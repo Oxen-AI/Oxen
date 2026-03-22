@@ -28,3 +28,6 @@ cli-test/vendor/
 .cargo/config.toml
 .claude/settings.local.json
 .superset
+
+data/
+oxen-python

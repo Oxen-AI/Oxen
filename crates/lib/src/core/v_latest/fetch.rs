@@ -689,7 +689,7 @@ async fn pull_large_entries(
     for worker in 0..worker_count {
         let queue = queue.clone();
         let progress_bar = Arc::clone(progress_bar);
-        let handle = tokio::spawn(async move {
+        let handle: tokio::task::JoinHandle<Result<(), OxenError>> = tokio::spawn(async move {
             loop {
                 let Some((repo, remote_repo, entry)) = queue.try_pop() else {
                     // reached end of queue
@@ -701,31 +701,23 @@ async fn pull_large_entries(
                 let remote_path = &entry.path();
 
                 // Download to the tmp path, then copy over to the entries dir
-                match api::client::entries::pull_large_entry(
-                    &repo,
-                    &remote_repo,
-                    &remote_path,
-                    &entry,
-                )
-                .await
-                {
-                    Ok(_) => {
-                        log::debug!("Pulled large entry {remote_path:?} to versions dir");
-                        progress_bar.add_bytes(entry.num_bytes());
-                        progress_bar.add_files(1);
-                    }
-                    Err(err) => {
-                        log::error!("Could not download chunk... {err}")
-                    }
-                }
+                api::client::entries::pull_large_entry(&repo, &remote_repo, &remote_path, &entry)
+                    .await?;
+
+                log::debug!("Pulled large entry {remote_path:?} to versions dir");
+                progress_bar.add_bytes(entry.num_bytes());
+                progress_bar.add_files(1);
             }
+            Ok(())
         });
         handles.push(handle);
     }
     let join_results = future::join_all(handles).await;
     for res in join_results {
-        if let Err(e) = res {
-            return Err(OxenError::basic_str(format!("worker task panicked: {e}")));
+        match res {
+            Err(e) => return Err(OxenError::basic_str(format!("worker task panicked: {e}"))),
+            Ok(Err(e)) => return Err(e),
+            Ok(Ok(())) => {}
         }
     }
 
@@ -785,7 +777,7 @@ async fn pull_small_entries(
     for worker in 0..worker_count {
         let queue = queue.clone();
         let progress_bar = Arc::clone(progress_bar);
-        let handle = tokio::spawn(async move {
+        let handle: tokio::task::JoinHandle<Result<(), OxenError>> = tokio::spawn(async move {
             loop {
                 let Some((remote_repo, chunk, local_repo)) = queue.try_pop() else {
                     // reached end of queue
@@ -793,29 +785,26 @@ async fn pull_small_entries(
                 };
                 log::debug!("worker[{worker}] processing task...");
 
-                match api::client::versions::download_data_from_version_paths(
+                let download_size = api::client::versions::download_data_from_version_paths(
                     &remote_repo,
                     &chunk,
                     &local_repo,
                 )
-                .await
-                {
-                    Ok(download_size) => {
-                        progress_bar.add_bytes(download_size);
-                        progress_bar.add_files(chunk.len() as u64);
-                    }
-                    Err(err) => {
-                        log::error!("Could not pull entries... {err}")
-                    }
-                }
+                .await?;
+
+                progress_bar.add_bytes(download_size);
+                progress_bar.add_files(chunk.len() as u64);
             }
+            Ok(())
         });
         handles.push(handle);
     }
     let join_results = future::join_all(handles).await;
     for res in join_results {
-        if let Err(e) = res {
-            return Err(OxenError::basic_str(format!("worker task panicked: {e}")));
+        match res {
+            Err(e) => return Err(OxenError::basic_str(format!("worker task panicked: {e}"))),
+            Ok(Err(e)) => return Err(e),
+            Ok(Ok(())) => {}
         }
     }
 
@@ -934,7 +923,7 @@ async fn download_large_entries(
     for worker in 0..worker_count {
         let queue = queue.clone();
         let progress_bar = Arc::clone(progress_bar);
-        let handle = tokio::spawn(async move {
+        let handle: tokio::task::JoinHandle<Result<(), OxenError>> = tokio::spawn(async move {
             loop {
                 let Some((remote_repo, entry, _dst, download_path)) = queue.try_pop() else {
                     // reached end of queue
@@ -946,32 +935,28 @@ async fn download_large_entries(
                 let remote_path = &entry.path();
 
                 // Download to the tmp path, then copy over to the entries dir
-                match api::client::entries::download_large_entry(
+                api::client::entries::download_large_entry(
                     &remote_repo,
                     &remote_path,
                     &download_path,
                     &entry.commit_id(),
                     entry.num_bytes(),
                 )
-                .await
-                {
-                    Ok(_) => {
-                        // log::debug!("Downloaded large entry {:?} to versions dir", remote_path);
-                        progress_bar.add_bytes(entry.num_bytes());
-                        progress_bar.add_files(1);
-                    }
-                    Err(err) => {
-                        log::error!("Could not download chunk... {err}")
-                    }
-                }
+                .await?;
+
+                progress_bar.add_bytes(entry.num_bytes());
+                progress_bar.add_files(1);
             }
+            Ok(())
         });
         handles.push(handle);
     }
     let join_results = future::join_all(handles).await;
     for res in join_results {
-        if let Err(e) = res {
-            return Err(OxenError::basic_str(format!("worker task panicked: {e}")));
+        match res {
+            Err(e) => return Err(OxenError::basic_str(format!("worker task panicked: {e}"))),
+            Ok(Err(e)) => return Err(e),
+            Ok(Ok(())) => {}
         }
     }
 
@@ -1030,7 +1015,7 @@ async fn download_small_entries(
     for worker in 0..worker_count {
         let queue = queue.clone();
         let progress_bar = Arc::clone(progress_bar);
-        let handle = tokio::spawn(async move {
+        let handle: tokio::task::JoinHandle<Result<(), OxenError>> = tokio::spawn(async move {
             loop {
                 let Some((remote_repo, chunk, path)) = queue.try_pop() else {
                     // reached end of queue
@@ -1038,30 +1023,27 @@ async fn download_small_entries(
                 };
                 log::debug!("worker[{worker}] processing task...");
 
-                match api::client::entries::download_data_from_version_paths(
+                let download_size = api::client::entries::download_data_from_version_paths(
                     &remote_repo,
                     &chunk,
                     &path,
                 )
-                .await
-                {
-                    Ok(download_size) => {
-                        progress_bar.add_bytes(download_size);
-                        progress_bar.add_files(chunk.len() as u64);
-                    }
-                    Err(err) => {
-                        log::error!("Could not download entries... {err}")
-                    }
-                }
+                .await?;
+
+                progress_bar.add_bytes(download_size);
+                progress_bar.add_files(chunk.len() as u64);
             }
+            Ok(())
         });
         handles.push(handle);
     }
 
     let join_results = future::join_all(handles).await;
     for res in join_results {
-        if let Err(e) = res {
-            return Err(OxenError::basic_str(format!("worker task panicked: {e}")));
+        match res {
+            Err(e) => return Err(OxenError::basic_str(format!("worker task panicked: {e}"))),
+            Ok(Err(e)) => return Err(e),
+            Ok(Ok(())) => {}
         }
     }
     log::debug!("All tasks done. :-)");

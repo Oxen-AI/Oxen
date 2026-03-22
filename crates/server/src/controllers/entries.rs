@@ -123,21 +123,13 @@ pub async fn download_chunk(
     let file_node = match repositories::entries::get_file(&repo, &commit, &path)? {
         Some(node) => node,
         None => {
-            let err: OxenHttpError = OxenError::path_does_not_exist(path).into();
-            return Ok(err.error_response());
+            return Err(OxenHttpError::NotFound);
         }
     };
 
-    let chunk = match version_store
+    let chunk = version_store
         .get_version_chunk(&file_node.hash().to_string(), chunk_start, chunk_size)
-        .await
-    {
-        Ok(chunk) => chunk,
-        Err(err) => {
-            let err: OxenHttpError = err.into();
-            return Ok(err.error_response());
-        }
-    };
+        .await?;
 
     Ok(HttpResponse::Ok().body(chunk))
 }
