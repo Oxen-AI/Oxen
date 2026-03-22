@@ -30,6 +30,9 @@ pub async fn commit(
     workspace_id: &str,
     commit: &NewCommitBody,
 ) -> Result<Commit, OxenError> {
+    // Notify the server that we are starting a push
+    api::client::repositories::pre_push_workspace(remote_repo).await?;
+
     let uri = format!("/workspaces/{workspace_id}/commit/{branch_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("commit_staged {url}\n{commit:?}");
@@ -49,7 +52,7 @@ pub async fn commit(
                 commit_id: commit.id.clone(),
             };
             api::client::commits::post_push_complete(remote_repo, &branch, &commit.id).await?;
-            api::client::repositories::post_push(remote_repo, &branch, &commit.id).await?;
+            api::client::repositories::post_push_workspace(remote_repo).await?;
 
             println!("🐂 commit {commit} complete!");
             Ok(commit)
