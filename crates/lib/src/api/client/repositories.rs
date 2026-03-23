@@ -16,6 +16,7 @@ use std::fmt;
 
 const CLONE: &str = "clone";
 const PUSH: &str = "push";
+const PUSH_WORKSPACE: &str = "push_workspace";
 const UPLOAD: &str = "upload";
 const DOWNLOAD: &str = "download";
 const PULL: &str = "pull";
@@ -522,6 +523,10 @@ pub async fn pre_push(
     .await
 }
 
+pub async fn pre_push_workspace(repository: &RemoteRepository) -> Result<(), OxenError> {
+    action_hook(repository, PUSH_WORKSPACE, ActionEventState::Started, None).await
+}
+
 pub async fn post_push(
     repository: &RemoteRepository,
     branch: &Branch,
@@ -539,6 +544,16 @@ pub async fn post_push(
         action_name,
         ActionEventState::Completed,
         Some(body),
+    )
+    .await
+}
+
+pub async fn post_push_workspace(repository: &RemoteRepository) -> Result<(), OxenError> {
+    action_hook(
+        repository,
+        PUSH_WORKSPACE,
+        ActionEventState::Completed,
+        None,
     )
     .await
 }
