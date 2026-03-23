@@ -419,12 +419,8 @@ pub async fn pull_large_entry(
         .await;
 
     // Propagate the first error before combining chunks
-    for result in &results {
-        if let Err(err) = result {
-            return Err(OxenError::basic_str(format!(
-                "Failed to download chunk for {remote_path:?}: {err}"
-            )));
-        }
+    for result in results {
+        result?;
     }
 
     // Once all downloaded, recombine file and delete temp dir
@@ -455,24 +451,15 @@ async fn try_pull_entry_chunk(
         )
         .await
         {
-            Ok(status) => match status {
-                reqwest::StatusCode::OK => {
-                    log::debug!("Downloaded chunk {:?}", remote_path.as_ref());
-                    return Ok(chunk_size);
-                }
-                reqwest::StatusCode::NOT_FOUND => {
-                    return Err(OxenError::path_does_not_exist(remote_path));
-                }
-                reqwest::StatusCode::UNAUTHORIZED => {
-                    return Err(OxenError::must_supply_valid_api_key());
-                }
-                _ => {
-                    return Err(OxenError::basic_str(format!(
-                        "Could not download entry status: {status}"
-                    )));
-                }
-            },
+            Ok(_status) => {
+                log::debug!("Downloaded chunk {:?}", remote_path.as_ref());
+                return Ok(chunk_size);
+            }
             Err(err) => {
+                // Don't retry non-transient errors
+                if err.is_auth_error() || err.is_not_found() {
+                    return Err(err);
+                }
                 log::error!(
                     "Failed to download chunk for the {} time, trying again: {}",
                     util::str::to_ordinal(try_num),
@@ -532,15 +519,8 @@ async fn pull_entry_chunk(
                 .await?;
             Ok(status)
         }
-        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::UNAUTHORIZED => {
-            log::warn!(
-                "pull_entry_chunk got {} for path={:?} chunk_start={}",
-                status,
-                remote_path,
-                chunk_start
-            );
-            Ok(status)
-        }
+        reqwest::StatusCode::NOT_FOUND => Err(OxenError::path_does_not_exist(remote_path)),
+        reqwest::StatusCode::UNAUTHORIZED => Err(OxenError::must_supply_valid_api_key()),
         _ => {
             let err = format!("Could not download entry status: {status}");
             Err(OxenError::basic_str(err))
@@ -644,13 +624,11 @@ pub async fn download_large_entry(
         .await;
 
     // Propagate the first error before recombining chunks
-    for result in &results {
+    for result in results {
         if let Err(err) = result {
             // Clean up temp dir on failure
             let _ = util::fs::remove_dir_all(&tmp_dir);
-            return Err(OxenError::basic_str(format!(
-                "Failed to download chunk for {remote_path:?}: {err}"
-            )));
+            return Err(err);
         }
     }
 
@@ -724,24 +702,15 @@ async fn try_download_entry_chunk(
         )
         .await
         {
-            Ok(status) => match status {
-                reqwest::StatusCode::OK => {
-                    log::debug!("Downloaded chunk {:?}", local_path.as_ref());
-                    return Ok(chunk_size);
-                }
-                reqwest::StatusCode::NOT_FOUND => {
-                    return Err(OxenError::path_does_not_exist(remote_path));
-                }
-                reqwest::StatusCode::UNAUTHORIZED => {
-                    return Err(OxenError::must_supply_valid_api_key());
-                }
-                _ => {
-                    return Err(OxenError::basic_str(format!(
-                        "Could not download entry status: {status}"
-                    )));
-                }
-            },
+            Ok(_status) => {
+                log::debug!("Downloaded chunk {:?}", local_path.as_ref());
+                return Ok(chunk_size);
+            }
             Err(err) => {
+                // Don't retry non-transient errors
+                if err.is_auth_error() || err.is_not_found() {
+                    return Err(err);
+                }
                 log::error!(
                     "Failed to download chunk for the {} time, trying again: {}",
                     util::str::to_ordinal(try_num),
@@ -811,15 +780,8 @@ async fn download_entry_chunk(
             std::io::copy(&mut content, &mut dest)?;
             Ok(status)
         }
-        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::UNAUTHORIZED => {
-            log::warn!(
-                "download_entry_chunk got {} for path={:?} chunk_start={}",
-                status,
-                remote_path,
-                chunk_start
-            );
-            Ok(status)
-        }
+        reqwest::StatusCode::NOT_FOUND => Err(OxenError::path_does_not_exist(remote_path)),
+        reqwest::StatusCode::UNAUTHORIZED => Err(OxenError::must_supply_valid_api_key()),
         _ => {
             let err = format!("Could not download entry status: {status}");
             Err(OxenError::basic_str(err))

@@ -10,7 +10,6 @@ use liboxen::view::StatusMessage;
 use liboxen::view::entries::{PaginatedMetadataEntries, PaginatedMetadataEntriesResponse};
 use liboxen::{constants, current_function, repositories};
 
-use actix_web::error::ResponseError;
 use actix_web::{HttpRequest, HttpResponse, web};
 use flate2::Compression;
 use flate2::read::GzDecoder;
@@ -86,8 +85,7 @@ pub async fn download_data_from_version_paths(
             tar.append_path_with_name(path_to_read, content_file)?;
         } else {
             log::error!("Could not find content: {content_file:?} -> {path_to_read:?}");
-            let err: OxenHttpError = OxenError::path_does_not_exist(path_to_read).into();
-            return Ok(err.error_response());
+            return Err(OxenError::path_does_not_exist(path_to_read).into());
         }
     }
 
