@@ -42,17 +42,17 @@ repos:
         pass_filenames: false
 
       - id: ruff-check-scripts
-        name: ruff check (scripts)
-        entry: bash -c 'uvx ruff check scripts/'
+        name: ruff check (script)
+        entry: bash -c 'uvx ruff check script/'
         language: system
-        files: ^scripts/.*\.py$
+        files: ^script/.*\.py$
         pass_filenames: false
 
       - id: ruff-format-scripts
-        name: ruff format (scripts)
-        entry: bash -c 'uvx ruff format scripts/'
+        name: ruff format (script)
+        entry: bash -c 'uvx ruff format script/'
         language: system
-        files: ^scripts/.*\.py$
+        files: ^script/.*\.py$
         pass_filenames: false
 
       - id: shellcheck
@@ -60,4 +60,4 @@ repos:
         entry: shellcheck -x
         language: system
         types: [shell]
-        files: \.sh$
+        files: ^script/

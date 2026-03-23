@@ -15,7 +15,7 @@ else
     ABSOLUTE_ROOT_PATH="$(realpath "$ROOT_PATH")"
 fi
 
-# Dir where this script is running - to reference ./backup_and_migrate_repo.sh
+# Dir where this script is running - to reference ./backup_and_migrate_repo
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
 N_FAILS=0
@@ -33,8 +33,8 @@ for namespace in "$ABSOLUTE_ROOT_PATH"/*; do
         if [ -d "$repository/.oxen" ]; then
 
           # Make the script exectuable
-          chmod +x "$DIR/backup_and_migrate_repo.sh"
-          if ! "$DIR/backup_and_migrate_repo.sh" "$repository" "$namespace_name/$repository_name" "$MIGRATION_NAME"; then
+          chmod +x "$DIR/backup_and_migrate_repo"
+          if ! "$DIR/backup_and_migrate_repo" "$repository" "$namespace_name/$repository_name" "$MIGRATION_NAME"; then
             echo "Backup and migration failed for $repository"
 						N_FAILS=$((N_FAILS + 1))
           fi

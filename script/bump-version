@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Version bumping script to update version across Rust and Python codebases
 # Usage:
-#   ./scripts/bump-version.sh <version>  - Set specific version
-#   ./scripts/bump-version.sh major      - Bump major version (1.2.3 -> 2.0.0)
-#   ./scripts/bump-version.sh minor      - Bump minor version (1.2.3 -> 1.3.0)
-#   ./scripts/bump-version.sh patch      - Bump patch version (1.2.3 -> 1.2.4)
-# Example: ./scripts/bump-version.sh 0.39.0
+#   ./script/bump-version <version>  - Set specific version
+#   ./script/bump-version major      - Bump major version (1.2.3 -> 2.0.0)
+#   ./script/bump-version minor      - Bump minor version (1.2.3 -> 1.3.0)
+#   ./script/bump-version patch      - Bump patch version (1.2.3 -> 1.2.4)
+# Example: ./script/bump-version 0.39.0
 
 set -euo pipefail
 
@@ -66,9 +66,9 @@ ARG=${1:-}
 # Validate argument
 if [[ -z "$ARG" ]]; then
   echo "Error: Version argument required" >&2
-  echo "Usage: ./scripts/bump-version.sh <version|major|minor|patch>" >&2
-  echo "Example: ./scripts/bump-version.sh 0.39.0" >&2
-  echo "Example: ./scripts/bump-version.sh patch" >&2
+  echo "Usage: ./script/bump-version <version|major|minor|patch>" >&2
+  echo "Example: ./script/bump-version 0.39.0" >&2
+  echo "Example: ./script/bump-version patch" >&2
   exit 1
 fi
 

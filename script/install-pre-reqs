@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# install-pre-reqs.sh
+# install-pre-reqs
 #
 # Installs all development prerequisites for the Oxen project.
 # Works on macOS and Linux. Idempotent: safe to run multiple times.
