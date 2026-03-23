@@ -413,21 +413,15 @@ pub async fn pull_large_entry(
         })
         .collect();
 
-    let bodies = futures::stream::iter(futures_vec).buffer_unordered(num_workers);
-
-    // Wait for all requests to finish
-    bodies
-        .for_each(|b| async {
-            match b {
-                Ok(s) => {
-                    log::debug!("Downloaded chunk {s:?}");
-                }
-                Err(err) => {
-                    log::error!("Error downloading chunk: {err:?}")
-                }
-            }
-        })
+    let results: Vec<_> = futures::stream::iter(futures_vec)
+        .buffer_unordered(num_workers)
+        .collect()
         .await;
+
+    // Propagate the first error before combining chunks
+    for result in results {
+        result?;
+    }
 
     // Once all downloaded, recombine file and delete temp dir
     version_store.combine_version_chunks(&hash, true).await?;
@@ -457,24 +451,15 @@ async fn try_pull_entry_chunk(
         )
         .await
         {
-            Ok(status) => match status {
-                reqwest::StatusCode::OK => {
-                    log::debug!("Downloaded chunk {:?}", remote_path.as_ref());
-                    return Ok(chunk_size);
-                }
-                reqwest::StatusCode::NOT_FOUND => {
-                    return Err(OxenError::path_does_not_exist(remote_path));
-                }
-                reqwest::StatusCode::UNAUTHORIZED => {
-                    return Err(OxenError::must_supply_valid_api_key());
-                }
-                _ => {
-                    return Err(OxenError::basic_str(format!(
-                        "Could not download entry status: {status}"
-                    )));
-                }
-            },
+            Ok(_status) => {
+                log::debug!("Downloaded chunk {:?}", remote_path.as_ref());
+                return Ok(chunk_size);
+            }
             Err(err) => {
+                // Don't retry non-transient errors
+                if err.is_auth_error() || err.is_not_found() {
+                    return Err(err);
+                }
                 log::error!(
                     "Failed to download chunk for the {} time, trying again: {}",
                     util::str::to_ordinal(try_num),
@@ -518,6 +503,13 @@ async fn pull_entry_chunk(
     let response = client.get(&url).send().await?;
 
     let status = response.status();
+    log::debug!(
+        "pull_entry_chunk response status={} for path={:?} chunk_start={} chunk_size={}",
+        status,
+        remote_path,
+        chunk_start,
+        chunk_size
+    );
 
     match status {
         reqwest::StatusCode::OK => {
@@ -527,7 +519,8 @@ async fn pull_entry_chunk(
                 .await?;
             Ok(status)
         }
-        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::UNAUTHORIZED => Ok(status),
+        reqwest::StatusCode::NOT_FOUND => Err(OxenError::path_does_not_exist(remote_path)),
+        reqwest::StatusCode::UNAUTHORIZED => Err(OxenError::must_supply_valid_api_key()),
         _ => {
             let err = format!("Could not download entry status: {status}");
             Err(OxenError::basic_str(err))
@@ -612,40 +605,32 @@ pub async fn download_large_entry(
 
     use futures::prelude::*;
     let num_workers = constants::DEFAULT_NUM_WORKERS;
-    let bodies = stream::iter(tasks)
+    let results: Vec<_> = stream::iter(tasks)
         .map(|item| async move {
-            // log::debug!("Downloading chunk {:?} -> {:?}", remote_path, tmp_file);
             let (remote_repo, remote_path, tmp_file, revision, chunk_start, chunk_size) = item;
 
-            match try_download_entry_chunk(
+            try_download_entry_chunk(
                 &remote_repo,
                 &remote_path,
-                &tmp_file, // local_path
+                &tmp_file,
                 &revision,
                 chunk_start,
                 chunk_size,
             )
             .await
-            {
-                Ok(_) => Ok(chunk_size),
-                Err(err) => Err(err),
-            }
         })
-        .buffer_unordered(num_workers);
-
-    // Wait for all requests to finish
-    bodies
-        .for_each(|b| async {
-            match b {
-                Ok(s) => {
-                    log::debug!("Downloaded chunk {s:?}");
-                }
-                Err(err) => {
-                    log::error!("Error downloading chunk: {err:?}")
-                }
-            }
-        })
+        .buffer_unordered(num_workers)
+        .collect()
         .await;
+
+    // Propagate the first error before recombining chunks
+    for result in results {
+        if let Err(err) = result {
+            // Clean up temp dir on failure
+            let _ = util::fs::remove_dir_all(&tmp_dir);
+            return Err(err);
+        }
+    }
 
     // Once all downloaded, recombine file and delete temp dir
     log::debug!("Unpack to {local_path:?}");
@@ -717,24 +702,15 @@ async fn try_download_entry_chunk(
         )
         .await
         {
-            Ok(status) => match status {
-                reqwest::StatusCode::OK => {
-                    log::debug!("Downloaded chunk {:?}", local_path.as_ref());
-                    return Ok(chunk_size);
-                }
-                reqwest::StatusCode::NOT_FOUND => {
-                    return Err(OxenError::path_does_not_exist(remote_path));
-                }
-                reqwest::StatusCode::UNAUTHORIZED => {
-                    return Err(OxenError::must_supply_valid_api_key());
-                }
-                _ => {
-                    return Err(OxenError::basic_str(format!(
-                        "Could not download entry status: {status}"
-                    )));
-                }
-            },
+            Ok(_status) => {
+                log::debug!("Downloaded chunk {:?}", local_path.as_ref());
+                return Ok(chunk_size);
+            }
             Err(err) => {
+                // Don't retry non-transient errors
+                if err.is_auth_error() || err.is_not_found() {
+                    return Err(err);
+                }
                 log::error!(
                     "Failed to download chunk for the {} time, trying again: {}",
                     util::str::to_ordinal(try_num),
@@ -788,17 +764,24 @@ async fn download_entry_chunk(
     }
 
     let status = response.status();
+    log::debug!(
+        "download_entry_chunk response status={} for path={:?} chunk_start={} chunk_size={}",
+        status,
+        remote_path,
+        chunk_start,
+        chunk_size
+    );
 
     match status {
         reqwest::StatusCode::OK => {
-            // TODO: replace these with util::fs:: file functions for better error messages
-            // Copy to file
             let mut dest = { fs::File::create(local_path)? };
-            let mut content = Cursor::new(response.bytes().await?);
+            let bytes = response.bytes().await?;
+            let mut content = Cursor::new(bytes);
             std::io::copy(&mut content, &mut dest)?;
             Ok(status)
         }
-        reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::UNAUTHORIZED => Ok(status),
+        reqwest::StatusCode::NOT_FOUND => Err(OxenError::path_does_not_exist(remote_path)),
+        reqwest::StatusCode::UNAUTHORIZED => Err(OxenError::must_supply_valid_api_key()),
         _ => {
             let err = format!("Could not download entry status: {status}");
             Err(OxenError::basic_str(err))
@@ -854,11 +837,7 @@ pub async fn try_download_data_from_version_paths(
     let client = client::new_for_url(&url)?;
     let query_method = Method::from_bytes(b"QUERY").unwrap();
     if let Ok(res) = client.request(query_method, &url).body(body).send().await {
-        if reqwest::StatusCode::UNAUTHORIZED == res.status() {
-            let err = "Err: unauthorized request to download data".to_string();
-            log::error!("{err}");
-            return Err(OxenError::authentication(err));
-        }
+        let res = client::handle_non_json_response(&url, res).await?;
 
         let reader = res
             .bytes_stream()

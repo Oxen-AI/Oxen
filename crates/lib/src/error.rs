@@ -264,6 +264,19 @@ impl OxenError {
         OxenError::InvalidRepoName(StringError::from(s.as_ref()))
     }
 
+    pub fn is_auth_error(&self) -> bool {
+        matches!(self, OxenError::Authentication(_))
+    }
+
+    pub fn is_not_found(&self) -> bool {
+        matches!(
+            self,
+            OxenError::PathDoesNotExist(_)
+                | OxenError::ResourceNotFound(_)
+                | OxenError::RemoteRepoNotFound(_)
+        )
+    }
+
     pub fn repo_already_exists(repo: RepoNew) -> Self {
         OxenError::RepoAlreadyExists(Box::new(repo))
     }
