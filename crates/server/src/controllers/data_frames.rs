@@ -169,7 +169,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
             Ok(workspace) => workspace,
             Err(_e) => repositories::workspaces::get_non_editable_by_commit_id(&repo, &commit.id)?,
         };
-        repositories::workspaces::data_frames::index(&repo, &workspace, &path)?;
+        repositories::workspaces::data_frames::index(&repo, &workspace, &path).await?;
     }
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))

@@ -230,7 +230,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
     for upload_file in upload_files {
         let file_name = upload_file.path.file_name().unwrap();
         let dst_path = PathBuf::from(&directory).join(file_name);
-        let version_path = version_store.get_version_path(&upload_file.hash)?;
+        let version_path = version_store.get_version_path(&upload_file.hash).await?;
 
         let ret_file = match core::v_latest::workspaces::files::add_version_file(
             &workspace,
@@ -308,7 +308,8 @@ pub async fn add_version_files(
         &workspace,
         &files_with_hash,
         &directory,
-    )?;
+    )
+    .await?;
 
     log::debug!("Staging complete with {:?} err files", err_files.len());
 

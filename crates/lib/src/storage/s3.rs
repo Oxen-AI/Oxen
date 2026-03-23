@@ -1,4 +1,5 @@
 use crate::error::OxenError;
+use async_tempfile::TempFile;
 use async_trait::async_trait;
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::error::SdkError;
@@ -10,10 +11,11 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::OnceCell;
 use tokio_stream::Stream;
 
-use super::version_store::VersionStore;
+use super::version_store::{LocalFilePath, VersionStore};
 use crate::constants::VERSION_FILE_NAME;
 use crate::view::versions::CleanCorruptedVersionsResult;
 
@@ -334,16 +336,30 @@ impl VersionStore for S3VersionStore {
         }
     }
 
-    fn get_version_path(&self, hash: &str) -> Result<PathBuf, OxenError> {
-        let key = self.generate_key(hash);
-        Ok(PathBuf::from(key))
+    async fn get_version_path(&self, hash: &str) -> Result<LocalFilePath, OxenError> {
+        // TODO: This needs to be updated to handle large files that won't fit in memory
+        let data = self.get_version(hash).await?;
+        let mut tmp = TempFile::new()
+            .await
+            .map_err(|e| OxenError::basic_str(format!("Failed to create temp file: {e}")))?;
+        tmp.write_all(&data)
+            .await
+            .map_err(|e| OxenError::basic_str(format!("Failed to write temp file: {e}")))?;
+        Ok(LocalFilePath::Temp(tmp))
     }
 
-    async fn copy_version_to_path(&self, _hash: &str, _dest_path: &Path) -> Result<(), OxenError> {
-        // TODO: Implement S3 version copying to path
-        Err(OxenError::basic_str(
-            "S3VersionStore copy_version_to_path not yet implemented",
-        ))
+    async fn copy_version_to_path(&self, hash: &str, dest_path: &Path) -> Result<(), OxenError> {
+        // TODO: This needs to be updated to handle large files that won't fit in memory
+        let data = self.get_version(hash).await?;
+        if let Some(parent) = dest_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| OxenError::basic_str(format!("Failed to create parent dirs: {e}")))?;
+        }
+        tokio::fs::write(dest_path, &data)
+            .await
+            .map_err(|e| OxenError::basic_str(format!("Failed to write file: {e}")))?;
+        Ok(())
     }
 
     async fn store_version_chunk(

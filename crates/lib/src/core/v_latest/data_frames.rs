@@ -95,7 +95,9 @@ pub async fn get_slice(
     }
     // Read the data frame from the version path
     let version_store = repo.version_store()?;
-    let version_path = version_store.get_version_path(&file_node.hash().to_string())?;
+    let version_path = version_store
+        .get_version_path(&file_node.hash().to_string())
+        .await?;
     let df = tabular::read_df_with_extension(version_path, file_node.extension(), opts).await?;
     log::debug!("get_slice df {:?}", df.height());
 

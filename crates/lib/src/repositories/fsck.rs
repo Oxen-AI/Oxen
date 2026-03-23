@@ -24,7 +24,7 @@ mod tests {
 
             // Corrupt a version file by overwriting its data
             let hash = &versions[0];
-            let version_path = version_store.get_version_path(hash)?;
+            let version_path = version_store.get_version_path(hash).await?;
             std::fs::write(&version_path, b"corrupted data")?;
 
             // Dry run should detect corruption but not delete
@@ -55,7 +55,7 @@ mod tests {
 
             // Corrupt a version file by overwriting its data
             let hash = &versions[0];
-            let version_path = version_store.get_version_path(hash)?;
+            let version_path = version_store.get_version_path(hash).await?;
             std::fs::write(&version_path, b"corrupted data")?;
 
             // Clean should detect and remove the corrupted file

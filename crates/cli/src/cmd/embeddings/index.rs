@@ -64,7 +64,7 @@ impl RunCmd for EmbeddingsIndexCmd {
             let workspace_id = format!("{}-{}", path, commit.id);
             let workspace =
                 repositories::workspaces::create(&repository, &commit, workspace_id, false)?;
-            repositories::workspaces::data_frames::index(&repository, &workspace, path)?;
+            repositories::workspaces::data_frames::index(&repository, &workspace, path).await?;
             repositories::workspaces::data_frames::embeddings::index(
                 &workspace,
                 path,
