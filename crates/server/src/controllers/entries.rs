@@ -48,7 +48,7 @@ pub async fn download_data_from_version_paths(
 
     let mut gz = GzDecoder::new(&bytes[..]);
     let mut line_delimited_files = String::new();
-    gz.read_to_string(&mut line_delimited_files).unwrap();
+    gz.read_to_string(&mut line_delimited_files)?;
 
     let content_files: Vec<&str> = line_delimited_files.split('\n').collect();
 
@@ -82,15 +82,15 @@ pub async fn download_data_from_version_paths(
         );
 
         if path_to_read.exists() {
-            tar.append_path_with_name(path_to_read, content_file)
-                .unwrap();
+            tar.append_path_with_name(path_to_read, content_file)?;
         } else {
             log::error!("Could not find content: {content_file:?} -> {path_to_read:?}");
+            return Err(OxenError::path_does_not_exist(path_to_read).into());
         }
     }
 
-    tar.finish().unwrap();
-    let buffer: Vec<u8> = tar.into_inner().unwrap().finish().unwrap();
+    tar.finish()?;
+    let buffer: Vec<u8> = tar.into_inner()?.finish()?;
     Ok(HttpResponse::Ok().body(buffer))
 }
 
@@ -118,8 +118,13 @@ pub async fn download_chunk(
     let chunk_start: u64 = query.chunk_start.unwrap_or(0);
     let chunk_size: u64 = query.chunk_size.unwrap_or(AVG_CHUNK_SIZE);
 
-    let file_node = repositories::entries::get_file(&repo, &commit, &path)?
-        .ok_or(OxenError::path_does_not_exist(path.clone()))?;
+    let file_node = match repositories::entries::get_file(&repo, &commit, &path)? {
+        Some(node) => node,
+        None => {
+            return Err(OxenHttpError::NotFound);
+        }
+    };
+
     let chunk = version_store
         .get_version_chunk(&file_node.hash().to_string(), chunk_start, chunk_size)
         .await?;
