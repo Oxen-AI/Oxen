@@ -44,7 +44,7 @@ pub async fn import(
     url: &str,
     auth: &str,
     directory: PathBuf,
-    filename: String,
+    filename: Option<String>,
     workspace: &Workspace,
 ) -> Result<(), OxenError> {
     match workspace.base_repo.min_version() {

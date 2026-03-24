@@ -3,11 +3,14 @@ use futures::StreamExt;
 use parking_lot::Mutex;
 use reqwest::Client;
 use reqwest::header::HeaderValue;
+use reqwest::redirect;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{Read, Write};
+use std::net::IpAddr;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use url::Url;
 use zip::ZipArchive;
 
 use crate::core;
@@ -190,32 +193,128 @@ pub fn exists(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool, Oxe
     })
 }
 
+fn is_private_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+        }
+        IpAddr::V6(v6) => {
+            if v6.is_loopback() || v6.is_unspecified() {
+                return true;
+            }
+            let segments = v6.segments();
+            // fc00::/7 (unique local)
+            if segments[0] & 0xfe00 == 0xfc00 {
+                return true;
+            }
+            // fe80::/10 (link-local)
+            if segments[0] & 0xffc0 == 0xfe80 {
+                return true;
+            }
+            // IPv4-mapped addresses (::ffff:x.x.x.x)
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_private_ip(&IpAddr::V4(v4));
+            }
+            false
+        }
+    }
+}
+
+async fn validate_url_target(url: &Url) -> Result<(), OxenError> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| OxenError::file_import_error("URL has no host"))?;
+    let port = url.port_or_known_default().unwrap_or(443);
+    let addr = format!("{host}:{port}");
+
+    let resolved = tokio::net::lookup_host(&addr).await.map_err(|e| {
+        OxenError::file_import_error(format!("DNS resolution failed for {host}: {e}"))
+    })?;
+
+    for socket_addr in resolved {
+        if is_private_ip(&socket_addr.ip()) {
+            return Err(OxenError::file_import_error(format!(
+                "URL resolves to a private/reserved IP address: {}",
+                socket_addr.ip()
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_content_disposition_filename(header: &str) -> Option<String> {
+    // Look for filename="..." or filename=...
+    let lower = header.to_lowercase();
+    if let Some(pos) = lower.find("filename=") {
+        let rest = &header[pos + 9..];
+        if let Some(rest) = rest.strip_prefix('"') {
+            // filename="..."
+            rest.find('"').map(|end| rest[..end].to_string())
+        } else {
+            // filename=... (unquoted, until semicolon or end)
+            let end = rest.find(';').unwrap_or(rest.len());
+            let name = rest[..end].trim();
+            if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            }
+        }
+    } else {
+        None
+    }
+}
+
+fn filename_from_url(url: &Url) -> Option<String> {
+    url.path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .filter(|s| !s.is_empty())
+        .and_then(|s| urlencoding::decode(s).ok())
+        .map(|s| s.into_owned())
+}
+
+fn sanitize_filename(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_whitespace() { '_' } else { c })
+        .filter(|&c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_')
+        .collect()
+}
+
 pub async fn import(
     url: &str,
     auth: &str,
     directory: PathBuf,
-    mut filename: String,
+    filename: Option<String>,
     workspace: &Workspace,
 ) -> Result<(), OxenError> {
-    // Sanitize filename
-    filename = filename
-        .chars()
-        .map(|c| if c.is_whitespace() { '_' } else { c })
-        .filter(|&c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_')
-        .collect::<String>();
+    let parsed_url =
+        Url::parse(url).map_err(|_| OxenError::file_import_error(format!("Invalid URL: {url}")))?;
 
-    if filename.is_empty() {
-        return Err(OxenError::file_import_error(format!(
-            "URL has an invalid filename {url}"
-        )));
+    let scheme = parsed_url.scheme();
+    if scheme != "http" && scheme != "https" {
+        return Err(OxenError::file_import_error(
+            "Only http and https URLs are allowed",
+        ));
     }
 
-    log::debug!("files::import_file Got uploaded file name: {filename}");
+    validate_url_target(&parsed_url).await?;
 
     let auth_header_value = HeaderValue::from_str(auth)
         .map_err(|_e| OxenError::file_import_error(format!("Invalid header auth value {auth}")))?;
 
-    fetch_file(url, auth_header_value, directory, filename, workspace).await?;
+    fetch_file(
+        &parsed_url,
+        auth_header_value,
+        directory,
+        filename,
+        workspace,
+    )
+    .await?;
 
     Ok(())
 }
@@ -271,26 +370,86 @@ pub async fn upload_zip(
     }
 }
 
+const MAX_REDIRECTS: usize = 10;
+
 async fn fetch_file(
-    url: &str,
+    url: &Url,
     auth_header_value: HeaderValue,
     directory: PathBuf,
-    filename: String,
+    caller_filename: Option<String>,
     workspace: &Workspace,
 ) -> Result<(), OxenError> {
-    let response = Client::new()
-        .get(url)
-        .header("Authorization", auth_header_value)
-        .send()
-        .await
-        .map_err(|e| OxenError::file_import_error(format!("Fetch file request failed: {e}")))?;
+    let client = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .map_err(|e| OxenError::file_import_error(format!("Failed to build HTTP client: {e}")))?;
+
+    let mut current_url = url.clone();
+    let mut response = None;
+
+    // Manual redirect loop — only sends Authorization on the first request
+    for hop in 0..=MAX_REDIRECTS {
+        let mut req = client.get(current_url.as_str());
+        if hop == 0 {
+            req = req.header("Authorization", auth_header_value.clone());
+        }
+
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| OxenError::file_import_error(format!("Fetch file request failed: {e}")))?;
+
+        let status = resp.status();
+        if status.is_redirection() {
+            if hop == MAX_REDIRECTS {
+                return Err(OxenError::file_import_error("Too many redirects (max 10)"));
+            }
+            let location = resp
+                .headers()
+                .get("location")
+                .and_then(|v| v.to_str().ok())
+                .ok_or_else(|| {
+                    OxenError::file_import_error("Redirect response missing Location header")
+                })?;
+
+            // Resolve relative redirects
+            let next_url = current_url
+                .join(location)
+                .map_err(|e| OxenError::file_import_error(format!("Invalid redirect URL: {e}")))?;
+
+            // Validate redirect target
+            let scheme = next_url.scheme();
+            if scheme != "http" && scheme != "https" {
+                return Err(OxenError::file_import_error(
+                    "Redirect to non-HTTP(S) URL is not allowed",
+                ));
+            }
+            validate_url_target(&next_url).await?;
+
+            current_url = next_url;
+            continue;
+        }
+
+        if !status.is_success() {
+            return Err(OxenError::file_import_error(format!(
+                "HTTP request failed with status {status}"
+            )));
+        }
+
+        response = Some(resp);
+        break;
+    }
+
+    let response = response.ok_or_else(|| {
+        OxenError::file_import_error("Failed to get a successful response after redirects")
+    })?;
 
     let resp_headers = response.headers();
 
     let content_type = resp_headers
         .get("content-type")
         .and_then(|h| h.to_str().ok())
-        .ok_or_else(|| OxenError::file_import_error("Fetch file response missing content type"))?;
+        .unwrap_or("application/octet-stream");
 
     let content_length = response.content_length();
     if let Some(content_length) = content_length
@@ -300,11 +459,33 @@ async fn fetch_file(
             "Content length {content_length} exceeds maximum allowed size of 1GB"
         )));
     }
+
+    // Resolve filename: caller-specified > Content-Disposition > URL path > UUID
+    let raw_filename = if let Some(ref name) = caller_filename {
+        name.clone()
+    } else if let Some(cd) = resp_headers
+        .get("content-disposition")
+        .and_then(|h| h.to_str().ok())
+    {
+        parse_content_disposition_filename(cd)
+            .or_else(|| filename_from_url(&current_url))
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+    } else {
+        filename_from_url(&current_url).unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+    };
+
+    let filename = sanitize_filename(&raw_filename);
+    if filename.is_empty() {
+        return Err(OxenError::file_import_error(format!(
+            "Could not determine a valid filename for {url}"
+        )));
+    }
+
     let is_zip = content_type.contains("zip");
 
     log::debug!("files::import_file Got filename : {filename:?}");
 
-    let filepath = directory.join(filename);
+    let filepath = directory.join(&filename);
     log::debug!("files::import_file got download filepath: {filepath:?}");
 
     // handle download stream
