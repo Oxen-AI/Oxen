@@ -56,7 +56,7 @@ jobs:
       - name: Bump version
         id: bump
         run: |
-          new_version=$(./script/bump-version "${{ inputs.version }}")
+          new_version=$(./bin/bump-version "${{ inputs.version }}")
           echo "version=$new_version" >> "$GITHUB_OUTPUT"
           echo "# New Version: $new_version" >> $GITHUB_STEP_SUMMARY
 

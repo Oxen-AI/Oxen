@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Patch oxen-python's pyproject.toml and Cargo.toml with a PEP 440 dev version.
 #
-# Usage: script/patch_dev_version <PEP440_VERSION>
-# Example: script/patch_dev_version 0.44.1.dev3
+# Usage: bin/patch_dev_version <PEP440_VERSION>
+# Example: bin/patch_dev_version 0.44.1.dev3
 #
 # The PEP 440 version (e.g. 0.44.1.dev3) is written directly into pyproject.toml.
 # For Cargo.toml, it is converted to a semver pre-release (e.g. 0.44.1-dev.3).
 #
 # This script is used by:
-#   - script/publish_test_pypi  (local dev builds)
+#   - bin/publish_test_pypi  (local dev builds)
 #   - CI workflows (build_wheels_linux.yml, build_wheels_macos.yml)
 
 set -euo pipefail

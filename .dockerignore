@@ -8,6 +8,5 @@ examples
 benchmark
 cli-test
 experiments
-scripts
 .claude
 .ruff_cache

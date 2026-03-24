@@ -20,7 +20,7 @@ Click **Run workflow** and fill in the `version` input with one of:
 
 ![Bump Version workflow dispatch UI](images/release_process_bump_release.png)
 
-This workflow runs `script/bump-version`, which updates the version string in all of the following files:
+This workflow runs `bin/bump-version`, which updates the version string in all of the following files:
 - `package.version` in `Cargo.toml` files ([`Cargo.toml`](Cargo.toml), [`crates/oxen-py/Cargo.toml`](crates/oxen-py/Cargo.toml))
 - `project.version` in [`oxen-python/pyproject.toml`](oxen-python/pyproject.toml)
 - The `version` in lockfiles ([`Cargo.lock`](Cargo.lock), [`oxen-python/uv.lock`](oxen-python/uv.lock))

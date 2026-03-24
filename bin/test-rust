@@ -45,7 +45,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Ensure all prerequisites are installed
-"$SCRIPT_DIR/install-pre-reqs"
+"$SCRIPT_DIR/install-prereqs"
 
 # Build
 echo "==> Building oxen (cargo build $FEATURE_ARGS)..."

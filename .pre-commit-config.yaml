@@ -41,18 +41,18 @@ repos:
         files: ^oxen-python/.*\.py$
         pass_filenames: false
 
-      - id: ruff-check-scripts
-        name: ruff check (script)
-        entry: bash -c 'uvx ruff check script/'
+      - id: ruff-check-python-scripts
+        name: ruff check (python scripts)
+        entry: bash -c 'uvx ruff check bin/'
         language: system
-        files: ^script/.*\.py$
+        files: ^bin/.*\.py$
         pass_filenames: false
 
-      - id: ruff-format-scripts
-        name: ruff format (script)
-        entry: bash -c 'uvx ruff format script/'
+      - id: ruff-format-python-scripts
+        name: ruff format (python scripts)
+        entry: bash -c 'uvx ruff format bin/'
         language: system
-        files: ^script/.*\.py$
+        files: ^bin/.*\.py$
         pass_filenames: false
 
       - id: shellcheck
@@ -60,4 +60,4 @@ repos:
         entry: shellcheck -x
         language: system
         types: [shell]
-        files: ^script/
+        files: ^bin/
