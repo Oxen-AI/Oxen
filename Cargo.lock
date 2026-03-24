@@ -5221,6 +5221,7 @@ version = "0.46.4"
 dependencies = [
  "bindgen 0.71.1",
  "cc",
+ "env_logger",
  "glob",
  "liboxen",
  "log",
