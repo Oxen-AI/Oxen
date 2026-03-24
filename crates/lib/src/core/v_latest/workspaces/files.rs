@@ -103,20 +103,26 @@ pub async fn add_version_files(
     let workspace_repo = &workspace.workspace_repo;
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
 
-    // Resolve all version paths before entering the sync closure
-    let mut version_paths = Vec::with_capacity(files_with_hash.len());
-    for item in files_with_hash.iter() {
-        version_paths.push(version_store.get_version_path(&item.hash).await?);
-    }
-
     let mut err_files: Vec<ErrorFileInfo> = vec![];
     let staged_db_manager = get_staged_db_manager(workspace_repo)?;
-    for (item, version_path) in files_with_hash.iter().zip(version_paths.iter()) {
+    for item in files_with_hash.iter() {
         let target_path = PathBuf::from(directory).join(&item.path);
-
+        let version_path = match version_store.get_version_path(&item.hash).await {
+            Ok(path) => path,
+            Err(e) => {
+                let error = format!("Failed to resolve version path: {e}");
+                log::error!("{error}");
+                err_files.push(ErrorFileInfo {
+                    hash: item.hash.clone(),
+                    path: Some(item.path.clone()),
+                    error,
+                });
+                continue;
+            }
+        };
         match stage_file_with_hash(
             workspace,
-            version_path,
+            &version_path,
             &target_path,
             &item.hash,
             &staged_db_manager,
@@ -127,11 +133,12 @@ pub async fn add_version_files(
                 // let parent_dirs = item.parents;
             }
             Err(e) => {
-                log::error!("error with adding file: {e:?}");
+                let error = format!("Failed to add file to staged db: {e}");
+                log::error!("{error}");
                 err_files.push(ErrorFileInfo {
                     hash: item.hash.clone(),
                     path: Some(item.path.clone()),
-                    error: format!("Failed to add file to staged db: {e}"),
+                    error,
                 });
                 continue;
             }
