@@ -77,9 +77,9 @@ Installs every development prerequisite for building Oxen from source (system pa
 
 
 
-## Recomended Workflows
+## Recommended Workflows
 
-### Testing Large Scale Upload to `oxen-server`
+### Testing Large-Scale Upload to `oxen-server`
 
 Use `generate-dataset` to make the raw, randomized data files for your upload. Pay careful attention to the `--tier` parameter, which lets you make a segmented distribution for sampling file sizes.
 Have this script output everything to a flat directory (which is the default behavior).
