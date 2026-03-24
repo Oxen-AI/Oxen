@@ -426,7 +426,11 @@ pub fn populate_entries_with_workspace_data(
         if *status == StagedEntryStatus::Added {
             let staged_node = get_staged_db_manager(&workspace.workspace_repo)?
                 .read_from_staged_db(file_path)?
-                .expect("Staged node found in status not present in staged db");
+                .ok_or_else(|| {
+                    OxenError::basic_str(format!(
+                        "Staged entry disappeared while resolving workspace metadata: {file_path:?}"
+                    ))
+                })?;
 
             let metadata = match staged_node.node.node {
                 EMerkleTreeNode::File(file_node) => {
