@@ -768,20 +768,17 @@ pub async fn diff_text_file_and_node(
     file_path: impl AsRef<Path>,
 ) -> Result<DiffResult, OxenError> {
     let version_store = repo.version_store()?;
-    let (file_node_content, version_path) = if let Some(node) = file_node {
+    let file_node_content = if let Some(node) = file_node {
         let file_hash = node.hash().to_string();
-        let contents = read_version_file_to_string(&version_store, &file_hash).await?;
-        let path = version_store.get_version_path(&file_hash).await?;
-
-        (Some(contents), Some(path.to_pathbuf()))
+        Some(read_version_file_to_string(&version_store, &file_hash).await?)
     } else {
-        (None, None)
+        None
     };
 
     let file_path_content = util::fs::read_file(Some(&file_path))?;
     let result = utf8_diff::diff(
         file_node_content,
-        version_path,
+        Some(file_path.as_ref().to_path_buf()), // The display path for the file node is the same as the locally-changed file
         Some(file_path_content),
         Some(file_path.as_ref().to_path_buf()),
     )?;

@@ -19,8 +19,15 @@ pub const NAME: &str = "diff";
 pub const DIFFSEP: &str = "..";
 pub struct DiffCmd;
 
-fn write_to_pager(output: &mut Pager, text: &str) -> Result<(), OxenError> {
+fn writeln_to_pager(output: &mut Pager, text: &str) -> Result<(), OxenError> {
     match writeln!(output, "{text}") {
+        Ok(_) => Ok(()),
+        Err(_) => Err(OxenError::basic_str("Could not write to pager")),
+    }
+}
+
+fn write_to_pager(output: &mut Pager, text: &str) -> Result<(), OxenError> {
+    match write!(output, "{text}") {
         Ok(_) => Ok(()),
         Err(_) => Err(OxenError::basic_str("Could not write to pager")),
     }
@@ -221,23 +228,22 @@ impl DiffCmd {
             match result {
                 DiffResult::Tabular(diff) => {
                     // println!("{:?}", ct.summary);
-                    write_to_pager(
+                    writeln_to_pager(
                         &mut p,
                         &format!(
-                            "--- from file: {}\n+++ to file: {}\n",
+                            "--- from file: {}\n+++ to file: {}",
                             diff.filename1.as_ref().unwrap_or(&"".to_string()),
                             diff.filename2.as_ref().unwrap_or(&"".to_string())
                         ),
                     )?;
                     DiffCmd::print_column_changes(&mut p, &diff.summary.modifications)?;
                     DiffCmd::print_row_changes(&mut p, &diff.summary.modifications)?;
-                    write_to_pager(&mut p, pretty_print::df_to_str(&diff.contents).as_str())?;
+                    writeln_to_pager(&mut p, pretty_print::df_to_str(&diff.contents).as_str())?;
                 }
                 DiffResult::Text(diff) => {
                     DiffCmd::print_text_diff(&mut p, diff)?;
                 }
             }
-            write_to_pager(&mut p, "\n\n".to_string().as_str())?;
         }
 
         match minus::page_all(p) {
@@ -272,10 +278,10 @@ impl DiffCmd {
         }
 
         for output in outputs {
-            write_to_pager(p, &output)?;
+            writeln_to_pager(p, &output)?;
         }
 
-        write_to_pager(p, "\n".to_string().as_str())?;
+        writeln_to_pager(p, "\n".to_string().as_str())?;
 
         Ok(())
     }
@@ -297,7 +303,7 @@ impl DiffCmd {
         }
 
         for output in outputs {
-            write_to_pager(p, &format!("{output}"))?;
+            writeln_to_pager(p, &format!("{output}"))?;
         }
 
         Ok(())
@@ -311,7 +317,7 @@ impl DiffCmd {
         write_to_pager(
             p,
             &format!(
-                "--- from file: {}\n+++ to file: {}\n",
+                "--- from file: {}\n+++ to file: {}",
                 filename1.unwrap_or(String::from("")),
                 filename2.unwrap_or(String::from("")),
             ),
@@ -319,10 +325,10 @@ impl DiffCmd {
 
         for line in &diff.lines {
             match line.modification {
-                ChangeType::Unchanged => write_to_pager(p, line.text.to_string().as_str())?,
-                ChangeType::Added => write_to_pager(p, &format!("+ {}", line.text.green()))?,
-                ChangeType::Removed => write_to_pager(p, &format!("- {}", line.text.red()))?,
-                ChangeType::Modified => write_to_pager(p, line.text.to_string().as_str())?,
+                ChangeType::Unchanged => write_to_pager(p, &format!("\n{}", line.text))?,
+                ChangeType::Added => write_to_pager(p, &format!("\n+ {}", line.text.green()))?,
+                ChangeType::Removed => write_to_pager(p, &format!("\n- {}", line.text.red()))?,
+                ChangeType::Modified => write_to_pager(p, &format!("\n{}", line.text))?,
             }
         }
         Ok(())
