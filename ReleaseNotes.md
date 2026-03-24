@@ -1,3 +1,30 @@
+# v0.10.15
+
+* fix tabular json file size computation
+* better error handling on metadata unwrap on push
+
+# v0.10.14
+
+* Change --empty flag on `oxen create-remote` command, to default to create an empty repo and use `--add_readme` if you want to add a README
+
+# Sorry we got lazy...
+
+# v0.6.2
+
+## Features/Fixes
+* Update GET /merge to return commits
+* Delete repo in background thread via API
+* Fix DataFrame size in API
+* Compute repo size on POST commit to server to serve up the size faster
+* Add imagemagick and ffmpeg deps for compute cache
+
+
+# v0.6.1
+
+## Features/Fixes
+* Add version compatibility check on remote push and pull
+* fix command line arg parsing for `restore` and `df`
+* fix merging remote branch that is ahead of current on pull
 
 # v0.6.0+2
 

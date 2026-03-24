@@ -8,15 +8,16 @@ Oxen is a fast, unstructured data version control system written in Rust. It's d
 
 # Project Organization
 
-This repository is broken into two main components:
-- `oxen-rust`: contains the core Rust implementation of the library, CLI, and server.
-- `oxen-python`: provides Python bindings for the Oxen library.
-
-# oxen-rust
+The Cargo workspace lives at the repository root, with crates under `crates/`:
+- `crates/lib/` - Core shared library (`liboxen`)
+- `crates/cli/` - Command-line interface binary (`oxen`)
+- `crates/server/` - HTTP server binary (`oxen-server`)
+- `crates/oxen-py/` - Python bindings (Rust source for `oxen-python`)
+- `oxen-python/` - Python package source, tests, and `pyproject.toml`
 
 ## Architecture
 
-The project follows a workspace structure with three main components in the `src/` directory:
+The project follows a workspace structure with crates in the `crates/` directory:
 
 - **`lib/`** - Core shared library (`liboxen`) containing all the business logic
 - **`cli/`** - Command-line interface binary (`oxen`)
@@ -82,7 +83,7 @@ bacon server                        # Start server with live reload
 
 ### CLI Usage
 ```bash
-export PATH="$PATH:/path/to/Oxen/oxen-rust/target/debug"
+export PATH="$PATH:/path/to/Oxen/target/debug"
 oxen init                           # Initialize repository
 oxen status                         # Check status
 oxen add images/                    # Add files
