@@ -66,18 +66,19 @@ pub fn get_staged_db_manager(repository: &LocalRepository) -> Result<StagedDBMan
     let staged_db_dir = util::fs::oxen_hidden_dir(&repository.path).join(STAGED_DIR);
 
     // Fast path: read lock
-    {
-        let cache_r = DB_INSTANCES.read();
-        if let Some(db_lock) = cache_r.peek(&staged_db_dir) {
-            return Ok(StagedDBManager {
-                staged_db: db_lock.clone(),
-                repository: repository.clone(),
-            });
-        }
+    let cache_r = DB_INSTANCES.read();
+    if let Some(db_lock) = cache_r.peek(&staged_db_dir) {
+        return Ok(StagedDBManager {
+            staged_db: db_lock.clone(),
+            repository: repository.clone(),
+        });
     }
+    drop(cache_r);
 
-    // Slow path: write lock, double-check
+    // Get a write lock on DB_INSTANCES so we can add the new DB to the cache
     let mut cache_w = DB_INSTANCES.write();
+    // It's possible another thread has already added the DB to the cache while we were waiting for
+    // the write lock, so we check again before creating the DB, just in case.
     if let Some(db_lock) = cache_w.get(&staged_db_dir) {
         return Ok(StagedDBManager {
             staged_db: db_lock.clone(),
