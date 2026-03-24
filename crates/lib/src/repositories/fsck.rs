@@ -7,6 +7,7 @@
 mod tests {
     use crate::error::OxenError;
     use crate::repositories;
+    use crate::storage::version_store::LocalFilePath;
     use crate::test;
 
     #[tokio::test]
@@ -22,10 +23,15 @@ mod tests {
             let versions = version_store.list_versions().await?;
             assert!(!versions.is_empty());
 
-            // Corrupt a version file by overwriting its data
+            // Corrupt a version file by overwriting its data.
+            // This test relies on writing directly to the version store's
+            // on-disk path, which only works with LocalVersionStore.
             let hash = &versions[0];
             let version_path = version_store.get_version_path(hash).await?;
-            std::fs::write(&version_path, b"corrupted data")?;
+            let LocalFilePath::Stable(ref path) = version_path else {
+                panic!("Expected LocalVersionStore (Stable path), got a Temp path. This test only works with local storage.");
+            };
+            std::fs::write(path, b"corrupted data")?;
 
             // Dry run should detect corruption but not delete
             let result = version_store.clean_corrupted_versions(true).await?;
@@ -53,10 +59,15 @@ mod tests {
             let versions = version_store.list_versions().await?;
             assert!(!versions.is_empty());
 
-            // Corrupt a version file by overwriting its data
+            // Corrupt a version file by overwriting its data.
+            // This test relies on writing directly to the version store's
+            // on-disk path, which only works with LocalVersionStore.
             let hash = &versions[0];
             let version_path = version_store.get_version_path(hash).await?;
-            std::fs::write(&version_path, b"corrupted data")?;
+            let LocalFilePath::Stable(ref path) = version_path else {
+                panic!("Expected LocalVersionStore (Stable path), got a Temp path. This test only works with local storage.");
+            };
+            std::fs::write(path, b"corrupted data")?;
 
             // Clean should detect and remove the corrupted file
             let result = version_store.clean_corrupted_versions(false).await?;
