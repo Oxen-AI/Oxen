@@ -83,7 +83,7 @@ pub fn mv(
     workspace: &Workspace,
     path: impl AsRef<Path>,
     new_path: impl AsRef<Path>,
-) -> Result<PathBuf, OxenError> {
+) -> Result<(), OxenError> {
     match workspace.base_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::workspaces::files::mv(workspace, path, new_path),
@@ -121,8 +121,7 @@ mod tests {
             let new_path = Path::new("renamed").join("data").join("bbox_renamed.csv");
 
             // Move the file
-            let result = workspaces::files::mv(&workspace, &original_path, &new_path)?;
-            assert_eq!(result, new_path);
+            workspaces::files::mv(&workspace, &original_path, &new_path)?;
 
             // Check status - should show the original as removed and new as added
             let status = workspaces::status::status(&workspace)?;
