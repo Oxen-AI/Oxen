@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::core::staged::with_staged_db_manager;
+use crate::core::staged::get_staged_db_manager;
 use crate::error::OxenError;
 use crate::model::Schema;
 use crate::model::StagedEntryStatus;
@@ -43,37 +43,35 @@ pub fn update_schema(
         }
     }
 
-    with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
-        let data = staged_db_manager.read_from_staged_db(&path)?;
+    let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+    let data = staged_db_manager.read_from_staged_db(&path)?;
 
-        let mut file_node: FileNode;
+    let mut file_node: FileNode;
 
-        if let Some(data) = data {
-            file_node = data.node.file()?;
-        } else {
-            file_node = repositories::tree::get_file_by_path(
-                &workspace.base_repo,
-                &workspace.commit,
-                path.as_ref(),
-            )?
-            .ok_or(OxenError::basic_str("File not found"))?;
-        }
+    if let Some(data) = data {
+        file_node = data.node.file()?;
+    } else {
+        file_node = repositories::tree::get_file_by_path(
+            &workspace.base_repo,
+            &workspace.commit,
+            path.as_ref(),
+        )?
+        .ok_or(OxenError::basic_str("File not found"))?;
+    }
 
-        if let Some(GenericMetadata::MetadataTabular(tabular_metadata)) = &file_node.metadata() {
-            file_node.set_metadata(Some(GenericMetadata::MetadataTabular(
-                MetadataTabular::new(
-                    tabular_metadata.tabular.width,
-                    tabular_metadata.tabular.height,
-                    schema,
-                ),
-            )));
-        } else {
-            return Err(OxenError::basic_str("Expected tabular metadata"));
-        }
+    if let Some(GenericMetadata::MetadataTabular(tabular_metadata)) = &file_node.metadata() {
+        file_node.set_metadata(Some(GenericMetadata::MetadataTabular(
+            MetadataTabular::new(
+                tabular_metadata.tabular.width,
+                tabular_metadata.tabular.height,
+                schema,
+            ),
+        )));
+    } else {
+        return Err(OxenError::basic_str("Expected tabular metadata"));
+    }
 
-        staged_db_manager.upsert_file_node(path, StagedEntryStatus::Modified, &file_node)?;
-        Ok(())
-    })?;
+    staged_db_manager.upsert_file_node(path, StagedEntryStatus::Modified, &file_node)?;
 
     Ok(())
 }

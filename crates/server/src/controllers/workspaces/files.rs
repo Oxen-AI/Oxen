@@ -3,7 +3,7 @@ use crate::helpers::get_repo;
 use crate::params::{app_data, path_param};
 
 use liboxen::core;
-use liboxen::core::staged::with_staged_db_manager;
+use liboxen::core::staged::get_staged_db_manager;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::model::merkle_tree::node::EMerkleTreeNode;
@@ -91,34 +91,29 @@ pub async fn get(
     log::debug!("got workspace file path {:?}", &path);
 
     // First, look for the file in the workspace staged_db
-    let file_node = with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
-        let staged_node = staged_db_manager.read_from_staged_db(&path)?;
-
-        match staged_node {
-            Some(staged_node) => {
-                let file_node = match staged_node.node.node {
-                    EMerkleTreeNode::File(f) => Ok(f),
-                    _ => Err(OxenError::basic_str(
-                        "Only single file download is supported",
-                    )),
-                }?;
-
-                Ok(file_node)
-            }
-            None => {
-                // If the file isn't in the workspace staged_db, look for it in the base repo
-                if let Some(file_node) = repositories::tree::get_file_by_path(
-                    &workspace.base_repo,
-                    &workspace.commit,
-                    &path,
-                )? {
-                    Ok(file_node)
-                } else {
-                    Err(OxenError::resource_not_found(&path))
-                }
+    let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+    let file_node = match staged_db_manager.read_from_staged_db(&path)? {
+        Some(staged_node) => match staged_node.node.node {
+            EMerkleTreeNode::File(f) => Ok(f),
+            _ => Err(OxenError::basic_str(
+                "Only single file download is supported",
+            )),
+        }?,
+        None => {
+            // If the file isn't in the workspace staged_db, look for it in the base repo
+            if let Some(file_node) = repositories::tree::get_file_by_path(
+                &workspace.base_repo,
+                &workspace.commit,
+                &path,
+            )? {
+                file_node
+            } else {
+                return Err(OxenHttpError::InternalOxenError(
+                    OxenError::resource_not_found(&path),
+                ));
             }
         }
-    })?;
+    };
 
     let file_hash = file_node.hash();
     let hash_str = file_hash.to_string();

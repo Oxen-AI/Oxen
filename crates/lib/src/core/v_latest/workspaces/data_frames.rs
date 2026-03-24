@@ -3,7 +3,7 @@ use duckdb::Connection;
 use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL, EXCLUDE_OXEN_COLS, TABLE_NAME};
 use crate::core::db::data_frames::df_db;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
-use crate::core::staged::with_staged_db_manager;
+use crate::core::staged::get_staged_db_manager;
 use crate::core::v_latest::workspaces::files::{add, track_modified_data_frame};
 use parking_lot::Mutex;
 use sql_query_builder::Delete;
@@ -203,10 +203,8 @@ pub async fn rename(
     util::fs::remove_dir_all(og_db_path_parent)?;
 
     // Use staged_db_manager
-    let mut staged_entry = with_staged_db_manager(workspace_repo, |staged_db_manager| {
-        // Try to read existing staged entry
-        staged_db_manager.read_from_staged_db(path)
-    })?;
+    let staged_db_manager = get_staged_db_manager(workspace_repo)?;
+    let mut staged_entry = staged_db_manager.read_from_staged_db(path)?;
 
     if staged_entry.is_none() {
         let workspace_file_path = workspace.workspace_repo.path.join(new_path);
@@ -240,9 +238,7 @@ pub async fn rename(
         }
 
         // Read the staged entry again after adding
-        staged_entry = with_staged_db_manager(workspace_repo, |staged_db_manager| {
-            staged_db_manager.read_from_staged_db(new_path)
-        })?;
+        staged_entry = get_staged_db_manager(workspace_repo)?.read_from_staged_db(new_path)?;
         log::debug!("rename: staged_entry after add: {staged_entry:?}");
     }
 
@@ -261,26 +257,23 @@ pub async fn rename(
     // Get the file node from the staged entry
     let file_node = new_staged_entry.node.file()?;
 
-    with_staged_db_manager(workspace_repo, |staged_db_manager| {
-        // Add the file node at the new path using staged_db_manager
-        staged_db_manager.upsert_file_node(new_path, new_staged_entry.status, &file_node)?;
+    let staged_db_manager = get_staged_db_manager(workspace_repo)?;
+    // Add the file node at the new path using staged_db_manager
+    staged_db_manager.upsert_file_node(new_path, new_staged_entry.status, &file_node)?;
 
-        // Delete the old path entry
-        staged_db_manager.delete_entry(path)?;
+    // Delete the old path entry
+    staged_db_manager.delete_entry(path)?;
 
-        // Add parent directories for the new path
-        if let Some(parents) = new_path.parent() {
-            let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
-            for dir in parents.ancestors() {
-                staged_db_manager.add_directory(dir, &seen_dirs)?;
-                if dir == Path::new("") {
-                    break;
-                }
+    // Add parent directories for the new path
+    if let Some(parents) = new_path.parent() {
+        let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
+        for dir in parents.ancestors() {
+            staged_db_manager.add_directory(dir, &seen_dirs)?;
+            if dir == Path::new("") {
+                break;
             }
         }
-
-        Ok(())
-    })?;
+    }
 
     let relative_path = util::fs::path_relative_to_dir(new_path, &workspace_repo.path)?;
     Ok(relative_path)

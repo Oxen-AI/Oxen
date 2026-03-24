@@ -5,7 +5,7 @@ use crate::constants::TABLE_NAME;
 use crate::core::db;
 use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
 use crate::core::db::data_frames::{column_changes_db, columns, df_db::with_df_db_manager};
-use crate::core::staged::staged_db_manager::with_staged_db_manager;
+use crate::core::staged::staged_db_manager::get_staged_db_manager;
 use crate::core::v_latest::workspaces;
 use crate::error::OxenError;
 use crate::model::data_frame::schema::Field;
@@ -346,7 +346,8 @@ pub fn add_column_metadata(
     column: impl AsRef<str>,
     metadata: &serde_json::Value,
 ) -> Result<HashMap<PathBuf, Schema>, OxenError> {
-    with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
+    let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+    {
         let path = file_path.as_ref();
         let path = util::fs::path_relative_to_dir(path, &workspace.workspace_repo.path)?;
         let column = column.as_ref();
@@ -451,7 +452,7 @@ pub fn add_column_metadata(
         staged_db_manager.upsert_staged_node(&path, &staged_entry, None)?;
 
         Ok(results)
-    })
+    }
 }
 
 pub fn update_column_names_in_metadata(

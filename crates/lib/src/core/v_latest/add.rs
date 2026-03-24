@@ -19,7 +19,7 @@ use crate::constants::{OXEN_HIDDEN_DIR, STAGED_DIR};
 use crate::core;
 use crate::core::db;
 use crate::core::oxenignore;
-use crate::core::staged::staged_db_manager::{StagedDBManager, with_staged_db_manager};
+use crate::core::staged::staged_db_manager::{StagedDBManager, get_staged_db_manager};
 use crate::model::merkle_tree::node::file_node::FileNodeOpts;
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::workspace::Workspace;
@@ -946,16 +946,15 @@ pub fn add_file_node_to_staged_db(
     file_node: &FileNode,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<(), OxenError> {
-    with_staged_db_manager(repo, |staged_db_manager| {
-        add_file_node_and_parent_dir(
-            file_node,
-            status,
-            relative_path,
-            staged_db_manager,
-            seen_dirs,
-        )?;
-        Ok(())
-    })
+    let staged_db_manager = get_staged_db_manager(repo)?;
+    add_file_node_and_parent_dir(
+        file_node,
+        status,
+        relative_path,
+        &staged_db_manager,
+        seen_dirs,
+    )?;
+    Ok(())
 }
 
 pub fn stage_file_with_hash(
