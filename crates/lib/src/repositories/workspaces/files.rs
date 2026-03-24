@@ -44,7 +44,7 @@ pub async fn import(
     url: &str,
     auth: &str,
     directory: PathBuf,
-    filename: String,
+    filename: Option<String>,
     workspace: &Workspace,
 ) -> Result<(), OxenError> {
     match workspace.base_repo.min_version() {
@@ -233,6 +233,44 @@ mod tests {
             // After staging: staged file is true, non-existent file is still false
             assert!(workspaces::files::exists(&workspace, hello)?);
             assert!(!workspaces::files::exists(&workspace, nonexistent)?);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_import_rejects_private_ip() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let file = repo.path.join("hello.txt");
+            crate::util::fs::write_to_path(&file, "hello")?;
+            repositories::add(&repo, &file).await?;
+            let commit = repositories::commit(&repo, "Add hello.txt")?;
+
+            let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+
+            let cases = [
+                ("http://127.0.0.1/secret", "loopback address"),
+                ("http://10.0.0.1/internal", "private address"),
+                (
+                    "http://169.254.169.254/latest/meta-data/",
+                    "link-local/metadata address",
+                ),
+                ("http://[::1]/secret", "IPv6 loopback"),
+                ("file:///etc/passwd", "non-HTTP scheme"),
+            ];
+
+            for (url, label) in cases {
+                let result = workspaces::files::import(
+                    url,
+                    "",
+                    std::path::PathBuf::from("data"),
+                    None,
+                    &workspace,
+                )
+                .await;
+                assert!(result.is_err(), "should reject {label}");
+            }
 
             Ok(())
         })

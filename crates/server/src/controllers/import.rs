@@ -17,8 +17,6 @@ use liboxen::model::file::TempFilePathNew;
 use liboxen::repositories;
 use liboxen::view::{CommitResponse, StatusMessage};
 
-const ALLOWED_IMPORT_DOMAINS: [&str; 3] = ["huggingface.co", "kaggle.com", "oxen.ai"];
-
 #[derive(ToSchema, Deserialize)]
 #[schema(
     title = "ZipUploadBody",
@@ -46,17 +44,27 @@ pub struct ZipUploadBody {
     title = "ImportFileBody",
     description = "Body for importing a file from a URL",
     example = json!({
-        "download_url": "https://huggingface.co/datasets/user/dataset/resolve/main/data.csv",
-        "headers": {
-            "Authorization": "Bearer <token>"
-        }
+        "download_url": "https://example.com/datasets/data.csv",
+        "auth": "Bearer <token>",
+        "filename": "data.csv",
+        "name": "ox",
+        "email": "ox@oxen.ai",
+        "message": "Import dataset"
     })
 )]
 pub struct ImportFileBody {
-    #[schema(example = "https://huggingface.co/datasets/user/dataset/resolve/main/data.csv")]
+    #[schema(example = "https://example.com/datasets/data.csv")]
     pub download_url: String,
-    #[schema(value_type = Object, example = json!({"Authorization": "Bearer token"}))]
-    pub headers: Option<Value>,
+    #[schema(example = "Bearer <token>")]
+    pub auth: Option<String>,
+    #[schema(example = "data.csv")]
+    pub filename: Option<String>,
+    #[schema(example = "ox")]
+    pub name: Option<String>,
+    #[schema(example = "ox@oxen.ai")]
+    pub email: Option<String>,
+    #[schema(example = "Import dataset")]
+    pub message: Option<String>,
 }
 
 /// Import file from URL
@@ -64,7 +72,7 @@ pub struct ImportFileBody {
     post,
     path = "/api/repos/{namespace}/{repo_name}/import/{resource}",
     tag = "Import",
-    description = "Import a file from a remote URL (huggingface.co, kaggle.com, oxen.ai) and commit it to the repository.",
+    description = "Import a file from a remote URL and commit it to the repository.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "Common-Crawl"),
@@ -74,10 +82,10 @@ pub struct ImportFileBody {
         content = ImportFileBody,
         description = "Import configuration",
         example = json!({
-            "download_url": "https://huggingface.co/datasets/user/dataset/resolve/main/data.csv",
-            "headers": {
-                "Authorization": "Bearer <token>"
-            }
+            "download_url": "https://example.com/datasets/data.csv",
+            "auth": "Bearer <token>",
+            "name": "ox",
+            "email": "ox@oxen.ai"
         })
     ),
     responses(
@@ -106,12 +114,27 @@ pub async fn import(
     let directory = resource.path.clone();
     log::debug!("workspace::files::import_file Got directory: {directory:?}");
 
-    // commit info
-    let author = req.headers().get("oxen-commit-author");
-    let email = req.headers().get("oxen-commit-email");
-    let message = req.headers().get("oxen-commit-message");
+    // commit info from JSON body
+    let name = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let email = body
+        .get("email")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let message = body
+        .get("message")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
-    log::debug!("file::import commit info author:{author:?}, email:{email:?}, message:{message:?}");
+    let user = create_user_from_options(name, email)?;
+
+    log::debug!(
+        "file::import commit info author:{}, email:{}, message:{message:?}",
+        user.name,
+        user.email
+    );
 
     // Make sure the resource path is not already a file
     let node = repositories::tree::get_node_by_path(&repo, &commit, &resource.path)?;
@@ -130,12 +153,10 @@ pub async fn import(
 
     log::debug!("workspace::files::import_file workspace created!");
 
-    // extract auth key from req body
+    // extract auth token from req body
     let auth = body
-        .get("headers")
-        .and_then(|headers| headers.as_object())
-        .and_then(|map| map.get("Authorization"))
-        .and_then(|auth| auth.as_str())
+        .get("auth")
+        .and_then(|v| v.as_str())
         .unwrap_or_default();
 
     let download_url = body
@@ -143,34 +164,21 @@ pub async fn import(
         .and_then(|v| v.as_str())
         .unwrap_or_default();
 
-    // Validate URL domain
+    // Validate URL scheme
     let url_parsed = url::Url::parse(download_url)
         .map_err(|_| OxenHttpError::BadRequest("Invalid URL".into()))?;
-    let domain = url_parsed
-        .domain()
-        .ok_or_else(|| OxenHttpError::BadRequest("Invalid URL domain".into()))?;
-    if !ALLOWED_IMPORT_DOMAINS.iter().any(|&d| domain.ends_with(d)) {
-        return Err(OxenHttpError::BadRequest("URL domain not allowed".into()));
+    let scheme = url_parsed.scheme();
+    if scheme != "http" && scheme != "https" {
+        return Err(OxenHttpError::BadRequest(
+            "Only http and https URLs are allowed".into(),
+        ));
     }
 
-    // parse filename from the given url
-    let filename = if url_parsed.domain() == Some("huggingface.co") {
-        url_parsed.path_segments().and_then(|segments| {
-            let segments: Vec<_> = segments.collect();
-            if segments.len() >= 2 {
-                let last_two = &segments[segments.len() - 2..];
-                Some(format!("{}_{}", last_two[0], last_two[1]))
-            } else {
-                None
-            }
-        })
-    } else {
-        url_parsed
-            .path_segments()
-            .and_then(|mut segments| segments.next_back())
-            .map(|s| s.to_string())
-    }
-    .ok_or_else(|| OxenHttpError::BadRequest("Invalid filename in URL".into()))?;
+    // Extract optional caller-specified filename from request body
+    let filename = body
+        .get("filename")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
     // download and save the file into the workspace
     repositories::workspaces::files::import(download_url, auth, directory, filename, &workspace)
@@ -178,12 +186,10 @@ pub async fn import(
 
     // Commit workspace
     let commit_body = NewCommitBody {
-        author: author.map_or("".to_string(), |a| a.to_str().unwrap().to_string()),
-        email: email.map_or("".to_string(), |e| e.to_str().unwrap().to_string()),
-        message: message.map_or(
-            format!("Import files to {}", &resource.path.to_string_lossy()),
-            |m| m.to_str().unwrap().to_string(),
-        ),
+        author: user.name,
+        email: user.email,
+        message: message
+            .unwrap_or_else(|| format!("Import files to {}", &resource.path.to_string_lossy())),
     };
 
     let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
@@ -486,15 +492,17 @@ mod tests {
         let uri = format!("/oxen/{namespace}/{repo_name}/file/import/main/data");
 
         // import a file from oxen for testing
-        let body = serde_json::json!({"download_url": "https://hub.oxen.ai/api/repos/datasets/GettingStarted/file/main/tables/cats_vs_dogs.tsv"});
+        let body = serde_json::json!({
+            "download_url": "https://hub.oxen.ai/api/repos/datasets/GettingStarted/file/main/tables/cats_vs_dogs.tsv",
+            "name": author,
+            "email": email,
+        });
 
         let req = actix_web::test::TestRequest::post()
             .uri(&uri)
             .app_data(OxenAppData::new(sync_dir.to_path_buf()))
             .param("namespace", namespace)
             .param("repo_name", repo_name)
-            .insert_header(("oxen-commit-author", author))
-            .insert_header(("oxen-commit-email", email))
             .set_json(&body)
             .to_request();
 
@@ -546,15 +554,17 @@ mod tests {
         let uri = format!("/oxen/{namespace}/{repo_name}/file/import/main/notebooks");
 
         // import a file from oxen for testing
-        let body = serde_json::json!({"download_url": "https://hub.oxen.ai/api/repos/datasets/GettingStarted/file/main/notebooks/chat.py"});
+        let body = serde_json::json!({
+            "download_url": "https://hub.oxen.ai/api/repos/datasets/GettingStarted/file/main/notebooks/chat.py",
+            "name": author,
+            "email": email,
+        });
 
         let req = actix_web::test::TestRequest::post()
             .uri(&uri)
             .app_data(OxenAppData::new(sync_dir.to_path_buf()))
             .param("namespace", namespace)
             .param("repo_name", repo_name)
-            .insert_header(("oxen-commit-author", author))
-            .insert_header(("oxen-commit-email", email))
             .set_json(&body)
             .to_request();
 
