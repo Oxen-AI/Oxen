@@ -16,10 +16,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Copy rust-toolchain.toml to root
-        run: |
-          cp ${{ github.workspace }}/oxen-rust/rust-toolchain.toml .
-
       - name: Setup Rust Toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -34,16 +30,18 @@ jobs:
           # Only cache builds from main. Otherwise our caches will be too big and start to churn. (10 GB limit in GitHub Actions)
           # Other branches will still use the cache but won't save it.
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          workspaces: |
-            oxen-rust
-            oxen-python
+          workspaces: "."
 
       - name: Install dependencies and development tools
         run: |
           cd ${{ github.workspace }}
-          ./scripts/install-pre-reqs.sh
+          ./bin/install-prereqs
 
       - name: Run Pre-Commit Hooks
         run: |
           cd ${{ github.workspace }}
-          pre-commit run --verbose --all-files
+          if ! pre-commit run --color=always --verbose --all-files ; then
+            echo "Pre-commit failed. Showing git status:"
+            git -c color.status=always status
+            exit 1
+          fi

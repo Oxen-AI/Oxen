@@ -43,7 +43,7 @@ oxen push origin main
 
 Oxen is comprised of a [command line
 interface](https://docs.oxen.ai/getting-started/cli), as well as bindings for
-[Rust](https://github.com/Oxen-AI/Oxen/tree/main/oxen-rust) 🦀, [Python](https://docs.oxen.ai/getting-started/python) 🐍, and [HTTP interfaces](https://docs.oxen.ai/http-api) 🌎 to make it easy to integrate into your workflow.
+[Rust](https://github.com/Oxen-AI/Oxen/tree/main/crates) 🦀, [Python](https://docs.oxen.ai/getting-started/python) 🐍, and [HTTP interfaces](https://docs.oxen.ai/http-api) 🌎 to make it easy to integrate into your workflow.
 
 ## 🌾 What kind of data?
 
@@ -117,7 +117,7 @@ This repository contains the Python library that wraps the core Rust codebase. W
 
 Code bases to contribute to:
 
-* 🦀 [Core Rust Library](https://github.com/Oxen-AI/Oxen/tree/main/oxen-rust)
+* 🦀 [Core Rust Library](https://github.com/Oxen-AI/Oxen/tree/main/crates/lib)
 * 🐍 [Python Interface](https://github.com/Oxen-AI/Oxen/tree/main/oxen-python)
 * 📚 [Documentation](https://github.com/Oxen-AI/docs)
 
@@ -125,7 +125,7 @@ If you are building anything with Oxen.ai or have any questions we would love to
 
 ## Build 🔨
 
-Each codebase has its own build instructions, please refer to [`oxen-rust`'s build instructions](./oxen-rust/README.md#-build--run)
+Each codebase has its own build instructions, please refer to the [Rust build instructions](./crates/lib/README.md#-build--run)
 and [`oxen-python`'s build instructions](./oxen-python/README.md#build) for specifics.
 
 However, each codebase shares the same pre-requisites and pre-commit hooks.
@@ -134,10 +134,10 @@ However, each codebase shares the same pre-requisites and pre-commit hooks.
 
 #### Automatic Install
 
-You should use [`./scripts/install-pre-reqs.sh`](./scripts/install-pre-reqs.sh) to automatically install the required development tools and toolchains for Rust and Python. Execute that as:
+You should use [`bin/install-prereqs`](./bin/install-prereqs) to automatically install the required development tools and toolchains for Rust and Python. Execute that as:
 
 ```bash
-./scripts/install-pre-reqs.sh
+bin/install-prereqs
 ```
 
 It supports MacOS and Debian-based Linux distributions. If you have a different OS or distribution, or if you have some error with the install script, you can follow the manual installation steps below.
@@ -170,7 +170,7 @@ Make sure [`cmake`](https://cmake.org/download/) is installed. `cmake` can be in
 brew install cmake
 ```
 
-The [Python interface](./oxen-python/README.md) uses [`liboxen`](./oxen-rust/crates/lib/) bindings provided by PyO3.
+The [Python interface](./oxen-python/README.md) uses [`liboxen`](./crates/lib/) bindings provided by PyO3.
 
 The `oxen-python` codebase requires installing [`uv`](https://docs.astral.sh/uv/getting-started/installation/):
 

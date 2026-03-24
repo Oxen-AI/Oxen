@@ -35,7 +35,7 @@ jobs:
 
       - name: Patch version in pyproject.toml and Cargo.toml
         run: |
-          bash ${{ github.workspace }}/scripts/patch_dev_version.sh "${{ inputs.VERSION_OVERRIDE }}"
+          bash ${{ github.workspace }}/bin/patch_dev_version "${{ inputs.VERSION_OVERRIDE }}"
 
       - name: Install rustup
         run: |
@@ -45,7 +45,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: "release-python"
-          workspaces: "oxen-python -> target"
+          workspaces: "."
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
@@ -68,5 +68,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wheels-macos
-          path: ${{ github.workspace }}/oxen-python/target/wheels/*.whl
+          path: ${{ github.workspace }}/target/wheels/*.whl
           retention-days: 1

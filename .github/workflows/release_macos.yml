@@ -35,8 +35,6 @@ jobs:
 
       - name: Build oxen binaries
         run: |
-          cd ${{ github.workspace }}/oxen-rust
-
           rustup target add aarch64-apple-darwin
           rustup target add x86_64-apple-darwin
 
@@ -59,14 +57,14 @@ jobs:
 
       - name: Create tarballs with oxen binaries
         run: |
-          tar -czvf ${{ github.workspace }}/release/oxen-macos-arm64.tar.gz -C ${{ github.workspace }}/oxen-rust/target/aarch64-apple-darwin/release/ oxen
-          tar -czvf ${{ github.workspace }}/release/oxen-macos-x86_64.tar.gz -C ${{ github.workspace }}/oxen-rust/target/x86_64-apple-darwin/release/ oxen
-          tar -czvf ${{ github.workspace }}/release/oxen-server-macos-arm64.tar.gz -C ${{ github.workspace }}/oxen-rust/target/aarch64-apple-darwin/release/ oxen-server
-          tar -czvf ${{ github.workspace }}/release/oxen-server-macos-x86_64.tar.gz -C ${{ github.workspace }}/oxen-rust/target/x86_64-apple-darwin/release/ oxen-server
+          tar -czvf ${{ github.workspace }}/release/oxen-macos-arm64.tar.gz -C ${{ github.workspace }}/target/aarch64-apple-darwin/release/ oxen
+          tar -czvf ${{ github.workspace }}/release/oxen-macos-x86_64.tar.gz -C ${{ github.workspace }}/target/x86_64-apple-darwin/release/ oxen
+          tar -czvf ${{ github.workspace }}/release/oxen-server-macos-arm64.tar.gz -C ${{ github.workspace }}/target/aarch64-apple-darwin/release/ oxen-server
+          tar -czvf ${{ github.workspace }}/release/oxen-server-macos-x86_64.tar.gz -C ${{ github.workspace }}/target/x86_64-apple-darwin/release/ oxen-server
 
       - name: Create tarballs with Python wheels
         run: |
-          cd ${{ github.workspace }}/oxen-python/target/wheels/
+          cd ${{ github.workspace }}/target/wheels/
 
           tar -czvf ${{ github.workspace }}/release/oxen-wheels-macos-x86_64.tar.gz ./*x86_64.whl
           tar -czvf ${{ github.workspace }}/release/oxen-wheels-macos-arm64.tar.gz ./*arm64.whl
