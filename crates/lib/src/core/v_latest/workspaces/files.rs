@@ -489,9 +489,8 @@ async fn fetch_file(
         break;
     }
 
-    let response = response.ok_or_else(|| {
-        OxenError::file_import_error("Failed to get a successful response")
-    })?;
+    let response = response
+        .ok_or_else(|| OxenError::file_import_error("Failed to get a successful response"))?;
 
     let resp_headers = response.headers();
 
@@ -510,7 +509,8 @@ async fn fetch_file(
     }
 
     // Resolve filename: caller-specified > Content-Disposition > URL path > UUID
-    let raw_filename = caller_filename.clone().unwrap_or_else(|| { // caller specified
+    let raw_filename = caller_filename.clone().unwrap_or_else(|| {
+        // caller specified
         resp_headers
             .get("content-disposition")
             .and_then(|h| h.to_str().ok())

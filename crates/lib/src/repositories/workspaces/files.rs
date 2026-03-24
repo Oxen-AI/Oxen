@@ -252,7 +252,10 @@ mod tests {
             let cases = [
                 ("http://127.0.0.1/secret", "loopback address"),
                 ("http://10.0.0.1/internal", "private address"),
-                ("http://169.254.169.254/latest/meta-data/", "link-local/metadata address"),
+                (
+                    "http://169.254.169.254/latest/meta-data/",
+                    "link-local/metadata address",
+                ),
                 ("http://[::1]/secret", "IPv6 loopback"),
                 ("file:///etc/passwd", "non-HTTP scheme"),
             ];
