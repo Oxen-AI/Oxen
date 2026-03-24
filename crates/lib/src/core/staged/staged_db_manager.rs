@@ -65,17 +65,8 @@ pub struct StagedDBManager {
 pub fn get_staged_db_manager(repository: &LocalRepository) -> Result<StagedDBManager, OxenError> {
     let staged_db_dir = util::fs::oxen_hidden_dir(&repository.path).join(STAGED_DIR);
 
-    // Fast path: read lock
-    let cache_r = DB_INSTANCES.read();
-    if let Some(db_lock) = cache_r.peek(&staged_db_dir) {
-        return Ok(StagedDBManager {
-            staged_db: db_lock.clone(),
-            repository: repository.clone(),
-        });
-    }
-    drop(cache_r);
-
-    // Get a write lock on DB_INSTANCES so we can add the new DB to the cache
+    // Get a write lock on DB_INSTANCES so the LRU cache entry gets updated, and hold onto it if we
+    // need to add a new DB to the cache.
     let mut cache_w = DB_INSTANCES.write();
     // It's possible another thread has already added the DB to the cache while we were waiting for
     // the write lock, so we check again before creating the DB, just in case.
