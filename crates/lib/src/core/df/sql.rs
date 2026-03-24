@@ -12,7 +12,7 @@ use crate::{
 use polars::frame::DataFrame;
 use uuid::Uuid;
 
-pub fn query_df_from_repo(
+pub async fn query_df_from_repo(
     sql: String,
     repo: &LocalRepository,
     path: &PathBuf,
@@ -25,7 +25,7 @@ pub fn query_df_from_repo(
         // If not, proceed to create a new workspace and index the data frame.
         let workspace_id = Uuid::new_v4().to_string();
         let workspace = repositories::workspaces::create(repo, &commit, workspace_id, false)?;
-        repositories::workspaces::data_frames::index(repo, &workspace, path)?;
+        repositories::workspaces::data_frames::index(repo, &workspace, path).await?;
     }
 
     let workspace =

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::constants::{VERSION_CHUNK_FILE_NAME, VERSION_CHUNKS_DIR, VERSION_FILE_NAME};
 use crate::error::OxenError;
-use crate::storage::version_store::VersionStore;
+use crate::storage::version_store::{LocalFilePath, VersionStore};
 use crate::util::{self, concurrency, hasher};
 use crate::view::versions::CleanCorruptedVersionsResult;
 
@@ -190,8 +190,8 @@ impl VersionStore for LocalVersionStore {
         }
     }
 
-    fn get_version_path(&self, hash: &str) -> Result<PathBuf, OxenError> {
-        Ok(self.version_path(hash))
+    async fn get_version_path(&self, hash: &str) -> Result<LocalFilePath, OxenError> {
+        Ok(LocalFilePath::Stable(self.version_path(hash)))
     }
 
     // TODO: (CleanCut) Do we need to make sure the destination path is outside the version store?

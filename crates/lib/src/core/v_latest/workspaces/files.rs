@@ -89,7 +89,7 @@ pub fn add_version_file(
     Ok(dst_path.to_path_buf())
 }
 
-pub fn add_version_files(
+pub async fn add_version_files(
     repo: &LocalRepository,
     workspace: &Workspace,
     files_with_hash: &[FileWithHash],
@@ -101,15 +101,20 @@ pub fn add_version_files(
     let workspace_repo = &workspace.workspace_repo;
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
 
+    // Resolve all version paths before entering the sync closure
+    let mut version_paths = Vec::with_capacity(files_with_hash.len());
+    for item in files_with_hash.iter() {
+        version_paths.push(version_store.get_version_path(&item.hash).await?);
+    }
+
     let mut err_files: Vec<ErrorFileInfo> = vec![];
     with_staged_db_manager(workspace_repo, |staged_db_manager| {
-        for item in files_with_hash.iter() {
-            let version_path = version_store.get_version_path(&item.hash)?;
+        for (item, version_path) in files_with_hash.iter().zip(version_paths.iter()) {
             let target_path = PathBuf::from(directory).join(&item.path);
 
             match stage_file_with_hash(
                 workspace,
-                &version_path,
+                version_path,
                 &target_path,
                 &item.hash,
                 staged_db_manager,

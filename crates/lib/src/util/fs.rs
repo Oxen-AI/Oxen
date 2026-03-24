@@ -1669,7 +1669,7 @@ async fn generate_video_thumbnail_version_store(
     }
 
     // Get the video file path from version store
-    let version_path = version_store.get_version_path(video_hash)?;
+    let version_path = version_store.get_version_path(video_hash).await?;
 
     // Determine output dimensions
     // The thumbnails crate maintains aspect ratio, so we use max dimensions
@@ -2031,9 +2031,9 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn version_path() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
+    #[tokio::test]
+    async fn version_path() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let entry = CommitEntry {
                 commit_id: String::from("1234"),
                 path: PathBuf::from("hello_world.txt"),
@@ -2043,9 +2043,9 @@ mod tests {
                 last_modified_nanoseconds: 0,
             };
             let version_store = repo.version_store()?;
-            let path = version_store.get_version_path(&entry.hash)?;
+            let local_path = version_store.get_version_path(&entry.hash).await?;
             let versions_dir = util::fs::oxen_hidden_dir(&repo.path).join(constants::VERSIONS_DIR);
-            let relative_path = util::fs::path_relative_to_dir(path, versions_dir)?;
+            let relative_path = util::fs::path_relative_to_dir(&*local_path, versions_dir)?;
             assert_eq!(
                 relative_path,
                 Path::new(constants::FILES_DIR)
@@ -2056,6 +2056,7 @@ mod tests {
 
             Ok(())
         })
+        .await
     }
 
     #[test]

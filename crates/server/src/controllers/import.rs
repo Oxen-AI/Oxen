@@ -517,7 +517,9 @@ mod tests {
         let entry =
             repositories::entries::get_file(&repo, &resp.commit, "data/cats_vs_dogs.tsv")?.unwrap();
         let version_store = repo.version_store()?;
-        let version_path = version_store.get_version_path(&entry.hash().to_string())?;
+        let version_path = version_store
+            .get_version_path(&entry.hash().to_string())
+            .await?;
         assert!(version_path.exists());
 
         // cleanup
@@ -579,7 +581,9 @@ mod tests {
         )?
         .unwrap();
         let version_store = repo.version_store()?;
-        let version_path = version_store.get_version_path(&entry.hash().to_string())?;
+        let version_path = version_store
+            .get_version_path(&entry.hash().to_string())
+            .await?;
         assert!(version_path.exists());
 
         // cleanup
