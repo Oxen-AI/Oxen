@@ -64,23 +64,15 @@ jobs:
           role-duration-seconds: 3600
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Copy rust-toolchain.toml to root
-        if: matrix.platform != 'windows'
-        run: |
-          cp ${{ github.workspace }}/oxen-rust/rust-toolchain.toml .
-
-      - name: Copy rust-toolchain.toml to root (Windows)
-        if: matrix.platform == 'windows'
-        run: |
-          copy ${{ github.workspace }}\oxen-rust\rust-toolchain.toml .
-
       - name: Setup Rust Toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ${{ matrix.platform == 'windows' && '-D warnings -C link-arg=/DEBUG:NONE' || '-D warnings' }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.10" # Test against the earliest supported Python version
+          python-version: "3.11" # Test against the earliest supported Python version
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -88,9 +80,7 @@ jobs:
           # Only cache builds from main. Otherwise our caches will be too big and start to churn. (10 GB limit in GitHub Actions)
           # Other branches will still use the cache but won't save it.
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          workspaces: |
-            oxen-rust
-            oxen-python
+          workspaces: "."
 
       - name: Install dependencies (macOS)
         if: matrix.platform == 'macos'
@@ -145,65 +135,61 @@ jobs:
       - name: Setup test directories (Linux/macOS)
         if: matrix.platform != 'windows'
         run: |
-          cd ${{ github.workspace }}/oxen-rust
           mkdir -p data/test/runs
           mkdir -p /tmp/oxen_sync/
 
       - name: Setup test directories (Windows)
         if: matrix.platform == 'windows'
         run: |
-          cd ${{ github.workspace }}\oxen-rust
           mkdir .\data\test\runs
 
-      - name: Build oxen-rust
+      - name: Build oxen rust project
         run: |
-          cd ${{ github.workspace }}/oxen-rust
           cargo build --workspace
+        env:
+          TEMP: ${{ matrix.platform == 'windows' && 'D:\a\_temp' || runner.temp }}
+          TMP: ${{ matrix.platform == 'windows' && 'D:\a\_temp' || runner.temp }}
 
       - name: Setup oxen-server user (Linux/macOS)
         if: matrix.platform != 'windows'
         run: |
-          cd ${{ github.workspace }}/oxen-rust
           ./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
           cp user_config.toml data/test/config/user_config.toml
 
       - name: Setup oxen-server user (Windows)
         if: matrix.platform == 'windows'
         run: |
-          cd ${{ github.workspace }}\oxen-rust
           .\target\debug\oxen-server.exe add-user --email ox@oxen.ai --name Ox --output user_config.toml
           copy user_config.toml data\test\config\user_config.toml
 
-      - name: Run oxen-rust tests (Linux/macOS)
+      - name: Run oxen rust tests (Linux/macOS)
         if: matrix.platform != 'windows'
         run: |
-          cd ${{ github.workspace }}/oxen-rust
           ./target/debug/oxen-server start &
           cargo nextest run --workspace --profile ci
 
-      - name: Run oxen-rust tests (Windows)
+      - name: Run oxen rust tests (Windows)
         if: matrix.platform == 'windows'
         run: |
-          cd ${{ github.workspace }}\oxen-rust
-          Start-Process -FilePath "${{ github.workspace }}\oxen-rust\target\debug\oxen-server.exe" -WindowStyle Hidden -ArgumentList "start"
+          Start-Process -FilePath "${{ github.workspace }}\target\debug\oxen-server.exe" -WindowStyle Hidden -ArgumentList "start"
           cargo nextest run --workspace --profile ci
 
       # CLI Tests
       - name: Run CLI tests (Linux/macOS)
         if: matrix.platform != 'windows'
         env:
-          PATH: ${{ env.PATH }}:${{ github.workspace }}/oxen-rust/target/debug
+          PATH: ${{ env.PATH }}:${{ github.workspace }}/target/debug
         run: |
-          cd ${{ github.workspace }}/oxen-rust/cli-test
+          cd ${{ github.workspace }}/cli-test
           uv sync
           uv run pytest tests -v
 
       - name: Run CLI tests (Windows)
         if: matrix.platform == 'windows'
         env:
-          PATH: ${{ env.PATH }};${{ github.workspace }}/oxen-rust/target/debug
+          PATH: ${{ env.PATH }};${{ github.workspace }}/target/debug
         run: |
-          cd ${{ github.workspace }}\oxen-rust\cli-test
+          cd ${{ github.workspace }}\cli-test
           uv sync
           uv run pytest tests -v
 
@@ -211,13 +197,13 @@ jobs:
       - name: Copy binaries for Python tests (Linux/macOS)
         if: matrix.platform != 'windows'
         run: |
-          cp ${{ github.workspace }}/oxen-rust/target/debug/oxen ~/oxen
+          cp ${{ github.workspace }}/target/debug/oxen ~/oxen
           chmod +x ~/oxen ~/oxen
 
       - name: Copy binaries for Python tests (Windows)
         if: matrix.platform == 'windows'
         run: |
-          copy oxen-rust\target\debug\oxen.exe ${{ github.workspace }}\oxen.exe
+          copy target\debug\oxen.exe ${{ github.workspace }}\oxen.exe
 
       - name: Run oxen-python tests (Linux/macOS)
         if: matrix.platform != 'windows'

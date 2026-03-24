@@ -6,32 +6,18 @@ repos:
 
   - repo: local
     hooks:
-      - id: cargo-fmt-oxen-rust
-        name: cargo fmt (oxen-rust)
-        entry: bash -c 'cd oxen-rust && cargo fmt --all'
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: bash -c 'cargo fmt --all'
         language: system
-        files: ^oxen-rust/.*\.rs$
+        files: \.rs$
         pass_filenames: false
 
-      - id: cargo-fmt-oxen-python
-        name: cargo fmt (oxen-python)
-        entry: bash -c 'cd oxen-python && cargo fmt'
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: bash -c 'cargo clippy --workspace --no-deps -- -D warnings'
         language: system
-        files: ^oxen-python/.*\.rs$
-        pass_filenames: false
-
-      - id: cargo-clippy-oxen-rust
-        name: cargo clippy (oxen-rust)
-        entry: bash -c 'cd oxen-rust && cargo clippy --workspace --no-deps -- -D warnings'
-        language: system
-        files: ^oxen-rust/.*\.rs$
-        pass_filenames: false
-
-      - id: cargo-clippy-oxen-python
-        name: cargo clippy (oxen-python)
-        entry: bash -c 'cd oxen-python && cargo clippy --no-deps -- -D warnings'
-        language: system
-        files: ^oxen-python/.*\.rs$
+        files: \.rs$
         pass_filenames: false
 
       - id: cargo-sort
@@ -55,18 +41,18 @@ repos:
         files: ^oxen-python/.*\.py$
         pass_filenames: false
 
-      - id: ruff-check-scripts
-        name: ruff check (scripts)
-        entry: bash -c 'uvx ruff check scripts/'
+      - id: ruff-check-python-scripts
+        name: ruff check (python scripts)
+        entry: bash -c 'uvx ruff check bin/'
         language: system
-        files: ^scripts/.*\.py$
+        files: ^bin/.*\.py$
         pass_filenames: false
 
-      - id: ruff-format-scripts
-        name: ruff format (scripts)
-        entry: bash -c 'uvx ruff format scripts/'
+      - id: ruff-format-python-scripts
+        name: ruff format (python scripts)
+        entry: bash -c 'uvx ruff format bin/'
         language: system
-        files: ^scripts/.*\.py$
+        files: ^bin/.*\.py$
         pass_filenames: false
 
       - id: shellcheck
@@ -74,4 +60,4 @@ repos:
         entry: shellcheck -x
         language: system
         types: [shell]
-        files: \.sh$
+        files: ^bin/

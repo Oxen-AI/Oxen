@@ -20,10 +20,10 @@ Click **Run workflow** and fill in the `version` input with one of:
 
 ![Bump Version workflow dispatch UI](images/release_process_bump_release.png)
 
-This workflow runs `scripts/bump-version.sh`, which updates the version string in all of the following files:
-- `package.version` in `Cargo.toml` files ([`oxen-rust/Cargo.toml`](oxen-rust/Cargo.toml), [`oxen-python/Cargo.toml`](oxen-python/Cargo.toml))
+This workflow runs `bin/bump-version`, which updates the version string in all of the following files:
+- `package.version` in `Cargo.toml` files ([`Cargo.toml`](Cargo.toml), [`crates/oxen-py/Cargo.toml`](crates/oxen-py/Cargo.toml))
 - `project.version` in [`oxen-python/pyproject.toml`](oxen-python/pyproject.toml)
-- The `version` in lockfiles ([`oxen-rust/Cargo.lock`](oxen-rust/Cargo.lock), [`oxen-python/Cargo.lock`](oxen-python/Cargo.lock), [`oxen-python/uv.lock`](oxen-python/uv.lock))
+- The `version` in lockfiles ([`Cargo.lock`](Cargo.lock), [`oxen-python/uv.lock`](oxen-python/uv.lock))
 
 It then creates a commit on `main` with the message `Bump v{VERSION}`, tags it `v{VERSION}`, and pushes both the commit and the tag.
 
@@ -36,7 +36,7 @@ Pushing the `v*` tag automatically triggers the **Release** workflow ([`release.
 - **Windows x86_64** ([`release_windows.yml`](.github/workflows/release_windows.yml)) — EC2 runner
 - **Docker arm64 and x86_64** ([`release_docker.yml`](.github/workflows/release_docker.yml)) — EC2 runners
 
-Python wheels for versions 3.10, 3.11, 3.12, and 3.13 are built as part of each platform job.
+Python wheels for versions 3.11, 3.12, 3.13, and 3.14 are built as part of each platform job.
 
 When all builds finish, the workflow creates a **draft** GitHub Release named `Release {VERSION}` with all artifacts attached.
 
@@ -80,7 +80,7 @@ Once the release notes are complete, click **Publish release**.
 Publishing the release automatically triggers the **Publish** workflow ([`publish.yml`](.github/workflows/publish.yml)), which:
 
 1. **Publishes Python wheels to PyPI** — downloads the `oxen-wheels-*` artifacts from the release and uploads all `.whl` files via maturin (_secret: `PYPI_API_TOKEN`_).
-2. **Publishes the `liboxen` crate to crates.io** — runs `cargo publish` from [`oxen-rust/crates/lib`](`oxen-rust/crates/lib) (_secret: `CRATES_IO_TOKEN`_).
+2. **Publishes the `liboxen` crate to crates.io** — runs `cargo publish` from [`crates/lib`](crates/lib) (_secret: `CRATES_IO_TOKEN`_).
 3. **Updates the `oxen` Homebrew formula** — opens a PR against [`Homebrew/homebrew-core`](https://github.com/Homebrew/homebrew-core) to update [`Formula/o/oxen.rb`](https://github.com/Homebrew/homebrew-core/blob/main/Formula/o/oxen.rb) (_secret: `GH_PERSONAL_ACCESS_TOKEN`_).
 4. **Updates the `oxen-server` Homebrew formula** — pushes directly to [`Oxen-AI/homebrew-oxen-server`](https://github.com/Oxen-AI/homebrew-oxen-server) on `main`, updating [`Formula/oxen-server.rb`](https://github.com/Oxen-AI/homebrew-oxen-server/blob/main/Formula/oxen-server.rb) (_secret: `GH_PERSONAL_ACCESS_TOKEN`_).
 
