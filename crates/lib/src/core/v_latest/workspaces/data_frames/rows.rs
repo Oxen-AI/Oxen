@@ -275,7 +275,9 @@ pub async fn prepare_modified_or_removed_row(
 
     // let scan_rows = 10000 as usize;
     let version_store = repo.version_store()?;
-    let committed_df_path = version_store.get_version_path(&commit_merkle_tree.hash.to_string())?;
+    let committed_df_path = version_store
+        .get_version_path(&commit_merkle_tree.hash.to_string())
+        .await?;
 
     log::debug!("prepare_modified_or_removed_row() committed_df_path: {committed_df_path:?}");
 

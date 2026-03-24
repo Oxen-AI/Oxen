@@ -1109,7 +1109,7 @@ mod tests {
             // Now index df2
             let workspace_id = Uuid::new_v4().to_string();
             let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, false)?;
-            repositories::workspaces::data_frames::index(&repo, &workspace, &entry2.path)?;
+            repositories::workspaces::data_frames::index(&repo, &workspace, &entry2.path).await?;
 
             // Now get the metadata entries for the two dataframes
             let meta1 = repositories::entries::get_meta_entry(&repo, &commit, &path_1)?;

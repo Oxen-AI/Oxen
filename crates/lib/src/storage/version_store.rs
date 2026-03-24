@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -15,6 +16,63 @@ use crate::opts::StorageOpts;
 use crate::storage::{LocalVersionStore, S3VersionStore};
 use crate::util;
 use crate::view::versions::CleanCorruptedVersionsResult;
+
+/// A local filesystem path to a version file.
+///
+/// The path is guaranteed to be readable on the local filesystem, but callers must NOT assume it is
+/// stable: non-local backends (e.g. S3) materialize the file into a temporary location that is
+/// cleaned up when this value is dropped.
+///
+/// - Implements `Deref<Target = Path>` so that `&LocalFilePath` can be passed directly to any
+///   function that accepts `&Path`.
+/// - Implements `AsRef<Path>` so that `LocalFilePath` can be passed directly to any function that
+///   accepts `impl AsRef<Path>`.
+///
+/// TODO: See how many of our own functions can be updated to accept LocalFilePath directly. Perhaps we can remove the need for `AsRef<Path>`.
+pub enum LocalFilePath {
+    /// A stable path (e.g. from `LocalVersionStore`) that outlives this value.
+    Stable(PathBuf),
+    /// A temporary file that is deleted when this value is dropped.
+    Temp(async_tempfile::TempFile),
+}
+
+impl Deref for LocalFilePath {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        match self {
+            LocalFilePath::Stable(p) => p.as_path(),
+            LocalFilePath::Temp(t) => t.file_path(),
+        }
+    }
+}
+
+impl AsRef<Path> for LocalFilePath {
+    fn as_ref(&self) -> &Path {
+        self.deref()
+    }
+}
+
+impl std::fmt::Debug for LocalFilePath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LocalFilePath::Stable(p) => write!(f, "Stable({p:?})"),
+            LocalFilePath::Temp(t) => write!(f, "Temp({:?})", t.file_path()),
+        }
+    }
+}
+
+impl std::fmt::Display for LocalFilePath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.deref().display())
+    }
+}
+
+impl LocalFilePath {
+    pub fn to_pathbuf(&self) -> PathBuf {
+        self.deref().to_path_buf()
+    }
+}
 
 /// Configuration for version storage backend
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -179,12 +237,19 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         derived_filename: &str,
     ) -> Result<bool, OxenError>;
 
-    /// Get the path to a version file (sync operation)
+    /// Get a local filesystem path to a version file.
+    ///
+    /// The returned `LocalFilePath` is guaranteed to be readable on the local
+    /// filesystem. For local backends the path points into the version store
+    /// directly; for remote backends (e.g. S3) the file is downloaded to a
+    /// temporary location that is cleaned up when the `LocalFilePath` is dropped.
+    ///
+    /// **Callers must keep the returned value alive for as long as they use the
+    /// path.**
     ///
     /// # Arguments
-    /// * `hash` - The content hash of the version file to compute the path for
-    // TODO: See if we can make this infallible
-    fn get_version_path(&self, hash: &str) -> Result<PathBuf, OxenError>;
+    /// * `hash` - The content hash of the version file to retrieve
+    async fn get_version_path(&self, hash: &str) -> Result<LocalFilePath, OxenError>;
 
     /// Copy a versioned file from the version store to a destination path on the local filesystem
     ///

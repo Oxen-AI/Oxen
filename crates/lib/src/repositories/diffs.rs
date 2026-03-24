@@ -662,7 +662,9 @@ pub async fn diff_tabular_file_and_file_node(
     let (df_1, df_2) = match file_node {
         Some(file_node) => {
             let version_store = repo.version_store()?;
-            let file_node_path = version_store.get_version_path(&file_node.hash().to_string())?;
+            let file_node_path = version_store
+                .get_version_path(&file_node.hash().to_string())
+                .await?;
             let df_1 = tabular::read_df_with_extension(
                 file_node_path,
                 file_node.extension(),
@@ -698,8 +700,12 @@ pub async fn diff_tabular_file_nodes(
     match (file_1, file_2) {
         (Some(file_1), Some(file_2)) => {
             let version_store = repo.version_store()?;
-            let version_path_1 = version_store.get_version_path(&file_1.hash().to_string())?;
-            let version_path_2 = version_store.get_version_path(&file_2.hash().to_string())?;
+            let version_path_1 = version_store
+                .get_version_path(&file_1.hash().to_string())
+                .await?;
+            let version_path_2 = version_store
+                .get_version_path(&file_2.hash().to_string())
+                .await?;
             let df_1 = tabular::read_df_with_extension(
                 version_path_1,
                 file_1.extension(),
@@ -719,7 +725,9 @@ pub async fn diff_tabular_file_nodes(
         }
         (Some(file_1), None) => {
             let version_store = repo.version_store()?;
-            let version_path_1 = version_store.get_version_path(&file_1.hash().to_string())?;
+            let version_path_1 = version_store
+                .get_version_path(&file_1.hash().to_string())
+                .await?;
             let df_1 = tabular::read_df_with_extension(
                 version_path_1,
                 file_1.extension(),
@@ -734,7 +742,9 @@ pub async fn diff_tabular_file_nodes(
         }
         (None, Some(file_2)) => {
             let version_store = repo.version_store()?;
-            let version_path_2 = version_store.get_version_path(&file_2.hash().to_string())?;
+            let version_path_2 = version_store
+                .get_version_path(&file_2.hash().to_string())
+                .await?;
             let df_1 = tabular::new_df();
             let df_2 = tabular::read_df_with_extension(
                 version_path_2,
@@ -761,9 +771,9 @@ pub async fn diff_text_file_and_node(
     let (file_node_content, version_path) = if let Some(node) = file_node {
         let file_hash = node.hash().to_string();
         let contents = read_version_file_to_string(&version_store, &file_hash).await?;
-        let path = version_store.get_version_path(&file_hash)?;
+        let path = version_store.get_version_path(&file_hash).await?;
 
-        (Some(contents), Some(path))
+        (Some(contents), Some(path.to_pathbuf()))
     } else {
         (None, None)
     };
@@ -788,30 +798,40 @@ pub async fn diff_text_file_nodes(
         (Some(file_1), Some(file_2)) => {
             let file_hash_1 = file_1.hash().to_string();
             let file_content_1 = read_version_file_to_string(&version_store, &file_hash_1).await?;
-            let version_path_1 = version_store.get_version_path(&file_hash_1)?;
+            let version_path_1 = version_store.get_version_path(&file_hash_1).await?;
 
             let file_hash_2 = file_2.hash().to_string();
             let file_content_2 = read_version_file_to_string(&version_store, &file_hash_2).await?;
-            let version_path_2 = version_store.get_version_path(&file_hash_2)?;
+            let version_path_2 = version_store.get_version_path(&file_hash_2).await?;
 
             utf8_diff::diff(
                 Some(file_content_1),
-                Some(version_path_1),
+                Some(version_path_1.to_pathbuf()),
                 Some(file_content_2),
-                Some(version_path_2),
+                Some(version_path_2.to_pathbuf()),
             )
         }
         (Some(file_1), None) => {
             let file_hash_1 = file_1.hash().to_string();
             let file_content_1 = read_version_file_to_string(&version_store, &file_hash_1).await?;
-            let version_path_1 = version_store.get_version_path(&file_hash_1)?;
-            utf8_diff::diff(Some(file_content_1), Some(version_path_1), None, None)
+            let version_path_1 = version_store.get_version_path(&file_hash_1).await?;
+            utf8_diff::diff(
+                Some(file_content_1),
+                Some(version_path_1.to_pathbuf()),
+                None,
+                None,
+            )
         }
         (None, Some(file_2)) => {
             let file_hash_2 = file_2.hash().to_string();
             let file_content_2 = read_version_file_to_string(&version_store, &file_hash_2).await?;
-            let version_path_2 = version_store.get_version_path(&file_hash_2)?;
-            utf8_diff::diff(None, None, Some(file_content_2), Some(version_path_2))
+            let version_path_2 = version_store.get_version_path(&file_hash_2).await?;
+            utf8_diff::diff(
+                None,
+                None,
+                Some(file_content_2),
+                Some(version_path_2.to_pathbuf()),
+            )
         }
         (None, None) => Err(OxenError::basic_str(
             "Could not find one or both of the files to compare",
@@ -1374,24 +1394,20 @@ pub async fn get_cached_diff(
     let right_entry = compare_entry_2.unwrap();
 
     // TODO this should be cached
-    let left_full_df = tabular::read_df(
-        repositories::revisions::get_version_file_from_commit_id(
-            repo,
-            left_entry.commit_id,
-            &left_entry.path,
-        )?,
-        DFOpts::empty(),
+    let left_version_path = repositories::revisions::get_version_file_from_commit_id(
+        repo,
+        left_entry.commit_id,
+        &left_entry.path,
     )
     .await?;
-    let right_full_df = tabular::read_df(
-        repositories::revisions::get_version_file_from_commit_id(
-            repo,
-            right_entry.commit_id,
-            &right_entry.path,
-        )?,
-        DFOpts::empty(),
+    let left_full_df = tabular::read_df(&*left_version_path, DFOpts::empty()).await?;
+    let right_version_path = repositories::revisions::get_version_file_from_commit_id(
+        repo,
+        right_entry.commit_id,
+        &right_entry.path,
     )
     .await?;
+    let right_full_df = tabular::read_df(&*right_version_path, DFOpts::empty()).await?;
 
     let schema_diff = TabularSchemaDiff::from_schemas(
         &Schema::from_polars(left_full_df.schema()),

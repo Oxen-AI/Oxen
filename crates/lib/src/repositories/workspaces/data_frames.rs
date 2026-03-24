@@ -82,14 +82,14 @@ pub fn get_queryable_data_frame_workspace(
     }
 }
 
-pub fn index(
+pub async fn index(
     repo: &LocalRepository,
     workspace: &Workspace,
     path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::data_frames::index(workspace, path.as_ref()),
+        _ => core::v_latest::workspaces::data_frames::index(workspace, path.as_ref()).await,
     }
 }
 
@@ -118,7 +118,7 @@ pub fn unindex(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), Oxen
     })
 }
 
-pub fn restore(
+pub async fn restore(
     repo: &LocalRepository,
     workspace: &Workspace,
     path: impl AsRef<Path>,
@@ -127,7 +127,7 @@ pub fn restore(
     unindex(workspace, &path)?;
 
     // TODO: we could do this more granularly without a full reset
-    index(repo, workspace, path.as_ref())?;
+    index(repo, workspace, path.as_ref()).await?;
 
     Ok(())
 }
@@ -593,7 +593,7 @@ mod tests {
                 .join("bounding_box.csv");
 
             // Index dataset
-            workspaces::data_frames::index(&repo, &workspace, &file_path)?;
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
 
             // Append row
             let json_data = json!({
@@ -640,7 +640,7 @@ mod tests {
                 .join("bounding_box.csv");
 
             // Index dataset
-            workspaces::data_frames::index(&repo, &workspace, &file_path)?;
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
 
             // Append row
             let json_data = json!({
@@ -719,7 +719,7 @@ mod tests {
                 .join("bounding_box.csv");
 
             // Index the dataset
-            workspaces::data_frames::index(&repo, &workspace, &file_path)?;
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
 
             // Append the data to staging area
             let json_data = json!({
@@ -808,7 +808,7 @@ mod tests {
                 .join("bounding_box.csv");
 
             // Index the dataset
-            workspaces::data_frames::index(&repo, &workspace, &file_path)?;
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
 
             // Preview the dataset to grab some ids
             let mut page_opts = DFOpts::empty();
@@ -850,19 +850,21 @@ mod tests {
 
             let file_1 = repositories::revisions::get_version_file_from_commit_id(
                 &repo, &commit.id, &file_path,
-            )?;
+            )
+            .await?;
             // copy the file to the same path but with .csv as the extension
             let file_1_csv = file_1.with_extension("csv");
-            util::fs::copy(&file_1, &file_1_csv)?;
+            util::fs::copy(&*file_1, &file_1_csv)?;
             log::debug!("copied file 1 to {file_1_csv:?}");
 
             let file_2 = repositories::revisions::get_version_file_from_commit_id(
                 &repo,
                 commit_2.id,
                 &file_path,
-            )?;
+            )
+            .await?;
             let file_2_csv = file_2.with_extension("csv");
-            util::fs::copy(&file_2, &file_2_csv)?;
+            util::fs::copy(&*file_2, &file_2_csv)?;
             log::debug!("copied file 2 to {file_2_csv:?}");
             let diff_result =
                 repositories::diffs::diff_files(file_1_csv, file_2_csv, vec![], vec![], vec![])
@@ -899,7 +901,7 @@ mod tests {
 
             // Could use cache path here but they're being sketchy at time of writing
             // Index the dataset
-            workspaces::data_frames::index(&repo, &workspace, &file_path)?;
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
 
             // Add a row
             let json_data = json!({
@@ -975,7 +977,7 @@ mod tests {
 
             // Could use cache path here but they're being sketchy at time of writing
             // Index the dataset
-            workspaces::data_frames::index(&repo, &workspace, &file_path)?;
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
 
             // Add a row
             let json_data = json!({
@@ -1040,7 +1042,7 @@ mod tests {
 
             // Could use cache path here but they're being sketchy at time of writing
             // Index the dataset
-            workspaces::data_frames::index(&repo, &workspace, &file_path)?;
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
 
             // Preview the dataset to grab some ids
             let mut page_opts = DFOpts::empty();
@@ -1125,7 +1127,7 @@ mod tests {
                 .join("bounding_box.csv");
 
             // Index the dataset
-            workspaces::data_frames::index(&repo, &workspace, &file_path)?;
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
 
             // Preview the dataset to grab some ids
             let mut page_opts = DFOpts::empty();
@@ -1212,7 +1214,7 @@ mod tests {
                 .join("bounding_box.csv");
 
             // Index the dataset
-            workspaces::data_frames::index(&repo, &workspace, &file_path)?;
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
 
             // Preview the dataset to grab some ids
             let mut page_opts = DFOpts::empty();
@@ -1283,7 +1285,7 @@ mod tests {
 
             let workspace_id = UserConfig::identifier()?;
             let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
-            workspaces::data_frames::index(&repo, &workspace, &path)?;
+            workspaces::data_frames::index(&repo, &workspace, &path).await?;
             let json_data = json!({"NOT_REAL_COLUMN": "images/test.jpg"});
             let result = workspaces::data_frames::rows::add(&repo, &workspace, &path, &json_data);
             // Should be an error
@@ -1312,7 +1314,7 @@ mod tests {
             let workspace_id = UserConfig::identifier()?;
             let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
 
-            workspaces::data_frames::index(&repo, &workspace, &path)?;
+            workspaces::data_frames::index(&repo, &workspace, &path).await?;
             let json_data = json!({"file": "images/test.jpg", "label": "dog", "min_x": 2.0, "min_y": 3.0, "width": 100, "height": 120});
             workspaces::data_frames::rows::add(&repo, &workspace, &path, &json_data)?;
             let new_commit = NewCommitBody {
@@ -1326,7 +1328,7 @@ mod tests {
             // Make sure version file is updated
             let entry = repositories::entries::get_commit_entry(&repo, &commit, &path)?.unwrap();
             let version_store = repo.version_store()?;
-            let version_file = version_store.get_version_path(&entry.hash)?;
+            let version_file = version_store.get_version_path(&entry.hash).await?;
             let extension = entry.path.extension().unwrap().to_str().unwrap();
             let data_frame =
                 df::tabular::read_df_with_extension(version_file, extension, &DFOpts::empty()).await?;

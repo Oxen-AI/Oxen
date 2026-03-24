@@ -36,6 +36,7 @@ astral-tokio-tar = { workspace = true }
 async-compression = { workspace = true }
 async-std = { workspace = true }
 async-tar = { workspace = true }
+async-tempfile = { workspace = true }
 async-trait = { workspace = true }
 aws-config = { workspace = true }
 aws-sdk-s3 = { workspace = true }
