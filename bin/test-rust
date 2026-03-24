@@ -2,7 +2,7 @@
 #
 # Build, configure, and run the Oxen test suite.
 #
-# Usage: test-rust.sh [--ffmpeg] [--keep] [nextest args...]
+# Usage: test-rust [--ffmpeg] [--keep] [nextest args...]
 #
 #   --ffmpeg    Enable the "ffmpeg" cargo feature for build and test commands.
 #   --keep      Do not remove test data (in data/ox and data/test/runs)on cleanup--useful for
@@ -45,7 +45,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Ensure all prerequisites are installed
-"$SCRIPT_DIR/install-pre-reqs.sh"
+"$SCRIPT_DIR/install-prereqs"
 
 # Build
 echo "==> Building oxen (cargo build $FEATURE_ARGS)..."
