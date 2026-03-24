@@ -5,10 +5,10 @@ use crate::params::{app_data, path_param};
 use liboxen::core;
 use liboxen::core::staged::get_staged_db_manager;
 use liboxen::error::OxenError;
-use liboxen::model::LocalRepository;
 use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::metadata::metadata_video::VideoThumbnail;
+use liboxen::model::{LocalRepository, StagedEntryStatus};
 use liboxen::repositories;
 use liboxen::util;
 use liboxen::util::hasher;
@@ -93,6 +93,11 @@ pub async fn get(
     // First, look for the file in the workspace staged_db
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
     let file_node = match staged_db_manager.read_from_staged_db(&path)? {
+        Some(staged_node) if staged_node.status == StagedEntryStatus::Removed => {
+            return Err(OxenHttpError::InternalOxenError(
+                OxenError::resource_not_found(&path),
+            ));
+        }
         Some(staged_node) => match staged_node.node.node {
             EMerkleTreeNode::File(f) => Ok(f),
             _ => Err(OxenError::basic_str(
