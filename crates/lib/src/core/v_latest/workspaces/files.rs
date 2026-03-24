@@ -196,11 +196,12 @@ pub fn exists(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool, Oxe
 fn is_private_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || v4.is_broadcast()
+            v4.is_loopback()           // 127.0.0.0/8
+                || v4.is_private()     // 10/8, 172.16/12, 192.168/16
+                || v4.is_link_local()  // 169.254/16
+                || v4.is_unspecified() // 0.0.0.0
+                || v4.is_broadcast()   // 255.255.255.255
+                || is_cgn_or_reserved_v4(v4.octets())
         }
         IpAddr::V6(v6) => {
             if v6.is_loopback() || v6.is_unspecified() {
@@ -215,13 +216,48 @@ fn is_private_ip(ip: &IpAddr) -> bool {
             if segments[0] & 0xffc0 == 0xfe80 {
                 return true;
             }
-            // IPv4-mapped addresses (::ffff:x.x.x.x)
+            // 2001:db8::/32 (documentation)
+            if segments[0] == 0x2001 && segments[1] == 0x0db8 {
+                return true;
+            }
+            // 64:ff9b::/96 and 64:ff9b:1::/48 (NAT64 — may embed private IPv4)
+            if segments[0] == 0x0064 && segments[1] == 0xff9b {
+                // Extract embedded IPv4 and check it
+                let v4 = std::net::Ipv4Addr::new(
+                    (segments[6] >> 8) as u8,
+                    segments[6] as u8,
+                    (segments[7] >> 8) as u8,
+                    segments[7] as u8,
+                );
+                return is_private_ip(&IpAddr::V4(v4));
+            }
+            // IPv4-mapped (::ffff:x.x.x.x) and IPv4-compatible (::x.x.x.x)
             if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_private_ip(&IpAddr::V4(v4));
+            }
+            if let Some(v4) = v6.to_ipv4() {
                 return is_private_ip(&IpAddr::V4(v4));
             }
             false
         }
     }
+}
+
+/// Additional reserved IPv4 ranges not covered by std methods
+fn is_cgn_or_reserved_v4(octets: [u8; 4]) -> bool {
+    // 100.64.0.0/10 — Shared/CGN (RFC 6598), used internally by cloud providers
+    if octets[0] == 100 && (octets[1] & 0xC0) == 64 {
+        return true;
+    }
+    // 192.0.0.0/24 — IETF protocol assignments (RFC 6890)
+    if octets[0] == 192 && octets[1] == 0 && octets[2] == 0 {
+        return true;
+    }
+    // 198.18.0.0/15 — Benchmarking (RFC 2544)
+    if octets[0] == 198 && (octets[1] & 0xFE) == 18 {
+        return true;
+    }
+    false
 }
 
 async fn validate_url_target(url: &Url) -> Result<(), OxenError> {

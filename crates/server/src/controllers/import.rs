@@ -45,9 +45,7 @@ pub struct ZipUploadBody {
     description = "Body for importing a file from a URL",
     example = json!({
         "download_url": "https://example.com/datasets/data.csv",
-        "headers": {
-            "Authorization": "Bearer <token>"
-        },
+        "auth": "Bearer <token>",
         "filename": "data.csv",
         "name": "ox",
         "email": "ox@oxen.ai",
@@ -57,8 +55,8 @@ pub struct ZipUploadBody {
 pub struct ImportFileBody {
     #[schema(example = "https://example.com/datasets/data.csv")]
     pub download_url: String,
-    #[schema(value_type = Object, example = json!({"Authorization": "Bearer token"}))]
-    pub headers: Option<Value>,
+    #[schema(example = "Bearer <token>")]
+    pub auth: Option<String>,
     #[schema(example = "data.csv")]
     pub filename: Option<String>,
     #[schema(example = "ox")]
@@ -85,9 +83,7 @@ pub struct ImportFileBody {
         description = "Import configuration",
         example = json!({
             "download_url": "https://example.com/datasets/data.csv",
-            "headers": {
-                "Authorization": "Bearer <token>"
-            },
+            "auth": "Bearer <token>",
             "name": "ox",
             "email": "ox@oxen.ai"
         })
@@ -157,12 +153,10 @@ pub async fn import(
 
     log::debug!("workspace::files::import_file workspace created!");
 
-    // extract auth key from req body
+    // extract auth token from req body
     let auth = body
-        .get("headers")
-        .and_then(|headers| headers.as_object())
-        .and_then(|map| map.get("Authorization"))
-        .and_then(|auth| auth.as_str())
+        .get("auth")
+        .and_then(|v| v.as_str())
         .unwrap_or_default();
 
     let download_url = body
