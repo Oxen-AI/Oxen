@@ -193,6 +193,10 @@ pub fn exists(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool, Oxe
     })
 }
 
+/// SSRF protection: checks whether an IP is non-globally-routable. Covers private,
+/// loopback, link-local, and cloud-internal ranges (e.g. CGN used by AWS). Also handles
+/// IPv6 encodings that embed IPv4 addresses (mapped, compatible, NAT64) to prevent
+/// bypassing the check by encoding a private IPv4 inside an IPv6 address.
 fn is_private_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
@@ -260,6 +264,9 @@ fn is_cgn_or_reserved_v4(octets: [u8; 4]) -> bool {
     false
 }
 
+/// Resolves a URL's hostname via DNS and rejects it if any resolved address is
+/// private/reserved. This prevents SSRF attacks where a user-supplied URL could reach
+/// internal services (e.g. cloud metadata at 169.254.169.254, internal APIs, etc.).
 async fn validate_url_target(url: &Url) -> Result<(), OxenError> {
     let host = url
         .host_str()
@@ -321,6 +328,8 @@ fn sanitize_filename(name: &str) -> String {
         .collect()
 }
 
+/// Downloads a file from a user-supplied URL into a workspace directory.
+/// Validates the URL scheme and target IP before fetching to prevent SSRF.
 pub async fn import(
     url: &str,
     auth: &str,
@@ -408,6 +417,11 @@ pub async fn upload_zip(
 
 const MAX_REDIRECTS: usize = 10;
 
+/// Fetches a file from the given URL, handling redirects manually for two reasons:
+/// 1. Auth credentials are only sent on the first request, not leaked to redirect targets
+///    (e.g. HuggingFace redirects to a CDN — we shouldn't send the HF token there)
+/// 2. Each redirect target is validated against private/reserved IPs to prevent SSRF
+///    via open redirects (an attacker's server could 302 to http://169.254.169.254/)
 async fn fetch_file(
     url: &Url,
     auth_header_value: HeaderValue,
@@ -423,7 +437,6 @@ async fn fetch_file(
     let mut current_url = url.clone();
     let mut response = None;
 
-    // Manual redirect loop — only sends Authorization on the first request
     for hop in 0..=MAX_REDIRECTS {
         let mut req = client.get(current_url.as_str());
         if hop == 0 {
