@@ -490,7 +490,7 @@ async fn fetch_file(
     }
 
     let response = response.ok_or_else(|| {
-        OxenError::file_import_error("Failed to get a successful response after redirects")
+        OxenError::file_import_error("Failed to get a successful response")
     })?;
 
     let resp_headers = response.headers();
@@ -510,18 +510,14 @@ async fn fetch_file(
     }
 
     // Resolve filename: caller-specified > Content-Disposition > URL path > UUID
-    let raw_filename = if let Some(ref name) = caller_filename {
-        name.clone()
-    } else if let Some(cd) = resp_headers
-        .get("content-disposition")
-        .and_then(|h| h.to_str().ok())
-    {
-        parse_content_disposition_filename(cd)
-            .or_else(|| filename_from_url(&current_url))
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
-    } else {
-        filename_from_url(&current_url).unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
-    };
+    let raw_filename = caller_filename.clone().unwrap_or_else(|| { // caller specified
+        resp_headers
+            .get("content-disposition")
+            .and_then(|h| h.to_str().ok())
+            .and_then(parse_content_disposition_filename) // Content-Disposition
+            .or_else(|| filename_from_url(&current_url)) // URL path
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()) // UUID
+    });
 
     let filename = sanitize_filename(&raw_filename);
     if filename.is_empty() {

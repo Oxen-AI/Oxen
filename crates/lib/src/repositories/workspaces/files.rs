@@ -249,60 +249,25 @@ mod tests {
 
             let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
 
-            // Loopback
-            let result = workspaces::files::import(
-                "http://127.0.0.1/secret",
-                "",
-                std::path::PathBuf::from("data"),
-                None,
-                &workspace,
-            )
-            .await;
-            assert!(result.is_err(), "should reject loopback address");
+            let cases = [
+                ("http://127.0.0.1/secret", "loopback address"),
+                ("http://10.0.0.1/internal", "private address"),
+                ("http://169.254.169.254/latest/meta-data/", "link-local/metadata address"),
+                ("http://[::1]/secret", "IPv6 loopback"),
+                ("file:///etc/passwd", "non-HTTP scheme"),
+            ];
 
-            // Private network
-            let result = workspaces::files::import(
-                "http://10.0.0.1/internal",
-                "",
-                std::path::PathBuf::from("data"),
-                None,
-                &workspace,
-            )
-            .await;
-            assert!(result.is_err(), "should reject private address");
-
-            // Cloud metadata endpoint (link-local)
-            let result = workspaces::files::import(
-                "http://169.254.169.254/latest/meta-data/",
-                "",
-                std::path::PathBuf::from("data"),
-                None,
-                &workspace,
-            )
-            .await;
-            assert!(result.is_err(), "should reject link-local/metadata address");
-
-            // IPv6 loopback
-            let result = workspaces::files::import(
-                "http://[::1]/secret",
-                "",
-                std::path::PathBuf::from("data"),
-                None,
-                &workspace,
-            )
-            .await;
-            assert!(result.is_err(), "should reject IPv6 loopback");
-
-            // Non-HTTP scheme
-            let result = workspaces::files::import(
-                "file:///etc/passwd",
-                "",
-                std::path::PathBuf::from("data"),
-                None,
-                &workspace,
-            )
-            .await;
-            assert!(result.is_err(), "should reject non-HTTP scheme");
+            for (url, label) in cases {
+                let result = workspaces::files::import(
+                    url,
+                    "",
+                    std::path::PathBuf::from("data"),
+                    None,
+                    &workspace,
+                )
+                .await;
+                assert!(result.is_err(), "should reject {label}");
+            }
 
             Ok(())
         })
