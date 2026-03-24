@@ -80,16 +80,6 @@ pub async fn restore(
             &workspace.workspace_repo,
             &HashSet::from([path.as_ref().to_path_buf()]),
         )?;
-
-        // loop over parents and delete from staged db
-        let mut current_path = path.as_ref().to_path_buf();
-        while let Some(parent) = current_path.parent() {
-            manager.remove_staged_recursively(
-                &workspace.workspace_repo,
-                &HashSet::from([parent.to_path_buf()]),
-            )?;
-            current_path = parent.to_path_buf();
-        }
     }
 
     Ok(restored_row)
