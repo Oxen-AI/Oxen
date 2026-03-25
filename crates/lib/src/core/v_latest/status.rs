@@ -1,7 +1,7 @@
 use crate::constants::STAGED_DIR;
 use crate::core::db;
 use crate::core::oxenignore;
-use crate::core::staged::staged_db_manager::with_staged_db_manager;
+use crate::core::staged::staged_db_manager::get_staged_db_manager;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::merkle_tree::node::StagedMerkleTreeNode;
@@ -367,9 +367,8 @@ pub fn read_staged_entries_below_path_with_staged_db_manager(
     start_path: impl AsRef<Path>,
     read_progress: &ProgressBar,
 ) -> Result<(HashMap<PathBuf, Vec<StagedMerkleTreeNode>>, usize), OxenError> {
-    with_staged_db_manager(repo, |staged_db_manager| {
-        staged_db_manager.read_staged_entries_below_path(start_path, read_progress)
-    })
+    let staged_db_manager = get_staged_db_manager(repo)?;
+    staged_db_manager.read_staged_entries_below_path(start_path, read_progress)
 }
 
 pub fn read_staged_entries_below_path(

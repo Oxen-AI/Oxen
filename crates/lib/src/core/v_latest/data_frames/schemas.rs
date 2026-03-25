@@ -16,7 +16,7 @@ use std::str;
 use crate::constants;
 use crate::core::db;
 
-use crate::core::staged::staged_db_manager::with_staged_db_manager;
+use crate::core::staged::staged_db_manager::get_staged_db_manager;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::model::MerkleHash;
@@ -123,18 +123,17 @@ pub fn get_staged_schema_with_staged_db_manager(
     path: impl AsRef<Path>,
 ) -> Result<Option<Schema>, OxenError> {
     let path = util::fs::path_relative_to_dir(path, &repo.path)?;
-    with_staged_db_manager(repo, |staged_db_manager| {
-        match staged_db_manager.read_from_staged_db(&path) {
-            Ok(Some(value)) => {
-                let schema = db_val_to_schema(&value)?;
-                Ok(Some(schema))
-            }
-            _ => {
-                log::debug!("could not get staged schema");
-                Ok(None)
-            }
+    let staged_db_manager = get_staged_db_manager(repo)?;
+    match staged_db_manager.read_from_staged_db(&path) {
+        Ok(Some(value)) => {
+            let schema = db_val_to_schema(&value)?;
+            Ok(Some(schema))
         }
-    })
+        _ => {
+            log::debug!("could not get staged schema");
+            Ok(None)
+        }
+    }
 }
 
 /// Restores the staged schema in workspace df to its original state by comparing the original schema
@@ -148,48 +147,46 @@ pub fn restore_schema(
     after_column: &str,
 ) -> Result<(), OxenError> {
     let path = util::fs::path_relative_to_dir(&path, &repo.path)?;
-    with_staged_db_manager(repo, |staged_db_manager| {
-        let value = staged_db_manager.read_from_staged_db(&path)?;
-        let (mut staged_schema, val) = match value {
-            Some(value) => {
-                let schema = db_val_to_schema(&value)?;
-                (schema, value)
-            }
-            _ => {
-                log::debug!("could not get staged schema");
-                return Ok(());
-            }
-        };
+    let staged_db_manager = get_staged_db_manager(repo)?;
+    let value = staged_db_manager.read_from_staged_db(&path)?;
+    let (mut staged_schema, val) = match value {
+        Some(value) => {
+            let schema = db_val_to_schema(&value)?;
+            (schema, value)
+        }
+        _ => {
+            log::debug!("could not get staged schema");
+            return Ok(());
+        }
+    };
 
-        for field in &mut staged_schema.fields {
-            if field.name == after_column {
-                field.name = before_column.to_string();
+    for field in &mut staged_schema.fields {
+        if field.name == after_column {
+            field.name = before_column.to_string();
 
-                for og_field in &og_schema.fields {
-                    if og_field.name == before_column {
-                        field.metadata = og_field.metadata.clone();
-                    }
+            for og_field in &og_schema.fields {
+                if og_field.name == before_column {
+                    field.metadata = og_field.metadata.clone();
                 }
-                break;
             }
+            break;
         }
+    }
 
-        let mut file_node = val.node.file()?;
-        if let Some(GenericMetadata::MetadataTabular(tabular_metadata)) = &file_node.metadata() {
-            file_node.set_metadata(Some(GenericMetadata::MetadataTabular(
-                MetadataTabular::new(
-                    tabular_metadata.tabular.width,
-                    tabular_metadata.tabular.height,
-                    staged_schema,
-                ),
-            )));
-        } else {
-            return Err(OxenError::basic_str("Expected tabular metadata"));
-        }
+    let mut file_node = val.node.file()?;
+    if let Some(GenericMetadata::MetadataTabular(tabular_metadata)) = &file_node.metadata() {
+        file_node.set_metadata(Some(GenericMetadata::MetadataTabular(
+            MetadataTabular::new(
+                tabular_metadata.tabular.width,
+                tabular_metadata.tabular.height,
+                staged_schema,
+            ),
+        )));
+    } else {
+        return Err(OxenError::basic_str("Expected tabular metadata"));
+    }
 
-        staged_db_manager.upsert_file_node(&path, StagedEntryStatus::Modified, &file_node)?;
-        Ok(())
-    })?;
+    staged_db_manager.upsert_file_node(&path, StagedEntryStatus::Modified, &file_node)?;
     Ok(())
 }
 

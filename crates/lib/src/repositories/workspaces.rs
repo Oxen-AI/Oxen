@@ -1,7 +1,7 @@
 use crate::config::RepositoryConfig;
 use crate::constants::{OXEN_HIDDEN_DIR, REPO_CONFIG_FILENAME};
 use crate::core;
-use crate::core::staged::staged_db_manager::with_staged_db_manager;
+use crate::core::staged::staged_db_manager::get_staged_db_manager;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::entry::metadata_entry::{WorkspaceChanges, WorkspaceMetadataEntry};
@@ -424,10 +424,8 @@ pub fn populate_entries_with_workspace_data(
     }
     for (file_path, status) in additions_map.iter() {
         if *status == StagedEntryStatus::Added {
-            let staged_node =
-                with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
-                    staged_db_manager.read_from_staged_db(file_path)
-                })?
+            let staged_node = get_staged_db_manager(&workspace.workspace_repo)?
+                .read_from_staged_db(file_path)?
                 .expect("Staged node found in status not present in staged db");
 
             let metadata = match staged_node.node.node {
@@ -489,10 +487,9 @@ pub fn get_added_entry(
             ));
         }
 
-        let staged_node = with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
-            staged_db_manager.read_from_staged_db(file_path)
-        })?
-        .expect("Staged node found in status not present in staged db");
+        let staged_node = get_staged_db_manager(&workspace.workspace_repo)?
+            .read_from_staged_db(file_path)?
+            .expect("Staged node found in status not present in staged db");
 
         let metadata = match staged_node.node.node {
             EMerkleTreeNode::File(file_node) => {

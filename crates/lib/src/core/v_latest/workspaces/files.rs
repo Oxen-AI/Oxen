@@ -14,7 +14,7 @@ use url::Url;
 use zip::ZipArchive;
 
 use crate::core;
-use crate::core::staged::staged_db_manager::with_staged_db_manager;
+use crate::core::staged::staged_db_manager::get_staged_db_manager;
 use crate::core::v_latest::add::{
     add_file_node_to_staged_db, get_file_node, process_add_file_with_staged_db_manager,
     stage_file_with_hash,
@@ -78,16 +78,15 @@ pub fn add_version_file(
     // let workspace_repo = &workspace.workspace_repo;
     // let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
 
-    with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
-        stage_file_with_hash(
-            workspace,
-            version_path.as_ref(),
-            dst_path,
-            file_hash,
-            staged_db_manager,
-            &Arc::new(Mutex::new(HashSet::new())),
-        )
-    })?;
+    let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+    stage_file_with_hash(
+        workspace,
+        version_path.as_ref(),
+        dst_path,
+        file_hash,
+        &staged_db_manager,
+        &Arc::new(Mutex::new(HashSet::new())),
+    )?;
 
     Ok(dst_path.to_path_buf())
 }
@@ -111,39 +110,38 @@ pub async fn add_version_files(
     }
 
     let mut err_files: Vec<ErrorFileInfo> = vec![];
-    with_staged_db_manager(workspace_repo, |staged_db_manager| {
-        for (item, version_path) in files_with_hash.iter().zip(version_paths.iter()) {
-            let target_path = PathBuf::from(directory).join(&item.path);
+    let staged_db_manager = get_staged_db_manager(workspace_repo)?;
+    for (item, version_path) in files_with_hash.iter().zip(version_paths.iter()) {
+        let target_path = PathBuf::from(directory).join(&item.path);
 
-            match stage_file_with_hash(
-                workspace,
-                version_path,
-                &target_path,
-                &item.hash,
-                staged_db_manager,
-                &seen_dirs,
-            ) {
-                Ok(_) => {
-                    // Add parents to staged db
-                    // let parent_dirs = item.parents;
-                }
-                Err(e) => {
-                    log::error!("error with adding file: {e:?}");
-                    err_files.push(ErrorFileInfo {
-                        hash: item.hash.clone(),
-                        path: Some(item.path.clone()),
-                        error: format!("Failed to add file to staged db: {e}"),
-                    });
-                    continue;
-                }
+        match stage_file_with_hash(
+            workspace,
+            version_path,
+            &target_path,
+            &item.hash,
+            &staged_db_manager,
+            &seen_dirs,
+        ) {
+            Ok(_) => {
+                // Add parents to staged db
+                // let parent_dirs = item.parents;
+            }
+            Err(e) => {
+                log::error!("error with adding file: {e:?}");
+                err_files.push(ErrorFileInfo {
+                    hash: item.hash.clone(),
+                    path: Some(item.path.clone()),
+                    error: format!("Failed to add file to staged db: {e}"),
+                });
+                continue;
             }
         }
-        log::debug!(
-            "add_version_files complete with {:?} err_files",
-            err_files.len()
-        );
-        Ok(err_files)
-    })
+    }
+    log::debug!(
+        "add_version_files complete with {:?} err_files",
+        err_files.len()
+    );
+    Ok(err_files)
 }
 
 pub fn track_modified_data_frame(
@@ -185,17 +183,13 @@ pub async fn remove_files_from_staged_db(
 pub fn unstage(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), OxenError> {
     let workspace_repo = &workspace.workspace_repo;
     let path = util::fs::path_relative_to_dir(path.as_ref(), &workspace_repo.path)?;
-    with_staged_db_manager(workspace_repo, |staged_db_manager| {
-        staged_db_manager.delete_entry(&path)
-    })
+    get_staged_db_manager(workspace_repo)?.delete_entry(&path)
 }
 
 pub fn exists(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool, OxenError> {
     let workspace_repo = &workspace.workspace_repo;
     let path = util::fs::path_relative_to_dir(path.as_ref(), &workspace_repo.path)?;
-    with_staged_db_manager(workspace_repo, |staged_db_manager| {
-        staged_db_manager.exists(&path)
-    })
+    get_staged_db_manager(workspace_repo)?.exists(&path)
 }
 
 /// SSRF protection: checks whether an IP is non-globally-routable. Covers private,
@@ -971,9 +965,7 @@ pub fn mv(
     let workspace_repo = &workspace.workspace_repo;
 
     // First, try to read existing staged entry for the source path
-    let staged_entry = with_staged_db_manager(workspace_repo, |staged_db_manager| {
-        staged_db_manager.read_from_staged_db(path)
-    })?;
+    let staged_entry = get_staged_db_manager(workspace_repo)?.read_from_staged_db(path)?;
 
     // Get the file node - either from staged_db or from the base repo
     let file_node = if let Some(entry) = staged_entry {
@@ -1004,64 +996,58 @@ pub fn mv(
 
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
 
-    with_staged_db_manager(workspace_repo, |staged_db_manager| {
-        if staged_db_manager.read_from_staged_db(new_path)?.is_some() {
-            return Err(OxenError::basic_str(format!(
-                "Destination already staged: {new_path:?}"
-            )));
-        }
-        // Add the file node at the new path
-        staged_db_manager.upsert_file_node(new_path, new_status, &new_file_node)?;
+    let staged_db_manager = get_staged_db_manager(workspace_repo)?;
+    if staged_db_manager.read_from_staged_db(new_path)?.is_some() {
+        return Err(OxenError::basic_str(format!(
+            "Destination already staged: {new_path:?}"
+        )));
+    }
+    // Add the file node at the new path
+    staged_db_manager.upsert_file_node(new_path, new_status, &new_file_node)?;
 
-        // Only handle removal if source and destination are different
-        if !is_same_path {
-            // Check if the source file exists in the base repo (needs to be staged for removal)
-            let source_exists_in_base = repositories::tree::get_file_by_path(
-                &workspace.base_repo,
-                &workspace.commit,
+    // Only handle removal if source and destination are different
+    if !is_same_path {
+        // Check if the source file exists in the base repo (needs to be staged for removal)
+        let source_exists_in_base =
+            repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
+                .is_some();
+
+        if source_exists_in_base {
+            // Create a file node for the removed entry with the full original path as name
+            let mut removed_file_node = file_node.clone();
+            removed_file_node.set_name(path.to_str().unwrap());
+
+            // Stage the original path as removed
+            staged_db_manager.upsert_file_node(
                 path,
-            )?
-            .is_some();
+                StagedEntryStatus::Removed,
+                &removed_file_node,
+            )?;
 
-            if source_exists_in_base {
-                // Create a file node for the removed entry with the full original path as name
-                let mut removed_file_node = file_node.clone();
-                removed_file_node.set_name(path.to_str().unwrap());
-
-                // Stage the original path as removed
-                staged_db_manager.upsert_file_node(
-                    path,
-                    StagedEntryStatus::Removed,
-                    &removed_file_node,
-                )?;
-
-                // Add parent directories for the removed path
-                if let Some(parents) = path.parent() {
-                    for dir in parents.ancestors() {
-                        staged_db_manager.add_directory(dir, &seen_dirs)?;
-                        if dir == Path::new("") {
-                            break;
-                        }
+            // Add parent directories for the removed path
+            if let Some(parents) = path.parent() {
+                for dir in parents.ancestors() {
+                    staged_db_manager.add_directory(dir, &seen_dirs)?;
+                    if dir == Path::new("") {
+                        break;
                     }
                 }
-            } else {
-                // Just delete the staged entry if file wasn't in base repo
-                staged_db_manager.delete_entry(path)?;
+            }
+        } else {
+            // Just delete the staged entry if file wasn't in base repo
+            staged_db_manager.delete_entry(path)?;
+        }
+    }
+
+    // Add parent directories for the new path
+    if let Some(parents) = new_path.parent() {
+        for dir in parents.ancestors() {
+            staged_db_manager.add_directory(dir, &seen_dirs)?;
+            if dir == Path::new("") {
+                break;
             }
         }
-
-        // Add parent directories for the new path
-        if let Some(parents) = new_path.parent() {
-            for dir in parents.ancestors() {
-                staged_db_manager.add_directory(dir, &seen_dirs)?;
-                if dir == Path::new("") {
-                    break;
-                }
-            }
-        }
-
-        Ok(())
-    })?;
+    }
 
     let relative_path = util::fs::path_relative_to_dir(new_path, &workspace_repo.path)?;
     Ok(relative_path)
