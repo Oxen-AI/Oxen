@@ -51,7 +51,9 @@ impl RunCmd for DbCmd {
                 tokio::runtime::Handle::current().block_on(cmd.run(sub_matches))
             })?;
         } else {
-            return Err(OxenError::basic_str("No subcommand provided"));
+            return Err(OxenError::basic_str(
+                "No db subcommand provided. Run `oxen db --help` for usage.",
+            ));
         }
 
         Ok(())

@@ -14,10 +14,8 @@ pub const NAME: &str = "log";
 pub struct LogCmd;
 
 fn write_to_pager(output: &mut Pager, text: &str) -> Result<(), OxenError> {
-    match writeln!(output, "{text}") {
-        Ok(_) => Ok(()),
-        Err(_) => Err(OxenError::basic_str("Could not write to pager")),
-    }
+    writeln!(output, "{text}")
+        .map_err(|e| OxenError::basic_str(format!("Could not write to pager: {e}")))
 }
 
 #[async_trait]

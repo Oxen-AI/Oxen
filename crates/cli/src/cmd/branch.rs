@@ -83,7 +83,7 @@ impl RunCmd for BranchCmd {
         if let Some(subcommand) = args.subcommand() {
             match subcommand {
                 (unlock::NAME, args) => unlock::BranchUnlockCmd.run(args).await,
-                (cmd, _) => Err(OxenError::basic_str(format!("Unknown subcommand {cmd}"))),
+                (cmd, _) => Err(OxenError::unknown_subcommand("branch", cmd)),
             }
         } else if args.get_flag("all") {
             self.list_all_branches(&repo).await

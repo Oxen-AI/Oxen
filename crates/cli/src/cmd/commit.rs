@@ -116,10 +116,8 @@ fn get_message_from_editor(maybe_config: Option<&UserConfig>) -> Result<String, 
                      # Lines starting with '#' will be ignored, and an empty message aborts the commit.\n";
 
     {
-        let mut file = std::fs::File::create(&temp_path)
-            .map_err(|e| OxenError::basic_str(format!("Failed to create temp file: {e}")))?;
-        file.write_all(template.as_bytes())
-            .map_err(|e| OxenError::basic_str(format!("Failed to write to temp file: {e}")))?;
+        let mut file = std::fs::File::create(&temp_path)?;
+        file.write_all(template.as_bytes())?;
     }
 
     // Spawn the editor
@@ -133,8 +131,7 @@ fn get_message_from_editor(maybe_config: Option<&UserConfig>) -> Result<String, 
     let status = std::process::Command::new(parts[0])
         .args(&parts[1..])
         .arg(&temp_path)
-        .status()
-        .map_err(|e| OxenError::basic_str(format!("Failed to open editor '{editor}': {e}")))?;
+        .status()?;
 
     if !status.success() {
         return Err(OxenError::basic_str(format!(
@@ -143,8 +140,7 @@ fn get_message_from_editor(maybe_config: Option<&UserConfig>) -> Result<String, 
     }
 
     // Read the file and strip comments
-    let contents = std::fs::read_to_string(&temp_path)
-        .map_err(|e| OxenError::basic_str(format!("Failed to read temp file: {e}")))?;
+    let contents = std::fs::read_to_string(&temp_path)?;
     let _ = std::fs::remove_file(&temp_path);
 
     let message: String = contents

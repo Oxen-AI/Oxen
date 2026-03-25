@@ -126,7 +126,7 @@ impl RunCmd for WorkspaceDFGetCmd {
                 }
             }
             Err(e) => {
-                return Err(OxenError::basic_str(format!("{e:?}")));
+                return Err(e);
             }
         }
 

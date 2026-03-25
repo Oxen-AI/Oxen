@@ -83,7 +83,7 @@ impl RunCmd for PushCmd {
         } else if let Some(branch) = current_branch {
             branch.name
         } else {
-            return Err(OxenError::basic_str("Cannot push from non-existent branch"));
+            return Err(OxenError::must_be_on_valid_branch());
         };
 
         let opts = PushOpts {
@@ -114,16 +114,8 @@ impl RunCmd for PushCmd {
             check_remote_version_blocking(scheme.clone(), host.clone()).await?;
             check_remote_version(scheme, host).await?;
 
-            match repositories::push::push_remote_branch(&repo, &opts).await {
-                Ok(_) => Ok(()),
-                Err(OxenError::BranchNotFound(branch)) => {
-                    let msg = format!(
-                        "{branch}\nMake sure you are on the correct branch and have committed your changes."
-                    );
-                    Err(OxenError::basic_str(msg))
-                }
-                Err(e) => Err(e),
-            }
+            repositories::push::push_remote_branch(&repo, &opts).await?;
+            Ok(())
         }
     }
 }

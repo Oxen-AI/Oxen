@@ -157,9 +157,7 @@ impl RunCmd for ConfigCmd {
             let storage_opts = StorageOpts::from_args(Some(backend), Some(path), bucket)?;
 
             let mut repo = LocalRepository::from_current_dir()?;
-            self.set_version_store(&mut repo, storage_opts)
-                .await
-                .map_err(|e| OxenError::basic_str(format!("{e}")))?;
+            self.set_version_store(&mut repo, storage_opts).await?;
         }
 
         Ok(())
