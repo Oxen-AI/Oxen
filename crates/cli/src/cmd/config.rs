@@ -109,11 +109,9 @@ impl RunCmd for ConfigCmd {
         }
 
         if let Some(auth) = args.get_many::<String>("auth-token") {
-            if let [host, token] = auth.collect::<Vec<_>>()[..] {
-                self.set_auth_token(host, token)?;
-            } else {
-                eprintln!("invalid arguments for --auth");
-            }
+            let values: Vec<_> = auth.collect();
+            // clap enforces number_of_values(2), so this is guaranteed
+            self.set_auth_token(values[0], values[1])?;
         }
 
         if let Some(default_host) = args.get_one::<String>("default-host") {
@@ -127,11 +125,9 @@ impl RunCmd for ConfigCmd {
         // Repo Dependent
         if let Some(remote) = args.get_many::<String>("set-remote") {
             let mut repo = LocalRepository::from_current_dir()?;
-            if let [name, url] = remote.collect::<Vec<_>>()[..] {
-                self.set_remote(&mut repo, name, url)?;
-            } else {
-                eprintln!("invalid arguments for --set-remote");
-            }
+            let values: Vec<_> = remote.collect();
+            // clap enforces number_of_values(2), so this is guaranteed
+            self.set_remote(&mut repo, values[0], values[1])?;
         }
 
         if let Some(name) = args.get_one::<String>("delete-remote") {

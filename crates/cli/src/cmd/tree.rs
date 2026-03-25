@@ -62,21 +62,19 @@ impl RunCmd for TreeCmd {
         // Parse Args
         let depth = args
             .get_one::<String>("depth")
-            .expect("Must supply depth")
+            .expect("depth has a default value")
             .parse::<i32>()
-            .expect("depth must be a valid integer.");
+            .map_err(OxenError::ParseIntError)?;
         let commit_id = args
             .get_one::<String>("commit")
-            .expect("Must supply commit");
+            .expect("commit has a default value");
         let repo = LocalRepository::from_current_dir()?;
 
         let commit = if commit_id == "HEAD" {
             repositories::commits::head_commit(&repo)?
         } else {
             let Some(commit) = repositories::commits::get_by_id(&repo, commit_id)? else {
-                return Err(OxenError::basic_str(format!(
-                    "Commit {commit_id} not found"
-                )));
+                return Err(OxenError::commit_id_does_not_exist(commit_id));
             };
             commit
         };
@@ -96,7 +94,8 @@ impl TreeCmd {
     fn print_node(&self, repo: &LocalRepository, node: &str, depth: i32) -> Result<(), OxenError> {
         let node_hash = node.parse()?;
         // REFACTOR: Get through repositories::tree
-        let tree = CommitMerkleTree::read_node(repo, &node_hash, true)?.unwrap();
+        let tree = CommitMerkleTree::read_node(repo, &node_hash, true)?
+            .ok_or_else(|| OxenError::resource_not_found(format!("Node {node_hash} not found")))?;
         CommitMerkleTree::print_node_depth(&tree, depth);
 
         Ok(())
@@ -115,12 +114,10 @@ impl TreeCmd {
                 println!("Working with subtrees: {subtrees:?}");
                 println!("Depth: {depth}");
                 println!("Loading first tree...");
-                repositories::tree::print_tree_depth_subtree(
-                    repo,
-                    commit,
-                    depth,
-                    subtrees.first().unwrap(),
-                )?;
+                let first = subtrees
+                    .first()
+                    .ok_or_else(|| OxenError::basic_str("No subtree paths configured"))?;
+                repositories::tree::print_tree_depth_subtree(repo, commit, depth, first)?;
             }
             (_, _) => {
                 if let Some(path) = path {
