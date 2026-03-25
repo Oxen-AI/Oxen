@@ -70,6 +70,9 @@ pub struct StagedDBManager {
 /// contention with other operations that need write access to the staged DB, and can prevent the
 /// LRU cache from evicting idle database handles.
 ///
+/// **In async contexts**, ensure the manager is dropped before any `.await` points to avoid
+/// holding the database handle across suspension points.
+///
 /// Easy ways to ensure the manager is dropped promptly:
 ///
 /// **Call `drop()` explicitly** when you need the result in the same scope:
