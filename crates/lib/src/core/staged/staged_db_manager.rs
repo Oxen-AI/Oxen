@@ -62,6 +62,32 @@ pub struct StagedDBManager {
     repository: LocalRepository,
 }
 
+/// Returns a [`StagedDBManager`] to access RocksDB for the given repository.
+///
+/// The manager holds a reference-counted handle to a shared RocksDB instance that is cached in a
+/// global LRU cache. You should **drop the manager as soon as you are done with it** to avoid
+/// holding the underlying database open longer than necessary. Holding it too long can cause
+/// contention with other operations that need write access to the staged DB, and can prevent the
+/// LRU cache from evicting idle database handles.
+///
+/// Easy ways to ensure the manager is dropped promptly:
+///
+/// **Call `drop()` explicitly** when you need the result in the same scope:
+/// ```ignore
+/// let mgr = get_staged_db_manager(repo)?;
+/// let result = mgr.read_from_staged_db(path)?;
+/// drop(mgr);
+/// // ... continue working with result ...
+/// ```
+///
+/// **Use a block scope** so the manager is dropped at the end of the block:
+/// ```ignore
+/// let result = {
+///     let mgr = get_staged_db_manager(repo)?;
+///     mgr.read_from_staged_db(path)?
+/// }; // mgr is dropped here
+/// // ... continue working with result ...
+/// ```
 pub fn get_staged_db_manager(repository: &LocalRepository) -> Result<StagedDBManager, OxenError> {
     let staged_db_dir = util::fs::oxen_hidden_dir(&repository.path).join(STAGED_DIR);
 
