@@ -50,8 +50,7 @@ impl LocalRepository {
     pub fn from_dir(path: impl AsRef<Path>) -> Result<Self, OxenError> {
         let path = path.as_ref().to_path_buf();
         let config_path = util::fs::config_filepath(&path);
-        let config = RepositoryConfig::from_file(&config_path)
-            .map_err(|_| OxenError::local_repo_not_found(&path))?;
+        let config = RepositoryConfig::from_file(&config_path)?;
 
         let mut repo = LocalRepository {
             path,
