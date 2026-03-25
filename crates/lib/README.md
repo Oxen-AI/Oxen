@@ -250,28 +250,28 @@ cargo test --workspace -- --test-threads=$(getconf _NPROCESSORS_ONLN)
 
 ## Automatic Test Setup
 
-You can use [the following script](./scripts/test-rust.sh) to run tests. It will set up config files, build and run an oxen-server, run the tests against it, and shutdown the server. Any arguments passed to the script will be passed to `cargo nextest run`, so you can use it to run specific tests or set test threads.
+You can use [bin/test-rust](./bin/test-rust) to run tests. It will set up config files, build and run an oxen-server, run the tests against it, and shutdown the server. Any arguments passed to `test-rust` will be passed to `cargo nextest run`, so you can use it to run specific tests or set test threads.
 
 ```bash
-scripts/test-rust.sh
+bin/test-rust
 ```
 
 It can be faster (in terms of compilation and runtime) to run a specific test. To run a specific library test:
 
 ```bash
-scripts/test-rust.sh --lib test_get_metadata_text_readme
+bin/test-rust --lib test_get_metadata_text_readme
 ```
 
 To run with all debug output and run a specific test
 
 ```bash
-env RUST_LOG=warn,liboxen=debug,integration_test=debug scripts/test-rust.sh --no-capture test_command_push_clone_pull_push
+env RUST_LOG=warn,liboxen=debug,integration_test=debug bin/test-rust --no-capture test_command_push_clone_pull_push
 ```
 
 To explicitly set the port for the `oxen-server` used in tests, set `OXEN_PORT`:
 
 ```bash
-env OXEN_PORT=4000 scripts/test-rust.sh
+env OXEN_PORT=4000 bin/test-rust
 ```
 
 
@@ -312,13 +312,13 @@ curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"name": "MyRepo"}' "http://$
 Create the docker image
 
 ```bash
-docker build -t oxen/server:0.46.4 .
+docker build -t oxen/server:0.46.7 .
 ```
 
 Run a container on port 3000 with a local filesystem mounted from /var/oxen/data on the host to /var/oxen/data in the container.
 
 ```bash
-docker run -d -v /var/oxen/data:/var/oxen/data -p 3000:3001 --name oxen oxen/server:0.46.4
+docker run -d -v /var/oxen/data:/var/oxen/data -p 3000:3001 --name oxen oxen/server:0.46.7
 ```
 
 Or use docker compose

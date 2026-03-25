@@ -91,7 +91,7 @@ jobs:
       - name: Build oxen binaries
         run: |
           refreshenv
-          cargo build --workspace --release
+          cargo build --workspace --exclude oxen-py --release
 
       - name: Build Python wheels
         run: |

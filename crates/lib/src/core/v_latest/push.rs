@@ -619,7 +619,7 @@ async fn chunk_and_send_large_entries(
                     break;
                 };
 
-                let version_path = match version_store.get_version_path(&entry.hash()) {
+                let version_path = match version_store.get_version_path(&entry.hash()).await {
                     Ok(path) => path,
                     Err(e) => {
                         log::error!("Failed to get version path: {e}");

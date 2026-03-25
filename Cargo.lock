@@ -968,6 +968,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
 
 [[package]]
+name = "async-tempfile"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8a57b75c36e16f4d015e60e6a177552976a99b6947724403c551bcfa7cb1207"
+dependencies = [
+ "tokio",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4427,7 +4436,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "liboxen"
-version = "0.46.4"
+version = "0.46.7"
 dependencies = [
  "approx",
  "arrow",
@@ -4435,6 +4444,7 @@ dependencies = [
  "async-compression",
  "async-std",
  "async-tar",
+ "async-tempfile",
  "async-trait",
  "aws-config",
  "aws-sdk-s3",
@@ -5185,7 +5195,7 @@ checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
 name = "oxen-cli"
-version = "0.46.4"
+version = "0.46.7"
 dependencies = [
  "async-trait",
  "bytesize",
@@ -5207,10 +5217,11 @@ dependencies = [
 
 [[package]]
 name = "oxen-py"
-version = "0.46.4"
+version = "0.46.7"
 dependencies = [
  "bindgen 0.71.1",
  "cc",
+ "env_logger",
  "glob",
  "liboxen",
  "log",
@@ -5225,7 +5236,7 @@ dependencies = [
 
 [[package]]
 name = "oxen-server"
-version = "0.46.4"
+version = "0.46.7"
 dependencies = [
  "actix-http",
  "actix-multipart",

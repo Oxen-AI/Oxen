@@ -3,11 +3,14 @@ use futures::StreamExt;
 use parking_lot::Mutex;
 use reqwest::Client;
 use reqwest::header::HeaderValue;
+use reqwest::redirect;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{Read, Write};
+use std::net::IpAddr;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use url::Url;
 use zip::ZipArchive;
 
 use crate::core;
@@ -89,7 +92,7 @@ pub fn add_version_file(
     Ok(dst_path.to_path_buf())
 }
 
-pub fn add_version_files(
+pub async fn add_version_files(
     repo: &LocalRepository,
     workspace: &Workspace,
     files_with_hash: &[FileWithHash],
@@ -101,15 +104,20 @@ pub fn add_version_files(
     let workspace_repo = &workspace.workspace_repo;
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
 
+    // Resolve all version paths before entering the sync closure
+    let mut version_paths = Vec::with_capacity(files_with_hash.len());
+    for item in files_with_hash.iter() {
+        version_paths.push(version_store.get_version_path(&item.hash).await?);
+    }
+
     let mut err_files: Vec<ErrorFileInfo> = vec![];
     with_staged_db_manager(workspace_repo, |staged_db_manager| {
-        for item in files_with_hash.iter() {
-            let version_path = version_store.get_version_path(&item.hash)?;
+        for (item, version_path) in files_with_hash.iter().zip(version_paths.iter()) {
             let target_path = PathBuf::from(directory).join(&item.path);
 
             match stage_file_with_hash(
                 workspace,
-                &version_path,
+                version_path,
                 &target_path,
                 &item.hash,
                 staged_db_manager,
@@ -190,32 +198,173 @@ pub fn exists(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool, Oxe
     })
 }
 
+/// SSRF protection: checks whether an IP is non-globally-routable. Covers private,
+/// loopback, link-local, and cloud-internal ranges (e.g. CGN used by AWS). Also handles
+/// IPv6 encodings that embed IPv4 addresses (mapped, compatible, NAT64) to prevent
+/// bypassing the check by encoding a private IPv4 inside an IPv6 address.
+fn is_private_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()           // 127.0.0.0/8
+                || v4.is_private()     // 10/8, 172.16/12, 192.168/16
+                || v4.is_link_local()  // 169.254/16
+                || v4.is_unspecified() // 0.0.0.0
+                || v4.is_broadcast()   // 255.255.255.255
+                || is_cgn_or_reserved_v4(v4.octets())
+        }
+        IpAddr::V6(v6) => {
+            if v6.is_loopback() || v6.is_unspecified() {
+                return true;
+            }
+            let segments = v6.segments();
+            // fc00::/7 (unique local)
+            if segments[0] & 0xfe00 == 0xfc00 {
+                return true;
+            }
+            // fe80::/10 (link-local)
+            if segments[0] & 0xffc0 == 0xfe80 {
+                return true;
+            }
+            // 2001:db8::/32 (documentation)
+            if segments[0] == 0x2001 && segments[1] == 0x0db8 {
+                return true;
+            }
+            // 64:ff9b::/96 and 64:ff9b:1::/48 (NAT64 — may embed private IPv4)
+            if segments[0] == 0x0064 && segments[1] == 0xff9b {
+                // Extract embedded IPv4 and check it
+                let v4 = std::net::Ipv4Addr::new(
+                    (segments[6] >> 8) as u8,
+                    segments[6] as u8,
+                    (segments[7] >> 8) as u8,
+                    segments[7] as u8,
+                );
+                return is_private_ip(&IpAddr::V4(v4));
+            }
+            // IPv4-mapped (::ffff:x.x.x.x) and IPv4-compatible (::x.x.x.x)
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_private_ip(&IpAddr::V4(v4));
+            }
+            if let Some(v4) = v6.to_ipv4() {
+                return is_private_ip(&IpAddr::V4(v4));
+            }
+            false
+        }
+    }
+}
+
+/// Additional reserved IPv4 ranges not covered by std methods
+fn is_cgn_or_reserved_v4(octets: [u8; 4]) -> bool {
+    // 100.64.0.0/10 — Shared/CGN (RFC 6598), used internally by cloud providers
+    if octets[0] == 100 && (octets[1] & 0xC0) == 64 {
+        return true;
+    }
+    // 192.0.0.0/24 — IETF protocol assignments (RFC 6890)
+    if octets[0] == 192 && octets[1] == 0 && octets[2] == 0 {
+        return true;
+    }
+    // 198.18.0.0/15 — Benchmarking (RFC 2544)
+    if octets[0] == 198 && (octets[1] & 0xFE) == 18 {
+        return true;
+    }
+    false
+}
+
+/// Resolves a URL's hostname via DNS and rejects it if any resolved address is
+/// private/reserved. This prevents SSRF attacks where a user-supplied URL could reach
+/// internal services (e.g. cloud metadata at 169.254.169.254, internal APIs, etc.).
+async fn validate_url_target(url: &Url) -> Result<(), OxenError> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| OxenError::file_import_error("URL has no host"))?;
+    let port = url.port_or_known_default().unwrap_or(443);
+    let addr = format!("{host}:{port}");
+
+    let resolved = tokio::net::lookup_host(&addr).await.map_err(|e| {
+        OxenError::file_import_error(format!("DNS resolution failed for {host}: {e}"))
+    })?;
+
+    for socket_addr in resolved {
+        if is_private_ip(&socket_addr.ip()) {
+            return Err(OxenError::file_import_error(format!(
+                "URL resolves to a private/reserved IP address: {}",
+                socket_addr.ip()
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_content_disposition_filename(header: &str) -> Option<String> {
+    // Look for filename="..." or filename=...
+    let lower = header.to_lowercase();
+    if let Some(pos) = lower.find("filename=") {
+        let rest = &header[pos + 9..];
+        if let Some(rest) = rest.strip_prefix('"') {
+            // filename="..."
+            rest.find('"').map(|end| rest[..end].to_string())
+        } else {
+            // filename=... (unquoted, until semicolon or end)
+            let end = rest.find(';').unwrap_or(rest.len());
+            let name = rest[..end].trim();
+            if name.is_empty() {
+                None
+            } else {
+                Some(name.to_string())
+            }
+        }
+    } else {
+        None
+    }
+}
+
+fn filename_from_url(url: &Url) -> Option<String> {
+    url.path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .filter(|s| !s.is_empty())
+        .and_then(|s| urlencoding::decode(s).ok())
+        .map(|s| s.into_owned())
+}
+
+fn sanitize_filename(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_whitespace() { '_' } else { c })
+        .filter(|&c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_')
+        .collect()
+}
+
+/// Downloads a file from a user-supplied URL into a workspace directory.
+/// Validates the URL scheme and target IP before fetching to prevent SSRF.
 pub async fn import(
     url: &str,
     auth: &str,
     directory: PathBuf,
-    mut filename: String,
+    filename: Option<String>,
     workspace: &Workspace,
 ) -> Result<(), OxenError> {
-    // Sanitize filename
-    filename = filename
-        .chars()
-        .map(|c| if c.is_whitespace() { '_' } else { c })
-        .filter(|&c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_')
-        .collect::<String>();
+    let parsed_url =
+        Url::parse(url).map_err(|_| OxenError::file_import_error(format!("Invalid URL: {url}")))?;
 
-    if filename.is_empty() {
-        return Err(OxenError::file_import_error(format!(
-            "URL has an invalid filename {url}"
-        )));
+    let scheme = parsed_url.scheme();
+    if scheme != "http" && scheme != "https" {
+        return Err(OxenError::file_import_error(
+            "Only http and https URLs are allowed",
+        ));
     }
 
-    log::debug!("files::import_file Got uploaded file name: {filename}");
+    validate_url_target(&parsed_url).await?;
 
     let auth_header_value = HeaderValue::from_str(auth)
         .map_err(|_e| OxenError::file_import_error(format!("Invalid header auth value {auth}")))?;
 
-    fetch_file(url, auth_header_value, directory, filename, workspace).await?;
+    fetch_file(
+        &parsed_url,
+        auth_header_value,
+        directory,
+        filename,
+        workspace,
+    )
+    .await?;
 
     Ok(())
 }
@@ -271,26 +420,89 @@ pub async fn upload_zip(
     }
 }
 
+const MAX_REDIRECTS: usize = 10;
+
+/// Fetches a file from the given URL, handling redirects manually for two reasons:
+/// 1. Auth credentials are only sent on the first request, not leaked to redirect targets
+///    (e.g. HuggingFace redirects to a CDN — we shouldn't send the HF token there)
+/// 2. Each redirect target is validated against private/reserved IPs to prevent SSRF
+///    via open redirects (an attacker's server could 302 to http://169.254.169.254/)
 async fn fetch_file(
-    url: &str,
+    url: &Url,
     auth_header_value: HeaderValue,
     directory: PathBuf,
-    filename: String,
+    caller_filename: Option<String>,
     workspace: &Workspace,
 ) -> Result<(), OxenError> {
-    let response = Client::new()
-        .get(url)
-        .header("Authorization", auth_header_value)
-        .send()
-        .await
-        .map_err(|e| OxenError::file_import_error(format!("Fetch file request failed: {e}")))?;
+    let client = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .map_err(|e| OxenError::file_import_error(format!("Failed to build HTTP client: {e}")))?;
+
+    let mut current_url = url.clone();
+    let mut response = None;
+
+    for hop in 0..=MAX_REDIRECTS {
+        let mut req = client.get(current_url.as_str());
+        if hop == 0 {
+            req = req.header("Authorization", auth_header_value.clone());
+        }
+
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| OxenError::file_import_error(format!("Fetch file request failed: {e}")))?;
+
+        let status = resp.status();
+        if status.is_redirection() {
+            if hop == MAX_REDIRECTS {
+                return Err(OxenError::file_import_error("Too many redirects (max 10)"));
+            }
+            let location = resp
+                .headers()
+                .get("location")
+                .and_then(|v| v.to_str().ok())
+                .ok_or_else(|| {
+                    OxenError::file_import_error("Redirect response missing Location header")
+                })?;
+
+            // Resolve relative redirects
+            let next_url = current_url
+                .join(location)
+                .map_err(|e| OxenError::file_import_error(format!("Invalid redirect URL: {e}")))?;
+
+            // Validate redirect target
+            let scheme = next_url.scheme();
+            if scheme != "http" && scheme != "https" {
+                return Err(OxenError::file_import_error(
+                    "Redirect to non-HTTP(S) URL is not allowed",
+                ));
+            }
+            validate_url_target(&next_url).await?;
+
+            current_url = next_url;
+            continue;
+        }
+
+        if !status.is_success() {
+            return Err(OxenError::file_import_error(format!(
+                "HTTP request failed with status {status}"
+            )));
+        }
+
+        response = Some(resp);
+        break;
+    }
+
+    let response = response
+        .ok_or_else(|| OxenError::file_import_error("Failed to get a successful response"))?;
 
     let resp_headers = response.headers();
 
     let content_type = resp_headers
         .get("content-type")
         .and_then(|h| h.to_str().ok())
-        .ok_or_else(|| OxenError::file_import_error("Fetch file response missing content type"))?;
+        .unwrap_or("application/octet-stream");
 
     let content_length = response.content_length();
     if let Some(content_length) = content_length
@@ -300,11 +512,30 @@ async fn fetch_file(
             "Content length {content_length} exceeds maximum allowed size of 1GB"
         )));
     }
+
+    // Resolve filename: caller-specified > Content-Disposition > URL path > UUID
+    let raw_filename = caller_filename.clone().unwrap_or_else(|| {
+        // caller specified
+        resp_headers
+            .get("content-disposition")
+            .and_then(|h| h.to_str().ok())
+            .and_then(parse_content_disposition_filename) // Content-Disposition
+            .or_else(|| filename_from_url(&current_url)) // URL path
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()) // UUID
+    });
+
+    let filename = sanitize_filename(&raw_filename);
+    if filename.is_empty() {
+        return Err(OxenError::file_import_error(format!(
+            "Could not determine a valid filename for {url}"
+        )));
+    }
+
     let is_zip = content_type.contains("zip");
 
     log::debug!("files::import_file Got filename : {filename:?}");
 
-    let filepath = directory.join(filename);
+    let filepath = directory.join(&filename);
     log::debug!("files::import_file got download filepath: {filepath:?}");
 
     // handle download stream

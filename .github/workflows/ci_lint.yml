@@ -35,7 +35,7 @@ jobs:
       - name: Install dependencies and development tools
         run: |
           cd ${{ github.workspace }}
-          ./scripts/install-pre-reqs.sh
+          ./bin/install-prereqs
 
       - name: Run Pre-Commit Hooks
         run: |

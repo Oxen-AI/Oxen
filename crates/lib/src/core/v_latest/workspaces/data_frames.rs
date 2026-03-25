@@ -98,7 +98,7 @@ pub fn get_queryable_data_frame_workspace(
     get_queryable_data_frame_workspace_from_file_node(repo, &commit.id.parse()?, path)
 }
 
-pub fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
+pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
     // Is tabular just looks at the file extensions
     let file_node =
         repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
@@ -140,7 +140,9 @@ pub fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
     util::fs::create_dir_all(parent)?;
 
     let version_store = repo.version_store()?;
-    let version_path = version_store.get_version_path(&file_hash.to_string())?;
+    let version_path = version_store
+        .get_version_path(&file_hash.to_string())
+        .await?;
 
     log::debug!(
         "core::v_latest::index::workspaces::data_frames::index({path:?}) got version path: {version_path:?}"

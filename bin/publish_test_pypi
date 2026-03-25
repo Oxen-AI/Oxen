@@ -2,7 +2,7 @@
 # Build a .devN Python wheel for oxen-python and publish it to Test PyPI.
 #
 # Usage:
-#   TEST_PYPI_API_TOKEN=pypi-... ./scripts/publish_test_pypi.sh <N>
+#   TEST_PYPI_API_TOKEN=pypi-... ./bin/publish_test_pypi <N>
 #
 # The published version will be <V>.dev<N>, where V is the version currently
 # set in oxen-python/pyproject.toml.
@@ -75,7 +75,7 @@ trap cleanup EXIT
 # ---------------------------------------------------------------------------
 # Patch versions
 # ---------------------------------------------------------------------------
-"$REPO_ROOT/scripts/patch_dev_version.sh" "$PEP440_VERSION"
+"$REPO_ROOT/bin/patch_dev_version" "$PEP440_VERSION"
 
 echo "Updating Cargo.lock..."
 (cd "$REPO_ROOT" && cargo update -p oxen-py --quiet)

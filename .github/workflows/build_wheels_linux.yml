@@ -96,7 +96,7 @@ jobs:
 
       - name: Patch version in pyproject.toml and Cargo.toml
         run: |
-          bash ${{ github.workspace }}/scripts/patch_dev_version.sh "${{ inputs.VERSION_OVERRIDE }}"
+          bash ${{ github.workspace }}/bin/patch_dev_version "${{ inputs.VERSION_OVERRIDE }}"
 
       - name: Install rustup
         run: |

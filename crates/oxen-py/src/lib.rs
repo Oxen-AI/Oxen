@@ -42,20 +42,9 @@ fn oxen(m: Bound<'_, PyModule>) -> PyResult<()> {
     builder.enable_all();
     pyo3_async_runtimes::tokio::init(builder);
 
-    // Logger was causing deadlock unless we run with py.allow_threads in our
-    // bridge I'd rather not do that, because it's less efficient, leaving this
-    // commented out just in case you need to do further debugging and
-    // enable the rust -> python logging bridge
-
-    // You will need to add py.allow_threads(|| { ... }) around your code to
-    // get it to work and ensure there is not a deadlock. In practice we
-    // shouldn't be calling back to python to need to grab the GIL again,
-    // and can just perform all the heavy work in rust.
-
-    // println! also works to debug, make sure to remove it before committing
-
-    // https://docs.rs/pyo3-log/latest/pyo3_log/#interaction-with-python-gil
-    // pyo3_log::init();
+    // Initialize env_logger so that RUST_LOG is respected.
+    // We use env_logger instead of pyo3_log to avoid GIL deadlocks.
+    let _ = env_logger::try_init();
 
     m.add_class::<diff::py_tabular_diff::PyTabularDiff>()?;
     m.add_class::<diff::py_text_diff::PyChangeType>()?;

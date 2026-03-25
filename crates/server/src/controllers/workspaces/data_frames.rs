@@ -232,7 +232,7 @@ pub async fn get_schema(req: HttpRequest) -> Result<HttpResponse, OxenHttpError>
     let is_indexed = repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)?;
 
     if !is_indexed {
-        repositories::workspaces::data_frames::index(&repo, &workspace, &file_path)?;
+        repositories::workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
     }
 
     let db_path = repositories::workspaces::data_frames::duckdb_path(&workspace, &file_path);
@@ -605,7 +605,7 @@ pub async fn put(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHtt
     let is_indexed = repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)?;
 
     if !is_indexed && to_index {
-        repositories::workspaces::data_frames::index(&repo, &workspace, &file_path)?;
+        repositories::workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
     } else if is_indexed && !to_index {
         repositories::workspaces::data_frames::unindex(&workspace, &file_path)?;
     }
@@ -626,7 +626,7 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    repositories::workspaces::data_frames::restore(&repo, &workspace, file_path)?;
+    repositories::workspaces::data_frames::restore(&repo, &workspace, file_path).await?;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
 }
@@ -695,7 +695,7 @@ mod tests {
         let workspace_id = uuid::Uuid::new_v4().to_string();
         let workspace = repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
         let file_path = std::path::Path::new("data/test.csv");
-        repositories::workspaces::data_frames::index(&repo, &workspace, file_path)?;
+        repositories::workspaces::data_frames::index(&repo, &workspace, file_path).await?;
 
         // Request download for the indexed file
         let uri = format!(

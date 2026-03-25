@@ -2,7 +2,7 @@
 #
 # Build, configure, and run the Oxen test suite.
 #
-# Usage: test-rust.sh [--ffmpeg] [--keep] [nextest args...]
+# Usage: test-rust [--ffmpeg] [--keep] [nextest args...]
 #
 #   --ffmpeg    Enable the "ffmpeg" cargo feature for build and test commands.
 #   --keep      Do not remove test data (in data/ox and data/test/runs)on cleanup--useful for
@@ -31,7 +31,13 @@ cleanup() {
     if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
         echo "Stopping oxen-server (pid $SERVER_PID)..."
         kill "$SERVER_PID"
+        # Set a background process to force-kill after 20s if server still hasn't exited
+        (sleep 20 && kill -9 "$SERVER_PID" 2>/dev/null) &
+        WATCHDOG=$!
+        # Wait for server to exit
         wait "$SERVER_PID" 2>/dev/null || true
+        # Ensure the watchdog is killed, so it doesn't hang around when the server exits normally
+        kill "$WATCHDOG" 2>/dev/null || true
     fi
     if [ "$KEEP_DATA" = false ]; then
         echo "==> Removing test data..."
@@ -45,7 +51,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Ensure all prerequisites are installed
-"$SCRIPT_DIR/install-pre-reqs.sh"
+"$SCRIPT_DIR/install-prereqs"
 
 # Build
 echo "==> Building oxen (cargo build $FEATURE_ARGS)..."

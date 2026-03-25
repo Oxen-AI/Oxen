@@ -121,7 +121,7 @@ pub async fn unstage(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    unstage_from_workspace(&repo, &workspace, &path)
+    unstage_from_workspace(&repo, &workspace, &path).await
 }
 
 /// Unstage files
@@ -176,7 +176,7 @@ pub async fn unstage_many(
             continue;
         }
 
-        match unstage_from_workspace(&repo, &workspace, &path) {
+        match unstage_from_workspace(&repo, &workspace, &path).await {
             // Note: we can't delete the version file here because it may be
             // referenced elsewhere. In order to cleanup eagerly here we would
             // need the staged DB to track whether the version was newly added
@@ -199,14 +199,14 @@ pub async fn unstage_many(
     }
 }
 
-fn unstage_from_workspace(
+async fn unstage_from_workspace(
     repo: &LocalRepository,
     workspace: &Workspace,
     path: &PathBuf,
 ) -> Result<HttpResponse, OxenHttpError> {
     // This may not be in the commit if it's added, so have to parse tabular-ness from the path.
     if util::fs::is_tabular(path) {
-        repositories::workspaces::data_frames::restore(repo, workspace, path)?;
+        repositories::workspaces::data_frames::restore(repo, workspace, path).await?;
         Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
     } else if repositories::workspaces::files::exists(workspace, path)? {
         repositories::workspaces::files::unstage(workspace, path)?;
