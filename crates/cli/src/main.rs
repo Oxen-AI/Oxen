@@ -122,7 +122,7 @@ async fn async_main() -> ExitCode {
                             match WorkspaceCmd::run_subcommands(command, args).await {
                                 Ok(_) => {}
                                 Err(err) => {
-                                    eprintln!("{}", cli_error::format_error(&err));
+                                    cli_error::print_error(&err);
                                     return ExitCode::FAILURE;
                                 }
                             }
@@ -134,7 +134,7 @@ async fn async_main() -> ExitCode {
                             match RemoteModeCmd::run_subcommands(command, args).await {
                                 Ok(_) => {}
                                 Err(err) => {
-                                    eprintln!("{}", cli_error::format_error(&err));
+                                    cli_error::print_error(&err);
                                     return ExitCode::FAILURE;
                                 }
                             }
@@ -154,7 +154,7 @@ async fn async_main() -> ExitCode {
                 match runner.run(args).await {
                     Ok(_) => {}
                     Err(err) => {
-                        eprintln!("{}", cli_error::format_error(&err));
+                        cli_error::print_error(&err);
                         return ExitCode::FAILURE;
                     }
                 }

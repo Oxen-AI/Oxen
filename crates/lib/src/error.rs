@@ -26,8 +26,6 @@ pub use crate::error::string_error::StringError;
 
 use polars::prelude::PolarsError;
 
-pub const NO_REPO_FOUND: &str = "No oxen repository exists, looking for directory: .oxen";
-
 pub const HEAD_NOT_FOUND: &str = "HEAD not found";
 
 pub const EMAIL_AND_NAME_NOT_FOUND: &str = "oxen not configured, set email and name with:\n\noxen config --name YOUR_NAME --email YOUR_EMAIL\n";
@@ -170,7 +168,11 @@ impl fmt::Display for OxenError {
 
             // Remotes
             OxenError::RemoteRepoNotFound(remote) => {
-                write!(f, "Remote repository not found: {remote}")
+                if remote.name.is_empty() {
+                    write!(f, "Remote repository not found: {}", remote.url)
+                } else {
+                    write!(f, "Remote repository not found: {remote}")
+                }
             }
             OxenError::RemoteAheadOfLocal(err) => write!(f, "{err}"),
             OxenError::IncompleteLocalHistory(err) => write!(f, "{err}"),
@@ -434,8 +436,10 @@ impl OxenError {
     }
 
     pub fn remote_repo_not_found(url: impl AsRef<str>) -> OxenError {
-        let err = format!("Remote repository does not exist {}", url.as_ref());
-        OxenError::basic_str(err)
+        OxenError::RemoteRepoNotFound(Box::new(Remote {
+            name: String::new(),
+            url: url.as_ref().to_string(),
+        }))
     }
 
     pub fn head_not_found() -> OxenError {
