@@ -832,7 +832,7 @@ impl From<StripPrefixError> for OxenError {
 }
 impl From<ParseIntError> for OxenError {
     fn from(error: ParseIntError) -> Self {
-        OxenError::basic_str(error.to_string())
+        OxenError::ParseIntError(error)
     }
 }
 
