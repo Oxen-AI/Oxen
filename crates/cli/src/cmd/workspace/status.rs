@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use clap::{Arg, ArgMatches, Command};
 
 use liboxen::api;
-use liboxen::error;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::model::RemoteRepository;
@@ -146,8 +145,9 @@ impl RunCmd for WorkspaceStatusCmd {
             ignore: None,
         };
 
+        let current_dir = std::env::current_dir().map_err(OxenError::from)?;
         let repo_dir = util::fs::get_repo_root_from_current_dir()
-            .ok_or(OxenError::basic_str(error::NO_REPO_FOUND))?;
+            .ok_or_else(|| OxenError::local_repo_not_found(&current_dir))?;
 
         let repository = LocalRepository::from_dir(&repo_dir)?;
 

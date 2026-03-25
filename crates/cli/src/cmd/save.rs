@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use clap::{Arg, ArgMatches, Command};
 
-use liboxen::error;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
@@ -41,8 +40,8 @@ impl RunCmd for SaveCmd {
 
         let output_path = Path::new(output_str);
         let repo_path = Path::new(repo_str);
-        let repo_dir =
-            util::fs::get_repo_root(repo_path).ok_or(OxenError::basic_str(error::NO_REPO_FOUND))?;
+        let repo_dir = util::fs::get_repo_root(repo_path)
+            .ok_or_else(|| OxenError::local_repo_not_found(repo_path))?;
         let repo = LocalRepository::from_dir(&repo_dir)?;
 
         repositories::save(&repo, output_path)?;

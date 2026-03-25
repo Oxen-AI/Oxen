@@ -146,16 +146,132 @@ pub enum OxenError {
 impl fmt::Display for OxenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OxenError::OxenUpdateRequired(err)
-            | OxenError::Basic(err)
-            | OxenError::ThumbnailingNotEnabled(err) => write!(f, "{err}"),
+            // User
+            OxenError::UserConfigNotFound(err) => write!(f, "{err}"),
+
+            // Repo
+            OxenError::RepoNotFound(repo) => write!(f, "Repository '{repo}' not found"),
+            OxenError::LocalRepoNotFound(path) => {
+                write!(f, "No oxen repository found at {path}")
+            }
+            OxenError::RepoAlreadyExists(repo) => {
+                write!(f, "Repository '{repo}' already exists")
+            }
+            OxenError::RepoAlreadyExistsAtDestination(dest) => {
+                write!(f, "Repository already exists at destination: {dest}")
+            }
             OxenError::InvalidRepoName(name) => write!(
                 f,
                 "Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"
             ),
-            _ => {
-                write!(f, "{self:?}")
+
+            // Fork
+            OxenError::ForkStatusNotFound(err) => write!(f, "{err}"),
+
+            // Remotes
+            OxenError::RemoteRepoNotFound(remote) => {
+                write!(f, "Remote repository not found: {remote}")
             }
+            OxenError::RemoteAheadOfLocal(err) => write!(f, "{err}"),
+            OxenError::IncompleteLocalHistory(err) => write!(f, "{err}"),
+            OxenError::RemoteBranchLocked(err) => write!(f, "{err}"),
+            OxenError::UpstreamMergeConflict(err) => write!(f, "{err}"),
+
+            // Branches/Commits
+            OxenError::BranchNotFound(name) => write!(f, "{name}"),
+            OxenError::RevisionNotFound(revision) => {
+                write!(f, "Revision not found: {revision}")
+            }
+            OxenError::RootCommitDoesNotMatch(commit) => {
+                write!(f, "Root commit does not match: {commit}")
+            }
+            OxenError::NothingToCommit(err) => write!(f, "{err}"),
+            OxenError::NoCommitsFound(err) => write!(f, "{err}"),
+            OxenError::HeadNotFound(err) => write!(f, "{err}"),
+
+            // Workspaces
+            OxenError::WorkspaceNotFound(id) => write!(f, "Workspace not found: {id}"),
+            OxenError::QueryableWorkspaceNotFound() => {
+                write!(f, "No queryable workspace found")
+            }
+            OxenError::WorkspaceBehind(workspace) => {
+                write!(f, "Workspace is behind: {workspace}")
+            }
+
+            // Resources
+            OxenError::ResourceNotFound(resource) => {
+                write!(f, "Resource not found: {resource}")
+            }
+            OxenError::PathDoesNotExist(path) => write!(f, "Path does not exist: {path}"),
+            OxenError::ParsedResourceNotFound(path) => {
+                write!(f, "Resource not found: {path}")
+            }
+
+            // Versioning
+            OxenError::MigrationRequired(err) => write!(f, "{err}"),
+            OxenError::OxenUpdateRequired(err) => write!(f, "{err}"),
+            OxenError::InvalidVersion(err) => write!(f, "Invalid version: {err}"),
+
+            // Entry
+            OxenError::CommitEntryNotFound(err) => write!(f, "{err}"),
+
+            // Schema
+            OxenError::InvalidSchema(schema) => write!(f, "Invalid schema: {schema}"),
+            OxenError::IncompatibleSchemas(schema) => {
+                write!(f, "Incompatible schemas: {schema}")
+            }
+            OxenError::InvalidFileType(err) => write!(f, "{err}"),
+            OxenError::ColumnNameAlreadyExists(err) => write!(f, "{err}"),
+            OxenError::ColumnNameNotFound(err) => write!(f, "{err}"),
+            OxenError::UnsupportedOperation(err) => write!(f, "{err}"),
+
+            // Metadata
+            OxenError::ImageMetadataParseError(err) => write!(f, "{err}"),
+            OxenError::ThumbnailingNotEnabled(err) => write!(f, "{err}"),
+
+            // SQL
+            OxenError::SQLParseError(err) => write!(f, "SQL parse error: {err}"),
+            OxenError::NoRowsFound(err) => write!(f, "{err}"),
+
+            // CLI Interaction
+            OxenError::OperationCancelled(err) => write!(f, "{err}"),
+
+            // fs / io
+            OxenError::StripPrefixError(err) => write!(f, "{err}"),
+
+            // Dataframe
+            OxenError::DataFrameError(err) => write!(f, "{err}"),
+
+            // File Import
+            OxenError::ImportFileError(err) => write!(f, "{err}"),
+
+            // External Library Errors
+            OxenError::IO(err) => write!(f, "{err}"),
+            OxenError::Authentication(err) => write!(f, "Authentication failed: {err}"),
+            OxenError::ArrowError(err) => write!(f, "{err}"),
+            OxenError::BinCodeError(err) => write!(f, "{err}"),
+            OxenError::TomlSer(err) => write!(f, "Configuration error: {err}"),
+            OxenError::TomlDe(err) => write!(f, "Configuration error: {err}"),
+            OxenError::URI(err) => write!(f, "Invalid URI: {err}"),
+            OxenError::URL(err) => write!(f, "Invalid URL: {err}"),
+            OxenError::JSON(err) => write!(f, "JSON error: {err}"),
+            OxenError::HTTP(err) => write!(f, "Network error: {err}"),
+            OxenError::UTF8Error(err) => write!(f, "UTF-8 encoding error: {err}"),
+            OxenError::DB(err) => write!(f, "Database error: {err}"),
+            OxenError::DUCKDB(err) => write!(f, "Query error: {err}"),
+            OxenError::ENV(err) => write!(f, "Environment variable error: {err}"),
+            OxenError::ImageError(err) => write!(f, "Image processing error: {err}"),
+            OxenError::RedisError(err) => write!(f, "Redis error: {err}"),
+            OxenError::R2D2Error(err) => write!(f, "Connection pool error: {err}"),
+            OxenError::JwalkError(err) => write!(f, "Directory traversal error: {err}"),
+            OxenError::PatternError(err) => write!(f, "Pattern error: {err}"),
+            OxenError::GlobError(err) => write!(f, "Glob error: {err}"),
+            OxenError::PolarsError(err) => write!(f, "DataFrame error: {err}"),
+            OxenError::ParseIntError(err) => write!(f, "Invalid integer: {err}"),
+            OxenError::RmpDecodeError(err) => write!(f, "Decode error: {err}"),
+
+            // Fallback
+            OxenError::Basic(err) => write!(f, "{err}"),
         }
     }
 }

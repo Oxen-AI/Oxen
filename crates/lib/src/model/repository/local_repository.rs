@@ -2,7 +2,6 @@ use crate::config::RepositoryConfig;
 use crate::constants::SHALLOW_FLAG;
 use crate::constants::{self, DEFAULT_VNODE_SIZE, MIN_OXEN_VERSION};
 use crate::core::versions::MinOxenVersion;
-use crate::error;
 use crate::error::OxenError;
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
 use crate::opts::StorageOpts;
@@ -51,7 +50,8 @@ impl LocalRepository {
     pub fn from_dir(path: impl AsRef<Path>) -> Result<Self, OxenError> {
         let path = path.as_ref().to_path_buf();
         let config_path = util::fs::config_filepath(&path);
-        let config = RepositoryConfig::from_file(&config_path)?;
+        let config = RepositoryConfig::from_file(&config_path)
+            .map_err(|_| OxenError::local_repo_not_found(&path))?;
 
         let mut repo = LocalRepository {
             path,
@@ -116,8 +116,9 @@ impl LocalRepository {
     /// Load a repository from the current directory
     /// this traverses up the directory tree until it finds a .oxen/ directory
     pub fn from_current_dir() -> Result<LocalRepository, OxenError> {
+        let current_dir = std::env::current_dir().map_err(OxenError::from)?;
         let repo_dir = util::fs::get_repo_root_from_current_dir()
-            .ok_or(OxenError::basic_str(error::NO_REPO_FOUND))?;
+            .ok_or_else(|| OxenError::local_repo_not_found(&current_dir))?;
 
         LocalRepository::from_dir(&repo_dir)
     }
