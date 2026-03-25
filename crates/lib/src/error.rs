@@ -694,6 +694,14 @@ impl OxenError {
         let err = format!("Parse error: {:?}", value.as_ref());
         OxenError::basic_str(err)
     }
+
+    pub fn unknown_subcommand(parent: impl AsRef<str>, name: impl AsRef<str>) -> OxenError {
+        OxenError::basic_str(format!(
+            "Unknown {} subcommand '{}'",
+            parent.as_ref(),
+            name.as_ref()
+        ))
+    }
 }
 
 // if you do not want to call .map_err, implement the std::convert::From trait

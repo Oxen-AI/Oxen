@@ -61,10 +61,7 @@ impl RunCmd for SchemasCmd {
         let sub_commands = self.get_subcommands();
         if let Some((name, sub_matches)) = args.subcommand() {
             let Some(cmd) = sub_commands.get(name) else {
-                eprintln!("Unknown schema subcommand {name}");
-                return Err(OxenError::basic_str(format!(
-                    "Unknown schema subcommand {name}"
-                )));
+                return Err(OxenError::unknown_subcommand("schemas", name));
             };
 
             // Calling await within an await is making it complain?
@@ -81,8 +78,7 @@ impl RunCmd for SchemasCmd {
         } else {
             // Fall back to list schemas
             let Some(cmd) = sub_commands.get("list") else {
-                eprintln!("Unknown schema subcommand list");
-                return Err(OxenError::basic_str("Unknown schema subcommand list"));
+                return Err(OxenError::unknown_subcommand("schemas", "list"));
             };
             tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(cmd.run(args))
