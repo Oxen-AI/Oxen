@@ -312,42 +312,6 @@ impl VersionStore for LocalVersionStore {
         Ok(buffer)
     }
 
-    async fn get_version_chunk_stream(
-        &self,
-        hash: &str,
-        offset: u64,
-        size: u64,
-    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
-    {
-        let version_file_path = self.version_path(hash);
-
-        let mut file = File::open(&version_file_path).await?;
-        let metadata = file.metadata().await?;
-        let file_len = metadata.len();
-
-        if offset >= file_len || offset + size > file_len {
-            return Err(OxenError::IO(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "beyond end of file",
-            )));
-        }
-
-        let read_len = std::cmp::min(size, file_len - offset);
-        if read_len > usize::MAX as u64 {
-            return Err(OxenError::basic_str("requested chunk too large"));
-        }
-
-        use tokio::io::{AsyncSeekExt, SeekFrom};
-        file.seek(SeekFrom::Start(offset)).await?;
-
-        // Create a limited reader that only reads the specified range
-        let limited_reader = file.take(read_len);
-        let reader = BufReader::new(limited_reader);
-        let stream = ReaderStream::new(reader);
-
-        Ok(Box::new(stream))
-    }
-
     async fn list_version_chunks(&self, hash: &str) -> Result<Vec<u64>, OxenError> {
         let chunk_dir = self.version_chunks_dir(hash);
         let mut chunks = Vec::new();
