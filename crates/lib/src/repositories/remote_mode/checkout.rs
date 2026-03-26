@@ -90,9 +90,7 @@ pub async fn create_checkout_branch(
             "Error: local repository has no remote",
         ));
     };
-    let remote_repo = api::client::repositories::get_by_remote(&remote)
-        .await?
-        .ok_or_else(|| OxenError::remote_repo_not_found(branch_name))?;
+    let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
 
     // Create the remote branch from the commit
     let head_commit = repositories::commits::head_commit(repo)?;

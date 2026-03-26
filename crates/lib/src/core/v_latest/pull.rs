@@ -37,9 +37,7 @@ pub async fn pull_remote_branch(
         .get_remote(remote)
         .ok_or(OxenError::remote_not_set(remote))?;
 
-    let remote_repo = api::client::repositories::get_by_remote(&remote)
-        .await?
-        .ok_or(OxenError::remote_not_found(remote.clone()))?;
+    let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
 
     api::client::repositories::pre_pull(&remote_repo).await?;
 
