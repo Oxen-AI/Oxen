@@ -397,19 +397,6 @@ impl VersionStore for S3VersionStore {
         ))
     }
 
-    async fn get_version_chunk_stream(
-        &self,
-        _hash: &str,
-        _offset: u64,
-        _size: u64,
-    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
-    {
-        // TODO: Implement S3 version chunk stream retrieval
-        Err(OxenError::basic_str(
-            "S3VersionStore get_version_chunk_stream not yet implemented",
-        ))
-    }
-
     async fn list_version_chunks(&self, _hash: &str) -> Result<Vec<u64>, OxenError> {
         // TODO: Implement S3 version chunk listing
         Err(OxenError::basic_str(
