@@ -793,41 +793,35 @@ pub async fn diff_text_file_nodes(
     let version_store = repo.version_store()?;
     match (file_1, file_2) {
         (Some(file_1), Some(file_2)) => {
-            let file_hash_1 = file_1.hash().to_string();
-            let file_content_1 = read_version_file_to_string(&version_store, &file_hash_1).await?;
-            let version_path_1 = version_store.get_version_path(&file_hash_1).await?;
-
-            let file_hash_2 = file_2.hash().to_string();
-            let file_content_2 = read_version_file_to_string(&version_store, &file_hash_2).await?;
-            let version_path_2 = version_store.get_version_path(&file_hash_2).await?;
-
+            let file_content_1 =
+                read_version_file_to_string(&version_store, &file_1.hash().to_string()).await?;
+            let file_content_2 =
+                read_version_file_to_string(&version_store, &file_2.hash().to_string()).await?;
             utf8_diff::diff(
                 Some(file_content_1),
-                Some(version_path_1.to_pathbuf()),
+                Some(PathBuf::from(file_1.name())),
                 Some(file_content_2),
-                Some(version_path_2.to_pathbuf()),
+                Some(PathBuf::from(file_2.name())),
             )
         }
         (Some(file_1), None) => {
-            let file_hash_1 = file_1.hash().to_string();
-            let file_content_1 = read_version_file_to_string(&version_store, &file_hash_1).await?;
-            let version_path_1 = version_store.get_version_path(&file_hash_1).await?;
+            let file_content_1 =
+                read_version_file_to_string(&version_store, &file_1.hash().to_string()).await?;
             utf8_diff::diff(
                 Some(file_content_1),
-                Some(version_path_1.to_pathbuf()),
+                Some(PathBuf::from(file_1.name())),
                 None,
                 None,
             )
         }
         (None, Some(file_2)) => {
-            let file_hash_2 = file_2.hash().to_string();
-            let file_content_2 = read_version_file_to_string(&version_store, &file_hash_2).await?;
-            let version_path_2 = version_store.get_version_path(&file_hash_2).await?;
+            let file_content_2 =
+                read_version_file_to_string(&version_store, &file_2.hash().to_string()).await?;
             utf8_diff::diff(
                 None,
                 None,
                 Some(file_content_2),
-                Some(version_path_2.to_pathbuf()),
+                Some(PathBuf::from(file_2.name())),
             )
         }
         (None, None) => Err(OxenError::basic_str(

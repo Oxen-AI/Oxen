@@ -770,10 +770,8 @@ async fn create_merge_commit(
     merge_commits: &MergeCommits,
     shared_hashes: HashSet<MerkleHash>,
 ) -> Result<Commit, OxenError> {
-    // Stage changes
-
-    let head_commit = repositories::commits::head_commit(repo)?;
-    add::add_dir_except(repo, &Some(head_commit), repo.path.clone(), shared_hashes).await?;
+    let base_commit = merge_commits.base.clone();
+    add::add_dir_except(repo, &Some(base_commit), repo.path.clone(), shared_hashes).await?;
 
     let commit_msg = format!(
         "Merge commit {} into {}",
@@ -800,9 +798,8 @@ async fn create_merge_commit_on_branch(
     branch: &Branch,
     shared_hashes: HashSet<MerkleHash>,
 ) -> Result<Commit, OxenError> {
-    // Stage changes
-    let head_commit = repositories::commits::head_commit(repo)?;
-    add::add_dir_except(repo, &Some(head_commit), repo.path.clone(), shared_hashes).await?;
+    let base_commit = merge_commits.base.clone();
+    add::add_dir_except(repo, &Some(base_commit), repo.path.clone(), shared_hashes).await?;
 
     let commit_msg = format!(
         "Merge commit {} into {} on branch {}",

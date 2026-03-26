@@ -293,17 +293,16 @@ pub fn remove_file_with_db_manager(
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let mut err_files: Vec<ErrorFileInfo> = vec![];
 
-    if let Ok(staged_db_manager) = get_staged_db_manager(repo) {
-        let status = StagedEntryStatus::Removed;
-        match add_file_node_and_parent_dir(file_node, status, path, &staged_db_manager, seen_dirs) {
-            Ok(_) => {}
-            Err(e) => {
-                err_files.push(ErrorFileInfo {
-                    hash: file_node.hash().to_string(),
-                    path: Some(path.to_path_buf()),
-                    error: format!("Failed to add file to staged db: {e}"),
-                });
-            }
+    let staged_db_manager = get_staged_db_manager(repo)?;
+    let status = StagedEntryStatus::Removed;
+    match add_file_node_and_parent_dir(file_node, status, path, &staged_db_manager, seen_dirs) {
+        Ok(_) => {}
+        Err(e) => {
+            err_files.push(ErrorFileInfo {
+                hash: file_node.hash().to_string(),
+                path: Some(path.to_path_buf()),
+                error: format!("Failed to add file to staged db: {e}"),
+            });
         }
     }
 

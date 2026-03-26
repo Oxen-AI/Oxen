@@ -17,7 +17,7 @@ use crate::model::{
 };
 
 use crate::opts::PushOpts;
-use crate::util::{self, concurrency};
+use crate::util::concurrency;
 use crate::{api, repositories};
 
 pub async fn push(repo: &LocalRepository) -> Result<Branch, OxenError> {
@@ -566,19 +566,13 @@ async fn chunk_and_send_large_entries(
     }
 
     use tokio::time::sleep;
-    type PieceOfWork = (Entry, PathBuf, RemoteRepository);
+    type PieceOfWork = (Entry, RemoteRepository);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
 
     log::debug!("Chunking and sending {} larger files", entries.len());
     let entries: Vec<PieceOfWork> = entries
         .iter()
-        .map(|e| {
-            (
-                e.to_owned(),
-                local_repo.path.clone(),
-                remote_repo.to_owned(),
-            )
-        })
+        .map(|e| (e.to_owned(), remote_repo.to_owned()))
         .collect();
 
     let queue = Arc::new(TaskQueue::new(entries.len()));
@@ -610,7 +604,7 @@ async fn chunk_and_send_large_entries(
                     break;
                 }
 
-                let Some((entry, repo_path, remote_repo)) = queue.try_pop() else {
+                let Some((entry, remote_repo)) = queue.try_pop() else {
                     // reached end of queue
                     break;
                 };
@@ -624,21 +618,10 @@ async fn chunk_and_send_large_entries(
                         break;
                     }
                 };
-                let relative_path = util::fs::path_relative_to_dir(version_path, &repo_path)
-                    .unwrap_or_else(|e| {
-                        log::error!("Failed to get relative path: {e}");
-                        entry.path()
-                    });
-                let path = if relative_path.exists() {
-                    relative_path
-                } else {
-                    // for test environment
-                    repo_path.join(relative_path)
-                };
 
                 match api::client::versions::parallel_large_file_upload(
                     &remote_repo,
-                    path,
+                    &*version_path,
                     None::<PathBuf>,
                     None,
                     Some(entry.clone()),

@@ -103,20 +103,26 @@ pub async fn add_version_files(
     let workspace_repo = &workspace.workspace_repo;
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
 
-    // Resolve all version paths before entering the sync closure
-    let mut version_paths = Vec::with_capacity(files_with_hash.len());
-    for item in files_with_hash.iter() {
-        version_paths.push(version_store.get_version_path(&item.hash).await?);
-    }
-
     let mut err_files: Vec<ErrorFileInfo> = vec![];
     let staged_db_manager = get_staged_db_manager(workspace_repo)?;
-    for (item, version_path) in files_with_hash.iter().zip(version_paths.iter()) {
+    for item in files_with_hash.iter() {
         let target_path = PathBuf::from(directory).join(&item.path);
-
+        let version_path = match version_store.get_version_path(&item.hash).await {
+            Ok(path) => path,
+            Err(e) => {
+                let error = format!("Failed to resolve version path: {e}");
+                log::error!("{error}");
+                err_files.push(ErrorFileInfo {
+                    hash: item.hash.clone(),
+                    path: Some(item.path.clone()),
+                    error,
+                });
+                continue;
+            }
+        };
         match stage_file_with_hash(
             workspace,
-            version_path,
+            &version_path,
             &target_path,
             &item.hash,
             &staged_db_manager,
@@ -127,11 +133,12 @@ pub async fn add_version_files(
                 // let parent_dirs = item.parents;
             }
             Err(e) => {
-                log::error!("error with adding file: {e:?}");
+                let error = format!("Failed to add file to staged db: {e}");
+                log::error!("{error}");
                 err_files.push(ErrorFileInfo {
                     hash: item.hash.clone(),
                     path: Some(item.path.clone()),
-                    error: format!("Failed to add file to staged db: {e}"),
+                    error,
                 });
                 continue;
             }
@@ -959,9 +966,16 @@ pub fn mv(
     workspace: &Workspace,
     path: impl AsRef<Path>,
     new_path: impl AsRef<Path>,
-) -> Result<PathBuf, OxenError> {
+) -> Result<(), OxenError> {
     let path = path.as_ref();
     let new_path = new_path.as_ref();
+
+    if path == new_path {
+        return Err(OxenError::basic_str(format!(
+            "Source and destination are the same: {path:?}"
+        )));
+    }
+
     let workspace_repo = &workspace.workspace_repo;
 
     // First, try to read existing staged entry for the source path
@@ -975,9 +989,6 @@ pub fn mv(
         repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
             .ok_or_else(|| OxenError::path_does_not_exist(path))?
     };
-
-    // Check if this is a no-op move (source and destination are the same)
-    let is_same_path = path == new_path;
 
     // Create the new file node with updated name (full path for the new location)
     let mut new_file_node = file_node.clone();
@@ -1005,38 +1016,31 @@ pub fn mv(
     // Add the file node at the new path
     staged_db_manager.upsert_file_node(new_path, new_status, &new_file_node)?;
 
-    // Only handle removal if source and destination are different
-    if !is_same_path {
-        // Check if the source file exists in the base repo (needs to be staged for removal)
-        let source_exists_in_base =
-            repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
-                .is_some();
+    // Check if the source file exists in the base repo (needs to be staged for removal)
+    let source_exists_in_base =
+        repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
+            .is_some();
 
-        if source_exists_in_base {
-            // Create a file node for the removed entry with the full original path as name
-            let mut removed_file_node = file_node.clone();
-            removed_file_node.set_name(path.to_str().unwrap());
+    if source_exists_in_base {
+        // Create a file node for the removed entry with the full original path as name
+        let mut removed_file_node = file_node.clone();
+        removed_file_node.set_name(path.to_str().unwrap());
 
-            // Stage the original path as removed
-            staged_db_manager.upsert_file_node(
-                path,
-                StagedEntryStatus::Removed,
-                &removed_file_node,
-            )?;
+        // Stage the original path as removed
+        staged_db_manager.upsert_file_node(path, StagedEntryStatus::Removed, &removed_file_node)?;
 
-            // Add parent directories for the removed path
-            if let Some(parents) = path.parent() {
-                for dir in parents.ancestors() {
-                    staged_db_manager.add_directory(dir, &seen_dirs)?;
-                    if dir == Path::new("") {
-                        break;
-                    }
+        // Add parent directories for the removed path
+        if let Some(parents) = path.parent() {
+            for dir in parents.ancestors() {
+                staged_db_manager.add_directory(dir, &seen_dirs)?;
+                if dir == Path::new("") {
+                    break;
                 }
             }
-        } else {
-            // Just delete the staged entry if file wasn't in base repo
-            staged_db_manager.delete_entry(path)?;
         }
+    } else {
+        // Just delete the staged entry if file wasn't in base repo
+        staged_db_manager.delete_entry(path)?;
     }
 
     // Add parent directories for the new path
@@ -1049,6 +1053,5 @@ pub fn mv(
         }
     }
 
-    let relative_path = util::fs::path_relative_to_dir(new_path, &workspace_repo.path)?;
-    Ok(relative_path)
+    Ok(())
 }
