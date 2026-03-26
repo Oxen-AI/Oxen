@@ -8,7 +8,10 @@ pub struct Remote {
 
 impl std::fmt::Display for Remote {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{}] '{}'", self.name, self.url)
+        match self.name.as_str() {
+            "" => write!(f, "{}", self.url),
+            _ => write!(f, "[{}] '{}'", self.name, self.url),
+        }
     }
 }
 
