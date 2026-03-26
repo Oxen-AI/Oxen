@@ -100,6 +100,12 @@ oxen push origin main               # Push to remote
 - Functions should return `Result<T, OxenError>`
 - Implement proper error propagation through the `?` operator
 
+# Making Changes
+
+- When changing something that is documented in nearby code, or appears in any markdown files in the repository, update the affected documentation.
+- When prompted to always do something a certain way in general, add an entry to this section of the CLAUDE.md file.
+- When calling `get_staged_db_manager`, follow the doc comment on that function: drop the returned `StagedDBManager` as soon as possible (via a block scope or explicit `drop()`) to avoid holding the shared database handle longer than necessary.
+
 # Testing Rules
 - Use the test helpers in `crates/lib/src/test.rs` (e.g., `run_empty_local_repo_test`) for unit tests in the lib code.
 - Try to use the minimal helper for the scenario you are testing. E.g., don't use `run_training_data_fully_sync_remote` when `run_one_commit_local_repo_test` is enough.
