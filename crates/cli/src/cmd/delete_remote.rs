@@ -68,11 +68,7 @@ impl RunCmd for DeleteRemoteCmd {
             .unwrap_or("https".to_string());
 
         let url = format!("{scheme}://{host}/{namespace_name}");
-        let Some(remote_repo) = api::client::repositories::get_by_url(&url).await? else {
-            return Err(OxenError::basic_str(format!(
-                "Remote repository not found: {namespace_name}"
-            )));
-        };
+        let remote_repo = api::client::repositories::get_by_url(&url).await?;
 
         // Check if the user wants to skip confirmation
         let skip_confirmation = args.get_flag("yes");

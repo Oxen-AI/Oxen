@@ -53,11 +53,7 @@ pub async fn push_remote_branch(
         .get_remote(&opts.remote)
         .ok_or_else(|| OxenError::remote_not_set(&opts.remote))?;
 
-    let remote_repo = match api::client::repositories::get_by_remote(&remote).await {
-        Ok(Some(repo)) => repo,
-        Ok(None) => return Err(OxenError::remote_repo_not_found(&remote.url)),
-        Err(err) => return Err(err),
-    };
+    let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
 
     push_local_branch_to_remote_repo(repo, &remote_repo, &local_branch, opts).await?;
     let duration = std::time::Duration::from_millis(start.elapsed().as_millis() as u64);

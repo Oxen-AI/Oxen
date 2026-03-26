@@ -162,22 +162,15 @@ pub async fn delete_remote(
     remote: impl AsRef<str>,
     branch_name: impl AsRef<str>,
 ) -> Result<Branch, OxenError> {
-    if let Some(remote) = repo.get_remote(&remote) {
-        if let Some(remote_repo) = api::client::repositories::get_by_remote(&remote).await? {
-            if let Some(branch) =
-                api::client::branches::get_by_name(&remote_repo, &branch_name).await?
-            {
-                api::client::branches::delete(&remote_repo, &branch.name).await?;
-                Ok(branch)
-            } else {
-                Err(OxenError::remote_branch_not_found(branch_name))
-            }
-        } else {
-            Err(OxenError::remote_repo_not_found(&remote.url))
-        }
-    } else {
-        Err(OxenError::remote_not_set(remote))
-    }
+    let remote = repo
+        .get_remote(&remote)
+        .ok_or_else(|| OxenError::remote_not_set(remote))?;
+    let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
+    let branch = api::client::branches::get_by_name(&remote_repo, &branch_name)
+        .await?
+        .ok_or_else(|| OxenError::remote_branch_not_found(branch_name))?;
+    api::client::branches::delete(&remote_repo, &branch.name).await?;
+    Ok(branch)
 }
 
 pub async fn delete(

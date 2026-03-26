@@ -9,6 +9,7 @@ use liboxen::model::LocalRepository;
 use liboxen::util;
 // use env_logger::Env;
 
+pub mod cli_error;
 pub mod cmd;
 pub mod helpers;
 
@@ -121,7 +122,7 @@ async fn async_main() -> ExitCode {
                             match WorkspaceCmd::run_subcommands(command, args).await {
                                 Ok(_) => {}
                                 Err(err) => {
-                                    eprintln!("{err}");
+                                    cli_error::print_error(&err);
                                     return ExitCode::FAILURE;
                                 }
                             }
@@ -133,7 +134,7 @@ async fn async_main() -> ExitCode {
                             match RemoteModeCmd::run_subcommands(command, args).await {
                                 Ok(_) => {}
                                 Err(err) => {
-                                    eprintln!("{err}");
+                                    cli_error::print_error(&err);
                                     return ExitCode::FAILURE;
                                 }
                             }
@@ -153,7 +154,7 @@ async fn async_main() -> ExitCode {
                 match runner.run(args).await {
                     Ok(_) => {}
                     Err(err) => {
-                        eprintln!("{err}");
+                        cli_error::print_error(&err);
                         return ExitCode::FAILURE;
                     }
                 }

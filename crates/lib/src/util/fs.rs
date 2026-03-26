@@ -168,13 +168,9 @@ pub fn read_from_path(path: impl AsRef<Path>) -> Result<String, OxenError> {
     let path = path.as_ref();
     match std::fs::read_to_string(path) {
         Ok(contents) => Ok(contents),
-        Err(_) => {
-            let err = format!(
-                "util::fs::read_from_path could not open: {}",
-                path.display()
-            );
-            log::warn!("{err}");
-            Err(OxenError::basic_str(&err))
+        Err(err) => {
+            log::warn!("Could not read file {}: {err}", path.display());
+            Err(OxenError::file_read_error(path, err))
         }
     }
 }

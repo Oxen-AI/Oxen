@@ -497,9 +497,9 @@ pub async fn maybe_fetch_missing_entries(
     };
 
     let remote_repo = match api::client::repositories::get_by_remote(&remote).await {
-        Ok(Some(repo)) => repo,
-        Ok(None) => {
-            log::warn!("Remote repo not found: {}", remote.url);
+        Ok(repo) => repo,
+        Err(OxenError::RemoteRepoNotFound(_)) => {
+            log::debug!("No remote repo found, skipping fetch");
             return Ok(());
         }
         Err(err) => {

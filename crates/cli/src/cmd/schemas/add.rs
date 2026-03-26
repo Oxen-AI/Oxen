@@ -49,9 +49,7 @@ impl RunCmd for SchemasAddCmd {
         let path = args
             .get_one::<String>("PATH")
             .map(|p| -> Result<PathBuf, OxenError> {
-                let current_dir = std::env::current_dir().map_err(|e| {
-                    OxenError::basic_str(format!("Failed to get current directory: {e}"))
-                })?;
+                let current_dir = std::env::current_dir()?;
                 let path = current_dir.join(p);
                 util::fs::canonicalize(&path).or_else(|_| Ok(path))
             })

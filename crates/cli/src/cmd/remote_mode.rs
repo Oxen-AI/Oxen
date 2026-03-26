@@ -49,10 +49,7 @@ impl RunCmd for RemoteModeCmd {
         let sub_commands = Self::get_subcommands();
         if let Some((name, sub_matches)) = args.subcommand() {
             let Some(cmd) = sub_commands.get(name) else {
-                eprintln!("Unknown remote mode subcommand {name}");
-                return Err(OxenError::basic_str(format!(
-                    "Unknown remote mode subcommand {name}"
-                )));
+                return Err(OxenError::unknown_subcommand("remote mode", name));
             };
 
             // Calling await within an await is making it complain?
@@ -86,9 +83,7 @@ impl RemoteModeCmd {
     ) -> Result<(), OxenError> {
         let sub_commands = Self::get_subcommands();
         let Some(cmd) = sub_commands.get(name) else {
-            return Err(OxenError::basic_str(format!(
-                "Command `oxen {name}` not available for remote mode"
-            )));
+            return Err(OxenError::unknown_subcommand("remote mode", name));
         };
 
         tokio::task::block_in_place(|| {

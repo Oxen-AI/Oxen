@@ -7,7 +7,6 @@ use crate::constants;
 use crate::constants::OXEN_HIDDEN_DIR;
 use crate::core;
 use crate::core::refs::with_ref_manager;
-use crate::error::NO_REPO_FOUND;
 use crate::error::OxenError;
 use crate::model::Commit;
 use crate::model::MetadataEntry;
@@ -102,7 +101,7 @@ fn is_repo_forked(repo_dir: &Path) -> Result<Option<LocalRepository>, OxenError>
     if status_path.exists() {
         Ok(Some(LocalRepository::from_dir(repo_dir)?))
     } else {
-        Err(OxenError::basic_str(NO_REPO_FOUND))
+        Err(OxenError::local_repo_not_found(repo_dir))
     }
 }
 

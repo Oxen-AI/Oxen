@@ -20,9 +20,7 @@ pub async fn fetch_all(
     let remote = repo
         .get_remote(&fetch_opts.remote)
         .ok_or(OxenError::remote_not_set(fetch_opts.remote.clone()))?;
-    let remote_repo = api::client::repositories::get_by_remote(&remote)
-        .await?
-        .ok_or(OxenError::remote_not_found(remote.clone()))?;
+    let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
 
     api::client::repositories::pre_fetch(&remote_repo).await?;
     let remote_branches = api::client::branches::list(&remote_repo).await?;
@@ -90,9 +88,7 @@ pub async fn fetch_branch(
     let remote = repo
         .get_remote(&fetch_opts.remote)
         .ok_or(OxenError::remote_not_set(fetch_opts.remote.clone()))?;
-    let remote_repo = api::client::repositories::get_by_remote(&remote)
-        .await?
-        .ok_or(OxenError::remote_not_found(remote.clone()))?;
+    let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
 
     api::client::repositories::pre_fetch(&remote_repo).await?;
     let branch = fetch_remote_branch(repo, &remote_repo, fetch_opts).await?;

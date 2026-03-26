@@ -247,7 +247,7 @@ impl RunCmd for DFCmd {
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
         // Parse Args
-        let mut opts = DFCmd::parse_df_args(args);
+        let mut opts = DFCmd::parse_df_args(args)?;
         let Some(path) = args.get_one::<String>("PATH") else {
             return Err(OxenError::basic_str("Must supply a DataFrame to process."));
         };
@@ -269,7 +269,7 @@ impl RunCmd for DFCmd {
 }
 
 impl DFCmd {
-    pub fn parse_df_args(args: &ArgMatches) -> liboxen::opts::DFOpts {
+    pub fn parse_df_args(args: &ArgMatches) -> Result<liboxen::opts::DFOpts, OxenError> {
         let vstack: Option<Vec<PathBuf>> = if let Some(vstack) = args.get_many::<String>("vstack") {
             let values: Vec<PathBuf> = vstack.map(std::path::PathBuf::from).collect();
             Some(values)
@@ -295,13 +295,11 @@ impl DFCmd {
         let page_specified: bool = args.get_one::<String>("page").is_some()
             | args.get_one::<String>("page-size").is_some();
 
-        liboxen::opts::DFOpts {
+        Ok(liboxen::opts::DFOpts {
             add_col: args.get_one::<String>("add-col").map(String::from),
             add_row: args.get_one::<String>("add-row").map(String::from),
             rename_col: args.get_one::<String>("rename-col").map(String::from),
-            at: args
-                .get_one::<String>("at")
-                .map(|x| x.parse::<usize>().expect("at must be valid int")),
+            at: parse_usize_arg(args, "at")?,
             columns: args.get_one::<String>("columns").map(String::from),
             delete_row: args.get_one::<String>("delete-row").map(String::from),
             delimiter: args.get_one::<String>("delimiter").map(String::from),
@@ -310,27 +308,19 @@ impl DFCmd {
             find_embedding_where: args
                 .get_one::<String>("find-embedding-where")
                 .map(String::from),
-            head: args
-                .get_one::<String>("head")
-                .map(|x| x.parse::<usize>().expect("head must be valid int")),
+            head: parse_usize_arg(args, "head")?,
             host: args.get_one::<String>("host").map(String::from),
             item: args.get_one::<String>("item").map(String::from),
             output: args
                 .get_one::<String>("output")
                 .map(std::path::PathBuf::from),
             output_column: args.get_one::<String>("output-column").map(String::from),
-            page: args
-                .get_one::<String>("page")
-                .map(|x| x.parse::<usize>().expect("page must be valid int")),
-            page_size: args
-                .get_one::<String>("page-size")
-                .map(|x| x.parse::<usize>().expect("page-size must be valid int")),
+            page: parse_usize_arg(args, "page")?,
+            page_size: parse_usize_arg(args, "page-size")?,
             path: None,
             quote_char: args.get_one::<String>("quote").map(String::from),
             repo_dir,
-            row: args
-                .get_one::<String>("row")
-                .map(|x| x.parse::<usize>().expect("row must be valid int")),
+            row: parse_usize_arg(args, "row")?,
             should_page: args.get_flag("full") || page_specified,
             should_randomize: args.get_flag("randomize"),
             should_reverse: args.get_flag("reverse"),
@@ -340,15 +330,19 @@ impl DFCmd {
                 .get_one::<String>("sort-by-similarity-to")
                 .map(String::from),
             sql: args.get_one::<String>("sql").map(String::from),
-            tail: args
-                .get_one::<String>("tail")
-                .map(|x| x.parse::<usize>().expect("tail must be valid int")),
+            tail: parse_usize_arg(args, "tail")?,
             take: args.get_one::<String>("take").map(String::from),
             text2sql: args.get_one::<String>("text2sql").map(String::from),
             unique: args.get_one::<String>("unique").map(String::from),
             unique_count: args.get_one::<String>("unique_count").map(String::from),
             vstack,
             write: write_path,
-        }
+        })
     }
+}
+
+fn parse_usize_arg(args: &ArgMatches, name: &str) -> Result<Option<usize>, OxenError> {
+    args.get_one::<String>(name)
+        .map(|x| x.parse::<usize>().map_err(OxenError::ParseIntError))
+        .transpose()
 }

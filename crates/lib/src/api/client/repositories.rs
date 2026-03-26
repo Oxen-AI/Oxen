@@ -41,24 +41,15 @@ pub async fn get_default_remote(repo: &LocalRepository) -> Result<RemoteReposito
     let remote = repo
         .get_remote(DEFAULT_REMOTE_NAME)
         .ok_or(OxenError::remote_not_set(DEFAULT_REMOTE_NAME))?;
-    let remote_repo = match api::client::repositories::get_by_remote(&remote).await {
-        Ok(Some(repo)) => repo,
-        Ok(None) => return Err(OxenError::remote_repo_not_found(&remote.url)),
-        Err(err) => return Err(err),
-    };
-    Ok(remote_repo)
+    api::client::repositories::get_by_remote(&remote).await
 }
 
-pub async fn get_by_remote_repo(
-    repo: &RemoteRepository,
-) -> Result<Option<RemoteRepository>, OxenError> {
+pub async fn get_by_remote_repo(repo: &RemoteRepository) -> Result<RemoteRepository, OxenError> {
     get_by_remote(&repo.remote).await
 }
 
 /// Attempts to find a repo by name on the remote "origin". For example ox/CatDog
-pub async fn get_by_name_default(
-    name: impl AsRef<str>,
-) -> Result<Option<RemoteRepository>, OxenError> {
+pub async fn get_by_name_default(name: impl AsRef<str>) -> Result<RemoteRepository, OxenError> {
     get_by_name_host_and_remote(name, DEFAULT_HOST, DEFAULT_SCHEME, DEFAULT_REMOTE_NAME).await
 }
 
@@ -66,7 +57,7 @@ pub async fn get_by_name_and_host(
     name: impl AsRef<str>,
     host: impl AsRef<str>,
     scheme: impl AsRef<str>,
-) -> Result<Option<RemoteRepository>, OxenError> {
+) -> Result<RemoteRepository, OxenError> {
     get_by_name_host_and_remote(name, host, scheme, DEFAULT_REMOTE_NAME).await
 }
 
@@ -74,7 +65,7 @@ pub async fn get_by_name_host_and_scheme(
     name: impl AsRef<str>,
     host: impl AsRef<str>,
     scheme: impl AsRef<str>,
-) -> Result<Option<RemoteRepository>, OxenError> {
+) -> Result<RemoteRepository, OxenError> {
     let name = name.as_ref();
     let url = api::endpoint::remote_url_from_name_and_scheme(host.as_ref(), name, scheme.as_ref());
     log::debug!("get_by_name_host_and_scheme({name}) remote url: {url}");
@@ -86,7 +77,7 @@ pub async fn get_by_name_host_and_remote(
     host: impl AsRef<str>,
     scheme: impl AsRef<str>,
     remote: impl AsRef<str>,
-) -> Result<Option<RemoteRepository>, OxenError> {
+) -> Result<RemoteRepository, OxenError> {
     let name = name.as_ref();
     let scheme = scheme.as_ref();
     let url = api::endpoint::remote_url_from_name_and_scheme(host.as_ref(), name, scheme);
@@ -99,11 +90,14 @@ pub async fn get_by_name_host_and_remote(
 }
 
 pub async fn exists(repo: &RemoteRepository) -> Result<bool, OxenError> {
-    let repo = get_by_remote_repo(repo).await?;
-    Ok(repo.is_some())
+    match get_by_remote_repo(repo).await {
+        Ok(_) => Ok(true),
+        Err(OxenError::RemoteRepoNotFound(_)) => Ok(false),
+        Err(e) => Err(e),
+    }
 }
 
-pub async fn get_by_url(url: &str) -> Result<Option<RemoteRepository>, OxenError> {
+pub async fn get_by_url(url: &str) -> Result<RemoteRepository, OxenError> {
     let remote = Remote {
         name: String::from(DEFAULT_REMOTE_NAME),
         url: url.to_string(),
@@ -111,7 +105,7 @@ pub async fn get_by_url(url: &str) -> Result<Option<RemoteRepository>, OxenError
     get_by_remote(&remote).await
 }
 
-pub async fn get_by_remote(remote: &Remote) -> Result<Option<RemoteRepository>, OxenError> {
+pub async fn get_by_remote(remote: &Remote) -> Result<RemoteRepository, OxenError> {
     let url = api::endpoint::url_from_remote(remote, "")?;
     log::debug!("get_by_remote url: {url}");
 
@@ -119,7 +113,7 @@ pub async fn get_by_remote(remote: &Remote) -> Result<Option<RemoteRepository>, 
     let res = client.get(&url).send().await?;
     log::debug!("get_by_remote status: {}", res.status());
     if 404 == res.status() {
-        return Ok(None);
+        return Err(OxenError::remote_repo_not_found(&remote.url));
     }
 
     let body = client::parse_json_body(&url, res).await?;
@@ -127,7 +121,7 @@ pub async fn get_by_remote(remote: &Remote) -> Result<Option<RemoteRepository>, 
 
     let response: Result<RepositoryResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
-        Ok(j_res) => Ok(Some(RemoteRepository::from_view(&j_res.repository, remote))),
+        Ok(j_res) => Ok(RemoteRepository::from_view(&j_res.repository, remote)),
         Err(err) => {
             log::debug!("Err: {err}");
             Err(OxenError::basic_str(format!(
@@ -797,9 +791,7 @@ mod tests {
     async fn test_get_by_name() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|local_repo| async move {
             let remote_repo = test::create_remote_repo(&local_repo).await?;
-            let url_repo = api::client::repositories::get_by_remote_repo(&remote_repo)
-                .await?
-                .unwrap();
+            let url_repo = api::client::repositories::get_by_remote_repo(&remote_repo).await?;
 
             assert_eq!(remote_repo.namespace, url_repo.namespace);
             assert_eq!(remote_repo.name, url_repo.name);
@@ -825,8 +817,7 @@ mod tests {
             sleep(std::time::Duration::from_secs(1)).await;
 
             let result = api::client::repositories::get_by_remote_repo(&remote_repo).await;
-            assert!(result.is_ok());
-            assert!(result.unwrap().is_none());
+            assert!(matches!(result, Err(OxenError::RemoteRepoNotFound(_))));
 
             Ok(())
         })

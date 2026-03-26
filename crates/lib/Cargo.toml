@@ -105,6 +105,7 @@ sqlparser = { workspace = true }
 sysinfo = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }
+thiserror = { workspace = true }
 thumbnails = { workspace = true, optional = true }
 time = { workspace = true }
 tokio = { workspace = true }

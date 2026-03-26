@@ -43,10 +43,7 @@ impl RunCmd for DbCmd {
         let sub_commands = self.get_subcommands();
         if let Some((name, sub_matches)) = args.subcommand() {
             let Some(cmd) = sub_commands.get(name) else {
-                eprintln!("Unknown schema subcommand {name}");
-                return Err(OxenError::basic_str(format!(
-                    "Unknown schema subcommand {name}"
-                )));
+                return Err(OxenError::unknown_subcommand("db", name));
             };
 
             // Calling await within an await is making it complain?
@@ -54,7 +51,9 @@ impl RunCmd for DbCmd {
                 tokio::runtime::Handle::current().block_on(cmd.run(sub_matches))
             })?;
         } else {
-            return Err(OxenError::basic_str("No subcommand provided"));
+            return Err(OxenError::basic_str(
+                "No db subcommand provided. Run `oxen db --help` for usage.",
+            ));
         }
 
         Ok(())

@@ -101,77 +101,38 @@ impl RunCmd for ConfigCmd {
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
         // Non-Repo Dependent
         if let Some(name) = args.get_one::<String>("name") {
-            match self.set_user_name(name) {
-                Ok(_) => {}
-                Err(err) => {
-                    eprintln!("{err}")
-                }
-            }
+            self.set_user_name(name)?;
         }
 
         if let Some(email) = args.get_one::<String>("email") {
-            match self.set_user_email(email) {
-                Ok(_) => {}
-                Err(err) => {
-                    eprintln!("{err}")
-                }
-            }
+            self.set_user_email(email)?;
         }
 
         if let Some(auth) = args.get_many::<String>("auth-token") {
-            if let [host, token] = auth.collect::<Vec<_>>()[..] {
-                match self.set_auth_token(host, token) {
-                    Ok(_) => {}
-                    Err(err) => {
-                        eprintln!("{err}")
-                    }
-                }
-            } else {
-                eprintln!("invalid arguments for --auth");
-            }
+            let values: Vec<_> = auth.collect();
+            // clap enforces number_of_values(2), so this is guaranteed
+            self.set_auth_token(values[0], values[1])?;
         }
 
         if let Some(default_host) = args.get_one::<String>("default-host") {
-            match self.set_default_host(default_host) {
-                Ok(_) => {}
-                Err(err) => {
-                    eprintln!("{err}")
-                }
-            }
+            self.set_default_host(default_host)?;
         }
 
         if let Some(editor) = args.get_one::<String>("editor") {
-            match self.set_editor(editor) {
-                Ok(_) => {}
-                Err(err) => {
-                    eprintln!("{err}")
-                }
-            }
+            self.set_editor(editor)?;
         }
 
         // Repo Dependent
         if let Some(remote) = args.get_many::<String>("set-remote") {
             let mut repo = LocalRepository::from_current_dir()?;
-            if let [name, url] = remote.collect::<Vec<_>>()[..] {
-                match self.set_remote(&mut repo, name, url) {
-                    Ok(_) => {}
-                    Err(err) => {
-                        eprintln!("{err}")
-                    }
-                }
-            } else {
-                eprintln!("invalid arguments for --set-remote");
-            }
+            let values: Vec<_> = remote.collect();
+            // clap enforces number_of_values(2), so this is guaranteed
+            self.set_remote(&mut repo, values[0], values[1])?;
         }
 
         if let Some(name) = args.get_one::<String>("delete-remote") {
             let mut repo = LocalRepository::from_current_dir()?;
-            match self.delete_remote(&mut repo, name) {
-                Ok(_) => {}
-                Err(err) => {
-                    eprintln!("{err}")
-                }
-            }
+            self.delete_remote(&mut repo, name)?;
         }
 
         if let Some(path) = args
@@ -192,9 +153,7 @@ impl RunCmd for ConfigCmd {
             let storage_opts = StorageOpts::from_args(Some(backend), Some(path), bucket)?;
 
             let mut repo = LocalRepository::from_current_dir()?;
-            self.set_version_store(&mut repo, storage_opts)
-                .await
-                .map_err(|e| OxenError::basic_str(format!("{e}")))?;
+            self.set_version_store(&mut repo, storage_opts).await?;
         }
 
         Ok(())

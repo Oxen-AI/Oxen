@@ -99,7 +99,7 @@ impl RunCmd for WorkspaceDownloadCmd {
         .await
         {
             Ok(_) => Ok(()),
-            Err(OxenError::PathDoesNotExist(_)) => Err(OxenError::basic_str(
+            Err(OxenError::PathDoesNotExist(_)) => Err(OxenError::resource_not_found(
                 "File not found in workspace staged DB or base repo",
             )),
             unexpected_error => unexpected_error,

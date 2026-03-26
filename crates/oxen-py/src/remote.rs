@@ -17,11 +17,12 @@ pub fn get_repo(
     host: String,
     scheme: &str,
 ) -> Result<Option<PyRemoteRepo>, PyOxenError> {
-    let Some(remote_repo) = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
+    let remote_repo = match pyo3_async_runtimes::tokio::get_runtime().block_on(async {
         liboxen::api::client::repositories::get_by_name_host_and_scheme(name, &host, &scheme).await
-    })?
-    else {
-        return Ok(None);
+    }) {
+        Ok(repo) => repo,
+        Err(liboxen::error::OxenError::RemoteRepoNotFound(_)) => return Ok(None),
+        Err(e) => return Err(e.into()),
     };
 
     let branch_name = DEFAULT_BRANCH_NAME.to_string();

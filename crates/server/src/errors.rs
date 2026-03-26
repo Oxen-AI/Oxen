@@ -325,6 +325,13 @@ impl error::ResponseError for OxenHttpError {
 
                         HttpResponse::NotFound().json(error_json)
                     }
+                    OxenError::RemoteRepoNotFound(remote) => {
+                        log::debug!("Remote repo not found: {remote}");
+
+                        HttpResponse::NotFound().json(StatusMessageDescription::not_found(format!(
+                            "Remote repository not found: {remote}"
+                        )))
+                    }
                     OxenError::CommitEntryNotFound(msg) => {
                         log::error!("{msg}");
 
@@ -571,6 +578,7 @@ impl error::ResponseError for OxenHttpError {
                 OxenError::InvalidSchema(_) => StatusCode::BAD_REQUEST,
                 OxenError::InvalidRepoName(_) => StatusCode::BAD_REQUEST,
                 OxenError::PathDoesNotExist(_) => StatusCode::NOT_FOUND,
+                OxenError::RemoteRepoNotFound(_) => StatusCode::NOT_FOUND,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
         }

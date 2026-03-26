@@ -38,10 +38,7 @@ impl RunCmd for EmbeddingsCmd {
         let sub_commands = self.get_subcommands();
         if let Some((name, sub_matches)) = args.subcommand() {
             let Some(cmd) = sub_commands.get(name) else {
-                eprintln!("Unknown schema subcommand {name}");
-                return Err(OxenError::basic_str(format!(
-                    "Unknown schema subcommand {name}"
-                )));
+                return Err(OxenError::unknown_subcommand("embeddings", name));
             };
 
             // Calling await within an await is making it complain?

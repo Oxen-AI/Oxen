@@ -70,10 +70,7 @@ impl RunCmd for WorkspaceCmd {
         let sub_commands = Self::get_subcommands();
         if let Some((name, sub_matches)) = args.subcommand() {
             let Some(cmd) = sub_commands.get(name) else {
-                eprintln!("Unknown schema subcommand {name}");
-                return Err(OxenError::basic_str(format!(
-                    "Unknown schema subcommand {name}"
-                )));
+                return Err(OxenError::unknown_subcommand("workspace", name));
             };
 
             // Calling await within an await is making it complain?
@@ -114,9 +111,7 @@ impl WorkspaceCmd {
     ) -> Result<(), OxenError> {
         let sub_commands = Self::get_subcommands();
         let Some(cmd) = sub_commands.get(name) else {
-            return Err(OxenError::basic_str(format!(
-                "Command `oxen {name}` not available for workspaces"
-            )));
+            return Err(OxenError::unknown_subcommand("workspace", name));
         };
 
         tokio::task::block_in_place(|| {

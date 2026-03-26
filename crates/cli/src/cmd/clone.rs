@@ -100,11 +100,12 @@ impl RunCmd for CloneCmd {
             .collect();
         let depth: Option<i32> = args
             .get_one::<String>("depth")
-            .map(|s| s.parse().expect("Invalid depth, must be an integer"));
+            .map(|s| s.parse::<i32>().map_err(OxenError::ParseIntError))
+            .transpose()?;
         let is_vfs = args.get_flag("vfs");
         let is_remote = args.get_flag("remote");
 
-        let current_dir = std::env::current_dir().expect("Could not get current working directory");
+        let current_dir = std::env::current_dir()?;
         let dst: PathBuf = match args.get_one::<String>("DESTINATION") {
             Some(dir_name) => {
                 let path = Path::new(dir_name);

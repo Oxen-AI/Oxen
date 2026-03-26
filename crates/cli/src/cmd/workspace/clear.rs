@@ -33,9 +33,7 @@ impl RunCmd for WorkspaceClearCmd {
                 let remote = repository
                     .get_remote(name)
                     .ok_or(OxenError::remote_not_set(name))?;
-                api::client::repositories::get_by_remote(&remote)
-                    .await?
-                    .ok_or(OxenError::remote_not_found(remote))?
+                api::client::repositories::get_by_remote(&remote).await?
             }
             None => api::client::repositories::get_default_remote(&repository).await?,
         };

@@ -3,9 +3,7 @@
 //! Enumeration for all errors that can occur in the oxen library
 //!
 
-use derive_more::{Debug, Error};
 use duckdb::arrow::error::ArrowError;
-use std::fmt;
 use std::io;
 use std::num::ParseIntError;
 use std::path::Path;
@@ -13,10 +11,10 @@ use std::path::PathBuf;
 use std::path::StripPrefixError;
 use tokio::task::JoinError;
 
+use crate::model::RepoNew;
 use crate::model::Schema;
 use crate::model::Workspace;
 use crate::model::{Commit, ParsedResource};
-use crate::model::{Remote, RepoNew};
 
 pub mod path_buf_error;
 pub mod string_error;
@@ -24,143 +22,235 @@ pub mod string_error;
 pub use crate::error::path_buf_error::PathBufError;
 pub use crate::error::string_error::StringError;
 
-use polars::prelude::PolarsError;
-
-pub const NO_REPO_FOUND: &str = "No oxen repository exists, looking for directory: .oxen";
-
 pub const HEAD_NOT_FOUND: &str = "HEAD not found";
 
 pub const EMAIL_AND_NAME_NOT_FOUND: &str = "oxen not configured, set email and name with:\n\noxen config --name YOUR_NAME --email YOUR_EMAIL\n";
 
 pub const AUTH_TOKEN_NOT_FOUND: &str = "oxen authentication token not found, obtain one from your administrator and configure with:\n\noxen config --auth <HOST> <TOKEN>\n";
 
-#[derive(Error, Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum OxenError {
-    /// Internal Oxen Errors
     // User
+    #[error("{0}")]
     UserConfigNotFound(Box<StringError>),
 
     // Repo
+    #[error("Repository '{0}' not found")]
     RepoNotFound(Box<RepoNew>),
+    #[error("No oxen repository found at {0}")]
     LocalRepoNotFound(Box<PathBufError>),
+    #[error("Repository '{0}' already exists")]
     RepoAlreadyExists(Box<RepoNew>),
+    #[error("Repository already exists at destination: {0}")]
     RepoAlreadyExistsAtDestination(Box<StringError>),
+    #[error("Invalid repository or namespace name '{0}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+")]
     InvalidRepoName(StringError),
 
     // Fork
+    #[error("{0}")]
     ForkStatusNotFound(StringError),
 
     // Remotes
-    RemoteRepoNotFound(Box<Remote>),
+    #[error("Remote repository not found: {0}")]
+    RemoteRepoNotFound(Box<StringError>),
+    #[error("{0}")]
     RemoteAheadOfLocal(StringError),
+    #[error("{0}")]
     IncompleteLocalHistory(StringError),
+    #[error("{0}")]
     RemoteBranchLocked(StringError),
+    #[error("{0}")]
     UpstreamMergeConflict(StringError),
 
-    // Remote Mode
-    // RemoteModeCommandNotAvailable(StringError),
-
     // Branches/Commits
+    #[error("{0}")]
     BranchNotFound(Box<StringError>),
+    #[error("Revision not found: {0}")]
     RevisionNotFound(Box<StringError>),
+    #[error("Root commit does not match: {0}")]
     RootCommitDoesNotMatch(Box<Commit>),
+    #[error("{0}")]
     NothingToCommit(StringError),
+    #[error("{0}")]
     NoCommitsFound(StringError),
+    #[error("{0}")]
     HeadNotFound(StringError),
 
     // Workspaces
+    #[error("Workspace not found: {0}")]
     WorkspaceNotFound(Box<StringError>),
+    #[error("No queryable workspace found")]
     QueryableWorkspaceNotFound(),
+    #[error("Workspace is behind: {0}")]
     WorkspaceBehind(Box<Workspace>),
 
     // Resources (paths, uris, etc.)
+    #[error("Resource not found: {0}")]
     ResourceNotFound(StringError),
+    #[error("Path does not exist: {0}")]
     PathDoesNotExist(Box<PathBufError>),
+    #[error("Resource not found: {0}")]
     ParsedResourceNotFound(Box<PathBufError>),
 
     // Versioning
+    #[error("{0}")]
     MigrationRequired(StringError),
+    #[error("{0}")]
     OxenUpdateRequired(StringError),
+    #[error("Invalid version: {0}")]
     InvalidVersion(StringError),
 
     // Entry
+    #[error("{0}")]
     CommitEntryNotFound(StringError),
 
     // Schema
+    #[error("Invalid schema: {0}")]
     InvalidSchema(Box<Schema>),
+    #[error("Incompatible schemas: {0}")]
     IncompatibleSchemas(Box<Schema>),
+    #[error("{0}")]
     InvalidFileType(StringError),
+    #[error("{0}")]
     ColumnNameAlreadyExists(StringError),
+    #[error("{0}")]
     ColumnNameNotFound(StringError),
+    #[error("{0}")]
     UnsupportedOperation(StringError),
 
     // Metadata
+    #[error("{0}")]
     ImageMetadataParseError(StringError),
+    #[error("{0}")]
     ThumbnailingNotEnabled(StringError),
 
     // SQL
+    #[error("SQL parse error: {0}")]
     SQLParseError(StringError),
+    #[error("{0}")]
     NoRowsFound(StringError),
 
     // CLI Interaction
+    #[error("{0}")]
     OperationCancelled(StringError),
 
     // fs / io
+    #[error("{0}")]
     StripPrefixError(StringError),
 
     // Dataframe Errors
+    #[error("{0}")]
     DataFrameError(StringError),
 
     // File Import Error
+    #[error("{0}")]
     ImportFileError(StringError),
 
     // External Library Errors
-    IO(io::Error),
+    #[error("{0}")]
+    IO(#[from] io::Error),
+    #[error("Authentication failed: {0}")]
     Authentication(StringError),
-    ArrowError(ArrowError),
-    BinCodeError(bincode::Error),
-    TomlSer(toml::ser::Error),
-    TomlDe(toml::de::Error),
-    URI(http::uri::InvalidUri),
-    URL(url::ParseError),
-    JSON(serde_json::Error),
-    HTTP(reqwest::Error),
-    UTF8Error(std::str::Utf8Error),
-    DB(rocksdb::Error),
-    DUCKDB(duckdb::Error),
-    ENV(std::env::VarError),
-    ImageError(image::ImageError),
-    RedisError(redis::RedisError),
-    R2D2Error(r2d2::Error),
-    JwalkError(jwalk::Error),
-    PatternError(glob::PatternError),
-    GlobError(glob::GlobError),
-    PolarsError(polars::prelude::PolarsError),
-    ParseIntError(ParseIntError),
-    RmpDecodeError(rmp_serde::decode::Error),
+    #[error("{0}")]
+    ArrowError(#[from] ArrowError),
+    #[error("{0}")]
+    BinCodeError(#[from] bincode::Error),
+    #[error("Configuration error: {0}")]
+    TomlSer(#[from] toml::ser::Error),
+    #[error("Configuration error: {0}")]
+    TomlDe(#[from] toml::de::Error),
+    #[error("Invalid URI: {0}")]
+    URI(#[from] http::uri::InvalidUri),
+    #[error("Invalid URL: {0}")]
+    URL(#[from] url::ParseError),
+    #[error("JSON error: {0}")]
+    JSON(#[from] serde_json::Error),
+    #[error("Network error: {0}")]
+    HTTP(#[from] reqwest::Error),
+    #[error("UTF-8 encoding error: {0}")]
+    UTF8Error(#[from] std::str::Utf8Error),
+    #[error("Database error: {0}")]
+    DB(#[from] rocksdb::Error),
+    #[error("Query error: {0}")]
+    DUCKDB(#[from] duckdb::Error),
+    #[error("Environment variable error: {0}")]
+    ENV(#[from] std::env::VarError),
+    #[error("Image processing error: {0}")]
+    ImageError(#[from] image::ImageError),
+    #[error("Redis error: {0}")]
+    RedisError(#[from] redis::RedisError),
+    #[error("Connection pool error: {0}")]
+    R2D2Error(#[from] r2d2::Error),
+    #[error("Directory traversal error: {0}")]
+    JwalkError(#[from] jwalk::Error),
+    #[error("Pattern error: {0}")]
+    PatternError(#[from] glob::PatternError),
+    #[error("Glob error: {0}")]
+    GlobError(#[from] glob::GlobError),
+    #[error("DataFrame error: {0}")]
+    PolarsError(#[from] polars::prelude::PolarsError),
+    #[error("Invalid integer: {0}")]
+    ParseIntError(#[from] ParseIntError),
+    #[error("Decode error: {0}")]
+    RmpDecodeError(#[from] rmp_serde::decode::Error),
 
     // Fallback
+    #[error("{0}")]
     Basic(StringError),
 }
 
-impl fmt::Display for OxenError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            OxenError::OxenUpdateRequired(err)
-            | OxenError::Basic(err)
-            | OxenError::ThumbnailingNotEnabled(err) => write!(f, "{err}"),
-            OxenError::InvalidRepoName(name) => write!(
-                f,
-                "Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"
-            ),
-            _ => {
-                write!(f, "{self:?}")
-            }
-        }
-    }
-}
-
 impl OxenError {
+    /// Returns a user-facing hint for this error, or None if none applies.
+    pub fn hint(&self) -> Option<String> {
+        use OxenError::*;
+        use std::io::ErrorKind::PermissionDenied;
+
+        let hint = match self {
+            LocalRepoNotFound(_) => "Run `oxen init` to create a new repository here.",
+            Authentication(_) => {
+                "Check your token with `oxen config --auth <HOST> <TOKEN>` and try again."
+            }
+            RemoteRepoNotFound(_) => {
+                "Verify the remote URL is correct. Check your remotes with `oxen remote -v`."
+            }
+            BranchNotFound(_) => "List available branches with `oxen branch --all`.",
+            RevisionNotFound(_) => {
+                "Check available branches with `oxen branch --all` or commits with `oxen log`."
+            }
+            NothingToCommit(_) => "Stage changes with `oxen add <path>` before committing.",
+            HeadNotFound(_) | NoCommitsFound(_) => {
+                "This repository has no commits yet. Add files and create your first commit."
+            }
+            PathDoesNotExist(_)
+            | ResourceNotFound(_)
+            | ParsedResourceNotFound(_)
+            | CommitEntryNotFound(_) => "Check the path and current branch with `oxen status`.",
+            HTTP(req_err) => {
+                if req_err.is_connect() || req_err.is_timeout() {
+                    "Check your internet connection and that the remote host is reachable."
+                } else if req_err.is_status() {
+                    if let Some(status) = req_err.status() {
+                        return Some(format!("Server returned HTTP {status}."));
+                    } else {
+                        return None;
+                    }
+                } else {
+                    "Check your internet connection and remote configuration with `oxen remote -v`."
+                }
+            }
+            IO(io_err) if io_err.kind() == PermissionDenied => {
+                "Check file permissions and try again."
+            }
+            DB(_) | ArrowError(_) | BinCodeError(_) | RedisError(_) | R2D2Error(_)
+            | RmpDecodeError(_) => {
+                "This is an internal error. Run with RUST_LOG=debug for more details."
+            }
+            _ => return None,
+        }
+        .to_string();
+        Some(hint)
+    }
+
     pub fn basic_str(s: impl AsRef<str>) -> Self {
         OxenError::Basic(StringError::from(s.as_ref()))
     }
@@ -202,10 +292,6 @@ impl OxenError {
         OxenError::basic_str(format!(
             "Remote not set, you can set a remote by running:\n\noxen config --set-remote {name} <url>\n"
         ))
-    }
-
-    pub fn remote_not_found(remote: Remote) -> Self {
-        OxenError::RemoteRepoNotFound(Box::new(remote))
     }
 
     pub fn remote_ahead_of_local() -> Self {
@@ -318,8 +404,7 @@ impl OxenError {
     }
 
     pub fn remote_repo_not_found(url: impl AsRef<str>) -> OxenError {
-        let err = format!("Remote repository does not exist {}", url.as_ref());
-        OxenError::basic_str(err)
+        OxenError::RemoteRepoNotFound(Box::new(StringError::from(url.as_ref())))
     }
 
     pub fn head_not_found() -> OxenError {
@@ -450,7 +535,7 @@ impl OxenError {
     pub fn file_copy_error(
         src: impl AsRef<Path>,
         dst: impl AsRef<Path>,
-        err: impl Debug,
+        err: impl std::fmt::Debug,
     ) -> OxenError {
         let err = format!(
             "File copy error: {err:?}\nCould not copy from `{:?}` to `{:?}`",
@@ -463,7 +548,7 @@ impl OxenError {
     pub fn file_rename_error(
         src: impl AsRef<Path>,
         dst: impl AsRef<Path>,
-        err: impl Debug,
+        err: impl std::fmt::Debug,
     ) -> OxenError {
         let err = format!(
             "File rename error: {err:?}\nCould not move from `{:?}` to `{:?}`",
@@ -578,137 +663,26 @@ impl OxenError {
         let err = format!("Parse error: {:?}", value.as_ref());
         OxenError::basic_str(err)
     }
-}
 
-// if you do not want to call .map_err, implement the std::convert::From trait
-impl From<io::Error> for OxenError {
-    fn from(error: io::Error) -> Self {
-        OxenError::IO(error)
+    pub fn unknown_subcommand(parent: impl AsRef<str>, name: impl AsRef<str>) -> OxenError {
+        OxenError::basic_str(format!(
+            "Unknown {} subcommand '{}'",
+            parent.as_ref(),
+            name.as_ref()
+        ))
     }
 }
 
+// Manual From impls for types that need transformation
 impl From<String> for OxenError {
     fn from(error: String) -> Self {
         OxenError::Basic(StringError::from(error))
     }
 }
 
-impl From<toml::ser::Error> for OxenError {
-    fn from(error: toml::ser::Error) -> Self {
-        OxenError::TomlSer(error)
-    }
-}
-
-impl From<toml::de::Error> for OxenError {
-    fn from(error: toml::de::Error) -> Self {
-        OxenError::TomlDe(error)
-    }
-}
-
-impl From<http::uri::InvalidUri> for OxenError {
-    fn from(error: http::uri::InvalidUri) -> Self {
-        OxenError::URI(error)
-    }
-}
-
-impl From<url::ParseError> for OxenError {
-    fn from(error: url::ParseError) -> Self {
-        OxenError::URL(error)
-    }
-}
-
-impl From<serde_json::Error> for OxenError {
-    fn from(error: serde_json::Error) -> Self {
-        OxenError::JSON(error)
-    }
-}
-
-impl From<std::str::Utf8Error> for OxenError {
-    fn from(error: std::str::Utf8Error) -> Self {
-        OxenError::UTF8Error(error)
-    }
-}
-
-impl From<bincode::Error> for OxenError {
-    fn from(error: bincode::Error) -> Self {
-        OxenError::BinCodeError(error)
-    }
-}
-
-impl From<r2d2::Error> for OxenError {
-    fn from(error: r2d2::Error) -> Self {
-        OxenError::R2D2Error(error)
-    }
-}
-
-impl From<jwalk::Error> for OxenError {
-    fn from(error: jwalk::Error) -> Self {
-        OxenError::JwalkError(error)
-    }
-}
-
-impl From<redis::RedisError> for OxenError {
-    fn from(error: redis::RedisError) -> Self {
-        OxenError::RedisError(error)
-    }
-}
-
-impl From<glob::PatternError> for OxenError {
-    fn from(error: glob::PatternError) -> Self {
-        OxenError::PatternError(error)
-    }
-}
-
-impl From<PolarsError> for OxenError {
-    fn from(err: PolarsError) -> Self {
-        OxenError::PolarsError(err)
-    }
-}
-
-impl From<ArrowError> for OxenError {
-    fn from(error: ArrowError) -> Self {
-        OxenError::ArrowError(error)
-    }
-}
-
-impl From<glob::GlobError> for OxenError {
-    fn from(error: glob::GlobError) -> Self {
-        OxenError::GlobError(error)
-    }
-}
-
-impl From<reqwest::Error> for OxenError {
-    fn from(error: reqwest::Error) -> Self {
-        OxenError::HTTP(error)
-    }
-}
-
-impl From<rocksdb::Error> for OxenError {
-    fn from(error: rocksdb::Error) -> Self {
-        OxenError::DB(error)
-    }
-}
-
-impl From<duckdb::Error> for OxenError {
-    fn from(error: duckdb::Error) -> Self {
-        OxenError::DUCKDB(error)
-    }
-}
-
-impl From<std::env::VarError> for OxenError {
-    fn from(error: std::env::VarError) -> Self {
-        OxenError::ENV(error)
-    }
-}
-
 impl From<StripPrefixError> for OxenError {
     fn from(error: StripPrefixError) -> Self {
         OxenError::basic_str(format!("Error stripping prefix: {error}"))
-    }
-}
-impl From<ParseIntError> for OxenError {
-    fn from(error: ParseIntError) -> Self {
-        OxenError::basic_str(error.to_string())
     }
 }
 
@@ -721,17 +695,5 @@ impl From<JoinError> for OxenError {
 impl From<std::string::FromUtf8Error> for OxenError {
     fn from(error: std::string::FromUtf8Error) -> Self {
         OxenError::basic_str(format!("UTF8 conversion error: {error}"))
-    }
-}
-
-impl From<image::ImageError> for OxenError {
-    fn from(error: image::ImageError) -> Self {
-        OxenError::ImageError(error)
-    }
-}
-
-impl From<rmp_serde::decode::Error> for OxenError {
-    fn from(error: rmp_serde::decode::Error) -> Self {
-        OxenError::RmpDecodeError(error)
     }
 }
