@@ -200,6 +200,57 @@ pub enum OxenError {
 }
 
 impl OxenError {
+    /// Returns a user-facing hint for this error, or None if none applies.
+    pub fn hint(&self) -> Option<String> {
+        use OxenError::*;
+        use std::io::ErrorKind::PermissionDenied;
+
+        let hint = match self {
+            LocalRepoNotFound(_) => "Run `oxen init` to create a new repository here.",
+            Authentication(_) => {
+                "Check your token with `oxen config --auth <HOST> <TOKEN>` and try again."
+            }
+            RemoteRepoNotFound(_) => {
+                "Verify the remote URL is correct. Check your remotes with `oxen remote -v`."
+            }
+            BranchNotFound(_) => "List available branches with `oxen branch --all`.",
+            RevisionNotFound(_) => {
+                "Check available branches with `oxen branch --all` or commits with `oxen log`."
+            }
+            NothingToCommit(_) => "Stage changes with `oxen add <path>` before committing.",
+            HeadNotFound(_) | NoCommitsFound(_) => {
+                "This repository has no commits yet. Add files and create your first commit."
+            }
+            PathDoesNotExist(_)
+            | ResourceNotFound(_)
+            | ParsedResourceNotFound(_)
+            | CommitEntryNotFound(_) => "Check the path and current branch with `oxen status`.",
+            HTTP(req_err) => {
+                if req_err.is_connect() || req_err.is_timeout() {
+                    "Check your internet connection and that the remote host is reachable."
+                } else if req_err.is_status() {
+                    if let Some(status) = req_err.status() {
+                        return Some(format!("Server returned HTTP {status}."));
+                    } else {
+                        return None;
+                    }
+                } else {
+                    "Check your internet connection and remote configuration with `oxen remote -v`."
+                }
+            }
+            IO(io_err) if io_err.kind() == PermissionDenied => {
+                "Check file permissions and try again."
+            }
+            DB(_) | ArrowError(_) | BinCodeError(_) | RedisError(_) | R2D2Error(_)
+            | RmpDecodeError(_) => {
+                "This is an internal error. Run with RUST_LOG=debug for more details."
+            }
+            _ => return None,
+        }
+        .to_string();
+        Some(hint)
+    }
+
     pub fn basic_str(s: impl AsRef<str>) -> Self {
         OxenError::Basic(StringError::from(s.as_ref()))
     }
