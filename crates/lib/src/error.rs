@@ -52,7 +52,7 @@ pub enum OxenError {
 
     // Remotes
     #[error("Remote repository not found: {0}")]
-    RemoteRepoNotFound(Box<Remote>),
+    RemoteRepoNotFound(Box<StringError>),
     #[error("{0}")]
     RemoteAheadOfLocal(StringError),
     #[error("{0}")]
@@ -244,7 +244,7 @@ impl OxenError {
     }
 
     pub fn remote_not_found(remote: Remote) -> Self {
-        OxenError::RemoteRepoNotFound(Box::new(remote))
+        OxenError::RemoteRepoNotFound(Box::new(StringError::from(remote.url)))
     }
 
     pub fn remote_ahead_of_local() -> Self {
@@ -357,10 +357,7 @@ impl OxenError {
     }
 
     pub fn remote_repo_not_found(url: impl AsRef<str>) -> OxenError {
-        OxenError::RemoteRepoNotFound(Box::new(Remote {
-            name: String::new(),
-            url: url.as_ref().to_string(),
-        }))
+        OxenError::RemoteRepoNotFound(Box::new(StringError::from(url.as_ref())))
     }
 
     pub fn head_not_found() -> OxenError {

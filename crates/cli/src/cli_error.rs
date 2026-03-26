@@ -14,12 +14,11 @@ pub fn print_error(err: &OxenError) {
             eprintln!("{prefix} {err}");
             print_hint("Check your token with `oxen config --auth <HOST> <TOKEN>` and try again.");
         }
-        OxenError::RemoteRepoNotFound(remote) => {
+        OxenError::RemoteRepoNotFound(_) => {
             eprintln!("{prefix} {err}");
-            print_hint(&format!(
-                "Verify the remote URL is correct. Check your remotes with `oxen remote -v`.\nCurrent remote: {}",
-                remote.url
-            ));
+            print_hint(
+                "Verify the remote URL is correct. Check your remotes with `oxen remote -v`.",
+            );
         }
         OxenError::BranchNotFound(_) => {
             eprintln!("{prefix} {err}");
