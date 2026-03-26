@@ -166,19 +166,6 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         size: u64,
     ) -> Result<Vec<u8>, OxenError>;
 
-    /// Get a chunk of a version file as a stream of bytes
-    ///
-    /// # Arguments
-    /// * `hash` - The content hash of the version to retrieve
-    /// * `offset` - The starting byte position of the chunk
-    /// * `size` - The chunk size
-    async fn get_version_chunk_stream(
-        &self,
-        hash: &str,
-        offset: u64,
-        size: u64,
-    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>;
-
     /// List all chunks for a version file
     ///
     /// # Arguments
