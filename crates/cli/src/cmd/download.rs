@@ -98,17 +98,12 @@ impl RunCmd for DownloadCmd {
         check_remote_version_blocking(scheme.clone(), host.clone()).await?;
 
         // Check if the first path is a valid remote repo
-        match api::client::repositories::get_by_name_host_and_scheme(id, &host, &scheme).await {
-            Ok(remote_repo) => {
-                // Download from the remote without having to have a local repo directory
-                for path in paths {
-                    repositories::download(&remote_repo, &path, &dst, &revision).await?;
-                }
-            }
-            Err(OxenError::RemoteRepoNotFound(_)) => {
-                eprintln!("Repository does not exist {id}");
-            }
-            Err(e) => return Err(e),
+        let remote_repo =
+            api::client::repositories::get_by_name_host_and_scheme(id, &host, &scheme).await?;
+
+        // Download from the remote without having to have a local repo directory
+        for path in paths {
+            repositories::download(&remote_repo, &path, &dst, &revision).await?;
         }
 
         Ok(())

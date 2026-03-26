@@ -115,29 +115,22 @@ impl RunCmd for UploadCmd {
         // Check if the first path is a valid remote repo
         let name = paths[0].to_string_lossy();
 
-        match api::client::repositories::get_by_name_host_and_remote(
+        let remote_repo = api::client::repositories::get_by_name_host_and_remote(
             &name,
             &opts.host,
             &opts.scheme,
             &opts.remote,
         )
-        .await
-        {
-            Ok(remote_repo) => {
-                // Remove the repo name from the list of paths
-                let remote_paths = paths[1..].to_vec();
-                let opts = UploadOpts {
-                    paths: remote_paths,
-                    ..opts
-                };
+        .await?;
 
-                repositories::workspaces::upload(&remote_repo, &opts).await?;
-            }
-            Err(OxenError::RemoteRepoNotFound(_)) => {
-                eprintln!("Repository does not exist {name}");
-            }
-            Err(e) => return Err(e),
-        }
+        // Remove the repo name from the list of paths
+        let remote_paths = paths[1..].to_vec();
+        let opts = UploadOpts {
+            paths: remote_paths,
+            ..opts
+        };
+
+        repositories::workspaces::upload(&remote_repo, &opts).await?;
         Ok(())
     }
 }
