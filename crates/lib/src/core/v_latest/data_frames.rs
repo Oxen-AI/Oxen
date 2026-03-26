@@ -1,7 +1,7 @@
 use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::df::tabular::transform_new;
 use crate::core::df::{sql, tabular};
-use crate::core::staged::with_staged_db_manager;
+use crate::core::staged::get_staged_db_manager;
 use crate::error::OxenError;
 use crate::model::ParsedResource;
 use crate::model::data_frame::{DataFrameSchemaSize, DataFrameSlice, DataFrameSliceSchemas};
@@ -38,34 +38,32 @@ pub async fn get_slice(
     };
 
     let file_node = match workspace {
-        Some(ws) => with_staged_db_manager(staged_repo, |staged_db_manager| {
+        Some(ws) => {
+            let staged_db_manager = get_staged_db_manager(staged_repo)?;
             // Try staged DB first
             if let Some(staged_node) = staged_db_manager.read_from_staged_db(&path)? {
-                let file_node = match staged_node.node.node {
+                match staged_node.node.node {
                     EMerkleTreeNode::File(f) => Ok(f),
                     _ => Err(OxenError::basic_str(
                         "Only single file download is supported",
                     )),
-                }?;
-                return Ok(file_node);
+                }?
+            } else {
+                // Fall back to commit tree using workspace's commit
+                let commit = &ws.commit;
+                repositories::tree::get_file_by_path(base_repo, commit, &path)?
+                    .ok_or(OxenError::path_does_not_exist(path.as_ref()))?
             }
-
-            // Fall back to commit tree using workspace's commit
-            let commit = &ws.commit;
-            let file_node = repositories::tree::get_file_by_path(base_repo, commit, &path)?
-                .ok_or(OxenError::path_does_not_exist(path.as_ref()))?;
-            Ok(file_node)
-        }),
+        }
         None => {
             let commit = resource
                 .commit
                 .as_ref()
                 .ok_or(OxenError::basic_str("Commit not found"))?;
-            let file_node = repositories::tree::get_file_by_path(base_repo, commit, &path)?
-                .ok_or(OxenError::path_does_not_exist(path.as_ref()))?;
-            Ok(file_node)
+            repositories::tree::get_file_by_path(base_repo, commit, &path)?
+                .ok_or(OxenError::path_does_not_exist(path.as_ref()))?
         }
-    }?;
+    };
 
     log::debug!("get_slice file_node {file_node:?}");
 

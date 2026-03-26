@@ -14,7 +14,7 @@ use crate::opts::DFOpts;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::db::data_frames::rows;
 use crate::core::df::tabular;
-use crate::core::staged::staged_db_manager::with_staged_db_manager;
+use crate::core::staged::staged_db_manager::get_staged_db_manager;
 use crate::core::v_latest::workspaces;
 use crate::error::OxenError;
 use crate::model::data_frame::update_result::UpdateResult;
@@ -75,23 +75,21 @@ pub async fn restore(
         log::debug!("no changes, deleting file from staged db");
         // Restored to original state == delete file from staged db
         // TODO: Implement this
-        with_staged_db_manager(&workspace.workspace_repo, |manager| {
+        let manager = get_staged_db_manager(&workspace.workspace_repo)?;
+        manager.remove_staged_recursively(
+            &workspace.workspace_repo,
+            &HashSet::from([path.as_ref().to_path_buf()]),
+        )?;
+
+        // loop over parents and delete from staged db
+        let mut current_path = path.as_ref().to_path_buf();
+        while let Some(parent) = current_path.parent() {
             manager.remove_staged_recursively(
                 &workspace.workspace_repo,
-                &HashSet::from([path.as_ref().to_path_buf()]),
+                &HashSet::from([parent.to_path_buf()]),
             )?;
-
-            // loop over parents and delete from staged db
-            let mut current_path = path.as_ref().to_path_buf();
-            while let Some(parent) = current_path.parent() {
-                manager.remove_staged_recursively(
-                    &workspace.workspace_repo,
-                    &HashSet::from([parent.to_path_buf()]),
-                )?;
-                current_path = parent.to_path_buf();
-            }
-            Ok(())
-        })?;
+            current_path = parent.to_path_buf();
+        }
     }
 
     Ok(restored_row)
@@ -130,13 +128,10 @@ pub fn delete(
         if !diff.has_changes() {
             log::debug!("no changes, deleting file from staged db {path:?}");
             // Restored to original state == delete file from staged db
-            with_staged_db_manager(&workspace.workspace_repo, |manager| {
-                manager.remove_staged_recursively(
-                    &workspace.workspace_repo,
-                    &HashSet::from([path.to_path_buf()]),
-                )?;
-                Ok(())
-            })?;
+            get_staged_db_manager(&workspace.workspace_repo)?.remove_staged_recursively(
+                &workspace.workspace_repo,
+                &HashSet::from([path.to_path_buf()]),
+            )?;
         } else {
             log::debug!("there are still changes, not deleting file from staged db");
             log::debug!("diff: {diff:?}");
@@ -184,13 +179,10 @@ pub fn update(
     log::debug!("update() diff: {diff:?}");
     if let DiffResult::Tabular(diff) = diff {
         if !diff.has_changes() {
-            with_staged_db_manager(&workspace.workspace_repo, |manager| {
-                manager.remove_staged_recursively(
-                    &workspace.workspace_repo,
-                    &HashSet::from([path.to_path_buf()]),
-                )?;
-                Ok(())
-            })?;
+            get_staged_db_manager(&workspace.workspace_repo)?.remove_staged_recursively(
+                &workspace.workspace_repo,
+                &HashSet::from([path.to_path_buf()]),
+            )?;
         } else {
             workspaces::files::track_modified_data_frame(workspace, path)?;
         }

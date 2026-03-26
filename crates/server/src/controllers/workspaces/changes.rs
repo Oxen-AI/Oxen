@@ -3,7 +3,7 @@ use crate::helpers::get_repo;
 use crate::params::{PageNumQuery, app_data, path_param};
 
 use liboxen::constants;
-use liboxen::core::staged::with_staged_db_manager;
+use liboxen::core::staged::get_staged_db_manager;
 use liboxen::model::LocalRepository;
 use liboxen::model::Workspace;
 use liboxen::repositories;
@@ -167,10 +167,9 @@ pub async fn unstage_many(
     let mut err_paths = vec![];
 
     for path in paths_to_remove {
-        let is_staged = with_staged_db_manager(&workspace.workspace_repo, |staged_db_manager| {
-            staged_db_manager.read_from_staged_db(&path)
-        })?
-        .is_some();
+        let is_staged = get_staged_db_manager(&workspace.workspace_repo)?
+            .read_from_staged_db(&path)?
+            .is_some();
 
         if !is_staged {
             continue;

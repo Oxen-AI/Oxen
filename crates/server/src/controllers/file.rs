@@ -8,7 +8,7 @@ use actix_multipart::{Field, MultipartError};
 use actix_web::{HttpRequest, HttpResponse, web};
 use futures_util::TryStreamExt as _;
 use futures_util::future::LocalBoxFuture;
-use liboxen::core::staged::with_staged_db_manager;
+use liboxen::core::staged::get_staged_db_manager;
 use liboxen::error::OxenError;
 use liboxen::model::Commit;
 use liboxen::model::commit::NewCommitBody;
@@ -150,31 +150,29 @@ pub async fn get(
     };
 
     let entry = match workspace {
-        Some(ws) => with_staged_db_manager(staged_repo, |staged_db_manager| {
+        Some(ws) => {
+            let staged_db_manager = get_staged_db_manager(staged_repo)?;
             // Try staged DB first
             if let Some(staged_node) = staged_db_manager.read_from_staged_db(&path)? {
-                let file_node = match staged_node.node.node {
+                match staged_node.node.node {
                     EMerkleTreeNode::File(f) => Ok(f),
                     _ => Err(OxenError::basic_str(
                         "Only single file download is supported",
                     )),
-                }?;
-                return Ok(file_node);
+                }?
+            } else {
+                // Fall back to commit tree using workspace's commit
+                let commit = &ws.commit;
+                repositories::tree::get_file_by_path(base_repo, commit, &path)?
+                    .ok_or(OxenError::path_does_not_exist(path.clone()))?
             }
-
-            // Fall back to commit tree using workspace's commit
-            let commit = &ws.commit;
-            let file_node = repositories::tree::get_file_by_path(base_repo, commit, &path)?
-                .ok_or(OxenError::path_does_not_exist(path.clone()))?;
-            Ok(file_node)
-        }),
+        }
         None => {
             let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
-            let file_node = repositories::tree::get_file_by_path(base_repo, &commit, &path)?
-                .ok_or(OxenError::path_does_not_exist(path.clone()))?;
-            Ok(file_node)
+            repositories::tree::get_file_by_path(base_repo, &commit, &path)?
+                .ok_or(OxenError::path_does_not_exist(path.clone()))?
         }
-    }?;
+    };
 
     let file_hash = entry.hash();
     let hash_str = file_hash.to_string();

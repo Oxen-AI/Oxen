@@ -62,59 +62,78 @@ pub struct StagedDBManager {
     repository: LocalRepository,
 }
 
-pub fn with_staged_db_manager<F, T>(
-    repository: &LocalRepository,
-    operation: F,
-) -> Result<T, OxenError>
-where
-    F: FnOnce(&StagedDBManager) -> Result<T, OxenError>,
-{
-    let staged_db = {
-        let staged_db_dir = util::fs::oxen_hidden_dir(&repository.path).join(STAGED_DIR);
+/// Returns a [`StagedDBManager`] to access RocksDB for the given repository.
+///
+/// The manager holds a reference-counted handle to a shared RocksDB instance that is cached in a
+/// global LRU cache. You should **drop the manager as soon as you are done with it** to avoid
+/// holding the underlying database open longer than necessary. Holding it too long can cause
+/// contention with other operations that need write access to the staged DB, and can prevent the
+/// LRU cache from evicting idle database handles.
+///
+/// **In async contexts**, ensure the manager is dropped before any `.await` points to avoid
+/// holding the database handle across suspension points.
+///
+/// Easy ways to ensure the manager is dropped promptly:
+///
+/// **Call `drop()` explicitly** when you need the result in the same scope:
+/// ```ignore
+/// let mgr = get_staged_db_manager(repo)?;
+/// let result = mgr.read_from_staged_db(path)?;
+/// drop(mgr);
+/// // ... continue working with result ...
+/// ```
+///
+/// **Use a block scope** so the manager is dropped at the end of the block:
+/// ```ignore
+/// let result = {
+///     let mgr = get_staged_db_manager(repo)?;
+///     mgr.read_from_staged_db(path)?
+/// }; // mgr is dropped here
+/// // ... continue working with result ...
+/// ```
+pub fn get_staged_db_manager(repository: &LocalRepository) -> Result<StagedDBManager, OxenError> {
+    let staged_db_dir = util::fs::oxen_hidden_dir(&repository.path).join(STAGED_DIR);
 
-        // 1. If staged db exists in cache, return the existing connection
-        {
-            let cache_r = DB_INSTANCES.read();
-            if let Some(db_lock) = cache_r.peek(&staged_db_dir) {
-                // Read lock guard is dropped here, return the existing connection
-                return operation(&StagedDBManager {
-                    staged_db: db_lock.clone(),
-                    repository: repository.clone(),
-                });
-            }
-        }
+    // Fast path: read lock
+    let cache_r = DB_INSTANCES.read();
+    if let Some(db_lock) = cache_r.peek(&staged_db_dir) {
+        return Ok(StagedDBManager {
+            staged_db: db_lock.clone(),
+            repository: repository.clone(),
+        });
+    }
+    drop(cache_r);
 
-        // 2. If not exists, create the directory and open the db
-        let mut cache_w = DB_INSTANCES.write();
-        if let Some(db_lock) = cache_w.get(&staged_db_dir) {
-            db_lock.clone()
-        } else {
-            // Cache miss: create directory and open DB
-            if !staged_db_dir.exists() {
-                std::fs::create_dir_all(&staged_db_dir).map_err(|e| {
-                    log::error!("Failed to create staged db directory: {e}");
-                    OxenError::basic_str(format!("Failed to create staged db directory: {e}"))
-                })?;
-            }
-            let opts = db::key_val::opts::default();
-            let db = DB::open(&opts, dunce::simplified(&staged_db_dir)).map_err(|e| {
-                log::error!("Failed to open staged db: {e}");
-                OxenError::basic_str(format!("Failed to open staged db: {e}"))
-            })?;
-            // Wrap the DB in an RwLock and store it in the cache
-            let db_lock = Arc::new(RwLock::new(db));
-            cache_w.put(staged_db_dir.clone(), db_lock.clone());
-            db_lock
-        }
-    };
+    // Get a write lock on DB_INSTANCES so we can add the new DB to the cache
+    let mut cache_w = DB_INSTANCES.write();
+    // It's possible another thread has already added the DB to the cache while we were waiting for
+    // the write lock, so we check again before creating the DB, just in case.
+    if let Some(db_lock) = cache_w.get(&staged_db_dir) {
+        return Ok(StagedDBManager {
+            staged_db: db_lock.clone(),
+            repository: repository.clone(),
+        });
+    }
 
-    let manager = StagedDBManager {
-        staged_db,
+    // Cache miss: create directory and open DB
+    if !staged_db_dir.exists() {
+        std::fs::create_dir_all(&staged_db_dir).map_err(|e| {
+            log::error!("Failed to create staged db directory: {e}");
+            OxenError::basic_str(format!("Failed to create staged db directory: {e}"))
+        })?;
+    }
+    let opts = db::key_val::opts::default();
+    let db = DB::open(&opts, dunce::simplified(&staged_db_dir)).map_err(|e| {
+        log::error!("Failed to open staged db: {e}");
+        OxenError::basic_str(format!("Failed to open staged db: {e}"))
+    })?;
+    let db_lock = Arc::new(RwLock::new(db));
+    cache_w.put(staged_db_dir.clone(), db_lock.clone());
+
+    Ok(StagedDBManager {
+        staged_db: db_lock,
         repository: repository.clone(),
-    };
-
-    // Execute the operation with our StagedDBManager instance
-    operation(&manager)
+    })
 }
 
 /// Normalizes a path to use forward slashes for use as a DB key.

@@ -15,7 +15,7 @@ use indicatif::ProgressStyle;
 use rocksdb::IteratorMode;
 use tokio::time::Duration;
 
-use crate::core::staged::with_staged_db_manager;
+use crate::core::staged::get_staged_db_manager;
 use crate::core::v_latest::add::CumulativeStats;
 use crate::core::v_latest::add::add_file_node_and_parent_dir;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
@@ -293,20 +293,19 @@ pub fn remove_file_with_db_manager(
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let mut err_files: Vec<ErrorFileInfo> = vec![];
 
-    let _ = with_staged_db_manager(repo, |staged_db_manager| {
+    if let Ok(staged_db_manager) = get_staged_db_manager(repo) {
         let status = StagedEntryStatus::Removed;
-        match add_file_node_and_parent_dir(file_node, status, path, staged_db_manager, seen_dirs) {
-            Ok(_) => Ok(()),
+        match add_file_node_and_parent_dir(file_node, status, path, &staged_db_manager, seen_dirs) {
+            Ok(_) => {}
             Err(e) => {
                 err_files.push(ErrorFileInfo {
                     hash: file_node.hash().to_string(),
                     path: Some(path.to_path_buf()),
                     error: format!("Failed to add file to staged db: {e}"),
                 });
-                Err(e)
             }
         }
-    });
+    }
 
     Ok(err_files)
 }
@@ -322,80 +321,80 @@ pub fn remove_dir_with_db_manager(
     let mut staged_nodes: HashMap<PathBuf, StagedMerkleTreeNode> = HashMap::new();
     // let err_files: Vec<ErrorFileInfo> = vec![];
 
-    with_staged_db_manager(repo, |staged_db_manager| {
-        // Walk the tree, collecting every node under the dir
-        let nodes = root_dir.list_files_and_dirs()?;
-        let parent_path = root_path.parent().unwrap_or(&empty_path);
+    let staged_db_manager = get_staged_db_manager(repo)?;
 
-        for (path, node) in nodes {
-            let path = parent_path.join(path);
-            let corrected_node = match &node.node {
-                EMerkleTreeNode::File(file_node) => {
-                    let mut file_node = file_node.clone();
-                    file_node.set_name(&path.to_string_lossy());
-                    MerkleTreeNode {
-                        hash: node.hash,
-                        node: EMerkleTreeNode::File(file_node.clone()),
-                        parent_id: node.parent_id,
-                        children: node.children.clone(),
-                    }
-                }
+    // Walk the tree, collecting every node under the dir
+    let nodes = root_dir.list_files_and_dirs()?;
+    let parent_path = root_path.parent().unwrap_or(&empty_path);
 
-                EMerkleTreeNode::Directory(dir_node) => {
-                    let mut dir_node = dir_node.clone();
-                    dir_node.set_name(path.to_string_lossy());
-                    MerkleTreeNode {
-                        hash: node.hash,
-                        node: EMerkleTreeNode::Directory(dir_node.clone()),
-                        parent_id: node.parent_id,
-                        children: node.children.clone(),
-                    }
-                }
-                _ => {
-                    return Err(OxenError::basic_str("Error: Unexpected node type"));
-                }
-            };
-
-            let staged_node = StagedMerkleTreeNode {
-                status: StagedEntryStatus::Removed,
-                node: corrected_node,
-            };
-
-            staged_nodes.insert(path, staged_node);
-        }
-
-        log::debug!("staged_nodes: {}", staged_nodes.len());
-
-        // Stage the root dir's parents
-        let mut parent_path = root_path.to_path_buf();
-        while let Some(parent) = parent_path.parent() {
-            parent_path = parent.to_path_buf();
-
-            match staged_db_manager.add_directory(&parent_path, seen_dirs) {
-                Ok(_) => {}
-                Err(e) => {
-                    log::debug!("Error adding parent dirs: {e:?}");
-                    return Err(e);
+    for (path, node) in nodes {
+        let path = parent_path.join(path);
+        let corrected_node = match &node.node {
+            EMerkleTreeNode::File(file_node) => {
+                let mut file_node = file_node.clone();
+                file_node.set_name(&path.to_string_lossy());
+                MerkleTreeNode {
+                    hash: node.hash,
+                    node: EMerkleTreeNode::File(file_node.clone()),
+                    parent_id: node.parent_id,
+                    children: node.children.clone(),
                 }
             }
 
-            if parent_path == Path::new("") {
-                break;
+            EMerkleTreeNode::Directory(dir_node) => {
+                let mut dir_node = dir_node.clone();
+                dir_node.set_name(path.to_string_lossy());
+                MerkleTreeNode {
+                    hash: node.hash,
+                    node: EMerkleTreeNode::Directory(dir_node.clone()),
+                    parent_id: node.parent_id,
+                    children: node.children.clone(),
+                }
             }
-        }
+            _ => {
+                return Err(OxenError::basic_str("Error: Unexpected node type"));
+            }
+        };
 
-        // Write all files to staged db
-        match staged_db_manager.upsert_staged_nodes(&staged_nodes) {
-            Ok(_) => {
-                log::debug!("Successfully upserted staged nodes");
-                Ok(())
-            }
+        let staged_node = StagedMerkleTreeNode {
+            status: StagedEntryStatus::Removed,
+            node: corrected_node,
+        };
+
+        staged_nodes.insert(path, staged_node);
+    }
+
+    log::debug!("staged_nodes: {}", staged_nodes.len());
+
+    // Stage the root dir's parents
+    let mut parent_path = root_path.to_path_buf();
+    while let Some(parent) = parent_path.parent() {
+        parent_path = parent.to_path_buf();
+
+        match staged_db_manager.add_directory(&parent_path, seen_dirs) {
+            Ok(_) => {}
             Err(e) => {
-                log::error!("Failed to upsert staged nodes due to error: {e:?}");
-                Err(e)
+                log::debug!("Error adding parent dirs: {e:?}");
+                return Err(e);
             }
         }
-    })
+
+        if parent_path == Path::new("") {
+            break;
+        }
+    }
+
+    // Write all files to staged db
+    match staged_db_manager.upsert_staged_nodes(&staged_nodes) {
+        Ok(_) => {
+            log::debug!("Successfully upserted staged nodes");
+            Ok(())
+        }
+        Err(e) => {
+            log::error!("Failed to upsert staged nodes due to error: {e:?}");
+            Err(e)
+        }
+    }
 }
 
 // Stages the file_node as removed, and all its parents in the repo as modified
