@@ -113,7 +113,7 @@ pub async fn get_by_remote(remote: &Remote) -> Result<RemoteRepository, OxenErro
     let res = client.get(&url).send().await?;
     log::debug!("get_by_remote status: {}", res.status());
     if 404 == res.status() {
-        return Err(OxenError::remote_not_found(remote.clone()));
+        return Err(OxenError::remote_repo_not_found(&remote.url));
     }
 
     let body = client::parse_json_body(&url, res).await?;

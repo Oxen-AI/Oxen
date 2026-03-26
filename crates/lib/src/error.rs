@@ -11,10 +11,10 @@ use std::path::PathBuf;
 use std::path::StripPrefixError;
 use tokio::task::JoinError;
 
+use crate::model::RepoNew;
 use crate::model::Schema;
 use crate::model::Workspace;
 use crate::model::{Commit, ParsedResource};
-use crate::model::{Remote, RepoNew};
 
 pub mod path_buf_error;
 pub mod string_error;
@@ -241,10 +241,6 @@ impl OxenError {
         OxenError::basic_str(format!(
             "Remote not set, you can set a remote by running:\n\noxen config --set-remote {name} <url>\n"
         ))
-    }
-
-    pub fn remote_not_found(remote: Remote) -> Self {
-        OxenError::RemoteRepoNotFound(Box::new(StringError::from(remote.url)))
     }
 
     pub fn remote_ahead_of_local() -> Self {
