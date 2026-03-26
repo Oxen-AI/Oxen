@@ -24,9 +24,7 @@ pub async fn fetch_remote(
     let remote = repo
         .get_remote(remote_name)
         .ok_or(OxenError::remote_not_set(remote_name))?;
-    let remote_repo = api::remote::repositories::get_by_remote(&remote)
-        .await?
-        .ok_or(OxenError::remote_not_found(remote.clone()))?;
+    let remote_repo = api::remote::repositories::get_by_remote(&remote).await?;
 
     let remote_branches = api::remote::branches::list(&remote_repo).await?;
     let local_branches = api::local::branches::list(repo)?;

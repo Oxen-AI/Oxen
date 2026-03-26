@@ -75,9 +75,7 @@ async fn clone_remote(opts: &CloneOpts) -> Result<Option<LocalRepository>, OxenE
         name: String::from(DEFAULT_REMOTE_NAME),
         url: opts.url.to_owned(),
     };
-    let remote_repo = api::client::repositories::get_by_remote(&remote)
-        .await?
-        .ok_or_else(|| OxenError::remote_repo_not_found(&opts.url))?;
+    let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
 
     // Check if the destination directory exists before cloning so we know
     // whether to clean it up or not in the case of an error.

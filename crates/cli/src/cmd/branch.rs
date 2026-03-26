@@ -202,9 +202,7 @@ impl BranchCmd {
         let remote = repo
             .get_remote(remote_name)
             .ok_or(OxenError::remote_not_set(remote_name))?;
-        let remote_repo = api::client::repositories::get_by_remote(&remote)
-            .await?
-            .ok_or(OxenError::remote_not_found(remote.clone()))?;
+        let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
 
         let branches = api::client::branches::list(&remote_repo).await?;
         for branch in branches.iter() {
