@@ -2,7 +2,8 @@
 name = "oxen-py"
 version = { workspace = true }
 edition = { workspace = true }
-license-file = "../../oxen-python/LICENSE"
+license = "Apache 2.0"  # Ideally, we'd use workspace = true, but oxen-python needs this file to be at its root.
+                        # We can restore this once oxen-python's contents have been moved to the repository root.
 homepage = { workspace = true }
 repository = { workspace = true }
 readme = { workspace = true }
