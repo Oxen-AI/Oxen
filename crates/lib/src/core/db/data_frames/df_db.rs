@@ -436,6 +436,12 @@ fn add_special_columns(conn: &duckdb::Connection, sql: &str) -> Result<String, O
             if let Some(Statement::Query(query)) = ast.get_mut(0)
                 && let ast::SetExpr::Select(select) = &mut *query.body
             {
+                // Don't inject special columns into DISTINCT queries —
+                // adding per-row unique cols like _oxen_id defeats deduplication.
+                if select.distinct.is_some() {
+                    return Ok(sql.to_string());
+                }
+
                 // Add new columns to the SELECT clause
                 for special_column in special_columns {
                     select
@@ -800,6 +806,39 @@ mod tests {
             let num_entries = count(&conn, table_name)?;
             assert_eq!(num_entries, 0);
 
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_select_distinct_not_defeated_by_special_columns() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|data_dir| {
+            let db_file = data_dir.join("data.db");
+            let conn = get_connection(&db_file)?;
+
+            // Create the table with the standard name and an _oxen_id column
+            // so add_special_columns will attempt to inject it.
+            conn.execute(
+                &format!(
+                    "CREATE TABLE {TABLE_NAME} (
+                        color VARCHAR,
+                        {OXEN_ID_COL} VARCHAR DEFAULT (uuid()::VARCHAR),
+                        {OXEN_ROW_ID_COL} INTEGER
+                    )"
+                ),
+                [],
+            )?;
+
+            // Insert rows with duplicate 'color' values
+            conn.execute(
+                &format!("INSERT INTO {TABLE_NAME} (color, {OXEN_ROW_ID_COL}) VALUES ('red', 1), ('red', 2), ('blue', 3)"),
+                [],
+            )?;
+
+            let sql = format!("SELECT DISTINCT color FROM {TABLE_NAME}");
+            let df = select_str(&conn, &sql, None)?;
+
+            assert_eq!(df.height(), 2, "DISTINCT should deduplicate 'red': {df:?}");
             Ok(())
         })
     }
