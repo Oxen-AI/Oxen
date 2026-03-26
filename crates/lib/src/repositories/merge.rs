@@ -971,14 +971,16 @@ mod tests {
 
             // 2. Create a new branch
             let new_branch_name = "new_branch";
-            let new_branch = repositories::branches::create_checkout(&repo, new_branch_name)?;
+            repositories::branches::create_checkout(&repo, new_branch_name)?;
 
             // 3. Commit something in new branch
             let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nfish")?;
             repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "Adding fish to labels.txt file")?;
 
-            // 4. merge main onto new branch
+            // 4. merge main onto new branch (re-fetch branches to get current commit IDs)
+            let og_branch = repositories::branches::get_by_name(&repo, &og_branch.name)?.unwrap();
+            let new_branch = repositories::branches::get_by_name(&repo, new_branch_name)?.unwrap();
             let merge_result =
                 repositories::merge::merge_into_base(&repo, &og_branch, &new_branch).await;
 
