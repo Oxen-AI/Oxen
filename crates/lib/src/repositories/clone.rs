@@ -5,6 +5,7 @@
 
 use std::path::Path;
 
+use crate::api;
 use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::core;
 use crate::core::versions::MinOxenVersion;
@@ -12,14 +13,9 @@ use crate::error::OxenError;
 use crate::model::{LocalRepository, Remote, RemoteRepository};
 use crate::opts::CloneOpts;
 use crate::opts::{FetchOpts, StorageOpts};
-use crate::{api, util};
 
 pub async fn clone(opts: &CloneOpts) -> Result<LocalRepository, OxenError> {
-    match clone_remote(opts).await {
-        Ok(Some(repo)) => Ok(repo),
-        Ok(None) => Err(OxenError::remote_repo_not_found(&opts.url)),
-        Err(err) => Err(err),
-    }
+    clone_remote(opts).await
 }
 
 pub async fn clone_url(
@@ -58,7 +54,7 @@ async fn _clone(
     clone(&opts).await
 }
 
-async fn clone_remote(opts: &CloneOpts) -> Result<Option<LocalRepository>, OxenError> {
+async fn clone_remote(opts: &CloneOpts) -> Result<LocalRepository, OxenError> {
     log::debug!(
         "clone_remote {} -> {:?} -> subtree? {:?} -> depth? {:?} -> all? {} -> storage backend? {:?} -> is vfs? {} -> is remote? {}",
         opts.url,
@@ -77,38 +73,10 @@ async fn clone_remote(opts: &CloneOpts) -> Result<Option<LocalRepository>, OxenE
     };
     let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
 
-    // Check if the destination directory exists before cloning so we know
-    // whether to clean it up or not in the case of an error.
-    let dst_exists_before_clone = opts.dst.exists();
-
     if opts.is_remote {
-        match clone_repo_remote_mode(remote_repo, opts).await {
-            Ok(repo) => Ok(Some(repo)),
-            Err(err) => {
-                if !dst_exists_before_clone && opts.dst.exists() {
-                    // Cleanup the destination directory if it wasn't there before cloning
-                    // Close DB instances before we delete it.
-                    core::staged::remove_from_cache_with_children(&opts.dst)?;
-                    core::refs::remove_from_cache(&opts.dst)?;
-                    util::fs::remove_dir_all(&opts.dst)?;
-                }
-                Err(err)
-            }
-        }
+        clone_repo_remote_mode(remote_repo, opts).await
     } else {
-        match clone_repo(remote_repo, opts).await {
-            Ok(repo) => Ok(Some(repo)),
-            Err(err) => {
-                if !dst_exists_before_clone && opts.dst.exists() {
-                    // Cleanup the destination directory if it wasn't there before cloning
-                    // Close DB instances before we delete it.
-                    core::staged::remove_from_cache_with_children(&opts.dst)?;
-                    core::refs::remove_from_cache(&opts.dst)?;
-                    util::fs::remove_dir_all(&opts.dst)?;
-                }
-                Err(err)
-            }
-        }
+        clone_repo(remote_repo, opts).await
     }
 }
 
@@ -164,7 +132,7 @@ mod tests {
                 let opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
 
                 log::debug!("about to clone the remote");
-                let local_repo = clone_remote(&opts).await?.unwrap();
+                let local_repo = clone_remote(&opts).await?;
                 log::debug!("succeeded");
                 let cfg_fname = ".oxen/config.toml".to_string();
                 let config_path = local_repo.path.join(&cfg_fname);
@@ -195,7 +163,7 @@ mod tests {
 
             test::run_empty_dir_test_async(|dir| async move {
                 let opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
-                let local_repo = clone_remote(&opts).await?.unwrap();
+                let local_repo = clone_remote(&opts).await?;
 
                 api::client::repositories::delete(&remote_repo).await?;
 
@@ -226,7 +194,7 @@ mod tests {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.fetch_opts.subtree_paths = Some(vec![PathBuf::from(".")]);
                 opts.fetch_opts.depth = Some(1);
-                let local_repo = clone_remote(&opts).await?.unwrap();
+                let local_repo = clone_remote(&opts).await?;
 
                 // Make sure we set the depth and subtree paths
                 assert_eq!(local_repo.depth(), Some(1));
@@ -258,7 +226,7 @@ mod tests {
             test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.fetch_opts.subtree_paths = Some(vec![PathBuf::from("annotations")]);
-                let local_repo = clone_remote(&opts).await?.unwrap();
+                let local_repo = clone_remote(&opts).await?;
 
                 // Make sure we set the depth and subtree paths
                 assert_eq!(
@@ -311,7 +279,7 @@ mod tests {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.fetch_opts.subtree_paths =
                     Some(vec![PathBuf::from("annotations").join("test")]);
-                let local_repo = clone_remote(&opts).await?.unwrap();
+                let local_repo = clone_remote(&opts).await?;
 
                 assert!(local_repo.path.join("annotations").join("test").exists());
                 assert!(
@@ -343,7 +311,7 @@ mod tests {
                     PathBuf::from("annotations").join("test"),
                     PathBuf::from("nlp"),
                 ]);
-                let local_repo = clone_remote(&opts).await?.unwrap();
+                let local_repo = clone_remote(&opts).await?;
 
                 assert!(local_repo.path.join("annotations").join("test").exists());
                 assert!(local_repo.path.join("nlp").exists());
