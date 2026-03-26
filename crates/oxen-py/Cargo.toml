@@ -1,22 +1,28 @@
 [package]
 name = "oxen-py"
-version = "0.46.8"
-edition.workspace = true
+version = { workspace = true }
+edition = { workspace = true }
+license-file = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+readme = { workspace = true }
+keywords = { workspace = true }
+publish = false
 
 [lib]
-name = "oxen"
-crate-type = ["cdylib"]
+name = "oxen" # Necessary so that we can import the crate as `import oxen` in Python.
+crate-type = ["cdylib"] # PyO3 needs this crate to be a cdylib so it can link against it.
 
 [dependencies]
-env_logger = "0.11"
+env_logger = { workspace = true }
 liboxen = { path = "../lib", features = ["perf-logging"] }
-log = "0.4.17"
-pyo3 = { version = "0.25" }
-pyo3-async-runtimes = { version = "0.25", features = ["attributes", "async-std-runtime", "tokio-runtime"] }
-pyo3-polars = { version = "0.22", features = ["dtype-full"] }
-serde_json.workspace = true
-tokio.workspace = true
-uuid.workspace = true
+log = { workspace = true }
+pyo3 = { workspace = true }
+pyo3-async-runtimes = { workspace = true }
+pyo3-polars = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
 
 [build-dependencies]
 bindgen = { version = "0.71.1", default-features = false, features = ["runtime"] }
