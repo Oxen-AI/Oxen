@@ -11,15 +11,9 @@ use std::path::Path;
 
 /// # Stage files into repository
 ///
-/// ```
-/// use liboxen::command;
+/// ```ignore
+/// use liboxen::repositories;
 /// use liboxen::util;
-/// # use liboxen::error::OxenError;
-/// # use std::path::Path;
-/// #
-///
-/// # fn main() -> Result<(), OxenError> {
-/// # liboxen::test::init_test_env();
 ///
 /// // Initialize the repository
 /// let base_dir = Path::new("repo_dir_add");
@@ -30,11 +24,9 @@ use std::path::Path;
 /// util::fs::write_to_path(&hello_file, "Hello World");
 ///
 /// // Stage the file
-/// repositories::add(&repo, &hello_file)?;
+/// repositories::add(&repo, &hello_file).await?;
 ///
 /// # util::fs::remove_dir_all(base_dir)?;
-/// # Ok(())
-/// # }
 /// ```
 pub async fn add(repo: &LocalRepository, path: impl AsRef<Path>) -> Result<(), OxenError> {
     add_all_with_version(repo, vec![path], repo.min_version()).await

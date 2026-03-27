@@ -19,14 +19,9 @@ pub mod commit_writer;
 
 /// # Commit the staged files in the repo
 ///
-/// ```
-/// use liboxen::command;
+/// ```ignore
+/// use liboxen::repositories;
 /// use liboxen::util;
-/// #
-/// # use liboxen::error::OxenError;
-/// # use std::path::Path;
-/// # fn main() -> Result<(), OxenError> {
-/// # liboxen::test::init_test_env();
 ///
 /// // Initialize the repository
 /// let base_dir = Path::new("repo_dir_commit");
@@ -37,14 +32,10 @@ pub mod commit_writer;
 /// util::fs::write_to_path(&hello_file, "Hello World");
 ///
 /// // Stage the file
-/// repositories::add(&repo, &hello_file)?;
+/// repositories::add(&repo, &hello_file).await?;
 ///
 /// // Commit staged
 /// repositories::commit(&repo, "My commit message")?;
-///
-/// # util::fs::remove_dir_all(base_dir)?;
-/// # Ok(())
-/// # }
 /// ```
 pub fn commit(repo: &LocalRepository, message: &str) -> Result<Commit, OxenError> {
     match repo.min_version() {

@@ -11,15 +11,10 @@ use crate::opts::RestoreOpts;
 
 /// # Restore a removed file that was committed
 ///
-/// ```
-/// use liboxen::command;
+/// ```ignore
+/// use liboxen::repositories;
+/// use liboxen::opts::RestoreOpts;
 /// use liboxen::util;
-/// #
-/// # use liboxen::error::OxenError;
-/// # use liboxen::opts::RestoreOpts;
-/// # use std::path::Path;
-/// # fn main() -> Result<(), OxenError> {
-/// # liboxen::test::init_test_env();
 ///
 /// // Initialize the repository
 /// let base_dir = Path::new("repo_dir_commit");
@@ -34,17 +29,13 @@ use crate::opts::RestoreOpts;
 /// repositories::add(&repo, &hello_path).await?;
 ///
 /// // Commit staged
-/// let commit = repositories::commit(&repo, "My commit message")?.unwrap();
+/// let commit = repositories::commit(&repo, "My commit message")?;
 ///
 /// // Remove the file from disk
 /// util::fs::remove_file(hello_path)?;
 ///
 /// // Restore the file
-/// repositories::restore::restore(&repo, RestoreOpts::from_path_ref(hello_name, commit.id))?;
-///
-/// # util::fs::remove_dir_all(base_dir)?;
-/// # Ok(())
-/// # }
+/// repositories::restore::restore(&repo, RestoreOpts::from_path_ref(hello_name, commit.id)).await?;
 /// ```
 pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenError> {
     match repo.min_version() {

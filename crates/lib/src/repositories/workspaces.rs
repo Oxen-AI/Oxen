@@ -103,13 +103,8 @@ pub fn get_by_name(
     workspace_name: impl AsRef<str>,
 ) -> Result<Option<Workspace>, OxenError> {
     let workspace_name = workspace_name.as_ref();
-    let workspaces = list(repo)?;
-    for workspace in workspaces {
-        if workspace.name == Some(workspace_name.to_string()) {
-            return Ok(Some(workspace));
-        }
-    }
-    Ok(None)
+    let workspace = iter_workspaces(repo)?.find(|ws| ws.name.as_deref() == Some(workspace_name));
+    Ok(workspace)
 }
 
 /// Creates a new workspace and saves it to the filesystem
@@ -251,36 +246,46 @@ fn check_existing_workspace_name(
     Ok(())
 }
 
-pub fn list(repo: &LocalRepository) -> Result<Vec<Workspace>, OxenError> {
+/// Returns a lazy iterator over all workspaces in the repository.
+/// Each workspace is loaded from the filesystem on demand.
+fn iter_workspaces(
+    repo: &LocalRepository,
+) -> Result<impl Iterator<Item = Workspace> + '_, OxenError> {
     let workspaces_dir = Workspace::workspaces_dir(repo);
-    log::debug!("workspace::list got workspaces_dir: {workspaces_dir:?}");
-    if !workspaces_dir.exists() {
-        // Return early if the workspaces directory does not exist
-        return Ok(vec![]);
-    }
+    log::debug!("workspace::iter_workspaces got workspaces_dir: {workspaces_dir:?}");
 
-    let workspaces_hashes = util::fs::list_dirs_in_dir(&workspaces_dir)
-        .map_err(|e| OxenError::basic_str(format!("Error listing workspace directories: {e}")))?;
+    let workspace_hashes = if workspaces_dir.exists() {
+        util::fs::list_dirs_in_dir(&workspaces_dir).map_err(|e| {
+            OxenError::basic_str(format!("Error listing workspace directories: {e}"))
+        })?
+    } else {
+        Vec::new()
+    };
 
-    log::debug!("workspace::list got {} workspaces", workspaces_hashes.len());
+    log::debug!(
+        "workspace::iter_workspaces got {} workspaces",
+        workspace_hashes.len()
+    );
 
-    let mut workspaces = Vec::new();
-    for workspace_hash in workspaces_hashes {
-        // Construct the Workspace and add it to the list
-        match get_by_dir(repo, &workspace_hash) {
-            Ok(Some(workspace)) => workspaces.push(workspace),
-            Ok(None) => {
-                log::debug!("Workspace not found: {workspace_hash:?}");
-                continue;
-            }
-            Err(e) => {
-                log::error!("Failed to list workspace: {e}");
-                continue;
-            }
-        }
-    }
+    Ok(workspace_hashes
+        .into_iter()
+        .filter_map(
+            move |workspace_hash| match get_by_dir(repo, &workspace_hash) {
+                Ok(Some(workspace)) => Some(workspace),
+                Ok(None) => {
+                    log::debug!("Workspace not found: {workspace_hash:?}");
+                    None
+                }
+                Err(e) => {
+                    log::error!("Failed to list workspace: {e}");
+                    None
+                }
+            },
+        ))
+}
 
-    Ok(workspaces)
+pub fn list(repo: &LocalRepository) -> Result<Vec<Workspace>, OxenError> {
+    iter_workspaces(repo).map(|iter| iter.collect())
 }
 
 pub fn get_non_editable_by_commit_id(

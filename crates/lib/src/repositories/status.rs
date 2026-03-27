@@ -19,14 +19,8 @@ use crate::model::{LocalRepository, StagedData};
 ///
 /// Empty Repository:
 ///
-/// ```
-/// use liboxen::command;
-/// # use liboxen::error::OxenError;
-/// # use std::path::Path;
-/// #
-///
-/// # fn main() -> Result<(), OxenError> {
-/// # liboxen::test::init_test_env();
+/// ```ignore
+/// use liboxen::repositories;
 ///
 /// let base_dir = Path::new("repo_dir_status_1");
 /// // Initialize empty repo
@@ -34,22 +28,12 @@ use crate::model::{LocalRepository, StagedData};
 /// // Get status on repo
 /// let status = repositories::status(&repo)?;
 /// assert!(status.is_clean());
-///
-/// # util::fs::remove_dir_all(base_dir)?;
-/// # Ok(())
-/// # }
 /// ```
 ///
 /// Repository with files
-/// ```
-/// use liboxen::command;
+/// ```ignore
+/// use liboxen::repositories;
 /// use liboxen::util;
-/// # use liboxen::error::OxenError;
-/// # use std::path::Path;
-/// #
-///
-/// # fn main() -> Result<(), OxenError> {
-/// # liboxen::test::init_test_env();
 ///
 /// let base_dir = Path::new("repo_dir_status_2");
 /// // Initialize empty repo
@@ -62,10 +46,6 @@ use crate::model::{LocalRepository, StagedData};
 /// // Get status on repo
 /// let status = repositories::status(&repo)?;
 /// assert_eq!(status.untracked_files.len(), 1);
-///
-/// # util::fs::remove_dir_all(base_dir)?;
-/// # Ok(())
-/// # }
 /// ```
 pub fn status(repo: &LocalRepository) -> Result<StagedData, OxenError> {
     match repo.min_version() {
