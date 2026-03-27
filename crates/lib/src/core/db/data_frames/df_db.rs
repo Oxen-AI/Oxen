@@ -393,8 +393,7 @@ fn add_special_columns(conn: &duckdb::Connection, sql: &str) -> Result<String, O
         .collect::<Vec<_>>()
         .join(";");
 
-    let stmt = conn.prepare(&query_with_limit);
-    let mut stmt = stmt.map_err(|error| OxenError::basic_str(error.to_string()))?;
+    let mut stmt = conn.prepare(&query_with_limit)?;
     let records: Vec<RecordBatch> = stmt.query_arrow([])?.collect();
 
     let mut result_fields = vec![];
