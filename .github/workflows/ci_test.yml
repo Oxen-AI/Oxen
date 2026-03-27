@@ -55,10 +55,10 @@ jobs:
           df -h
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ env.AWS_ROLE }}
           role-duration-seconds: 3600
@@ -73,7 +73,7 @@ jobs:
           cache-workspace-crates: true
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.11" # Test against the earliest supported Python version
 
@@ -124,7 +124,9 @@ jobs:
       #     echo "PKG_CONFIG_PATH=$pkgConfigPath" >> $env:GITHUB_ENV
 
       - name: Install nextest runner
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.114
 
       # Oxen Rust Tests
       - name: Setup test directories (Linux/macOS)
