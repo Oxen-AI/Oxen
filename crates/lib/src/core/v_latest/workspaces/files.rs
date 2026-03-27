@@ -772,7 +772,7 @@ pub fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenError>
 
     // Get the canonical (absolute) path of the parent directory
     let parent = match zip_filepath.parent() {
-        Some(p) => p.canonicalize()?,
+        Some(p) => crate::util::fs::canonicalize(p)?,
         None => std::env::current_dir()?,
     };
 
