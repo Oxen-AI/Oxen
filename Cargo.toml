@@ -96,6 +96,9 @@ parking_lot = "0.12.1"
 pathdiff = "0.2.3"
 percent-encoding = "2.1"
 polars = { version = "0.49.0", features = ["lazy", "parquet", "json", "ipc", "ipc_streaming", "dtype-full", "timezones", "random"] }
+pyo3 = { version = "0.25" }
+pyo3-async-runtimes = { version = "0.25", features = ["attributes", "async-std-runtime", "tokio-runtime"] }
+pyo3-polars = { version = "0.22", features = ["dtype-full"] }
 qsv-sniffer = "0.10.3"
 r2d2 = "0.8.10"
 rand = "0.8.5"
