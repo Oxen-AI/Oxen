@@ -20,7 +20,7 @@ pub fn parse_resource_from_path(
     let components = path.components().collect::<Vec<_>>();
 
     let first_str = match components.first() {
-        Some(c) => component_str(c),
+        Some(c) => c.as_os_str().to_str().expect("non-UTF-8 resource path"),
         None => return Ok(None),
     };
 
@@ -105,18 +105,6 @@ fn parsed_from_workspace(
     }
 }
 
-/// All resource paths originate from HTTP routes, so non-UTF-8 is unreachable.
-/// These two helpers make that assumption explicit in one place.
-fn component_str<'a>(c: &'a Component<'a>) -> &'a str {
-    let p: &Path = c.as_ref();
-    path_str(p)
-}
-
-fn path_str(p: &Path) -> &str {
-    p.to_str()
-        .expect("resource path component is not valid UTF-8")
-}
-
 fn remaining_path(components: &[Component], skip: usize) -> PathBuf {
     components.iter().skip(skip).fold(PathBuf::new(), |acc, c| {
         let p: &Path = c.as_ref();
@@ -158,7 +146,9 @@ fn try_parse_as_branch(
             (&components[..split], &components[split..])
         };
 
-        let branch_name = util::fs::linux_path_str(path_str(&join_components(branch_components)));
+        let joined = join_components(branch_components);
+        let branch_name =
+            util::fs::linux_path_str(joined.to_str().expect("non-UTF-8 resource path"));
 
         let maybe_branch =
             with_ref_manager(repo, |manager| manager.get_branch_by_name(&branch_name))?;
