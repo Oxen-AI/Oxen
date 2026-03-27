@@ -72,7 +72,7 @@ fn read_df_jsonl(path: impl AsRef<Path>) -> Result<LazyFrame, OxenError> {
     let path = path
         .as_ref()
         .to_str()
-        .ok_or(OxenError::basic_str("Could not convert path to string"))?;
+        .ok_or_else(|| OxenError::basic_str("Could not convert path to string"))?;
     LazyJsonLineReader::new(path)
         .with_infer_schema_length(Some(NonZeroUsize::new(10000).unwrap()))
         .finish()
@@ -149,7 +149,7 @@ pub fn scan_df_jsonl(path: impl AsRef<Path>, total_rows: usize) -> Result<LazyFr
     let path = path
         .as_ref()
         .to_str()
-        .ok_or(OxenError::basic_str("Could not convert path to string"))?;
+        .ok_or_else(|| OxenError::basic_str("Could not convert path to string"))?;
     LazyJsonLineReader::new(path)
         .with_infer_schema_length(Some(NonZeroUsize::new(10000).unwrap()))
         .with_n_rows(Some(total_rows))

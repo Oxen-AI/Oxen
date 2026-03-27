@@ -209,15 +209,15 @@ pub fn handle_data_frame_column_change(
             previous: None,
         })),
         "modified" => {
-            let column_before = change.column_before.ok_or(OxenError::basic_str(
-                "A modified column needs to have a column before value",
-            ))?;
+            let column_before = change.column_before.ok_or_else(|| {
+                OxenError::basic_str("A modified column needs to have a column before value")
+            })?;
 
             let previous_field = PreviousField {
                 name: column_before.column_name.clone(),
-                dtype: column_before.column_data_type.ok_or(OxenError::basic_str(
-                    "A modified column needs to have a before datatype value",
-                ))?,
+                dtype: column_before.column_data_type.ok_or_else(|| {
+                    OxenError::basic_str("A modified column needs to have a before datatype value")
+                })?,
                 metadata: None,
             };
 
@@ -251,18 +251,18 @@ pub fn reinsert_deleted_columns_into_schema(
     }
 
     for deleted_column in &deleted_columns {
-        let before_column = deleted_column.clone().ok_or(OxenError::basic_str(
-            "A deleted column needs to have a column before value",
-        ))?;
+        let before_column = deleted_column.clone().ok_or_else(|| {
+            OxenError::basic_str("A deleted column needs to have a column before value")
+        })?;
 
         df_views.source.schema.fields.push(Field {
             name: before_column.column_name.clone(),
             dtype: before_column
                 .column_data_type
                 .clone()
-                .ok_or(OxenError::basic_str(
-                    "A deleted column needs to have a before datatype value",
-                ))?
+                .ok_or_else(|| {
+                    OxenError::basic_str("A deleted column needs to have a before datatype value")
+                })?
                 .clone(),
             metadata: None,
             changes: None,
@@ -272,9 +272,9 @@ pub fn reinsert_deleted_columns_into_schema(
             name: before_column.column_name.clone(),
             dtype: before_column
                 .column_data_type
-                .ok_or(OxenError::basic_str(
-                    "A deleted column needs to have a before datatype value",
-                ))?
+                .ok_or_else(|| {
+                    OxenError::basic_str("A deleted column needs to have a before datatype value")
+                })?
                 .clone(),
             metadata: None,
             changes: None,

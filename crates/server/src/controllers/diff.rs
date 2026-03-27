@@ -73,8 +73,8 @@ pub async fn commits(
     let (base, head) = parse_base_head(&base_head)?;
     let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head)?;
 
-    let base_commit = base_commit.ok_or(OxenError::revision_not_found(base.into()))?;
-    let head_commit = head_commit.ok_or(OxenError::revision_not_found(head.into()))?;
+    let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
+    let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
 
     let commits = repositories::commits::list_between(&repository, &base_commit, &head_commit)?;
     let (paginated, pagination) = util::paginate(commits, page, page_size);
@@ -132,8 +132,8 @@ pub async fn entries(
     let (base, head) = parse_base_head(&base_head)?;
     let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head)?;
 
-    let base_commit = base_commit.ok_or(OxenError::revision_not_found(base.into()))?;
-    let head_commit = head_commit.ok_or(OxenError::revision_not_found(head.into()))?;
+    let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
+    let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
 
     let entries_diff = repositories::diffs::list_diff_entries(
         &repository,
@@ -207,8 +207,8 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     let (base, head) = parse_base_head(&base_head)?;
     let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head)?;
 
-    let base_commit = base_commit.ok_or(OxenError::revision_not_found(base.into()))?;
-    let head_commit = head_commit.ok_or(OxenError::revision_not_found(head.into()))?;
+    let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
+    let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
 
     let dir_diffs =
         repositories::diffs::list_changed_dirs(&repository, &base_commit, &head_commit)?;
@@ -264,8 +264,8 @@ pub async fn dir_entries(
     let (base, head) = parse_base_head(&base_head)?;
     let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head)?;
 
-    let base_commit = base_commit.ok_or(OxenError::revision_not_found(base.into()))?;
-    let head_commit = head_commit.ok_or(OxenError::revision_not_found(head.into()))?;
+    let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
+    let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
     let dir = PathBuf::from(dir);
 
     let entries_diff = repositories::diffs::list_diff_entries(
@@ -430,10 +430,10 @@ pub async fn create_df_diff(
     let compare_id = data.compare_id.clone();
 
     let commit_1 = repositories::revisions::get(&repository, &data.left.version)?
-        .ok_or_else(|| OxenError::revision_not_found(data.left.version.into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(data.left.version.into()))?;
 
     let commit_2 = repositories::revisions::get(&repository, &data.right.version)?
-        .ok_or_else(|| OxenError::revision_not_found(data.right.version.into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(data.right.version.into()))?;
 
     let node_1 =
         repositories::entries::get_file(&repository, &commit_1, &resource_1)?.ok_or_else(|| {
@@ -539,9 +539,9 @@ pub async fn update_df_diff(
     log::debug!("display by col is {display_by_column:?}");
 
     let commit_1 = repositories::revisions::get(&repository, &data.left.version)?
-        .ok_or_else(|| OxenError::revision_not_found(data.left.version.into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(data.left.version.into()))?;
     let commit_2 = repositories::revisions::get(&repository, &data.right.version)?
-        .ok_or_else(|| OxenError::revision_not_found(data.right.version.into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(data.right.version.into()))?;
 
     let node_1 =
         repositories::entries::get_file(&repository, &commit_1, &resource_1)?.ok_or_else(|| {
@@ -632,8 +632,8 @@ pub async fn get_df_diff(
     let (left, right) = parse_base_head(&base_head)?;
     let (left_commit, right_commit) = resolve_base_head(&repository, &left, &right)?;
 
-    let left_commit = left_commit.ok_or(OxenError::revision_not_found(left.into()))?;
-    let right_commit = right_commit.ok_or(OxenError::revision_not_found(right.into()))?;
+    let left_commit = left_commit.ok_or_else(|| OxenError::RevisionNotFound(left.into()))?;
+    let right_commit = right_commit.ok_or_else(|| OxenError::RevisionNotFound(right.into()))?;
 
     let left_entry = repositories::entries::get_commit_entry(
         &repository,
@@ -866,13 +866,13 @@ fn parse_base_head_resource(
     let mut split = base_head.split("..");
     let base = split
         .next()
-        .ok_or(OxenError::resource_not_found(base_head))?;
+        .ok_or_else(|| OxenError::resource_not_found(base_head))?;
     let head = split
         .next()
-        .ok_or(OxenError::resource_not_found(base_head))?;
+        .ok_or_else(|| OxenError::resource_not_found(base_head))?;
 
     let base_commit = repositories::revisions::get(repo, base)?
-        .ok_or(OxenError::revision_not_found(base.into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
 
     // Split on / and find longest branch name
     let split_head = head.split('/');
@@ -897,8 +897,8 @@ fn parse_base_head_resource(
     log::debug!("Got head_commit: {head_commit:?}");
     log::debug!("Got resource: {resource:?}");
 
-    let head_commit = head_commit.ok_or(OxenError::revision_not_found(head.into()))?;
-    let resource = resource.ok_or(OxenError::revision_not_found(head.into()))?;
+    let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
+    let resource = resource.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
 
     Ok((base_commit, head_commit, resource))
 }

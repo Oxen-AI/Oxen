@@ -52,11 +52,6 @@ pub async fn fork(
             log::info!("Successfully forked repository to {:?}", &new_repo_path);
             Ok(HttpResponse::Accepted().json(fork_start_response))
         }
-        Err(OxenError::RepoAlreadyExistsAtDestination(path)) => {
-            log::debug!("Repo already exists: {path:?}");
-            Ok(HttpResponse::Conflict()
-                .json(StatusMessage::error("Repo already exists at destination.")))
-        }
         Err(err) => {
             log::error!("Failed to fork repository: {err:?}");
             Err(OxenHttpError::from(err))
@@ -90,7 +85,7 @@ pub async fn get_status(req: HttpRequest) -> Result<HttpResponse, OxenHttpError>
 
     match repositories::fork::get_fork_status(&repo_path) {
         Ok(status) => Ok(HttpResponse::Ok().json(status)),
-        Err(OxenError::ForkStatusNotFound(_)) => {
+        Err(OxenError::ForkStatusNotFound) => {
             Ok(HttpResponse::NotFound().json(StatusMessage::error("Fork status not found")))
         }
         Err(e) => {

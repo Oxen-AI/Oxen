@@ -28,7 +28,7 @@ pub async fn checkout(
 
         println!("Checkout branch: {value}");
         let commit = repositories::revisions::get(repo, value)?
-            .ok_or(OxenError::revision_not_found(value.into()))?;
+            .ok_or_else(|| OxenError::RevisionNotFound(value.into()))?;
         let subtree_paths = match repo.subtree_paths() {
             Some(paths_vec) => paths_vec, // If Some(vec), take the inner vector
             None => vec![Path::new("").to_path_buf()],
@@ -46,7 +46,7 @@ pub async fn checkout(
         }
 
         let commit = repositories::revisions::get(repo, value)?
-            .ok_or(OxenError::revision_not_found(value.into()))?;
+            .ok_or_else(|| OxenError::RevisionNotFound(value.into()))?;
 
         let previous_head_commit = repositories::commits::head_commit_maybe(repo)?;
         repositories::branches::checkout_commit_from_commit(repo, &commit, &previous_head_commit)

@@ -56,7 +56,7 @@ pub fn update_schema(
             &workspace.commit,
             path.as_ref(),
         )?
-        .ok_or(OxenError::basic_str("File not found"))?;
+        .ok_or_else(|| OxenError::basic_str("File not found"))?;
     }
 
     if let Some(GenericMetadata::MetadataTabular(tabular_metadata)) = &file_node.metadata() {

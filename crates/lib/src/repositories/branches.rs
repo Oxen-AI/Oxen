@@ -271,7 +271,7 @@ pub fn list_entry_versions_on_branch(
     path: &Path,
 ) -> Result<Vec<(Commit, CommitEntry)>, OxenError> {
     let branch = repositories::branches::get_by_name(local_repo, branch_name)?
-        .ok_or(OxenError::local_branch_not_found(branch_name))?;
+        .ok_or_else(|| OxenError::local_branch_not_found(branch_name))?;
     log::debug!(
         "get branch commits for branch {:?} -> {}",
         branch.name,

@@ -241,14 +241,12 @@ impl error::ResponseError for OxenHttpError {
                 match error {
                     OxenError::RepoNotFound(repo) => {
                         log::debug!("Repo not found: {repo}");
-
                         HttpResponse::NotFound().json(StatusMessageDescription::not_found(format!(
                             "Repository '{repo}' not found"
                         )))
                     }
                     OxenError::ResourceNotFound(resource) => {
                         log::debug!("Resource not found: {resource}");
-
                         let error_json = json!({
                             "error": {
                                 "type": MSG_RESOURCE_NOT_FOUND,
@@ -258,12 +256,10 @@ impl error::ResponseError for OxenHttpError {
                             "status": STATUS_ERROR,
                             "status_message": MSG_RESOURCE_NOT_FOUND,
                         });
-
                         HttpResponse::NotFound().json(error_json)
                     }
                     OxenError::ParsedResourceNotFound(resource) => {
                         log::debug!("Resource not found: {resource}");
-
                         let error_json = json!({
                             "error": {
                                 "type": MSG_RESOURCE_NOT_FOUND,
@@ -273,7 +269,6 @@ impl error::ResponseError for OxenHttpError {
                             "status": STATUS_ERROR,
                             "status_message": MSG_RESOURCE_NOT_FOUND,
                         });
-
                         HttpResponse::NotFound().json(error_json)
                     }
                     OxenError::BranchNotFound(branch) => {
@@ -286,7 +281,6 @@ impl error::ResponseError for OxenHttpError {
                             "status": STATUS_ERROR,
                             "status_message": MSG_RESOURCE_NOT_FOUND,
                         });
-
                         HttpResponse::NotFound().json(error_json)
                     }
                     OxenError::RevisionNotFound(revision) => {
@@ -299,12 +293,10 @@ impl error::ResponseError for OxenHttpError {
                             "status": STATUS_ERROR,
                             "status_message": MSG_RESOURCE_NOT_FOUND,
                         });
-
                         HttpResponse::NotFound().json(error_json)
                     }
                     OxenError::PathDoesNotExist(path) => {
                         log::debug!("Path does not exist: {path}");
-
                         let error_json = json!({
                             "error": {
                                 "type": MSG_RESOURCE_NOT_FOUND,
@@ -314,12 +306,10 @@ impl error::ResponseError for OxenHttpError {
                             "status": STATUS_ERROR,
                             "status_message": MSG_RESOURCE_NOT_FOUND,
                         });
-
                         HttpResponse::NotFound().json(error_json)
                     }
                     OxenError::WorkspaceNotFound(workspace) => {
                         log::error!("Workspace not found: {workspace}");
-
                         let error_json = json!({
                             "error": {
                                 "type": MSG_RESOURCE_NOT_FOUND,
@@ -329,19 +319,16 @@ impl error::ResponseError for OxenHttpError {
                             "status": STATUS_ERROR,
                             "status_message": MSG_RESOURCE_NOT_FOUND,
                         });
-
                         HttpResponse::NotFound().json(error_json)
                     }
                     OxenError::RemoteRepoNotFound(remote) => {
                         log::debug!("Remote repo not found: {remote}");
-
                         HttpResponse::NotFound().json(StatusMessageDescription::not_found(format!(
                             "Remote repository not found: {remote}"
                         )))
                     }
                     OxenError::CommitEntryNotFound(msg) => {
                         log::error!("{msg}");
-
                         let error_json = json!({
                             "error": {
                                 "type": MSG_RESOURCE_NOT_FOUND,
@@ -351,12 +338,10 @@ impl error::ResponseError for OxenHttpError {
                             "status": STATUS_ERROR,
                             "status_message": MSG_RESOURCE_NOT_FOUND,
                         });
-
                         HttpResponse::NotFound().json(error_json)
                     }
                     OxenError::UpstreamMergeConflict(desc) => {
                         log::error!("Upstream merge conflict: {desc}");
-
                         let error_json = json!({
                             "error": {
                                 "type": MSG_CONFLICT,
@@ -366,28 +351,15 @@ impl error::ResponseError for OxenHttpError {
                             "status": STATUS_ERROR,
                             "status_message": MSG_CONFLICT,
                         });
-
                         HttpResponse::Conflict().json(error_json)
                     }
                     OxenError::InvalidSchema(schema) => {
                         log::error!("Invalid schema: {schema}");
-
                         HttpResponse::BadRequest().json(StatusMessageDescription::bad_request(
                             format!("Schema is invalid: '{schema}'"),
                         ))
                     }
-                    OxenError::RemoteAheadOfLocal(desc) => {
-                        log::error!("Remote ahead of local: {desc}");
 
-                        HttpResponse::BadRequest()
-                            .json(StatusMessageDescription::bad_request(format!("{desc}")))
-                    }
-                    OxenError::IncompleteLocalHistory(desc) => {
-                        log::error!("Cannot push repo with incomplete local history: {desc}");
-
-                        HttpResponse::BadRequest()
-                            .json(StatusMessageDescription::bad_request(format!("{desc}")))
-                    }
                     OxenError::IncompatibleSchemas(schema) => {
                         log::error!("Incompatible schemas: {schema}");
 
@@ -447,8 +419,10 @@ impl error::ResponseError for OxenHttpError {
                         let error_json = json!({
                             "error": {
                                 "type": "invalid_repo_name",
-                                "title": "Invalid Repository Name",
-                                "detail": format!("Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"),
+                                "title":
+                                    "Invalid Repository Name",
+                                "detail":
+                                    format!("Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"),
                             },
                             "status": STATUS_ERROR,
                             "status_message": MSG_BAD_REQUEST,
@@ -471,7 +445,6 @@ impl error::ResponseError for OxenHttpError {
                     }
                     OxenError::DUCKDB(error) => {
                         log::error!("DuckDB error: {error}");
-
                         let error_json = json!({
                             "error": {
                                 "type": "query_error",
@@ -512,13 +485,13 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::InternalServerError().json(error_json)
                     }
-                    OxenError::ThumbnailingNotEnabled(error) => {
-                        log::error!("Thumbnailing not enabled: {error}");
+                    thumbnail_error @ OxenError::ThumbnailingNotEnabled => {
+                        log::error!("Thumbnailing not enabled: {thumbnail_error}");
                         let error_json = json!({
                             "error": {
                                 "type": "thumbnailing_not_enabled",
                                 "title": "Thumbnailing Not Enabled",
-                                "detail": format!("{}", error),
+                                "detail": format!("{thumbnail_error}"),
                             },
                             "status": STATUS_ERROR,
                             "status_message": MSG_INTERNAL_SERVER_ERROR,
@@ -536,18 +509,83 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::InternalServerError().json(error_json)
                     }
-                    OxenError::NoRowsFound(msg) => {
-                        log::error!("No rows found: {msg}");
+                    e @ OxenError::NoRowsFound => {
+                        log::error!("No rows found: {e}");
                         let error_json = json!({
                             "error": {
                                 "type": "no_rows_found",
                                 "title": "No rows found",
-                                "detail": format!("{}", msg),
+                                "detail": format!("{e}"),
                             },
                             "status": STATUS_ERROR,
                             "status_message": MSG_INTERNAL_SERVER_ERROR,
                         });
                         HttpResponse::NotFound().json(error_json)
+                    }
+                    OxenError::LocalRepoNotFound(path) => {
+                        log::debug!("Local repo not found: {path}");
+                        let error_json = json!({
+                            "error": {
+                                "type": MSG_RESOURCE_NOT_FOUND,
+                                "title": "Local repository not found",
+                                "detail": format!("No oxen repository found at {path}")
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_RESOURCE_NOT_FOUND,
+                        });
+                        HttpResponse::NotFound().json(error_json)
+                    }
+                    OxenError::HeadNotFound => {
+                        log::debug!("HEAD not found");
+                        let error_json = json!({
+                            "error": {
+                                "type": MSG_RESOURCE_NOT_FOUND,
+                                "title": "HEAD not found",
+                                "detail": "HEAD not found."
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_RESOURCE_NOT_FOUND,
+                        });
+                        HttpResponse::NotFound().json(error_json)
+                    }
+                    OxenError::NoCommitsFound => {
+                        log::debug!("No commits found");
+                        let error_json = json!({
+                            "error": {
+                                "type": MSG_RESOURCE_NOT_FOUND,
+                                "title": "No commits found",
+                                "detail": "No commits found."
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_RESOURCE_NOT_FOUND,
+                        });
+                        HttpResponse::NotFound().json(error_json)
+                    }
+                    OxenError::QueryableWorkspaceNotFound => {
+                        log::debug!("Queryable workspace not found");
+                        let error_json = json!({
+                            "error": {
+                                "type": MSG_RESOURCE_NOT_FOUND,
+                                "title": "Queryable workspace not found",
+                                "detail": "Queryable workspace not found."
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_RESOURCE_NOT_FOUND,
+                        });
+                        HttpResponse::NotFound().json(error_json)
+                    }
+                    OxenError::WorkspaceBehind(workspace) => {
+                        log::error!("Workspace behind: {workspace}");
+                        let error_json = json!({
+                            "error": {
+                                "type": MSG_CONFLICT,
+                                "title": "Workspace is behind",
+                                "detail": format!("Workspace '{}' is behind at commit {}", workspace.id, workspace.commit.id)
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_CONFLICT,
+                        });
+                        HttpResponse::Conflict().json(error_json)
                     }
                     err => {
                         log::error!("Internal server error: {err:?}");

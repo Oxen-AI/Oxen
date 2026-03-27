@@ -315,7 +315,7 @@ pub async fn add_column_metadata(
     // Extract the column_name and metadata from the parsed JSON
     let column_name = parsed_json["column_name"]
         .as_str()
-        .ok_or(OxenHttpError::BasicError("column_name is required".into()))?;
+        .ok_or_else(|| OxenHttpError::BasicError("column_name is required".into()))?;
     let column_metadata = &parsed_json["metadata"];
 
     repositories::workspaces::data_frames::columns::add_column_metadata(

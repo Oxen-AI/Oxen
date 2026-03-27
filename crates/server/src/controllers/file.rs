@@ -164,13 +164,13 @@ pub async fn get(
                 // Fall back to commit tree using workspace's commit
                 let commit = &ws.commit;
                 repositories::tree::get_file_by_path(base_repo, commit, &path)?
-                    .ok_or(OxenError::path_does_not_exist(path.clone()))?
+                    .ok_or_else(|| OxenError::path_does_not_exist(path.clone()))?
             }
         }
         None => {
             let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
             repositories::tree::get_file_by_path(base_repo, &commit, &path)?
-                .ok_or(OxenError::path_does_not_exist(path.clone()))?
+                .ok_or_else(|| OxenError::path_does_not_exist(path.clone()))?
         }
     };
 
@@ -278,9 +278,7 @@ pub async fn put(
     let branch = resource
         .branch
         .clone()
-        .ok_or(OxenError::local_branch_not_found(
-            resource.version.to_string_lossy(),
-        ))?;
+        .ok_or_else(|| OxenError::local_branch_not_found(resource.version.to_string_lossy()))?;
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
     let node = repositories::tree::get_node_by_path(&repo, &commit, &resource.path)?;
     let upload_mode = resolve_upload_mode(
@@ -383,9 +381,7 @@ pub async fn delete(
     let branch = resource
         .branch
         .clone()
-        .ok_or(OxenError::local_branch_not_found(
-            resource.version.to_string_lossy(),
-        ))?;
+        .ok_or_else(|| OxenError::local_branch_not_found(resource.version.to_string_lossy()))?;
     let commit = resource.commit.clone().ok_or(OxenHttpError::NotFound)?;
     let path = resource.path;
 
@@ -476,9 +472,7 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
     let branch = resource
         .branch
         .clone()
-        .ok_or(OxenError::local_branch_not_found(
-            resource.version.to_string_lossy(),
-        ))?;
+        .ok_or_else(|| OxenError::local_branch_not_found(resource.version.to_string_lossy()))?;
     let commit = resource.commit.clone().ok_or(OxenHttpError::NotFound)?;
     let source_path = resource.path;
 
@@ -668,9 +662,9 @@ fn build_files_from_upload_parts(
 }
 
 fn take_single_file_part(file_part: Option<&TempFileNew>) -> Result<&TempFileNew, OxenHttpError> {
-    file_part.ok_or(OxenHttpError::BadRequest(
-        "Missing file data: expected one `file` part".into(),
-    ))
+    file_part.ok_or_else(|| {
+        OxenHttpError::BadRequest("Missing file data: expected one `file` part".into())
+    })
 }
 
 fn normalize_relative_upload_path(

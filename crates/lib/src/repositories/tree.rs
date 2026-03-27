@@ -485,9 +485,9 @@ pub fn collect_nodes_along_path(
     // Grab the first path or error if empty
     let root_path = paths
         .first()
-        .ok_or(OxenError::basic_str("No paths provided"))?;
+        .ok_or_else(|| OxenError::basic_str("No paths provided"))?;
     let node = get_node_by_path_with_children(repo, commit, root_path)?
-        .ok_or(OxenError::basic_str("Node not found"))?;
+        .ok_or_else(|| OxenError::basic_str("Node not found"))?;
 
     let (_root_node, nodes) = node.get_nodes_along_paths(paths)?;
 
@@ -550,7 +550,7 @@ pub async fn list_missing_file_hashes_from_commits(
         let commit_id_str = commit_id.to_string();
         let Some(commit) = repositories::commits::get_by_id(repo, &commit_id_str)? else {
             log::error!("list_missing_file_hashes_from_commits Commit {commit_id_str} not found");
-            return Err(OxenError::revision_not_found(commit_id_str.into()));
+            return Err(OxenError::RevisionNotFound(commit_id_str.into()));
         };
         // Handle the case where we are given a list of subtrees to check
         // It is much faster to check the subtree directly than to walk the entire tree
@@ -1159,7 +1159,7 @@ pub fn get_node_hashes_between_commits(
     );
     let (first_commit, new_commits) = commits
         .split_first()
-        .ok_or(OxenError::basic_str("Must provide at least one commit"))?;
+        .ok_or_else(|| OxenError::basic_str("Must provide at least one commit"))?;
 
     let mut starting_node_hashes = HashSet::new();
 

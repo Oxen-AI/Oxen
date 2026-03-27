@@ -23,7 +23,9 @@ pub mod video;
 /// Returns the metadata given a file path
 pub fn get(path: impl AsRef<Path>) -> Result<MetadataEntry, OxenError> {
     let path = path.as_ref();
-    let base_name = path.file_name().ok_or(OxenError::file_has_no_name(path))?;
+    let base_name = path
+        .file_name()
+        .ok_or_else(|| OxenError::file_has_no_name(path))?;
     let size = get_file_size(path)?;
     let mime_type = util::fs::file_mime_type(path);
     let data_type = util::fs::datatype_from_mimetype(path, mime_type.as_str());
@@ -49,7 +51,9 @@ pub fn get(path: impl AsRef<Path>) -> Result<MetadataEntry, OxenError> {
 /// Returns the metadata given a file path
 pub fn from_path(path: impl AsRef<Path>) -> Result<MetadataEntry, OxenError> {
     let path = path.as_ref();
-    let base_name = path.file_name().ok_or(OxenError::file_has_no_name(path))?;
+    let base_name = path
+        .file_name()
+        .ok_or_else(|| OxenError::file_has_no_name(path))?;
     let size = get_file_size(path)?;
     let mime_type = util::fs::file_mime_type(path);
     let data_type = util::fs::datatype_from_mimetype(path, mime_type.as_str());

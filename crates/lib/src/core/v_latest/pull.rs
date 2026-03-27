@@ -35,7 +35,7 @@ pub async fn pull_remote_branch(
 
     let remote = repo
         .get_remote(remote)
-        .ok_or(OxenError::remote_not_set(remote))?;
+        .ok_or_else(|| OxenError::RemoteNotSet(remote.clone()))?;
 
     let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
 
@@ -47,9 +47,8 @@ pub async fn pull_remote_branch(
     fetch_opts.should_update_branch_head = false;
     let remote_branch = fetch::fetch_remote_branch(repo, &remote_repo, &fetch_opts).await?;
 
-    let new_head_commit = repositories::revisions::get(repo, &remote_branch.commit_id)?.ok_or(
-        OxenError::revision_not_found(remote_branch.commit_id.to_owned().into()),
-    )?;
+    let new_head_commit = repositories::revisions::get(repo, &remote_branch.commit_id)?
+        .ok_or_else(|| OxenError::RevisionNotFound(remote_branch.commit_id.to_owned().into()))?;
 
     match previous_head_commit {
         Some(previous_head_commit) => {
@@ -72,8 +71,8 @@ pub async fn pull_remote_branch(
                     }
                     Ok(None) => {
                         // Merge conflict, keep the previous commit
-                        return Err(OxenError::merge_conflict(
-                            "There was a merge conflict, please resolve it before pulling",
+                        return Err(OxenError::UpstreamMergeConflict(
+                            "There was a merge conflict, please resolve it before pulling.".into(),
                         ));
                     }
                     Err(e) => return Err(e),

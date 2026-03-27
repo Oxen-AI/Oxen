@@ -563,7 +563,7 @@ fn get_avg_embedding(result_set: Vec<RecordBatch>) -> Result<Vec<f32>, OxenError
     }
 
     if embeddings.is_empty() {
-        return Err(OxenError::NoRowsFound("Query returned no rows".into()));
+        return Err(OxenError::NoRowsFound);
     }
 
     if vector_length == 0 {

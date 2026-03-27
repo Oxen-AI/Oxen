@@ -147,14 +147,14 @@ pub fn latest_commit(repo: &LocalRepository) -> Result<Commit, OxenError> {
             latest_commit = Some(commit);
         }
     }
-    latest_commit.ok_or(OxenError::no_commits_found())
+    latest_commit.ok_or(OxenError::NoCommitsFound)
 }
 
 fn head_commit_id(repo: &LocalRepository) -> Result<MerkleHash, OxenError> {
     let commit_id = with_ref_manager(repo, |manager| manager.head_commit_id())?;
     match commit_id {
         Some(commit_id) => Ok(commit_id.parse()?),
-        None => Err(OxenError::head_not_found()),
+        None => Err(OxenError::HeadNotFound),
     }
 }
 
@@ -173,10 +173,11 @@ pub fn head_commit(repo: &LocalRepository) -> Result<Commit, OxenError> {
     let head_commit_id = head_commit_id(repo)?;
     log::debug!("head_commit: head_commit_id: {head_commit_id:?}");
 
-    let node =
-        repositories::tree::get_node_by_id(repo, &head_commit_id)?.ok_or(OxenError::basic_str(
-            format!("Merkle tree node not found for head commit: '{head_commit_id}'"),
-        ))?;
+    let node = repositories::tree::get_node_by_id(repo, &head_commit_id)?.ok_or_else(|| {
+        OxenError::basic_str(format!(
+            "Merkle tree node not found for head commit: '{head_commit_id}'"
+        ))
+    })?;
     let commit = node.commit()?;
     Ok(commit.to_commit())
 }
@@ -257,15 +258,17 @@ pub fn create_empty_commit(
 ) -> Result<Commit, OxenError> {
     let branch_name = branch_name.as_ref();
     let Some(existing_commit) = repositories::revisions::get(repo, branch_name)? else {
-        return Err(OxenError::revision_not_found(branch_name.into()));
+        return Err(OxenError::RevisionNotFound(branch_name.into()));
     };
     let existing_commit_id = existing_commit.id.parse()?;
     let existing_node =
-        repositories::tree::get_node_by_id_with_children(repo, &existing_commit_id)?.ok_or(
-            OxenError::basic_str(format!(
-                "Merkle tree node not found for commit: '{}'",
-                existing_commit.id
-            )),
+        repositories::tree::get_node_by_id_with_children(repo, &existing_commit_id)?.ok_or_else(
+            || {
+                OxenError::basic_str(format!(
+                    "Merkle tree node not found for commit: '{}'",
+                    existing_commit.id
+                ))
+            },
         )?;
     let timestamp = OffsetDateTime::now_utc();
     let commit_node = CommitNode::new(
@@ -677,9 +680,9 @@ pub fn list_from_paginated_impl(
         let base = split[0];
         let head = split[1];
         let base_commit = repositories::commits::get_by_id(repo, base)?
-            .ok_or(OxenError::revision_not_found(base.into()))?;
+            .ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
         let head_commit = repositories::commits::get_by_id(repo, head)?
-            .ok_or(OxenError::revision_not_found(head.into()))?;
+            .ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
 
         let (commits, total_count) =
             list_recursive_paginated(repo, head_commit, skip, limit, Some(&base_commit), None)?;
@@ -791,7 +794,7 @@ pub fn count_from(
     let revision = revision.as_ref();
 
     let commit = repositories::revisions::get(repo, revision)?
-        .ok_or_else(|| OxenError::revision_not_found(revision.into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(revision.into()))?;
 
     let db = open_commit_count_db(repo)?;
 
@@ -839,7 +842,7 @@ pub fn search_entries(
 
     let mut results = HashSet::new();
     let tree = repositories::tree::get_root_with_children(repo, commit)?
-        .ok_or(OxenError::basic_str("Root not found"))?;
+        .ok_or_else(|| OxenError::basic_str("Root not found"))?;
     let (files, _) = repositories::tree::list_files_and_dirs(&tree)?;
     for file in files {
         let path = file.dir.join(file.file_node.name());
@@ -947,9 +950,9 @@ pub fn list_by_path_from_paginated(
 
     // Check if the path is a directory or file
     let _perf_node = crate::perf_guard!("core::commits::get_node_by_path");
-    let node = repositories::tree::get_node_by_path(repo, commit, path)?.ok_or(
-        OxenError::basic_str(format!("Merkle tree node not found for path: {path:?}")),
-    )?;
+    let node = repositories::tree::get_node_by_path(repo, commit, path)?.ok_or_else(|| {
+        OxenError::basic_str(format!("Merkle tree node not found for path: {path:?}"))
+    })?;
     let last_commit_id = match &node.node {
         EMerkleTreeNode::File(file_node) => file_node.last_commit_id(),
         EMerkleTreeNode::Directory(dir_node) => dir_node.last_commit_id(),

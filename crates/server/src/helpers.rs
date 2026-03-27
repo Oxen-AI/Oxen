@@ -31,8 +31,8 @@ pub fn create_user_from_options(
     email: Option<String>,
 ) -> actix_web::Result<User, OxenHttpError> {
     Ok(User {
-        name: name.ok_or(OxenHttpError::BadRequest("Name is required".into()))?,
-        email: email.ok_or(OxenHttpError::BadRequest("Email is required".into()))?,
+        name: name.ok_or_else(|| OxenHttpError::BadRequest("Name is required".into()))?,
+        email: email.ok_or_else(|| OxenHttpError::BadRequest("Email is required".into()))?,
     })
 }
 

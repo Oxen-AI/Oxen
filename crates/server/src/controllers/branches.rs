@@ -105,7 +105,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
 
     log::debug!("show branch {branch_name:?}");
     let branch = repositories::branches::get_by_name(&repository, &branch_name)?
-        .ok_or(OxenError::remote_branch_not_found(&branch_name))?;
+        .ok_or_else(|| OxenError::remote_branch_not_found(&branch_name))?;
     log::debug!("show branch found {branch:?}");
 
     let view = BranchResponse {
@@ -227,7 +227,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     let repository = get_repo(&app_data.path, namespace, name)?;
 
     let branch = repositories::branches::get_by_name(&repository, &branch_name)?
-        .ok_or(OxenError::remote_branch_not_found(&branch_name))?;
+        .ok_or_else(|| OxenError::remote_branch_not_found(&branch_name))?;
 
     repositories::branches::force_delete(&repository, &branch.name)?;
     Ok(HttpResponse::Ok().json(BranchResponse {
@@ -316,17 +316,17 @@ pub async fn maybe_create_merge(
     let repository = get_repo(&app_data.path, namespace, name)?;
     let branch_name = path_param(&req, "branch_name")?;
     let branch = repositories::branches::get_by_name(&repository, &branch_name)?
-        .ok_or(OxenError::remote_branch_not_found(&branch_name))?;
+        .ok_or_else(|| OxenError::remote_branch_not_found(&branch_name))?;
 
     let data: Result<BranchRemoteMerge, serde_json::Error> = serde_json::from_str(&body);
     let data = data.map_err(|err| OxenHttpError::BadRequest(format!("{err:?}").into()))?;
     let incoming_commit_id = data.client_commit_id;
     let incoming_commit = repositories::commits::get_by_id(&repository, &incoming_commit_id)?
-        .ok_or(OxenError::resource_not_found(&incoming_commit_id))?;
+        .ok_or_else(|| OxenError::resource_not_found(&incoming_commit_id))?;
 
     let current_commit_id = data.server_commit_id;
     let current_commit = repositories::commits::get_by_id(&repository, &current_commit_id)?
-        .ok_or(OxenError::resource_not_found(&current_commit_id))?;
+        .ok_or_else(|| OxenError::resource_not_found(&current_commit_id))?;
 
     log::debug!("maybe_create_merge got client head commit {incoming_commit_id:?}");
 
@@ -387,7 +387,7 @@ pub async fn list_entry_versions(
     // Get branch
     let repo = get_repo(&app_data.path, namespace.clone(), &repo_name)?;
     let branch = repositories::branches::get_by_name(&repo, &branch_name)?
-        .ok_or(OxenError::remote_branch_not_found(&branch_name))?;
+        .ok_or_else(|| OxenError::remote_branch_not_found(&branch_name))?;
 
     let path = PathBuf::from(path_param(&req, "path")?);
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;

@@ -107,9 +107,7 @@ pub async fn import(
     let branch = resource
         .branch
         .clone()
-        .ok_or(OxenError::local_branch_not_found(
-            resource.version.to_string_lossy(),
-        ))?;
+        .ok_or_else(|| OxenError::local_branch_not_found(resource.version.to_string_lossy()))?;
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
     let directory = resource.path.clone();
     log::debug!("workspace::files::import_file Got directory: {directory:?}");
@@ -247,9 +245,7 @@ pub async fn upload_zip(
     let branch = resource
         .branch
         .clone()
-        .ok_or(OxenError::local_branch_not_found(
-            resource.version.to_string_lossy(),
-        ))?;
+        .ok_or_else(|| OxenError::local_branch_not_found(resource.version.to_string_lossy()))?;
     let directory = resource.path.clone();
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
 

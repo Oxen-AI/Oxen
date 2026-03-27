@@ -306,7 +306,7 @@ pub async fn list_missing_files(
     };
 
     let head_commit = repositories::commits::get_by_id(&repo, &query.head)?
-        .ok_or(OxenError::revision_not_found(query.head.clone().into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(query.head.as_str().into()))?;
 
     let missing_files = repositories::entries::list_missing_files_in_commit_range(
         &repo,
@@ -399,7 +399,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     let commit_id = path_param(&req, "commit_id")?;
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     let commit = repositories::commits::get_by_id(&repo, &commit_id)?
-        .ok_or(OxenError::revision_not_found(commit_id.into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(commit_id.into()))?;
 
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_found(),
@@ -430,7 +430,7 @@ pub async fn parents(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHt
     let commit_or_branch = path_param(&req, "commit_or_branch")?;
     let repository = get_repo(&app_data.path, namespace, name)?;
     let commit = repositories::revisions::get(&repository, &commit_or_branch)?
-        .ok_or(OxenError::revision_not_found(commit_or_branch.into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(commit_or_branch.into()))?;
     let parents = repositories::commits::list_from(&repository, &commit.id)?;
     Ok(HttpResponse::Ok().json(ListCommitResponse {
         status: StatusMessage::resource_found(),
@@ -524,9 +524,9 @@ pub async fn download_dir_hashes_db(
         let base_commit_id = split[0];
         let head_commit_id = split[1];
         let base_commit = repositories::revisions::get(&repository, base_commit_id)?
-            .ok_or(OxenError::revision_not_found(base_commit_id.into()))?;
+            .ok_or_else(|| OxenError::RevisionNotFound(base_commit_id.into()))?;
         let head_commit = repositories::revisions::get(&repository, head_commit_id)?
-            .ok_or(OxenError::revision_not_found(head_commit_id.into()))?;
+            .ok_or_else(|| OxenError::RevisionNotFound(head_commit_id.into()))?;
 
         repositories::commits::list_between(&repository, &base_commit, &head_commit)?
     } else {
@@ -563,7 +563,7 @@ pub async fn download_commit_entries_db(
     let repository = get_repo(&app_data.path, namespace, name)?;
 
     let commit = repositories::revisions::get(&repository, &commit_or_branch)?
-        .ok_or(OxenError::revision_not_found(commit_or_branch.into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(commit_or_branch.into()))?;
     let buffer = compress_commit(&repository, &commit)?;
 
     Ok(HttpResponse::Ok().body(buffer))
@@ -710,10 +710,6 @@ pub async fn create(
             status: StatusMessage::resource_created(),
             commit: commit.to_owned(),
         })),
-        Err(OxenError::RootCommitDoesNotMatch(commit_id)) => {
-            log::error!("Err create_commit: RootCommitDoesNotMatch {commit_id}");
-            Err(OxenHttpError::BadRequest("Remote commit history does not match local commit history. Make sure you are pushing to the correct remote.".into()))
-        }
         Err(err) => {
             log::error!("Err create_commit: {err}");
             Err(OxenHttpError::InternalServerError)

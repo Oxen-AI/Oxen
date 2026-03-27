@@ -71,9 +71,9 @@ pub fn delete(
             let column_data_type =
                 table_schema
                     .get_field(&column_to_delete.name)
-                    .ok_or(OxenError::Basic(
-                        "A column with the given name does not exist".into(),
-                    ))?;
+                    .ok_or_else(|| {
+                        OxenError::Basic("A column with the given name does not exist".into())
+                    })?;
 
             let result = columns::delete_column(conn, column_to_delete)?;
             Ok((result, column_data_type.to_owned()))
@@ -152,7 +152,7 @@ pub async fn update(
     repositories::workspaces::data_frames::schemas::update_schema(
         workspace,
         file_path,
-        &og_schema.ok_or(OxenError::basic_str("Original schema not found"))?,
+        &og_schema.ok_or_else(|| OxenError::basic_str("Original schema not found"))?,
         &column_to_update.name,
         &column_after_name,
     )?;
@@ -193,9 +193,12 @@ pub async fn restore(
                     name: change
                         .column_after
                         .clone()
-                        .ok_or(OxenError::Basic(
-                            "To restore an add, the column after object has to be defined".into(),
-                        ))?
+                        .ok_or_else(|| {
+                            OxenError::Basic(
+                                "To restore an add, the column after object has to be defined"
+                                    .into(),
+                            )
+                        })?
                         .column_name
                         .clone(),
                 };
@@ -206,9 +209,12 @@ pub async fn restore(
                     &db,
                     &change
                         .column_after
-                        .ok_or(OxenError::Basic(
-                            "To restore an add, the column after object has to be defined".into(),
-                        ))?
+                        .ok_or_else(|| {
+                            OxenError::Basic(
+                                "To restore an add, the column after object has to be defined"
+                                    .into(),
+                            )
+                        })?
                         .column_name,
                 )?;
                 repositories::workspaces::files::add(workspace, file_path).await?;
@@ -220,22 +226,26 @@ pub async fn restore(
                     name: change
                         .column_before
                         .clone()
-                        .ok_or(OxenError::Basic(
-                            "To restore a delete, the column before object has to be defined"
-                                .into(),
-                        ))?
+                        .ok_or_else(|| {
+                            OxenError::Basic(
+                                "To restore a delete, the column before object has to be defined"
+                                    .into(),
+                            )
+                        })?
                         .column_name,
                     data_type: change
                         .column_before
                         .clone()
-                        .ok_or(OxenError::Basic(
-                            "To restore a delete, the column before object has to be defined"
-                                .into(),
-                        ))?
+                        .ok_or_else(|| {
+                            OxenError::Basic(
+                                "To restore a delete, the column before object has to be defined"
+                                    .into(),
+                            )
+                        })?
                         .column_data_type
-                        .ok_or(OxenError::Basic(
-                            "Column data type is required but was None".into(),
-                        ))?,
+                        .ok_or_else(|| {
+                            OxenError::Basic("Column data type is required but was None".into())
+                        })?,
                 };
                 let result = with_df_db_manager(&db_path, |manager| {
                     manager.with_conn(|conn| columns::add_column(conn, &new_column))
@@ -244,10 +254,12 @@ pub async fn restore(
                     &db,
                     &change
                         .column_before
-                        .ok_or(OxenError::Basic(
-                            "To restore a delete, the column before object has to be defined"
-                                .into(),
-                        ))?
+                        .ok_or_else(|| {
+                            OxenError::Basic(
+                                "To restore a delete, the column before object has to be defined"
+                                    .into(),
+                            )
+                        })?
                         .column_name,
                 )?;
                 repositories::workspaces::files::add(workspace, file_path).await?;
@@ -258,30 +270,38 @@ pub async fn restore(
                 let new_data_type = change
                     .column_before
                     .clone()
-                    .ok_or(OxenError::Basic(
-                        "To restore a modify, the column before object has to be defined".into(),
-                    ))?
+                    .ok_or_else(|| {
+                        OxenError::Basic(
+                            "To restore a modify, the column before object has to be defined"
+                                .into(),
+                        )
+                    })?
                     .column_data_type
-                    .ok_or(OxenError::Basic(
-                        "column_data_type is None, cannot unwrap".into(),
-                    ))?;
+                    .ok_or_else(|| {
+                        OxenError::Basic("column_data_type is None, cannot unwrap".into())
+                    })?;
                 let column_to_update = ColumnToUpdate {
                     name: change
                         .column_after
                         .clone()
-                        .ok_or(OxenError::Basic(
-                            "To restore a modify, the column after object has to be defined".into(),
-                        ))?
+                        .ok_or_else(|| {
+                            OxenError::Basic(
+                                "To restore a modify, the column after object has to be defined"
+                                    .into(),
+                            )
+                        })?
                         .column_name,
                     new_data_type: Some(new_data_type.to_owned()),
                     new_name: Some(
                         change
                             .column_before
                             .clone()
-                            .ok_or(OxenError::Basic(
+                            .ok_or_else(|| {
+                                OxenError::Basic(
                                 "To restore a modify, the column before object has to be defined"
                                     .into(),
-                            ))?
+                            )
+                            })?
                             .column_name,
                     ),
                 };
@@ -297,14 +317,16 @@ pub async fn restore(
                     &change
                         .column_after
                         .clone()
-                        .ok_or(OxenError::Basic(
-                            "To restore a modify, the column before object has to be defined"
-                                .into(),
-                        ))?
+                        .ok_or_else(|| {
+                            OxenError::Basic(
+                                "To restore a modify, the column before object has to be defined"
+                                    .into(),
+                            )
+                        })?
                         .column_name,
                 )?;
                 let og_schema =
-                    og_schema.ok_or(OxenError::basic_str("Original schema not found"))?;
+                    og_schema.ok_or_else(|| OxenError::basic_str("Original schema not found"))?;
 
                 repositories::data_frames::schemas::restore_schema(
                     &workspace.workspace_repo,
@@ -313,16 +335,20 @@ pub async fn restore(
                     &change
                         .column_before
                         .clone()
-                        .ok_or(OxenError::basic_str(
-                            "To restore a modify, the column before object has to be defined",
-                        ))?
+                        .ok_or_else(|| {
+                            OxenError::basic_str(
+                                "To restore a modify, the column before object has to be defined",
+                            )
+                        })?
                         .column_name,
                     &change
                         .column_after
                         .clone()
-                        .ok_or(OxenError::basic_str(
-                            "To restore a modify, the column after object has to be defined",
-                        ))?
+                        .ok_or_else(|| {
+                            OxenError::basic_str(
+                                "To restore a modify, the column after object has to be defined",
+                            )
+                        })?
                         .column_name,
                 )?;
                 repositories::workspaces::files::add(workspace, file_path).await?;
@@ -360,9 +386,8 @@ pub fn add_column_metadata(
         } else {
             // Get the FileNode from the CommitMerkleTree
             let commit = workspace.commit.clone();
-            let node = repositories::tree::get_node_by_path(repo, &commit, &path)?.ok_or(
-                OxenError::basic_str("Node does not exist at the specified path"),
-            )?;
+            let node = repositories::tree::get_node_by_path(repo, &commit, &path)?
+                .ok_or_else(|| OxenError::basic_str("Node does not exist at the specified path"))?;
             let mut parent_id = node.parent_id;
             let mut dir_path = path.clone();
 
