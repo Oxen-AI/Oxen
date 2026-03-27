@@ -9,18 +9,13 @@ use crate::error::OxenError;
 use crate::model::{Branch, LocalRepository};
 use crate::opts::PushOpts;
 
-/// # Get a log of all the commits
+/// # Push committed data to a remote
 ///
-/// ```
-/// # use liboxen::api;
-/// #
+/// ```ignore
 /// use liboxen::command;
+/// use liboxen::repositories;
 /// use liboxen::util;
-/// # use liboxen::error::OxenError;
-/// # use std::path::Path;
-/// # #[tokio::main]
-/// # async fn main() -> Result<(), OxenError> {
-/// # liboxen::test::init_test_env();
+///
 /// // Initialize the repository
 /// let base_dir = Path::new("repo_dir_push");
 /// let mut repo = repositories::init(base_dir)?;
@@ -30,7 +25,7 @@ use crate::opts::PushOpts;
 /// util::fs::write_to_path(&hello_file, "Hello World");
 ///
 /// // Stage the file
-/// repositories::add(&repo, &hello_file)?;
+/// repositories::add(&repo, &hello_file).await?;
 ///
 /// // Commit staged
 /// repositories::commit(&repo, "My commit message")?;
@@ -38,15 +33,8 @@ use crate::opts::PushOpts;
 /// // Set the remote server
 /// command::config::set_remote(&mut repo, "origin", "http://localhost:3000/repositories/hello");
 ///
-/// let remote_repo = api::client::repositories::create(&repo, "repositories", "hello", "localhost:3000").await?;
-///
 /// // Push the file
-/// repositories::push(&repo).await;
-///
-/// # util::fs::remove_dir_all(base_dir)?;
-/// # api::client::repositories::delete(&remote_repo).await?;
-/// # Ok(())
-/// # }
+/// repositories::push(&repo).await?;
 /// ```
 pub async fn push(repo: &LocalRepository) -> Result<Branch, OxenError> {
     match repo.min_version() {

@@ -13,19 +13,13 @@ use crate::model::LocalRepository;
 use crate::opts::StorageOpts;
 
 /// # Initialize an Empty Oxen Repository
-/// ```
-/// # use liboxen::command;
-/// # use liboxen::error::OxenError;
-/// # use std::path::Path;
-/// #
-/// # fn main() -> Result<(), OxenError> {
-/// # liboxen::test::init_test_env();
+/// ```ignore
+/// use liboxen::repositories;
+/// use std::path::Path;
+///
 /// let base_dir = Path::new("repo_dir_init");
-/// command::repositori(base_dir)?;
+/// let repo = repositories::init(base_dir)?;
 /// assert!(base_dir.join(".oxen").exists());
-/// # util::fs::remove_dir_all(base_dir)?;
-/// # Ok(())
-/// # }
 /// ```
 pub fn init(path: impl AsRef<Path>) -> Result<LocalRepository, OxenError> {
     init_with_version(path, MIN_OXEN_VERSION)

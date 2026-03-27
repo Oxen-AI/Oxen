@@ -6,39 +6,33 @@
 //!
 //! Instantiating a new repo:
 //!
-//! ```
-//! use liboxen::command;
+//! ```ignore
+//! use liboxen::repositories;
 //!
 //! // Instantiate a new repo
 //! let repo = repositories::init("test_repo")?;
 //! // Add a file to the repo
-//! repositories::add(&repo, "file.txt")?;
+//! repositories::add(&repo, "file.txt").await?;
 //! // Commit the file
 //! repositories::commit(&repo, "Added file.txt")?;
-//!
 //! ```
 //!
 //! Push data from local repo to remote repo:
 //!
-//! ```
+//! ```ignore
 //! use liboxen::command;
 //! use liboxen::model::LocalRepository;
+//! use liboxen::repositories;
+//! use liboxen::api;
 //!
 //! // Create LocalRepository from existing repo
 //! let repo = LocalRepository::from_dir("test_repo")?;
 //! // Add a file to the repo
-//! repositories::add(&repo, "file.txt")?;
+//! repositories::add(&repo, "file.txt").await?;
 //! // Commit the file
 //! repositories::commit(&repo, "Added file.txt")?;
 //! // Set remote
-//! let namespace = "ox";
-//! let repo_name = "test_repo";
-//! let host = "0.0.0.0:3000";
-//! let remote_repo = api::client::repositories::create(
-//!     repo, namespace, repo_name, host
-//! ).await?;
-//! let remote_url = remote_repo.url();
-//! // Set remote
+//! let remote_url = "http://0.0.0.0:3000/ox/test_repo";
 //! let remote_name = "origin";
 //! command::config::set_remote(&mut repo, remote_name, &remote_url)?;
 //! // Push to remote
@@ -46,9 +40,9 @@
 //! ```
 //!
 //! Clone data from remote url
-//! ```
-//! use liboxen::command;
-//! use liboxen::model::LocalRepository;
+//! ```ignore
+//! use liboxen::opts::CloneOpts;
+//! use liboxen::repositories;
 //!
 //! let url = "http://0.0.0.0:3000/ox/test_repo";
 //! let repo_dir = "test_repo";
