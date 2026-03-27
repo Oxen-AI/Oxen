@@ -83,6 +83,7 @@ jobs:
           cache: true # This is the default--making it explicit. This uses Swatinem/rust-cache under the hood.
           cache-all-crates: true
           cache-workspace-crates: true
+          cache-directories: ${{ env.CARGO_TARGET_DIR }} # Cache cargo build artifacts on the ramdisk in windows
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
