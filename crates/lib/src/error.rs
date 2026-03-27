@@ -147,6 +147,8 @@ pub enum OxenError {
     ImportFileError(StringError),
 
     // External Library Errors
+    #[error("AWS SDK error: {0}")]
+    AwsSdkError(Box<dyn std::error::Error + Send + Sync>),
     #[error("{0}")]
     IO(#[from] io::Error),
     #[error("Authentication failed: {0}")]
@@ -249,6 +251,10 @@ impl OxenError {
         }
         .to_string();
         Some(hint)
+    }
+
+    pub fn aws_sdk_error(e: impl std::error::Error + Send + Sync + 'static) -> Self {
+        OxenError::AwsSdkError(Box::new(e))
     }
 
     pub fn basic_str(s: impl AsRef<str>) -> Self {
