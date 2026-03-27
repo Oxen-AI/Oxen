@@ -986,13 +986,6 @@ fn r_create_dir_node(
                     file_node.set_last_commit_id(&last_commit_id);
                     file_node.set_name(file_name);
 
-                    // if let Some(vnode_db) = &mut maybe_vnode_db {
-                    // log::debug!(
-                    //     "Adding file {} to vnode {} in commit {}",
-                    //     file_name,
-                    //     vnode.id,
-                    //     commit_id
-                    // );
                     vnode_db.add_child(&file_node)?;
                     *total_written += 1;
                     // }
@@ -1070,14 +1063,13 @@ fn compute_dir_node(
             let err_msg = format!("compute_dir_node No entries found for directory {path:?}");
             return Err(OxenError::basic_str(err_msg));
         };
-        // log::debug!(
-        //     "Aggregating dir {:?} child {:?} with {} vnodes",
-        //     path,
-        //     child,
-        //     vnodes.len()
-        // );
         for vnode in vnodes.iter() {
-            // log::debug!("Aggregating vnode entries {:?}", vnode.entries.len());
+            // Include VNode hashes in the directory hash so that when a VNode
+            // gets a new UUID-based hash (because it has modified entries), the
+            // parent directory hash changes too. Without this, two commits can
+            // produce the same directory hash even though their VNode children
+            // differ, causing stale node data to be read from shared storage.
+            hasher.update(&vnode.id.to_le_bytes());
             for entry in vnode.entries.iter() {
                 // log::debug!("Aggregating entry {}", entry.node);
                 match &entry.node.node {

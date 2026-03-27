@@ -23,6 +23,17 @@ pub async fn add(workspace: &Workspace, path: impl AsRef<Path>) -> Result<PathBu
     }
 }
 
+pub async fn add_with_opts(
+    workspace: &Workspace,
+    path: impl AsRef<Path>,
+    force_update: bool,
+) -> Result<PathBuf, OxenError> {
+    match workspace.base_repo.min_version() {
+        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
+        _ => core::v_latest::workspaces::files::add_with_opts(workspace, path, force_update).await,
+    }
+}
+
 pub async fn rm(
     workspace: &Workspace,
     path: impl AsRef<Path>,
@@ -46,12 +57,20 @@ pub async fn import(
     directory: PathBuf,
     filename: Option<String>,
     workspace: &Workspace,
+    force_update: bool,
 ) -> Result<(), OxenError> {
     match workspace.base_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {
-            core::v_latest::workspaces::files::import(url, auth, directory, filename, workspace)
-                .await?;
+            core::v_latest::workspaces::files::import(
+                url,
+                auth,
+                directory,
+                filename,
+                workspace,
+                force_update,
+            )
+            .await?;
             Ok(())
         }
     }
@@ -266,6 +285,7 @@ mod tests {
                     std::path::PathBuf::from("data"),
                     None,
                     &workspace,
+                    false,
                 )
                 .await;
                 assert!(result.is_err(), "should reject {label}");

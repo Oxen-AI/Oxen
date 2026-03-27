@@ -180,9 +180,21 @@ pub async fn import(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
+    let force_update = body
+        .get("force_update")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     // download and save the file into the workspace
-    repositories::workspaces::files::import(download_url, auth, directory, filename, &workspace)
-        .await?;
+    repositories::workspaces::files::import(
+        download_url,
+        auth,
+        directory,
+        filename,
+        &workspace,
+        force_update,
+    )
+    .await?;
 
     // Commit workspace
     let commit_body = NewCommitBody {
