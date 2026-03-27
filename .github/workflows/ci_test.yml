@@ -87,6 +87,9 @@ jobs:
           # Use ramdisk for oxen-server sync directory
           echo "SYNC_DIR=R:\sync" >> $env:GITHUB_ENV
 
+          # Use ramdisk for test harness run directories
+          echo "OXEN_TEST_RUN_DIR=R:\test\runs" >> $env:GITHUB_ENV
+
       - name: Setup Rust Toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -163,6 +166,7 @@ jobs:
         if: matrix.platform == 'windows'
         run: |
           mkdir .\data\test\runs
+          mkdir R:\test\runs
           mkdir R:\sync
 
       - name: Build oxen rust project

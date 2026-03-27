@@ -45,7 +45,10 @@ pub static REPO_ROOT: LazyLock<PathBuf> = LazyLock::new(|| {
 pub static TEST_DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| REPO_ROOT.join("data"));
 
 pub fn test_run_dir() -> PathBuf {
-    TEST_DATA_DIR.join("test").join("runs")
+    match std::env::var("OXEN_TEST_RUN_DIR") {
+        Ok(dir) => PathBuf::from(dir),
+        Err(_) => TEST_DATA_DIR.join("test").join("runs"),
+    }
 }
 
 pub fn test_host() -> String {
