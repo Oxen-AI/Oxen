@@ -73,10 +73,8 @@ jobs:
           # Use ramdisk for cargo build artifacts
           echo "CARGO_TARGET_DIR=R:\target" >> $env:GITHUB_ENV
 
-          # Junction only the test runs directory to ramdisk for faster test I/O
-          New-Item -ItemType Directory -Path "R:\runs" | Out-Null
-          New-Item -ItemType Directory -Path "data\test" -Force | Out-Null
-          cmd /c mklink /J data\test\runs R:\runs
+          # Use ramdisk for oxen-server sync directory
+          echo "SYNC_DIR=R:\sync" >> $env:GITHUB_ENV
 
       - name: Setup Rust Toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -153,6 +151,7 @@ jobs:
         if: matrix.platform == 'windows'
         run: |
           mkdir .\data\test\runs
+          mkdir R:\sync
 
       - name: Build oxen rust project
         run: cargo build --workspace
