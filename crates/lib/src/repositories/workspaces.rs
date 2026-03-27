@@ -103,8 +103,14 @@ pub fn get_by_name(
     workspace_name: impl AsRef<str>,
 ) -> Result<Option<Workspace>, OxenError> {
     let workspace_name = workspace_name.as_ref();
-    let workspace = iter_workspaces(repo)?.find(|ws| ws.name.as_deref() == Some(workspace_name));
-    Ok(workspace)
+    for workspace in iter_workspaces(repo)? {
+        if let Some(workspace) = workspace?
+            && workspace.name.as_deref() == Some(workspace_name)
+        {
+            return Ok(Some(workspace));
+        }
+    }
+    Ok(None)
 }
 
 /// Creates a new workspace and saves it to the filesystem
@@ -250,7 +256,7 @@ fn check_existing_workspace_name(
 /// Each workspace is loaded from the filesystem on demand.
 fn iter_workspaces(
     repo: &LocalRepository,
-) -> Result<impl Iterator<Item = Workspace> + '_, OxenError> {
+) -> Result<impl Iterator<Item = Result<Option<Workspace>, OxenError>> + '_, OxenError> {
     let workspaces_dir = Workspace::workspaces_dir(repo);
     log::debug!("workspace::iter_workspaces got workspaces_dir: {workspaces_dir:?}");
 
@@ -269,23 +275,17 @@ fn iter_workspaces(
 
     Ok(workspace_hashes
         .into_iter()
-        .filter_map(
-            move |workspace_hash| match get_by_dir(repo, &workspace_hash) {
-                Ok(Some(workspace)) => Some(workspace),
-                Ok(None) => {
-                    log::debug!("Workspace not found: {workspace_hash:?}");
-                    None
-                }
-                Err(e) => {
-                    log::error!("Failed to list workspace: {e}");
-                    None
-                }
-            },
-        ))
+        .map(move |workspace_hash| get_by_dir(repo, &workspace_hash)))
 }
 
 pub fn list(repo: &LocalRepository) -> Result<Vec<Workspace>, OxenError> {
-    iter_workspaces(repo).map(|iter| iter.collect())
+    let mut workspaces = Vec::new();
+    for workspace in iter_workspaces(repo)? {
+        if let Some(workspace) = workspace? {
+            workspaces.push(workspace);
+        }
+    }
+    Ok(workspaces)
 }
 
 pub fn get_non_editable_by_commit_id(

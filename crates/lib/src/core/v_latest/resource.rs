@@ -56,7 +56,7 @@ pub fn parse_resource_from_path(
             log::debug!("Workspace not found: {first_str}");
         }
         Err(e) => {
-            log::debug!("Workspace lookup failed for '{first_str}' with error: {e:?}");
+            return Err(e);
         }
     }
 
