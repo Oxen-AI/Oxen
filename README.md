@@ -178,6 +178,15 @@ The `oxen-python` codebase requires installing [`uv`](https://docs.astral.sh/uv/
 curl --LsSf https://astral.sh/uv/install.sh | sh
 ```
 
+If you use [`mise`](https://mise.jdx.dev/) to manage your Python installs, you may run into an error where the oxen-py crate can't find the Python dynamic library to link with, e.g., `dyld[31558]: Library not loaded: @rpath/libpython3.13.dylib`
+
+You can fix it by adding this to your mise config (`~/.config/mise/config.toml`)
+
+```toml
+[env]
+DYLD_LIBRARY_PATH = "{{ exec(command='mise where python') }}/lib"
+```
+
 ### Pre-Commit Hooks
 
 We use [pre-commit-hooks](https://pre-commit.com/) to check for commit consistency.
