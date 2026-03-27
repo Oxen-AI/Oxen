@@ -22,6 +22,16 @@ done
 
 set -euo pipefail
 
+# On macOS, SIP strips DYLD_LIBRARY_PATH from processes launched by system
+# binaries (like /usr/bin/env bash), so cargo nextest can't find libpython.
+# Re-derive the path from the active Python install if needed.
+if [ "$(uname)" = "Darwin" ] && [ -z "${DYLD_LIBRARY_PATH:-}" ] && command -v python3 &>/dev/null; then
+    _pylib="$(python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))' 2>/dev/null)"
+    if [ -n "$_pylib" ] && [ -d "$_pylib" ]; then
+        export DYLD_LIBRARY_PATH="$_pylib"
+    fi
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
