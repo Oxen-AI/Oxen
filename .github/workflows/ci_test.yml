@@ -73,14 +73,10 @@ jobs:
           # Use ramdisk for cargo build artifacts
           echo "CARGO_TARGET_DIR=R:\target" >> $env:GITHUB_ENV
 
-          # Move repo data directory to ramdisk for faster test I/O
-          if (Test-Path "data") {
-            Copy-Item -Recurse -Path "data" -Destination "R:\data"
-            Remove-Item -Recurse -Force "data"
-          } else {
-            New-Item -ItemType Directory -Path "R:\data" | Out-Null
-          }
-          cmd /c mklink /J data R:\data
+          # Junction only the test runs directory to ramdisk for faster test I/O
+          New-Item -ItemType Directory -Path "R:\runs" | Out-Null
+          New-Item -ItemType Directory -Path "data\test" -Force | Out-Null
+          cmd /c mklink /J data\test\runs R:\runs
 
       - name: Setup Rust Toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
