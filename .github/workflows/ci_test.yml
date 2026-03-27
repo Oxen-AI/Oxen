@@ -67,8 +67,19 @@ jobs:
       - name: Setup ramdisk (Windows)
         if: matrix.platform == 'windows'
         run: |
+          # Layer 1: imdisk ramdisk at T: (RAM-backed, but driver lacks full NTFS support, so building libduckdb-sys fails)
           choco install imdisk -y
-          imdisk -a -s 12G -m R: -p "/fs:ntfs /q /y"
+          imdisk -a -s 12G -m T: -p "/fs:ntfs /q /y"
+
+          # Layer 2: VHD file on the ramdisk, mounted at R: (standard NTFS driver, full support)
+          @"
+          create vdisk file="T:\build.vhdx" maximum=11264 type=fixed
+          select vdisk file="T:\build.vhdx"
+          attach vdisk
+          create partition primary
+          format fs=ntfs quick label=CargoBuild
+          assign letter=R
+          "@ | diskpart
 
           # Use ramdisk for cargo build artifacts
           echo "CARGO_TARGET_DIR=R:\target" >> $env:GITHUB_ENV
