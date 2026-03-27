@@ -55,6 +55,8 @@ pub struct CompleteVersionUploadRequest {
     // If the workspace_id is provided, we will add the file to the workspace
     // otherwise, we will just add the file to the versions store
     pub workspace_id: Option<String>,
+    #[serde(default)]
+    pub force_update: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

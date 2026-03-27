@@ -135,7 +135,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
                 &version_path,
                 &dst_path,
                 &version_id,
-                false,
+                request.force_update,
             )?;
         }
 

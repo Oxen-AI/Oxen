@@ -663,4 +663,84 @@ mod tests {
         })
         .await
     }
+
+    #[tokio::test]
+    async fn test_reupload_same_large_file_with_force_update_succeeds() -> Result<(), OxenError> {
+        test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
+            let branch_name = "main";
+
+            let workspace_id = UserConfig::identifier()?;
+            api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
+
+            let paths = vec![test::test_30k_parquet()];
+            let result = api::client::workspaces::files::add(
+                &remote_repo,
+                &workspace_id,
+                "parquet",
+                paths.clone(),
+                &None,
+            )
+            .await;
+            assert!(result.is_ok(), "{result:?}");
+
+            let body = NewCommitBody {
+                message: "Add large parquet".to_string(),
+                author: "Test User".to_string(),
+                email: "test@oxen.ai".to_string(),
+            };
+            let first_commit =
+                api::client::workspaces::commit(&remote_repo, branch_name, &workspace_id, &body)
+                    .await?;
+            assert!(!first_commit.id.is_empty());
+
+            let workspace_id_2 = UserConfig::identifier()? + "_2";
+            api::client::workspaces::create(&remote_repo, branch_name, &workspace_id_2).await?;
+
+            let result = api::client::workspaces::files::add_with_opts(
+                &remote_repo,
+                &workspace_id_2,
+                "parquet",
+                paths,
+                &None,
+                true,
+            )
+            .await;
+            assert!(result.is_ok(), "{result:?}");
+
+            let body = NewCommitBody {
+                message: "Force update same large parquet".to_string(),
+                author: "Test User".to_string(),
+                email: "test@oxen.ai".to_string(),
+            };
+            let second_commit =
+                api::client::workspaces::commit(&remote_repo, branch_name, &workspace_id_2, &body)
+                    .await?;
+            assert!(!second_commit.id.is_empty());
+
+            assert_ne!(
+                first_commit.id, second_commit.id,
+                "Expected different commit IDs after force update on a large file"
+            );
+
+            let entries =
+                api::client::dir::list(&remote_repo, branch_name, Path::new("parquet"), 1, 100)
+                    .await?;
+            let file_entry = entries
+                .entries
+                .iter()
+                .find(|e| e.filename() == "wiki_30k.parquet")
+                .expect("Should find the uploaded large file in the directory listing");
+            let latest_commit = file_entry
+                .latest_commit()
+                .expect("File entry should have a latest_commit");
+            assert_eq!(
+                latest_commit.id, second_commit.id,
+                "latest_commit on the large file entry should match the force_update commit, got {} expected {}",
+                latest_commit.id, second_commit.id,
+            );
+
+            Ok(remote_repo)
+        })
+        .await
+    }
 }

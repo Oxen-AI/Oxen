@@ -267,6 +267,7 @@ pub async fn upload_single_file(
             path,
             Some(directory),
             Some(workspace_id.as_ref().to_string()),
+            false,
             None,
             None,
         )
@@ -373,6 +374,7 @@ async fn upload_multiple_files(
             &path,
             Some(&dst_dir),
             Some(workspace_id.to_string()),
+            force_update,
             None,
             None,
         )
