@@ -6243,7 +6243,6 @@ version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d73cc6b1b7d8b3cef02101d37390dbdfe7e450dfea14921cae80a9534ba59ef2"
 dependencies = [
- "async-std",
  "futures",
  "once_cell",
  "pin-project-lite",
