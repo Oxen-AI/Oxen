@@ -1,4 +1,4 @@
-from .oxen import auth, util
+from ._oxen import auth, util
 from oxen.user import config_user
 from typing import Optional
 import os

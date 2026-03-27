@@ -11,7 +11,7 @@ keywords = { workspace = true }
 publish = false
 
 [lib]
-name = "oxen" # Necessary so that we can import the crate as `import oxen` in Python.
+name = "_oxen" # The native extension module. Users still `import oxen` via the Python package wrapper.
 crate-type = ["cdylib"] # PyO3 needs this crate to be a cdylib so it can link against it.
 
 [dependencies]

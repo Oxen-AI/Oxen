@@ -2,7 +2,7 @@ import os
 
 from typing import Optional
 from typing import List, Tuple
-from .oxen import PyRemoteRepo, remote, PyCommit
+from ._oxen import PyRemoteRepo, remote, PyCommit
 from . import user as oxen_user
 from .workspace import Workspace
 
