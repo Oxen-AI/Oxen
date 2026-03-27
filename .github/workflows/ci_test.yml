@@ -139,7 +139,7 @@ jobs:
           mkdir .\data\test\runs
 
       - name: Build oxen rust project
-        run: cargo build --workspace --profile test # use test profile so we don't have to rebuild later
+        run: cargo build --workspace
 
       - name: Setup oxen-server user (Linux/macOS)
         if: matrix.platform != 'windows'
@@ -157,13 +157,13 @@ jobs:
         if: matrix.platform != 'windows'
         run: |
           ./target/debug/oxen-server start &
-          cargo nextest run --workspace --profile ci
+          cargo nextest run --workspace --profile ci --cargo-profile dev
 
       - name: Run oxen rust tests (Windows)
         if: matrix.platform == 'windows'
         run: |
           Start-Process -FilePath "${{ github.workspace }}\target\debug\oxen-server.exe" -WindowStyle Hidden -ArgumentList "start"
-          cargo nextest run --workspace --profile ci
+          cargo nextest run --workspace --profile ci --cargo-profile dev
 
       # CLI Tests
       - name: Run CLI tests (Linux/macOS)
@@ -205,7 +205,7 @@ jobs:
 
           uv sync --no-install-project
           source .venv/bin/activate
-          maturin develop --profile test
+          maturin develop
           pytest -s tests
 
       - name: Run oxen-python tests (Windows)
@@ -218,5 +218,5 @@ jobs:
           uv sync --no-install-project
           dir .venv
           .venv\Scripts\Activate.ps1
-          maturin develop --profile test
+          maturin develop
           pytest -s tests --ignore=tests/test_data_frame.py --ignore=tests/test_embeddings.py --ignore=tests/test_fsspec_backend.py
