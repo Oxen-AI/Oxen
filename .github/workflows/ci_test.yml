@@ -67,19 +67,8 @@ jobs:
       - name: Setup ramdisk (Windows)
         if: matrix.platform == 'windows'
         run: |
-          # Layer 1: imdisk ramdisk at T: (RAM-backed, but driver lacks full NTFS support)
           choco install imdisk -y
-          imdisk -a -s 18G -m T: -p "/fs:ntfs /q /y"
-
-          # Layer 2: VHD file on the ramdisk, mounted at R: (standard NTFS driver, full canonicalize support)
-          @"
-          create vdisk file="T:\build.vhdx" maximum=17920 type=fixed
-          select vdisk file="T:\build.vhdx"
-          attach vdisk
-          create partition primary
-          format fs=ntfs quick label=TestData
-          assign letter=R
-          "@ | diskpart
+          imdisk -a -s 16G -m R: -p "/fs:ntfs /q /y"
 
           # Use ramdisk for oxen-server sync directory and test runs (not cargo target--too large)
           echo "SYNC_DIR=R:\sync" >> $env:GITHUB_ENV
