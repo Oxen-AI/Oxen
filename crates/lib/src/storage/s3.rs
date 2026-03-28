@@ -264,6 +264,29 @@ impl VersionStore for S3VersionStore {
         Ok(data)
     }
 
+    async fn get_version_derived_size(
+        &self,
+        orig_hash: &str,
+        derived_filename: &str,
+    ) -> Result<u64, OxenError> {
+        let client = self.init_client().await?;
+        let key = format!("{}/{}", self.version_dir(orig_hash), derived_filename);
+
+        let resp = client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(&key)
+            .send()
+            .await
+            .map_err(|e| OxenError::basic_str(format!("S3 head_object failed: {e}")))?;
+
+        let size = resp
+            .content_length()
+            .ok_or_else(|| OxenError::basic_str("S3 object missing content_length"))?
+            as u64;
+        Ok(size)
+    }
+
     async fn get_version_stream(
         &self,
         hash: &str,

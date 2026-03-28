@@ -1,7 +1,7 @@
 pub mod chunks;
 
 use crate::errors::OxenHttpError;
-use crate::helpers::get_repo;
+use crate::helpers::{file_stream_response, get_repo};
 use crate::params::{app_data, parse_resource, path_param};
 
 use actix_multipart::Multipart;
@@ -130,6 +130,7 @@ pub async fn download(
     let file_hash = entry.hash();
     let hash_str = file_hash.to_string();
     let mime_type = entry.mime_type();
+    let num_bytes = entry.num_bytes();
     let last_commit_id = entry.last_commit_id().to_string();
     // TODO: refactor out of here and check for type,
     // but seeing if it works to resize the image and cache it to disk if we have a resize query
@@ -139,23 +140,20 @@ pub async fn download(
     {
         log::debug!("img_resize {img_resize:?}");
 
-        let file_stream =
+        let (file_stream, content_length) =
             util::fs::handle_image_resize(Arc::clone(&version_store), hash_str, &path, img_resize)
                 .await?;
 
-        return Ok(HttpResponse::Ok()
-            .content_type(mime_type)
-            .insert_header(("oxen-revision-id", last_commit_id.as_str()))
-            .streaming(file_stream));
+        return Ok(
+            file_stream_response(mime_type, &last_commit_id, Some(content_length))
+                .streaming(file_stream),
+        );
     } else {
         log::debug!("did not hit the resize cache");
     }
 
     let stream = version_store.get_version_stream(&hash_str).await?;
-    Ok(HttpResponse::Ok()
-        .content_type(mime_type)
-        .insert_header(("oxen-revision-id", last_commit_id.as_str()))
-        .streaming(stream))
+    Ok(file_stream_response(mime_type, &last_commit_id, Some(num_bytes)).streaming(stream))
 }
 
 /// Batch download version files
@@ -598,7 +596,8 @@ mod tests {
     use crate::controllers;
     use crate::test;
     use actix_multipart::test::create_form_data_payload_and_headers;
-    use actix_web::{App, web, web::Bytes};
+    use actix_web::http::header;
+    use actix_web::{App, body, web, web::Bytes};
     use flate2::Compression;
     use flate2::write::GzEncoder;
     use liboxen::error::OxenError;
@@ -644,10 +643,83 @@ mod tests {
 
         let resp = actix_web::test::call_service(&app, req).await;
         assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(header::CONTENT_LENGTH).unwrap(),
+            file_content.len().to_string().as_str()
+        );
+        assert_eq!(
+            resp.headers()
+                .get(header::ACCESS_CONTROL_EXPOSE_HEADERS)
+                .unwrap(),
+            header::CONTENT_LENGTH.as_str()
+        );
         let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
         assert_eq!(bytes, "Hello");
 
         // cleanup
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_controllers_versions_download_resize_sets_content_length() -> Result<(), OxenError>
+    {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Resize-Content-Length";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        util::fs::create_dir_all(repo.path.join("data"))?;
+        let relative_path = "data/pixel.png";
+        let image_file = repo.path.join(relative_path);
+        let png_bytes = [
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99,
+            0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+        util::fs::write_data(&image_file, &png_bytes)?;
+        repositories::add(&repo, &image_file).await?;
+        repositories::commit(&repo, "First commit")?;
+
+        let uri =
+            format!("/oxen/{namespace}/{repo_name}/versions/main/{relative_path}?width=2&height=2");
+        let req = actix_web::test::TestRequest::get()
+            .uri(&uri)
+            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+            .to_request();
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/versions/{resource:.*}",
+                    web::get().to(controllers::versions::download),
+                ),
+        )
+        .await;
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get(header::ACCESS_CONTROL_EXPOSE_HEADERS)
+                .unwrap(),
+            header::CONTENT_LENGTH.as_str()
+        );
+        let content_length = resp
+            .headers()
+            .get(header::CONTENT_LENGTH)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .parse::<usize>()
+            .unwrap();
+        let bytes = body::to_bytes(resp.into_body()).await.unwrap();
+        assert_eq!(content_length, bytes.len());
+
         test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
     }
