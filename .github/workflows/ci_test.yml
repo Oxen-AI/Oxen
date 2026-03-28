@@ -67,27 +67,22 @@ jobs:
       - name: Setup ramdisk (Windows)
         if: matrix.platform == 'windows'
         run: |
-          # Layer 1: imdisk ramdisk at T: (RAM-backed, but driver lacks full NTFS support, so building libduckdb-sys )
+          # Layer 1: imdisk ramdisk at T: (RAM-backed, but driver lacks full NTFS support)
           choco install imdisk -y
           imdisk -a -s 18G -m T: -p "/fs:ntfs /q /y"
 
-          # Layer 2: VHD file on the ramdisk, mounted at R: (standard NTFS driver, full support)
+          # Layer 2: VHD file on the ramdisk, mounted at R: (standard NTFS driver, full canonicalize support)
           @"
           create vdisk file="T:\build.vhdx" maximum=17920 type=fixed
           select vdisk file="T:\build.vhdx"
           attach vdisk
           create partition primary
-          format fs=ntfs quick label=CargoBuild
+          format fs=ntfs quick label=TestData
           assign letter=R
           "@ | diskpart
 
-          # Use ramdisk for cargo build artifacts
-          echo "CARGO_TARGET_DIR=R:\target" >> $env:GITHUB_ENV
-
-          # Use ramdisk for oxen-server sync directory
+          # Use ramdisk for oxen-server sync directory and test runs (not cargo target--too large)
           echo "SYNC_DIR=R:\sync" >> $env:GITHUB_ENV
-
-          # Use ramdisk for test harness run directories
           echo "OXEN_TEST_RUN_DIR=R:\test\runs" >> $env:GITHUB_ENV
 
       - name: Setup Rust Toolchain
@@ -97,7 +92,7 @@ jobs:
           cache: true # This is the default--making it explicit. This uses Swatinem/rust-cache under the hood.
           cache-all-crates: true
           cache-workspace-crates: true
-          cache-directories: ${{ env.CARGO_TARGET_DIR }} # Cache cargo build artifacts on the ramdisk in windows
+          cache-directories: ${{ env.CARGO_TARGET_DIR }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -181,7 +176,7 @@ jobs:
       - name: Setup oxen-server user (Windows)
         if: matrix.platform == 'windows'
         run: |
-          & "$env:CARGO_TARGET_DIR\debug\oxen-server.exe" add-user --email ox@oxen.ai --name Ox --output user_config.toml
+          .\target\debug\oxen-server.exe add-user --email ox@oxen.ai --name Ox --output user_config.toml
           copy user_config.toml data\test\config\user_config.toml
 
       - name: Run oxen rust tests (Linux/macOS)
@@ -193,7 +188,7 @@ jobs:
       - name: Run oxen rust tests (Windows)
         if: matrix.platform == 'windows'
         run: |
-          Start-Process "$env:CARGO_TARGET_DIR\debug\oxen-server.exe" -ArgumentList "start"
+          Start-Process ".\target\debug\oxen-server.exe" -ArgumentList "start"
           cargo nextest run --workspace --profile ci --cargo-profile dev
 
       # CLI Tests
@@ -209,7 +204,7 @@ jobs:
       - name: Run CLI tests (Windows)
         if: matrix.platform == 'windows'
         env:
-          PATH: ${{ env.PATH }};${{ env.CARGO_TARGET_DIR }}\debug
+          PATH: ${{ env.PATH }};${{ github.workspace }}\target\debug
         run: |
           cd ${{ github.workspace }}\cli-test
           uv sync
@@ -225,7 +220,7 @@ jobs:
       - name: Copy binaries for Python tests (Windows)
         if: matrix.platform == 'windows'
         run: |
-          copy "$env:CARGO_TARGET_DIR\debug\oxen.exe" ${{ github.workspace }}\oxen.exe
+          copy target\debug\oxen.exe ${{ github.workspace }}\oxen.exe
 
       - name: Run oxen-python tests (Linux/macOS)
         if: matrix.platform != 'windows'
