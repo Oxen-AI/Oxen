@@ -94,7 +94,13 @@ pub async fn handle_image_resize(
     file_hash: String,
     file_path: &Path,
     img_resize: ImgResize,
-) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>, OxenError> {
+) -> Result<
+    (
+        Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
+        u64,
+    ),
+    OxenError,
+> {
     log::debug!("img_resize {img_resize:?}");
     let derived_filename = resized_filename(file_path, img_resize.width, img_resize.height);
 
@@ -1579,16 +1585,25 @@ pub async fn resize_cache_image_version_store(
     img_hash: &str,
     derived_filename: &str,
     resize: ImgResize,
-) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>, OxenError> {
+) -> Result<
+    (
+        Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
+        u64,
+    ),
+    OxenError,
+> {
     if version_store
         .derived_version_exists(img_hash, derived_filename)
         .await?
     {
         log::debug!("In the resize cache! {derived_filename}");
+        let content_length = version_store
+            .get_version_derived_size(img_hash, derived_filename)
+            .await?;
         let stream = version_store
             .get_version_derived_stream(img_hash, derived_filename)
             .await?;
-        return Ok(stream.boxed());
+        return Ok((stream.boxed(), content_length));
     }
 
     log::debug!("create resized image {derived_filename} from hash {img_hash}");
@@ -1638,11 +1653,12 @@ pub async fn resize_cache_image_version_store(
     version_store
         .store_version_derived(img_hash, derived_filename, &buf)
         .await?;
+    let content_length = buf.len() as u64;
 
     let stream: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>> =
         futures::stream::once(async move { Ok(Bytes::from(buf)) }).boxed();
 
-    Ok(stream)
+    Ok((stream, content_length))
 }
 
 /// Generate a video thumbnail using thumbnails crate.

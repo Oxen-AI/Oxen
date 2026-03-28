@@ -207,6 +207,17 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// # Arguments
     /// * `orig_hash` - The content hash of the parent version
     /// * `derived_filename` - Filename for the derived artifact
+    async fn get_version_derived_size(
+        &self,
+        orig_hash: &str,
+        derived_filename: &str,
+    ) -> Result<u64, OxenError>;
+
+    /// Get a stream of a derived file (resized, video thumbnail, etc.)
+    ///
+    /// # Arguments
+    /// * `orig_hash` - The content hash of the parent version
+    /// * `derived_filename` - Filename for the derived artifact
     async fn get_version_derived_stream(
         &self,
         orig_hash: &str,
