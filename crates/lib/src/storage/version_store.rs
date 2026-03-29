@@ -77,7 +77,7 @@ impl LocalFilePath {
 /// Configuration for version storage backend
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct StorageConfig {
-    /// Storage type: "local" or "s3"
+    /// Storage type: "local", "s3", or "memory"
     #[serde(rename = "type")]
     pub type_: String,
     /// Backend-specific settings

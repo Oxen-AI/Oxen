@@ -133,6 +133,16 @@ pub async fn download_entry(
     local_path: impl AsRef<Path>,
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
+    download_entry_with_bearer_token(remote_repo, remote_path, local_path, revision, None).await
+}
+
+pub async fn download_entry_with_bearer_token(
+    remote_repo: &RemoteRepository,
+    remote_path: impl AsRef<Path>,
+    local_path: impl AsRef<Path>,
+    revision: impl AsRef<str>,
+    bearer_token: Option<&str>,
+) -> Result<(), OxenError> {
     let remote_path = remote_path.as_ref();
     let download_path = util::fs::remove_leading_slash(remote_path);
 
@@ -184,7 +194,15 @@ pub async fn download_entry(
     if entry.is_dir {
         repositories::download::download_dir(remote_repo, &entry, download_path, &local_path).await
     } else {
-        download_file(remote_repo, &entry, download_path, local_path, revision).await
+        download_file_with_bearer_token(
+            remote_repo,
+            &entry,
+            download_path,
+            local_path,
+            revision,
+            bearer_token,
+        )
+        .await
     }
 }
 
@@ -260,17 +278,37 @@ pub async fn download_file(
     local_path: impl AsRef<Path>,
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
+    download_file_with_bearer_token(remote_repo, entry, remote_path, local_path, revision, None)
+        .await
+}
+
+pub async fn download_file_with_bearer_token(
+    remote_repo: &RemoteRepository,
+    entry: &MetadataEntry,
+    remote_path: impl AsRef<Path>,
+    local_path: impl AsRef<Path>,
+    revision: impl AsRef<str>,
+    bearer_token: Option<&str>,
+) -> Result<(), OxenError> {
     if entry.size > AVG_CHUNK_SIZE {
-        download_large_entry(
+        download_large_entry_with_bearer_token(
             remote_repo,
             &remote_path,
             &local_path,
             &revision,
             entry.size,
+            bearer_token,
         )
         .await
     } else {
-        download_small_entry(remote_repo, remote_path, local_path, revision).await
+        download_small_entry_with_bearer_token(
+            remote_repo,
+            remote_path,
+            local_path,
+            revision,
+            bearer_token,
+        )
+        .await
     }
 }
 
@@ -280,12 +318,24 @@ pub async fn download_small_entry(
     dest: impl AsRef<Path>,
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
+    download_small_entry_with_bearer_token(remote_repo, remote_path, dest, revision, None).await
+}
+
+pub async fn download_small_entry_with_bearer_token(
+    remote_repo: &RemoteRepository,
+    remote_path: impl AsRef<Path>,
+    dest: impl AsRef<Path>,
+    revision: impl AsRef<str>,
+    bearer_token: Option<&str>,
+) -> Result<(), OxenError> {
     let path = remote_path.as_ref().to_string_lossy();
     let revision = revision.as_ref();
     let uri = format!("/file/{revision}/{path}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    // log::debug!("url: {url:?}");
-    let client = client::new_for_url(&url)?;
+    let client = match bearer_token {
+        Some(token) => client::new_for_url_with_bearer_token(&url, token)?,
+        None => client::new_for_url(&url)?,
+    };
     let response = client
         .get(&url)
         .send()
@@ -538,6 +588,25 @@ pub async fn download_large_entry(
     revision: impl AsRef<str>,
     num_bytes: u64,
 ) -> Result<(), OxenError> {
+    download_large_entry_with_bearer_token(
+        remote_repo,
+        remote_path,
+        local_path,
+        revision,
+        num_bytes,
+        None,
+    )
+    .await
+}
+
+pub async fn download_large_entry_with_bearer_token(
+    remote_repo: &RemoteRepository,
+    remote_path: impl AsRef<Path>,
+    local_path: impl AsRef<Path>,
+    revision: impl AsRef<str>,
+    num_bytes: u64,
+    bearer_token: Option<&str>,
+) -> Result<(), OxenError> {
     // Read chunks
     let chunk_size = AVG_CHUNK_SIZE;
     let total_size = num_bytes;
@@ -595,31 +664,36 @@ pub async fn download_large_entry(
     let item = tasks.remove(0);
     let (remote_repo, remote_path, tmp_file, revision, chunk_start, chunk_size) = item;
     // Will error out if the first chunk is not found or unauthorized
-    try_download_entry_chunk(
+    try_download_entry_chunk_with_bearer_token(
         &remote_repo,
         &remote_path,
         &tmp_file,
         &revision,
         chunk_start,
         chunk_size,
+        bearer_token,
     )
     .await?;
 
     use futures::prelude::*;
     let num_workers = constants::DEFAULT_NUM_WORKERS;
     let results: Vec<_> = stream::iter(tasks)
-        .map(|item| async move {
-            let (remote_repo, remote_path, tmp_file, revision, chunk_start, chunk_size) = item;
+        .map(move |item| {
+            let bearer_token = bearer_token;
+            async move {
+                let (remote_repo, remote_path, tmp_file, revision, chunk_start, chunk_size) = item;
 
-            try_download_entry_chunk(
-                &remote_repo,
-                &remote_path,
-                &tmp_file,
-                &revision,
-                chunk_start,
-                chunk_size,
-            )
-            .await
+                try_download_entry_chunk_with_bearer_token(
+                    &remote_repo,
+                    &remote_path,
+                    &tmp_file,
+                    &revision,
+                    chunk_start,
+                    chunk_size,
+                    bearer_token,
+                )
+                .await
+            }
         })
         .buffer_unordered(num_workers)
         .collect()
@@ -684,23 +758,25 @@ pub async fn download_large_entry(
     Ok(())
 }
 
-async fn try_download_entry_chunk(
+async fn try_download_entry_chunk_with_bearer_token(
     remote_repo: &RemoteRepository,
     remote_path: impl AsRef<Path>,
     local_path: impl AsRef<Path>,
     revision: impl AsRef<str>,
     chunk_start: u64,
     chunk_size: u64,
+    bearer_token: Option<&str>,
 ) -> Result<u64, OxenError> {
     let mut try_num = 0;
     while try_num < constants::NUM_HTTP_RETRIES {
-        match download_entry_chunk(
+        match download_entry_chunk_with_bearer_token(
             remote_repo,
             &remote_path,
             &local_path,
             &revision,
             chunk_start,
             chunk_size,
+            bearer_token,
         )
         .await
         {
@@ -727,14 +803,14 @@ async fn try_download_entry_chunk(
     Err(OxenError::basic_str("Retry download chunk failed"))
 }
 
-/// Downloads a chunk of a file
-async fn download_entry_chunk(
+async fn download_entry_chunk_with_bearer_token(
     remote_repo: &RemoteRepository,
     remote_path: impl AsRef<Path>,
     local_path: impl AsRef<Path>,
     revision: impl AsRef<str>,
     chunk_start: u64,
     chunk_size: u64,
+    bearer_token: Option<&str>,
 ) -> Result<reqwest::StatusCode, OxenError> {
     let remote_path = remote_path.as_ref();
     let local_path = local_path.as_ref();
@@ -757,7 +833,10 @@ async fn download_entry_chunk(
 
     log::debug!("download_entry_chunk {url}");
 
-    let client = client::new_for_url(&url)?;
+    let client = match bearer_token {
+        Some(token) => client::new_for_url_with_bearer_token(&url, token)?,
+        None => client::new_for_url(&url)?,
+    };
     let response = client.get(&url).send().await?;
 
     if let Some(parent) = local_path.parent() {

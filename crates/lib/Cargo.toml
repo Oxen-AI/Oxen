@@ -64,6 +64,8 @@ futures = { workspace = true }
 futures-util = { workspace = true }
 glob = { workspace = true }
 glob-match = { workspace = true }
+hex = { workspace = true }
+hmac = { workspace = true }
 http = { workspace = true }
 humantime = { workspace = true }
 ignore = { workspace = true }

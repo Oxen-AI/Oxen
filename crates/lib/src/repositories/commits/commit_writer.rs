@@ -21,6 +21,7 @@ use crate::core::db::merkle_node::MerkleNodeDB;
 use crate::core::refs::with_ref_manager;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_latest::status;
+use crate::core::webhook_dispatcher::WebhookDispatcher;
 use crate::error::OxenError;
 use crate::model::MerkleHash;
 use crate::model::MerkleTreeNodeType;
@@ -193,6 +194,11 @@ pub fn commit_with_cfg(
             start_time.elapsed().as_millis() as u64
         ))
     );
+
+    // Trigger webhook notifications based on configuration
+    if let Err(e) = trigger_webhook_notifications(repo, &commit) {
+        log::warn!("Failed to trigger webhook notifications: {}", e);
+    }
 
     Ok(commit)
 }
@@ -1232,6 +1238,36 @@ fn create_commit_data(
             timestamp,
         })
     }
+}
+
+fn trigger_webhook_notifications(repo: &LocalRepository, commit: &Commit) -> Result<(), OxenError> {
+    // Use the configurable webhook dispatcher
+    let dispatcher = WebhookDispatcher::from_repo(repo)?;
+
+    // Spawn a thread to handle async dispatch without blocking commit
+    let repo_clone = repo.clone();
+    let commit_clone = commit.clone();
+
+    std::thread::spawn(move || {
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                log::error!("Failed to create async runtime for webhooks: {}", e);
+                return;
+            }
+        };
+
+        rt.block_on(async move {
+            if let Err(e) = dispatcher
+                .dispatch_webhook_event(&repo_clone, &commit_clone)
+                .await
+            {
+                log::error!("Failed to dispatch webhook event: {}", e);
+            }
+        });
+    });
+
+    Ok(())
 }
 
 #[cfg(test)]

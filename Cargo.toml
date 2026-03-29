@@ -72,6 +72,7 @@ futures-util = "0.3.28"
 glob = "0.3.1"
 glob-match = "0.2.1"
 hex = "0.4.3"
+hmac = "0.12.1"
 http = "1.1.0"
 humantime = "2.1.0"
 hyper = { version = "1", features = ["server", "http1"] }

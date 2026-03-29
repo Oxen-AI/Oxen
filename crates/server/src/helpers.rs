@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 // use liboxen::constants::DEFAULT_REDIS_URL;
 use actix_web::http::header;
@@ -57,6 +57,14 @@ pub fn file_stream_response(
     response.insert_header(("oxen-revision-id", last_commit_id));
     expose_content_length(&mut response);
     response
+}
+
+pub fn get_repo_path(
+    base_path: &Path,
+    namespace: impl AsRef<str>,
+    repo_name: impl AsRef<str>,
+) -> PathBuf {
+    base_path.join(namespace.as_ref()).join(repo_name.as_ref())
 }
 
 #[cfg(test)]

@@ -1,3 +1,4 @@
+use crate::auth::access_keys::AccessKeyManager;
 use crate::errors::OxenHttpError;
 use crate::helpers::{create_user_from_options, file_stream_response, get_repo};
 use crate::params::{app_data, parse_resource, path_param};
@@ -10,20 +11,24 @@ use futures_util::TryStreamExt as _;
 use futures_util::future::LocalBoxFuture;
 use liboxen::core::staged::get_staged_db_manager;
 use liboxen::error::OxenError;
-use liboxen::model::Commit;
 use liboxen::model::commit::NewCommitBody;
 use liboxen::model::file::{FileContents, FileNew, TempFileNew};
 use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::metadata::metadata_video::VideoThumbnail;
+use liboxen::model::{Commit, User};
 use liboxen::repositories::commits;
 use liboxen::repositories::{self, branches};
 use liboxen::util;
 use liboxen::view::{CommitResponse, StatusMessage};
+
 use serde::Deserialize;
+use serde_json::Value;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use utoipa::ToSchema;
+
+const ALLOWED_IMPORT_DOMAINS: [&str; 3] = ["huggingface.co", "kaggle.com", "oxen.ai"];
 
 #[derive(MultipartForm, ToSchema)]
 #[schema(
@@ -256,6 +261,7 @@ pub async fn put(
     MultipartForm(form): MultipartForm<FileUploadBody>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     log::debug!("file::put path {:?}", req.path());
+
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
@@ -280,7 +286,36 @@ pub async fn put(
         .clone()
         .ok_or_else(|| OxenError::local_branch_not_found(resource.version.to_string_lossy()))?;
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
+
+    // Extract claimed commit hash from HTTP header
+    let claimed_commit_hash = req
+        .headers()
+        .get("oxen-based-on")
+        .and_then(|value| value.to_str().ok())
+        .map(|s| s.to_string());
+
+    // Check if the resource path is a file and handle conflicts
     let node = repositories::tree::get_node_by_path(&repo, &commit, &resource.path)?;
+    if let Some(ref n) = node
+        && n.is_file()
+    {
+        // Get current commit hash for the file
+        let current_commit_hash = n.latest_commit_id()?.to_string();
+
+        // Only fail if claimed hash is provided but doesn't match current hash
+        if let Some(claimed_hash) = claimed_commit_hash
+            && current_commit_hash != claimed_hash
+        {
+            return Err(OxenHttpError::BasicError(
+                format!(
+                    "File has been modified since claimed revision. Current: {}, Claimed: {}. Your changes would overwrite another change without that being from a merge",
+                    current_commit_hash, claimed_hash
+                )
+                .into(),
+            ));
+        }
+    }
+
     let upload_mode = resolve_upload_mode(
         file_parts,
         &files_array_parts,
@@ -347,34 +382,26 @@ pub async fn put(
 #[utoipa::path(
     delete,
     path = "/api/repos/{namespace}/{repo_name}/file/{resource}",
-    description = "Remove a file from the repository. Stage the file as removed to a workspace and commit the removal. Can remove files or directories.",
+    description = "Remove a file from the repository. Stage the file as removed to a workspace and commit the removal.",
     tag = "Files",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
         ("resource" = String, Path, description = "Path to the file to be deleted (including branch)", example = "main/train/images/n01440764_10026.JPEG"),
     ),
-    request_body(
-        content_type = "multipart/form-data",
-        content = FileUploadBody,
-    ),
     responses(
         (status = 200, description = "File removed successfully", body = CommitResponse),
         (status = 404, description = "Branch or path not found")
     )
 )]
-// TODO: `content` above should be a different type that doesn't include `files` and `file` fields
-pub async fn delete(
-    req: HttpRequest,
-    MultipartForm(form): MultipartForm<FileUploadBody>,
-) -> actix_web::Result<HttpResponse, OxenHttpError> {
+pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     log::debug!("file::delete path {:?}", req.path());
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
-    // Parse the resource (branch/commit/path)
+    // Parse the resource (branch/commit/path) - DELETE operations require existing commits
     let resource = parse_resource(&req, &repo)?;
 
     // Resource must specify branch because we need to commit the workspace back to a branch
@@ -383,31 +410,68 @@ pub async fn delete(
         .clone()
         .ok_or_else(|| OxenError::local_branch_not_found(resource.version.to_string_lossy()))?;
     let commit = resource.commit.clone().ok_or(OxenHttpError::NotFound)?;
-    let path = resource.path;
 
-    let name = form.name();
-    let email = form.email();
-    let message = form.message();
+    // Extract claimed commit hash from HTTP header
+    let claimed_commit_hash = req
+        .headers()
+        .get("oxen-based-on")
+        .and_then(|value| value.to_str().ok())
+        .map(|s| s.to_string());
 
-    log::debug!("file::delete creating workspace for commit: {commit}");
+    // Check if the resource path exists and is a file
+    let node = repositories::tree::get_node_by_path(&repo, &commit, &resource.path)?;
+    let node = node.ok_or_else(|| OxenHttpError::NotFound)?;
+
+    if !node.is_file() {
+        return Err(OxenHttpError::BadRequest(
+            format!("Cannot delete directory: {}", resource.path.display()).into(),
+        ));
+    }
+
+    // Get current commit hash for the file and validate oxen-based-on header if provided
+    let current_commit_hash = node.latest_commit_id()?.to_string();
+    if let Some(claimed_hash) = claimed_commit_hash
+        && current_commit_hash != claimed_hash
+    {
+        return Err(OxenHttpError::BasicError(
+            format!(
+                "File has been modified since claimed revision. Current: {}, Claimed: {}. Your changes would overwrite another change without that being from a merge",
+                current_commit_hash, claimed_hash
+            )
+            .into(),
+        ));
+    }
+
+    // Get authenticated user from bearer token
+    let authenticated_user = get_authenticated_user(&req)?;
+    let user = match authenticated_user {
+        Some(user) => user,
+        None => {
+            return Err(OxenHttpError::BadRequest(
+                "Bearer token required for DELETE operations".into(),
+            ));
+        }
+    };
+
+    // Create temporary workspace
     let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
 
-    // Stage the path as removed
-    log::debug!("file::delete staging path {path:?}");
-    repositories::workspaces::files::rm(&workspace, &path).await?;
+    // Stage the deletion using the relative path (not absolute workspace path)
+    repositories::workspaces::files::rm(&workspace, &resource.path).await?;
 
-    // Commit workspace
+    // Commit workspace with deletion
     let commit_body = NewCommitBody {
-        author: name.clone().unwrap_or("".to_string()),
-        email: email.clone().unwrap_or("".to_string()),
-        message: message
-            .clone()
-            .unwrap_or(format!("Remove {}", &path.to_string_lossy())),
+        author: user.name.clone(),
+        email: user.email.clone(),
+        message: format!("Delete file {}", resource.path.display()),
     };
 
     let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
 
-    log::debug!("file::delete workspace commit ✅ success! commit {commit:?}");
+    log::debug!(
+        "file::delete workspace commit ✅ success! commit {:?}",
+        commit
+    );
 
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_deleted(),
@@ -537,12 +601,15 @@ async fn handle_initial_put_empty_repo(
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let resource: PathBuf = PathBuf::from(req.match_info().query("resource"));
 
-    let mut resource = resource.components();
-    let branch_name = resource
+    let mut resource_components = resource.components();
+    let branch_name = resource_components
         .next()
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .unwrap_or("main".to_string());
-    let path_string = resource.collect::<PathBuf>().to_string_lossy().to_string();
+    let path_string = resource_components
+        .collect::<PathBuf>()
+        .to_string_lossy()
+        .to_string();
     let path = PathBuf::from(path_string);
 
     let name = form.name();
@@ -667,6 +734,178 @@ fn take_single_file_part(file_part: Option<&TempFileNew>) -> Result<&TempFileNew
     })
 }
 
+/// import files from hf/kaggle (create a workspace and commit)
+pub async fn import(
+    req: HttpRequest,
+    body: web::Json<Value>,
+) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
+    let resource = parse_resource(&req, &repo)?;
+
+    // Resource must specify branch for committing the workspace
+    let branch = resource
+        .branch
+        .clone()
+        .ok_or(OxenError::local_branch_not_found(
+            resource.version.to_string_lossy(),
+        ))?;
+    let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
+    let directory = resource.path.clone();
+    log::debug!("workspace::files::import_file Got directory: {directory:?}");
+
+    // commit info
+    let author = req.headers().get("oxen-commit-author");
+    let email = req.headers().get("oxen-commit-email");
+    let message = req.headers().get("oxen-commit-message");
+
+    log::debug!(
+        "file::import commit info author:{:?}, email:{:?}, message:{:?}",
+        author,
+        email,
+        message
+    );
+
+    // Make sure the resource path is not already a file
+    let node = repositories::tree::get_node_by_path(&repo, &commit, &resource.path)?;
+    if node.is_some() && node.unwrap().is_file() {
+        return Err(OxenHttpError::BasicError(
+            format!(
+                "Target path must be a directory: {}",
+                resource.path.display()
+            )
+            .into(),
+        ));
+    }
+
+    // Create temporary workspace
+    let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+
+    log::debug!("workspace::files::import_file workspace created!");
+
+    // extract auth key from req body
+    let auth = body
+        .get("headers")
+        .and_then(|headers| headers.as_object())
+        .and_then(|map| map.get("Authorization"))
+        .and_then(|auth| auth.as_str())
+        .unwrap_or_default();
+
+    let download_url = body
+        .get("download_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+
+    // Validate URL domain
+    let url_parsed = url::Url::parse(download_url)
+        .map_err(|_| OxenHttpError::BadRequest("Invalid URL".into()))?;
+    let domain = url_parsed
+        .domain()
+        .ok_or_else(|| OxenHttpError::BadRequest("Invalid URL domain".into()))?;
+    if !ALLOWED_IMPORT_DOMAINS.iter().any(|&d| domain.ends_with(d)) {
+        return Err(OxenHttpError::BadRequest("URL domain not allowed".into()));
+    }
+
+    // parse filename from the given url
+    let filename = if url_parsed.domain() == Some("huggingface.co") {
+        url_parsed.path_segments().and_then(|segments| {
+            let segments: Vec<_> = segments.collect();
+            if segments.len() >= 2 {
+                let last_two = &segments[segments.len() - 2..];
+                Some(format!("{}_{}", last_two[0], last_two[1]))
+            } else {
+                None
+            }
+        })
+    } else {
+        url_parsed
+            .path_segments()
+            .and_then(|mut segments| segments.next_back())
+            .map(|s| s.to_string())
+    }
+    .ok_or_else(|| OxenHttpError::BadRequest("Invalid filename in URL".into()))?;
+
+    // download and save the file into the workspace
+    repositories::workspaces::files::import(download_url, auth, directory, filename, &workspace)
+        .await?;
+
+    // Commit workspace
+    let commit_body = NewCommitBody {
+        author: author.map_or("".to_string(), |a| a.to_str().unwrap().to_string()),
+        email: email.map_or("".to_string(), |e| e.to_str().unwrap().to_string()),
+        message: message.map_or(
+            format!("Import files to {}", &resource.path.to_string_lossy()),
+            |m| m.to_str().unwrap().to_string(),
+        ),
+    };
+
+    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
+    log::debug!("workspace::commit ✅ success! commit {:?}", commit);
+
+    Ok(HttpResponse::Ok().json(CommitResponse {
+        status: StatusMessage::resource_created(),
+        commit,
+    }))
+}
+
+// Helper function to extract authenticated user from bearer token
+fn get_authenticated_user(req: &HttpRequest) -> Result<Option<User>, OxenHttpError> {
+    // Extract bearer token from Authorization header
+    let auth_header = req.headers().get("authorization");
+
+    if let Some(auth_value) = auth_header {
+        if let Ok(auth_str) = auth_value.to_str() {
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                let app_data = app_data(req)?;
+
+                log::debug!(
+                    "Attempting to validate bearer token: {}...",
+                    &token[..std::cmp::min(20, token.len())]
+                );
+                log::debug!("AccessKeyManager path: {:?}", &app_data.path);
+
+                match AccessKeyManager::new_read_only(&app_data.path) {
+                    Ok(keygen) => {
+                        log::debug!("AccessKeyManager created successfully");
+                        match keygen.get_claim(token) {
+                            Ok(Some(claim)) => {
+                                log::debug!(
+                                    "Token validated successfully for user: {}",
+                                    claim.name()
+                                );
+                                return Ok(Some(User {
+                                    name: claim.name().to_string(),
+                                    email: claim.email().to_string(),
+                                }));
+                            }
+                            Ok(None) => {
+                                log::debug!("Token validation returned None");
+                            }
+                            Err(e) => {
+                                log::debug!("Token validation error: {:?}", e);
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        log::debug!("AccessKeyManager creation failed: {:?}", err);
+                        // Treat missing keys DB as "no authentication configured" instead of crashing
+                    }
+                }
+            } else {
+                log::debug!("Authorization header does not start with 'Bearer '");
+            }
+        } else {
+            log::debug!("Could not parse authorization header as string");
+        }
+    } else {
+        log::debug!("No authorization header found");
+    }
+
+    Ok(None)
+}
+
 fn normalize_relative_upload_path(
     path: &Path,
     allow_empty: bool,
@@ -764,6 +1003,7 @@ async fn process_and_add_files(
                 }
             }
 
+            // Add the file to staging
             if let Some(ws) = workspace {
                 repositories::workspaces::files::add(ws, &filepath).await?;
             } else {
@@ -982,6 +1222,70 @@ mod tests {
         assert_eq!(std::str::from_utf8(&body).unwrap(), "# Hero Content");
 
         test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_controllers_file_import() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Name";
+        let author = "test_user";
+        let email = "ox@oxen.ai";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        util::fs::create_dir_all(repo.path.join("data"))?;
+        let hello_file = repo.path.join("data/hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file).await?;
+        let _commit = repositories::commit(&repo, "First commit")?;
+
+        let uri = format!("/oxen/{namespace}/{repo_name}/file/import/main/data");
+
+        // import a file from oxen for testing
+        let body = serde_json::json!({"download_url": "https://hub.oxen.ai/api/repos/datasets/GettingStarted/file/main/tables/cats_vs_dogs.tsv"});
+
+        let req = actix_web::test::TestRequest::post()
+            .uri(&uri)
+            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+            .param("namespace", namespace)
+            .param("repo_name", repo_name)
+            .insert_header(("oxen-commit-author", author))
+            .insert_header(("oxen-commit-email", email))
+            .set_json(&body)
+            .to_request();
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/file/import/{resource:.*}",
+                    web::post().to(controllers::file::import),
+                ),
+        )
+        .await;
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&bytes).unwrap();
+        let resp: CommitResponse = serde_json::from_str(body)?;
+        assert_eq!(resp.status.status, "success");
+
+        let entry = repositories::entries::get_file(
+            &repo,
+            &resp.commit,
+            PathBuf::from("data/cats_vs_dogs.tsv"),
+        )?
+        .unwrap();
+        let version_store = repo.version_store()?;
+        let version_path = version_store
+            .get_version_path(&entry.hash().to_string())
+            .await?;
+        assert!(version_path.exists());
+
+        // cleanup
+        test::cleanup_sync_dir(&sync_dir)?;
+
         Ok(())
     }
 

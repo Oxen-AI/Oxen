@@ -10,25 +10,20 @@ use futures_util::StreamExt;
 use reqwest::multipart::{Form, Part};
 use std::path::Path;
 
-pub async fn put_file(
-    remote_repo: &RemoteRepository,
-    branch: impl AsRef<str>,
-    directory: impl AsRef<str>,
+/// Helper function that contains the common logic for putting a file
+async fn put_file_impl(
+    client: reqwest::Client,
+    url: String,
     file_path: impl AsRef<Path>,
     file_name: Option<impl AsRef<str>>,
     commit_body: Option<NewCommitBody>,
 ) -> Result<CommitResponse, OxenError> {
-    let branch = branch.as_ref();
-    let directory = directory.as_ref();
-    put_multipart_file(
-        remote_repo,
-        format!("/file/{branch}/{directory}"),
-        "files[]",
-        file_path,
-        file_name,
-        commit_body,
-    )
-    .await
+    let file_path = file_path.as_ref();
+    let file_part = make_file_part(file_path, file_name).await?;
+    let form = apply_commit_body(Form::new().part("files[]", file_part), commit_body);
+    let res = client.put(&url).multipart(form).send().await?;
+    let body = client::parse_json_body(&url, res).await?;
+    Ok(serde_json::from_str(&body)?)
 }
 
 pub async fn put_file_to_path(
@@ -90,6 +85,45 @@ fn apply_commit_body(mut form: Form, commit_body: Option<NewCommitBody>) -> Form
         form = form.text("message", body.message);
     }
     form
+}
+
+pub async fn put_file(
+    remote_repo: &RemoteRepository,
+    branch: impl AsRef<str>,
+    directory: impl AsRef<str>,
+    file_path: impl AsRef<Path>,
+    file_name: Option<impl AsRef<str>>,
+    commit_body: Option<NewCommitBody>,
+) -> Result<CommitResponse, OxenError> {
+    let branch = branch.as_ref();
+    let directory = directory.as_ref();
+    let file_path = file_path.as_ref();
+    let uri = format!("/file/{branch}/{directory}");
+    log::debug!("put_file {uri:?}, file_path {file_path:?}");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    let client = client::new_for_url(&url)?;
+    put_file_impl(client, url, file_path, file_name, commit_body).await
+}
+
+pub async fn put_file_with_bearer_token(
+    remote_repo: &RemoteRepository,
+    branch: impl AsRef<str>,
+    directory: impl AsRef<str>,
+    file_path: impl AsRef<Path>,
+    file_name: Option<impl AsRef<str>>,
+    commit_body: Option<NewCommitBody>,
+    bearer_token: &str,
+) -> Result<CommitResponse, OxenError> {
+    let branch = branch.as_ref();
+    let directory = directory.as_ref();
+    let file_path = file_path.as_ref();
+    let uri = format!("/file/{branch}/{directory}");
+    log::debug!("put_file_with_bearer_token {uri:?}, file_path {file_path:?}");
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+
+    let client = client::new_for_url_with_bearer_token(&url, bearer_token)?;
+    put_file_impl(client, url, file_path, file_name, commit_body).await
 }
 
 pub async fn get_file(

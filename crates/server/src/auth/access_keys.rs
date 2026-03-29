@@ -17,6 +17,20 @@ pub struct JWTClaim {
     email: String,
 }
 
+impl JWTClaim {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn email(&self) -> &str {
+        &self.email
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+}
+
 pub struct AccessKeyManager {
     sync_dir: PathBuf,
     db: DBWithThreadMode<MultiThreaded>,
