@@ -17,6 +17,7 @@ macro_rules! current_function {
 
 pub fn init_logging() {
     match env_logger::Builder::from_env(Env::default())
+        .filter_module("h2", log::LevelFilter::Warn)
         .format(|buf, record| {
             use crate::request_context::get_request_id;
 
