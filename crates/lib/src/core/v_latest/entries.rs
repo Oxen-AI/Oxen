@@ -249,6 +249,7 @@ pub fn dir_entries_with_depth(
         parsed_resource,
         found_commits,
         &mut entries,
+        sort_opts,
         depth,
     )?;
     drop(_perf_recurse);
@@ -407,6 +408,7 @@ fn p_dir_entries(
     parsed_resource: &ParsedResource,
     found_commits: &mut HashMap<MerkleHash, Commit>,
     entries: &mut Vec<MetadataEntry>,
+    sort_opts: &SortOpts,
     depth: usize,
 ) -> Result<(), OxenError> {
     let search_directory = search_directory.as_ref();
@@ -423,6 +425,7 @@ fn p_dir_entries(
                     parsed_resource,
                     found_commits,
                     entries,
+                    sort_opts,
                     depth,
                 )?;
             }
@@ -464,15 +467,11 @@ fn p_dir_entries(
                                 &sub_resource,
                                 found_commits,
                                 &mut children,
+                                sort_opts,
                                 depth - 1,
                             )?;
 
-                            // Sort children
-                            children.sort_by(|a, b| {
-                                b.is_dir
-                                    .cmp(&a.is_dir)
-                                    .then_with(|| a.filename.cmp(&b.filename))
-                            });
+                            sort_entries(&mut children, sort_opts);
 
                             if !children.is_empty() {
                                 metadata.children = Some(children);
@@ -491,6 +490,7 @@ fn p_dir_entries(
                     parsed_resource,
                     found_commits,
                     entries,
+                    sort_opts,
                     depth,
                 )?;
             }

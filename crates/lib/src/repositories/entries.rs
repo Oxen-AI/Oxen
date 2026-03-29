@@ -401,10 +401,11 @@ mod tests {
     use uuid::Uuid;
 
     use crate::error::OxenError;
-    use crate::opts::{PaginateOpts, SortOpts};
+    use crate::opts::{PaginateOpts, SortBy, SortOpts};
     use crate::repositories;
     use crate::test;
     use crate::util;
+    use tokio::time::sleep;
 
     #[tokio::test]
     async fn test_api_local_entries_list_all() -> Result<(), OxenError> {
@@ -1134,6 +1135,7 @@ mod tests {
             // root/
             //   dir_a/
             //     file_a1.txt
+            //     file_a2.txt
             //     subdir/
             //       file_sub.txt
             //   dir_b/
@@ -1154,7 +1156,13 @@ mod tests {
             util::fs::write(dir_b.join("file_b1.txt"), "b1 content")?;
 
             repositories::add(&repo, &repo.path).await?;
-            let commit = repositories::commit(&repo, "Adding nested structure")?;
+            let _first_commit = repositories::commit(&repo, "Adding nested structure")?;
+
+            sleep(std::time::Duration::from_millis(1100)).await;
+
+            util::fs::write(dir_a.join("file_a2.txt"), "a2 content")?;
+            repositories::add(&repo, dir_a.join("file_a2.txt")).await?;
+            let commit = repositories::commit(&repo, "Adding newer nested file")?;
 
             let paginate_opts = PaginateOpts {
                 page_num: 1,
@@ -1208,13 +1216,36 @@ mod tests {
             if let Some(crate::view::entries::EMetadataEntry::MetadataEntry(e)) = dir_a_entry {
                 assert!(e.children.is_some());
                 let children = e.children.as_ref().unwrap();
-                // dir_a should have: file_a1.txt and subdir
-                assert_eq!(children.len(), 2);
+                // dir_a should have: file_a1.txt, file_a2.txt, and subdir
+                assert_eq!(children.len(), 3);
 
                 // With depth=1, subdir's children should NOT be populated
                 let subdir = children.iter().find(|c| c.filename == "subdir");
                 assert!(subdir.is_some());
                 assert!(subdir.unwrap().children.is_none());
+            }
+
+            // Test non-default sorting is applied to nested children as well
+            let paginated = repositories::entries::list_directory_w_workspace_depth(
+                &repo,
+                Path::new(""),
+                &commit.id,
+                None,
+                &paginate_opts,
+                &SortOpts {
+                    sort_by: SortBy::Date,
+                    reverse: true,
+                },
+                repo.min_version(),
+                1,
+            )?;
+
+            let dir_a_entry = paginated.entries.iter().find(|e| e.filename() == "dir_a");
+            if let Some(crate::view::entries::EMetadataEntry::MetadataEntry(e)) = dir_a_entry {
+                let children = e.children.as_ref().unwrap();
+                assert_eq!(children[0].filename, "subdir");
+                assert_eq!(children[1].filename, "file_a2.txt");
+                assert_eq!(children[2].filename, "file_a1.txt");
             }
 
             // Test depth=2 - nested children populated

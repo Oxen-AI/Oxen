@@ -5,6 +5,7 @@ use crate::error::OxenError;
 use crate::model::RemoteRepository;
 use crate::model::metadata::MetadataDir;
 use crate::model::metadata::generic_metadata::GenericMetadata;
+use crate::opts::SortOpts;
 use crate::view::entries::EMetadataEntry;
 use crate::view::{PaginatedDirEntries, PaginatedDirEntriesResponse};
 use crate::{api, constants};
@@ -27,9 +28,31 @@ pub async fn list(
     page: usize,
     page_size: usize,
 ) -> Result<PaginatedDirEntries, OxenError> {
+    list_with_opts(remote_repo, revision, path, page, page_size, None, None).await
+}
+
+pub async fn list_with_opts(
+    remote_repo: &RemoteRepository,
+    revision: impl AsRef<str>,
+    path: impl AsRef<Path>,
+    page: usize,
+    page_size: usize,
+    sort_opts: Option<&SortOpts>,
+    depth: Option<usize>,
+) -> Result<PaginatedDirEntries, OxenError> {
     let revision = revision.as_ref();
     let path = path.as_ref().to_string_lossy();
-    let uri = format!("/dir/{revision}/{path}?page={page}&page_size={page_size}");
+    let mut query_params = vec![format!("page={page}"), format!("page_size={page_size}")];
+    if let Some(sort_opts) = sort_opts {
+        query_params.push(format!("sort_by={}", sort_opts.sort_by));
+        if sort_opts.reverse {
+            query_params.push("reverse=true".to_string());
+        }
+    }
+    if let Some(depth) = depth {
+        query_params.push(format!("depth={depth}"));
+    }
+    let uri = format!("/dir/{revision}/{path}?{}", query_params.join("&"));
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;
@@ -101,10 +124,12 @@ mod tests {
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
     use crate::model::StagedEntryStatus;
+    use crate::opts::{SortBy, SortOpts};
     use crate::repositories;
     use crate::test;
     use crate::util;
     use crate::view::entries::EMetadataEntry;
+    use tokio::time::sleep;
 
     use std::path::Path;
     use std::path::PathBuf;
@@ -488,6 +513,129 @@ mod tests {
                 }
             }
             Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_list_dir_sort_opts() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|local_repo| async move {
+            let mut local_repo = local_repo;
+
+            let name = local_repo.dirname();
+            let remote = test::repo_remote_url_from(&name);
+            command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
+
+            let remote_repo = test::create_remote_repo(&local_repo).await?;
+
+            let file_a = local_repo.path.join("a_file.txt");
+            util::fs::write_to_path(&file_a, "content a")?;
+            repositories::add(&local_repo, &file_a).await?;
+            repositories::commit(&local_repo, "adding a_file")?;
+            repositories::push(&local_repo).await?;
+
+            sleep(std::time::Duration::from_millis(1100)).await;
+
+            let file_b = local_repo.path.join("b_file.txt");
+            util::fs::write_to_path(&file_b, "content b")?;
+            repositories::add(&local_repo, &file_b).await?;
+            repositories::commit(&local_repo, "adding b_file")?;
+            repositories::push(&local_repo).await?;
+
+            let root_entries = api::client::dir::list_with_opts(
+                &remote_repo,
+                DEFAULT_BRANCH_NAME,
+                Path::new(""),
+                1,
+                10,
+                Some(&SortOpts {
+                    sort_by: SortBy::Date,
+                    reverse: true,
+                }),
+                None,
+            )
+            .await?;
+
+            let filenames: Vec<&str> = root_entries.entries.iter().map(|e| e.filename()).collect();
+            assert_eq!(filenames, vec!["b_file.txt", "a_file.txt"]);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_list_dir_depth_and_nested_sort_opts() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|local_repo| async move {
+            let mut local_repo = local_repo;
+
+            let name = local_repo.dirname();
+            let remote = test::repo_remote_url_from(&name);
+            command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
+
+            let remote_repo = test::create_remote_repo(&local_repo).await?;
+
+            let dir_a = local_repo.path.join("dir_a");
+            let dir_a_subdir = dir_a.join("subdir");
+            let dir_b = local_repo.path.join("dir_b");
+
+            util::fs::create_dir_all(&dir_a)?;
+            util::fs::create_dir_all(&dir_a_subdir)?;
+            util::fs::create_dir_all(&dir_b)?;
+
+            util::fs::write(local_repo.path.join("root_file.txt"), "root content")?;
+            util::fs::write(dir_a.join("file_a1.txt"), "a1 content")?;
+            util::fs::write(dir_a_subdir.join("file_sub.txt"), "sub content")?;
+            util::fs::write(dir_b.join("file_b1.txt"), "b1 content")?;
+
+            repositories::add(&local_repo, &local_repo.path).await?;
+            repositories::commit(&local_repo, "Adding nested structure")?;
+            repositories::push(&local_repo).await?;
+
+            sleep(std::time::Duration::from_millis(1100)).await;
+
+            let newer_nested_file = dir_a.join("file_a2.txt");
+            util::fs::write(newer_nested_file.clone(), "a2 content")?;
+            repositories::add(&local_repo, newer_nested_file).await?;
+            repositories::commit(&local_repo, "Adding newer nested file")?;
+            repositories::push(&local_repo).await?;
+
+            let paginated = api::client::dir::list_with_opts(
+                &remote_repo,
+                DEFAULT_BRANCH_NAME,
+                Path::new(""),
+                1,
+                100,
+                Some(&SortOpts {
+                    sort_by: SortBy::Date,
+                    reverse: true,
+                }),
+                Some(1),
+            )
+            .await?;
+
+            let dir_a_entry = paginated
+                .entries
+                .iter()
+                .find(|e| e.filename() == "dir_a")
+                .expect("dir_a entry not found");
+
+            let EMetadataEntry::MetadataEntry(dir_a) = dir_a_entry else {
+                panic!("Expected dir_a to be a MetadataEntry");
+            };
+
+            let children = dir_a
+                .children
+                .as_ref()
+                .expect("dir_a children not populated");
+            let child_names: Vec<&str> = children
+                .iter()
+                .map(|child| child.filename.as_str())
+                .collect();
+            assert_eq!(child_names, vec!["subdir", "file_a2.txt", "file_a1.txt"]);
+            assert!(children[0].children.is_none());
+
+            Ok(())
         })
         .await
     }
