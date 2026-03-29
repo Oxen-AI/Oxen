@@ -6,7 +6,7 @@ use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::{Entry, SchemaEntry};
 use crate::model::merkle_tree::node::{DirNode, FileNode};
-use crate::opts::PaginateOpts;
+use crate::opts::{PaginateOpts, SortOpts};
 use crate::repositories;
 use crate::util::concurrency;
 use rayon::prelude::*;
@@ -110,17 +110,20 @@ pub fn list_directory_w_workspace(
         revision,
         workspace,
         paginate_opts,
+        &SortOpts::default(),
         version,
         0,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn list_directory_w_workspace_depth(
     repo: &LocalRepository,
     directory: impl AsRef<Path>,
     revision: impl AsRef<str>,
     workspace: Option<Workspace>,
     paginate_opts: &PaginateOpts,
+    sort_opts: &SortOpts,
     version: MinOxenVersion,
     depth: usize,
 ) -> Result<PaginatedDirEntries, OxenError> {
@@ -154,6 +157,7 @@ pub fn list_directory_w_workspace_depth(
                 directory,
                 &parsed_resource,
                 paginate_opts,
+                sort_opts,
                 depth,
             )
         }
@@ -397,7 +401,7 @@ mod tests {
     use uuid::Uuid;
 
     use crate::error::OxenError;
-    use crate::opts::PaginateOpts;
+    use crate::opts::{PaginateOpts, SortOpts};
     use crate::repositories;
     use crate::test;
     use crate::util;
@@ -1164,6 +1168,7 @@ mod tests {
                 &commit.id,
                 None,
                 &paginate_opts,
+                &SortOpts::default(),
                 repo.min_version(),
                 0,
             )?;
@@ -1189,6 +1194,7 @@ mod tests {
                 &commit.id,
                 None,
                 &paginate_opts,
+                &SortOpts::default(),
                 repo.min_version(),
                 1,
             )?;
@@ -1218,6 +1224,7 @@ mod tests {
                 &commit.id,
                 None,
                 &paginate_opts,
+                &SortOpts::default(),
                 repo.min_version(),
                 2,
             )?;

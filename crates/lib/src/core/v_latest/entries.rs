@@ -8,7 +8,8 @@ use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{
     Commit, CommitEntry, EntryDataType, LocalRepository, MerkleHash, MetadataEntry, ParsedResource,
 };
-use crate::opts::PaginateOpts;
+use crate::opts::{PaginateOpts, SortBy, SortOpts};
+
 use crate::repositories;
 use crate::util;
 use crate::view::PaginatedDirEntries;
@@ -45,7 +46,14 @@ pub fn list_directory(
     parsed_resource: &ParsedResource,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
-    list_directory_with_depth(repo, directory, parsed_resource, paginate_opts, 0)
+    list_directory_with_depth(
+        repo,
+        directory,
+        parsed_resource,
+        paginate_opts,
+        &SortOpts::default(),
+        0,
+    )
 }
 
 pub fn list_directory_with_depth(
@@ -53,6 +61,7 @@ pub fn list_directory_with_depth(
     directory: impl AsRef<Path>,
     parsed_resource: &ParsedResource,
     paginate_opts: &PaginateOpts,
+    sort_opts: &SortOpts,
     depth: usize,
 ) -> Result<PaginatedDirEntries, OxenError> {
     let _perf = crate::perf_guard!("core::entries::list_directory");
@@ -112,6 +121,7 @@ pub fn list_directory_with_depth(
         directory,
         parsed_resource,
         &mut found_commits,
+        sort_opts,
         depth,
     )?;
     log::debug!("list_directory got {} entries", entries.len());
@@ -199,41 +209,15 @@ pub fn dir_entries(
     parsed_resource: &ParsedResource,
     found_commits: &mut HashMap<MerkleHash, Commit>,
 ) -> Result<Vec<MetadataEntry>, OxenError> {
-    let _perf = crate::perf_guard!("core::entries::dir_entries");
-
-    log::debug!(
-        "dir_entries search_directory {:?} dir {}",
-        search_directory.as_ref(),
-        dir
-    );
-    let mut entries: Vec<MetadataEntry> = Vec::new();
-    let current_directory = search_directory.as_ref();
-
-    let _perf_recurse = crate::perf_guard!("core::entries::p_dir_entries_recurse");
-    p_dir_entries(
+    dir_entries_with_depth(
         repo,
         dir,
-        &search_directory,
-        current_directory,
+        search_directory,
         parsed_resource,
         found_commits,
-        &mut entries,
+        &SortOpts::default(),
         0,
-    )?;
-    drop(_perf_recurse);
-
-    log::debug!("dir_entries got {} entries", entries.len());
-
-    let _perf_sort = crate::perf_guard!("core::entries::sort_entries");
-    // Sort entries by is_dir first, then by filename
-    entries.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
-            .then_with(|| a.filename.cmp(&b.filename))
-    });
-    drop(_perf_sort);
-
-    Ok(entries)
+    )
 }
 
 pub fn dir_entries_with_depth(
@@ -242,6 +226,7 @@ pub fn dir_entries_with_depth(
     search_directory: impl AsRef<Path>,
     parsed_resource: &ParsedResource,
     found_commits: &mut HashMap<MerkleHash, Commit>,
+    sort_opts: &SortOpts,
     depth: usize,
 ) -> Result<Vec<MetadataEntry>, OxenError> {
     let _perf = crate::perf_guard!("core::entries::dir_entries");
@@ -271,15 +256,37 @@ pub fn dir_entries_with_depth(
     log::debug!("dir_entries got {} entries", entries.len());
 
     let _perf_sort = crate::perf_guard!("core::entries::sort_entries");
-    // Sort entries by is_dir first, then by filename
-    entries.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
-            .then_with(|| a.filename.cmp(&b.filename))
-    });
+    sort_entries(&mut entries, sort_opts);
     drop(_perf_sort);
 
     Ok(entries)
+}
+
+fn sort_entries(entries: &mut [MetadataEntry], sort_opts: &SortOpts) {
+    use std::cmp::Ordering;
+
+    entries.sort_by(|a, b| {
+        // Directories always come first
+        let dir_cmp = b.is_dir.cmp(&a.is_dir);
+        if dir_cmp != Ordering::Equal {
+            return dir_cmp;
+        }
+
+        let field_cmp = match sort_opts.sort_by {
+            SortBy::Name => a.filename.cmp(&b.filename),
+            SortBy::Date => {
+                let a_ts = a.latest_commit.as_ref().map(|c| c.timestamp);
+                let b_ts = b.latest_commit.as_ref().map(|c| c.timestamp);
+                a_ts.cmp(&b_ts)
+            }
+        };
+
+        if sort_opts.reverse {
+            field_cmp.reverse()
+        } else {
+            field_cmp
+        }
+    });
 }
 
 fn dir_node_to_metadata_entry(

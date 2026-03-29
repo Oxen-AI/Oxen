@@ -20,6 +20,7 @@ pub mod push_opts;
 pub mod restore_opts;
 pub mod rm_opts;
 pub mod s3_opts;
+pub mod sort_opts;
 pub mod storage_opts;
 pub mod upload_opts;
 
@@ -40,5 +41,6 @@ pub use crate::opts::push_opts::PushOpts;
 pub use crate::opts::restore_opts::RestoreOpts;
 pub use crate::opts::rm_opts::RmOpts;
 pub use crate::opts::s3_opts::S3Opts;
+pub use crate::opts::sort_opts::{SortBy, SortOpts};
 pub use crate::opts::storage_opts::StorageOpts;
 pub use crate::opts::upload_opts::UploadOpts;
