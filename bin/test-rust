@@ -152,18 +152,21 @@ if [ "$RUN_PYTHON" = true ]; then
     echo "==> Configuring oxen CLI user..."
     ./target/debug/oxen config --name "Bessie Testington" --email "bessie@yourcompany.com"
 
-    # Set up Python environment and build the extension
+    # Set up Python environment and build the extension (in a subshell to avoid
+    # changing the working directory, so cleanup's relative paths still work)
     echo "==> Setting up Python environment..."
-    cd oxen-python
-    uv sync --no-install-project
-    # shellcheck disable=SC1091
-    source .venv/bin/activate
-    echo "==> Building Python extension with maturin..."
-    maturin develop
+    (
+        cd oxen-python
+        uv sync --no-install-project
+        # shellcheck disable=SC1091
+        source .venv/bin/activate
+        echo "==> Building Python extension with maturin..."
+        maturin develop
 
-    # Run tests
-    echo "==> Running pytest $* ..."
-    pytest -s tests "$@"
+        # Run tests
+        echo "==> Running pytest $* ..."
+        pytest -s tests "$@"
+    )
 else
     # Run Rust tests
     echo "==> Running tests with 'cargo nextest run $FEATURE_ARGS $*' ..."
