@@ -16,10 +16,14 @@ macro_rules! current_function {
 }
 
 pub fn init_logging() {
-    match env_logger::Builder::from_env(Env::default())
-        .filter_module("h2", log::LevelFilter::Warn)
-        .filter_module("hyper_util", log::LevelFilter::Warn)
-        .filter_module("reqwest", log::LevelFilter::Warn)
+    let mut builder = env_logger::Builder::new();
+    // ignore noisy http logs
+    builder.filter_module("h2", log::LevelFilter::Warn);
+    builder.filter_module("hyper_util", log::LevelFilter::Warn);
+    builder.filter_module("reqwest", log::LevelFilter::Warn);
+
+    builder.parse_env(Env::default());
+    match builder
         .format(|buf, record| {
             use crate::request_context::get_request_id;
 
