@@ -31,7 +31,7 @@ actix-multipart-test = "0.0.3"
 actix-web = { version = "4.9.0", features = ["rustls"] }
 actix-web-httpauth = "0.8.0"
 approx = "0.5.1"
-arrow = "=53.4.0"
+arrow = "=58.1.0"
 astral-tokio-tar = "0.5.2"
 async-compression = { version = "0.4.2", features = ["tokio", "gzip", "futures-io"] }
 async-recursion = "1.1.1"
@@ -60,7 +60,7 @@ dialoguer = "0.11.0"
 difference = "2.0.0"
 dirs = "5.0.1"
 dotenv = "0.15.0"
-duckdb = { package = "duckdb", version = "=1.1.1", default-features = false, features = ["serde_json"] }
+duckdb = { package = "duckdb", version = "=1.10501.0", default-features = false, features = ["serde_json"] }
 dunce = "1.0.4"
 env_logger = "0.11.3"
 fd-lock = "4.0.1"
@@ -82,7 +82,7 @@ itertools = "0.13.0"
 jsonwebtoken = "9.3.0"
 jwalk = "0.8.1"
 lazy_static = "1.4.0"
-libduckdb-sys = { version = "=1.1.1" }
+libduckdb-sys = { version = "=1.10501.0" }
 lofty = "0.22.2"
 log = "0.4.20"
 lru = "0.14.0"

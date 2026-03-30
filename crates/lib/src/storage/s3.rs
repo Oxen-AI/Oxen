@@ -84,6 +84,17 @@ impl S3VersionStore {
         }
     }
 
+    #[cfg(test)]
+    pub fn new_with_client(client: Arc<Client>, bucket: String, prefix: String) -> Self {
+        let cell = OnceCell::new();
+        cell.set(Ok(client)).expect("cell was just created");
+        Self {
+            client: cell,
+            bucket,
+            prefix,
+        }
+    }
+
     /// Get the directory containing a version file
     fn version_dir(&self, hash: &str) -> String {
         let topdir = &hash[..2];
@@ -711,5 +722,139 @@ impl Stream for ByteStreamAdapter {
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::version_store::VersionStore;
+
+    use std::net::SocketAddr;
+    use tokio::net::TcpListener;
+
+    async fn setup() -> (
+        S3VersionStore,
+        async_tempfile::TempDir,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let tmp = async_tempfile::TempDir::new().await.unwrap();
+        let fs = s3s_fs::FileSystem::new(tmp.dir_path()).unwrap();
+
+        let mut builder = s3s::service::S3ServiceBuilder::new(fs);
+        builder.set_auth(s3s::auth::SimpleAuth::from_single("test", "test"));
+        let service = builder.build();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server_handle = tokio::spawn(async move {
+            loop {
+                let (stream, _) = match listener.accept().await {
+                    Ok(conn) => conn,
+                    Err(_) => break,
+                };
+                let service = service.clone();
+                tokio::spawn(async move {
+                    let stream = hyper_util::rt::TokioIo::new(stream);
+                    let _ = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(stream, service)
+                        .await;
+                });
+            }
+        });
+
+        let client = build_test_client(addr);
+        client
+            .create_bucket()
+            .bucket("test-bucket")
+            .send()
+            .await
+            .unwrap();
+
+        let store = S3VersionStore::new_with_client(
+            Arc::new(client),
+            "test-bucket".to_string(),
+            "versions".to_string(),
+        );
+
+        (store, tmp, server_handle)
+    }
+
+    fn build_test_client(addr: SocketAddr) -> Client {
+        let config = aws_sdk_s3::Config::builder()
+            .behavior_version_latest()
+            .region(aws_sdk_s3::config::Region::new("us-east-1"))
+            .endpoint_url(format!("http://{addr}"))
+            .credentials_provider(aws_sdk_s3::config::Credentials::new(
+                "test", "test", None, None, "test",
+            ))
+            .force_path_style(true)
+            .build();
+        Client::from_conf(config)
+    }
+
+    #[tokio::test]
+    async fn test_store_and_get_small_version_from_reader() {
+        let (store, _tmp, _server) = setup().await;
+        let data = b"hello world";
+
+        let cursor = std::io::Cursor::new(data.to_vec());
+        store
+            .store_version_from_reader("abcdef1234567890", Box::new(cursor), data.len() as u64)
+            .await
+            .unwrap();
+
+        let retrieved = store.get_version("abcdef1234567890").await.unwrap();
+        assert_eq!(retrieved, data);
+    }
+
+    #[tokio::test]
+    async fn test_store_and_get_large_version_from_reader() {
+        let (store, _tmp, _server) = setup().await;
+
+        // 20MB -- forces multipart upload (> 8MB part size)
+        let data = vec![42u8; 20 * 1024 * 1024];
+
+        let cursor = std::io::Cursor::new(data.clone());
+        store
+            .store_version_from_reader("bbcdef1234567890", Box::new(cursor), data.len() as u64)
+            .await
+            .unwrap();
+
+        let retrieved = store.get_version("bbcdef1234567890").await.unwrap();
+        assert_eq!(retrieved.len(), data.len());
+        assert_eq!(retrieved, data);
+    }
+
+    #[tokio::test]
+    async fn test_store_version_from_reader_exact_part_boundary() {
+        let (store, _tmp, _server) = setup().await;
+
+        // Exactly 16MB -- two full 8MB parts, no partial last part
+        let data = vec![7u8; 16 * 1024 * 1024];
+
+        let cursor = std::io::Cursor::new(data.clone());
+        store
+            .store_version_from_reader("cccdef1234567890", Box::new(cursor), data.len() as u64)
+            .await
+            .unwrap();
+
+        let retrieved = store.get_version("cccdef1234567890").await.unwrap();
+        assert_eq!(retrieved, data);
+    }
+
+    #[tokio::test]
+    async fn test_store_version_from_reader_empty() {
+        let (store, _tmp, _server) = setup().await;
+
+        let cursor = std::io::Cursor::new(Vec::new());
+        store
+            .store_version_from_reader("ddddef1234567890", Box::new(cursor), 0)
+            .await
+            .unwrap();
+
+        let retrieved = store.get_version("ddddef1234567890").await.unwrap();
+        assert!(retrieved.is_empty());
     }
 }
