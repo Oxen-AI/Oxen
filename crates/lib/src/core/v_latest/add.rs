@@ -494,10 +494,14 @@ pub async fn process_add_dir(
                                             &conflicts,
                                         ) {
                                             Ok(Some(node)) => {
+                                                let file = tokio::fs::File::open(&path).await?;
+                                                let size = file.metadata().await?.len();
+                                                let reader = tokio::io::BufReader::new(file);
                                                 version_store
-                                                    .store_version_from_path(
+                                                    .store_version_from_reader(
                                                         &file_status.hash.to_string(),
-                                                        &path,
+                                                        Box::new(reader),
+                                                        size,
                                                     )
                                                     .await?;
 
@@ -657,8 +661,11 @@ async fn add_file_inner(
 
     let file_name = path.file_name().unwrap_or_default().to_string_lossy();
     let file_status = determine_file_status(&maybe_dir_node, &file_name, path)?;
+    let file = tokio::fs::File::open(path).await?;
+    let size = file.metadata().await?.len();
+    let reader = tokio::io::BufReader::new(file);
     version_store
-        .store_version_from_path(&file_status.hash.to_string(), path)
+        .store_version_from_reader(&file_status.hash.to_string(), Box::new(reader), size)
         .await?;
 
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));

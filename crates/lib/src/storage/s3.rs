@@ -10,7 +10,6 @@ use bytes::Bytes;
 use futures::StreamExt;
 use log;
 use std::collections::HashMap;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -153,33 +152,6 @@ impl VersionStore for S3VersionStore {
                 self.bucket
             ))),
         }
-    }
-
-    async fn store_version_from_path(&self, hash: &str, file_path: &Path) -> Result<(), OxenError> {
-        // get the client
-        let client = self.init_client().await?;
-        // get file content from the path
-        let mut file = std::fs::File::open(file_path).map_err(|e| {
-            OxenError::basic_str(format!("Failed to open file {}: {e}", file_path.display()))
-        })?;
-
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer).map_err(|e| {
-            OxenError::basic_str(format!("Failed to read file {}: {e}", file_path.display()))
-        })?;
-
-        let key = self.generate_key(hash);
-        let body = ByteStream::from(buffer);
-        client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(&key)
-            .body(body)
-            .send()
-            .await
-            .map_err(|e| OxenError::basic_str(format!("Failed to store version in S3: {e}")))?;
-
-        Ok(())
     }
 
     /// Streams file content to S3 without writing to disk.

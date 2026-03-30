@@ -91,13 +91,6 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// Initialize the storage backend
     async fn init(&self) -> Result<(), OxenError>;
 
-    /// Store a version file from a file path
-    ///
-    /// # Arguments
-    /// * `hash` - The content hash that identifies this version
-    /// * `file_path` - Path to the file to store
-    async fn store_version_from_path(&self, hash: &str, file_path: &Path) -> Result<(), OxenError>;
-
     /// Store a version file from an async reader
     ///
     /// # Arguments

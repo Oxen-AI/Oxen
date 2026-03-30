@@ -416,8 +416,11 @@ async fn cleanup_removed_files(
         let version_store = repo.version_store()?;
         for (hash, full_path) in files_to_store {
             log::debug!("Storing hash {hash:?} and path {full_path:?}");
+            let file = tokio::fs::File::open(&full_path).await?;
+            let size = file.metadata().await?.len();
+            let reader = tokio::io::BufReader::new(file);
             version_store
-                .store_version_from_path(&hash.to_string(), &full_path)
+                .store_version_from_reader(&hash.to_string(), Box::new(reader), size)
                 .await?;
         }
     }
