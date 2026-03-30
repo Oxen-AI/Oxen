@@ -1,5 +1,5 @@
 use actix_multipart::MultipartError;
-use actix_web::{HttpResponse, error, http::StatusCode};
+use actix_web::{HttpResponse, error};
 use derive_more::{Display, Error};
 use liboxen::constants;
 use liboxen::error::{OxenError, PathBufError, StringError};
@@ -88,6 +88,13 @@ impl From<std::string::FromUtf8Error> for OxenHttpError {
 }
 
 impl error::ResponseError for OxenHttpError {
+    // NOTICE: We are **NOT** using the status_code() method in error_response().
+    //
+    //         We instead have opted to directly implement the OxenHttpError -> HTTP status code
+    //         mapping directly in the error_response() creation method.
+    //
+    //         Do not add a `status_code()` method definition here :)
+
     fn error_response(&self) -> HttpResponse {
         log::debug!("OxenHttpError: {self:?}");
         match self {
@@ -549,38 +556,6 @@ impl error::ResponseError for OxenHttpError {
                     }
                 }
             }
-        }
-    }
-
-    fn status_code(&self) -> StatusCode {
-        match self {
-            OxenHttpError::InternalServerError => StatusCode::INTERNAL_SERVER_ERROR,
-            OxenHttpError::AppDataDoesNotExist => StatusCode::BAD_REQUEST,
-            OxenHttpError::PathParamDoesNotExist(_) => StatusCode::BAD_REQUEST,
-            OxenHttpError::BadRequest(_) => StatusCode::BAD_REQUEST,
-            OxenHttpError::SQLParseError(_) => StatusCode::BAD_REQUEST,
-            OxenHttpError::MultipartError(_) => StatusCode::BAD_REQUEST,
-            OxenHttpError::NotFound => StatusCode::NOT_FOUND,
-            OxenHttpError::NotQueryable => StatusCode::BAD_REQUEST,
-            OxenHttpError::WorkspaceBehind(_) => StatusCode::CONFLICT,
-            OxenHttpError::DatasetNotIndexed(_) => StatusCode::BAD_REQUEST,
-            OxenHttpError::BasicError(_) => StatusCode::BAD_REQUEST,
-            OxenHttpError::DatasetAlreadyIndexed(_) => StatusCode::BAD_REQUEST,
-            OxenHttpError::UpdateRequired(_) => StatusCode::UPGRADE_REQUIRED,
-            OxenHttpError::MigrationRequired(_) => StatusCode::UPGRADE_REQUIRED,
-            OxenHttpError::ActixError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            OxenHttpError::SerdeError(_) => StatusCode::BAD_REQUEST,
-            OxenHttpError::FailedToReadRequestPayload => StatusCode::BAD_REQUEST,
-            OxenHttpError::InternalOxenError(error) => match error {
-                OxenError::RepoNotFound(_) => StatusCode::NOT_FOUND,
-                OxenError::RevisionNotFound(_) => StatusCode::NOT_FOUND,
-                OxenError::ResourceNotFound(_) => StatusCode::NOT_FOUND,
-                OxenError::InvalidSchema(_) => StatusCode::BAD_REQUEST,
-                OxenError::InvalidRepoName(_) => StatusCode::BAD_REQUEST,
-                OxenError::PathDoesNotExist(_) => StatusCode::NOT_FOUND,
-                OxenError::RemoteRepoNotFound(_) => StatusCode::NOT_FOUND,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
-            },
         }
     }
 }

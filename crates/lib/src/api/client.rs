@@ -128,7 +128,7 @@ fn builder_for_host(host: String, should_add_user_agent: bool) -> Result<ClientB
         }
     };
     if let Some(auth_token) = config.auth_token_for_host(host.as_str()) {
-        log::debug!("Setting auth token for host: {}", host);
+        log::trace!("Setting auth token for host: {}", host);
         let auth_header = format!("Bearer {auth_token}");
         let mut auth_value = match header::HeaderValue::from_str(auth_header.as_str()) {
             Ok(header) => header,
@@ -181,6 +181,15 @@ pub async fn parse_json_body(url: &str, res: reqwest::Response) -> Result<String
     parse_json_body_with_err_msg(url, res, Some(type_override), Some(err_msg)).await
 }
 
+/// Extract the request ID from an oxen server response.
+pub fn get_request_id(response: &reqwest::Response) -> &str {
+    response
+        .headers()
+        .get("x-oxen-request-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("-")
+}
+
 /// Used to override error message when parsing json body
 async fn parse_json_body_with_err_msg(
     url: &str,
@@ -189,9 +198,9 @@ async fn parse_json_body_with_err_msg(
     response_msg_override: Option<&str>,
 ) -> Result<String, OxenError> {
     let status = res.status();
+    let request_id = get_request_id(&res);
+    log::debug!("url: {url}\nstatus: {status} request_id: {request_id}");
     let body = res.text().await?;
-
-    log::debug!("url: {url}\nstatus: {status}");
 
     let response: Result<OxenResponse, serde_json::Error> = serde_json::from_str(&body);
     log::debug!("response: {response:?}");
@@ -262,6 +271,12 @@ pub async fn handle_non_json_response(
     url: &str,
     res: reqwest::Response,
 ) -> Result<reqwest::Response, OxenError> {
+    let request_id = get_request_id(&res);
+    log::debug!(
+        "url: {url}\nstatus: {} request_id: {request_id}",
+        res.status()
+    );
+
     if res.status().is_success() || res.status().is_redirection() {
         // If the response is successful, return it as-is. We don't want to do any parsing here.
         return Ok(res);

@@ -202,6 +202,22 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         hash: &str,
     ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>;
 
+    /// Get the size in bytes of a derived file (e.g., resized image, video thumbnail).
+    ///
+    /// Returns the content length of the derived artifact on disk.
+    ///
+    /// # Arguments
+    /// * `orig_hash` - The content hash of the parent version
+    /// * `derived_filename` - Filename for the derived artifact
+    ///
+    /// # Errors
+    /// Returns `OxenError` if the derived file does not exist or cannot be read.
+    async fn get_version_derived_size(
+        &self,
+        orig_hash: &str,
+        derived_filename: &str,
+    ) -> Result<u64, OxenError>;
+
     /// Get a stream of a derived file (resized, video thumbnail, etc.)
     ///
     /// # Arguments
