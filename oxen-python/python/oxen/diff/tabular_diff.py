@@ -1,6 +1,6 @@
-from ..oxen import PyTabularDiff
-
 from polars import DataFrame
+
+from ..oxen_py import PyTabularDiff
 
 
 class TabularDiff:

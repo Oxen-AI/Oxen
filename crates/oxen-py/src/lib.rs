@@ -28,7 +28,7 @@ pub mod util;
 
 /// A Python module implemented in Rust.
 #[pymodule]
-fn oxen(m: Bound<'_, PyModule>) -> PyResult<()> {
+fn oxen_py(m: Bound<'_, PyModule>) -> PyResult<()> {
     let py_version = Python::version_info(m.py());
     let _ = RuntimeConfig::set(
         String::from("Python"),

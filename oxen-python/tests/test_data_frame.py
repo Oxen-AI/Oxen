@@ -14,10 +14,8 @@ def test_data_frame_crud(celeba_remote_repo_fully_pushed):
 
     train_path = str(PurePath("annotations", "train.csv"))
     df = DataFrame(
-        remote_repo.identifier,
+        remote_repo,
         train_path,
-        host="localhost:3000",
-        scheme="http",
     )
     _width, og_height = df.size()
 
@@ -51,10 +49,8 @@ def test_data_frame_create_on_insert(celeba_remote_repo_fully_pushed):
     }
 
     df = DataFrame(
-        remote_repo.identifier,
+        remote_repo,
         new_file,
-        host="localhost:3000",
-        scheme="http",
     )
 
     # Add a row and commit
@@ -94,10 +90,8 @@ def test_data_frame_create_on_insert_on_branch(celeba_remote_repo_fully_pushed):
     }
 
     df = DataFrame(
-        remote_repo.identifier,
+        remote_repo,
         new_file,
-        host="localhost:3000",
-        scheme="http",
         branch="test-branch",
     )
 
@@ -177,10 +171,8 @@ def test_data_frame_commit(celeba_remote_repo_fully_pushed):
 
     train_path = str(PurePath("annotations", "train.csv"))
     df = DataFrame(
-        remote_repo.identifier,
+        remote_repo,
         train_path,
-        host="localhost:3000",
-        scheme="http",
     )
 
     # List commits before
