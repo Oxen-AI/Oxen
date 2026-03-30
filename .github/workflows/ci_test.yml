@@ -215,8 +215,8 @@ jobs:
           brew install redis pkg-config
           brew services start redis
 
-      - name: Build oxen binaries
-        run: cargo build -p oxen-cli -p oxen-server
+      - name: Build oxen rust project
+        run: cargo build --workspace
 
       - name: Setup test directories (Linux/macOS)
         if: matrix.platform != 'windows'
