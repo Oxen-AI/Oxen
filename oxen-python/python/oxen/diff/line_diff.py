@@ -1,6 +1,6 @@
-from ..oxen import PyLineDiff, PyChangeType
-
 from oxen.diff.change_type import ChangeType
+
+from ..oxen_py import PyChangeType, PyLineDiff
 
 
 class LineDiff:
