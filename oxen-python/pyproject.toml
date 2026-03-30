@@ -40,5 +40,6 @@ build-backend = "maturin"
 
 [tool.maturin]
 manifest-path = "../crates/oxen-py/Cargo.toml"
+module-name = "oxen._oxen"
 python-source = "python"
 features = ["pyo3/extension-module"]
