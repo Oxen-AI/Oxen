@@ -501,14 +501,15 @@ async fn pull_entry_chunk(
 
     let client = client::new_for_url(&url)?;
     let response = client.get(&url).send().await?;
-
+    let request_id = client::get_request_id(&response);
     let status = response.status();
     log::debug!(
-        "pull_entry_chunk response status={} for path={:?} chunk_start={} chunk_size={}",
+        "pull_entry_chunk status={} path={:?} chunk_start={} chunk_size={} request_id: {}",
         status,
         remote_path,
         chunk_start,
-        chunk_size
+        chunk_size,
+        request_id
     );
 
     match status {
