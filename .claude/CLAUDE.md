@@ -108,6 +108,7 @@ oxen push origin main               # Push to remote
 - When altering the `OxenError` enum, consider whether a hint needs to be added or updated in the `hint` method.
 - After changing any Rust code, verify that tests pass with the `bin/test-rust` script (not `cargo`). The script is documented in a comment at the top of its file.
 - Prefer using inline code over creating a new function when the function would only be called once and the function body would be less than 15 lines.
+- Preserve comments whenever possible. Comments that were written by someone other than Claude should always be preserved or updated if possible.
 
 # Testing Rules
 - Use the test helpers in `crates/lib/src/test.rs` (e.g., `run_empty_local_repo_test`) for unit tests in the lib code.
