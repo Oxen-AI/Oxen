@@ -18,7 +18,7 @@ pub fn get_repo(
     scheme: &str,
 ) -> Result<Option<PyRemoteRepo>, PyOxenError> {
     let remote_repo = match pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-        liboxen::api::client::repositories::get_by_name_host_and_scheme(name, &host, &scheme).await
+        liboxen::api::client::repositories::get_by_name_host_and_scheme(&name, &host, scheme).await
     }) {
         Ok(repo) => repo,
         Err(liboxen::error::OxenError::RemoteRepoNotFound(_)) => return Ok(None),
@@ -63,7 +63,7 @@ pub fn create_repo(
 ) -> Result<PyRemoteRepo, PyOxenError> {
     // Check that name is valid ex: :namespace/:repo_name
     if !name.contains("/") {
-        return Err(OxenError::basic_str(format!("Invalid repository name: {name}")).into());
+        return Err(OxenError::basic_str(&format!("Invalid repository name: {name}")).into());
     }
 
     let namespace = name.split("/").collect::<Vec<&str>>()[0].to_string();
@@ -79,7 +79,7 @@ pub fn create_repo(
         )?;
         if files.is_empty() {
             let mut repo =
-                RepoNew::from_namespace_name_host(namespace, repo_name, host.clone(), storage_opts);
+                RepoNew::from_namespace_name_host(&namespace, &repo_name, &host, storage_opts);
             if !description.is_empty() {
                 repo.description = Some(description);
             }
@@ -112,7 +112,7 @@ pub fn create_repo(
             repo.scheme = Some(scheme.clone());
 
             let repo = liboxen::api::client::repositories::create(repo).await?;
-            let branch = liboxen::api::client::branches::get_by_name(&repo, &DEFAULT_BRANCH_NAME)
+            let branch = liboxen::api::client::branches::get_by_name(&repo, DEFAULT_BRANCH_NAME)
                 .await?
                 .unwrap();
 

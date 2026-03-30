@@ -78,18 +78,18 @@ pub struct TempFilePathNew {
 }
 
 impl FileNew {
-    pub fn new_text(path: impl AsRef<Path>, contents: impl AsRef<str>, user: User) -> FileNew {
+    pub fn new_text(path: &Path, contents: &str, user: User) -> FileNew {
         FileNew {
-            path: path.as_ref().to_path_buf(),
-            contents: FileContents::Text(contents.as_ref().to_string()),
+            path: path.to_path_buf(),
+            contents: FileContents::Text(contents.to_string()),
             user,
         }
     }
 
-    pub fn new_binary(path: impl AsRef<Path>, contents: impl AsRef<[u8]>, user: User) -> FileNew {
+    pub fn new_binary(path: &Path, contents: &[u8], user: User) -> FileNew {
         FileNew {
-            path: path.as_ref().to_path_buf(),
-            contents: FileContents::Binary(contents.as_ref().to_vec()),
+            path: path.to_path_buf(),
+            contents: FileContents::Binary(contents.to_vec()),
             user,
         }
     }

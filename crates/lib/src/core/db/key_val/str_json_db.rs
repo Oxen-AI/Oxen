@@ -6,7 +6,7 @@ use rocksdb::{DBWithThreadMode, IteratorMode, ThreadMode};
 use std::{collections::HashMap, str};
 
 /// More efficient than get since it does not actual deserialize the entry
-pub fn has_key<T: ThreadMode, S: AsRef<str>>(db: &DBWithThreadMode<T>, key: S) -> bool {
+pub fn has_key<T: ThreadMode>(db: &DBWithThreadMode<T>, key: &str) -> bool {
     kv_db::has_key(db, key)
 }
 
@@ -16,10 +16,7 @@ pub fn clear<T: ThreadMode>(db: &DBWithThreadMode<T>) -> Result<(), OxenError> {
 }
 
 /// # Removes key from database
-pub fn delete<T: ThreadMode, S: AsRef<str>>(
-    db: &DBWithThreadMode<T>,
-    key: S,
-) -> Result<(), OxenError> {
+pub fn delete<T: ThreadMode>(db: &DBWithThreadMode<T>, key: &str) -> Result<(), OxenError> {
     kv_db::delete(db, key)
 }
 
@@ -29,14 +26,10 @@ pub fn list_keys<T: ThreadMode>(db: &DBWithThreadMode<T>) -> Result<Vec<String>,
 }
 
 /// # Get the value from the key
-pub fn get<T: ThreadMode, S: AsRef<str>, D>(
-    db: &DBWithThreadMode<T>,
-    key: S,
-) -> Result<Option<D>, OxenError>
+pub fn get<T: ThreadMode, D>(db: &DBWithThreadMode<T>, key: &str) -> Result<Option<D>, OxenError>
 where
     D: de::DeserializeOwned,
 {
-    let key = key.as_ref();
     // log::debug!("str_json_db::get({:?}) from db {:?}", key, db.path());
 
     let bytes = key.as_bytes();
@@ -62,21 +55,20 @@ where
                 err,
                 db.path()
             );
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
 
 /// # Serializes the entry to json and writes to db
-pub fn put<T: ThreadMode, S: AsRef<str>, D>(
+pub fn put<T: ThreadMode, D>(
     db: &DBWithThreadMode<T>,
-    key: S,
+    key: &str,
     entry: &D,
 ) -> Result<(), OxenError>
 where
     D: Serialize,
 {
-    let key = key.as_ref();
     let json_val = serde_json::to_string(entry)?;
 
     // log::debug!(

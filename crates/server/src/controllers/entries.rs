@@ -33,7 +33,7 @@ pub async fn download_data_from_version_paths(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     let mut bytes = web::BytesMut::new();
     while let Some(item) = body.next().await {
@@ -85,7 +85,7 @@ pub async fn download_data_from_version_paths(
             tar.append_path_with_name(path_to_read, content_file)?;
         } else {
             log::error!("Could not find content: {content_file:?} -> {path_to_read:?}");
-            return Err(OxenError::path_does_not_exist(path_to_read).into());
+            return Err(OxenError::path_does_not_exist(&path_to_read).into());
         }
     }
 
@@ -102,7 +102,7 @@ pub async fn download_chunk(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let resource = parse_resource(&req, &repo)?;
     let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
     let path = resource.path.clone();
@@ -140,7 +140,7 @@ pub async fn list_tabular(
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let commit_or_branch = path_param(&req, "commit_or_branch")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let commit = repositories::revisions::get(&repo, &commit_or_branch)?
         .ok_or_else(|| OxenError::revision_not_found(commit_or_branch.into()))?;
 

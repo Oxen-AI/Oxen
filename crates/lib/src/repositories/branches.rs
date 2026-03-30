@@ -30,10 +30,9 @@ pub fn get_by_name(repo: &LocalRepository, name: &str) -> Result<Option<Branch>,
 /// Get branch by name or fall back the current
 pub fn get_by_name_or_current(
     repo: &LocalRepository,
-    branch_name: Option<impl AsRef<str>>,
+    branch_name: Option<&str>,
 ) -> Result<Branch, OxenError> {
     if let Some(branch_name) = branch_name {
-        let branch_name = branch_name.as_ref();
         match repositories::branches::get_by_name(repo, branch_name)? {
             Some(branch) => Ok(branch),
             None => Err(OxenError::local_branch_not_found(branch_name)),
@@ -70,24 +69,13 @@ pub fn current_branch(repo: &LocalRepository) -> Result<Option<Branch>, OxenErro
 /// # Create a new branch from the head commit
 /// This creates a new pointer to the current commit with a name,
 /// it does not switch you to this branch, you still must call `checkout_branch`
-pub fn create_from_head(
-    repo: &LocalRepository,
-    name: impl AsRef<str>,
-) -> Result<Branch, OxenError> {
-    let name = name.as_ref();
+pub fn create_from_head(repo: &LocalRepository, name: &str) -> Result<Branch, OxenError> {
     let head_commit = repositories::commits::head_commit(repo)?;
     with_ref_manager(repo, |manager| manager.create_branch(name, &head_commit.id))
 }
 
 /// # Create a local branch from a specific commit id
-pub fn create(
-    repo: &LocalRepository,
-    name: impl AsRef<str>,
-    commit_id: impl AsRef<str>,
-) -> Result<Branch, OxenError> {
-    let name = name.as_ref();
-    let commit_id = commit_id.as_ref();
-
+pub fn create(repo: &LocalRepository, name: &str, commit_id: &str) -> Result<Branch, OxenError> {
     if repositories::commits::commit_id_exists(repo, commit_id)? {
         with_ref_manager(repo, |manager| manager.create_branch(name, commit_id))
     } else {
@@ -98,27 +86,20 @@ pub fn create(
 /// # Create a branch and check it out in one go
 /// This creates a branch with name,
 /// then switches HEAD to point to the branch
-pub fn create_checkout(repo: &LocalRepository, name: impl AsRef<str>) -> Result<Branch, OxenError> {
-    let name = name.as_ref();
+pub fn create_checkout(repo: &LocalRepository, name: &str) -> Result<Branch, OxenError> {
     let name = util::fs::linux_path_str(name);
     println!("Create and checkout branch: {name}");
     let head_commit = repositories::commits::head_commit(repo)?;
 
     with_ref_manager(repo, |manager| {
         let branch = manager.create_branch(&name, &head_commit.id)?;
-        manager.set_head(name);
+        manager.set_head(&name);
         Ok(branch)
     })
 }
 
 /// Update the branch name to point to a commit id
-pub fn update(
-    repo: &LocalRepository,
-    name: impl AsRef<str>,
-    commit_id: impl AsRef<str>,
-) -> Result<Branch, OxenError> {
-    let name = name.as_ref();
-    let commit_id = commit_id.as_ref();
+pub fn update(repo: &LocalRepository, name: &str, commit_id: &str) -> Result<Branch, OxenError> {
     with_ref_manager(repo, |manager| {
         if let Some(branch) = manager.get_branch_by_name(name)? {
             // Set the branch to point to the commit
@@ -131,14 +112,13 @@ pub fn update(
 }
 
 /// Delete a local branch
-pub fn delete(repo: &LocalRepository, name: impl AsRef<str>) -> Result<Branch, OxenError> {
-    let name = name.as_ref();
+pub fn delete(repo: &LocalRepository, name: &str) -> Result<Branch, OxenError> {
     // Make sure they don't delete the current checked out branch
     if let Ok(Some(branch)) = current_branch(repo)
         && branch.name == name
     {
         let err = format!("Err: Cannot delete current checked out branch '{name}'");
-        return Err(OxenError::basic_str(err));
+        return Err(OxenError::basic_str(&err));
     }
 
     if branch_has_been_merged(repo, name)? {
@@ -147,19 +127,18 @@ pub fn delete(repo: &LocalRepository, name: impl AsRef<str>) -> Result<Branch, O
         let err = format!(
             "Err: The branch '{name}' is not fully merged.\nIf you are sure you want to delete it, run 'oxen branch -D {name}'."
         );
-        Err(OxenError::basic_str(err))
+        Err(OxenError::basic_str(&err))
     }
 }
 
 /// # Force delete a local branch
 /// Caution! Will delete a local branch without checking if it has been merged or pushed.
-pub fn force_delete(repo: &LocalRepository, name: impl AsRef<str>) -> Result<Branch, OxenError> {
-    let name = name.as_ref();
+pub fn force_delete(repo: &LocalRepository, name: &str) -> Result<Branch, OxenError> {
     if let Ok(Some(branch)) = current_branch(repo)
         && branch.name == name
     {
         let err = format!("Err: Cannot delete current checked out branch '{name}'");
-        return Err(OxenError::basic_str(err));
+        return Err(OxenError::basic_str(&err));
     }
 
     with_ref_manager(repo, |manager| manager.delete_branch(name))
@@ -180,10 +159,9 @@ pub fn is_checked_out(repo: &LocalRepository, name: &str) -> bool {
 /// Checkout a branch
 pub async fn checkout_branch_from_commit(
     repo: &LocalRepository,
-    name: impl AsRef<str>,
+    name: &str,
     from_commit: &Option<Commit>,
 ) -> Result<(), OxenError> {
-    let name = name.as_ref();
     log::debug!("checkout_branch {name}");
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
@@ -220,8 +198,8 @@ pub async fn checkout_commit_from_commit(
     }
 }
 
-pub fn set_head(repo: &LocalRepository, value: impl AsRef<str>) -> Result<(), OxenError> {
-    log::debug!("set_head {}", value.as_ref());
+pub fn set_head(repo: &LocalRepository, value: &str) -> Result<(), OxenError> {
+    log::debug!("set_head {}", value);
     with_ref_manager(repo, |manager| {
         manager.set_head(value);
         Ok(())
@@ -246,7 +224,7 @@ fn branch_has_been_merged(repo: &LocalRepository, name: &str) -> Result<bool, Ox
             }
         } else {
             let err = format!("Err: The branch '{name}' does not exist.");
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     })
 }
@@ -315,7 +293,7 @@ mod tests {
             // Make a dir
             let dir_path = Path::new("test_dir");
             let dir_repo_path = repo.path.join(dir_path);
-            util::fs::create_dir_all(dir_repo_path)?;
+            util::fs::create_dir_all(&dir_repo_path)?;
 
             // File in the dir
             let file_path = dir_path.join(Path::new("test_file.txt"));
@@ -339,7 +317,7 @@ mod tests {
             let file_path_3 = Path::new("test_file_3.txt");
             let file_repo_path_3 = repo.path.join(file_path_3);
 
-            util::fs::write_to_path(file_repo_path_3, "test 3")?;
+            util::fs::write_to_path(&file_repo_path_3, "test 3")?;
             util::fs::write_to_path(&file_repo_path_2, "something different now")?;
             util::fs::write_to_path(&file_repo_path, "something different now")?;
 
@@ -386,7 +364,7 @@ mod tests {
     async fn test_list_branch_versions_branch_off_main() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
             let dir_path = Path::new("test_dir");
-            util::fs::create_dir_all(repo.path.join(dir_path))?;
+            util::fs::create_dir_all(&repo.path.join(dir_path))?;
 
             let file_path = dir_path.join(Path::new("test_file.txt"));
             let file_repo_path = repo.path.join(&file_path);
@@ -406,7 +384,7 @@ mod tests {
             // Add an irrelevant file - aka this isn't changing for commit 3
             let file_path_2 = Path::new("test_file_2.txt");
             let file_repo_path_2 = repo.path.join(file_path_2);
-            util::fs::write_to_path(file_repo_path_2, "test")?;
+            util::fs::write_to_path(&file_repo_path_2, "test")?;
             repositories::add(&repo, &repo.path).await?;
             let _commit_3 = repositories::commit(&repo, "adding test file 3")?;
 
@@ -482,7 +460,7 @@ mod tests {
             repositories::branches::create_checkout(&repo, branch_name)?;
 
             // Must checkout main again before deleting
-            repositories::checkout(&repo, og_branch.name).await?;
+            repositories::checkout(&repo, &og_branch.name).await?;
 
             // Now we can delete
             repositories::branches::delete(&repo, branch_name)?;

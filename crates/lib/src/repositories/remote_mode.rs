@@ -23,6 +23,7 @@ pub use status::status;
 #[cfg(test)]
 mod tests {
 
+    use std::path::Path;
     use std::path::PathBuf;
 
     use crate::api;
@@ -47,7 +48,7 @@ mod tests {
             test::run_empty_dir_test_async(|repo_dir| async move {
                 // Clone repo in remote mode
                 let mut clone_opts =
-                    CloneOpts::new(&remote_repo.remote.url, repo_dir.join("new_repo"));
+                    CloneOpts::new(&remote_repo.remote.url, &repo_dir.join("new_repo"));
                 clone_opts.is_remote = true;
 
                 let remote_mode_repo = repositories::clone(&clone_opts).await?;
@@ -98,13 +99,13 @@ mod tests {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let remote_mode_repo = repositories::clone(&opts).await?;
                 assert!(remote_mode_repo.is_remote_mode());
 
                 let workspace_identifier = remote_mode_repo.workspace_name.clone().unwrap();
-                let directory = ".".to_string();
+                let directory_name = ".";
 
                 // Create a deeply nested directory
                 let dir_path = remote_mode_repo
@@ -117,20 +118,20 @@ mod tests {
 
                 // Add two tabular files
                 let cats_tsv = dir_path.join("cats.tsv");
-                util::fs::write(&cats_tsv, "1\t2\t3\nhello\tworld\tsup\n")?;
+                util::fs::write(&cats_tsv, "1\t2\t3\nhello\tworld\tsup\n".as_bytes())?;
                 let dogs_csv = dir_path.join("dogs.csv");
-                util::fs::write(&dogs_csv, "1,2,3\nhello,world,sup\n")?;
+                util::fs::write(&dogs_csv, "1,2,3\nhello,world,sup\n".as_bytes())?;
 
                 // Add a non-tabular file
                 let readme_md = dir_path.join("README.md");
-                util::fs::write(&readme_md, "readme....")?;
+                util::fs::write(&readme_md, "readme....".as_bytes())?;
 
                 // Add and commit all
                 let files_to_add = vec![cats_tsv, dogs_csv, readme_md];
                 api::client::workspaces::files::add(
                     &remote_repo,
                     &workspace_identifier,
-                    &directory,
+                    Path::new(directory_name),
                     files_to_add,
                     &Some(remote_mode_repo.clone()),
                 )
@@ -170,13 +171,13 @@ mod tests {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, &dir.join("new_repo"));
                 opts.is_remote = true;
                 let remote_mode_repo = repositories::clone(&opts).await?;
                 assert!(remote_mode_repo.is_remote_mode());
 
                 let workspace_identifier = remote_mode_repo.workspace_name.clone().unwrap();
-                let directory = ".".to_string();
+                let directory_name = ".";
 
                 let p1 = PathBuf::from("hi.txt");
                 let p2 = PathBuf::from("bye.txt");
@@ -191,7 +192,7 @@ mod tests {
                 api::client::workspaces::files::add(
                     &remote_repo,
                     &workspace_identifier,
-                    &directory,
+                    Path::new(directory_name),
                     vec![p1.clone(), p2.clone()],
                     &Some(remote_mode_repo.clone()),
                 )
@@ -203,7 +204,7 @@ mod tests {
                     &remote_mode_repo,
                     &remote_repo,
                     &workspace_identifier,
-                    &directory,
+                    Path::new(directory_name),
                     &status_opts,
                 )
                 .await?;
@@ -225,12 +226,12 @@ mod tests {
                 assert!(repositories::tree::has_path(
                     &remote_mode_repo,
                     &commit,
-                    p1.clone()
+                    &p1.clone()
                 )?);
                 assert!(repositories::tree::has_path(
                     &remote_mode_repo,
                     &head_commit,
-                    p2.clone()
+                    &p2.clone()
                 )?);
 
                 // Pull with the original repo and verify it also contains both paths
@@ -240,12 +241,12 @@ mod tests {
                 assert!(repositories::tree::has_path(
                     &local_repo,
                     &local_repo_head,
-                    p1.clone()
+                    &p1.clone()
                 )?);
                 assert!(repositories::tree::has_path(
                     &local_repo,
                     &local_repo_head,
-                    p2.clone()
+                    &p2.clone()
                 )?);
 
                 Ok(())

@@ -86,7 +86,7 @@ impl DirNode {
                     data_type_sizes: opts.data_type_sizes,
                 }),
             }),
-            _ => Err(OxenError::basic_str(format!(
+            _ => Err(OxenError::basic_str(&format!(
                 "Unsupported DirNode version: {}",
                 repo.min_version()
             ))),
@@ -176,8 +176,8 @@ impl DirNode {
         self.node().name()
     }
 
-    pub fn set_name(&mut self, name: impl AsRef<str>) {
-        self.mut_node().set_name(name.as_ref());
+    pub fn set_name(&mut self, name: &str) {
+        self.mut_node().set_name(name);
     }
 
     /// /// Number of files (not including directories)

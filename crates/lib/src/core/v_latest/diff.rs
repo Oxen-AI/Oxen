@@ -70,7 +70,7 @@ pub async fn list_diff_entries(
                     head_dirs.extend(dirs);
                 }
                 _ => {
-                    return Err(OxenError::basic_str(format!(
+                    return Err(OxenError::basic_str(&format!(
                         "Failed to get base tree for commit: {base_commit}"
                     )));
                 }
@@ -94,7 +94,7 @@ pub async fn list_diff_entries(
                 base_dirs.extend(dirs);
             }
             _ => {
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Failed to get base tree for commit: {base_commit}"
                 )));
             }
@@ -117,7 +117,7 @@ pub async fn list_diff_entries(
                 head_dirs.extend(dirs);
             }
             _ => {
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Failed to get head tree for commit: {head_commit}"
                 )));
             }
@@ -263,7 +263,7 @@ pub async fn list_diff_entries(
         .map(|entry| async move {
             DiffEntry::from_file_nodes(
                 repo,
-                entry.path,
+                &entry.path,
                 entry.base_entry,
                 base_commit,
                 entry.head_entry,
@@ -303,12 +303,12 @@ pub fn list_changed_dirs(
     let mut changed_dirs: Vec<(PathBuf, DiffEntryStatus)> = vec![];
 
     let Some(base_tree) = repositories::tree::get_root_with_children(repo, base_commit)? else {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Failed to get base tree for commit: {base_commit}"
         )));
     };
     let Some(head_tree) = repositories::tree::get_root_with_children(repo, head_commit)? else {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Failed to get head tree for commit: {head_commit}"
         )));
     };
@@ -335,7 +335,7 @@ pub fn list_changed_dirs(
         let base_dir_hash = match base_dir {
             Some(base_dir) => base_dir.hash,
             None => {
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Could not calculate dir diff tree: base_dir_hash not found for dir {:?} in commit {}",
                     dir, base_commit.id
                 )));
@@ -345,7 +345,7 @@ pub fn list_changed_dirs(
         let head_dir_hash = match head_dir {
             Some(head_dir) => head_dir.hash,
             None => {
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Could not calculate dir diff tree: head_dir_hash not found for dir {:?} in commit {}",
                     dir, head_commit.id
                 )));
@@ -371,12 +371,12 @@ pub fn get_dir_diff_entry_with_summary(
     summary: GenericDiffSummary,
 ) -> Result<Option<DiffEntry>, OxenError> {
     let Some(base_tree) = repositories::tree::get_root_with_children(repo, base_commit)? else {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Failed to get base tree for commit: {base_commit}"
         )));
     };
     let Some(head_tree) = repositories::tree::get_root_with_children(repo, head_commit)? else {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Failed to get head tree for commit: {head_commit}"
         )));
     };
@@ -429,7 +429,7 @@ pub fn get_dir_diff_entry_with_summary(
 
 pub async fn diff_entries(
     repo: &LocalRepository,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
     base_entry: Option<FileNode>,
     base_commit: &Commit,
     head_entry: Option<FileNode>,
@@ -481,7 +481,7 @@ fn collect_added_directories(
     head_dirs: &HashSet<DirNodeWithPath>,
     head_commit: &Commit,
     diff_entries: &mut Vec<DiffEntry>,
-    base_path: impl AsRef<Path>,
+    base_path: &Path,
 ) -> Result<(), OxenError> {
     // DEBUG
     // for base_dir in base_dirs.iter() {
@@ -491,14 +491,13 @@ fn collect_added_directories(
     // for head_dir in head_dirs.iter() {
     //     log::debug!("collect_added_directories HEAD dir {:?}", head_dir);
     // }
-    let base_path = base_path.as_ref();
     for head_dir in head_dirs {
         // HEAD entry is *not* in BASE
         if !base_dirs.contains(head_dir) {
             log::debug!("collect_added_directories adding dir {head_dir:?}");
             diff_entries.push(DiffEntry::from_dir_nodes(
                 repo,
-                base_path.join(&head_dir.path),
+                &base_path.join(&head_dir.path),
                 None,
                 base_commit,
                 Some(head_dir.dir_node.clone()),
@@ -518,7 +517,7 @@ fn collect_removed_directories(
     head_dirs: &HashSet<DirNodeWithPath>,
     head_commit: &Commit,
     diff_entries: &mut Vec<DiffEntry>,
-    base_path: impl AsRef<Path>,
+    base_path: &Path,
 ) -> Result<(), OxenError> {
     // DEBUG
     // for base_dir in base_dirs.iter() {
@@ -534,14 +533,13 @@ fn collect_removed_directories(
     //         head_dir.display()
     //     );
     // }
-    let base_path = base_path.as_ref();
     for base_dir in base_dirs {
         // HEAD entry is *not* in BASE
         if !head_dirs.contains(base_dir) {
             log::debug!("collect_removed_directories adding dir {base_dir:?}");
             diff_entries.push(DiffEntry::from_dir_nodes(
                 repo,
-                base_path.join(&base_dir.path),
+                &base_path.join(&base_dir.path),
                 Some(base_dir.dir_node.clone()),
                 base_commit,
                 None,
@@ -561,16 +559,15 @@ fn collect_modified_directories(
     head_dirs: &HashSet<DirNodeWithPath>,
     head_commit: &Commit,
     diff_entries: &mut Vec<DiffEntry>,
-    base_path: impl AsRef<Path>,
+    base_path: &Path,
 ) -> Result<(), OxenError> {
-    let base_path = base_path.as_ref();
     for head_dir in head_dirs {
         // HEAD entry is in BASE
         if let Some(base_dir) = base_dirs.get(head_dir) {
             log::debug!("collect_modified_directories adding dir {head_dir:?}");
             let diff_entry = DiffEntry::from_dir_nodes(
                 repo,
-                base_path.join(&head_dir.path),
+                &base_path.join(&head_dir.path),
                 Some(base_dir.dir_node.clone()),
                 base_commit,
                 Some(head_dir.dir_node.clone()),
@@ -591,7 +588,7 @@ fn collect_added_entries(
     base_entries: &HashSet<FileNodeWithDir>,
     head_entries: &HashSet<FileNodeWithDir>,
     diff_entries: &mut Vec<DiffFileNode>,
-    base_path: impl AsRef<Path>,
+    base_path: &Path,
 ) -> Result<(), OxenError> {
     // log::debug!(
     //     "collect_added_entries Computing difference for add entries head {} base {}",
@@ -606,7 +603,6 @@ fn collect_added_entries(
     // for head in head_entries.iter() {
     //     log::debug!("collect_added_entries HEAD {:?}", head);
     // }
-    let base_path = base_path.as_ref();
     let diff = head_entries.difference(base_entries);
     for head_entry in diff {
         // HEAD entry is *not* in BASE
@@ -625,9 +621,8 @@ fn collect_removed_entries(
     base_entries: &HashSet<FileNodeWithDir>,
     head_entries: &HashSet<FileNodeWithDir>,
     diff_entries: &mut Vec<DiffFileNode>,
-    base_path: impl AsRef<Path>,
+    base_path: &Path,
 ) -> Result<(), OxenError> {
-    let base_path = base_path.as_ref();
     for base_entry in base_entries {
         // BASE entry is *not* in HEAD
         if !head_entries.contains(base_entry) {
@@ -647,9 +642,8 @@ fn collect_modified_entries(
     base_entries: &HashSet<FileNodeWithDir>,
     head_entries: &HashSet<FileNodeWithDir>,
     diff_entries: &mut Vec<DiffFileNode>,
-    base_path: impl AsRef<Path>,
+    base_path: &Path,
 ) -> Result<(), OxenError> {
-    let base_path = base_path.as_ref();
     log::debug!(
         "collect_modified_entries modified entries base.len() {} head.len() {}",
         base_entries.len(),

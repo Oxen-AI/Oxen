@@ -184,8 +184,8 @@ pub fn push_benchmark(c: &mut Criterion) {
 
                         let repo_new = RepoNew::from_namespace_name_host(
                             DEFAULT_NAMESPACE,
-                            iter_dirname,
-                            test_host(),
+                            &iter_dirname,
+                            &test_host(),
                             None,
                         );
 
@@ -229,7 +229,7 @@ pub fn push_benchmark(c: &mut Criterion) {
     }
     group.finish();
 
-    util::fs::remove_dir_all(base_dir).unwrap();
+    util::fs::remove_dir_all(&base_dir).unwrap();
 }
 
 criterion_group!(benches, push_benchmark);

@@ -15,9 +15,9 @@ pub struct StagedDirStats {
 }
 
 impl StagedDirStats {
-    pub fn from<T: AsRef<Path>>(path: T, status: StagedEntryStatus) -> StagedDirStats {
+    pub fn from(path: &Path, status: StagedEntryStatus) -> StagedDirStats {
         StagedDirStats {
-            path: path.as_ref().to_path_buf(),
+            path: path.to_path_buf(),
             num_files_staged: 0,
             total_files: 0,
             status,

@@ -21,15 +21,14 @@ use crate::opts::StorageOpts;
 /// let repo = repositories::init(base_dir)?;
 /// assert!(base_dir.join(".oxen").exists());
 /// ```
-pub fn init(path: impl AsRef<Path>) -> Result<LocalRepository, OxenError> {
+pub fn init(path: &Path) -> Result<LocalRepository, OxenError> {
     init_with_version(path, MIN_OXEN_VERSION)
 }
 
 pub fn init_with_version(
-    path: impl AsRef<Path>,
+    path: &Path,
     version: MinOxenVersion,
 ) -> Result<LocalRepository, OxenError> {
-    let path = path.as_ref();
     match version {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::init_with_version_default(path, version),
@@ -37,18 +36,17 @@ pub fn init_with_version(
 }
 
 pub async fn init_with_storage_opts(
-    path: impl AsRef<Path>,
+    path: &Path,
     storage_opts: Option<StorageOpts>,
 ) -> Result<LocalRepository, OxenError> {
     init_with_version_and_storage_opts(path, MIN_OXEN_VERSION, storage_opts).await
 }
 
 pub async fn init_with_version_and_storage_opts(
-    path: impl AsRef<Path>,
+    path: &Path,
     version: MinOxenVersion,
     storage_opts: Option<StorageOpts>,
 ) -> Result<LocalRepository, OxenError> {
-    let path = path.as_ref();
     match version {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::init_with_version_and_storage_opts(path, version, storage_opts).await,

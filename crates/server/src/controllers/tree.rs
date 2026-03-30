@@ -28,7 +28,7 @@ pub async fn get_node_by_id(req: HttpRequest) -> actix_web::Result<HttpResponse,
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repository = get_repo(&app_data.path, namespace, repo_name)?;
+    let repository = get_repo(&app_data.path, &namespace, &repo_name)?;
     let hash_str = path_param(&req, "hash")?;
 
     let node = repositories::tree::get_node_by_id(&repository, &hash_str.parse()?)?
@@ -44,7 +44,7 @@ pub async fn list_missing_node_hashes(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repository = get_repo(&app_data.path, namespace, repo_name)?;
+    let repository = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     let mut bytes = web::BytesMut::new();
     while let Some(item) = body.next().await {
@@ -75,7 +75,7 @@ pub async fn list_missing_file_hashes_from_commits(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repository = get_repo(&app_data.path, namespace, repo_name)?;
+    let repository = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     let mut bytes = web::BytesMut::new();
     while let Some(item) = body.next().await {
@@ -111,7 +111,7 @@ pub async fn list_missing_file_hashes(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repository = get_repo(&app_data.path, namespace, repo_name)?;
+    let repository = get_repo(&app_data.path, &namespace, &repo_name)?;
     let hash_str = path_param(&req, "hash")?;
     let hash = hash_str.parse()?;
 
@@ -134,7 +134,7 @@ pub async fn mark_nodes_as_synced(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repository = get_repo(&app_data.path, namespace, repo_name)?;
+    let repository = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     let mut bytes = web::BytesMut::new();
     while let Some(item) = body.next().await {
@@ -163,7 +163,7 @@ pub async fn create_nodes(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repository = get_repo(&app_data.path, namespace, repo_name)?;
+    let repository = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     let mut bytes = web::BytesMut::new();
     while let Some(item) = body.next().await {
@@ -184,7 +184,7 @@ pub async fn download_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, 
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
 
     // Download the entire tree
     let buffer = repositories::tree::compress_tree(&repository)?;
@@ -198,7 +198,7 @@ pub async fn get_node_hash_by_path(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repository = get_repo(&app_data.path, namespace, repo_name)?;
+    let repository = get_repo(&app_data.path, &namespace, &repo_name)?;
     let resource = parse_resource(&req, &repository)?;
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
 
@@ -218,7 +218,7 @@ pub async fn download_tree_nodes(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
     let base_head_str = path_param(&req, "base_head")?;
     let is_download = query.is_download.unwrap_or(false);
 
@@ -229,7 +229,7 @@ pub async fn download_tree_nodes(
         query.depth
     );
 
-    let (base_commit_id, maybe_head_commit_id) = maybe_parse_base_head(base_head_str)?;
+    let (base_commit_id, maybe_head_commit_id) = maybe_parse_base_head(&base_head_str)?;
     let base_commit = repositories::commits::get_by_id(&repository, &base_commit_id)?
         .ok_or(OxenError::revision_not_found(base_commit_id.into()))?;
 
@@ -305,7 +305,7 @@ pub async fn download_node(req: HttpRequest) -> actix_web::Result<HttpResponse, 
     let name = path_param(&req, "repo_name")?;
     let hash_str = path_param(&req, "hash")?;
     let hash = hash_str.parse()?;
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
 
     let buffer = repositories::tree::compress_node(&repository, &hash)?;
 
@@ -336,12 +336,9 @@ fn node_to_json(node: MerkleTreeNode) -> actix_web::Result<HttpResponse, OxenHtt
 
 /// Parses a base..head string into a base and head string
 /// If the base..head string does not contain a .., then it returns the base as the base and head as None
-fn maybe_parse_base_head(
-    base_head: impl AsRef<str>,
-) -> Result<(String, Option<String>), OxenError> {
-    let base_head_str = base_head.as_ref();
-    if base_head_str.contains("..") {
-        let mut split = base_head_str.split("..");
+fn maybe_parse_base_head(base_head: &str) -> Result<(String, Option<String>), OxenError> {
+    if base_head.contains("..") {
+        let mut split = base_head.split("..");
         if let (Some(base), Some(head)) = (split.next(), split.next()) {
             Ok((base.to_string(), Some(head.to_string())))
         } else {
@@ -350,7 +347,7 @@ fn maybe_parse_base_head(
             ))
         }
     } else {
-        Ok((base_head_str.to_string(), None))
+        Ok((base_head.to_string(), None))
     }
 }
 

@@ -123,10 +123,7 @@ pub async fn merge_into_base(
     }
 }
 
-pub async fn merge(
-    repo: &LocalRepository,
-    branch_name: impl AsRef<str>,
-) -> Result<Option<Commit>, OxenError> {
+pub async fn merge(repo: &LocalRepository, branch_name: &str) -> Result<Option<Commit>, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::merge::merge(repo, branch_name).await,
@@ -178,9 +175,9 @@ pub fn remove_conflict_path(repo: &LocalRepository, path: &Path) -> Result<(), O
     }
 }
 
-pub fn find_merge_commits<S: AsRef<str>>(
+pub fn find_merge_commits(
     repo: &LocalRepository,
-    branch_name: S,
+    branch_name: &str,
 ) -> Result<MergeCommits, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
@@ -232,7 +229,7 @@ mod tests {
         let a_branch = repositories::branches::current_branch(repo)?.unwrap();
         let a_path = repo.path.join("a.txt");
         util::fs::write_to_path(&a_path, "a")?;
-        repositories::add(repo, a_path).await?;
+        repositories::add(repo, &a_path).await?;
         // Return the lowest common ancestor for the tests
         let lca = repositories::commit(repo, "Committing a.txt file")?;
 
@@ -240,19 +237,19 @@ mod tests {
         repositories::branches::create_checkout(repo, merge_branch_name)?;
         let b_path = repo.path.join("b.txt");
         util::fs::write_to_path(&b_path, "b")?;
-        repositories::add(repo, b_path).await?;
+        repositories::add(repo, &b_path).await?;
         repositories::commit(repo, "Committing b.txt file")?;
 
         // Checkout A again to make another change
         repositories::checkout(repo, &a_branch.name).await?;
         let c_path = repo.path.join("c.txt");
         util::fs::write_to_path(&c_path, "c")?;
-        repositories::add(repo, c_path).await?;
+        repositories::add(repo, &c_path).await?;
         repositories::commit(repo, "Committing c.txt file")?;
 
         let d_path = repo.path.join("d.txt");
         util::fs::write_to_path(&d_path, "d")?;
-        repositories::add(repo, d_path).await?;
+        repositories::add(repo, &d_path).await?;
         repositories::commit(repo, "Committing d.txt file")?;
 
         // Checkout merge branch (B) to make another change
@@ -260,7 +257,7 @@ mod tests {
 
         let e_path = repo.path.join("e.txt");
         util::fs::write_to_path(&e_path, "e")?;
-        repositories::add(repo, e_path).await?;
+        repositories::add(repo, &e_path).await?;
         repositories::commit(repo, "Committing e.txt file")?;
 
         // Checkout the OG branch again so that we can merge into it
@@ -276,7 +273,7 @@ mod tests {
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello")?;
-            repositories::add(&repo, hello_file).await?;
+            repositories::add(&repo, &hello_file).await?;
             repositories::commit(&repo, "Adding hello file")?;
 
             // Branch to add world
@@ -320,7 +317,7 @@ mod tests {
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello")?;
-            repositories::add(&repo, hello_file).await?;
+            repositories::add(&repo, &hello_file).await?;
 
             // Write and add world file
             let world_file = repo.path.join("world.txt");
@@ -369,7 +366,7 @@ mod tests {
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello")?;
-            repositories::add(&repo, hello_file).await?;
+            repositories::add(&repo, &hello_file).await?;
 
             // Write and add world file
             let world_file = repo.path.join("world.txt");
@@ -386,7 +383,7 @@ mod tests {
 
             // Modify the file
             let new_contents = "Around the world";
-            let world_file = test::modify_txt_file(world_file, new_contents)?;
+            let world_file = test::modify_txt_file(&world_file, new_contents)?;
 
             // Commit the removal
             repositories::add(&repo, &world_file).await?;
@@ -584,7 +581,7 @@ mod tests {
             // Add a fish label to the file on a branch
             let fish_branch_name = "add-fish-label";
             repositories::branches::create_checkout(&repo, fish_branch_name)?;
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nfish")?;
+            let labels_path = test::modify_txt_file(&labels_path, "cat\ndog\nfish")?;
             repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "Adding fish to labels.txt file")?;
 
@@ -592,8 +589,8 @@ mod tests {
             repositories::checkout(&repo, &og_branch.name).await?;
             let human_branch_name = "add-human-label";
             repositories::branches::create_checkout(&repo, human_branch_name)?;
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nhuman")?;
-            repositories::add(&repo, labels_path).await?;
+            let labels_path = test::modify_txt_file(&labels_path, "cat\ndog\nhuman")?;
+            repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "Adding human to labels.txt file")?;
 
             // Checkout main again
@@ -634,7 +631,7 @@ mod tests {
             // Add a fish label to the file on a branch
             let fish_branch_name = "add-fish-label";
             repositories::branches::create_checkout(&repo, fish_branch_name)?;
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nfish")?;
+            let labels_path = test::modify_txt_file(&labels_path, "cat\ndog\nfish")?;
             repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "Adding fish to labels.txt file")?;
 
@@ -642,8 +639,8 @@ mod tests {
             repositories::checkout(&repo, &og_branch.name).await?;
             let human_branch_name = "add-human-label";
             repositories::branches::create_checkout(&repo, human_branch_name)?;
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nhuman")?;
-            repositories::add(&repo, labels_path).await?;
+            let labels_path = test::modify_txt_file(&labels_path, "cat\ndog\nhuman")?;
+            repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "Adding human to labels.txt file")?;
 
             // Checkout main again
@@ -685,7 +682,7 @@ mod tests {
             // Add a fish label to the file on a branch
             let fish_branch_name = "add-fish-label";
             repositories::branches::create_checkout(&repo, fish_branch_name)?;
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nfish")?;
+            let labels_path = test::modify_txt_file(&labels_path, "cat\ndog\nfish")?;
             repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "Adding fish to labels.txt file")?;
 
@@ -693,8 +690,8 @@ mod tests {
             repositories::checkout(&repo, &og_branch.name).await?;
             let human_branch_name = "add-human-label";
             repositories::branches::create_checkout(&repo, human_branch_name)?;
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nhuman")?;
-            repositories::add(&repo, labels_path).await?;
+            let labels_path = test::modify_txt_file(&labels_path, "cat\ndog\nhuman")?;
+            repositories::add(&repo, &labels_path).await?;
             let human_commit = repositories::commit(&repo, "Adding human to labels.txt file")?;
 
             // Checkout main again
@@ -735,17 +732,17 @@ mod tests {
                 .join("bounding_box.csv");
             let bbox_file = repo.path.join(&bbox_filename);
             let bbox_file =
-                test::append_line_txt_file(bbox_file, "train/cat_3.jpg,cat,41.0,31.5,410,427")?;
+                test::append_line_txt_file(&bbox_file, "train/cat_3.jpg,cat,41.0,31.5,410,427")?;
             let their_branch_contents = util::fs::read_from_path(&bbox_file)?;
 
             repositories::add(&repo, &bbox_file).await?;
             repositories::commit(&repo, "Adding new annotation as an Ox on a branch.")?;
 
             // Add a more rows on the main branch
-            repositories::checkout(&repo, og_branch.name).await?;
+            repositories::checkout(&repo, &og_branch.name).await?;
 
             let bbox_file =
-                test::append_line_txt_file(bbox_file, "train/dog_4.jpg,dog,52.0,62.5,256,429")?;
+                test::append_line_txt_file(&bbox_file, "train/dog_4.jpg,dog,52.0,62.5,256,429")?;
 
             repositories::add(&repo, &bbox_file).await?;
             repositories::commit(&repo, "Adding new annotation on main branch")?;
@@ -787,17 +784,17 @@ mod tests {
 
             // Add in a line in this branch
             let row_from_branch = "train/cat_3.jpg,cat,41.0,31.5,410,427";
-            let bbox_file = test::append_line_txt_file(bbox_file, row_from_branch)?;
+            let bbox_file = test::append_line_txt_file(&bbox_file, row_from_branch)?;
 
             // Add the changes
             repositories::add(&repo, &bbox_file).await?;
             repositories::commit(&repo, "Adding new annotation as an Ox on a branch.")?;
 
             // Add a more rows on the main branch
-            repositories::checkout(&repo, og_branch.name).await?;
+            repositories::checkout(&repo, &og_branch.name).await?;
 
             let row_from_main = "train/dog_4.jpg,dog,52.0,62.5,256,429";
-            let bbox_file = test::append_line_txt_file(bbox_file, row_from_main)?;
+            let bbox_file = test::append_line_txt_file(&bbox_file, row_from_main)?;
 
             repositories::add(&repo, &bbox_file).await?;
             repositories::commit(&repo, "Adding new annotation on main branch")?;
@@ -810,7 +807,7 @@ mod tests {
             assert_eq!(status.merge_conflicts.len(), 1);
 
             // Run repositories::checkout::checkout_theirs() and make sure their changes get kept
-            repositories::checkout::checkout_combine(&repo, bbox_filename).await?;
+            repositories::checkout::checkout_combine(&repo, &bbox_filename).await?;
             let df = tabular::read_df(&bbox_file, DFOpts::empty()).await?;
 
             // This doesn't guarantee order, but let's make sure we have 7 annotations now
@@ -847,12 +844,12 @@ mod tests {
             repositories::commit(&repo, "Adding new column as an Ox on a branch.")?;
 
             // Add a more rows on the main branch
-            repositories::checkout(&repo, og_branch.name).await?;
+            repositories::checkout(&repo, &og_branch.name).await?;
 
             let row_from_main = "train/dog_4.jpg,dog,52.0,62.5,256,429";
-            let bbox_file = test::append_line_txt_file(bbox_file, row_from_main)?;
+            let bbox_file = test::append_line_txt_file(&bbox_file, row_from_main)?;
 
-            repositories::add(&repo, bbox_file).await?;
+            repositories::add(&repo, &bbox_file).await?;
             repositories::commit(&repo, "Adding new row on main branch")?;
 
             // Try to merge in the changes
@@ -863,7 +860,7 @@ mod tests {
             assert_eq!(status.merge_conflicts.len(), 1);
 
             // Run repositories::checkout::checkout_theirs() and make sure we cannot
-            let result = repositories::checkout::checkout_combine(&repo, bbox_filename).await;
+            let result = repositories::checkout::checkout_combine(&repo, &bbox_filename).await;
             println!("{result:?}");
             assert!(result.is_err());
 
@@ -906,7 +903,7 @@ mod tests {
                     let bbox_file = cloned_repo_a.path.join(&bbox_filename);
                     let og_df = tabular::read_df(&bbox_file, DFOpts::empty()).await?;
                     let bbox_file = test::append_line_txt_file(
-                        bbox_file,
+                        &bbox_file,
                         "train/cat_3.jpg,cat,41.0,31.5,410,427",
                     )?;
                     repositories::add(&cloned_repo_a, &bbox_file).await?;
@@ -929,7 +926,7 @@ mod tests {
                         .join("bounding_box.csv");
                     let bbox_file = cloned_repo_a.path.join(&bbox_filename);
                     let bbox_file = test::append_line_txt_file(
-                        bbox_file,
+                        &bbox_file,
                         "train/cat_13.jpg,cat,41.0,31.5,410,427",
                     )?;
                     repositories::add(&cloned_repo_a, &bbox_file).await?;
@@ -974,7 +971,7 @@ mod tests {
             repositories::branches::create_checkout(&repo, new_branch_name)?;
 
             // 3. Commit something in new branch
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nfish")?;
+            let labels_path = test::modify_txt_file(&labels_path, "cat\ndog\nfish")?;
             repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "Adding fish to labels.txt file")?;
 
@@ -1084,7 +1081,7 @@ mod tests {
             let _new_branch = repositories::branches::create_checkout(&repo, new_branch_name)?;
 
             // 4. merge main onto new branch
-            let commit = repositories::merge::merge(&repo, og_branch.name).await?;
+            let commit = repositories::merge::merge(&repo, &og_branch.name).await?;
 
             // 5. There should be no commit
             assert!(commit.is_none());

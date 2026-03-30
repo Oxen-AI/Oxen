@@ -153,8 +153,8 @@ impl RunCmd for WorkspaceStatusCmd {
 
         let (scheme, host) = get_scheme_and_host_from_repo(&repository)?;
 
-        check_remote_version_blocking(scheme.clone(), host.clone()).await?;
-        check_remote_version(scheme, host).await?;
+        check_remote_version_blocking(&scheme, &host).await?;
+        check_remote_version(&scheme, &host).await?;
 
         let directory = directory.unwrap_or(PathBuf::from("."));
 
@@ -173,7 +173,7 @@ impl WorkspaceStatusCmd {
     pub(crate) async fn status(
         remote_repo: &RemoteRepository,
         workspace_id: &str,
-        directory: impl AsRef<Path>,
+        directory: &Path,
         opts: &StagedDataOpts,
     ) -> Result<StagedData, OxenError> {
         let page_size = opts.limit;
@@ -215,6 +215,7 @@ mod tests {
     use super::*;
     use liboxen::api;
     use liboxen::error::OxenError;
+    use std::path::Path;
 
     #[tokio::test]
     async fn test_workspace_status_by_name() -> Result<(), OxenError> {
@@ -232,18 +233,20 @@ mod tests {
 
             // Create a named workspace
             api::client::workspaces::create_with_name(&remote_repo, "main", w_id, w_name).await?;
-            let status = WorkspaceStatusCmd::status(&remote_repo, w_id, ".", &opts).await?;
+            let status =
+                WorkspaceStatusCmd::status(&remote_repo, w_id, Path::new("."), &opts).await?;
             assert_eq!(status.staged_files.len(), 0);
 
             // add a file to it and ensure that we can retrieve status via name
             api::client::workspaces::files::upload_single_file(
                 &remote_repo,
                 w_name,
-                "",
-                liboxen::test::test_img_file(),
+                Path::new(""),
+                &liboxen::test::test_img_file(),
             )
             .await?;
-            let status = WorkspaceStatusCmd::status(&remote_repo, w_name, ".", &opts).await?;
+            let status =
+                WorkspaceStatusCmd::status(&remote_repo, w_name, Path::new("."), &opts).await?;
             assert_eq!(status.staged_files.len(), 1);
 
             Ok(remote_repo)

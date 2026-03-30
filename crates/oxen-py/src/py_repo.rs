@@ -83,13 +83,13 @@ impl PyRepo {
     pub fn add(&self, path: PathBuf) -> Result<(), PyOxenError> {
         let repo = LocalRepository::from_dir(&self.path)?;
         pyo3_async_runtimes::tokio::get_runtime()
-            .block_on(async { repositories::add(&repo, path).await.unwrap() });
+            .block_on(async { repositories::add(&repo, &path).await.unwrap() });
         Ok(())
     }
 
     pub fn add_schema_metadata(
         &self,
-        path: &str,
+        path: PathBuf,
         column: &str,
         metadata: &str,
     ) -> Result<(), PyOxenError> {
@@ -97,15 +97,15 @@ impl PyRepo {
 
         // make sure metadata is valid json, return oxen error if not
         let metadata: serde_json::Value = serde_json::from_str(metadata).map_err(|e| {
-            OxenError::basic_str(format!(
+            OxenError::basic_str(&format!(
                 "Metadata must be valid JSON: ''\n{e}",
                 // metadata.as_ref(),
             ))
         })?;
 
-        for (path, schema) in
-            repositories::data_frames::schemas::add_column_metadata(&repo, path, column, &metadata)?
-        {
+        for (path, schema) in repositories::data_frames::schemas::add_column_metadata(
+            &repo, &path, column, &metadata,
+        )? {
             println!("{:?}\n{}", path, schema.verbose_str());
         }
 

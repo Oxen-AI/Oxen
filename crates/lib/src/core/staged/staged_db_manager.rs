@@ -31,7 +31,7 @@ static DB_INSTANCES: LazyLock<RwLock<LruCache<PathBuf, Arc<RwLock<DB>>>>> =
     LazyLock::new(|| RwLock::new(LruCache::new(DB_CACHE_SIZE)));
 
 /// Removes a repository's DB instance from the cache.
-pub fn remove_from_cache(repository_path: impl AsRef<std::path::Path>) -> Result<(), OxenError> {
+pub fn remove_from_cache(repository_path: &std::path::Path) -> Result<(), OxenError> {
     let staged_dir = util::fs::oxen_hidden_dir(repository_path).join(STAGED_DIR);
     let mut instances = DB_INSTANCES.write();
     let _ = instances.pop(&staged_dir); // drop immediately
@@ -40,13 +40,11 @@ pub fn remove_from_cache(repository_path: impl AsRef<std::path::Path>) -> Result
 
 /// Removes a repository's DB instance and all its subdirectories from the cache.
 /// This is mostly useful in test cleanup to ensure all DB instances are removed.
-pub fn remove_from_cache_with_children(
-    repository_path: impl AsRef<std::path::Path>,
-) -> Result<(), OxenError> {
+pub fn remove_from_cache_with_children(repository_path: &std::path::Path) -> Result<(), OxenError> {
     let mut dbs_to_remove: Vec<PathBuf> = vec![];
     let mut instances = DB_INSTANCES.write();
     for (key, _) in instances.iter() {
-        if key.starts_with(&repository_path) {
+        if key.starts_with(repository_path) {
             dbs_to_remove.push(key.clone());
         }
     }
@@ -110,13 +108,13 @@ pub fn get_staged_db_manager(repository: &LocalRepository) -> Result<StagedDBMan
     if !staged_db_dir.exists() {
         std::fs::create_dir_all(&staged_db_dir).map_err(|e| {
             log::error!("Failed to create staged db directory: {e}");
-            OxenError::basic_str(format!("Failed to create staged db directory: {e}"))
+            OxenError::basic_str(&format!("Failed to create staged db directory: {e}"))
         })?;
     }
     let opts = db::key_val::opts::default();
     let db = DB::open(&opts, dunce::simplified(&staged_db_dir)).map_err(|e| {
         log::error!("Failed to open staged db: {e}");
-        OxenError::basic_str(format!("Failed to open staged db: {e}"))
+        OxenError::basic_str(&format!("Failed to open staged db: {e}"))
     })?;
     let db_lock = Arc::new(RwLock::new(db));
     cache_w.put(staged_db_dir.clone(), db_lock.clone());
@@ -129,15 +127,15 @@ pub fn get_staged_db_manager(repository: &LocalRepository) -> Result<StagedDBMan
 
 /// Normalizes a path to use forward slashes for use as a DB key.
 /// This ensures cross-platform consistency since DB keys should be platform-agnostic.
-fn normalize_key(path: impl AsRef<Path>) -> String {
-    path.as_ref().to_string_lossy().replace('\\', "/")
+fn normalize_key(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 impl StagedDBManager {
     /// Upsert a file node to the staged db
     pub fn upsert_file_node(
         &self,
-        relative_path: impl AsRef<Path>,
+        relative_path: &Path,
         status: StagedEntryStatus,
         file_node: &FileNode,
     ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
@@ -155,15 +153,15 @@ impl StagedDBManager {
     /// Upsert a staged node to the staged db
     pub fn upsert_staged_node(
         &self,
-        path: impl AsRef<Path>,
+        path: &Path,
         staged_node: &StagedMerkleTreeNode,
         db_w: Option<&parking_lot::RwLockWriteGuard<DB>>,
     ) -> Result<(), OxenError> {
-        let key = normalize_key(&path);
+        let key = normalize_key(path);
         let mut buf = Vec::new();
         staged_node
             .serialize(&mut Serializer::new(&mut buf))
-            .map_err(|e| OxenError::basic_str(e.to_string()))?;
+            .map_err(|e| OxenError::basic_str(&e.to_string()))?;
 
         match db_w {
             Some(write_guard) => {
@@ -193,10 +191,10 @@ impl StagedDBManager {
     /// If db_w is provided, use that write lock; otherwise acquire a new one
     pub fn delete_entry_with_lock(
         &self,
-        path: impl AsRef<Path>,
+        path: &Path,
         db_w: Option<&parking_lot::RwLockWriteGuard<DB>>,
     ) -> Result<(), OxenError> {
-        let key = normalize_key(&path);
+        let key = normalize_key(path);
 
         match db_w {
             Some(write_guard) => {
@@ -211,17 +209,16 @@ impl StagedDBManager {
     }
 
     /// Delete an entry from the staged db (convenience method)
-    pub fn delete_entry(&self, path: impl AsRef<Path>) -> Result<(), OxenError> {
+    pub fn delete_entry(&self, path: &Path) -> Result<(), OxenError> {
         self.delete_entry_with_lock(path, None)
     }
 
     /// Write a directory node to the staged db
     pub fn add_directory(
         &self,
-        directory_path: impl AsRef<Path>,
+        directory_path: &Path,
         seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
     ) -> Result<(), OxenError> {
-        let directory_path = directory_path.as_ref();
         let directory_path_str = directory_path.to_str().unwrap();
         let mut seen_dirs = seen_dirs.lock();
         if !seen_dirs.insert(directory_path.to_path_buf()) {
@@ -237,7 +234,7 @@ impl StagedDBManager {
         dir_entry
             .serialize(&mut Serializer::new(&mut buf))
             .map_err(|e| {
-                OxenError::basic_str(format!("Failed to serialize directory entry: {e}"))
+                OxenError::basic_str(&format!("Failed to serialize directory entry: {e}"))
             })?;
         let db_w = self.staged_db.write();
         db_w.put(directory_path_str, &buf)?;
@@ -246,8 +243,8 @@ impl StagedDBManager {
     }
 
     /// True if the paths exists in the staged db. False means it does not exist.
-    pub fn exists(&self, path: impl AsRef<Path>) -> Result<bool, OxenError> {
-        let key = normalize_key(&path);
+    pub fn exists(&self, path: &Path) -> Result<bool, OxenError> {
+        let key = normalize_key(path);
         Ok({
             let db_r = self.staged_db.read();
             // key_may_exist is a bloom filter that doesn't hit I/O
@@ -265,9 +262,9 @@ impl StagedDBManager {
     /// Read a file node from the staged db
     pub fn read_from_staged_db(
         &self,
-        path: impl AsRef<Path>,
+        path: &Path,
     ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
-        let key = normalize_key(&path);
+        let key = normalize_key(path);
 
         let db_r = self.staged_db.read();
         let data = match db_r.get(key.as_bytes())? {
@@ -278,7 +275,7 @@ impl StagedDBManager {
             Ok(val) => Ok(Some(val)),
             Err(e) => {
                 log::error!("Failed to deserialize data for key {key}: {e}");
-                Err(OxenError::basic_str(format!(
+                Err(OxenError::basic_str(&format!(
                     "Failed to deserialize staged data: {e}"
                 )))
             }
@@ -288,12 +285,11 @@ impl StagedDBManager {
     /// Read all entries below a path from the staged db
     pub fn read_staged_entries_below_path(
         &self,
-        start_path: impl AsRef<Path>,
+        start_path: &Path,
         read_progress: &ProgressBar,
     ) -> Result<(HashMap<PathBuf, Vec<StagedMerkleTreeNode>>, usize), OxenError> {
         let db = self.staged_db.read();
-        let start_path =
-            util::fs::path_relative_to_dir(start_path.as_ref(), &self.repository.path)?;
+        let start_path = util::fs::path_relative_to_dir(start_path, &self.repository.path)?;
         let mut total_entries = 0;
         let iter = db.iterator(IteratorMode::Start);
         let mut dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>> = HashMap::new();
@@ -303,7 +299,7 @@ impl StagedDBManager {
                 Ok((key, value)) => {
                     // log::debug!("Key is {key:?}, value is {value:?}");
                     let key =
-                        str::from_utf8(&key).map_err(|e| OxenError::basic_str(e.to_string()))?;
+                        str::from_utf8(&key).map_err(|e| OxenError::basic_str(&e.to_string()))?;
                     let path = Path::new(key);
                     if !path.starts_with(&start_path) {
                         continue;
@@ -395,7 +391,7 @@ impl StagedDBManager {
                         }
                     }
                     Err(e) => {
-                        return Err(OxenError::basic_str(format!(
+                        return Err(OxenError::basic_str(&format!(
                             "Could not read utf8 val: {e}"
                         )));
                     }
@@ -429,7 +425,7 @@ impl StagedDBManager {
                         }
                     }
                     Err(e) => {
-                        return Err(OxenError::basic_str(format!(
+                        return Err(OxenError::basic_str(&format!(
                             "Could not read utf8 val: {e}"
                         )));
                     }

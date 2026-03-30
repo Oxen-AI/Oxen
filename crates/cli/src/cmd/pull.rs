@@ -70,8 +70,8 @@ impl RunCmd for PullCmd {
         let (scheme, host) = get_scheme_and_host_from_repo(&repo)?;
 
         check_repo_migration_needed(&repo)?;
-        check_remote_version_blocking(scheme.clone(), host.clone()).await?;
-        check_remote_version(scheme, host).await?;
+        check_remote_version_blocking(&scheme, &host).await?;
+        check_remote_version(&scheme, &host).await?;
 
         let mut fetch_opts = FetchOpts::new();
         fetch_opts.remote = remote.to_owned();

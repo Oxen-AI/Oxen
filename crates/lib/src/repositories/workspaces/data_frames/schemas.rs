@@ -7,8 +7,8 @@ use crate::repositories;
 
 use std::path::Path;
 
-pub fn get_by_path(workspace: &Workspace, path: impl AsRef<Path>) -> Result<Schema, OxenError> {
-    let file_path = path.as_ref();
+pub fn get_by_path(workspace: &Workspace, path: &Path) -> Result<Schema, OxenError> {
+    let file_path = path;
     let staged_db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
     let df_schema = with_df_db_manager(&staged_db_path, |manager| {
         manager.with_conn(|conn| df_db::get_schema(conn, TABLE_NAME))
@@ -18,7 +18,7 @@ pub fn get_by_path(workspace: &Workspace, path: impl AsRef<Path>) -> Result<Sche
 
 pub fn update_schema(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
+    path: &Path,
     og_schema: &Schema,
     before_column: &str,
     after_column: &str,

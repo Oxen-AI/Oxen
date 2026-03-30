@@ -15,7 +15,7 @@ use crate::model::diff::DiffResult;
 pub fn diff(
     repo: &LocalRepository,
     workspace: &Workspace,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<DiffResult, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),

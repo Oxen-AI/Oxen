@@ -16,7 +16,7 @@ pub async fn get(
     path: &Path,
 ) -> Result<EmbeddingColumnsResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Path must be a string: {path:?}"
         )));
     };
@@ -35,12 +35,12 @@ pub async fn neighbors(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
     path: &Path,
-    column: impl AsRef<str>,
+    column: &str,
     embedding: &Vec<f32>,
     paginate_opts: &PaginateOpts,
 ) -> Result<WorkspaceJsonDataFrameViewResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Path must be a string: {path:?}"
         )));
     };
@@ -50,7 +50,7 @@ pub async fn neighbors(
     log::debug!("get_embeddings {url}");
 
     let body = json!({
-        "column": column.as_ref(),
+        "column": column,
         "embedding": embedding,
         "page_size": paginate_opts.page_size,
         "page_num": paginate_opts.page_num,
@@ -73,7 +73,7 @@ pub async fn index(
     use_background_thread: bool,
 ) -> Result<EmbeddingColumnsResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Path must be a string: {path:?}"
         )));
     };
@@ -133,7 +133,7 @@ mod tests {
             assert_eq!(branch.name, branch_name);
             let workspace_id = UserConfig::identifier()?;
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             // train/dog_1.jpg,dog,101.5,32.0,385,330
@@ -168,7 +168,7 @@ mod tests {
             let branch_name = DEFAULT_BRANCH_NAME;
             let workspace_id = UserConfig::identifier()?;
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             let path = Path::new("annotations")
@@ -227,7 +227,7 @@ mod tests {
             let branch_name = DEFAULT_BRANCH_NAME;
             let workspace_id = UserConfig::identifier()?;
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             let path = Path::new("annotations")
@@ -307,10 +307,10 @@ mod tests {
 
             let workspace_id = UserConfig::identifier()?;
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
-            api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path).await?;
+            api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, path).await?;
             let column = "embedding";
             let use_background_thread = false;
             api::client::workspaces::data_frames::embeddings::index(
@@ -331,7 +331,7 @@ mod tests {
                 &remote_repo,
                 &workspace_id,
                 path,
-                &column,
+                column,
                 &embedding,
                 &paginate_opts,
             )
@@ -367,7 +367,7 @@ mod tests {
             let branch_name = DEFAULT_BRANCH_NAME;
             let workspace_id = UserConfig::identifier()?;
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             let path = Path::new("annotations")
@@ -450,7 +450,7 @@ mod tests {
             let branch_name = DEFAULT_BRANCH_NAME;
             let workspace_id = UserConfig::identifier()?;
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             let path = Path::new("annotations")

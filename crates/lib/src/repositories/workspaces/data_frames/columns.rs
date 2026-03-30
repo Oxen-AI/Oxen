@@ -25,23 +25,21 @@ use crate::model::data_frame::schema::field::{Changes, PreviousField};
 pub fn add(
     repo: &LocalRepository,
     workspace: &Workspace,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
     new_column: &NewColumn,
 ) -> Result<DataFrame, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::data_frames::columns::add(
-            workspace,
-            file_path.as_ref(),
-            new_column,
-        ),
+        _ => {
+            core::v_latest::workspaces::data_frames::columns::add(workspace, file_path, new_column)
+        }
     }
 }
 
 pub async fn update(
     repo: &LocalRepository,
     workspace: &Workspace,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
     column_to_update: &ColumnToUpdate,
 ) -> Result<DataFrame, OxenError> {
     match repo.min_version() {
@@ -49,7 +47,7 @@ pub async fn update(
         _ => {
             core::v_latest::workspaces::data_frames::columns::update(
                 workspace,
-                file_path.as_ref(),
+                file_path,
                 column_to_update,
             )
             .await
@@ -60,14 +58,14 @@ pub async fn update(
 pub fn delete(
     repo: &LocalRepository,
     workspace: &Workspace,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
     column_to_delete: &ColumnToDelete,
 ) -> Result<DataFrame, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::workspaces::data_frames::columns::delete(
             workspace,
-            file_path.as_ref(),
+            file_path,
             column_to_delete,
         ),
     }
@@ -83,7 +81,7 @@ pub fn add_column_metadata(
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => Err(OxenError::basic_str("Not implemented")),
         _ => core::v_latest::workspaces::data_frames::columns::add_column_metadata(
-            repo, workspace, file_path, column, metadata,
+            repo, workspace, &file_path, &column, metadata,
         ),
     }
 }
@@ -91,7 +89,7 @@ pub fn add_column_metadata(
 pub async fn restore(
     repo: &LocalRepository,
     workspace: &Workspace,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
     column_to_restore: &ColumnToRestore,
 ) -> Result<DataFrame, OxenError> {
     match repo.min_version() {
@@ -99,7 +97,7 @@ pub async fn restore(
         _ => {
             core::v_latest::workspaces::data_frames::columns::restore(
                 workspace,
-                file_path.as_ref(),
+                file_path,
                 column_to_restore,
             )
             .await
@@ -109,7 +107,7 @@ pub async fn restore(
 
 pub fn get_column_diff(
     workspace: &Workspace,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
 ) -> Result<Vec<DataFrameColumnChange>, OxenError> {
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
@@ -123,11 +121,11 @@ pub fn get_column_diff(
 
 pub fn decorate_fields_with_column_diffs(
     workspace: &Workspace,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
     df_views: &mut JsonDataFrameViews,
 ) -> Result<(), OxenError> {
     let column_changes_path =
-        repositories::workspaces::data_frames::column_changes_path(workspace, file_path.as_ref());
+        repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
     let opts = db::key_val::opts::default();
     let db_open_result = DB::open_for_read_only(
         &opts,

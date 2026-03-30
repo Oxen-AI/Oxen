@@ -21,8 +21,7 @@ pub mod text;
 pub mod video;
 
 /// Returns the metadata given a file path
-pub fn get(path: impl AsRef<Path>) -> Result<MetadataEntry, OxenError> {
-    let path = path.as_ref();
+pub fn get(path: &Path) -> Result<MetadataEntry, OxenError> {
     let base_name = path.file_name().ok_or(OxenError::file_has_no_name(path))?;
     let size = get_file_size(path)?;
     let mime_type = util::fs::file_mime_type(path);
@@ -47,8 +46,7 @@ pub fn get(path: impl AsRef<Path>) -> Result<MetadataEntry, OxenError> {
 }
 
 /// Returns the metadata given a file path
-pub fn from_path(path: impl AsRef<Path>) -> Result<MetadataEntry, OxenError> {
-    let path = path.as_ref();
+pub fn from_path(path: &Path) -> Result<MetadataEntry, OxenError> {
     let base_name = path.file_name().ok_or(OxenError::file_has_no_name(path))?;
     let size = get_file_size(path)?;
     let mime_type = util::fs::file_mime_type(path);
@@ -126,8 +124,8 @@ pub fn from_dir_node(
 /// Returns metadata with latest commit information. Less efficient than get().
 pub fn get_cli(
     repo: &LocalRepository,
-    entry_path: impl AsRef<Path>,
-    data_path: impl AsRef<Path>,
+    entry_path: &Path,
+    data_path: &Path,
 ) -> Result<CLIMetadataEntry, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
@@ -136,13 +134,13 @@ pub fn get_cli(
 }
 
 /// Returns the file size in bytes.
-pub fn get_file_size(path: impl AsRef<Path>) -> Result<u64, OxenError> {
-    let metadata = util::fs::metadata(path.as_ref())?;
+pub fn get_file_size(path: &Path) -> Result<u64, OxenError> {
+    let metadata = util::fs::metadata(path)?;
     Ok(metadata.len())
 }
 
 pub fn get_file_metadata_with_extension(
-    path: impl AsRef<Path>,
+    path: &Path,
     data_type: &EntryDataType,
     extension: &str,
 ) -> Result<Option<GenericMetadata>, OxenError> {
@@ -190,10 +188,9 @@ pub fn get_file_metadata_with_extension(
 
 /// Returns metadata based on data_type
 pub fn get_file_metadata(
-    path: impl AsRef<Path>,
+    path: &Path,
     data_type: &EntryDataType,
 ) -> Result<Option<GenericMetadata>, OxenError> {
-    let path = path.as_ref();
     get_file_metadata_with_extension(path, data_type, &util::fs::file_extension(path))
 }
 
@@ -206,7 +203,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_metadata_audio_flac() {
         let file = test::test_audio_file_with_name("121-121726-0005.flac");
-        let metadata = repositories::metadata::get(file).unwrap();
+        let metadata = repositories::metadata::get(&file).unwrap();
 
         println!("metadata: {metadata:?}");
 

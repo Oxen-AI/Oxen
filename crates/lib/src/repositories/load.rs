@@ -78,7 +78,7 @@ mod tests {
             assert!(save_path.exists());
 
             // Cleanup tarball
-            util::fs::remove_file(save_path)?;
+            util::fs::remove_file(&save_path)?;
 
             Ok(())
         })
@@ -108,7 +108,7 @@ mod tests {
                 assert!(hydrated_repo.path.join("hello.txt").exists());
 
                 // Cleanup tarball
-                util::fs::remove_file(save_path)?;
+                util::fs::remove_file(&save_path)?;
 
                 Ok(())
             })
@@ -146,7 +146,7 @@ mod tests {
                 assert_eq!(status.removed_files.len(), 1);
 
                 // Cleanup tarball
-                util::fs::remove_file(save_path)?;
+                util::fs::remove_file(&save_path)?;
 
                 Ok(())
             })
@@ -209,7 +209,7 @@ mod tests {
                 assert!(!hydrated_repo.path.join("goodbye.txt").exists());
 
                 // Cleanup tarball
-                util::fs::remove_file(save_path)?;
+                util::fs::remove_file(&save_path)?;
 
                 Ok(())
             })

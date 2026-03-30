@@ -133,7 +133,7 @@ impl PyWorkspace {
         Ok(PyStagedData::from(remote_status))
     }
 
-    fn add_bytes(&self, src: PathBuf, buf: Vec<u8>, dst: String) -> Result<(), PyOxenError> {
+    fn add_bytes(&self, src: PathBuf, buf: Vec<u8>, dst: PathBuf) -> Result<(), PyOxenError> {
         pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::files::add_bytes(
                 &self.repo.repo,
@@ -147,7 +147,7 @@ impl PyWorkspace {
         Ok(())
     }
 
-    fn add(&self, src: Vec<PathBuf>, dst: String) -> Result<Vec<PyErrorFileInfo>, PyOxenError> {
+    fn add(&self, src: Vec<PathBuf>, dst: PathBuf) -> Result<Vec<PyErrorFileInfo>, PyOxenError> {
         let errors = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::files::add(
                 &self.repo.repo,
@@ -170,7 +170,7 @@ impl PyWorkspace {
             api::client::workspaces::files::add_files(
                 &self.repo.repo,
                 &self.get_identifier(),
-                base_dir,
+                &base_dir,
                 src,
             )
             .await
@@ -180,7 +180,7 @@ impl PyWorkspace {
 
     fn rm(&self, path: PathBuf) -> Result<(), PyOxenError> {
         pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            api::client::workspaces::files::rm(&self.repo.repo, &self.id, path).await
+            api::client::workspaces::files::rm(&self.repo.repo, &self.id, &path).await
         })?;
         Ok(())
     }

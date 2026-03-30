@@ -6,11 +6,9 @@ use std::path::Path;
 /// Get the version file path from a commit id
 pub async fn get_version_file_from_commit_id(
     repo: &LocalRepository,
-    commit_id: impl AsRef<str>,
-    path: impl AsRef<Path>,
+    commit_id: &str,
+    path: &Path,
 ) -> Result<LocalFilePath, OxenError> {
-    let commit_id = commit_id.as_ref();
-    let path = path.as_ref();
     let commit = repositories::commits::get_by_id(repo, commit_id)?
         .ok_or(OxenError::commit_id_does_not_exist(commit_id))?;
 

@@ -28,7 +28,7 @@ pub fn list(
 pub fn get_by_path(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<Option<Schema>, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
@@ -37,10 +37,7 @@ pub fn get_by_path(
 }
 
 /// Get a staged schema
-pub fn get_staged(
-    repo: &LocalRepository,
-    path: impl AsRef<Path>,
-) -> Result<Option<Schema>, OxenError> {
+pub fn get_staged(repo: &LocalRepository, path: &Path) -> Result<Option<Schema>, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::data_frames::schemas::get_staged(repo, path),
@@ -50,7 +47,7 @@ pub fn get_staged(
 /// Get staged schema for workspace
 pub fn get_staged_schema_with_staged_db_manager(
     repo: &LocalRepository,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<Option<Schema>, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
@@ -62,7 +59,7 @@ pub fn get_staged_schema_with_staged_db_manager(
 
 pub fn restore_schema(
     repo: &LocalRepository,
-    path: impl AsRef<Path>,
+    path: &Path,
     og_schema: &Schema,
     before_column: &str,
     after_column: &str,
@@ -90,11 +87,10 @@ pub fn list_staged(repo: &LocalRepository) -> Result<HashMap<PathBuf, Schema>, O
 /// Get a string representation of the schema given a schema ref
 pub fn show(
     repo: &LocalRepository,
-    path: impl AsRef<Path>,
+    path: &Path,
     staged: bool,
     verbose: bool,
 ) -> Result<String, OxenError> {
-    let path = path.as_ref();
     let schema = if staged {
         get_staged(repo, path)?
     } else {
@@ -130,7 +126,7 @@ pub fn show(
 }
 
 /// Remove a schema override from the staging area, TODO: Currently undefined behavior for non-staged schemas
-pub fn rm(repo: &LocalRepository, path: impl AsRef<Path>, staged: bool) -> Result<(), OxenError> {
+pub fn rm(repo: &LocalRepository, path: &Path, staged: bool) -> Result<(), OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::data_frames::schemas::rm(repo, path, staged),
@@ -140,7 +136,7 @@ pub fn rm(repo: &LocalRepository, path: impl AsRef<Path>, staged: bool) -> Resul
 /// Add metadata to the schema
 pub fn add_schema_metadata(
     repo: &LocalRepository,
-    path: impl AsRef<Path>,
+    path: &Path,
     metadata: &serde_json::Value,
 ) -> Result<HashMap<PathBuf, Schema>, OxenError> {
     match repo.min_version() {
@@ -152,8 +148,8 @@ pub fn add_schema_metadata(
 /// Add metadata to a specific column
 pub fn add_column_metadata(
     repo: &LocalRepository,
-    path: impl AsRef<Path>,
-    column: impl AsRef<str>,
+    path: &Path,
+    column: &str,
     metadata: &serde_json::Value,
 ) -> Result<HashMap<PathBuf, Schema>, OxenError> {
     match repo.min_version() {
@@ -222,7 +218,7 @@ mod tests {
                 .join("train")
                 .join("bounding_box.csv");
             let bbox_file = repo.path.join(bbox_filename);
-            repositories::add(&repo, bbox_file).await?;
+            repositories::add(&repo, &bbox_file).await?;
 
             // Make sure it is staged
             let status = repositories::status(&repo)?;
@@ -276,7 +272,7 @@ mod tests {
                 .join("train")
                 .join("bounding_box.csv");
             let bbox_file = repo.path.join(&bbox_filename);
-            repositories::add(&repo, bbox_file).await?;
+            repositories::add(&repo, &bbox_file).await?;
 
             // Make sure it is staged
             let status = repositories::status(&repo)?;
@@ -291,8 +287,8 @@ mod tests {
             // Write a new commit that is modifies any file
             let readme_filename = Path::new("README.md");
             let readme_file = repo.path.join(readme_filename);
-            util::fs::write(&readme_file, "Changing the README")?;
-            repositories::add(&repo, readme_file).await?;
+            util::fs::write(&readme_file, "Changing the README".as_bytes())?;
+            repositories::add(&repo, &readme_file).await?;
             let commit = repositories::commit(&repo, "Changing the README")?;
 
             // Fetch schema from HEAD commit, it should still be there in all it's glory
@@ -413,19 +409,21 @@ mod tests {
             repositories::add(&repo, &bbox_path).await?;
             repositories::data_frames::schemas::add_column_metadata(
                 &repo,
-                schema_ref,
+                Path::new(schema_ref),
                 "min_x",
                 &min_x_meta,
             )?;
 
-            let schema = repositories::data_frames::schemas::get_staged(&repo, schema_ref)?;
+            let schema =
+                repositories::data_frames::schemas::get_staged(&repo, Path::new(schema_ref))?;
             assert!(schema.is_some());
 
             // Remove the schema
-            repositories::data_frames::schemas::rm(&repo, schema_ref, true)?;
+            repositories::data_frames::schemas::rm(&repo, Path::new(schema_ref), true)?;
 
             // Make sure none are left
-            let schema = repositories::data_frames::schemas::get_staged(&repo, schema_ref)?;
+            let schema =
+                repositories::data_frames::schemas::get_staged(&repo, Path::new(schema_ref))?;
             assert!(schema.is_none());
 
             Ok(())
@@ -497,7 +495,7 @@ mod tests {
             repositories::data_frames::schemas::add_column_metadata(
                 &repo,
                 &bbox_file,
-                column_name,
+                &column_name,
                 &column_metadata,
             )?;
 

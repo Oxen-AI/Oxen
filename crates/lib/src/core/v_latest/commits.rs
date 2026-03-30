@@ -45,24 +45,19 @@ struct CommitTraversalConfig<'a> {
     known_total_count: Option<usize>,
 }
 
-pub fn commit(repo: &LocalRepository, message: impl AsRef<str>) -> Result<Commit, OxenError> {
+pub fn commit(repo: &LocalRepository, message: &str) -> Result<Commit, OxenError> {
     repositories::commits::commit_writer::commit(repo, message)
 }
 
 pub fn commit_with_user(
     repo: &LocalRepository,
-    message: impl AsRef<str>,
+    message: &str,
     user: &User,
 ) -> Result<Commit, OxenError> {
     repositories::commits::commit_writer::commit_with_user(repo, message, user)
 }
 
-pub fn commit_allow_empty(
-    repo: &LocalRepository,
-    message: impl AsRef<str>,
-) -> Result<Commit, OxenError> {
-    let message = message.as_ref();
-
+pub fn commit_allow_empty(repo: &LocalRepository, message: &str) -> Result<Commit, OxenError> {
     // Check if there are staged changes
     let status = crate::core::v_latest::status::status(repo)?;
     let has_changes = !status.staged_files.is_empty() || !status.staged_dirs.is_empty();
@@ -103,13 +98,13 @@ pub fn commit_allow_empty(
     }
 }
 
-pub fn get_commit_or_head<S: AsRef<str> + Clone>(
+pub fn get_commit_or_head(
     repo: &LocalRepository,
-    commit_id_or_branch_name: Option<S>,
+    commit_id_or_branch_name: Option<&str>,
 ) -> Result<Commit, OxenError> {
     match commit_id_or_branch_name {
         Some(ref_name) => {
-            log::debug!("get_commit_or_head: ref_name: {:?}", ref_name.as_ref());
+            log::debug!("get_commit_or_head: ref_name: {:?}", ref_name);
             get_commit_by_ref(repo, ref_name)
         }
         None => {
@@ -119,12 +114,9 @@ pub fn get_commit_or_head<S: AsRef<str> + Clone>(
     }
 }
 
-fn get_commit_by_ref<S: AsRef<str> + Clone>(
-    repo: &LocalRepository,
-    ref_name: S,
-) -> Result<Commit, OxenError> {
-    get_by_id(repo, ref_name.clone())?
-        .or_else(|| get_commit_by_branch(repo, ref_name.as_ref()))
+fn get_commit_by_ref(repo: &LocalRepository, ref_name: &str) -> Result<Commit, OxenError> {
+    get_by_id(repo, ref_name)?
+        .or_else(|| get_commit_by_branch(repo, ref_name))
         .ok_or_else(|| OxenError::basic_str("Commit not found"))
 }
 
@@ -175,7 +167,7 @@ pub fn head_commit(repo: &LocalRepository) -> Result<Commit, OxenError> {
 
     let node =
         repositories::tree::get_node_by_id(repo, &head_commit_id)?.ok_or(OxenError::basic_str(
-            format!("Merkle tree node not found for head commit: '{head_commit_id}'"),
+            &format!("Merkle tree node not found for head commit: '{head_commit_id}'"),
         ))?;
     let commit = node.commit()?;
     Ok(commit.to_commit())
@@ -227,11 +219,7 @@ fn root_commit_recursive(
     }
 }
 
-pub fn get_by_id(
-    repo: &LocalRepository,
-    commit_id_str: impl AsRef<str>,
-) -> Result<Option<Commit>, OxenError> {
-    let commit_id_str = commit_id_str.as_ref();
+pub fn get_by_id(repo: &LocalRepository, commit_id_str: &str) -> Result<Option<Commit>, OxenError> {
     let Ok(commit_id) = commit_id_str.parse() else {
         // log::debug!(
         //     "get_by_id could not create commit_id from [{}]",
@@ -252,17 +240,16 @@ pub fn get_by_hash(repo: &LocalRepository, hash: &MerkleHash) -> Result<Option<C
 
 pub fn create_empty_commit(
     repo: &LocalRepository,
-    branch_name: impl AsRef<str>,
+    branch_name: &str,
     new_commit: &Commit,
 ) -> Result<Commit, OxenError> {
-    let branch_name = branch_name.as_ref();
     let Some(existing_commit) = repositories::revisions::get(repo, branch_name)? else {
         return Err(OxenError::revision_not_found(branch_name.into()));
     };
     let existing_commit_id = existing_commit.id.parse()?;
     let existing_node =
         repositories::tree::get_node_by_id_with_children(repo, &existing_commit_id)?.ok_or(
-            OxenError::basic_str(format!(
+            OxenError::basic_str(&format!(
                 "Merkle tree node not found for commit: '{}'",
                 existing_commit.id
             )),
@@ -291,7 +278,7 @@ pub fn create_empty_commit(
 
     // Update the ref
     with_ref_manager(repo, |manager| {
-        manager.set_branch_commit_id(branch_name, commit_node.hash().to_string())
+        manager.set_branch_commit_id(branch_name, &commit_node.hash().to_string())
     })?;
 
     Ok(commit_node.to_commit())
@@ -302,13 +289,10 @@ pub fn create_empty_commit(
 /// Returns an error if the repository already has commits.
 pub fn create_initial_commit(
     repo: &LocalRepository,
-    branch_name: impl AsRef<str>,
+    branch_name: &str,
     user: &User,
-    message: impl AsRef<str>,
+    message: &str,
 ) -> Result<Commit, OxenError> {
-    let branch_name = branch_name.as_ref();
-    let message = message.as_ref();
-
     // Ensure the repository is actually empty
     if head_commit_maybe(repo)?.is_some() {
         return Err(OxenError::basic_str(
@@ -374,7 +358,7 @@ pub fn create_initial_commit(
 
     // Create the branch pointing to this commit
     with_ref_manager(repo, |manager| {
-        manager.create_branch(branch_name, commit_id.to_string())
+        manager.create_branch(branch_name, &commit_id.to_string())
     })?;
 
     // Set HEAD to the new branch
@@ -601,9 +585,8 @@ pub fn list_all(repo: &LocalRepository) -> Result<HashSet<Commit>, OxenError> {
 
 pub fn list_unsynced_from(
     repo: &LocalRepository,
-    revision: impl AsRef<str>,
+    revision: &str,
 ) -> Result<HashSet<Commit>, OxenError> {
-    let revision = revision.as_ref();
     let all_commits: HashSet<Commit> = list_from(repo, revision)?.into_iter().collect();
     filter_unsynced(repo, all_commits)
 }
@@ -654,23 +637,19 @@ fn list_all_recursive(
 }
 
 /// Get commit history given a revision (branch name or commit id)
-pub fn list_from(
-    repo: &LocalRepository,
-    revision: impl AsRef<str>,
-) -> Result<Vec<Commit>, OxenError> {
+pub fn list_from(repo: &LocalRepository, revision: &str) -> Result<Vec<Commit>, OxenError> {
     let (commits, _, _) = list_from_paginated_impl(repo, revision, 0, usize::MAX)?;
     Ok(commits)
 }
 
 pub fn list_from_paginated_impl(
     repo: &LocalRepository,
-    revision: impl AsRef<str>,
+    revision: &str,
     skip: usize,
     limit: usize,
 ) -> Result<(Vec<Commit>, usize, bool), OxenError> {
     let _perf = crate::perf_guard!("core::commits::list_from_paginated_impl");
 
-    let revision = revision.as_ref();
     if revision.contains("..") {
         let _perf_between = crate::perf_guard!("core::commits::list_between_range");
         let split: Vec<&str> = revision.split("..").collect();
@@ -720,7 +699,7 @@ pub fn list_from_paginated_impl(
 /// Get commit history given a revision (branch name or commit id)
 pub fn list_from_with_depth(
     repo: &LocalRepository,
-    revision: impl AsRef<str>,
+    revision: &str,
 ) -> Result<HashMap<Commit, usize>, OxenError> {
     let mut results = HashMap::new();
     let commit = repositories::revisions::get(repo, revision)?;
@@ -784,12 +763,7 @@ fn cache_count(
     str_val_db::put(db, commit_id, &count)
 }
 
-pub fn count_from(
-    repo: &LocalRepository,
-    revision: impl AsRef<str>,
-) -> Result<(usize, bool), OxenError> {
-    let revision = revision.as_ref();
-
+pub fn count_from(repo: &LocalRepository, revision: &str) -> Result<(usize, bool), OxenError> {
     let commit = repositories::revisions::get(repo, revision)?
         .ok_or_else(|| OxenError::revision_not_found(revision.into()))?;
 
@@ -832,9 +806,8 @@ pub fn list_between(
 pub fn search_entries(
     repo: &LocalRepository,
     commit: &Commit,
-    pattern: impl AsRef<str>,
+    pattern: &str,
 ) -> Result<HashSet<PathBuf>, OxenError> {
-    let pattern = pattern.as_ref();
     let pattern = Pattern::new(pattern)?;
 
     let mut results = HashSet::new();
@@ -891,7 +864,7 @@ fn list_by_path_recursive_impl(
                 if modified {
                     return Ok(true);
                 }
-                let parent_hash = match repositories::revisions::get(repo, parent_id.clone())? {
+                let parent_hash = match repositories::revisions::get(repo, &parent_id.clone())? {
                     Some(pc) => {
                         repositories::tree::get_node_by_path(repo, &pc, path)?.map(|n| n.hash)
                     }
@@ -908,7 +881,7 @@ fn list_by_path_recursive_impl(
         } else {
             // File not modified here. Use last_commit_id to jump ahead to the
             // next commit that did, skipping intermediate unmodified commits.
-            match repositories::revisions::get(repo, last_commit_id.to_string())? {
+            match repositories::revisions::get(repo, &last_commit_id.to_string())? {
                 Some(jump_commit) if !visited.contains(&jump_commit.id) => {
                     stack.push(jump_commit);
                 }
@@ -927,7 +900,7 @@ fn push_unvisited_parents(
     stack: &mut Vec<Commit>,
 ) -> Result<(), OxenError> {
     for parent_id in &commit.parent_ids {
-        if let Some(parent) = repositories::revisions::get(repo, parent_id.clone())?
+        if let Some(parent) = repositories::revisions::get(repo, &parent_id.clone())?
             && !visited.contains(&parent.id)
         {
             stack.push(parent);
@@ -948,13 +921,13 @@ pub fn list_by_path_from_paginated(
     // Check if the path is a directory or file
     let _perf_node = crate::perf_guard!("core::commits::get_node_by_path");
     let node = repositories::tree::get_node_by_path(repo, commit, path)?.ok_or(
-        OxenError::basic_str(format!("Merkle tree node not found for path: {path:?}")),
+        OxenError::basic_str(&format!("Merkle tree node not found for path: {path:?}")),
     )?;
     let last_commit_id = match &node.node {
         EMerkleTreeNode::File(file_node) => file_node.last_commit_id(),
         EMerkleTreeNode::Directory(dir_node) => dir_node.last_commit_id(),
         _ => {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "Merkle tree node not found for path: {path:?}"
             )));
         }
@@ -998,7 +971,7 @@ mod tests {
             for i in 0..15 {
                 let filename = format!("file_{i}.txt");
                 let file_path = repo.path.join(&filename);
-                test::write_txt_file_to_path(&file_path, format!("Content {i}"))?;
+                test::write_txt_file_to_path(&file_path, &format!("Content {i}"))?;
 
                 repositories::add(&repo, &file_path).await?;
                 let commit = repositories::commit(&repo, &format!("Commit {i}"))?;
@@ -1058,7 +1031,7 @@ mod tests {
             for i in 0..10 {
                 let filename = format!("file_{i}.txt");
                 let file_path = repo.path.join(&filename);
-                test::write_txt_file_to_path(&file_path, format!("Content {i}"))?;
+                test::write_txt_file_to_path(&file_path, &format!("Content {i}"))?;
 
                 repositories::add(&repo, &file_path).await?;
                 let commit = repositories::commit(&repo, &format!("Commit {i}"))?;

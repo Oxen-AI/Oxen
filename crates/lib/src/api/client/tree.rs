@@ -44,7 +44,7 @@ pub async fn has_node(
     let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(_) => Ok(true),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "api::client::tree::get_by_id() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -201,10 +201,9 @@ pub async fn download_tree_from(
 
 pub async fn get_node_hash_by_path(
     remote_repo: &RemoteRepository,
-    commit_id: impl AsRef<str>,
+    commit_id: &str,
     path: PathBuf,
 ) -> Result<MerkleHash, OxenError> {
-    let commit_id = commit_id.as_ref();
     let path_str = path.to_string_lossy();
     let uri = format!("/tree/nodes/resource/{commit_id}/{path_str}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
@@ -219,17 +218,16 @@ pub async fn get_node_hash_by_path(
 pub async fn download_tree_from_path(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
-    commit_id: impl AsRef<str>,
-    path: impl AsRef<str>,
+    commit_id: &str,
+    path: &str,
     is_dir: bool,
 ) -> Result<MerkleTreeNode, OxenError> {
     let download_tree_opts = DownloadTreeOpts {
-        subtree_paths: path.as_ref().into(),
+        subtree_paths: path.into(),
         depth: if is_dir { -1 } else { 0 },
         is_download: true,
     };
-    let path: PathBuf = path.as_ref().into();
-    let commit_id = commit_id.as_ref();
+    let path: PathBuf = path.into();
     let uri = append_download_tree_opts_to_uri(
         format!("/tree/download/{commit_id}"),
         &download_tree_opts,
@@ -259,10 +257,9 @@ pub async fn download_tree_from_path(
 pub async fn download_trees_from(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
-    commit_id: impl AsRef<str>,
+    commit_id: &str,
     fetch_opts: &FetchOpts,
 ) -> Result<(), OxenError> {
-    let commit_id = commit_id.as_ref();
     let uri = append_fetch_opts_to_uri(format!("/tree/download/{commit_id}"), fetch_opts);
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
@@ -332,12 +329,10 @@ fn append_subtree_paths_and_depth_to_uri(
 pub async fn download_trees_between(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
-    base_id: impl AsRef<str>,
-    head_id: impl AsRef<str>,
+    base_id: &str,
+    head_id: &str,
     fetch_opts: &FetchOpts,
 ) -> Result<(), OxenError> {
-    let base_id = base_id.as_ref();
-    let head_id = head_id.as_ref();
     let base_head = format!("{base_id}..{head_id}");
     let uri = append_fetch_opts_to_uri(format!("/tree/download/{base_head}"), fetch_opts);
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
@@ -351,12 +346,7 @@ pub async fn download_trees_between(
     Ok(())
 }
 
-async fn node_download_request(
-    local_repo: &LocalRepository,
-    url: impl AsRef<str>,
-) -> Result<(), OxenError> {
-    let url = url.as_ref();
-
+async fn node_download_request(local_repo: &LocalRepository, url: &str) -> Result<(), OxenError> {
     let client = client::builder_for_url(url)?
         .timeout(time::Duration::from_secs(12000))
         .build()?;
@@ -390,7 +380,7 @@ async fn node_download_request(
         log::debug!("Succesfully unpacked tar to temp dir");
 
         // Copy to the repo
-        util::fs::copy_dir_all(&temp_dir, &full_unpacked_path)?;
+        util::fs::copy_dir_all(temp_dir.path(), &full_unpacked_path)?;
     } else {
         // Else, unpack directly to the repo
         archive.unpack(&full_unpacked_path).await?;
@@ -412,7 +402,7 @@ pub async fn list_missing_node_hashes(
     let response: Result<MerkleHashesResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(response) => Ok(response.hashes),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "api::client::tree::list_missing_node_hashes() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -430,7 +420,7 @@ pub async fn list_missing_file_hashes(
     let response: Result<MerkleHashesResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(response) => Ok(response.hashes),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "api::client::tree::list_missing_file_hashes() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -457,7 +447,7 @@ pub async fn list_missing_file_hashes_from_commits(
     let response: Result<MerkleHashesResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(response) => Ok(response.hashes),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "api::client::tree::list_missing_file_hashes_from_commits() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -481,7 +471,7 @@ pub async fn mark_nodes_as_synced(
     let response: Result<MerkleHashesResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(_response) => Ok(()),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "api::client::tree::list_missing_hashes() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -535,10 +525,10 @@ mod tests {
             let dir_count = entries
                 .filter_map(|entry| match entry {
                     Ok(e) => {
-                        if let Ok(file_type) = e.file_type() {
-                            if file_type.is_dir() {
-                                return Some(1);
-                            }
+                        if let Ok(file_type) = e.file_type()
+                            && file_type.is_dir()
+                        {
+                            return Some(1);
                         }
                         None
                     }
@@ -562,10 +552,10 @@ mod tests {
             let dir_count = entries
                 .filter_map(|entry| match entry {
                     Ok(e) => {
-                        if let Ok(file_type) = e.file_type() {
-                            if file_type.is_dir() {
-                                return Some(1);
-                            }
+                        if let Ok(file_type) = e.file_type()
+                            && file_type.is_dir()
+                        {
+                            return Some(1);
                         }
                         None
                     }
@@ -604,10 +594,10 @@ mod tests {
             let dir_count = entries
                 .filter_map(|entry| match entry {
                     Ok(e) => {
-                        if let Ok(file_type) = e.file_type() {
-                            if file_type.is_dir() {
-                                return Some(1);
-                            }
+                        if let Ok(file_type) = e.file_type()
+                            && file_type.is_dir()
+                        {
+                            return Some(1);
                         }
                         None
                     }
@@ -642,10 +632,10 @@ mod tests {
             let dir_count = entries
                 .filter_map(|entry| match entry {
                     Ok(e) => {
-                        if let Ok(file_type) = e.file_type() {
-                            if file_type.is_dir() {
-                                return Some(1);
-                            }
+                        if let Ok(file_type) = e.file_type()
+                            && file_type.is_dir()
+                        {
+                            return Some(1);
                         }
                         None
                     }
@@ -678,7 +668,7 @@ mod tests {
 
             // Add and commit a new file
             let file_path = local_repo.path.join("test.txt");
-            let file_path = test::write_txt_file_to_path(file_path, "image,label\n1,2\n3,4\n5,6")?;
+            let file_path = test::write_txt_file_to_path(&file_path, "image,label\n1,2\n3,4\n5,6")?;
             repositories::add(&local_repo, &file_path).await?;
             let commit = repositories::commit(&local_repo, "test")?;
             let commit_hash = commit.id.parse()?;

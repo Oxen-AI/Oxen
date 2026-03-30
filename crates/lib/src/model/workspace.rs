@@ -45,12 +45,12 @@ impl Workspace {
         Self::workspace_dir(&self.base_repo, &workspace_id_hash)
     }
 
-    pub fn config_path_from_dir(dir: impl AsRef<Path>) -> PathBuf {
-        dir.as_ref().join(OXEN_HIDDEN_DIR).join(WORKSPACE_CONFIG)
+    pub fn config_path_from_dir(dir: &Path) -> PathBuf {
+        dir.join(OXEN_HIDDEN_DIR).join(WORKSPACE_CONFIG)
     }
 
     pub fn config_path(&self) -> PathBuf {
-        Self::config_path_from_dir(self.dir())
+        Self::config_path_from_dir(&self.dir())
     }
 }
 

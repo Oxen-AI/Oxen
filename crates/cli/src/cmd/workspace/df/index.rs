@@ -72,15 +72,20 @@ impl RunCmd for WorkspaceDFIndexCmd {
 
         let df = api::client::workspaces::data_frames::get(
             &remote_repo,
-            &workspace_id,
-            &path,
+            workspace_id,
+            std::path::Path::new(path),
             &DFOpts::empty(),
         )
         .await?;
 
         if !df.is_indexed {
             let start = Instant::now();
-            api::client::workspaces::data_frames::index(&remote_repo, workspace_id, &path).await?;
+            api::client::workspaces::data_frames::index(
+                &remote_repo,
+                workspace_id,
+                std::path::Path::new(path),
+            )
+            .await?;
             println!("{:?} indexed in {:?}", path, start.elapsed());
         } else {
             log::debug!("Data frame is already indexed.");

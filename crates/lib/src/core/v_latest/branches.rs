@@ -168,7 +168,7 @@ pub async fn checkout_subtrees(
             repositories::tree::get_subtree_by_depth_with_unique_children(
                 repo,
                 to_commit,
-                subtree_path.clone(),
+                &subtree_path.clone(),
                 None,
                 Some(&mut target_hashes),
                 None,
@@ -198,7 +198,7 @@ pub async fn checkout_subtrees(
                 &mut partial_nodes,
             )
             .map_err(|e| {
-                OxenError::basic_str(format!("Cannot get root node for base commit: {e:?}"))
+                OxenError::basic_str(&format!("Cannot get root node for base commit: {e:?}"))
             })?
         } else {
             log::warn!("head commit missing, might be a clone");

@@ -72,8 +72,12 @@ impl RunCmd for SchemasCmd {
             let repository = LocalRepository::from_current_dir()?;
             let staged = args.get_flag("staged");
             let verbose = !args.get_flag("flatten"); // default to verbose
-            let val =
-                repositories::data_frames::schemas::show(&repository, schema_ref, staged, verbose)?;
+            let val = repositories::data_frames::schemas::show(
+                &repository,
+                std::path::Path::new(schema_ref),
+                staged,
+                verbose,
+            )?;
             println!("{val}");
         } else {
             // Fall back to list schemas

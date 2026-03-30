@@ -165,14 +165,14 @@ pub fn add_benchmark(c: &mut Criterion) {
                         .await
                         .unwrap();
 
-                    let _ = util::fs::remove_dir_all(repo.path.join(".oxen/staging"));
+                    let _ = util::fs::remove_dir_all(&repo.path.join(".oxen/staging"));
                 })
             },
         );
     }
     group.finish();
 
-    util::fs::remove_dir_all(base_dir).unwrap();
+    util::fs::remove_dir_all(&base_dir).unwrap();
 }
 
 criterion_group!(benches, add_benchmark);

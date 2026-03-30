@@ -48,7 +48,12 @@ impl RunCmd for SchemasShowCmd {
         let verbose = args.get_flag("verbose");
         let staged = args.get_flag("staged");
 
-        let result = repositories::data_frames::schemas::show(&repository, path, staged, verbose)?;
+        let result = repositories::data_frames::schemas::show(
+            &repository,
+            std::path::Path::new(path),
+            staged,
+            verbose,
+        )?;
         println!("{result}");
 
         Ok(())

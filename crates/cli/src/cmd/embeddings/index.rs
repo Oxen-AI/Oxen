@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use clap::{Arg, Command, arg};
+use std::path::Path;
 
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
@@ -56,18 +57,20 @@ impl RunCmd for EmbeddingsIndexCmd {
         let commit = repositories::commits::head_commit(&repository)?;
         if !repositories::workspaces::data_frames::is_queryable_data_frame_indexed(
             &repository,
-            path,
+            Path::new(path),
             &commit,
         )? {
             // If not, proceed to create a new workspace and index the data frame.
             // create the workspace id from the file path + commit id
             let workspace_id = format!("{}-{}", path, commit.id);
             let workspace =
-                repositories::workspaces::create(&repository, &commit, workspace_id, false)?;
-            repositories::workspaces::data_frames::index(&repository, &workspace, path).await?;
+                repositories::workspaces::create(&repository, &commit, &workspace_id, false)?;
+            repositories::workspaces::data_frames::index(&repository, &workspace, Path::new(path))
+                .await?;
+
             repositories::workspaces::data_frames::embeddings::index(
                 &workspace,
-                path,
+                Path::new(path),
                 column,
                 use_background_thread,
             )

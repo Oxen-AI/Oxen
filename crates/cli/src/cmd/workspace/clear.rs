@@ -54,7 +54,7 @@ impl RunCmd for WorkspaceClearCmd {
                 return Ok(());
             }
             Err(e) => {
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Error confirming deletion: {e}"
                 )));
             }

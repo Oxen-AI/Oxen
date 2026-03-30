@@ -200,7 +200,7 @@ pub fn download_benchmark(c: &mut Criterion) {
     }
     group.finish();
 
-    util::fs::remove_dir_all(base_dir).unwrap();
+    util::fs::remove_dir_all(&base_dir).unwrap();
 }
 
 criterion_group!(benches, download_benchmark);

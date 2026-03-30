@@ -9,31 +9,28 @@ use crate::view::ErrorFileInfo;
 
 use std::path::{Path, PathBuf};
 
-pub fn exists(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool, OxenError> {
+pub fn exists(workspace: &Workspace, path: &Path) -> Result<bool, OxenError> {
     match workspace.base_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::workspaces::files::exists(workspace, path),
     }
 }
 
-pub async fn add(workspace: &Workspace, path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
+pub async fn add(workspace: &Workspace, path: &Path) -> Result<PathBuf, OxenError> {
     match workspace.base_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::workspaces::files::add(workspace, path).await,
     }
 }
 
-pub async fn rm(
-    workspace: &Workspace,
-    path: impl AsRef<Path>,
-) -> Result<Vec<ErrorFileInfo>, OxenError> {
+pub async fn rm(workspace: &Workspace, path: &Path) -> Result<Vec<ErrorFileInfo>, OxenError> {
     match workspace.base_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::workspaces::files::rm(workspace, path).await,
     }
 }
 
-pub fn unstage(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), OxenError> {
+pub fn unstage(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
     match workspace.base_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::workspaces::files::unstage(workspace, path),
@@ -79,11 +76,7 @@ pub async fn upload_zip(
     }
 }
 
-pub fn mv(
-    workspace: &Workspace,
-    path: impl AsRef<Path>,
-    new_path: impl AsRef<Path>,
-) -> Result<(), OxenError> {
+pub fn mv(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), OxenError> {
     match workspace.base_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::workspaces::files::mv(workspace, path, new_path),
@@ -112,7 +105,7 @@ mod tests {
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
             let workspace_id = UserConfig::identifier()?;
-            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let workspace = repositories::workspaces::create(&repo, &commit, &workspace_id, true)?;
 
             // Original file path that exists in the repo
             let original_path = Path::new("annotations")
@@ -161,8 +154,7 @@ mod tests {
                 email: user.email.clone(),
                 message: "Moved file to new location".to_string(),
             };
-            let commit =
-                workspaces::commit(&workspace, &new_commit, branch_name.to_string()).await?;
+            let commit = workspaces::commit(&workspace, &new_commit, branch_name).await?;
 
             // Verify the file exists at the new path in the commit
             let new_file = repositories::tree::get_file_by_path(&repo, &commit, &new_path)?;

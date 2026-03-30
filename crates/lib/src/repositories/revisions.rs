@@ -11,8 +11,7 @@ use crate::storage::LocalFilePath;
 
 /// Get a commit object from a commit id or branch name
 /// Returns Ok(None) if the revision does not exist
-pub fn get(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<Option<Commit>, OxenError> {
-    let revision = revision.as_ref();
+pub fn get(repo: &LocalRepository, revision: &str) -> Result<Option<Commit>, OxenError> {
     if revision == "HEAD" {
         let commit = repositories::commits::head_commit(repo)?;
         return Ok(Some(commit));
@@ -34,8 +33,8 @@ pub fn get(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<Option<C
 /// Get the version file path from a commit id
 pub async fn get_version_file_from_commit_id(
     repo: &LocalRepository,
-    commit_id: impl AsRef<str>,
-    path: impl AsRef<Path>,
+    commit_id: &str,
+    path: &Path,
 ) -> Result<LocalFilePath, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),

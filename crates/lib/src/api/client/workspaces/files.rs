@@ -48,14 +48,11 @@ pub type UploadFails = Vec<ErrorFileInfo>;
 // TODO: Test adding removed files
 pub async fn add(
     remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    directory: impl AsRef<str>,
+    workspace_id: &str,
+    directory: &Path,
     paths: Vec<PathBuf>,
     local_repo: &Option<LocalRepository>,
 ) -> Result<UploadFails, OxenError> {
-    let workspace_id = workspace_id.as_ref();
-    let directory = directory.as_ref();
-
     // If no paths provided, return early
     if paths.is_empty() {
         return Ok(vec![]);
@@ -73,7 +70,6 @@ pub async fn add(
     let expanded_paths = util::glob::parse_glob_paths(&glob_opts, local_repo.as_ref())?;
     let expanded_paths: Vec<PathBuf> = expanded_paths.iter().cloned().collect();
     // TODO: add a progress bar
-
     let n_expected_uploads = expanded_paths.len();
 
     let upload_result = upload_multiple_files(
@@ -131,12 +127,12 @@ fn resolve_paths_in_place(base_dir: &Path, paths: &mut [PathBuf]) -> Result<(), 
         paths[i] = std::path::absolute(&(paths[i]))?;
 
         if !paths[i].is_file() {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "Cannot upload non-existent file: {}",
                 paths[i].display()
             )));
         } else if !paths[i].starts_with(base_dir) {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "Cannot upload path that doesn't exist in base directory ({}): {}",
                 base_dir.display(),
                 paths[i].display()
@@ -156,14 +152,14 @@ fn resolve_paths_in_place(base_dir: &Path, paths: &mut [PathBuf]) -> Result<(), 
 /// repository.
 pub async fn add_files(
     remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    base_dir: impl AsRef<Path>,
+    workspace_id: &str,
+    base_dir: &Path,
     paths: Vec<PathBuf>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let base_dir = std::path::absolute(base_dir)?;
 
     if !base_dir.is_dir() {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "base_dir is not a directory: {}",
             base_dir.display()
         )));
@@ -172,8 +168,6 @@ pub async fn add_files(
     if paths.is_empty() {
         return Err(OxenError::basic_str("No paths to add!"));
     }
-
-    let workspace_id = workspace_id.as_ref();
 
     let paths: Vec<PathBuf> = {
         let mut paths = paths;
@@ -187,7 +181,7 @@ pub async fn add_files(
     match upload_multiple_files(
         remote_repo,
         workspace_id,
-        "", // Each path has the right relative directory components, so it's crucial that they're
+        Path::new(""), // Each path has the right relative directory components, so it's crucial that they're
         //    "placed" at the repo root since the server API expects to add files into a directory
         //    for a single API call.
         paths,
@@ -205,14 +199,11 @@ pub async fn add_files(
 
 pub async fn add_bytes(
     remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    directory: impl AsRef<str>,
+    workspace_id: &str,
+    directory: &Path,
     path: PathBuf,
     buf: &[u8],
 ) -> Result<(), OxenError> {
-    let workspace_id = workspace_id.as_ref();
-    let directory = directory.as_ref();
-
     match upload_bytes_as_file(remote_repo, workspace_id, directory, &path, buf).await {
         Ok(path) => {
             println!("🐂 oxen added entry {path:?} to workspace {workspace_id}");
@@ -227,12 +218,10 @@ pub async fn add_bytes(
 
 pub async fn upload_single_file(
     remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    directory: impl AsRef<Path>,
-    path: impl AsRef<Path>,
+    workspace_id: &str,
+    directory: &Path,
+    path: &Path,
 ) -> Result<PathBuf, OxenError> {
-    let path = path.as_ref();
-
     let Ok(metadata) = path.metadata() else {
         return Err(OxenError::path_does_not_exist(path));
     };
@@ -240,12 +229,11 @@ pub async fn upload_single_file(
     log::debug!("Uploading file with size: {}", metadata.len());
     // If the file is larger than AVG_CHUNK_SIZE, use the parallel upload strategy
     if metadata.len() > chunk_size() {
-        let directory = directory.as_ref();
         match api::client::versions::parallel_large_file_upload(
             remote_repo,
             path,
             Some(directory),
-            Some(workspace_id.as_ref().to_string()),
+            Some(workspace_id.to_string()),
             None,
             None,
         )
@@ -262,9 +250,9 @@ pub async fn upload_single_file(
 
 pub async fn upload_bytes_as_file(
     remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    directory: impl AsRef<Path>,
-    path: impl AsRef<Path>,
+    workspace_id: &str,
+    directory: &Path,
+    path: &Path,
     buf: &[u8],
 ) -> Result<PathBuf, OxenError> {
     p_upload_bytes_as_file(remote_repo, workspace_id, directory, path, buf).await
@@ -272,17 +260,14 @@ pub async fn upload_bytes_as_file(
 
 async fn upload_multiple_files(
     remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    directory: impl AsRef<Path>,
+    workspace_id: &str,
+    directory: &Path,
     paths: Vec<PathBuf>,
     local_or_base: Option<&LocalOrBase>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     if paths.is_empty() {
         return Ok(vec![]);
     }
-
-    let workspace_id = workspace_id.as_ref();
-    let directory = directory.as_ref();
 
     let large_file_threshold = chunk_size();
 
@@ -300,7 +285,7 @@ async fn upload_multiple_files(
         let path = match local_or_base {
             Some(LocalOrBase::Local(local_repository)) => {
                 let repo_path = &local_repository.path;
-                let relative_path = util::fs::path_relative_to_dir(path, repo_path)?;
+                let relative_path = util::fs::path_relative_to_dir(&path, repo_path)?;
                 repo_path.join(&relative_path)
             }
             Some(LocalOrBase::Base(_)) | None => path,
@@ -308,7 +293,7 @@ async fn upload_multiple_files(
 
         if !path.exists() {
             log::debug!("Path does not exist: {path:?}");
-            return Err(OxenError::path_does_not_exist(path));
+            return Err(OxenError::path_does_not_exist(&path));
         }
 
         match path.metadata() {
@@ -326,7 +311,7 @@ async fn upload_multiple_files(
             }
             Err(err) => {
                 log::debug!("Failed to get metadata for file {path:?}: {err}");
-                return Err(OxenError::file_metadata_error(path, err));
+                return Err(OxenError::file_metadata_error(&path, err));
             }
         }
     }
@@ -387,8 +372,8 @@ async fn upload_multiple_files(
 
 pub(crate) async fn parallel_batched_small_file_upload(
     remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    directory: impl AsRef<Path>,
+    workspace_id: &str,
+    directory: &Path,
     small_files: Vec<(PathBuf, u64)>,
     small_files_size: u64,
     local_or_base: Option<&LocalOrBase>,
@@ -419,8 +404,8 @@ pub(crate) async fn parallel_batched_small_file_upload(
         small_files_size
     );
 
-    let workspace_id = workspace_id.as_ref().to_string();
-    let directory = directory.as_ref().to_str().unwrap_or_default().to_string();
+    let workspace_id = workspace_id.to_string();
+    let directory = directory.to_str().unwrap_or_default().to_string();
 
     // Represents unprocessed batches
     type PieceOfWork = Vec<(PathBuf, u64)>;
@@ -535,7 +520,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                     };
 
                                     let file = std::fs::read(&path).map_err(|e| {
-                                        OxenError::basic_str(format!(
+                                        OxenError::basic_str(&format!(
                                             "Failed to read file '{path:?}': {e}"
                                         ))
                                     })?;
@@ -548,7 +533,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
 
                                         std::io::copy(&mut file.as_slice(), &mut encoder).map_err(
                                             |e| {
-                                                OxenError::basic_str(format!(
+                                                OxenError::basic_str(&format!(
                                                     "Failed to copy file '{path:?}' to encoder: {e}"
                                                 ))
                                             },
@@ -558,7 +543,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                             Ok(bytes) => bytes,
                                             Err(e) => {
                                                 // If compressing a file fails, cancel the operation
-                                                return Err(OxenError::basic_str(format!(
+                                                return Err(OxenError::basic_str(&format!(
                                                     "Failed to finish gzip for file {}: {}",
                                                     &hash, e
                                                 )));
@@ -596,13 +581,13 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                 (batch_parts, files_to_stage, batch_size);
                             match tx_clone.send(processed_batch).await {
                                 Ok(_) => Ok(()),
-                                Err(e) => Err(OxenError::basic_str(format!("{e:?}"))),
+                                Err(e) => Err(OxenError::basic_str(&format!("{e:?}"))),
                             }
                         }
                         .await;
 
                         if let Err(e) = result {
-                            errors.lock().push(OxenError::basic_str(format!("{e:?}")));
+                            errors.lock().push(OxenError::basic_str(&format!("{e:?}")));
                         }
                     }
                 }
@@ -695,7 +680,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                         // If staging failed, cancel the operation
                                         Err(e) => {
                                             log::error!("failed to stage files to workspace: {e}");
-                                            return Err(OxenError::basic_str(format!(
+                                            return Err(OxenError::basic_str(&format!(
                                                 "failed to stage to workspace: {e}"
                                             )));
                                         }
@@ -718,7 +703,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                     );
 
                                     log::error!("failed to upload version files to workspace: {e}");
-                                    Err(OxenError::basic_str(format!(
+                                    Err(OxenError::basic_str(&format!(
                                         "failed to upload version files to workspace: {e}"
                                     )))
                                 }
@@ -726,7 +711,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
                         }.await;
 
                         if let Err(e) = result {
-                            errors.lock().push(OxenError::basic_str(format!("{e:?}")));
+                            errors.lock().push(OxenError::basic_str(&format!("{e:?}")));
                         }
                     }
                 }
@@ -785,14 +770,13 @@ pub(crate) async fn parallel_batched_small_file_upload(
 pub async fn stage_files_to_workspace_with_retry(
     remote_repo: &RemoteRepository,
     client: Arc<reqwest::Client>,
-    workspace_id: impl AsRef<str>,
+    workspace_id: &str,
     files_to_add: Arc<Vec<FileWithHash>>,
-    directory_str: impl AsRef<str>,
+    directory_str: &str,
     err_files: Vec<ErrorFileInfo>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let mut retry_count: usize = 0;
-    let directory_str = directory_str.as_ref();
-    let workspace_id = workspace_id.as_ref().to_string();
+    let workspace_id = workspace_id.to_string();
     let max_retries = max_retries();
 
     while retry_count < max_retries {
@@ -815,7 +799,7 @@ pub async fn stage_files_to_workspace_with_retry(
             Err(e) => {
                 log::error!("Error staging files to workspace: {e:?}");
                 if retry_count == max_retries {
-                    return Err(OxenError::basic_str(format!(
+                    return Err(OxenError::basic_str(&format!(
                         "failed to stage files to workspace after retries: {e:?}"
                     )));
                 }
@@ -839,13 +823,11 @@ pub async fn stage_files_to_workspace_with_retry(
 pub async fn stage_files_to_workspace(
     remote_repo: &RemoteRepository,
     client: Arc<reqwest::Client>,
-    workspace_id: impl AsRef<str>,
+    workspace_id: &str,
     files_to_add: Arc<Vec<FileWithHash>>,
-    directory_str: impl AsRef<str>,
+    directory_str: &str,
     err_files: Vec<ErrorFileInfo>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
-    let workspace_id = workspace_id.as_ref();
-    let directory_str = directory_str.as_ref();
     let uri = format!("/workspaces/{workspace_id}/versions/{directory_str}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
@@ -872,18 +854,15 @@ pub async fn stage_files_to_workspace(
 
 async fn p_upload_single_file(
     remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    directory: impl AsRef<Path>,
-    path: impl AsRef<Path>,
+    workspace_id: &str,
+    directory: &Path,
+    path: &Path,
 ) -> Result<PathBuf, OxenError> {
-    let workspace_id = workspace_id.as_ref();
-    let directory = directory.as_ref();
     let directory_name = directory.to_string_lossy();
-    let path = path.as_ref();
     log::debug!("multipart_file_upload path: {path:?}");
     let Ok(file) = std::fs::read(path) else {
         let err = format!("Error reading file at path: {path:?}");
-        return Err(OxenError::basic_str(err));
+        return Err(OxenError::basic_str(&err));
     };
 
     let uri = format!("/workspaces/{workspace_id}/files/{directory_name}");
@@ -911,16 +890,16 @@ async fn p_upload_single_file(
             let err = format!(
                 "api::staging::add_file error parsing response from {url}\n\nErr {err:?} \n\n{body}"
             );
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
 
 async fn p_upload_bytes_as_file(
     remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    directory: impl AsRef<Path>,
-    path: impl AsRef<Path>,
+    workspace_id: &str,
+    directory: &Path,
+    path: &Path,
     mut buf: &[u8],
 ) -> Result<PathBuf, OxenError> {
     // Check if the total size of the files is too large (over 100mb for now)
@@ -932,13 +911,10 @@ async fn p_upload_bytes_as_file(
             ByteSize::b(total_size),
             ByteSize::b(limit)
         );
-        return Err(OxenError::basic_str(error_msg));
+        return Err(OxenError::basic_str(&error_msg));
     }
 
-    let workspace_id = workspace_id.as_ref();
-    let directory = directory.as_ref();
     let directory_name = directory.to_string_lossy();
-    let path = path.as_ref();
     log::debug!("multipart_file_upload path: {path:?}");
 
     let file_name: String = path.file_name().unwrap().to_string_lossy().into();
@@ -949,7 +925,7 @@ async fn p_upload_bytes_as_file(
     let compressed_bytes = match encoder.finish() {
         Ok(bytes) => bytes,
         Err(e) => {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "Failed to finish gzip for file {}: {}",
                 &file_name, e
             )));
@@ -982,7 +958,7 @@ async fn p_upload_bytes_as_file(
             let err = format!(
                 "api::staging::add_file error parsing response from {url}\n\nErr {err:?} \n\n{body}"
             );
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
@@ -992,9 +968,9 @@ async fn p_upload_bytes_as_file(
 pub async fn rm(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<(), OxenError> {
-    let file_name = path.as_ref().to_string_lossy();
+    let file_name = path.to_string_lossy();
     let uri = format!("/workspaces/{workspace_id}/files/{file_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("rm_file {url}");
@@ -1008,11 +984,9 @@ pub async fn rm(
 pub async fn rm_files(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
+    workspace_id: &str,
     paths: Vec<PathBuf>,
 ) -> Result<(), OxenError> {
-    let workspace_id = workspace_id.as_ref();
-
     // Parse glob paths
     let glob_opts = GlobOpts {
         paths: paths.clone(),
@@ -1059,7 +1033,7 @@ pub async fn rm_files(
         log::error!("rm_files failed with status: {}", response.status());
         let body = client::parse_json_body(&url, response).await?;
 
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Error: Could not remove paths {body:?}"
         )));
     }
@@ -1070,17 +1044,15 @@ pub async fn rm_files(
 pub async fn rm_files_from_staged(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
+    workspace_id: &str,
     paths: Vec<PathBuf>,
 ) -> Result<(), OxenError> {
-    let workspace_id = workspace_id.as_ref();
-
     // Parse glob paths
     let repo_path = local_repo.path.clone();
     let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
 
     for path in paths.clone() {
-        let relative_path = util::fs::path_relative_to_dir(&path, local_repo.path.clone())?;
+        let relative_path = util::fs::path_relative_to_dir(&path, &local_repo.path.clone())?;
         let full_path = repo_path.join(&relative_path);
         if util::fs::is_glob_path(&full_path) {
             let Some(ref head_commit) = repositories::commits::head_commit_maybe(local_repo)?
@@ -1139,18 +1111,16 @@ pub async fn rm_files_from_staged(
 /// Sends a PATCH request to update the file's path.
 pub async fn mv(
     remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    path: impl AsRef<Path>,
-    new_path: impl AsRef<Path>,
+    workspace_id: &str,
+    path: &Path,
+    new_path: &Path,
 ) -> Result<view::StatusMessage, OxenError> {
-    let workspace_id = workspace_id.as_ref();
-    let path = path.as_ref();
     let file_path_str = path.to_string_lossy();
 
     let uri = format!("/workspaces/{workspace_id}/files/{file_path_str}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     let params = serde_json::to_string(&serde_json::json!({
-        "new_path": new_path.as_ref().to_string_lossy()
+        "new_path": new_path.to_string_lossy()
     }))?;
 
     let client = client::new_for_url(&url)?;
@@ -1163,7 +1133,7 @@ pub async fn mv(
             let err = format!(
                 "api::workspaces::files::mv error parsing from {url}\n\nErr {err:?} \n\n{body}"
             );
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
@@ -1174,7 +1144,7 @@ pub async fn download(
     path: &str,
     output_path: Option<&Path>,
 ) -> Result<(), OxenError> {
-    let uri = if util::fs::has_tabular_extension(path) {
+    let uri = if util::fs::has_tabular_extension(Path::new(path)) {
         format!("/workspaces/{workspace_id}/data_frames/download/{path}")
     } else {
         format!("/workspaces/{workspace_id}/files/{path}")
@@ -1207,12 +1177,12 @@ pub async fn download(
         let status = response.status();
 
         if status == reqwest::StatusCode::NOT_FOUND {
-            return Err(OxenError::path_does_not_exist(path));
+            return Err(OxenError::path_does_not_exist(Path::new(path)));
         }
 
         log::error!("api::client::workspace::files::download failed with status: {status}");
         let body = client::parse_json_body(&url, response).await?;
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Error: Could not download file {body:?}"
         )));
     }
@@ -1280,14 +1250,14 @@ mod tests {
             let directory_name = "images";
             let workspace_id = uuid::Uuid::new_v4().to_string();
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             let path = test::test_img_file();
             let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_id,
-                directory_name,
+                &Path::new(directory_name),
                 vec![path],
                 &None,
             )
@@ -1336,14 +1306,14 @@ mod tests {
             let directory_name = "my_large_file";
             let workspace_id = uuid::Uuid::new_v4().to_string();
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             let path = test::test_30k_parquet();
             let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_id,
-                directory_name,
+                &Path::new(directory_name),
                 vec![path],
                 &None,
             )
@@ -1383,7 +1353,7 @@ mod tests {
 
             let workspace_id = uuid::Uuid::new_v4().to_string();
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             let directory_name = "data";
@@ -1394,7 +1364,7 @@ mod tests {
             let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_id,
-                directory_name,
+                &Path::new(directory_name),
                 paths,
                 &None,
             )
@@ -1431,12 +1401,12 @@ mod tests {
             assert_eq!(workspace.id, workspace_id);
 
             let file_to_post = test::test_1k_parquet();
-            let directory_name = "";
-            let result = api::client::workspaces::files::upload_single_file(
+            let directory_name = Path::new("");
+            let result = &api::client::workspaces::files::upload_single_file(
                 &remote_repo,
                 &workspace_id,
                 directory_name,
-                file_to_post,
+                &file_to_post,
             )
             .await;
             println!("result: {result:?}");
@@ -1458,7 +1428,7 @@ mod tests {
             // List the entries
             let entries = api::client::entries::list_entries_with_type(
                 &remote_repo,
-                "",
+                Path::new(""),
                 DEFAULT_BRANCH_NAME,
                 &EntryDataType::Tabular,
             )
@@ -1471,12 +1441,12 @@ mod tests {
                     .await?;
             assert_eq!(workspace.id, workspace_id);
             let file_to_post = test::test_csv_file_with_name("emojis.csv");
-            let directory_name = "moare_data";
-            let result = api::client::workspaces::files::upload_single_file(
+            let directory_name = Path::new("moare_data");
+            let result = &api::client::workspaces::files::upload_single_file(
                 &remote_repo,
                 &workspace_id,
                 directory_name,
-                file_to_post,
+                &file_to_post,
             )
             .await;
             println!("result: {result:?}");
@@ -1498,7 +1468,7 @@ mod tests {
             // List the entries
             let entries = api::client::entries::list_entries_with_type(
                 &remote_repo,
-                "",
+                Path::new(""),
                 DEFAULT_BRANCH_NAME,
                 &EntryDataType::Tabular,
             )
@@ -1512,12 +1482,12 @@ mod tests {
                     .await?;
             assert_eq!(workspace.id, workspace_id);
             let file_to_post = test::test_invalid_parquet_file();
-            let directory_name = "broken_data";
-            let result = api::client::workspaces::files::upload_single_file(
+            let directory_name = Path::new("broken_data");
+            let result = &api::client::workspaces::files::upload_single_file(
                 &remote_repo,
                 &workspace_id,
                 directory_name,
-                file_to_post,
+                &file_to_post,
             )
             .await;
             println!("result: {result:?}");
@@ -1539,7 +1509,7 @@ mod tests {
             // List the entries
             let entries = api::client::entries::list_entries_with_type(
                 &remote_repo,
-                "",
+                Path::new(""),
                 DEFAULT_BRANCH_NAME,
                 &EntryDataType::Tabular,
             )
@@ -1562,12 +1532,12 @@ mod tests {
             assert_eq!(workspace.id, workspace_id);
 
             let file_to_post = test::test_1k_parquet();
-            let directory_name = "";
-            let result = api::client::workspaces::files::upload_single_file(
+            let directory_name = Path::new("");
+            let result = &api::client::workspaces::files::upload_single_file(
                 &remote_repo,
                 &workspace_id,
                 directory_name,
-                file_to_post,
+                &file_to_post,
             )
             .await;
             println!("result: {result:?}");
@@ -1589,7 +1559,7 @@ mod tests {
             // List the entries
             let entries = api::client::entries::list_entries_with_type(
                 &remote_repo,
-                "",
+                Path::new(""),
                 DEFAULT_BRANCH_NAME,
                 &EntryDataType::Tabular,
             )
@@ -1602,12 +1572,12 @@ mod tests {
                     .await?;
             assert_eq!(workspace.id, workspace_id);
             let file_to_post = test::test_csv_file_with_name("emojis.csv");
-            let directory_name = "moare_data";
-            let result = api::client::workspaces::files::upload_single_file(
+            let directory_name = Path::new("moare_data");
+            let result = &api::client::workspaces::files::upload_single_file(
                 &remote_repo,
                 &workspace_id,
                 directory_name,
-                file_to_post,
+                &file_to_post,
             )
             .await;
             println!("result: {result:?}");
@@ -1629,7 +1599,7 @@ mod tests {
             // List the entries
             let entries = api::client::entries::list_entries_with_type(
                 &remote_repo,
-                "",
+                Path::new(""),
                 DEFAULT_BRANCH_NAME,
                 &EntryDataType::Tabular,
             )
@@ -1643,12 +1613,12 @@ mod tests {
                     .await?;
             assert_eq!(workspace.id, workspace_id);
             let file_to_post = test::test_invalid_parquet_file();
-            let directory_name = "broken_data";
-            let result = api::client::workspaces::files::upload_single_file(
+            let directory_name = Path::new("broken_data");
+            let result = &api::client::workspaces::files::upload_single_file(
                 &remote_repo,
                 &workspace_id,
                 directory_name,
-                file_to_post,
+                &file_to_post,
             )
             .await;
             println!("result: {result:?}");
@@ -1670,7 +1640,7 @@ mod tests {
             // List the entries
             let entries = api::client::entries::list_entries_with_type(
                 &remote_repo,
-                "",
+                Path::new(""),
                 DEFAULT_BRANCH_NAME,
                 &EntryDataType::Tabular,
             )
@@ -1697,16 +1667,16 @@ mod tests {
 
             let workspace_id = uuid::Uuid::new_v4().to_string();
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             let file_to_post = test::test_img_file();
             let directory_name = "data";
-            let result = api::client::workspaces::files::upload_single_file(
+            let result = &api::client::workspaces::files::upload_single_file(
                 &remote_repo,
                 &workspace_id,
-                directory_name,
-                file_to_post,
+                Path::new(directory_name),
+                &file_to_post,
             )
             .await;
             assert!(result.is_ok());
@@ -1727,7 +1697,8 @@ mod tests {
             let remote_repo_cloned = remote_repo.clone();
             test::run_empty_dir_test_async(|cloned_repo_dir| async move {
                 // Clone repo
-                let opts = CloneOpts::new(remote_repo.remote.url, cloned_repo_dir.join("new_repo"));
+                let opts =
+                    CloneOpts::new(&remote_repo.remote.url, &cloned_repo_dir.join("new_repo"));
                 let cloned_repo = repositories::clone(&opts).await?;
 
                 // Make sure that image is not on main branch
@@ -1776,27 +1747,27 @@ mod tests {
             let directory_name = "tabular";
             let workspace_id = uuid::Uuid::new_v4().to_string();
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             // Post a parquet file
             let path = test::test_1k_parquet();
-            let result = api::client::workspaces::files::upload_single_file(
+            let result = &api::client::workspaces::files::upload_single_file(
                 &remote_repo,
                 &workspace_id,
-                directory_name,
-                path,
+                Path::new(directory_name),
+                &path,
             )
             .await;
             assert!(result.is_ok());
 
             // Post an image file
             let path = test::test_img_file();
-            let result = api::client::workspaces::files::upload_single_file(
+            let result = &api::client::workspaces::files::upload_single_file(
                 &remote_repo,
                 &workspace_id,
-                directory_name,
-                path,
+                Path::new(directory_name),
+                &path,
             )
             .await;
             assert!(result.is_ok());
@@ -1817,7 +1788,8 @@ mod tests {
 
             // List the file counts on that branch in that directory
             let file_counts =
-                api::client::dir::file_counts(&remote_repo, branch_name, directory_name).await?;
+                api::client::dir::file_counts(&remote_repo, branch_name, Path::new(directory_name))
+                    .await?;
             assert_eq!(file_counts.dir.data_types.len(), 2);
             assert_eq!(
                 file_counts
@@ -1841,7 +1813,8 @@ mod tests {
             );
 
             // List the file counts on that branch in the root directory
-            let file_counts = api::client::dir::file_counts(&remote_repo, branch_name, "").await?;
+            let file_counts =
+                api::client::dir::file_counts(&remote_repo, branch_name, Path::new("")).await?;
             assert_eq!(file_counts.dir.data_types.len(), 2);
             assert_eq!(
                 file_counts
@@ -1883,24 +1856,27 @@ mod tests {
 
             let workspace_id = uuid::Uuid::new_v4().to_string();
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             let directory_name = "images";
             let path = test::test_img_file();
-            let result = api::client::workspaces::files::upload_single_file(
+            let result = &api::client::workspaces::files::upload_single_file(
                 &remote_repo,
                 &workspace_id,
-                directory_name,
-                path,
+                Path::new(directory_name),
+                &path,
             )
             .await;
             assert!(result.is_ok());
 
             // Remove the file
-            let result =
-                api::client::workspaces::files::rm(&remote_repo, &workspace_id, result.unwrap())
-                    .await;
+            let result = api::client::workspaces::files::rm(
+                &remote_repo,
+                &workspace_id,
+                result.as_ref().unwrap(),
+            )
+            .await;
             assert!(result.is_ok());
 
             // Make sure we have 0 files staged
@@ -1938,15 +1914,15 @@ mod tests {
             let directory_name = "my/images/dir/is/long";
             let workspace_id = uuid::Uuid::new_v4().to_string();
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             let path = test::test_img_file();
-            let result = api::client::workspaces::files::upload_single_file(
+            let result = &api::client::workspaces::files::upload_single_file(
                 &remote_repo,
                 &workspace_id,
-                directory_name,
-                path,
+                Path::new(directory_name),
+                &path,
             )
             .await;
             assert!(result.is_ok());
@@ -1984,7 +1960,7 @@ mod tests {
 
             let workspace_id = format!("test-workspace-{}", uuid::Uuid::new_v4());
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             // Prepare paths and directory
@@ -1992,13 +1968,13 @@ mod tests {
                 test::test_img_file(),
                 test::test_img_file_with_name("cole_anthony.jpeg"),
             ];
-            let directory = "test_data";
+            let directory_name = "test_data";
 
             // Call the add function with multiple files
             let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_id,
-                directory,
+                Path::new(directory_name),
                 paths,
                 &None,
             )
@@ -2008,11 +1984,10 @@ mod tests {
             // Verify that both files were added
             let page_num = constants::DEFAULT_PAGE_NUM;
             let page_size = constants::DEFAULT_PAGE_SIZE;
-            let path = Path::new(directory);
             let entries = api::client::workspaces::changes::list(
                 &remote_repo,
                 &workspace_id,
-                path,
+                Path::new(directory_name),
                 page_num,
                 page_size,
             )
@@ -2040,7 +2015,7 @@ mod tests {
             let directory_name = "new-images";
             let workspace_id = uuid::Uuid::new_v4().to_string();
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             // Get the absolute path to the file
@@ -2048,7 +2023,7 @@ mod tests {
             let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_id,
-                directory_name,
+                &Path::new(directory_name),
                 vec![path],
                 &None,
             )
@@ -2089,7 +2064,7 @@ mod tests {
 
             let workspace_id = uuid::Uuid::new_v4().to_string();
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id).await?;
             assert_eq!(workspace.id, workspace_id);
 
             let bounding_box_path = PathBuf::from("README.md");
@@ -2145,8 +2120,8 @@ mod tests {
             let mv_response = api::client::workspaces::files::mv(
                 &remote_repo,
                 &workspace_id,
-                original_path,
-                new_path,
+                Path::new(original_path),
+                Path::new(new_path),
             )
             .await?;
             assert_eq!(mv_response.status, "success");
@@ -2163,12 +2138,13 @@ mod tests {
 
             // Verify the file exists at the new path after commit
             let new_file =
-                api::client::entries::get_entry(&remote_repo, new_path, &commit.id).await?;
+                api::client::entries::get_entry(&remote_repo, Path::new(new_path), &commit.id)
+                    .await?;
             assert!(new_file.is_some(), "File should exist at new path");
 
             // Verify the actual file content is accessible at the new path
             let file_bytes =
-                api::client::file::get_file(&remote_repo, branch_name, new_path).await?;
+                api::client::file::get_file(&remote_repo, branch_name, Path::new(new_path)).await?;
             assert!(
                 !file_bytes.is_empty(),
                 "File content should not be empty at new path"
@@ -2176,7 +2152,8 @@ mod tests {
 
             // Verify the original path no longer exists
             let old_file =
-                api::client::entries::get_entry(&remote_repo, original_path, &commit.id).await?;
+                api::client::entries::get_entry(&remote_repo, Path::new(original_path), &commit.id)
+                    .await?;
             assert!(old_file.is_none(), "File should not exist at original path");
 
             Ok(remote_repo)
@@ -2221,7 +2198,7 @@ mod tests {
         let workspace_id = uuid::Uuid::new_v4().to_string();
         let workspace = api::client::workspaces::create(
             remote_repo,
-            &constants::DEFAULT_BRANCH_NAME,
+            constants::DEFAULT_BRANCH_NAME,
             &workspace_id,
         )
         .await?;
@@ -2252,7 +2229,7 @@ mod tests {
                 api::client::workspaces::files::upload_single_file(
                     &remote_repo,
                     &workspace_id,
-                    upload_path,
+                    Path::new(upload_path),
                     &test_file,
                 )
                 .await?;
@@ -2358,7 +2335,7 @@ mod tests {
                 let workspace_id = uuid::Uuid::new_v4().to_string();
                 let workspace = api::client::workspaces::create_with_name(
                     &remote_repo,
-                    &constants::DEFAULT_BRANCH_NAME,
+                    constants::DEFAULT_BRANCH_NAME,
                     &workspace_id,
                     workspace_name,
                 )

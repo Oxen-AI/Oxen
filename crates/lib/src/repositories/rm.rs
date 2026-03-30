@@ -154,35 +154,35 @@ mod tests {
             util::fs::create_dir_all(&gemma_dir)?;
 
             let chat_file = gemma_dir.join("chat.py");
-            util::fs::write(chat_file, "print('Hello, Gemma!')")?;
+            util::fs::write(&chat_file, "print('Hello, Gemma!')".as_bytes())?;
 
             let mistral_dir = repo.path.join("mistral-small-3-1");
             util::fs::create_dir_all(&mistral_dir)?;
 
             let chat_file = mistral_dir.join("chat.py");
-            util::fs::write(chat_file, "print('Hello, Mistral!')")?;
+            util::fs::write(&chat_file, "print('Hello, Mistral!')".as_bytes())?;
 
             let phi_dir = repo.path.join("phi-4");
             util::fs::create_dir_all(&phi_dir)?;
 
             let chat_file = phi_dir.join("chat.py");
-            util::fs::write(chat_file, "print('Hello, Phi!')")?;
+            util::fs::write(&chat_file, "print('Hello, Phi!')".as_bytes())?;
 
             let phi_multimodal_dir = repo.path.join("phi-4-multimodal");
             util::fs::create_dir_all(&phi_multimodal_dir)?;
 
             let chat_file = phi_multimodal_dir.join("chat.py");
-            util::fs::write(chat_file, "print('Hello, Phi Multimodal!')")?;
+            util::fs::write(&chat_file, "print('Hello, Phi Multimodal!')".as_bytes())?;
 
             let ocr_bench_dir = phi_multimodal_dir.join("eval");
             util::fs::create_dir_all(&ocr_bench_dir)?;
 
             let ocr_file = ocr_bench_dir.join("ocr-bench-v2.py");
-            util::fs::write(ocr_file, "print('Hello, Phi OCR Bench!')")?;
+            util::fs::write(&ocr_file, "print('Hello, Phi OCR Bench!')".as_bytes())?;
 
             // Write a README.md file
             let readme_file = repo.path.join("README.md");
-            util::fs::write(readme_file, "Hello, world!")?;
+            util::fs::write(&readme_file, "Hello, world!".as_bytes())?;
 
             // Add and commit the files
             repositories::add(&repo, &repo.path).await?;
@@ -207,16 +207,16 @@ mod tests {
             // add data via a workspace
             let workspace_id = "my_workspace";
             let workspace =
-                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
+                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
                     .await?;
             assert_eq!(workspace.id, workspace_id);
             let file_to_post = test::test_csv_file_with_name("emojis.csv");
             let directory_name = "phi-4";
-            let result = api::client::workspaces::files::upload_single_file(
+            let result = &api::client::workspaces::files::upload_single_file(
                 &remote_repo,
-                &workspace_id,
-                directory_name,
-                file_to_post,
+                workspace_id,
+                Path::new(directory_name),
+                &file_to_post,
             )
             .await;
             assert!(result.is_ok());
@@ -508,14 +508,14 @@ mod tests {
             // Remove one of the dogs
             let repo_filepath = PathBuf::from("images").join("dog_1.jpg");
 
-            let rm_opts = RmOpts::from_path(repo_filepath);
+            let rm_opts = RmOpts::from_path(&repo_filepath);
             repositories::rm(&repo, &rm_opts)?;
             let _commit = repositories::commit(&repo, "Removing dog")?;
 
             // Add dwight howard and vince carter
             let test_file = test::test_img_file_with_name("dwight_vince.jpeg");
             let repo_filepath = images_dir.join(test_file.file_name().unwrap());
-            util::fs::copy(&test_file, repo_filepath)?;
+            util::fs::copy(&test_file, &repo_filepath)?;
             repositories::add(&repo, &images_dir).await?;
             let commit = repositories::commit(&repo, "Adding dwight and vince")?;
 
@@ -544,7 +544,7 @@ mod tests {
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let dir = Path::new("nlp");
             let repo_dir = repo.path.join(dir);
-            repositories::add(&repo, repo_dir).await?;
+            repositories::add(&repo, &repo_dir).await?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -576,7 +576,7 @@ mod tests {
             status.print();
 
             // Add the removed nlp dir with a wildcard
-            repositories::add(&repo, "nlp/*").await?;
+            repositories::add(&repo, Path::new("nlp/*")).await?;
             status.print();
 
             let status = repositories::status(&repo)?;
@@ -674,7 +674,7 @@ mod tests {
             // add a new file in a directory
             let path = Path::new("dir").join("new_file.txt");
 
-            util::fs::write_to_path(repo.path.join(&path), "this is a new file")?;
+            util::fs::write_to_path(&repo.path.join(&path), "this is a new file")?;
             repositories::add(&repo, &path).await?;
             repositories::commit(&repo, "first_commit")?;
 
@@ -697,7 +697,7 @@ mod tests {
         test::run_select_data_repo_test_no_commits_async("README", |repo| async move {
             // Stage a file in a directory
             let path = Path::new("README.md");
-            repositories::add(&repo, repo.path.join(path)).await?;
+            repositories::add(&repo, &repo.path.join(path)).await?;
 
             let status = repositories::status(&repo)?;
             assert_eq!(status.staged_files.len(), 1);
@@ -719,7 +719,7 @@ mod tests {
         test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
             // Stage the data
             let path = Path::new("train");
-            repositories::add(&repo, repo.path.join(path)).await?;
+            repositories::add(&repo, &repo.path.join(path)).await?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -744,7 +744,7 @@ mod tests {
         test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Stage the data
             let path = Path::new("annotations").join("train");
-            repositories::add(&repo, repo.path.join(&path)).await?;
+            repositories::add(&repo, &repo.path.join(&path)).await?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -774,7 +774,7 @@ mod tests {
         test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
             // Stage the data
             let path = Path::new("train");
-            repositories::add(&repo, repo.path.join(path)).await?;
+            repositories::add(&repo, &repo.path.join(path)).await?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -804,7 +804,7 @@ mod tests {
         test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
             // Stage the data
             let path = Path::new("train/");
-            repositories::add(&repo, repo.path.join(path)).await?;
+            repositories::add(&repo, &repo.path.join(path)).await?;
 
             let status = repositories::status(&repo)?;
             // 1: train dir
@@ -911,12 +911,12 @@ mod tests {
 
             // copy a cat into the dog image
             util::fs::copy(
-                test::REPO_ROOT
+                &test::REPO_ROOT
                     .join("data")
                     .join("test")
                     .join("images")
                     .join("cat_1.jpg"),
-                repo.path.join(train_dir.join("dog_1.jpg")),
+                &repo.path.join(train_dir.join("dog_1.jpg")),
             )?;
 
             // There should be one modified file

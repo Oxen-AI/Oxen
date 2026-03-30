@@ -18,7 +18,7 @@ impl MinOxenVersion {
     /// Should default to latest if none is supplied in most cases
     pub fn or_latest(s: Option<String>) -> Result<MinOxenVersion, OxenError> {
         if let Some(version) = s {
-            MinOxenVersion::from_string(version)
+            MinOxenVersion::from_string(&version)
         } else {
             Ok(MinOxenVersion::LATEST)
         }
@@ -27,19 +27,19 @@ impl MinOxenVersion {
     /// Only use this if we have no version specified in an .oxen/config.toml file
     pub fn or_earliest(s: Option<String>) -> Result<MinOxenVersion, OxenError> {
         if let Some(version) = s {
-            MinOxenVersion::from_string(version)
+            MinOxenVersion::from_string(&version)
         } else {
             Ok(MinOxenVersion::V0_10_0)
         }
     }
 
-    pub fn from_string(s: impl AsRef<str>) -> Result<MinOxenVersion, OxenError> {
-        match s.as_ref() {
+    pub fn from_string(s: &str) -> Result<MinOxenVersion, OxenError> {
+        match s {
             "0.10.0" => Ok(MinOxenVersion::V0_10_0),
             "0.19.0" => Ok(MinOxenVersion::V0_19_0),
             "0.25.0" => Ok(MinOxenVersion::V0_25_0),
             "0.36.0" => Ok(MinOxenVersion::LATEST),
-            _ => Err(OxenError::invalid_version(s.as_ref())),
+            _ => Err(OxenError::invalid_version(s)),
         }
     }
 

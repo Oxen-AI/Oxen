@@ -34,7 +34,7 @@ impl EntryMergeConflictDBReader {
                 let err = format!(
                     "EntryMergeConflictDBReader::get_conflict Error reading db\nErr: {err}"
                 );
-                Err(OxenError::basic_str(err))
+                Err(OxenError::basic_str(&err))
             }
         }
     }
@@ -56,7 +56,7 @@ impl EntryMergeConflictDBReader {
                     let err = format!(
                         "EntryMergeConflictDBReader::list_conflicts Error reading db\nErr: {err}"
                     );
-                    return Err(OxenError::basic_str(err));
+                    return Err(OxenError::basic_str(&err));
                 }
             }
         }

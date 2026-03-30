@@ -12,14 +12,12 @@ use std::path::Path;
 
 pub async fn put_file(
     remote_repo: &RemoteRepository,
-    branch: impl AsRef<str>,
-    directory: impl AsRef<str>,
-    file_path: impl AsRef<Path>,
-    file_name: Option<impl AsRef<str>>,
+    branch: &str,
+    directory: &str,
+    file_path: &Path,
+    file_name: Option<&str>,
     commit_body: Option<NewCommitBody>,
 ) -> Result<CommitResponse, OxenError> {
-    let branch = branch.as_ref();
-    let directory = directory.as_ref();
     put_multipart_file(
         remote_repo,
         format!("/file/{branch}/{directory}"),
@@ -94,8 +92,8 @@ fn apply_commit_body(mut form: Form, commit_body: Option<NewCommitBody>) -> Form
 
 pub async fn get_file(
     remote_repo: &RemoteRepository,
-    branch: impl AsRef<str>,
-    file_path: impl AsRef<Path>,
+    branch: &str,
+    file_path: &Path,
 ) -> Result<Bytes, OxenError> {
     get_file_with_params(remote_repo, branch, file_path, None, None, None, None).await
 }
@@ -103,18 +101,17 @@ pub async fn get_file(
 /// Get a file with optional query parameters (for thumbnails, image resizing, etc.)
 pub async fn get_file_with_params(
     remote_repo: &RemoteRepository,
-    branch: impl AsRef<str>,
-    file_path: impl AsRef<Path>,
+    branch: &str,
+    file_path: &Path,
     thumbnail: Option<bool>,
     width: Option<u32>,
     height: Option<u32>,
     timestamp: Option<f64>,
 ) -> Result<Bytes, OxenError> {
-    let branch = branch.as_ref();
-    let path_ref = file_path.as_ref();
-    let file_path = path_ref
-        .to_str()
-        .ok_or_else(|| OxenError::basic_str(format!("Invalid UTF-8 in file path: {path_ref:?}")))?;
+    let path_ref = file_path;
+    let file_path = path_ref.to_str().ok_or_else(|| {
+        OxenError::basic_str(&format!("Invalid UTF-8 in file path: {path_ref:?}"))
+    })?;
     let uri = format!("/file/{branch}/{file_path}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
@@ -143,8 +140,8 @@ pub async fn get_file_with_params(
     let mut stream = res.bytes_stream();
     let mut buffer = BytesMut::new();
     while let Some(chunk_result) = stream.next().await {
-        let chunk =
-            chunk_result.map_err(|e| OxenError::basic_str(format!("Failed to read chunk: {e}")))?;
+        let chunk = chunk_result
+            .map_err(|e| OxenError::basic_str(&format!("Failed to read chunk: {e}")))?;
         buffer.extend_from_slice(&chunk);
     }
 
@@ -154,8 +151,8 @@ pub async fn get_file_with_params(
 /// Get a video thumbnail
 pub async fn get_file_thumbnail(
     remote_repo: &RemoteRepository,
-    branch: impl AsRef<str>,
-    file_path: impl AsRef<Path>,
+    branch: &str,
+    file_path: &Path,
     width: Option<u32>,
     height: Option<u32>,
     timestamp: Option<f64>,
@@ -175,15 +172,11 @@ pub async fn get_file_thumbnail(
 /// Move/rename a file in place (mv in a temp workspace and commit)
 pub async fn mv_file(
     remote_repo: &RemoteRepository,
-    branch: impl AsRef<str>,
-    source_path: impl AsRef<Path>,
-    new_path: impl AsRef<Path>,
+    branch: &str,
+    source_path: &Path,
+    new_path: &Path,
     commit_body: Option<NewCommitBody>,
 ) -> Result<CommitResponse, OxenError> {
-    let branch = branch.as_ref();
-    let source_path = source_path.as_ref();
-    let new_path = new_path.as_ref();
-
     let source_path_str = source_path.to_string_lossy().to_string();
     let new_path_str = new_path.to_string_lossy().to_string();
 
@@ -218,13 +211,10 @@ pub async fn mv_file(
 /// Delete a file in place (rm from a temp workspace and commit)
 pub async fn delete_file(
     remote_repo: &RemoteRepository,
-    branch: impl AsRef<str>,
-    file_path: impl AsRef<Path>,
+    branch: &str,
+    file_path: &Path,
     commit_body: Option<NewCommitBody>,
 ) -> Result<CommitResponse, OxenError> {
-    let branch = branch.as_ref();
-    let file_path = file_path.as_ref();
-
     let file_path = file_path.to_string_lossy().to_string();
 
     let uri = format!("/file/{branch}/{file_path}");
@@ -402,7 +392,7 @@ mod tests {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = "main";
             let file_path = test::test_bounding_box_csv();
-            let bytes = api::client::file::get_file(&remote_repo, branch_name, file_path).await;
+            let bytes = api::client::file::get_file(&remote_repo, branch_name, &file_path).await;
 
             assert!(bytes.is_ok());
             assert!(!bytes.unwrap().is_empty());
@@ -429,7 +419,7 @@ mod tests {
             // Delete the file on the remote repo
             let _commit_response = api::client::file::delete_file(
                 &remote_repo,
-                &branch_name,
+                branch_name,
                 &file_path,
                 Some(commit_body),
             )
@@ -479,7 +469,7 @@ mod tests {
             let delete_response = api::client::file::delete_file(
                 &remote_repo,
                 branch_name,
-                &file_to_delete,
+                Path::new(file_to_delete),
                 Some(delete_commit_body),
             )
             .await?;
@@ -526,8 +516,8 @@ mod tests {
             let mv_response = api::client::file::mv_file(
                 &remote_repo,
                 branch_name,
-                source_path,
-                new_path,
+                Path::new(source_path),
+                Path::new(new_path),
                 Some(mv_commit_body),
             )
             .await?;
@@ -581,7 +571,7 @@ mod tests {
                 .into_owned();
 
             let workspace =
-                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
+                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
                     .await?;
             assert_eq!(workspace.id, workspace_id);
 
@@ -592,12 +582,14 @@ mod tests {
             let _result = api::client::workspaces::files::upload_single_file(
                 &remote_repo,
                 &workspace.id,
-                directory_name,
+                Path::new(&directory_name),
                 &full_path,
             )
             .await;
 
-            let bytes = api::client::file::get_file(&remote_repo, workspace_id, file_path).await;
+            let bytes =
+                api::client::file::get_file(&remote_repo, workspace_id, Path::new(&file_path))
+                    .await;
 
             assert!(bytes.is_ok());
             assert!(!bytes.as_ref().unwrap().is_empty());

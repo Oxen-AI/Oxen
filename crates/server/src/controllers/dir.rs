@@ -66,7 +66,7 @@ pub async fn get(
     let paginated_entries = repositories::entries::list_directory_w_workspace_depth(
         &repo,
         &resource.path,
-        revision,
+        &revision,
         resource.workspace.clone(),
         &PaginateOpts {
             page_num: page,

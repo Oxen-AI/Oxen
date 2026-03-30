@@ -73,14 +73,14 @@ impl EntryVNode {
     }
 }
 
-pub fn commit(repo: &LocalRepository, message: impl AsRef<str>) -> Result<Commit, OxenError> {
+pub fn commit(repo: &LocalRepository, message: &str) -> Result<Commit, OxenError> {
     let cfg = UserConfig::get()?;
     commit_with_cfg(repo, message, &cfg, None)
 }
 
 pub fn commit_with_parent_ids(
     repo: &LocalRepository,
-    message: impl AsRef<str>,
+    message: &str,
     parent_ids: Vec<String>,
 ) -> Result<Commit, OxenError> {
     let cfg = UserConfig::get()?;
@@ -89,7 +89,7 @@ pub fn commit_with_parent_ids(
 
 pub fn commit_with_user(
     repo: &LocalRepository,
-    message: impl AsRef<str>,
+    message: &str,
     user: &User,
 ) -> Result<Commit, OxenError> {
     let cfg = UserConfig {
@@ -102,13 +102,12 @@ pub fn commit_with_user(
 
 pub fn commit_with_cfg(
     repo: &LocalRepository,
-    message: impl AsRef<str>,
+    message: &str,
     cfg: &UserConfig,
     parent_ids: Option<Vec<String>>,
 ) -> Result<Commit, OxenError> {
     // time the commit
     let start_time = Instant::now();
-    let message = message.as_ref();
 
     // Read the staged files from the staged db
     let opts = db::key_val::opts::default();
@@ -153,7 +152,7 @@ pub fn commit_with_cfg(
             &new_commit,
             staged_db,
             &commit_progress_bar,
-            maybe_branch_name
+            &maybe_branch_name
                 .clone()
                 .unwrap_or(DEFAULT_BRANCH_NAME.to_string()),
         )?
@@ -204,10 +203,9 @@ pub fn commit_dir_entries_with_parents(
     new_commit: &NewCommitBody,
     staged_db: DBWithThreadMode<SingleThreaded>,
     commit_progress_bar: &ProgressBar,
-    target_branch: impl AsRef<str>,
+    target_branch: &str,
 ) -> Result<Commit, OxenError> {
     let message = &new_commit.message;
-    let target_branch = target_branch.as_ref();
 
     // if the HEAD file exists, we have parents
     // otherwise this is the first commit
@@ -307,7 +305,7 @@ pub fn commit_dir_entries_with_parents(
     drop(staged_db);
 
     // Clear the staged db
-    util::fs::remove_dir_all(staged_db_path)?;
+    util::fs::remove_dir_all(&staged_db_path)?;
     Ok(node.to_commit())
 }
 
@@ -414,7 +412,7 @@ pub fn commit_dir_entries_new(
     drop(staged_db);
 
     // Clear the staged db
-    util::fs::remove_dir_all(staged_db_path)?;
+    util::fs::remove_dir_all(&staged_db_path)?;
 
     Ok(node.to_commit())
 }
@@ -423,7 +421,7 @@ pub fn commit_dir_entries(
     repo: &LocalRepository,
     dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
     new_commit: &NewCommitBody,
-    target_branch: impl AsRef<str>,
+    target_branch: &str,
     commit_progress_bar: &ProgressBar,
 ) -> Result<Commit, OxenError> {
     log::debug!("commit_dir_entries got {} entries", dir_entries.len());
@@ -553,10 +551,9 @@ fn cleanup_rm_dirs(
 }
 
 fn node_data_to_staged_node(
-    base_dir: impl AsRef<Path>,
+    base_dir: &Path,
     node: &MerkleTreeNode,
 ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
-    let base_dir = base_dir.as_ref();
     match node.node.node_type() {
         MerkleTreeNodeType::Dir => {
             let mut dir_node = node.dir()?;
@@ -581,13 +578,13 @@ fn node_data_to_staged_node(
 }
 
 fn get_node_dir_children(
-    base_dir: impl AsRef<Path>,
+    base_dir: &Path,
     node: &MerkleTreeNode,
 ) -> Result<HashSet<StagedMerkleTreeNode>, OxenError> {
     let dir_children = repositories::tree::list_files_and_folders(node)?;
     let children = dir_children
         .into_iter()
-        .flat_map(|child| node_data_to_staged_node(&base_dir, &child))
+        .flat_map(|child| node_data_to_staged_node(base_dir, &child))
         .flatten()
         .collect();
 
@@ -825,7 +822,7 @@ fn write_commit_entries(
         dir_hash_db,
         dir_hashes,
         entries,
-        root_path,
+        &root_path,
         &mut total_written,
     )?;
 
@@ -840,10 +837,10 @@ fn r_create_dir_node(
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
-    path: impl AsRef<Path>,
+    path: &Path,
     total_written: &mut u64,
 ) -> Result<(), OxenError> {
-    let path = path.as_ref().to_path_buf();
+    let path = path.to_path_buf();
 
     let keys = entries.keys();
     log::debug!("r_create_dir_node path {path:?} keys: {keys:?}");
@@ -998,7 +995,7 @@ fn r_create_dir_node(
                     // }
                 }
                 _ => {
-                    return Err(OxenError::basic_str(format!(
+                    return Err(OxenError::basic_str(&format!(
                         "r_create_dir_node found unexpected node type: {:?}",
                         entry.node
                     )));
@@ -1014,9 +1011,9 @@ fn r_create_dir_node(
 
 fn get_children(
     entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
-    dir_path: impl AsRef<Path>,
+    dir_path: &Path,
 ) -> Result<Vec<PathBuf>, OxenError> {
-    let dir_path = dir_path.as_ref().to_path_buf();
+    let dir_path = dir_path.to_path_buf();
     let mut children = vec![];
 
     for (path, _) in entries.iter() {
@@ -1033,9 +1030,9 @@ fn compute_dir_node(
     commit_id: MerkleHash,
     entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<DirNode, OxenError> {
-    let path = path.as_ref().to_path_buf();
+    let path = path.to_path_buf();
     let mut hasher = xxhash_rust::xxh3::Xxh3::new();
     hasher.update(b"dir");
     hasher.update(path.to_str().unwrap().as_bytes());
@@ -1068,7 +1065,7 @@ fn compute_dir_node(
     for child in children.iter() {
         let Some((vnodes, removed_entries)) = entries.get(child) else {
             let err_msg = format!("compute_dir_node No entries found for directory {path:?}");
-            return Err(OxenError::basic_str(err_msg));
+            return Err(OxenError::basic_str(&err_msg));
         };
         // log::debug!(
         //     "Aggregating dir {:?} child {:?} with {} vnodes",
@@ -1123,7 +1120,7 @@ fn compute_dir_node(
                         }
                     }
                     _ => {
-                        return Err(OxenError::basic_str(format!(
+                        return Err(OxenError::basic_str(&format!(
                             "compute_dir_node found unexpected node type: {:?}",
                             entry.node
                         )));
@@ -1157,7 +1154,7 @@ fn compute_dir_node(
                     }
                 }
                 _ => {
-                    return Err(OxenError::basic_str(format!(
+                    return Err(OxenError::basic_str(&format!(
                         "compute_dir_node found unexpected node type: {:?}",
                         entry.node
                     )));
@@ -1204,8 +1201,8 @@ fn create_merge_commit(
     let head_commit_id = util::fs::read_from_path(&orig_head_path)?;
 
     // Cleanup
-    util::fs::remove_file(merge_head_path)?;
-    util::fs::remove_file(orig_head_path)?;
+    util::fs::remove_file(&merge_head_path)?;
+    util::fs::remove_file(&orig_head_path)?;
 
     Ok(NewCommit {
         parent_ids: vec![merge_commit_id, head_commit_id],
@@ -1261,7 +1258,7 @@ mod tests {
     async fn test_first_commit() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|dir| async move {
             // Instantiate the correct version of the repo
-            let repo = repositories::init::init(dir)?;
+            let repo = repositories::init::init(&dir)?;
 
             // Write data to the repo
             add_n_files_m_dirs(&repo, 10, 2).await?;
@@ -1347,7 +1344,7 @@ mod tests {
     async fn test_commit_only_dirs_at_top_level() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(async |dir| {
             // Instantiate the correct version of the repo
-            let repo = repositories::init::init(dir)?;
+            let repo = repositories::init::init(&dir)?;
 
             // Add a new file to files/dir_0/
             let new_file = repo.path.join("all_files/dir_0/new_file.txt");
@@ -1377,7 +1374,7 @@ mod tests {
     async fn test_commit_single_file_deep_in_dir() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|dir| async move {
             // Instantiate the correct version of the repo
-            let repo = repositories::init::init(dir)?;
+            let repo = repositories::init::init(&dir)?;
 
             // Add a new file to files/dir_0/
             let new_file = repo.path.join("files/dir_0/new_file.txt");
@@ -1407,7 +1404,7 @@ mod tests {
     async fn test_2nd_commit_keeps_num_bytes_and_data_type_counts() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|dir| async move {
             // Instantiate the correct version of the repo
-            let repo = repositories::init::init(dir)?;
+            let repo = repositories::init::init(&dir)?;
 
             // Write data to the repo
             add_n_files_m_dirs(&repo, 10, 3).await?;
@@ -1463,7 +1460,7 @@ mod tests {
     async fn test_second_commit() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|dir| async move {
             // Instantiate the correct version of the repo
-            let repo = repositories::init::init(dir)?;
+            let repo = repositories::init::init(&dir)?;
 
             // Write data to the repo
             add_n_files_m_dirs(&repo, 10, 3).await?;
@@ -1585,7 +1582,7 @@ mod tests {
     async fn test_commit_configurable_vnode_size() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|dir| async move {
             // Instantiate the correct version of the repo
-            let mut repo = repositories::init::init(dir)?;
+            let mut repo = repositories::init::init(&dir)?;
             // Set the vnode size to 5
             repo.set_vnode_size(5);
 
@@ -1622,7 +1619,7 @@ mod tests {
                     .join("files")
                     .join(format!("dir_{dir_num}"))
                     .join(format!("new_file_{i}.txt"));
-                util::fs::write_to_path(&new_file, format!("New fileeeee {i}"))?;
+                util::fs::write_to_path(&new_file, &format!("New fileeeee {i}"))?;
                 repositories::add(&repo, &new_file).await?;
             }
 
@@ -1664,7 +1661,7 @@ mod tests {
     async fn test_commit_20_files_6_vnode_size() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|dir| async move {
             // Instantiate the correct version of the repo
-            let mut repo = repositories::init::init(dir)?;
+            let mut repo = repositories::init::init(&dir)?;
             // Set the vnode size to 6
             repo.set_vnode_size(6);
 
@@ -1734,7 +1731,7 @@ mod tests {
     async fn test_third_commit() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|dir| async move {
             // Instantiate the correct version of the repo
-            let repo = repositories::init::init(dir)?;
+            let repo = repositories::init::init(&dir)?;
 
             // Write data to the repo
             add_n_files_m_dirs(&repo, 10, 3).await?;
@@ -1828,8 +1825,8 @@ mod tests {
             let first_root_dir_node = first_tree.get_by_path(Path::new(""))?.unwrap();
 
             // add the data
-            repositories::add(&repo, repo.path.join("train")).await?;
-            repositories::add(&repo, repo.path.join("test")).await?;
+            repositories::add(&repo, &repo.path.join("train")).await?;
+            repositories::add(&repo, &repo.path.join("test")).await?;
             let second_commit = super::commit(&repo, "Adding the data")?;
 
             let second_tree = CommitMerkleTree::from_commit(&repo, &second_commit)?;

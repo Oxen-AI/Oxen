@@ -97,7 +97,7 @@ fn find_next_logical_op(
 pub fn parse(query: Option<String>) -> Result<Option<DFFilterExp>, OxenError> {
     if let Some(mut filter) = query {
         if filter.is_empty() {
-            return Err(OxenError::parse_error(filter));
+            return Err(OxenError::parse_error(&filter));
         }
 
         // 1) Iterate over string finding DFLogicalOps and collecting the sub expressions

@@ -38,29 +38,29 @@ pub fn list(
 ) -> Result<HashMap<PathBuf, Schema>, OxenError> {
     let tree = CommitMerkleTree::from_commit(repo, commit)?;
     let mut schemas = HashMap::new();
-    r_list_schemas(repo, tree.root, PathBuf::new(), &mut schemas)?;
+    r_list_schemas(repo, tree.root, &PathBuf::new(), &mut schemas)?;
     Ok(schemas)
 }
 
 fn r_list_schemas(
     _repo: &LocalRepository,
     node: MerkleTreeNode,
-    current_path: impl AsRef<Path>,
+    current_path: &Path,
     schemas: &mut HashMap<PathBuf, Schema>,
 ) -> Result<(), OxenError> {
     for child in node.children {
         match &child.node {
             EMerkleTreeNode::VNode(_) => {
-                let child_path = current_path.as_ref();
+                let child_path = current_path;
                 r_list_schemas(_repo, child, child_path, schemas)?;
             }
             EMerkleTreeNode::Directory(dir_node) => {
-                let child_path = current_path.as_ref().join(dir_node.name());
-                r_list_schemas(_repo, child, child_path, schemas)?;
+                let child_path = current_path.join(dir_node.name());
+                r_list_schemas(_repo, child, &child_path, schemas)?;
             }
             EMerkleTreeNode::File(file_node) => {
                 if let Some(GenericMetadata::MetadataTabular(metadata)) = &file_node.metadata() {
-                    let child_path = current_path.as_ref().join(file_node.name());
+                    let child_path = current_path.join(file_node.name());
                     schemas.insert(child_path, metadata.tabular.schema.clone());
                 }
             }
@@ -73,9 +73,8 @@ fn r_list_schemas(
 pub fn get_by_path(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<Option<Schema>, OxenError> {
-    let path = path.as_ref();
     let node = repositories::tree::get_file_by_path(repo, commit, path)?;
     let Some(node) = node else {
         return Err(OxenError::path_does_not_exist(path));
@@ -89,11 +88,7 @@ pub fn get_by_path(
 }
 
 /// Get a staged schema
-pub fn get_staged(
-    repo: &LocalRepository,
-    path: impl AsRef<Path>,
-) -> Result<Option<Schema>, OxenError> {
-    let path = path.as_ref();
+pub fn get_staged(repo: &LocalRepository, path: &Path) -> Result<Option<Schema>, OxenError> {
     let path = util::fs::path_relative_to_dir(path, &repo.path)?;
     let key = path.to_string_lossy();
     let db = if let Some(db) = get_staged_db_read_only(repo)? {
@@ -120,7 +115,7 @@ pub fn get_staged(
 /// A duplicate function in replace of get_staged for workspaces to use the staged db manager
 pub fn get_staged_schema_with_staged_db_manager(
     repo: &LocalRepository,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<Option<Schema>, OxenError> {
     let path = util::fs::path_relative_to_dir(path, &repo.path)?;
     let staged_db_manager = get_staged_db_manager(repo)?;
@@ -141,12 +136,12 @@ pub fn get_staged_schema_with_staged_db_manager(
 /// to match the original schema.
 pub fn restore_schema(
     repo: &LocalRepository,
-    path: impl AsRef<Path>,
+    path: &Path,
     og_schema: &Schema,
     before_column: &str,
     after_column: &str,
 ) -> Result<(), OxenError> {
-    let path = util::fs::path_relative_to_dir(&path, &repo.path)?;
+    let path = util::fs::path_relative_to_dir(path, &repo.path)?;
     let staged_db_manager = get_staged_db_manager(repo)?;
     let value = staged_db_manager.read_from_staged_db(&path)?;
     let (mut staged_schema, val) = match value {
@@ -233,12 +228,11 @@ fn db_val_to_schema(val: &StagedMerkleTreeNode) -> Result<Schema, OxenError> {
 }
 
 /// Remove a schema override from the staging area, TODO: Currently undefined behavior for non-staged schemas
-pub fn rm(repo: &LocalRepository, path: impl AsRef<Path>, staged: bool) -> Result<(), OxenError> {
+pub fn rm(repo: &LocalRepository, path: &Path, staged: bool) -> Result<(), OxenError> {
     if !staged {
         panic!("Undefined behavior for non-staged schemas")
     }
 
-    let path = path.as_ref();
     let db = get_staged_db(repo)?;
     let key = path.to_string_lossy();
     db.delete(key.as_bytes())?;
@@ -249,10 +243,9 @@ pub fn rm(repo: &LocalRepository, path: impl AsRef<Path>, staged: bool) -> Resul
 /// Add metadata to the schema
 pub fn add_schema_metadata(
     repo: &LocalRepository,
-    path: impl AsRef<Path>,
+    path: &Path,
     metadata: &serde_json::Value,
 ) -> Result<HashMap<PathBuf, Schema>, OxenError> {
-    let path = path.as_ref();
     let db = get_staged_db(repo)?;
 
     let key = path.to_string_lossy();
@@ -287,7 +280,7 @@ pub fn add_schema_metadata(
                 continue;
             };
             dir_path = dir_path.parent().unwrap().to_path_buf();
-            dir_node.set_name(dir_path.to_string_lossy());
+            dir_node.set_name(&dir_path.to_string_lossy());
             parent_node.node = EMerkleTreeNode::Directory(dir_node);
             let staged_parent_node = StagedMerkleTreeNode {
                 status: StagedEntryStatus::Modified,
@@ -347,17 +340,14 @@ pub fn add_schema_metadata(
 /// Add metadata to a specific column
 pub fn add_column_metadata(
     repo: &LocalRepository,
-    path: impl AsRef<Path>,
-    column: impl AsRef<str>,
+    path: &Path,
+    column: &str,
     metadata: &serde_json::Value,
 ) -> Result<HashMap<PathBuf, Schema>, OxenError> {
     let db = get_staged_db(repo)?;
-    let path = path.as_ref();
     let path = util::fs::path_relative_to_dir(path, &repo.path)?;
 
     log::debug!("add_column_metadata: path: {path:?}");
-
-    let column = column.as_ref();
 
     let key = path.to_string_lossy();
 
@@ -379,7 +369,7 @@ pub fn add_column_metadata(
         };
         log::debug!("add_column_metadata: commit: {commit} path: {path:?}");
         let Some(node) = repositories::tree::get_node_by_path(repo, &commit, &path)? else {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "path {path:?} not found in commit {commit:?}"
             )));
         };
@@ -395,7 +385,7 @@ pub fn add_column_metadata(
                 continue;
             };
             dir_path = dir_path.parent().unwrap().to_path_buf();
-            dir_node.set_name(dir_path.to_string_lossy());
+            dir_node.set_name(&dir_path.to_string_lossy());
             parent_node.node = EMerkleTreeNode::Directory(dir_node);
             let staged_parent_node = StagedMerkleTreeNode {
                 status: StagedEntryStatus::Modified,
@@ -426,7 +416,7 @@ pub fn add_column_metadata(
             results.insert(path.clone(), m.tabular.schema.clone());
         }
         _ => {
-            return Err(OxenError::path_does_not_exist(path));
+            return Err(OxenError::path_does_not_exist(&path));
         }
     }
 

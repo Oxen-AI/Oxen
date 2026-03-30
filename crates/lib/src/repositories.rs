@@ -72,11 +72,9 @@ pub use status::status_from_dir;
 
 pub fn get_by_namespace_and_name(
     sync_dir: &Path,
-    namespace: impl AsRef<str>,
-    name: impl AsRef<str>,
+    namespace: &str,
+    name: &str,
 ) -> Result<Option<LocalRepository>, OxenError> {
-    let namespace = namespace.as_ref();
-    let name = name.as_ref();
     let repo_dir = sync_dir.join(namespace).join(name);
 
     if !repo_dir.exists() {
@@ -253,7 +251,7 @@ pub async fn create(
 
     // Create history dir
     let history_dir = util::fs::oxen_hidden_dir(&repo_dir).join(constants::HISTORY_DIR);
-    util::fs::create_dir_all(history_dir)?;
+    util::fs::create_dir_all(&history_dir)?;
 
     // Create HEAD file and point it to DEFAULT_BRANCH_NAME
     with_ref_manager(&local_repo, |manager| {
@@ -331,7 +329,7 @@ pub async fn create(
 pub fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenError> {
     if !repo.path.exists() {
         let err = format!("Repository does not exist {:?}", repo.path);
-        return Err(OxenError::basic_str(err));
+        return Err(OxenError::basic_str(&err));
     }
 
     // Close DB instances before trying to delete the directory
@@ -572,9 +570,9 @@ mod tests {
             let namespace_3 = "my-namespace-3";
             let _ = sync_dir.join(namespace_3);
 
-            let _ = repositories::init(namespace_1_dir.join("testing1"))?;
-            let _ = repositories::init(namespace_1_dir.join("testing2"))?;
-            let _ = repositories::init(namespace_2_dir.join("testing3"))?;
+            let _ = repositories::init(&namespace_1_dir.join("testing1"))?;
+            let _ = repositories::init(&namespace_1_dir.join("testing2"))?;
+            let _ = repositories::init(&namespace_2_dir.join("testing3"))?;
 
             let repos = repositories::list_namespaces(sync_dir)?;
             assert_eq!(repos.len(), 2);
@@ -589,9 +587,9 @@ mod tests {
             let namespace = "my-namespace";
             let namespace_dir = sync_dir.join(namespace);
 
-            let _ = repositories::init(namespace_dir.join("testing1"))?;
-            let _ = repositories::init(namespace_dir.join("testing2"))?;
-            let _ = repositories::init(namespace_dir.join("testing3"))?;
+            let _ = repositories::init(&namespace_dir.join("testing1"))?;
+            let _ = repositories::init(&namespace_dir.join("testing2"))?;
+            let _ = repositories::init(&namespace_dir.join("testing3"))?;
 
             let repos = repositories::list_repos_in_namespace(&namespace_dir);
             assert_eq!(repos.len(), 3);

@@ -64,10 +64,7 @@ pub fn status_from_opts(
     }
 }
 
-pub fn status_from_dir(
-    repo: &LocalRepository,
-    dir: impl AsRef<Path>,
-) -> Result<StagedData, OxenError> {
+pub fn status_from_dir(repo: &LocalRepository, dir: &Path) -> Result<StagedData, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::status::status_from_dir(repo, dir),
@@ -130,7 +127,7 @@ mod tests {
     #[tokio::test]
     async fn test_command_add_one_file_top_level() -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
-            repositories::add(&repo, repo.path.join(Path::new("labels.txt"))).await?;
+            repositories::add(&repo, &repo.path.join(Path::new("labels.txt"))).await?;
 
             let repo_status = repositories::status(&repo)?;
             repo_status.print();
@@ -163,7 +160,7 @@ mod tests {
             // Add a deep file
             repositories::add(
                 &repo,
-                repo.path.join(Path::new("annotations/train/one_shot.csv")),
+                &repo.path.join(Path::new("annotations/train/one_shot.csv")),
             )
             .await?;
 
@@ -385,7 +382,7 @@ mod tests {
             let initial_len = commits.len();
 
             let labels_path = repo.path.join("labels.txt");
-            util::fs::write_to_path(labels_path, "changing this guy, but not committing")?;
+            util::fs::write_to_path(&labels_path, "changing this guy, but not committing")?;
 
             let result = repositories::commit(&repo, "Should not work");
             assert!(result.is_err());
@@ -402,7 +399,7 @@ mod tests {
         test::run_empty_local_repo_test(|repo| {
             // Write to file
             let hello_file = repo.path.join("hello.txt");
-            util::fs::write_to_path(hello_file, "Hello World")?;
+            util::fs::write_to_path(&hello_file, "Hello World")?;
 
             // Get status
             let repo_status = repositories::status(&repo)?;
@@ -433,7 +430,7 @@ mod tests {
             repositories::commit(&repo, "adding none category")?;
 
             // Add a "person" category on a the main branch
-            repositories::checkout(&repo, og_branch.name).await?;
+            repositories::checkout(&repo, &og_branch.name).await?;
 
             test::modify_txt_file(&labels_path, "cat\ndog\nperson")?;
             repositories::add(&repo, &labels_path).await?;
@@ -460,7 +457,7 @@ mod tests {
             // Move the file to a new name
             let og_basename = PathBuf::from("README.md");
             let og_file = repo.path.join(&og_basename);
-            util::fs::remove_file(og_file)?;
+            util::fs::remove_file(&og_file)?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -489,7 +486,7 @@ mod tests {
             // Move the file to a new name
             let og_basename = PathBuf::from("README.md");
             let og_file = repo.path.join(&og_basename);
-            util::fs::remove_file(og_file)?;
+            util::fs::remove_file(&og_file)?;
 
             let status = repositories::status(&repo)?;
             status.print();
@@ -544,7 +541,7 @@ mod tests {
             assert_eq!(status.staged_files.len(), 2); // Staged files still operates on the addition + removal
 
             // Restore one file and break the pair
-            repositories::restore(&repo, RestoreOpts::from_staged_path(og_basename)).await?;
+            repositories::restore(&repo, RestoreOpts::from_staged_path(&og_basename)).await?;
 
             // Pair is broken; no more "moved"
             let status = repositories::status(&repo)?;
@@ -705,7 +702,7 @@ mod tests {
                 .join("one_shot.csv");
 
             // Modify the committed file
-            let one_shot_file = test::modify_txt_file(one_shot_file, "new content coming in hot")?;
+            let one_shot_file = test::modify_txt_file(&one_shot_file, "new content coming in hot")?;
 
             // List modified
             let status = repositories::status(&repo)?;
@@ -716,7 +713,7 @@ mod tests {
             assert_eq!(files.len(), 1);
 
             // And it is
-            let relative_path = util::fs::path_relative_to_dir(one_shot_file, repo_path)?;
+            let relative_path = util::fs::path_relative_to_dir(&one_shot_file, repo_path)?;
             assert!(files.contains(&relative_path));
 
             Ok(())
@@ -822,14 +819,14 @@ mod tests {
             assert_eq!(mod_files.len(), 0);
 
             // modify the file
-            let hello_file = test::modify_txt_file(hello_file, "Hello 2")?;
+            let hello_file = test::modify_txt_file(&hello_file, "Hello 2")?;
 
             // List files
             let status = repositories::status(&repo)?;
             status.print();
             let mod_files = status.modified_files;
             assert_eq!(mod_files.len(), 1);
-            let relative_path = util::fs::path_relative_to_dir(hello_file, repo_path)?;
+            let relative_path = util::fs::path_relative_to_dir(&hello_file, repo_path)?;
             assert!(mod_files.contains(&relative_path));
 
             Ok(())
@@ -849,7 +846,7 @@ mod tests {
             repositories::branches::create_checkout(&repo, branch_name)?;
 
             let file_contents = "file,label\ntrain/cat_1.jpg,0\n";
-            test::modify_txt_file(one_shot_path, file_contents)?;
+            test::modify_txt_file(&one_shot_path, file_contents)?;
             let status = repositories::status(&repo)?;
             status.print();
             assert_eq!(status.modified_files.len(), 1);

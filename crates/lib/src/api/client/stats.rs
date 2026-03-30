@@ -25,14 +25,14 @@ pub async fn get(remote_repo: &RemoteRepository) -> Result<RepositoryStatsView, 
                     log::debug!("got RepositoryStatsResponse: {val:?}");
                     Ok(val.repository)
                 }
-                Err(err) => Err(OxenError::basic_str(format!(
+                Err(err) => Err(OxenError::basic_str(&format!(
                     "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                 ))),
             }
         }
         Err(err) => {
             let err = format!("Request failed: {url}\nErr {err:?}");
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
@@ -57,7 +57,7 @@ mod tests {
             util::fs::create_dir_all(&large_dir)?;
             let csv_file = large_dir.join("test.csv");
             let from_file = test::test_csv_file_with_name("mixed_data_types.csv");
-            util::fs::copy(from_file, &csv_file)?;
+            util::fs::copy(&from_file, &csv_file)?;
 
             repositories::add(&local_repo, &csv_file).await?;
             repositories::commit(&local_repo, "add test.csv")?;

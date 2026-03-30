@@ -8,8 +8,7 @@ use lofty::probe::Probe;
 use std::path::Path;
 
 /// Detects the audio metadata for the given file.
-pub fn get_metadata(path: impl AsRef<Path>) -> Result<MetadataAudio, OxenError> {
-    let path = path.as_ref();
+pub fn get_metadata(path: &Path) -> Result<MetadataAudio, OxenError> {
     match Probe::open(path) {
         Ok(tagged_file) => match tagged_file.read() {
             Ok(tagged_file) => {
@@ -27,12 +26,12 @@ pub fn get_metadata(path: impl AsRef<Path>) -> Result<MetadataAudio, OxenError> 
             }
             Err(err) => {
                 let error_str = format!("Could not read audio stream from {path:?} {err}");
-                Err(OxenError::basic_str(error_str))
+                Err(OxenError::basic_str(&error_str))
             }
         },
         Err(err) => {
             let error_str = format!("Could not probe audio stream from {path:?}: {err}");
-            Err(OxenError::basic_str(error_str))
+            Err(OxenError::basic_str(&error_str))
         }
     }
 }
@@ -50,7 +49,7 @@ mod tests {
     #[test]
     fn test_get_metadata_audio_flac() {
         let file = test::test_audio_file_with_name("121-121726-0005.flac");
-        let metadata = repositories::metadata::get(file).unwrap();
+        let metadata = repositories::metadata::get(&file).unwrap();
 
         println!("metadata: {metadata:?}");
 
@@ -72,7 +71,7 @@ mod tests {
     #[test]
     fn test_get_metadata_audio_wav() {
         let file = test::test_audio_file_with_name("121-121726-0005.wav");
-        let metadata = repositories::metadata::get(file).unwrap();
+        let metadata = repositories::metadata::get(&file).unwrap();
 
         println!("metadata: {metadata:?}");
 

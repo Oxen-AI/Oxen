@@ -33,11 +33,7 @@ use uuid::Uuid;
 /// Loads a workspace from the filesystem. Must call create() first to create the workspace.
 ///
 /// Returns an None if the workspace does not exist
-pub fn get(
-    repo: &LocalRepository,
-    workspace_id: impl AsRef<str>,
-) -> Result<Option<Workspace>, OxenError> {
-    let workspace_id = workspace_id.as_ref();
+pub fn get(repo: &LocalRepository, workspace_id: &str) -> Result<Option<Workspace>, OxenError> {
     let workspace_id_hash = util::hasher::hash_str_sha256(workspace_id);
     log::debug!("workspace::get workspace_id: {workspace_id:?} hash: {workspace_id_hash:?}");
 
@@ -46,11 +42,11 @@ pub fn get(
 
     log::debug!("workspace::get directory: {workspace_dir:?}");
     if config_path.exists() {
-        get_by_dir(repo, workspace_dir)
+        get_by_dir(repo, &workspace_dir)
     } else if let Some(workspace) = get_by_name(repo, workspace_id)? {
         let workspace_id = util::hasher::hash_str_sha256(&workspace.id);
         let workspace_dir = Workspace::workspace_dir(repo, &workspace_id);
-        get_by_dir(repo, workspace_dir)
+        get_by_dir(repo, &workspace_dir)
     } else {
         Ok(None)
     }
@@ -58,9 +54,8 @@ pub fn get(
 
 pub fn get_by_dir(
     repo: &LocalRepository,
-    workspace_dir: impl AsRef<Path>,
+    workspace_dir: &Path,
 ) -> Result<Option<Workspace>, OxenError> {
-    let workspace_dir = workspace_dir.as_ref();
     let workspace_id = workspace_dir.file_name().unwrap().to_str().unwrap();
     let config_path = Workspace::config_path_from_dir(workspace_dir);
 
@@ -71,10 +66,10 @@ pub fn get_by_dir(
 
     let config_contents = util::fs::read_from_path(&config_path)?;
     let config: WorkspaceConfig = toml::from_str(&config_contents)
-        .map_err(|e| OxenError::basic_str(format!("Failed to parse workspace config: {e}")))?;
+        .map_err(|e| OxenError::basic_str(&format!("Failed to parse workspace config: {e}")))?;
 
     let Some(commit) = repositories::commits::get_by_id(repo, &config.workspace_commit_id)? else {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Workspace {} has invalid commit_id {}",
             workspace_id, config.workspace_commit_id
         )));
@@ -100,12 +95,12 @@ pub fn get_by_dir(
 
 pub fn get_by_name(
     repo: &LocalRepository,
-    workspace_name: impl AsRef<str>,
+    workspace_name: &str,
 ) -> Result<Option<Workspace>, OxenError> {
-    let workspace_name = workspace_name.as_ref();
     for workspace in iter_workspaces(repo)? {
         if let Some(workspace) = workspace?
-            && workspace.name.as_deref() == Some(workspace_name)
+            && let Some(other_workspace_name) = workspace.name.as_deref()
+            && other_workspace_name == workspace_name
         {
             return Ok(Some(workspace));
         }
@@ -117,7 +112,7 @@ pub fn get_by_name(
 pub fn create(
     base_repo: &LocalRepository,
     commit: &Commit,
-    workspace_id: impl AsRef<str>,
+    workspace_id: &str,
     is_editable: bool,
 ) -> Result<Workspace, OxenError> {
     create_with_name(base_repo, commit, workspace_id, None, is_editable)
@@ -126,11 +121,10 @@ pub fn create(
 pub fn create_with_name(
     base_repo: &LocalRepository,
     commit: &Commit,
-    workspace_id: impl AsRef<str>,
+    workspace_id: &str,
     workspace_name: Option<String>,
     is_editable: bool,
 ) -> Result<Workspace, OxenError> {
-    let workspace_id = workspace_id.as_ref();
     let workspace_id_hash = util::hasher::hash_str_sha256(workspace_id);
     let workspace_dir = Workspace::workspace_dir(base_repo, &workspace_id_hash);
     let oxen_dir = workspace_dir.join(OXEN_HIDDEN_DIR);
@@ -139,7 +133,7 @@ pub fn create_with_name(
 
     if oxen_dir.exists() {
         log::debug!("index::workspaces::create already have oxen repo directory {oxen_dir:?}");
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Workspace {workspace_id} already exists"
         )));
     }
@@ -170,7 +164,7 @@ pub fn create_with_name(
     let toml_string = match toml::to_string(&workspace_config) {
         Ok(s) => s,
         Err(e) => {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "Failed to serialize workspace config to TOML: {e}"
             )));
         }
@@ -179,7 +173,7 @@ pub fn create_with_name(
     // Write the TOML string to WORKSPACE_CONFIG
     let workspace_config_path = Workspace::config_path_from_dir(&workspace_dir);
     log::debug!("index::workspaces::create writing workspace config to: {workspace_config_path:?}");
-    util::fs::write_to_path(&workspace_config_path, toml_string)?;
+    util::fs::write_to_path(&workspace_config_path, &toml_string)?;
 
     Ok(Workspace {
         id: workspace_id.to_owned(),
@@ -226,13 +220,13 @@ pub fn create_temporary(
 ) -> Result<TemporaryWorkspace, OxenError> {
     let workspace_id = Uuid::new_v4().to_string();
     let workspace_name = format!("temporary-{workspace_id}");
-    let workspace = create_with_name(base_repo, commit, workspace_id, Some(workspace_name), true)?;
+    let workspace = create_with_name(base_repo, commit, &workspace_id, Some(workspace_name), true)?;
     Ok(TemporaryWorkspace { workspace })
 }
 
 fn check_non_editable_workspace(workspace: &Workspace, commit: &Commit) -> Result<(), OxenError> {
     if workspace.commit.id == commit.id && !workspace.is_editable {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "A non-editable workspace already exists for commit {}",
             commit.id
         )));
@@ -245,7 +239,7 @@ fn check_existing_workspace_name(
     workspace_name: &str,
 ) -> Result<(), OxenError> {
     if workspace.name == Some(workspace_name.to_string()) || *workspace_name == workspace.id {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "A workspace with the name {workspace_name} already exists"
         )));
     }
@@ -262,7 +256,7 @@ fn iter_workspaces(
 
     let workspace_hashes = if workspaces_dir.exists() {
         util::fs::list_dirs_in_dir(&workspaces_dir).map_err(|e| {
-            OxenError::basic_str(format!("Error listing workspace directories: {e}"))
+            OxenError::basic_str(&format!("Error listing workspace directories: {e}"))
         })?
     } else {
         Vec::new()
@@ -290,11 +284,11 @@ pub fn list(repo: &LocalRepository) -> Result<Vec<Workspace>, OxenError> {
 
 pub fn get_non_editable_by_commit_id(
     repo: &LocalRepository,
-    commit_id: impl AsRef<str>,
+    commit_id: &str,
 ) -> Result<Workspace, OxenError> {
     let workspaces = list(repo)?;
     for workspace in workspaces {
-        if workspace.commit.id == commit_id.as_ref() && !workspace.is_editable {
+        if workspace.commit.id == commit_id && !workspace.is_editable {
             return Ok(workspace);
         }
     }
@@ -344,7 +338,7 @@ pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), O
     let config_contents = util::fs::read_from_path(&config_path)?;
     let mut config: WorkspaceConfig = toml::from_str(&config_contents).map_err(|e| {
         log::error!("Failed to parse workspace config: {config_path:?}, err: {e}");
-        OxenError::basic_str(format!("Failed to parse workspace config: {e}"))
+        OxenError::basic_str(&format!("Failed to parse workspace config: {e}"))
     })?;
 
     log::debug!(
@@ -357,10 +351,12 @@ pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), O
 
     let toml_string = toml::to_string(&config).map_err(|e| {
         log::error!("Failed to serialize workspace config to TOML: {config_path:?}, err: {e}");
-        OxenError::basic_str(format!("Failed to serialize workspace config to TOML: {e}"))
+        OxenError::basic_str(&format!(
+            "Failed to serialize workspace config to TOML: {e}"
+        ))
     })?;
 
-    util::fs::write_to_path(&config_path, toml_string)?;
+    util::fs::write_to_path(&config_path, &toml_string)?;
 
     Ok(())
 }
@@ -368,7 +364,7 @@ pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), O
 pub async fn commit(
     workspace: &Workspace,
     new_commit: &NewCommitBody,
-    branch_name: impl AsRef<str>,
+    branch_name: &str,
 ) -> Result<Commit, OxenError> {
     match workspace.workspace_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
@@ -376,10 +372,7 @@ pub async fn commit(
     }
 }
 
-pub fn mergeability(
-    workspace: &Workspace,
-    branch_name: impl AsRef<str>,
-) -> Result<Mergeable, OxenError> {
+pub fn mergeability(workspace: &Workspace, branch_name: &str) -> Result<Mergeable, OxenError> {
     match workspace.workspace_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::workspaces::commit::mergeability(workspace, branch_name),
@@ -388,9 +381,8 @@ pub fn mergeability(
 
 fn init_workspace_repo(
     repo: &LocalRepository,
-    workspace_dir: impl AsRef<Path>,
+    workspace_dir: &Path,
 ) -> Result<LocalRepository, OxenError> {
-    let workspace_dir = workspace_dir.as_ref();
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::workspaces::init_workspace_repo(repo, workspace_dir),
@@ -430,9 +422,9 @@ pub fn populate_entries_with_workspace_data(
     for (file_path, status) in additions_map.iter() {
         if *status == StagedEntryStatus::Added {
             let staged_node = get_staged_db_manager(&workspace.workspace_repo)?
-                .read_from_staged_db(file_path)?
+                .read_from_staged_db(Path::new(file_path))?
                 .ok_or_else(|| {
-                    OxenError::basic_str(format!(
+                    OxenError::basic_str(&format!(
                         "Staged entry disappeared while resolving workspace metadata: {file_path:?}"
                     ))
                 })?;
@@ -609,7 +601,8 @@ mod tests {
                 // Update the hello file in the temporary workspace
                 let workspace_hello_file = temp_workspace.dir().join("hello.txt");
                 util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
-                repositories::workspaces::files::add(&temp_workspace, workspace_hello_file).await?;
+                repositories::workspaces::files::add(&temp_workspace, &workspace_hello_file)
+                    .await?;
                 // Commit the changes to the "main" branch
                 repositories::workspaces::commit(
                     &temp_workspace,
@@ -630,7 +623,7 @@ mod tests {
                 // Update the goodbye file in the temporary workspace
                 let workspace_goodbye_file = temp_workspace.dir().join("goodbye.txt");
                 util::fs::write_to_path(&workspace_goodbye_file, "Goodbye again")?;
-                repositories::workspaces::files::add(&temp_workspace, workspace_goodbye_file)
+                repositories::workspaces::files::add(&temp_workspace, &workspace_goodbye_file)
                     .await?;
                 // Commit the changes to the "main" branch
                 repositories::workspaces::commit(
@@ -667,7 +660,8 @@ mod tests {
                 // Update the hello file in the temporary workspace
                 let workspace_hello_file = temp_workspace.dir().join("greetings").join("hello.txt");
                 util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
-                repositories::workspaces::files::add(&temp_workspace, workspace_hello_file).await?;
+                repositories::workspaces::files::add(&temp_workspace, &workspace_hello_file)
+                    .await?;
                 // Commit the changes to the "main" branch
                 repositories::workspaces::commit(
                     &temp_workspace,
@@ -688,7 +682,8 @@ mod tests {
                 // Update the hello file in the temporary workspace
                 let workspace_hello_file = temp_workspace.dir().join("greetings").join("hello.txt");
                 util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
-                repositories::workspaces::files::add(&temp_workspace, workspace_hello_file).await?;
+                repositories::workspaces::files::add(&temp_workspace, &workspace_hello_file)
+                    .await?;
                 // Commit the changes to the "main" branch
                 let result = repositories::workspaces::commit(
                     &temp_workspace,
@@ -730,7 +725,8 @@ mod tests {
                 // Update the hello file in the temporary workspace
                 let workspace_hello_file = temp_workspace.dir().join("greetings").join("hello.txt");
                 util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
-                repositories::workspaces::files::add(&temp_workspace, workspace_hello_file).await?;
+                repositories::workspaces::files::add(&temp_workspace, &workspace_hello_file)
+                    .await?;
                 // Commit the changes to the "main" branch
                 repositories::workspaces::commit(
                     &temp_workspace,
@@ -752,7 +748,7 @@ mod tests {
                 let workspace_goodbye_file =
                     temp_workspace.dir().join("greetings").join("goodbye.txt");
                 util::fs::write_to_path(&workspace_goodbye_file, "Goodbye again")?;
-                repositories::workspaces::files::add(&temp_workspace, workspace_goodbye_file)
+                repositories::workspaces::files::add(&temp_workspace, &workspace_goodbye_file)
                     .await?;
                 // Commit the changes to the "main" branch
                 repositories::workspaces::commit(
@@ -837,15 +833,15 @@ mod tests {
             api::client::workspaces::files::upload_single_file(
                 &remote_repo,
                 &workspace1.id,
-                "dir1",
-                file1,
+                Path::new("dir1"),
+                &file1,
             )
             .await?;
             api::client::workspaces::files::upload_single_file(
                 &remote_repo,
                 &workspace2.id,
-                "dir2",
-                file2,
+                Path::new("dir2"),
+                &file2,
             )
             .await?;
 
@@ -931,12 +927,12 @@ mod tests {
 
                     // Add a unique file
                     let file_path = repo.path.join(format!("file-{i}.txt"));
-                    util::fs::write_to_path(&file_path, format!("content {i}"))?;
+                    util::fs::write_to_path(&file_path, &format!("content {i}"))?;
                     api::client::workspaces::files::upload_single_file(
                         &remote_repo,
                         &workspace.id,
-                        "",
-                        file_path,
+                        Path::new(""),
+                        &file_path,
                     )
                     .await?;
 
@@ -964,7 +960,7 @@ mod tests {
             for handle in handles {
                 handle
                     .await
-                    .map_err(|e| OxenError::basic_str(format!("Task error: {e}")))??;
+                    .map_err(|e| OxenError::basic_str(&format!("Task error: {e}")))??;
             }
 
             Ok(remote_repo)

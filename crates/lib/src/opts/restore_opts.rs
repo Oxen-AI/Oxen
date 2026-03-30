@@ -10,9 +10,9 @@ pub struct RestoreOpts {
 }
 
 impl RestoreOpts {
-    pub fn from_path<P: AsRef<Path>>(path: P) -> RestoreOpts {
+    pub fn from_path(path: &Path) -> RestoreOpts {
         let mut paths = HashSet::new();
-        paths.insert(path.as_ref().to_owned());
+        paths.insert(path.to_owned());
 
         RestoreOpts {
             paths,
@@ -22,9 +22,9 @@ impl RestoreOpts {
         }
     }
 
-    pub fn from_staged_path<P: AsRef<Path>>(path: P) -> RestoreOpts {
+    pub fn from_staged_path(path: &Path) -> RestoreOpts {
         let mut paths = HashSet::new();
-        paths.insert(path.as_ref().to_owned());
+        paths.insert(path.to_owned());
 
         RestoreOpts {
             paths,
@@ -34,15 +34,15 @@ impl RestoreOpts {
         }
     }
 
-    pub fn from_path_ref<P: AsRef<Path>, S: AsRef<str>>(path: P, source_ref: S) -> RestoreOpts {
+    pub fn from_path_ref(path: &Path, source_ref: &str) -> RestoreOpts {
         let mut paths = HashSet::new();
-        paths.insert(path.as_ref().to_owned());
+        paths.insert(path.to_owned());
 
         RestoreOpts {
             paths,
             staged: false,
             is_remote: false,
-            source_ref: Some(source_ref.as_ref().to_owned()),
+            source_ref: Some(source_ref.to_owned()),
         }
     }
 }

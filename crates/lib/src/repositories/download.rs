@@ -15,19 +15,13 @@ use crate::repositories::LocalRepository;
 
 pub async fn download(
     repo: &RemoteRepository,
-    remote_path: impl AsRef<Path>,
-    local_path: impl AsRef<Path>,
-    revision: impl AsRef<str>,
+    remote_path: &Path,
+    local_path: &Path,
+    revision: &str,
 ) -> Result<(), OxenError> {
     // Ping server telling it we are about to download
     api::client::repositories::pre_download(repo).await?;
-    api::client::entries::download_entry(
-        repo,
-        remote_path.as_ref(),
-        local_path.as_ref(),
-        revision.as_ref(),
-    )
-    .await?;
+    api::client::entries::download_entry(repo, remote_path, local_path, revision).await?;
     // Ping server telling it we finished downloading
     api::client::repositories::post_download(repo).await?;
     Ok(())
@@ -36,8 +30,8 @@ pub async fn download(
 pub async fn download_dir(
     remote_repo: &RemoteRepository,
     entry: &MetadataEntry,
-    remote_path: impl AsRef<Path>,
-    local_path: impl AsRef<Path>,
+    remote_path: &Path,
+    local_path: &Path,
 ) -> Result<(), OxenError> {
     match remote_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
@@ -54,8 +48,8 @@ pub async fn download_dir_to_repo(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     entry: &MetadataEntry,
-    remote_path: impl AsRef<Path>,
-    local_path: impl AsRef<Path>,
+    remote_path: &Path,
+    local_path: &Path,
 ) -> Result<(), OxenError> {
     match remote_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
@@ -97,7 +91,7 @@ mod tests {
             let num_files = 33;
             for i in 0..num_files {
                 let path = dir.join(format!("file_{i}.txt"));
-                util::fs::write_to_path(&path, format!("lol hi {i}"))?;
+                util::fs::write_to_path(&path, &format!("lol hi {i}"))?;
             }
             repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;
@@ -118,7 +112,7 @@ mod tests {
 
             // Download the directory
             let output_dir = repo.path.join("output");
-            download(&remote_repo, &dir, &output_dir, &branch.name).await?;
+            download(&remote_repo, dir, &output_dir, &branch.name).await?;
 
             // Check that the files are there
             for i in 0..num_files {
@@ -190,7 +184,7 @@ mod tests {
             let num_files = 33;
             for i in 0..num_files {
                 let path = dir.join(format!("file_{i}.txt"));
-                util::fs::write_to_path(&path, format!("lol hi {i}"))?;
+                util::fs::write_to_path(&path, &format!("lol hi {i}"))?;
             }
             repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;
@@ -211,7 +205,7 @@ mod tests {
 
             // Download the directory
             let output_dir = Path::new("output");
-            repositories::download(&remote_repo, &dir, &output_dir, &branch.name).await?;
+            repositories::download(&remote_repo, dir, output_dir, &branch.name).await?;
 
             // Check that the files are there
             for i in 0..num_files {
@@ -245,7 +239,7 @@ mod tests {
                 let local_path = repo_dir.join("new_name.txt");
                 let revision = DEFAULT_BRANCH_NAME;
 
-                download(&remote_repo, file_path, &local_path, revision).await?;
+                download(&remote_repo, Path::new(file_path), &local_path, revision).await?;
 
                 assert!(local_path.exists());
                 assert_eq!(util::fs::read_from_path(&local_path)?, file_contents);
@@ -273,7 +267,7 @@ mod tests {
                 let dst_path = repo_dir.join("images");
                 let revision = DEFAULT_BRANCH_NAME;
 
-                download(&remote_repo, src_path, &dst_path, revision).await?;
+                download(&remote_repo, Path::new(src_path), &dst_path, revision).await?;
 
                 assert!(dst_path.exists());
                 let result_dir = &dst_path.join(src_path);

@@ -40,7 +40,7 @@ mod tests {
             let num_files = 33;
             for i in 0..num_files {
                 let path = dir.join(format!("file_{i}.txt"));
-                util::fs::write_to_path(&path, format!("lol hi {i}"))?;
+                util::fs::write_to_path(&path, &format!("lol hi {i}"))?;
             }
             repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;
@@ -99,7 +99,7 @@ mod tests {
             let num_files = 5;
             for i in 0..num_files {
                 let path = dir.join(format!("file_{i}.txt"));
-                util::fs::write_to_path(&path, format!("lol hi {i}"))?;
+                util::fs::write_to_path(&path, &format!("lol hi {i}"))?;
             }
             repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;
@@ -141,7 +141,7 @@ mod tests {
             assert_eq!(1, new_entries.entries.len());
 
             let file_path = "test/ing/data/new_file.jsonl";
-            let entry = api::client::entries::get_entry(&remote_repo, file_path, &branch.name).await?;
+            let entry = api::client::entries::get_entry(&remote_repo, Path::new(file_path), &branch.name).await?;
             assert!(entry.is_some());
             let entry = entry.unwrap();
             assert_eq!(entry.filename(), "new_file.jsonl");
@@ -161,7 +161,7 @@ mod tests {
             let num_files = 5;
             for i in 0..num_files {
                 let path = dir.join(format!("file_{i}.txt"));
-                util::fs::write_to_path(&path, format!("lol hi {i}"))?;
+                util::fs::write_to_path(&path, &format!("lol hi {i}"))?;
             }
             repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;

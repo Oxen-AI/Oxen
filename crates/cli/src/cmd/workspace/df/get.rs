@@ -99,8 +99,8 @@ impl RunCmd for WorkspaceDFGetCmd {
             println!("Downloading data frame to {output:?}");
             api::client::workspaces::data_frames::download(
                 &remote_repo,
-                &workspace_id,
-                &path,
+                workspace_id,
+                std::path::Path::new(path),
                 &opts,
             )
             .await?;
@@ -110,8 +110,13 @@ impl RunCmd for WorkspaceDFGetCmd {
         }
 
         let start = std::time::Instant::now();
-        match api::client::workspaces::data_frames::get(&remote_repo, &workspace_id, &path, &opts)
-            .await
+        match api::client::workspaces::data_frames::get(
+            &remote_repo,
+            workspace_id,
+            std::path::Path::new(path),
+            &opts,
+        )
+        .await
         {
             Ok(response) => {
                 if let Some(data_frame) = response.data_frame {
@@ -120,7 +125,7 @@ impl RunCmd for WorkspaceDFGetCmd {
                     println!("{df:?}");
                     println!("Query took: {:?}", start.elapsed());
                 } else {
-                    return Err(OxenError::basic_str(format!(
+                    return Err(OxenError::basic_str(&format!(
                         "No data frame found. Index the data frame before querying.\n\n  oxen workspace df index {path} -w {workspace_id}\n"
                     )));
                 }

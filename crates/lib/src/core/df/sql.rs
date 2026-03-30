@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::core::df::tabular;
 use crate::core::v_latest::workspaces;
@@ -15,7 +15,7 @@ use uuid::Uuid;
 pub async fn query_df_from_repo(
     sql: String,
     repo: &LocalRepository,
-    path: &PathBuf,
+    path: &Path,
     opts: &DFOpts,
 ) -> Result<DataFrame, OxenError> {
     let commit = repositories::commits::head_commit(repo)?;
@@ -24,7 +24,7 @@ pub async fn query_df_from_repo(
     {
         // If not, proceed to create a new workspace and index the data frame.
         let workspace_id = Uuid::new_v4().to_string();
-        let workspace = repositories::workspaces::create(repo, &commit, workspace_id, false)?;
+        let workspace = repositories::workspaces::create(repo, &commit, &workspace_id, false)?;
         repositories::workspaces::data_frames::index(repo, &workspace, path).await?;
     }
 
@@ -32,7 +32,7 @@ pub async fn query_df_from_repo(
         workspaces::data_frames::get_queryable_data_frame_workspace(repo, path, &commit)?;
 
     let db_path = repositories::workspaces::data_frames::duckdb_path(&workspace, path);
-    let df = with_df_db_manager(db_path, |manager| {
+    let df = with_df_db_manager(&db_path, |manager| {
         manager.with_conn_mut(|conn| query_df(conn, sql, Some(opts)))
     })?;
 
@@ -46,7 +46,7 @@ pub fn query_df(
     sql: String,
     opts: Option<&DFOpts>,
 ) -> Result<DataFrame, OxenError> {
-    let df = df_db::select_str(conn, sql, opts)?;
+    let df = df_db::select_str(conn, &sql, opts)?;
 
     Ok(df)
 }
@@ -55,7 +55,7 @@ pub fn export_df(
     conn: &duckdb::Connection,
     sql: String,
     opts: Option<&DFOpts>,
-    tmp_path: impl AsRef<Path>,
+    tmp_path: &Path,
 ) -> Result<(), OxenError> {
-    df_db::export(conn, sql, opts, tmp_path)
+    df_db::export(conn, &sql, opts, tmp_path)
 }

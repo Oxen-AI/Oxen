@@ -18,12 +18,10 @@ pub mod rows;
 
 pub async fn get(
     remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    path: impl AsRef<Path>,
+    workspace_id: &str,
+    path: &Path,
     opts: &DFOpts,
 ) -> Result<WorkspaceJsonDataFrameViewResponse, OxenError> {
-    let workspace_id = workspace_id.as_ref();
-    let path = path.as_ref();
     let file_path_str = path.to_string_lossy();
     let query_str = opts.to_http_query_params();
     let uri =
@@ -41,19 +39,17 @@ pub async fn get(
             let err = format!(
                 "workspaces::data_frames::get error parsing from {url}\n\nErr {err:?} \n\n{body}"
             );
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
 
 pub async fn download(
     remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    path: impl AsRef<Path>,
+    workspace_id: &str,
+    path: &Path,
     opts: &DFOpts, // opts holds output path
 ) -> Result<(), OxenError> {
-    let workspace_id = workspace_id.as_ref();
-    let path = path.as_ref();
     let file_path_str = path.to_string_lossy();
     let query_str = opts.to_http_query_params();
     let uri =
@@ -72,12 +68,12 @@ pub async fn download(
         let status = res.status();
 
         if status == reqwest::StatusCode::NOT_FOUND {
-            return Err(OxenError::resource_not_found(file_path_str));
+            return Err(OxenError::resource_not_found(&file_path_str));
         }
 
         log::error!("api::client::workspaces::data_frames::download failed with status: {status}");
         let body = client::parse_json_body(&url, res).await?;
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Error: Could not download data frame {body:?}"
         )));
     }
@@ -124,7 +120,7 @@ pub async fn list(
             let err = format!(
                 "api::workspaces::get_by_branch error parsing from {url}\n\nErr {err:?} \n\n{body}"
             );
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
@@ -132,13 +128,13 @@ pub async fn list(
 pub async fn index(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<StatusMessage, OxenError> {
-    let path = util::fs::linux_path(path.as_ref());
+    let path = util::fs::linux_path(path);
     put(
         remote_repo,
         workspace_id,
-        path,
+        &path,
         &serde_json::json!({"is_indexed": true}),
     )
     .await
@@ -160,12 +156,10 @@ pub async fn unindex(
 
 pub async fn put(
     remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    path: impl AsRef<Path>,
+    workspace_id: &str,
+    path: &Path,
     data: &serde_json::Value,
 ) -> Result<StatusMessage, OxenError> {
-    let workspace_id = workspace_id.as_ref();
-    let path = path.as_ref();
     let file_path_str = path.to_string_lossy();
 
     let uri = format!("/workspaces/{workspace_id}/data_frames/resource/{file_path_str}");
@@ -181,7 +175,7 @@ pub async fn put(
         Err(err) => {
             let err =
                 format!("api::workspaces::put error parsing from {url}\n\nErr {err:?} \n\n{body}");
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
@@ -189,9 +183,9 @@ pub async fn put(
 pub async fn restore(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<(), OxenError> {
-    let file_name = path.as_ref().to_string_lossy();
+    let file_name = path.to_string_lossy();
     let uri = format!("/workspaces/{workspace_id}/data_frames/resource/{file_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("workspaces::data_frames::restore {url}");
@@ -205,9 +199,9 @@ pub async fn restore(
 pub async fn restore_files(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
-    path: impl AsRef<Path>,
+    path: &Path,
 ) -> Result<(), OxenError> {
-    let file_name = path.as_ref().to_string_lossy();
+    let file_name = path.to_string_lossy();
     let uri = format!("/workspaces/{workspace_id}/data_frames/resource/{file_name}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("workspaces::data_frames::restore {url}");
@@ -242,32 +236,30 @@ pub async fn diff(
             match response {
                 Ok(data) => Ok(data.data_frame),
 
-                Err(err) => Err(OxenError::basic_str(format!(
+                Err(err) => Err(OxenError::basic_str(&format!(
                     "api::staging::diff error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                 ))),
             }
         }
         Err(err) => {
             let err = format!("api::staging::diff Request failed: {url}\nErr {err:?}");
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
 
 pub async fn rename_data_frame(
     remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    path: impl AsRef<Path>,
-    new_path: impl AsRef<Path>,
+    workspace_id: &str,
+    path: &Path,
+    new_path: &Path,
 ) -> Result<StatusMessage, OxenError> {
-    let workspace_id = workspace_id.as_ref();
-    let path = path.as_ref();
     let file_path_str = path.to_string_lossy();
 
     let uri = format!("/workspaces/{workspace_id}/data_frames/rename/{file_path_str}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     let params = serde_json::to_string(&serde_json::json!({
-        "new_path": new_path.as_ref().to_string_lossy()
+        "new_path": new_path.to_string_lossy()
     }))?;
 
     let client = client::new_for_url(&url)?;
@@ -279,7 +271,7 @@ pub async fn rename_data_frame(
         Err(err) => {
             let err =
                 format!("api::workspaces::put error parsing from {url}\n\nErr {err:?} \n\n{body}");
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
@@ -381,19 +373,15 @@ mod tests {
             let new_path = Path::new("new/dir/bounding_box_renamed.csv");
 
             // Index the original data frame
-            api::client::workspaces::data_frames::index(
-                &remote_repo,
-                &workspace.id,
-                &original_path,
-            )
-            .await?;
+            api::client::workspaces::data_frames::index(&remote_repo, &workspace.id, original_path)
+                .await?;
 
             // Rename the data frame
             let rename_response = api::client::workspaces::data_frames::rename_data_frame(
                 &remote_repo,
                 &workspace.id,
-                &original_path,
-                &new_path,
+                original_path,
+                new_path,
             )
             .await?;
             assert_eq!(rename_response.status, "success");
@@ -417,7 +405,7 @@ mod tests {
             let renamed_df = api::client::data_frames::get(
                 &remote_repo,
                 DEFAULT_BRANCH_NAME,
-                &new_path,
+                new_path,
                 DFOpts::empty(),
             )
             .await?;
@@ -426,7 +414,7 @@ mod tests {
             let original_df = api::client::data_frames::get(
                 &remote_repo,
                 DEFAULT_BRANCH_NAME,
-                &original_path,
+                original_path,
                 DFOpts::empty(),
             )
             .await?;
@@ -803,7 +791,7 @@ mod tests {
                 assert!(output_path.exists());
 
                 // Check the file contents are the same
-                let og_df = tabular::read_df(local_repo.path.join(path), DFOpts::empty()).await?;
+                let og_df = tabular::read_df(&local_repo.path.join(path), DFOpts::empty()).await?;
                 let download_df = tabular::read_df(&output_path, DFOpts::empty()).await?;
                 assert_eq!(og_df.height(), download_df.height());
                 assert_eq!(og_df.width(), download_df.width());
@@ -956,9 +944,12 @@ mod tests {
                     .await;
             assert!(workspace.is_ok());
 
-            let res =
-                api::client::workspaces::data_frames::index(&remote_repo, workspace_id, file_name)
-                    .await?;
+            let res = api::client::workspaces::data_frames::index(
+                &remote_repo,
+                workspace_id,
+                Path::new(file_name),
+            )
+            .await?;
 
             assert_eq!(res.status, "success");
 
@@ -1094,7 +1085,7 @@ mod tests {
             assert_eq!(branch.name, branch_name);
             let workspace_id = UserConfig::identifier()?;
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id)
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id)
                     .await;
             assert!(workspace.is_ok());
 
@@ -1144,7 +1135,7 @@ mod tests {
             assert_eq!(branch.name, branch_name);
             let workspace_id = UserConfig::identifier()?;
             let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id)
+                api::client::workspaces::create(&remote_repo, branch_name, &workspace_id)
                     .await;
             assert!(workspace.is_ok());
 
@@ -1243,7 +1234,7 @@ mod tests {
                 let user = UserConfig::get()?.to_user();
                 let workspace_id = "workspace_a";
                 let workspace =
-                    api::client::workspaces::create(&remote_repo, &DEFAULT_BRANCH_NAME, &workspace_id)
+                    api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
                         .await;
                 assert!(workspace.is_ok());
 
@@ -1278,7 +1269,7 @@ mod tests {
                 // Add a more rows on this branch
                 let workspace_id = "workspace_b";
                 let workspace =
-                    api::client::workspaces::create(&remote_repo, &DEFAULT_BRANCH_NAME, &workspace_id)
+                    api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
                         .await;
                 assert!(workspace.is_ok());
 
@@ -1338,8 +1329,8 @@ mod tests {
                 let workspace_id = "workspace_a";
                 let workspace = api::client::workspaces::create(
                     &remote_repo,
-                    &DEFAULT_BRANCH_NAME,
-                    &workspace_id,
+                    DEFAULT_BRANCH_NAME,
+                    workspace_id,
                 )
                 .await;
                 assert!(workspace.is_ok());
@@ -1386,8 +1377,8 @@ mod tests {
                 let workspace_id = "workspace_b";
                 let workspace = api::client::workspaces::create(
                     &remote_repo,
-                    &DEFAULT_BRANCH_NAME,
-                    &workspace_id,
+                    DEFAULT_BRANCH_NAME,
+                    workspace_id,
                 )
                 .await;
                 assert!(workspace.is_ok());

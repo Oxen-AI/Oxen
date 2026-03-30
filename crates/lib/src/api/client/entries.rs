@@ -30,13 +30,11 @@ use tokio::io::AsyncWriteExt;
 /// Returns the metadata given a file path
 pub async fn get_entry(
     remote_repo: &RemoteRepository,
-    remote_path: impl AsRef<Path>,
-    revision: impl AsRef<str>,
+    remote_path: &Path,
+    revision: &str,
 ) -> Result<Option<EMetadataEntry>, OxenError> {
-    let remote_path = remote_path.as_ref();
-
     let Some(response) =
-        api::client::metadata::get_file(remote_repo, &revision, &remote_path).await?
+        api::client::metadata::get_file(remote_repo, revision, remote_path).await?
     else {
         return Ok(None);
     };
@@ -45,12 +43,11 @@ pub async fn get_entry(
 
 pub async fn list_entries_with_type(
     remote_repo: &RemoteRepository,
-    path: impl AsRef<Path>,
-    revision: impl AsRef<str>,
+    path: &Path,
+    revision: &str,
     data_type: &EntryDataType,
 ) -> Result<Vec<MetadataEntry>, OxenError> {
-    let path = path.as_ref().to_string_lossy();
-    let revision = revision.as_ref();
+    let path = path.to_string_lossy();
     let uri = if path.is_empty() || path == "/" {
         format!("/{data_type}/{revision}")
     } else {
@@ -99,14 +96,8 @@ pub async fn upload_entries(
         api::client::workspaces::create(remote_repo, &branch_name, &workspace_id).await?;
     assert_eq!(workspace.id, workspace_id);
 
-    api::client::workspaces::files::add(
-        remote_repo,
-        &workspace_id,
-        &opts.dst.to_string_lossy(),
-        file_paths,
-        &None,
-    )
-    .await?;
+    api::client::workspaces::files::add(remote_repo, &workspace_id, &opts.dst, file_paths, &None)
+        .await?;
 
     log::debug!("Committing on {branch_name}");
 
@@ -129,14 +120,13 @@ pub async fn upload_entries(
 /// and get the size before downloading
 pub async fn download_entry(
     remote_repo: &RemoteRepository,
-    remote_path: impl AsRef<Path>,
-    local_path: impl AsRef<Path>,
-    revision: impl AsRef<str>,
+    remote_path: &Path,
+    local_path: &Path,
+    revision: &str,
 ) -> Result<(), OxenError> {
-    let remote_path = remote_path.as_ref();
     let download_path = util::fs::remove_leading_slash(remote_path);
 
-    let entry = get_entry(remote_repo, download_path.clone(), &revision).await?;
+    let entry = get_entry(remote_repo, &download_path.clone(), revision).await?;
 
     let entry = match entry {
         Some(EMetadataEntry::MetadataEntry(entry)) => entry,
@@ -146,26 +136,26 @@ pub async fn download_entry(
             ));
         }
         None => {
-            return Err(OxenError::path_does_not_exist(download_path));
+            return Err(OxenError::path_does_not_exist(&download_path));
         }
     };
 
     let remote_file_name = download_path.file_name();
-    let mut local_path = local_path.as_ref().to_path_buf();
+    let mut local_path = local_path.to_path_buf();
 
     // Following the similar logic as cp or scp
 
     // * if the dst parent is a file, we error because cannot copy to a file subdirectory
     if let Some(parent) = local_path.parent() {
         if parent.is_file() {
-            return Err(OxenError::basic_str(format!(
+            return Err(OxenError::basic_str(&format!(
                 "{parent:?} is not a directory"
             )));
         }
 
         // * if the dst parent does not exist, we error because cannot copy a directory to a non-existent location
         if !parent.exists() && parent != Path::new("") {
-            return Err(OxenError::basic_str(format!("{parent:?} does not exist")));
+            return Err(OxenError::basic_str(&format!("{parent:?} does not exist")));
         }
     }
 
@@ -182,9 +172,9 @@ pub async fn download_entry(
     }
 
     if entry.is_dir {
-        repositories::download::download_dir(remote_repo, &entry, download_path, &local_path).await
+        repositories::download::download_dir(remote_repo, &entry, &download_path, &local_path).await
     } else {
-        download_file(remote_repo, &entry, download_path, local_path, revision).await
+        download_file(remote_repo, &entry, &download_path, &local_path, revision).await
     }
 }
 
@@ -193,12 +183,11 @@ pub async fn download_entries_to_repo(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     paths_to_download: &[(PathBuf, PathBuf)],
-    revision: impl AsRef<str>,
+    revision: &str,
 ) -> Result<(), OxenError> {
-    let revision = revision.as_ref();
     for (local_path, remote_path) in paths_to_download.iter() {
         // TODO: Refactor to get the entries for all paths in one API call
-        let entry = get_entry(remote_repo, remote_path, &revision).await?;
+        let entry = get_entry(remote_repo, remote_path, revision).await?;
         let entry = match entry {
             Some(EMetadataEntry::MetadataEntry(entry)) => entry,
             Some(EMetadataEntry::WorkspaceMetadataEntry(_entry)) => {
@@ -214,7 +203,7 @@ pub async fn download_entries_to_repo(
         // * if the dst parent is a file, we error because cannot copy to a file subdirectory
         if let Some(parent) = local_path.parent() {
             if parent.is_file() {
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "{parent:?} is not a directory"
                 )));
             }
@@ -229,18 +218,18 @@ pub async fn download_entries_to_repo(
                 local_repo,
                 remote_repo,
                 &entry,
-                &remote_path,
-                &local_path,
+                remote_path,
+                local_path,
             )
             .await?
         } else {
             // Download file contents to working directory
-            download_file(remote_repo, &entry, &remote_path, &local_path, revision).await?;
+            download_file(remote_repo, &entry, remote_path, local_path, revision).await?;
 
             // Save contents to version store
             let version_store = local_repo.version_store()?;
             let file = std::fs::read(local_path).map_err(|e| {
-                OxenError::basic_str(format!("Failed to read file '{remote_path:?}': {e}"))
+                OxenError::basic_str(&format!("Failed to read file '{remote_path:?}': {e}"))
             })?;
             let hash = util::hasher::hash_buffer(&file);
             version_store
@@ -255,19 +244,12 @@ pub async fn download_entries_to_repo(
 pub async fn download_file(
     remote_repo: &RemoteRepository,
     entry: &MetadataEntry,
-    remote_path: impl AsRef<Path>,
-    local_path: impl AsRef<Path>,
-    revision: impl AsRef<str>,
+    remote_path: &Path,
+    local_path: &Path,
+    revision: &str,
 ) -> Result<(), OxenError> {
     if entry.size > AVG_CHUNK_SIZE {
-        download_large_entry(
-            remote_repo,
-            &remote_path,
-            &local_path,
-            &revision,
-            entry.size,
-        )
-        .await
+        download_large_entry(remote_repo, remote_path, local_path, revision, entry.size).await
     } else {
         download_small_entry(remote_repo, remote_path, local_path, revision).await
     }
@@ -275,12 +257,11 @@ pub async fn download_file(
 
 pub async fn download_small_entry(
     remote_repo: &RemoteRepository,
-    remote_path: impl AsRef<Path>,
-    dest: impl AsRef<Path>,
-    revision: impl AsRef<str>,
+    remote_path: &Path,
+    dest: &Path,
+    revision: &str,
 ) -> Result<(), OxenError> {
-    let path = remote_path.as_ref().to_string_lossy();
-    let revision = revision.as_ref();
+    let path = remote_path.to_string_lossy();
     let uri = format!("/file/{revision}/{path}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     // log::debug!("url: {url:?}");
@@ -295,7 +276,6 @@ pub async fn download_small_entry(
     match status {
         reqwest::StatusCode::OK => {
             // Copy to file
-            let dest = dest.as_ref();
             // Create parent directories if they don't exist
             if let Some(parent) = dest.parent() {
                 util::fs::create_dir_all(parent)?;
@@ -306,7 +286,7 @@ pub async fn download_small_entry(
             let mut stream = response.bytes_stream();
             while let Some(chunk_result) = stream.next().await {
                 let chunk = chunk_result
-                    .map_err(|e| OxenError::basic_str(format!("Failed to read chunk: {e}")))?;
+                    .map_err(|e| OxenError::basic_str(&format!("Failed to read chunk: {e}")))?;
                 dest_file.write_all(&chunk).await?;
             }
 
@@ -317,7 +297,7 @@ pub async fn download_small_entry(
         reqwest::StatusCode::UNAUTHORIZED => Err(OxenError::must_supply_valid_api_key()),
         _ => {
             let err = format!("Could not download entry status: {status}");
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
@@ -326,7 +306,7 @@ pub async fn download_small_entry(
 pub async fn pull_large_entry(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
-    remote_path: impl AsRef<Path>,
+    remote_path: &Path,
     entry: &Entry,
 ) -> Result<(), OxenError> {
     // Read chunks
@@ -336,8 +316,6 @@ pub async fn pull_large_entry(
     let hash = entry.hash();
     let revision = entry.commit_id();
     let version_store = repo.version_store()?;
-
-    let remote_path = remote_path.as_ref();
 
     log::debug!("Trying to download file {remote_path:?}");
 
@@ -432,9 +410,9 @@ pub async fn pull_large_entry(
 async fn try_pull_entry_chunk(
     version_store: Arc<dyn VersionStore>,
     remote_repo: &RemoteRepository,
-    remote_path: impl AsRef<Path>,
+    remote_path: &Path,
     hash: &str,
-    revision: impl AsRef<str>,
+    revision: &str,
     chunk_start: u64,
     chunk_size: u64,
 ) -> Result<u64, OxenError> {
@@ -443,18 +421,19 @@ async fn try_pull_entry_chunk(
         match pull_entry_chunk(
             Arc::clone(&version_store),
             remote_repo,
-            &remote_path,
+            remote_path,
             hash,
-            &revision,
+            revision,
             chunk_start,
             chunk_size,
         )
         .await
         {
             Ok(_status) => {
-                log::debug!("Downloaded chunk {:?}", remote_path.as_ref());
+                log::debug!("Downloaded chunk {:?}", remote_path);
                 return Ok(chunk_size);
             }
+
             Err(err) => {
                 // Don't retry non-transient errors
                 if err.is_auth_error() || err.is_not_found() {
@@ -478,18 +457,17 @@ async fn try_pull_entry_chunk(
 async fn pull_entry_chunk(
     version_store: Arc<dyn VersionStore>,
     remote_repo: &RemoteRepository,
-    remote_path: impl AsRef<Path>,
+    remote_path: &Path,
     hash: &str,
-    revision: impl AsRef<str>,
+    revision: &str,
     chunk_start: u64,
     chunk_size: u64,
 ) -> Result<reqwest::StatusCode, OxenError> {
-    let remote_path = remote_path.as_ref();
     log::debug!("{} {:?}", current_function!(), remote_path);
 
     let uri = format!(
         "/chunk/{}/{}?chunk_start={}&chunk_size={}",
-        revision.as_ref(),
+        revision,
         remote_path.to_string_lossy(),
         chunk_start,
         chunk_size
@@ -524,7 +502,7 @@ async fn pull_entry_chunk(
         reqwest::StatusCode::UNAUTHORIZED => Err(OxenError::must_supply_valid_api_key()),
         _ => {
             let err = format!("Could not download entry status: {status}");
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
@@ -532,9 +510,9 @@ async fn pull_entry_chunk(
 /// Download a file from the remote repository in parallel chunks
 pub async fn download_large_entry(
     remote_repo: &RemoteRepository,
-    remote_path: impl AsRef<Path>,
-    local_path: impl AsRef<Path>,
-    revision: impl AsRef<str>,
+    remote_path: &Path,
+    local_path: &Path,
+    revision: &str,
     num_bytes: u64,
 ) -> Result<(), OxenError> {
     // Read chunks
@@ -544,9 +522,7 @@ pub async fn download_large_entry(
     let mut chunk_size = chunk_size;
 
     // Write files to ~/.oxen/tmp/HASH/chunk_0..N
-    let remote_path = remote_path.as_ref();
-    let local_path = local_path.as_ref();
-    let hash = util::hasher::hash_str(format!("{remote_path:?}_{local_path:?}"));
+    let hash = util::hasher::hash_str(&format!("{remote_path:?}_{local_path:?}"));
 
     let home_dir = util::fs::oxen_tmp_dir()?;
 
@@ -581,7 +557,7 @@ pub async fn download_large_entry(
             remote_repo.clone(),
             remote_path.to_path_buf(),
             tmp_file,
-            revision.as_ref().to_string(),
+            revision.to_string(),
             chunk_start,
             chunk_size,
         ));
@@ -659,7 +635,7 @@ pub async fn download_large_entry(
                 match combined_file.write_all(&buffer) {
                     Ok(_) => {
                         log::debug!("Unpack successful! {local_path:?}");
-                        util::fs::remove_file(tmp_file)?;
+                        util::fs::remove_file(&tmp_file)?;
                     }
                     Err(err) => {
                         log::error!("Could not write all data to disk {err:?}");
@@ -676,7 +652,7 @@ pub async fn download_large_entry(
 
     if should_cleanup {
         log::error!("Cleaning up tmp dir {tmp_dir:?}");
-        util::fs::remove_dir_all(tmp_dir)?;
+        util::fs::remove_dir_all(&tmp_dir)?;
         return Err(OxenError::basic_str("Could not write all data to disk"));
     }
 
@@ -685,9 +661,9 @@ pub async fn download_large_entry(
 
 async fn try_download_entry_chunk(
     remote_repo: &RemoteRepository,
-    remote_path: impl AsRef<Path>,
-    local_path: impl AsRef<Path>,
-    revision: impl AsRef<str>,
+    remote_path: &Path,
+    local_path: &Path,
+    revision: &str,
     chunk_start: u64,
     chunk_size: u64,
 ) -> Result<u64, OxenError> {
@@ -695,18 +671,19 @@ async fn try_download_entry_chunk(
     while try_num < constants::NUM_HTTP_RETRIES {
         match download_entry_chunk(
             remote_repo,
-            &remote_path,
-            &local_path,
-            &revision,
+            remote_path,
+            local_path,
+            revision,
             chunk_start,
             chunk_size,
         )
         .await
         {
             Ok(_status) => {
-                log::debug!("Downloaded chunk {:?}", local_path.as_ref());
+                log::debug!("Downloaded chunk {:?}", local_path);
                 return Ok(chunk_size);
             }
+
             Err(err) => {
                 // Don't retry non-transient errors
                 if err.is_auth_error() || err.is_not_found() {
@@ -729,14 +706,12 @@ async fn try_download_entry_chunk(
 /// Downloads a chunk of a file
 async fn download_entry_chunk(
     remote_repo: &RemoteRepository,
-    remote_path: impl AsRef<Path>,
-    local_path: impl AsRef<Path>,
-    revision: impl AsRef<str>,
+    remote_path: &Path,
+    local_path: &Path,
+    revision: &str,
     chunk_start: u64,
     chunk_size: u64,
 ) -> Result<reqwest::StatusCode, OxenError> {
-    let remote_path = remote_path.as_ref();
-    let local_path = local_path.as_ref();
     log::debug!(
         "{} {:?} -> {:?}",
         current_function!(),
@@ -746,7 +721,7 @@ async fn download_entry_chunk(
 
     let uri = format!(
         "/chunk/{}/{}?chunk_start={}&chunk_size={}",
-        revision.as_ref(),
+        revision,
         remote_path.to_string_lossy(),
         chunk_start,
         chunk_size
@@ -785,7 +760,7 @@ async fn download_entry_chunk(
         reqwest::StatusCode::UNAUTHORIZED => Err(OxenError::must_supply_valid_api_key()),
         _ => {
             let err = format!("Could not download entry status: {status}");
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(&err))
         }
     }
 }
@@ -799,7 +774,7 @@ pub async fn download_data_from_version_paths(
     let mut num_retries = 0;
 
     while num_retries < total_retries {
-        match try_download_data_from_version_paths(remote_repo, content_ids, &dst).await {
+        match try_download_data_from_version_paths(remote_repo, content_ids, dst).await {
             Ok(val) => return Ok(val),
             Err(OxenError::Authentication(val)) => return Err(OxenError::Authentication(val)),
             Err(err) => {
@@ -817,15 +792,14 @@ pub async fn download_data_from_version_paths(
         content_ids.len(),
         total_retries
     );
-    Err(OxenError::basic_str(err))
+    Err(OxenError::basic_str(&err))
 }
 
 pub async fn try_download_data_from_version_paths(
     remote_repo: &RemoteRepository,
     content_ids: &[(String, PathBuf)], // tuple of content id and entry path
-    dst: impl AsRef<Path>,
+    dst: &Path,
 ) -> Result<u64, OxenError> {
-    let dst = dst.as_ref();
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     for (content_id, _path) in content_ids.iter() {
         let line = format!("{content_id}\n");
@@ -859,7 +833,7 @@ pub async fn try_download_data_from_version_paths(
                 Ok(file) => file,
                 Err(err) => {
                     let err = format!("Could not unwrap file {entry_path:?} -> {err:?}");
-                    return Err(OxenError::basic_str(err));
+                    return Err(OxenError::basic_str(&err));
                 }
             };
 
@@ -877,7 +851,7 @@ pub async fn try_download_data_from_version_paths(
                 }
                 Err(err) => {
                     let err = format!("Could not unpack file {entry_path:?} -> {err:?}");
-                    return Err(OxenError::basic_str(err));
+                    return Err(OxenError::basic_str(&err));
                 }
             }
 
@@ -890,7 +864,7 @@ pub async fn try_download_data_from_version_paths(
     } else {
         let err =
             format!("api::entries::download_data_from_version_paths Err request failed: {url}");
-        Err(OxenError::basic_str(err))
+        Err(OxenError::basic_str(&err))
     }
 }
 
@@ -931,7 +905,7 @@ mod tests {
             // List the entries
             let entries = api::client::entries::list_entries_with_type(
                 &remote_repo,
-                "",
+                Path::new(""),
                 revision,
                 &EntryDataType::Tabular,
             )
@@ -955,7 +929,7 @@ mod tests {
             // List the entries
             let entries = api::client::entries::list_entries_with_type(
                 &remote_repo,
-                "",
+                Path::new(""),
                 revision,
                 &EntryDataType::Tabular,
             )
@@ -1086,7 +1060,7 @@ mod tests {
             let remote_path = Path::new("annotations");
             let local_path = local_repo.path.join("data");
             let revision = DEFAULT_BRANCH_NAME;
-            api::client::entries::download_entry(&remote_repo, &remote_path, &local_path, revision)
+            api::client::entries::download_entry(&remote_repo, remote_path, &local_path, revision)
                 .await?;
             assert!(local_path.exists());
             assert!(local_path.join("annotations").join("README.md").exists());

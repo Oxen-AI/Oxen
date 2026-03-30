@@ -15,11 +15,10 @@ use super::index::CommitMerkleTree;
 /// Returns metadata with latest commit information. Less efficient than get().
 pub fn get_cli(
     repo: &LocalRepository,
-    entry_path: impl AsRef<Path>,
-    data_path: impl AsRef<Path>,
+    entry_path: &Path,
+    data_path: &Path,
 ) -> Result<CLIMetadataEntry, OxenError> {
-    let path = data_path.as_ref();
-    let entry_path = entry_path.as_ref();
+    let path = data_path;
     let base_name = entry_path
         .file_name()
         .ok_or(OxenError::file_has_no_name(path))?;

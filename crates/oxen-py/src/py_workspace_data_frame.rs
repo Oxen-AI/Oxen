@@ -40,19 +40,18 @@ pub fn index(
 
 fn _get(
     repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    path: impl AsRef<Path>,
+    workspace_id: &str,
+    path: &Path,
 ) -> Result<JsonDataFrameViews, PyOxenError> {
-    let path = path.as_ref();
     let opts = DFOpts::empty();
 
     let data = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-        api::client::workspaces::data_frames::get(repo, &workspace_id, path, &opts).await
+        api::client::workspaces::data_frames::get(repo, workspace_id, path, &opts).await
     })?;
 
     let Some(data_frame) = data.data_frame else {
         return Err(
-            OxenError::basic_str(format!("Failed to get data frame for path: {path:?}")).into(),
+            OxenError::basic_str(&format!("Failed to get data frame for path: {path:?}")).into(),
         );
     };
 
@@ -205,7 +204,7 @@ impl PyWorkspaceDataFrame {
                 let result: String = serde_json::to_string(&view).unwrap();
                 Ok(result)
             }
-            Err(e) => Err(OxenError::basic_str(format!("Failed to query data frame: {e}")).into()),
+            Err(e) => Err(OxenError::basic_str(&format!("Failed to query data frame: {e}")).into()),
         }
     }
 
@@ -319,7 +318,7 @@ impl PyWorkspaceDataFrame {
             // convert view to json string
             match serde_json::to_string(&response.data_frame.unwrap().view.data) {
                 Ok(json) => Ok(json),
-                Err(e) => Err(OxenError::basic_str(format!(
+                Err(e) => Err(OxenError::basic_str(&format!(
                     "Could not convert view to json: {e}"
                 ))),
             }
@@ -346,7 +345,7 @@ impl PyWorkspaceDataFrame {
 
     fn insert_row(&self, data: String) -> Result<String, PyOxenError> {
         let Ok(_) = serde_json::from_str::<serde_json::Value>(&data) else {
-            return Err(OxenError::basic_str(format!("Failed to parse json data: {data}")).into());
+            return Err(OxenError::basic_str(&format!("Failed to parse json data: {data}")).into());
         };
 
         let workspace_id = self.workspace.get_identifier();
@@ -369,7 +368,7 @@ impl PyWorkspaceDataFrame {
 
     fn update_row(&self, id: String, data: String) -> Result<String, PyOxenError> {
         let Ok(_) = serde_json::from_str::<serde_json::Value>(&data) else {
-            return Err(OxenError::basic_str(format!("Failed to parse json data: {data}")).into());
+            return Err(OxenError::basic_str(&format!("Failed to parse json data: {data}")).into());
         };
 
         let view = pyo3_async_runtimes::tokio::get_runtime().block_on(async {

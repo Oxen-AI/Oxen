@@ -63,7 +63,7 @@ pub async fn commits(
     let base_head = path_param(&req, "base_head")?;
 
     // Get the repository or return error
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
 
     // Page size and number
     let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
@@ -122,7 +122,7 @@ pub async fn entries(
     let base_head = path_param(&req, "base_head")?;
 
     // Get the repository or return error
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
 
     // Page size and number
     let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
@@ -201,7 +201,7 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     let base_head = path_param(&req, "base_head")?;
 
     // Get the repository or return error
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
 
     // Parse the base and head from the base..head string
     let (base, head) = parse_base_head(&base_head)?;
@@ -254,7 +254,7 @@ pub async fn dir_entries(
     let dir = path_param(&req, "dir")?;
 
     // Get the repository or return error
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
 
     // Page size and number
     let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
@@ -338,7 +338,7 @@ pub async fn file(
     let base_head = path_param(&req, "base_head")?;
 
     // Get the repository or return error
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
 
     // Parse the base and head from the base..head/resource string
     // For Example)
@@ -363,7 +363,7 @@ pub async fn file(
 
     let diff = repositories::diffs::diff_entries(
         &repository,
-        resource,
+        &resource,
         base_entry,
         &base_commit,
         head_entry,
@@ -408,14 +408,14 @@ pub async fn create_df_diff(
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
 
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
 
     let data: Result<TabularCompareBody, serde_json::Error> = serde_json::from_str(&body);
     let data = match data {
         Ok(data) => data,
         Err(err) => {
             log::error!("unable to parse tabular comparison data. Err: {err}\n{body}");
-            return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
+            return Ok(HttpResponse::BadRequest().json(StatusMessage::error(&err.to_string())));
         }
     };
 
@@ -515,14 +515,14 @@ pub async fn update_df_diff(
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
     let compare_id = path_param(&req, "compare_id")?;
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
 
     let data: Result<TabularCompareBody, serde_json::Error> = serde_json::from_str(&body);
     let data = match data {
         Ok(data) => data,
         Err(err) => {
             log::error!("unable to parse tabular comparison data. Err: {err}\n{body}");
-            return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
+            return Ok(HttpResponse::BadRequest().json(StatusMessage::error(&err.to_string())));
         }
     };
 
@@ -624,7 +624,7 @@ pub async fn get_df_diff(
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
     let compare_id = path_param(&req, "compare_id")?;
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(&app_data.path, &namespace, &name)?;
     let base_head = path_param(&req, "base_head")?;
 
     let data: TabularCompareBody = serde_json::from_str(&body)?;
@@ -705,7 +705,7 @@ pub async fn delete_df_diff(req: HttpRequest) -> Result<HttpResponse, OxenHttpEr
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let compare_id = path_param(&req, "compare_id")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     repositories::diffs::delete_df_diff(&repo, &compare_id)?;
 
@@ -737,7 +737,7 @@ pub async fn get_derived_df(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let compare_id = path_param(&req, "compare_id")?;
     // let base_head = path_param(&req, "base_head")?;
 
@@ -748,7 +748,7 @@ pub async fn get_derived_df(
     // TODO: If this structure holds for diff + query, there is some amt of reusability with
     // controllers::df::get logic
 
-    let df = tabular::read_df(derived_df_path, DFOpts::empty()).await?;
+    let df = tabular::read_df(&derived_df_path, DFOpts::empty()).await?;
 
     let og_schema = Schema::from_polars(df.schema());
 
@@ -1007,8 +1007,8 @@ mod tests {
         let path1 = repo.path.join("file1.csv");
         let path2 = repo.path.join("file2.csv");
 
-        liboxen::test::write_txt_file_to_path(path1, csv1)?;
-        liboxen::test::write_txt_file_to_path(path2, csv2)?;
+        liboxen::test::write_txt_file_to_path(&path1, csv1)?;
+        liboxen::test::write_txt_file_to_path(&path2, csv2)?;
 
         repositories::add(&repo, &repo.path).await?;
 

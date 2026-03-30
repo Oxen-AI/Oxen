@@ -1,0 +1,56 @@
+## Fresh Build
+
+No `target/` directory present before running commands.
+
+### Workspace
+Before any changes:
+```
+cargo build --workspace  1336.46s user 137.43s system 668% cpu 3:40.40 total
+```
+
+After changes:
+```
+cargo build --workspace  1325.70s user 144.97s system 646% cpu 3:47.33 total
+```
+
+### Tests
+Before any changes:
+```
+cargo build --workspace --tests  314.31s user 29.90s system 435% cpu 1:19.10 total
+```
+
+After changes:
+```
+cargo build --workspace --tests  1453.71s user 162.21s system 654% cpu 4:06.72 total
+```
+
+## Oxen-Only Changes
+
+Changes only made to the local crates. A full `target/` directory from a previous build.
+
+### Workspace
+Before any changes:
+```
+cargo build --workspace  16.03s user 5.48s system 191% cpu 11.225 total
+```
+
+After changes:
+```
+cargo build --workspace  6.13s user 1.82s system 186% cpu 4.270 total
+```
+
+### Tests
+Before any changes:
+```
+cargo build --workspace --tests  33.13s user 8.02s system 291% cpu 14.100 total
+```
+
+After changes:
+```
+# Changing src/lib/io.rs
+cargo build --workspace --tests  25.83s user 7.67s system 289% cpu 11.559 total
+
+# Changing fetch.rs test
+cargo build --workspace --tests  32.84s user 11.86s system 284% cpu 15.735 total
+```
+

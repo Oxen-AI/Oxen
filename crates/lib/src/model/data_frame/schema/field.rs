@@ -56,7 +56,7 @@ impl Field {
         )
     }
 
-    pub fn all_fields_to_string<V: AsRef<Vec<Field>>>(fields: V) -> String {
+    pub fn all_fields_to_string(fields: &[Field]) -> String {
         let names: Vec<String> = fields.as_ref().iter().map(|f| f.name.to_owned()).collect();
 
         let combined_names = names.join(", ");
@@ -87,8 +87,7 @@ impl Field {
         fields_vec
     }
 
-    pub fn fields_to_string_with_limit<V: AsRef<Vec<Field>>>(fields: V) -> String {
-        let fields = fields.as_ref();
+    pub fn fields_to_string_with_limit(fields: &[Field]) -> String {
         let max_num = 2;
         if fields.len() > max_num {
             let name_0 = fields[0].name.to_owned();

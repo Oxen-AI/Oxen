@@ -30,17 +30,16 @@ use std::path::Path;
 
 pub fn add(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
+    path: &Path,
     data: &serde_json::Value,
 ) -> Result<DataFrame, OxenError> {
-    let path = path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
     let df = tabular::parse_json_to_df(data)?;
     log::debug!("add() df: {df:?}");
 
-    let mut result = with_df_db_manager(db_path, |manager| {
+    let mut result = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| rows::append_row(conn, &df))
     })?;
     let oxen_id_col = result
@@ -63,12 +62,11 @@ pub fn add(
 
 pub async fn restore(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
-    row_id: impl AsRef<str>,
+    path: &Path,
+    row_id: &str,
 ) -> Result<DataFrame, OxenError> {
-    let row_id = row_id.as_ref();
-    let restored_row = restore_row_in_db(workspace, path.as_ref(), row_id).await?;
-    let diff = repositories::workspaces::data_frames::full_diff(workspace, path.as_ref())?;
+    let restored_row = restore_row_in_db(workspace, path, row_id).await?;
+    let diff = repositories::workspaces::data_frames::full_diff(workspace, path)?;
     if let DiffResult::Tabular(diff) = diff
         && !diff.has_changes()
     {
@@ -78,24 +76,19 @@ pub async fn restore(
         let manager = get_staged_db_manager(&workspace.workspace_repo)?;
         manager.remove_staged_recursively(
             &workspace.workspace_repo,
-            &HashSet::from([path.as_ref().to_path_buf()]),
+            &HashSet::from([path.to_path_buf()]),
         )?;
     }
 
     Ok(restored_row)
 }
 
-pub fn delete(
-    workspace: &Workspace,
-    path: impl AsRef<Path>,
-    row_id: &str,
-) -> Result<DataFrame, OxenError> {
-    log::debug!("delete() row_id: {row_id} from path: {:?}", path.as_ref());
-    let path = path.as_ref();
+pub fn delete(workspace: &Workspace, path: &Path, row_id: &str) -> Result<DataFrame, OxenError> {
+    log::debug!("delete() row_id: {row_id} from path: {:?}", path);
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
-    let mut deleted_row = with_df_db_manager(db_path, |manager| {
+    let mut deleted_row = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| rows::delete_row(conn, row_id))
     })?;
     log::debug!("delete() deleted_row: {deleted_row:?}");
@@ -135,11 +128,10 @@ pub fn delete(
 
 pub fn update(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
+    path: &Path,
     row_id: &str,
     data: &serde_json::Value,
 ) -> Result<DataFrame, OxenError> {
-    let path = path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
@@ -149,7 +141,7 @@ pub fn update(
         return Err(OxenError::resource_not_found("row not found"));
     }
 
-    let mut result = with_df_db_manager(db_path, |manager| {
+    let mut result = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| rows::modify_row(conn, &mut df, row_id))
     })?;
 
@@ -183,11 +175,9 @@ pub fn update(
 
 pub fn batch_update(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
+    path: &Path,
     data: &Value,
 ) -> Result<Vec<UpdateResult>, OxenError> {
-    let path = path.as_ref();
-
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
 
     let Some(array) = data.as_array() else {
@@ -215,7 +205,7 @@ pub fn batch_update(
         })
         .collect::<Result<_, OxenError>>()?;
 
-    with_df_db_manager(db_path, |manager| {
+    with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| rows::modify_rows(conn, row_map))
     })?;
 
@@ -230,7 +220,7 @@ pub fn batch_update(
 pub async fn prepare_modified_or_removed_row(
     repo: &LocalRepository,
     commit: &Commit,
-    path: impl AsRef<Path>,
+    path: &Path,
     row_df: &DataFrame,
 ) -> Result<DataFrame, OxenError> {
     let row_idx = repositories::workspaces::data_frames::rows::get_row_idx(row_df)?
@@ -238,9 +228,9 @@ pub async fn prepare_modified_or_removed_row(
     let row_idx_og = (row_idx - 1) as i64;
 
     let Some(commit_merkle_tree) =
-        repositories::tree::get_node_by_path_with_children(repo, commit, &path)?
+        repositories::tree::get_node_by_path_with_children(repo, commit, path)?
     else {
-        return Err(OxenError::basic_str(format!(
+        return Err(OxenError::basic_str(&format!(
             "Merkle tree for commit {commit:?} not found"
         )));
     };
@@ -264,9 +254,12 @@ pub async fn prepare_modified_or_removed_row(
     log::debug!("prepare_modified_or_removed_row() committed_df_path: {committed_df_path:?}");
 
     // TODONOW should not be using all rows - just need to parse delim
-    let lazy_df =
-        tabular::read_df_with_extension(committed_df_path, file_node.extension(), &DFOpts::empty())
-            .await?;
+    let lazy_df = tabular::read_df_with_extension(
+        &committed_df_path,
+        file_node.extension(),
+        &DFOpts::empty(),
+    )
+    .await?;
 
     // Get the row by index
     let mut row = lazy_df.slice(row_idx_og, 1_usize);
@@ -284,19 +277,17 @@ pub async fn prepare_modified_or_removed_row(
 
 pub async fn restore_row_in_db(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
-    row_id: impl AsRef<str>,
+    path: &Path,
+    row_id: &str,
 ) -> Result<DataFrame, OxenError> {
-    let row_id = row_id.as_ref();
-    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path.as_ref());
+    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let opts = db::key_val::opts::default();
     let column_changes_path =
-        repositories::workspaces::data_frames::column_changes_path(workspace, path.as_ref());
+        repositories::workspaces::data_frames::column_changes_path(workspace, path);
     let db = DB::open(&opts, dunce::simplified(&column_changes_path))?;
 
     // Get the row by id
-    let row =
-        repositories::workspaces::data_frames::rows::get_by_id(workspace, path.as_ref(), row_id)?;
+    let row = repositories::workspaces::data_frames::rows::get_by_id(workspace, path, row_id)?;
 
     if row.height() == 0 {
         return Err(OxenError::resource_not_found(row_id));
@@ -319,7 +310,7 @@ pub async fn restore_row_in_db(
             let mut insert_row = prepare_modified_or_removed_row(
                 &workspace.base_repo,
                 &workspace.commit,
-                path.as_ref(),
+                path,
                 &row,
             )
             .await?;

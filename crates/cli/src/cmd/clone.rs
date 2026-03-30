@@ -147,7 +147,7 @@ impl RunCmd for CloneCmd {
                 StorageOpts::default()
             }
             unsupported_backend => {
-                return Err(OxenError::basic_str(format!(
+                return Err(OxenError::basic_str(&format!(
                     "Unsupported async storage type: {unsupported_backend}"
                 )));
             }
@@ -171,8 +171,8 @@ impl RunCmd for CloneCmd {
         let (scheme, host) = api::client::get_scheme_and_host_from_url(&opts.url)?;
 
         // TODO: Do I need to worry about this for remote repo?
-        check_remote_version_blocking(scheme.clone(), host.clone()).await?;
-        check_remote_version(scheme, host).await?;
+        check_remote_version_blocking(&scheme, &host).await?;
+        check_remote_version(&scheme, &host).await?;
 
         repositories::clone(&opts).await?;
 

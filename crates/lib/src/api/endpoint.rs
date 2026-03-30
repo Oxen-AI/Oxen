@@ -7,21 +7,12 @@ use url::Url;
 
 pub const API_NAMESPACE: &str = "/api/repos";
 
-pub fn get_scheme(host: impl AsRef<str>) -> String {
-    RepoNew::scheme_default(host.as_ref())
+pub fn get_scheme(host: &str) -> String {
+    RepoNew::scheme_default(host)
 }
 
-pub fn url_from_host_and_scheme(
-    host: impl AsRef<str>,
-    uri: impl AsRef<str>,
-    scheme: impl AsRef<str>,
-) -> String {
-    format!(
-        "{}://{}{API_NAMESPACE}{}",
-        scheme.as_ref(),
-        host.as_ref(),
-        uri.as_ref()
-    )
+pub fn url_from_host_and_scheme(host: &str, uri: &str, scheme: &str) -> String {
+    format!("{}://{}{API_NAMESPACE}{}", scheme, host, uri)
 }
 
 pub fn url_from_host(host: &str, uri: &str) -> String {

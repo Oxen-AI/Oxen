@@ -6,9 +6,8 @@ use crate::view::ParseResourceResponse;
 
 pub async fn get(
     repository: &RemoteRepository,
-    revision: impl AsRef<str>,
+    revision: &str,
 ) -> Result<Option<ParsedResource>, OxenError> {
-    let revision = revision.as_ref();
     let uri = format!("/revisions/{revision}");
     let url = api::endpoint::url_from_repo(repository, &uri)?;
     log::debug!("api::client::revisions::get {url}");
@@ -24,7 +23,7 @@ pub async fn get(
     let response: Result<ParseResourceResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(j_res) => Ok(Some(j_res.resource)),
-        Err(err) => Err(OxenError::basic_str(format!(
+        Err(err) => Err(OxenError::basic_str(&format!(
             "api::client::revisions::get() Could not deserialize response [{err}]\n{body}"
         ))),
     }

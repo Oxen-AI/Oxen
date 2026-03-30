@@ -8,19 +8,13 @@ use std::path::Path;
 /// Upload a ZIP file that gets extracted into the workspace directory
 pub async fn upload_zip(
     remote_repo: &RemoteRepository,
-    branch_name: impl AsRef<str>,
-    directory: impl AsRef<str>,
-    zip_path: impl AsRef<Path>,
-    name: impl AsRef<str>,
-    email: impl AsRef<str>,
-    commit_message: Option<impl AsRef<str>>,
+    branch_name: &str,
+    directory: &str,
+    zip_path: &Path,
+    name: &str,
+    email: &str,
+    commit_message: Option<&str>,
 ) -> Result<crate::model::Commit, OxenError> {
-    let branch_name = branch_name.as_ref();
-    let directory = directory.as_ref();
-    let zip_path = zip_path.as_ref();
-    let name = name.as_ref();
-    let email = email.as_ref();
-
     // Read the ZIP file
     let zip_data = std::fs::read(zip_path)?;
     let file_name = zip_path
@@ -41,7 +35,7 @@ pub async fn upload_zip(
         .text("resource_path", directory.to_string());
 
     if let Some(msg) = commit_message {
-        form = form.text("commit_message", msg.as_ref().to_string());
+        form = form.text("commit_message", msg.to_string());
     }
 
     // Send the request
@@ -51,7 +45,7 @@ pub async fn upload_zip(
 
     // Parse the response
     let response: crate::view::CommitResponse = serde_json::from_str(&body)
-        .map_err(|e| OxenError::basic_str(format!("Failed to parse response: {e}")))?;
+        .map_err(|e| OxenError::basic_str(&format!("Failed to parse response: {e}")))?;
 
     Ok(response.commit)
 }
@@ -65,6 +59,7 @@ mod tests {
     use crate::error::OxenError;
 
     use crate::api;
+    use std::path::Path;
 
     use std::io::Write;
 
@@ -109,8 +104,12 @@ mod tests {
             let commit = result.unwrap();
             assert!(commit.message.contains("Upload test ZIP"));
 
-            let bytes =
-                api::client::file::get_file(&remote_repo, branch_name, "images/image1.png").await;
+            let bytes = api::client::file::get_file(
+                &remote_repo,
+                branch_name,
+                Path::new("images/image1.png"),
+            )
+            .await;
 
             assert!(bytes.is_ok());
             assert!(!bytes.as_ref().unwrap().is_empty());
@@ -161,8 +160,12 @@ mod tests {
             let commit = result.unwrap();
             assert!(commit.message.contains("Upload test ZIP in empty repo"));
 
-            let bytes =
-                api::client::file::get_file(&remote_repo, branch_name, "images/image1.png").await;
+            let bytes = api::client::file::get_file(
+                &remote_repo,
+                branch_name,
+                Path::new("images/image1.png"),
+            )
+            .await;
 
             assert!(bytes.is_ok());
             assert_eq!(
@@ -170,8 +173,12 @@ mod tests {
                 &Bytes::from_static(b"fake png data 1")
             );
 
-            let bytes_2 =
-                api::client::file::get_file(&remote_repo, branch_name, "images/image2.png").await;
+            let bytes_2 = api::client::file::get_file(
+                &remote_repo,
+                branch_name,
+                Path::new("images/image2.png"),
+            )
+            .await;
 
             assert!(bytes_2.is_ok());
             assert_eq!(
