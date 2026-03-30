@@ -2,20 +2,30 @@
 #
 # Build, configure, and run the Oxen test suite.
 #
-# Usage: test-rust [--ffmpeg] [--keep] [nextest args...]
+# Usage: test-rust [--ffmpeg] [--keep] [-p|--python] [extra args...]
 #
-#   --ffmpeg    Enable the "ffmpeg" cargo feature for build and test commands.
-#   --keep      Do not remove test data (in data/ox and data/test/runs)on cleanup--useful for
-#               debugging failed tests
-#   All subsequent arguments are forwarded to `cargo nextest run`.
+#   --ffmpeg      Enable the "ffmpeg" cargo feature for build and test commands.
+#   --keep        Do not remove test data (in data/ox and data/test/runs) on cleanup — useful for
+#                 debugging failed tests.
+#   -p|--python   Run the oxen-python test suite (via pytest) instead of the Rust test suite.
+#                 Builds the native extension with maturin.
+#   All remaining arguments are forwarded to `cargo nextest run` or `pytest` (with -p).
+#
+# Examples:
+#   test-rust                       # Run all Rust tests
+#   test-rust test_name             # Run Rust tests matching test_name
+#   test-rust -p                    # Run all Python tests
+#   test-rust -p -k test_init      # Run Python tests matching test_init
 
-# Check for --ffmpeg and --keep flags
+# Check for flags
 FEATURE_ARGS=""
 KEEP_DATA=false
+RUN_PYTHON=false
 while true; do
     case "${1:-}" in
-        --ffmpeg) FEATURE_ARGS="-F ffmpeg"; shift ;;
-        --keep)   KEEP_DATA=true; shift ;;
+        --ffmpeg)        FEATURE_ARGS="-F ffmpeg"; shift ;;
+        --keep)          KEEP_DATA=true; shift ;;
+        -p|--python)     RUN_PYTHON=true; shift ;;
         *) break ;;
     esac
 done
@@ -137,9 +147,28 @@ wait_for_server() {
 echo "==> Waiting for oxen-server health check to pass..."
 wait_for_server
 
-# Run tests
-echo "==> Running tests with 'cargo nextest run $FEATURE_ARGS $*' ..."
-# shellcheck disable=SC2086
-cargo nextest run $FEATURE_ARGS "$@"
+if [ "$RUN_PYTHON" = true ]; then
+    # Configure oxen CLI user for the Python tests
+    echo "==> Configuring oxen CLI user..."
+    ./target/debug/oxen config --name "Bessie Testington" --email "bessie@yourcompany.com"
+
+    # Set up Python environment and build the extension
+    echo "==> Setting up Python environment..."
+    cd oxen-python
+    uv sync --no-install-project
+    # shellcheck disable=SC1091
+    source .venv/bin/activate
+    echo "==> Building Python extension with maturin..."
+    maturin develop
+
+    # Run tests
+    echo "==> Running pytest $* ..."
+    pytest -s tests "$@"
+else
+    # Run Rust tests
+    echo "==> Running tests with 'cargo nextest run $FEATURE_ARGS $*' ..."
+    # shellcheck disable=SC2086
+    cargo nextest run $FEATURE_ARGS "$@"
+fi
 
 # cleanup handled via the trapped cleanup function
