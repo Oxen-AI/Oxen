@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+# bench-compile — measure pre-patch and post-patch compile times.
+#
+# Usage:
+#   bench-compile [OPTIONS] <patch-file>
+#
+# Options:
+#   -m, --mode MODE   Build mode. One of:
+#                        bare          → cargo build
+#                        pkg:NAME      → cargo build -p NAME
+#                        workspace     → cargo build --workspace
+#                        workspace-pkg:NAME → cargo build --workspace -p NAME
+#                        test          → cargo build --tests
+#                        test-pkg:NAME → cargo build --tests -p NAME
+#                        workspace-test → cargo build --workspace --tests
+#                        workspace-test-pkg:NAME → cargo build --workspace --tests -p NAME
+#                        all           → run every combination sequentially
+#                      (default: workspace)
+#
+#   -o, --output FILE CSV output file (default: bench-compile-results.csv)
+#   -n, --iterations N Number of reset→build→patch→build cycles (default: 1)
+#   -r, --release      Pass --release to cargo build
+#   -h, --help         Show this help
+#
+# The CSV columns are:
+#   timestamp, iteration, mode, phase, elapsed_secs, exit_code
+
+set -euo pipefail
+
+PACKAGES=(liboxen oxen-cli oxen-server oxen-py)
+TEST_PACKAGES=(liboxen oxen-cli oxen-server oxen-py)
+
+usage() {
+    awk 'NR>1 && /^#/{sub(/^# ?/,""); print; next} NR>1 && !/^#/{exit}' "$0"
+    exit "${1:-0}"
+}
+
+# ── defaults ──────────────────────────────────────────────────────────
+MODE="workspace"
+OUTPUT="bench-compile-results.csv"
+ITERATIONS=1
+RELEASE=""
+PATCH_FILE=""
+
+# ── parse args ────────────────────────────────────────────────────────
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -m|--mode)      MODE="$2";       shift 2 ;;
+        -o|--output)    OUTPUT="$2";      shift 2 ;;
+        -n|--iterations) ITERATIONS="$2"; shift 2 ;;
+        -r|--release)   RELEASE="--release"; shift ;;
+        -h|--help)      usage 0 ;;
+        -*)             echo "Unknown option: $1" >&2; usage 1 ;;
+        *)
+            if [[ -z "$PATCH_FILE" ]]; then
+                PATCH_FILE="$1"; shift
+            else
+                echo "Unexpected argument: $1" >&2; usage 1
+            fi
+            ;;
+    esac
+done
+
+if [[ -z "$PATCH_FILE" ]]; then
+    echo "Error: patch file is required." >&2
+    usage 1
+fi
+
+if [[ ! -f "$PATCH_FILE" ]]; then
+    echo "Error: patch file not found: $PATCH_FILE" >&2
+    exit 1
+fi
+
+# Resolve to absolute path so git reset doesn't break relative refs.
+PATCH_FILE="$(cd "$(dirname "$PATCH_FILE")" && pwd)/$(basename "$PATCH_FILE")"
+
+# ── build the list of modes to run ────────────────────────────────────
+resolve_modes() {
+    local m="$1"
+    if [[ "$m" == "all" ]]; then
+        echo "bare"
+        echo "workspace"
+        for pkg in "${PACKAGES[@]}"; do
+            echo "pkg:$pkg"
+        done
+        for pkg in "${PACKAGES[@]}"; do
+            echo "workspace-pkg:$pkg"
+        done
+        echo "test"
+        echo "workspace-test"
+        for pkg in "${TEST_PACKAGES[@]}"; do
+            echo "test-pkg:$pkg"
+        done
+        for pkg in "${TEST_PACKAGES[@]}"; do
+            echo "workspace-test-pkg:$pkg"
+        done
+    else
+        echo "$m"
+    fi
+}
+
+# Turn a mode string into a cargo build command (as an array printed one-per-line).
+cargo_args_for_mode() {
+    local m="$1"
+    case "$m" in
+        bare)
+            echo "build"
+            ;;
+        workspace)
+            echo "build"
+            echo "--workspace"
+            ;;
+        pkg:*)
+            local pkg="${m#pkg:}"
+            echo "build"
+            echo "-p"
+            echo "$pkg"
+            ;;
+        workspace-pkg:*)
+            local pkg="${m#workspace-pkg:}"
+            echo "build"
+            echo "--workspace"
+            echo "-p"
+            echo "$pkg"
+            ;;
+        test)
+            echo "build"
+            echo "--tests"
+            ;;
+        test-pkg:*)
+            local pkg="${m#test-pkg:}"
+            echo "build"
+            echo "--tests"
+            echo "-p"
+            echo "$pkg"
+            ;;
+        workspace-test)
+            echo "build"
+            echo "--workspace"
+            echo "--tests"
+            ;;
+        workspace-test-pkg:*)
+            local pkg="${m#workspace-test-pkg:}"
+            echo "build"
+            echo "--workspace"
+            echo "--tests"
+            echo "-p"
+            echo "$pkg"
+            ;;
+        *)
+            echo "Error: unknown mode '$m'" >&2
+            exit 1
+            ;;
+    esac
+}
+
+# ── CSV helpers ───────────────────────────────────────────────────────
+ensure_csv_header() {
+    if [[ ! -f "$OUTPUT" ]] || [[ ! -s "$OUTPUT" ]]; then
+        echo "timestamp,iteration,mode,phase,elapsed_secs,exit_code" > "$OUTPUT"
+    fi
+}
+
+append_row() {
+    local iter="$1" mode="$2" phase="$3" elapsed="$4" rc="$5"
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ),$iter,$mode,$phase,$elapsed,$rc" >> "$OUTPUT"
+}
+
+# ── timed build ───────────────────────────────────────────────────────
+# Runs cargo build, prints elapsed time, returns cargo's exit code.
+# Sets global ELAPSED and BUILD_RC.
+timed_build() {
+    local mode="$1"
+    local -a args=()
+    while IFS= read -r line; do
+        args+=("$line")
+    done < <(cargo_args_for_mode "$mode")
+    if [[ -n "$RELEASE" ]]; then
+        args+=("$RELEASE")
+    fi
+
+    echo "  → cargo ${args[*]}"
+    local start end
+    start=$(date +%s.%N 2>/dev/null || python3 -c 'import time; print(f"{time.time():.9f}")')
+
+    set +e
+    cargo "${args[@]}"
+    BUILD_RC=$?
+    set -e
+
+    end=$(date +%s.%N 2>/dev/null || python3 -c 'import time; print(f"{time.time():.9f}")')
+
+    # bc may not be available; use awk for the subtraction.
+    ELAPSED=$(awk "BEGIN {printf \"%.3f\", $end - $start}")
+    echo "  ⏱  ${ELAPSED}s (exit $BUILD_RC)"
+}
+
+# ── main loop ─────────────────────────────────────────────────────────
+ensure_csv_header
+
+MODES=()
+while IFS= read -r m; do
+    MODES+=("$m")
+done < <(resolve_modes "$MODE")
+
+echo "Patch file : $PATCH_FILE"
+echo "Modes      : ${MODES[*]}"
+echo "Iterations : $ITERATIONS"
+echo "Output CSV : $OUTPUT"
+echo "Release    : ${RELEASE:-no}"
+echo ""
+
+for (( i = 1; i <= ITERATIONS; i++ )); do
+    for mode in "${MODES[@]}"; do
+        echo "━━━ iteration $i / $ITERATIONS  mode=$mode ━━━"
+
+        # 1. Reset to HEAD (discard any prior patch).
+        echo "  → git reset --hard HEAD"
+        git reset --hard HEAD > /dev/null
+        git checkout -- . 2>/dev/null || true
+
+        # 2. Pre-patch build.
+        echo "  [pre-patch build]"
+        timed_build "$mode"
+        append_row "$i" "$mode" "pre-patch" "$ELAPSED" "$BUILD_RC"
+        if [[ $BUILD_RC -ne 0 ]]; then
+            echo "  ⚠  pre-patch build failed; skipping post-patch for this mode."
+            continue
+        fi
+
+        # 3. Apply patch.
+        echo "  → git apply $PATCH_FILE"
+        if ! git apply "$PATCH_FILE"; then
+            echo "  ⚠  patch failed to apply; skipping post-patch build."
+            append_row "$i" "$mode" "post-patch" "-1" "1"
+            continue
+        fi
+
+        # 4. Post-patch build.
+        echo "  [post-patch build]"
+        timed_build "$mode"
+        append_row "$i" "$mode" "post-patch" "$ELAPSED" "$BUILD_RC"
+    done
+done
+
+# Final reset so the tree is clean when we're done.
+git reset --hard HEAD > /dev/null
+git checkout -- . 2>/dev/null || true
+
+echo ""
+echo "Done. Results appended to $OUTPUT"
