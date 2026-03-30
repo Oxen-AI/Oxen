@@ -1,6 +1,6 @@
 from oxen.workspace import Workspace
 from oxen.remote_repo import RemoteRepo
-from .oxen import PyWorkspaceDataFrame, PyColumn
+from .oxen_py import PyWorkspaceDataFrame, PyColumn
 import json
 from typing import List, Union, Optional
 import os
