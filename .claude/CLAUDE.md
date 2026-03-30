@@ -108,7 +108,7 @@ oxen push origin main               # Push to remote
 - When altering the `OxenError` enum, consider whether a hint needs to be added or updated in the `hint` method.
 - After changing any Rust code, verify that tests pass with the `bin/test-rust` script (not `cargo`). The script is documented in a comment at the top of its file.
 - The Python project calls into the Rust project. Whenever changing the Rust code, check to see if the Python code needs to be updated.
-- After changing any Rust or Python code, verify that Rust tests pass with `bin/test-rust` and Python tests pass with `/bin/test-rust -p`
+- After changing any Rust or Python code, verify that Rust tests pass with `bin/test-rust` and Python tests pass with `bin/test-rust -p`
 
 # Testing Rules
 - Use the test helpers in `crates/lib/src/test.rs` (e.g., `run_empty_local_repo_test`) for unit tests in the lib code.
