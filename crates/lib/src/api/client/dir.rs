@@ -129,7 +129,6 @@ mod tests {
     use crate::test;
     use crate::util;
     use crate::view::entries::EMetadataEntry;
-    use tokio::time::sleep;
 
     use std::path::Path;
     use std::path::PathBuf;
@@ -534,8 +533,6 @@ mod tests {
             repositories::commit(&local_repo, "adding a_file")?;
             repositories::push(&local_repo).await?;
 
-            sleep(std::time::Duration::from_millis(1100)).await;
-
             let file_b = local_repo.path.join("b_file.txt");
             util::fs::write_to_path(&file_b, "content b")?;
             repositories::add(&local_repo, &file_b).await?;
@@ -591,8 +588,6 @@ mod tests {
             repositories::add(&local_repo, &local_repo.path).await?;
             repositories::commit(&local_repo, "Adding nested structure")?;
             repositories::push(&local_repo).await?;
-
-            sleep(std::time::Duration::from_millis(1100)).await;
 
             let newer_nested_file = dir_a.join("file_a2.txt");
             util::fs::write(newer_nested_file.clone(), "a2 content")?;

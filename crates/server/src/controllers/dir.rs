@@ -3,7 +3,7 @@ use crate::helpers::get_repo;
 use crate::params::{PageNumVersionQuery, app_data, parse_resource, path_param};
 
 use liboxen::core::versions::MinOxenVersion;
-use liboxen::opts::{PaginateOpts, SortBy, SortOpts};
+use liboxen::opts::{PaginateOpts, SortOpts};
 use liboxen::perf_guard;
 use liboxen::view::PaginatedDirEntriesResponse;
 use liboxen::{constants, repositories};
@@ -49,14 +49,13 @@ pub async fn get(
         d if d < 0 => usize::MAX,
         d => d as usize,
     };
-    let sort_by = match query.sort_by.as_deref() {
-        Some("date") => SortBy::Date,
-        _ => SortBy::Name,
-    };
-    let sort_opts = SortOpts {
-        sort_by,
-        reverse: query.reverse.unwrap_or(false),
-    };
+    let sort_opts = SortOpts::from_query(query.sort_by.as_deref(), query.reverse.unwrap_or(false))
+        .map_err(|_| {
+            OxenHttpError::BadRequest(
+                "Invalid value for sort_by, valid options include: `name`, `date`.".into(),
+            )
+        })?
+        .unwrap_or_default();
     drop(_perf_parse);
 
     log::debug!(

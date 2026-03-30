@@ -1,33 +1,73 @@
+use derive_more::Display;
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::str::FromStr;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+use crate::error::OxenError;
+
+#[derive(Clone, Debug, Default, Display, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+// TODO: When we upgrade to derive_more 2.0.0, use #[display(rename_all = "lowercase")]
 pub enum SortBy {
+    #[default]
+    #[display("name")]
     Name,
+    #[display("date")]
     Date,
 }
 
-impl fmt::Display for SortBy {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl SortBy {
+    const ALL: [SortBy; 2] = [SortBy::Name, SortBy::Date];
+
+    pub fn values() -> Vec<&'static str> {
+        Self::ALL.iter().map(SortBy::as_str).collect()
+    }
+
+    pub fn as_str(&self) -> &'static str {
         match self {
-            SortBy::Name => write!(f, "name"),
-            SortBy::Date => write!(f, "date"),
+            SortBy::Name => "name",
+            SortBy::Date => "date",
         }
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+impl FromStr for SortBy {
+    type Err = OxenError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let value = value.trim().to_lowercase();
+        SortBy::ALL
+            .iter()
+            .find(|sort_by| sort_by.as_str() == value)
+            .cloned()
+            .ok_or_else(|| {
+                let options = SortBy::values()
+                    .into_iter()
+                    .map(|value| format!("'{value}'"))
+                    .collect::<Vec<String>>()
+                    .join(" or ");
+                OxenError::basic_str(format!("Invalid sort_by: {value}. Expected {options}."))
+            })
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SortOpts {
     pub sort_by: SortBy,
     pub reverse: bool,
 }
 
-impl Default for SortOpts {
-    fn default() -> Self {
-        SortOpts {
-            sort_by: SortBy::Name,
-            reverse: false,
-        }
+impl SortOpts {
+    pub fn from_query(sort_by: Option<&str>, reverse: bool) -> Result<Option<Self>, OxenError> {
+        let parsed = sort_by
+            .map(SortBy::from_str)
+            .transpose()?
+            .map(|sort_by| Self { sort_by, reverse });
+
+        Ok(parsed.or_else(|| {
+            reverse.then_some(Self {
+                sort_by: SortBy::Name,
+                reverse: true,
+            })
+        }))
     }
 }

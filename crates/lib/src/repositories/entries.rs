@@ -1208,6 +1208,9 @@ mod tests {
             )?;
 
             assert_eq!(paginated.total_entries, 3);
+            assert_eq!(paginated.entries[0].filename(), "dir_a");
+            assert_eq!(paginated.entries[1].filename(), "dir_b");
+            assert_eq!(paginated.entries[2].filename(), "root_file.txt");
 
             // Find dir_a and check it has children
             let dir_a_entry = paginated.entries.iter().find(|e| e.filename() == "dir_a");
@@ -1218,6 +1221,10 @@ mod tests {
                 let children = e.children.as_ref().unwrap();
                 // dir_a should have: file_a1.txt, file_a2.txt, and subdir
                 assert_eq!(children.len(), 3);
+                // Default sort is name asc with directories first
+                assert_eq!(children[0].filename, "subdir");
+                assert_eq!(children[1].filename, "file_a1.txt");
+                assert_eq!(children[2].filename, "file_a2.txt");
 
                 // With depth=1, subdir's children should NOT be populated
                 let subdir = children.iter().find(|c| c.filename == "subdir");
