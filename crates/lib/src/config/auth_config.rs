@@ -74,7 +74,7 @@ impl AuthConfig {
             Err(_) => config_dir.join(Path::new(AUTH_CONFIG_FILENAME)),
         };
 
-        log::debug!("looking for config file in...{config_file:?}");
+        log::trace!("looking for config file in...{config_file:?}");
         if config_file.exists() {
             Ok(AuthConfig::new(&config_file))
         } else {
