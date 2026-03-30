@@ -1,10 +1,12 @@
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
+use strum::EnumIter;
+use strum::IntoEnumIterator;
 
 use crate::error::OxenError;
 
-#[derive(Clone, Debug, Default, Display, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Display, Serialize, Deserialize, PartialEq, Eq, EnumIter)]
 #[serde(rename_all = "lowercase")]
 // TODO: When we upgrade to derive_more 2.0.0, use #[display(rename_all = "lowercase")]
 pub enum SortBy {
@@ -16,10 +18,8 @@ pub enum SortBy {
 }
 
 impl SortBy {
-    const ALL: [SortBy; 2] = [SortBy::Name, SortBy::Date];
-
     pub fn values() -> Vec<&'static str> {
-        Self::ALL.iter().map(SortBy::as_str).collect()
+        Self::iter().map(|sort_by| sort_by.as_str()).collect()
     }
 
     pub fn as_str(&self) -> &'static str {
@@ -35,10 +35,8 @@ impl FromStr for SortBy {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let value = value.trim().to_lowercase();
-        SortBy::ALL
-            .iter()
+        SortBy::iter()
             .find(|sort_by| sort_by.as_str() == value)
-            .cloned()
             .ok_or_else(|| {
                 let options = SortBy::values()
                     .into_iter()
