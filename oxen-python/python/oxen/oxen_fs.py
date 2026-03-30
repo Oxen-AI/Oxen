@@ -9,7 +9,7 @@ import fsspec
 from fsspec.utils import infer_storage_options
 
 from .remote_repo import RemoteRepo
-from ._oxen import PyEntry
+from .oxen_py import PyEntry
 
 logger = logging.getLogger(__name__)
 

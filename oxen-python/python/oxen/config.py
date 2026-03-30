@@ -1,4 +1,4 @@
-from ._oxen import util
+from .oxen_py import util
 import os
 
 

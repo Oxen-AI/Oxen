@@ -11,7 +11,7 @@ keywords = { workspace = true }
 publish = false
 
 [lib]
-name = "_oxen" # The native extension module. Users still `import oxen` via the Python package wrapper.
+name = "oxen_py" # The native extension module. Users still `import oxen` via the Python package wrapper.
 crate-type = ["cdylib"] # PyO3 needs this crate to be a cdylib so it can link against it.
 
 [dependencies]

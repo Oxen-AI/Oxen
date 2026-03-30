@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Iterator, Optional
 
-from ._oxen import PyCommit, PyErrorFileInfo, PyWorkspace
+from .oxen_py import PyCommit, PyErrorFileInfo, PyWorkspace
 
 # Use TYPE_CHECKING for type hints to avoid runtime circular imports
 if TYPE_CHECKING:
