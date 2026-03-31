@@ -263,8 +263,6 @@ impl Hash for FileNode {
     }
 }
 
-impl TMerkleTreeNode for FileNode {}
-
 /// Debug is used for verbose multi-line output with println!("{:?}", node)
 impl fmt::Debug for FileNode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

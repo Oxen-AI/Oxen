@@ -204,8 +204,6 @@ impl MerkleTreeNodeIdType for CommitNode {
     }
 }
 
-impl TMerkleTreeNode for CommitNode {}
-
 /// Debug is used for verbose multi-line output with println!("{:?}", node)
 impl fmt::Debug for CommitNode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

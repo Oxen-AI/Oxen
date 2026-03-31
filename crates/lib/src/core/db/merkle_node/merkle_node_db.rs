@@ -226,7 +226,10 @@ impl MerkleNodeDB {
         Self::to_node(self.dtype, &self.data())
     }
 
-    pub fn to_node(dtype: MerkleTreeNodeType, data: &[u8]) -> Result<EMerkleTreeNode, OxenError> {
+    pub fn to_node(
+        dtype: MerkleTreeNodeType,
+        data: &[u8],
+    ) -> Result<EMerkleTreeNode, InvalidMerkleTreeNodeType> {
         match dtype {
             MerkleTreeNodeType::Commit => {
                 Ok(EMerkleTreeNode::Commit(CommitNode::deserialize(data)?))
@@ -324,7 +327,7 @@ impl MerkleNodeDB {
 
         let dtype = lookup
             .as_ref()
-            .map(|l| MerkleTreeNodeType::from_u8(l.data_type))
+            .map(|l| MerkleTreeNodeType::from_u8_unwrap(l.data_type))
             .unwrap_or(MerkleTreeNodeType::Commit);
         let parent_id = lookup.as_ref().map(|l| l.parent_id);
         Ok(Self {
@@ -498,7 +501,7 @@ impl MerkleNodeDB {
         };
 
         // Parse the node parent id
-        let data_type = MerkleTreeNodeType::from_u8(lookup.data_type);
+        let data_type = MerkleTreeNodeType::from_u8_unwrap(lookup.data_type);
         let parent_id = MerkleTreeNode::deserialize_id(&lookup.data, data_type)?;
 
         let mut file_data = Vec::new();
@@ -517,7 +520,7 @@ impl MerkleNodeDB {
             cursor.seek(SeekFrom::Start(*offset))?;
             let mut data = vec![0; *len as usize];
             cursor.read_exact(&mut data)?;
-            let dtype = MerkleTreeNodeType::from_u8(*dtype);
+            let dtype = MerkleTreeNodeType::from_u8_unwrap(*dtype);
             let node = MerkleTreeNode {
                 parent_id: Some(parent_id),
                 hash: MerkleHash::new(*hash),

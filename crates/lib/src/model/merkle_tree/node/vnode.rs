@@ -153,5 +153,3 @@ impl fmt::Display for VNode {
         write!(f, "")
     }
 }
-
-impl TMerkleTreeNode for VNode {}

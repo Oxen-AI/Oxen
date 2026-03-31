@@ -43,8 +43,6 @@ impl MerkleTreeNodeIdType for FileChunkNode {
     }
 }
 
-impl TMerkleTreeNode for FileChunkNode {}
-
 /// Debug is used for verbose multi-line output with println!("{:?}", node)
 impl fmt::Debug for FileChunkNode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

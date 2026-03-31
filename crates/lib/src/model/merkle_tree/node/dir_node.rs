@@ -262,8 +262,6 @@ impl MerkleTreeNodeIdType for DirNode {
     }
 }
 
-impl TMerkleTreeNode for DirNode {}
-
 /// Debug is used for verbose multi-line output with println!("{:?}", node)
 impl fmt::Debug for DirNode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
