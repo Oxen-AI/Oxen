@@ -58,4 +58,23 @@ pub trait MerkleTreeNodeIdType {
     fn hash(&self) -> MerkleHash;
 }
 
-pub trait TMerkleTreeNode: MerkleTreeNodeIdType + Serialize + Debug + Display {}
+/// Trait for things that are Merkle tree nodes.
+///
+/// Critical functionality is to be able to serialize & deserialize nodes. The Debug & Display
+/// constraints are for convenience.
+///
+/// Since this trait is used as a parameter for generic functions, it must be object-safe. This means
+/// that it cannot extend `Serialize` since that has a `<S: Serializer>` parameter on the
+/// `serialize` method, which causes the type to not be implementable as a vtable lookup.
+///
+/// This is why the trait contains manual serialization (`to_msgpack_bytes`) and deserialization
+/// (`from_msgpack_bytes`) methods. For types that do implement `Serialize` and `Deserialize`,
+/// there's a blanket implementation that delegates the appropriate `serialize` & `deserialze`
+/// calls to these trait methods.
+pub trait TMerkleTreeNode: MerkleTreeNodeIdType + Debug + Display {
+    /// Serialize this node to a MsgPack byte array.
+    fn to_msgpack_bytes(&self) -> Vec<u8>;
+
+    /// Deserialize a node from a MsgPack byte array.
+    fn from_msgpack_bytes(bytes: &[u8]) -> Self;
+}
