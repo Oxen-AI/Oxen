@@ -64,7 +64,7 @@ pub async fn import_url(
     directory: impl AsRef<str>,
     download_url: impl AsRef<str>,
     commit: &NewCommitBody,
-    force_update: bool,
+    update_timestamp: bool,
 ) -> Result<crate::model::Commit, OxenError> {
     let branch_name = branch_name.as_ref();
     let directory = directory.as_ref();
@@ -78,8 +78,8 @@ pub async fn import_url(
         "email": commit.email,
         "message": commit.message,
     });
-    if force_update {
-        body["force_update"] = serde_json::Value::Bool(true);
+    if update_timestamp {
+        body["update_timestamp"] = serde_json::Value::Bool(true);
     }
 
     let client = client::new_for_url(&url)?;
@@ -227,7 +227,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_import_url_with_force_update() -> Result<(), OxenError> {
+    async fn test_import_url_with_update_timestamp() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = DEFAULT_BRANCH_NAME;
             let download_url =
@@ -251,7 +251,7 @@ mod tests {
             .await?;
             assert!(!first_commit.id.is_empty());
 
-            // Second import of same file WITHOUT force_update should fail (no changes)
+            // Second import of same file WITHOUT update_timestamp should fail (no changes)
             let result = api::client::import::import_url(
                 &remote_repo,
                 branch_name,
@@ -269,7 +269,7 @@ mod tests {
                 "Expected import to fail with no changes: {result:?}"
             );
 
-            // Third import of same file WITH force_update should succeed
+            // Third import of same file WITH update_timestamp should succeed
             let third_commit = api::client::import::import_url(
                 &remote_repo,
                 branch_name,
@@ -284,7 +284,7 @@ mod tests {
             .await?;
             assert_ne!(first_commit.id, third_commit.id);
 
-            // Verify latest_commit on the entry matches the force_update commit
+            // Verify latest_commit on the entry matches the update_timestamp commit
             let entries = api::client::dir::list(
                 &remote_repo,
                 branch_name,
@@ -303,7 +303,7 @@ mod tests {
                 .expect("Entry should have latest_commit");
             assert_eq!(
                 latest_commit.id, third_commit.id,
-                "latest_commit should match the force_update commit"
+                "latest_commit should match the update_timestamp commit"
             );
 
             Ok(remote_repo)

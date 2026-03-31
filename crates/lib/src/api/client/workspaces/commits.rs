@@ -515,7 +515,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_reupload_same_file_without_force_update_fails() -> Result<(), OxenError> {
+    async fn test_reupload_same_file_without_update_timestamp_fails() -> Result<(), OxenError> {
         test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
             let branch_name = "main";
 
@@ -544,7 +544,7 @@ mod tests {
                     .await?;
             assert!(!first_commit.id.is_empty());
 
-            // Re-upload the same file without force_update
+            // Re-upload the same file without update_timestamp
             let workspace_id_2 = UserConfig::identifier()? + "_2";
             api::client::workspaces::create(&remote_repo, branch_name, &workspace_id_2).await?;
 
@@ -579,7 +579,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_reupload_same_file_with_force_update_succeeds() -> Result<(), OxenError> {
+    async fn test_reupload_same_file_with_update_timestamp_succeeds() -> Result<(), OxenError> {
         test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
             let branch_name = "main";
 
@@ -608,7 +608,7 @@ mod tests {
                     .await?;
             assert!(!first_commit.id.is_empty());
 
-            // Re-upload the same file WITH force_update
+            // Re-upload the same file WITH update_timestamp
             let workspace_id_2 = UserConfig::identifier()? + "_2";
             api::client::workspaces::create(&remote_repo, branch_name, &workspace_id_2).await?;
 
@@ -619,12 +619,12 @@ mod tests {
                 "images",
                 paths,
                 &None,
-                true, // force_update
+                true, // update_timestamp
             )
             .await;
             assert!(result.is_ok(), "{result:?}");
 
-            // Commit should succeed because force_update forces timestamp update
+            // Commit should succeed because update_timestamp forces timestamp update
             let body = NewCommitBody {
                 message: "Force update same image".to_string(),
                 author: "Test User".to_string(),
@@ -655,7 +655,7 @@ mod tests {
                 .expect("File entry should have a latest_commit");
             assert_eq!(
                 latest_commit.id, second_commit.id,
-                "latest_commit on the file entry should match the force_update commit, got {} expected {}",
+                "latest_commit on the file entry should match the update_timestamp commit, got {} expected {}",
                 latest_commit.id, second_commit.id,
             );
 
@@ -665,7 +665,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_reupload_same_large_file_with_force_update_succeeds() -> Result<(), OxenError> {
+    async fn test_reupload_same_large_file_with_update_timestamp_succeeds() -> Result<(), OxenError>
+    {
         test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
             let branch_name = "main";
 
@@ -735,7 +736,7 @@ mod tests {
                 .expect("File entry should have a latest_commit");
             assert_eq!(
                 latest_commit.id, second_commit.id,
-                "latest_commit on the large file entry should match the force_update commit, got {} expected {}",
+                "latest_commit on the large file entry should match the update_timestamp commit, got {} expected {}",
                 latest_commit.id, second_commit.id,
             );
 

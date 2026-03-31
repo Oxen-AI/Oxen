@@ -56,7 +56,7 @@ pub struct CompleteVersionUploadRequest {
     // otherwise, we will just add the file to the versions store
     pub workspace_id: Option<String>,
     #[serde(default)]
-    pub force_update: bool,
+    pub update_timestamp: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

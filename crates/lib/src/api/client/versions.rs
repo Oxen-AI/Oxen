@@ -110,7 +110,7 @@ pub async fn parallel_large_file_upload(
     file_path: impl AsRef<Path>,
     dst_dir: Option<impl AsRef<Path>>, // dst_dir is provided for workspace add workflow
     workspace_id: Option<String>,
-    force_update: bool,
+    update_timestamp: bool,
     entry: Option<Entry>,                 // entry is provided for push workflow
     progress: Option<&Arc<PushProgress>>, // for push workflow
 ) -> Result<MultipartLargeFileUpload, OxenError> {
@@ -138,7 +138,7 @@ pub async fn parallel_large_file_upload(
         upload,
         num_chunks,
         workspace_id,
-        force_update,
+        update_timestamp,
     )
     .await
 }
@@ -449,7 +449,7 @@ async fn complete_multipart_large_file_upload(
     upload: MultipartLargeFileUpload,
     num_chunks: usize,
     workspace_id: Option<String>,
-    force_update: bool,
+    update_timestamp: bool,
 ) -> Result<MultipartLargeFileUpload, OxenError> {
     let file_hash = &upload.hash.to_string();
 
@@ -472,7 +472,7 @@ async fn complete_multipart_large_file_upload(
             upload_results: None,
         }],
         workspace_id,
-        force_update,
+        update_timestamp,
     };
 
     let body = serde_json::to_string(&body)?;

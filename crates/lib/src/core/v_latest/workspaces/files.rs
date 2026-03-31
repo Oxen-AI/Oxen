@@ -45,7 +45,7 @@ pub async fn add(workspace: &Workspace, filepath: impl AsRef<Path>) -> Result<Pa
 pub async fn add_with_opts(
     workspace: &Workspace,
     filepath: impl AsRef<Path>,
-    force_update: bool,
+    update_timestamp: bool,
 ) -> Result<PathBuf, OxenError> {
     let filepath = filepath.as_ref();
     let workspace_repo = &workspace.workspace_repo;
@@ -58,7 +58,7 @@ pub async fn add_with_opts(
         workspace_repo,
         &Some(commit),
         filepath,
-        force_update,
+        update_timestamp,
     )
     .await?;
 
@@ -87,7 +87,7 @@ pub fn add_version_file(
     version_path: impl AsRef<Path>,
     dst_path: impl AsRef<Path>,
     file_hash: &str,
-    force_update: bool,
+    update_timestamp: bool,
 ) -> Result<PathBuf, OxenError> {
     // version_path is where the file is stored, dst_path is the relative path to the repo
     // let version_path = version_path.as_ref();
@@ -103,7 +103,7 @@ pub fn add_version_file(
         file_hash,
         &staged_db_manager,
         &Arc::new(Mutex::new(HashSet::new())),
-        force_update,
+        update_timestamp,
     )?;
 
     Ok(dst_path.to_path_buf())
@@ -114,7 +114,7 @@ pub async fn add_version_files(
     workspace: &Workspace,
     files_with_hash: &[FileWithHash],
     directory: impl AsRef<str>,
-    force_update: bool,
+    update_timestamp: bool,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let version_store = repo.version_store()?;
 
@@ -146,7 +146,7 @@ pub async fn add_version_files(
             &item.hash,
             &staged_db_manager,
             &seen_dirs,
-            force_update,
+            update_timestamp,
         ) {
             Ok(_) => {
                 // Add parents to staged db
@@ -362,7 +362,7 @@ pub async fn import(
     directory: PathBuf,
     filename: Option<String>,
     workspace: &Workspace,
-    force_update: bool,
+    update_timestamp: bool,
 ) -> Result<(), OxenError> {
     let parsed_url =
         Url::parse(url).map_err(|_| OxenError::file_import_error(format!("Invalid URL: {url}")))?;
@@ -385,7 +385,7 @@ pub async fn import(
         directory,
         filename,
         workspace,
-        force_update,
+        update_timestamp,
     )
     .await?;
 
@@ -456,7 +456,7 @@ async fn fetch_file(
     directory: PathBuf,
     caller_filename: Option<String>,
     workspace: &Workspace,
-    force_update: bool,
+    update_timestamp: bool,
 ) -> Result<(), OxenError> {
     let client = Client::builder()
         .redirect(redirect::Policy::none())
@@ -627,14 +627,14 @@ async fn fetch_file(
         for file in files.iter() {
             log::debug!("file::import add file {file:?}");
             let path =
-                repositories::workspaces::files::add_with_opts(workspace, file, force_update)
+                repositories::workspaces::files::add_with_opts(workspace, file, update_timestamp)
                     .await?;
             log::debug!("file::import add file ✅ success! staged file {path:?}");
         }
     } else {
         log::debug!("file::import add file {:?}", &filepath);
         let path =
-            repositories::workspaces::files::add_with_opts(workspace, &save_path, force_update)
+            repositories::workspaces::files::add_with_opts(workspace, &save_path, update_timestamp)
                 .await?;
         log::debug!("file::import add file ✅ success! staged file {path:?}");
     }
@@ -845,7 +845,7 @@ async fn p_add_file(
     workspace_repo: &LocalRepository,
     maybe_head_commit: &Option<Commit>,
     path: &Path,
-    force_update: bool,
+    update_timestamp: bool,
 ) -> Result<(), OxenError> {
     let version_store = base_repo.version_store()?;
     let mut maybe_dir_node = None;
@@ -869,11 +869,11 @@ async fn p_add_file(
     let mut file_status =
         core::v_latest::add::determine_file_status(&maybe_dir_node, &file_name, &full_path)?;
 
-    // When force_update is set, override Unmodified status to Modified
+    // When update_timestamp is set, override Unmodified status to Modified
     // and use the current time so the commit gets a new merkle tree hash
-    if force_update && file_status.status == StagedEntryStatus::Unmodified {
+    if update_timestamp && file_status.status == StagedEntryStatus::Unmodified {
         log::info!(
-            "file {full_path:?} has not changed but force_update is set - staging as modified"
+            "file {full_path:?} has not changed but update_timestamp is set - staging as modified"
         );
         file_status.status = StagedEntryStatus::Modified;
         file_status.mtime = FileTime::now();
