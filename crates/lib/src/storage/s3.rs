@@ -217,7 +217,7 @@ impl VersionStore for S3VersionStore {
 
         let upload_id = upload
             .upload_id()
-            .ok_or_else(|| OxenError::basic_str("S3 multipart upload missing upload_id"))?
+            .ok_or_else(|| OxenError::upload("S3 multipart upload missing upload_id"))?
             .to_string();
 
         // Pipeline reading and uploading: read parts on this task and send them through a bounded
@@ -261,7 +261,7 @@ impl VersionStore for S3VersionStore {
                             .map_err(OxenError::aws_sdk_error)?;
 
                         let etag = resp.e_tag().map(|s| s.to_string()).ok_or_else(|| {
-                            OxenError::basic_str("S3 upload_part response missing ETag")
+                            OxenError::upload("S3 upload_part response missing ETag")
                         })?;
 
                         Ok(CompletedPart::builder()
@@ -280,7 +280,7 @@ impl VersionStore for S3VersionStore {
         let producer_result: Result<(), OxenError> = async {
             let mut part_num: i32 = 1;
             tx.send((part_num, first_buf)).await.map_err(|_| {
-                OxenError::basic_str("Upload task terminated while sending first part")
+                OxenError::upload("Upload task terminated while sending first part")
             })?;
             part_num += 1;
 
@@ -292,9 +292,9 @@ impl VersionStore for S3VersionStore {
                     break;
                 }
                 buf.truncate(n);
-                tx.send((part_num, buf)).await.map_err(|_| {
-                    OxenError::basic_str("Upload task terminated while sending parts")
-                })?;
+                tx.send((part_num, buf))
+                    .await
+                    .map_err(|_| OxenError::upload("Upload task terminated while sending parts"))?;
                 part_num += 1;
             }
 
@@ -311,7 +311,7 @@ impl VersionStore for S3VersionStore {
             Ok(()) => {
                 match upload_task_join_handle
                     .await
-                    .map_err(|e| OxenError::basic_str(format!("Upload task panicked: {e}")))
+                    .map_err(|e| OxenError::upload(&format!("Upload task panicked: {e}")))
                 {
                     Ok(Ok(mut completed_parts)) => {
                         completed_parts.sort_by_key(|p| p.part_number);
@@ -690,7 +690,7 @@ async fn read_full(
         let n = reader
             .read(&mut buf[offset..])
             .await
-            .map_err(|e| OxenError::basic_str(format!("Failed to read from reader: {e}")))?;
+            .map_err(|e| OxenError::upload(&format!("Failed to read from reader: {e}")))?;
         if n == 0 {
             break;
         }

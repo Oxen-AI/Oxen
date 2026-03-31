@@ -102,6 +102,10 @@ pub enum OxenError {
     #[error("Invalid version: {0}")]
     InvalidVersion(StringError),
 
+    // Version Store
+    #[error("{0}")]
+    Upload(StringError),
+
     // Entry
     #[error("{0}")]
     CommitEntryNotFound(StringError),
@@ -281,6 +285,10 @@ impl OxenError {
 
     pub fn invalid_version(s: impl AsRef<str>) -> Self {
         OxenError::InvalidVersion(StringError::from(s.as_ref()))
+    }
+
+    pub fn upload(s: &str) -> Self {
+        OxenError::Upload(StringError::from(s))
     }
 
     pub fn oxen_update_required(s: impl AsRef<str>) -> Self {
