@@ -4,20 +4,16 @@ use async_trait::async_trait;
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::operation::head_object::HeadObjectError;
-use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_sdk_s3::{Client, config::Region, primitives::ByteStream};
 use bytes::Bytes;
-use futures::TryStreamExt;
-use futures::stream::StreamExt;
 use log;
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::OnceCell;
 use tokio_stream::Stream;
-use tokio_stream::wrappers::ReceiverStream;
 
 use super::version_store::{LocalFilePath, VersionStore};
 use crate::constants::VERSION_FILE_NAME;
@@ -176,186 +172,28 @@ impl VersionStore for S3VersionStore {
     async fn store_version_from_reader(
         &self,
         hash: &str,
-        reader: &mut (dyn tokio::io::AsyncRead + Send + Unpin),
+        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> Result<(), OxenError> {
         let client = self.init_client().await?;
         let key = self.generate_key(hash);
 
-        // S3 multipart upload requires 5MB minimum per part (except the last).
-        // We use 8MB parts for a balance of memory usage and request count.
-        const PART_SIZE: usize = 8 * 1024 * 1024;
+        // Stream the reader directly to S3 via put_object. Allocate 8MB to optimize for large files.
+        let stream = tokio_util::io::ReaderStream::with_capacity(reader, 8 * 1024 * 1024);
+        let body = ReaderBody {
+            stream: std::sync::Mutex::new(stream),
+        };
+        let byte_stream = ByteStream::from_body_1_x(body);
 
-        let mut reader = tokio::io::BufReader::new(reader);
-
-        // Read the first part to determine if we need multipart upload
-        let mut first_buf = vec![0u8; PART_SIZE];
-        let first_n = read_full(&mut reader, &mut first_buf).await?;
-        first_buf.truncate(first_n);
-
-        if first_n < PART_SIZE {
-            // Small file: single put_object
-            let body = ByteStream::from(first_buf);
-            client
-                .put_object()
-                .bucket(&self.bucket)
-                .key(&key)
-                .body(body)
-                .send()
-                .await
-                .map_err(OxenError::aws_sdk_error)?;
-            return Ok(());
-        }
-
-        // Large file: multipart upload
-        let upload = client
-            .create_multipart_upload()
+        client
+            .put_object()
             .bucket(&self.bucket)
             .key(&key)
+            .body(byte_stream)
             .send()
             .await
             .map_err(OxenError::aws_sdk_error)?;
 
-        let upload_id = upload
-            .upload_id()
-            .ok_or_else(|| OxenError::upload("S3 multipart upload missing upload_id"))?
-            .to_string();
-
-        // Pipeline reading and uploading: read parts on this task and send them through a bounded
-        // channel. A spawned task consumes the channel and uploads parts concurrently via
-        // buffer_unordered. The bounded channel keeps at most MAX_PARTS_WAITING_FOR_UPLOAD parts in
-        // memory.
-        const MAX_CONCURRENT_UPLOADS: usize = 8;
-        const MAX_PARTS_WAITING_FOR_UPLOAD: usize = 16;
-
-        let (tx, rx) = tokio::sync::mpsc::channel::<(i32, Vec<u8>)>(MAX_PARTS_WAITING_FOR_UPLOAD);
-
-        // Spawn the upload consumer on a separate tokio task. It starts executing immediately--you
-        // don't have to call `.await` on the join handle first like you do with a regular future.
-        //
-        // This runs concurrently with the producer loop below, connected via the bounded channel.
-        // Whatever the producer sends, the upload task will upload to S3, concurrently to the
-        // producer because it's in a different task, and concurrently with up to
-        // MAX_CONCURRENT_UPLOADS because buffer_unordered uses that many worker tasks.
-        let upload_client = client.clone();
-        let upload_bucket = self.bucket.clone();
-        let upload_key = key.clone();
-        let upload_id_clone = upload_id.clone();
-
-        let upload_task_join_handle = tokio::spawn(async move {
-            let results: Result<Vec<CompletedPart>, OxenError> = ReceiverStream::new(rx)
-                .map(|(part_num, data)| {
-                    let client = upload_client.clone();
-                    let bucket = upload_bucket.clone();
-                    let key = upload_key.clone();
-                    let upload_id = upload_id_clone.clone();
-                    async move {
-                        let resp = client
-                            .upload_part()
-                            .bucket(bucket)
-                            .key(key)
-                            .upload_id(upload_id)
-                            .part_number(part_num)
-                            .body(ByteStream::from(data))
-                            .send()
-                            .await
-                            .map_err(OxenError::aws_sdk_error)?;
-
-                        let etag = resp.e_tag().map(|s| s.to_string()).ok_or_else(|| {
-                            OxenError::upload("S3 upload_part response missing ETag")
-                        })?;
-
-                        Ok(CompletedPart::builder()
-                            .part_number(part_num)
-                            .e_tag(etag)
-                            .build())
-                    }
-                })
-                .buffer_unordered(MAX_CONCURRENT_UPLOADS)
-                .try_collect()
-                .await;
-            results
-        });
-
-        // Producer: read parts and feed them into the channel. This loop happens on this task.
-        let producer_result: Result<(), OxenError> = async {
-            let mut part_num: i32 = 1;
-            tx.send((part_num, first_buf)).await.map_err(|_| {
-                OxenError::upload("Upload task terminated while sending first part")
-            })?;
-            part_num += 1;
-
-            loop {
-                let mut buf = vec![0u8; PART_SIZE];
-                let n = read_full(&mut reader, &mut buf).await?;
-                if n == 0 {
-                    // We have reached EOF
-                    break;
-                }
-                buf.truncate(n);
-                tx.send((part_num, buf))
-                    .await
-                    .map_err(|_| OxenError::upload("Upload task terminated while sending parts"))?;
-                part_num += 1;
-            }
-
-            Ok(())
-        }
-        .await;
-
-        // Close the channel so the upload task finishes draining any buffered parts.
-        drop(tx);
-
-        let result = match producer_result {
-            // The producer task completed reading the file and sent all parts to the upload task,
-            // so wait for the upload task to finish next.
-            Ok(()) => {
-                match upload_task_join_handle
-                    .await
-                    .map_err(|e| OxenError::upload(&format!("Upload task panicked: {e}")))
-                {
-                    Ok(Ok(mut completed_parts)) => {
-                        completed_parts.sort_by_key(|p| p.part_number);
-
-                        let completed = CompletedMultipartUpload::builder()
-                            .set_parts(Some(completed_parts))
-                            .build();
-
-                        client
-                            .complete_multipart_upload()
-                            .bucket(&self.bucket)
-                            .key(&key)
-                            .upload_id(&upload_id)
-                            .multipart_upload(completed)
-                            .send()
-                            .await
-                            .map_err(OxenError::aws_sdk_error)
-                            .map(|_| ())
-                    }
-                    Ok(Err(e)) | Err(e) => Err(e),
-                }
-            }
-            // The producer task wasn't able to successfully read the file and send the parts to the
-            // upload task, so we ensure the upload task is cancelled and awaited so that no
-            // in-flight upload_part calls race with abort_multipart_upload below.
-            Err(producer_err) => {
-                upload_task_join_handle.abort();
-                let _ = upload_task_join_handle.await;
-                Err(producer_err)
-            }
-        };
-
-        if let Err(ref e) = result {
-            log::error!("Multipart upload failed, aborting: {e}");
-            let _ = client
-                .abort_multipart_upload()
-                .bucket(&self.bucket)
-                .key(&key)
-                .upload_id(&upload_id)
-                .send()
-                .await;
-        }
-
-        result
+        Ok(())
     }
 
     async fn store_version(&self, hash: &str, data: &[u8]) -> Result<(), OxenError> {
@@ -678,30 +516,33 @@ impl VersionStore for S3VersionStore {
     }
 }
 
-/// Read from `reader` until `buf` is full or EOF, returning the number of
-/// bytes read. Unlike a single `read()` call this won't return a short read
-/// unless EOF is reached.
-async fn read_full(
-    reader: &mut (dyn tokio::io::AsyncRead + Send + Unpin),
-    buf: &mut [u8],
-) -> Result<usize, OxenError> {
-    let mut offset = 0;
-    while offset < buf.len() {
-        let n = reader
-            .read(&mut buf[offset..])
-            .await
-            .map_err(|e| OxenError::upload(&format!("Failed to read from reader: {e}")))?;
-        if n == 0 {
-            break;
-        }
-        offset += n;
-    }
-    Ok(offset)
-}
-
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+
+/// The S3 library wants something that implements http_body::Body, but doesn't have a generic
+/// implementation for us to use out of the box for tokio::io::AsyncRead. This is our custom struct
+/// that wraps AsyncRead in a Mutex to satisfy the Sync bound on ByteStream, and then implements
+/// http_body::Body. The Mutex is only polled from one task, so there won't be any lock contention.
+struct ReaderBody {
+    stream: std::sync::Mutex<
+        tokio_util::io::ReaderStream<Box<dyn tokio::io::AsyncRead + Send + Unpin>>,
+    >,
+}
+
+impl http_body::Body for ReaderBody {
+    type Data = Bytes;
+    type Error = io::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        Pin::new(&mut *self.stream.lock().unwrap())
+            .poll_next(cx)
+            .map(|opt| opt.map(|result| result.map(http_body::Frame::data)))
+    }
+}
 
 pub struct ByteStreamAdapter {
     inner: ByteStream,
