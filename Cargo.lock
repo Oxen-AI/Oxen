@@ -2908,7 +2908,7 @@ dependencies = [
  "rust_decimal",
  "serde_json",
  "smallvec",
- "strum",
+ "strum 0.25.0",
 ]
 
 [[package]]
@@ -4513,6 +4513,7 @@ dependencies = [
  "simdutf8",
  "sql_query_builder",
  "sqlparser",
+ "strum 0.26.3",
  "sysinfo",
  "tar",
  "tempfile",
@@ -7735,6 +7736,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "290d54ea6f91c969195bdbcd7442c8c2a2ba87da8bf60a7ee86a235d4bc1e125"
 dependencies = [
  "strum_macros 0.25.3",
+]
+
+[[package]]
+name = "strum"
+version = "0.26.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
+dependencies = [
+ "strum_macros 0.26.4",
 ]
 
 [[package]]

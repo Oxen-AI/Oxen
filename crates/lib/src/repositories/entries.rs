@@ -6,7 +6,7 @@ use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::entry::commit_entry::{Entry, SchemaEntry};
 use crate::model::merkle_tree::node::{DirNode, FileNode};
-use crate::opts::PaginateOpts;
+use crate::opts::{PaginateOpts, SortOpts};
 use crate::repositories;
 use crate::util::concurrency;
 use rayon::prelude::*;
@@ -110,17 +110,20 @@ pub fn list_directory_w_workspace(
         revision,
         workspace,
         paginate_opts,
+        &SortOpts::default(),
         version,
         0,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn list_directory_w_workspace_depth(
     repo: &LocalRepository,
     directory: impl AsRef<Path>,
     revision: impl AsRef<str>,
     workspace: Option<Workspace>,
     paginate_opts: &PaginateOpts,
+    sort_opts: &SortOpts,
     version: MinOxenVersion,
     depth: usize,
 ) -> Result<PaginatedDirEntries, OxenError> {
@@ -154,6 +157,7 @@ pub fn list_directory_w_workspace_depth(
                 directory,
                 &parsed_resource,
                 paginate_opts,
+                sort_opts,
                 depth,
             )
         }
@@ -397,10 +401,11 @@ mod tests {
     use uuid::Uuid;
 
     use crate::error::OxenError;
-    use crate::opts::PaginateOpts;
+    use crate::opts::{PaginateOpts, SortBy, SortOpts};
     use crate::repositories;
     use crate::test;
     use crate::util;
+    use tokio::time::sleep;
 
     #[tokio::test]
     async fn test_api_local_entries_list_all() -> Result<(), OxenError> {
@@ -1130,6 +1135,7 @@ mod tests {
             // root/
             //   dir_a/
             //     file_a1.txt
+            //     file_a2.txt
             //     subdir/
             //       file_sub.txt
             //   dir_b/
@@ -1150,7 +1156,13 @@ mod tests {
             util::fs::write(dir_b.join("file_b1.txt"), "b1 content")?;
 
             repositories::add(&repo, &repo.path).await?;
-            let commit = repositories::commit(&repo, "Adding nested structure")?;
+            let _first_commit = repositories::commit(&repo, "Adding nested structure")?;
+
+            sleep(std::time::Duration::from_millis(1100)).await;
+
+            util::fs::write(dir_a.join("file_a2.txt"), "a2 content")?;
+            repositories::add(&repo, dir_a.join("file_a2.txt")).await?;
+            let commit = repositories::commit(&repo, "Adding newer nested file")?;
 
             let paginate_opts = PaginateOpts {
                 page_num: 1,
@@ -1164,6 +1176,7 @@ mod tests {
                 &commit.id,
                 None,
                 &paginate_opts,
+                &SortOpts::default(),
                 repo.min_version(),
                 0,
             )?;
@@ -1189,11 +1202,15 @@ mod tests {
                 &commit.id,
                 None,
                 &paginate_opts,
+                &SortOpts::default(),
                 repo.min_version(),
                 1,
             )?;
 
             assert_eq!(paginated.total_entries, 3);
+            assert_eq!(paginated.entries[0].filename(), "dir_a");
+            assert_eq!(paginated.entries[1].filename(), "dir_b");
+            assert_eq!(paginated.entries[2].filename(), "root_file.txt");
 
             // Find dir_a and check it has children
             let dir_a_entry = paginated.entries.iter().find(|e| e.filename() == "dir_a");
@@ -1202,13 +1219,40 @@ mod tests {
             if let Some(crate::view::entries::EMetadataEntry::MetadataEntry(e)) = dir_a_entry {
                 assert!(e.children.is_some());
                 let children = e.children.as_ref().unwrap();
-                // dir_a should have: file_a1.txt and subdir
-                assert_eq!(children.len(), 2);
+                // dir_a should have: file_a1.txt, file_a2.txt, and subdir
+                assert_eq!(children.len(), 3);
+                // Default sort is name asc with directories first
+                assert_eq!(children[0].filename, "subdir");
+                assert_eq!(children[1].filename, "file_a1.txt");
+                assert_eq!(children[2].filename, "file_a2.txt");
 
                 // With depth=1, subdir's children should NOT be populated
                 let subdir = children.iter().find(|c| c.filename == "subdir");
                 assert!(subdir.is_some());
                 assert!(subdir.unwrap().children.is_none());
+            }
+
+            // Test non-default sorting is applied to nested children as well
+            let paginated = repositories::entries::list_directory_w_workspace_depth(
+                &repo,
+                Path::new(""),
+                &commit.id,
+                None,
+                &paginate_opts,
+                &SortOpts {
+                    sort_by: SortBy::Date,
+                    reverse: true,
+                },
+                repo.min_version(),
+                1,
+            )?;
+
+            let dir_a_entry = paginated.entries.iter().find(|e| e.filename() == "dir_a");
+            if let Some(crate::view::entries::EMetadataEntry::MetadataEntry(e)) = dir_a_entry {
+                let children = e.children.as_ref().unwrap();
+                assert_eq!(children[0].filename, "subdir");
+                assert_eq!(children[1].filename, "file_a2.txt");
+                assert_eq!(children[2].filename, "file_a1.txt");
             }
 
             // Test depth=2 - nested children populated
@@ -1218,6 +1262,7 @@ mod tests {
                 &commit.id,
                 None,
                 &paginate_opts,
+                &SortOpts::default(),
                 repo.min_version(),
                 2,
             )?;

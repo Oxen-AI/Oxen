@@ -8,7 +8,7 @@ use std::path::Path;
 use crate::api;
 use crate::error::OxenError;
 use crate::model::{Branch, RemoteRepository};
-use crate::opts::PaginateOpts;
+use crate::opts::{PaginateOpts, SortOpts};
 use crate::view::PaginatedDirEntries;
 
 pub async fn ls(
@@ -17,12 +17,25 @@ pub async fn ls(
     directory: &Path,
     opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
-    api::client::dir::list(
+    ls_with_opts(remote_repo, branch, directory, opts, None, None).await
+}
+
+pub async fn ls_with_opts(
+    remote_repo: &RemoteRepository,
+    branch: &Branch,
+    directory: &Path,
+    opts: &PaginateOpts,
+    sort_opts: Option<&SortOpts>,
+    depth: Option<isize>,
+) -> Result<PaginatedDirEntries, OxenError> {
+    api::client::dir::list_with_opts(
         remote_repo,
         &branch.name,
         directory,
         opts.page_num,
         opts.page_size,
+        sort_opts,
+        depth,
     )
     .await
 }

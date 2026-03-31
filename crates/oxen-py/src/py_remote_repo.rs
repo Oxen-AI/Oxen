@@ -6,8 +6,8 @@ use liboxen::error::OxenError;
 use liboxen::model::commit::NewCommitBody;
 use liboxen::model::file::{FileContents, FileNew};
 use liboxen::model::{Remote, RemoteRepository, RepoNew};
-use liboxen::opts::PaginateOpts;
 use liboxen::opts::StorageOpts;
+use liboxen::opts::{PaginateOpts, SortOpts};
 use liboxen::{api, repositories};
 
 use std::borrow::Cow;
@@ -357,18 +357,33 @@ impl PyRemoteRepo {
             .collect())
     }
 
+    #[pyo3(signature = (path, page_num=1, page_size=10, sort_by=None, reverse=false, depth=None))]
     fn ls(
         &self,
         path: PathBuf,
         page_num: usize,
         page_size: usize,
+        sort_by: Option<&str>,
+        reverse: bool,
+        depth: Option<isize>,
     ) -> Result<PyPaginatedDirEntries, PyOxenError> {
         let Some(revision) = &self.revision else {
             return Ok(PyPaginatedDirEntries::empty());
         };
 
+        let sort_opts = SortOpts::from_query(sort_by, reverse)?;
+
         let result = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            api::client::dir::list(&self.repo, &revision, &path, page_num, page_size).await
+            api::client::dir::list_with_opts(
+                &self.repo,
+                revision,
+                &path,
+                page_num,
+                page_size,
+                sort_opts.as_ref(),
+                depth,
+            )
+            .await
         })?;
 
         // Convert remote status to a PyStagedData using the from method
