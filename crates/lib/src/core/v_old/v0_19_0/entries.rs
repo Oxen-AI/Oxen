@@ -56,9 +56,7 @@ pub fn get_meta_entry(
     let commit = parsed_resource
         .commit
         .clone()
-        .ok_or(OxenError::parsed_resource_not_found(
-            parsed_resource.clone(),
-        ))?;
+        .ok_or_else(|| OxenError::parsed_resource_not_found(parsed_resource.clone()))?;
     log::debug!("get_meta_entry path: {path:?} commit: {commit}");
     let node = repositories::tree::get_dir_without_children(repo, &commit, path, None)?;
     log::debug!("get_meta_entry node: {node:?}");
@@ -109,9 +107,10 @@ fn dir_node_to_metadata_entry(
     if let std::collections::hash_map::Entry::Vacant(e) =
         found_commits.entry(*dir_node.last_commit_id())
     {
-        let commit = repositories::commits::get_by_hash(repo, dir_node.last_commit_id())?.ok_or(
-            OxenError::commit_id_does_not_exist(dir_node.last_commit_id().to_string()),
-        )?;
+        let commit = repositories::commits::get_by_hash(repo, dir_node.last_commit_id())?
+            .ok_or_else(|| {
+                OxenError::commit_id_does_not_exist(dir_node.last_commit_id().to_string())
+            })?;
         e.insert(commit);
     }
 
@@ -153,9 +152,10 @@ fn file_node_to_metadata_entry(
     if let std::collections::hash_map::Entry::Vacant(e) =
         found_commits.entry(*file_node.last_commit_id())
     {
-        let commit = repositories::commits::get_by_hash(repo, file_node.last_commit_id())?.ok_or(
-            OxenError::commit_id_does_not_exist(file_node.last_commit_id().to_string()),
-        )?;
+        let commit = repositories::commits::get_by_hash(repo, file_node.last_commit_id())?
+            .ok_or_else(|| {
+                OxenError::commit_id_does_not_exist(file_node.last_commit_id().to_string())
+            })?;
         e.insert(commit);
     }
 

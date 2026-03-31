@@ -31,7 +31,7 @@ impl RunCmd for WorkspaceListCmd {
             Some(name) => {
                 let remote = repository
                     .get_remote(name)
-                    .ok_or(OxenError::remote_not_set(name))?;
+                    .ok_or_else(|| OxenError::RemoteNotSet(name.clone()))?;
                 api::client::repositories::get_by_remote(&remote).await?
             }
             None => api::client::repositories::get_default_remote(&repository).await?,

@@ -174,7 +174,7 @@ pub async fn diff_uncommitted(
     let unstaged_files = status.unstaged_files();
     log::debug!("unstaged_files: {unstaged_files:?}");
     let commit_1 = repositories::revisions::get(repo, rev_1)?
-        .ok_or_else(|| OxenError::revision_not_found(rev_1.to_string().into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(rev_1.into()))?;
     log::debug!("commit_1: {commit_1:?}");
     let mut diff_result = Vec::new();
     log::debug!("diff_result: {diff_result:?}");
@@ -224,9 +224,9 @@ pub async fn diff_revs(
         path_2.display()
     );
     let commit_1 = repositories::revisions::get(repo, rev_1)?
-        .ok_or_else(|| OxenError::revision_not_found(rev_1.to_string().into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(rev_1.into()))?;
     let commit_2 = repositories::revisions::get(repo, rev_2)?
-        .ok_or_else(|| OxenError::revision_not_found(rev_2.to_string().into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(rev_2.into()))?;
 
     let dir_diff = diff_path(repo, &commit_1, &commit_2, path_1, path_2, opts).await?;
     log::debug!(

@@ -290,26 +290,40 @@ fn is_cgn_or_reserved_v4(octets: [u8; 4]) -> bool {
     false
 }
 
+#[derive(Debug, thiserror::Error)]
+enum InvalidUrlError {
+    #[error("URL has no host")]
+    NoHost,
+
+    #[error("DNS resolution failed for {host}: {source}")]
+    DnsResolutionFailed {
+        host: String,
+        source: std::io::Error,
+    },
+
+    #[error("URL resolves to a private/reserved IP address: {0}")]
+    PrivateIp(std::net::IpAddr),
+}
+
 /// Resolves a URL's hostname via DNS and rejects it if any resolved address is
 /// private/reserved. This prevents SSRF attacks where a user-supplied URL could reach
 /// internal services (e.g. cloud metadata at 169.254.169.254, internal APIs, etc.).
-async fn validate_url_target(url: &Url) -> Result<(), OxenError> {
-    let host = url
-        .host_str()
-        .ok_or_else(|| OxenError::file_import_error("URL has no host"))?;
+async fn validate_url_target(url: &Url) -> Result<(), InvalidUrlError> {
+    let host = url.host_str().ok_or(InvalidUrlError::NoHost)?;
     let port = url.port_or_known_default().unwrap_or(443);
     let addr = format!("{host}:{port}");
 
-    let resolved = tokio::net::lookup_host(&addr).await.map_err(|e| {
-        OxenError::file_import_error(format!("DNS resolution failed for {host}: {e}"))
-    })?;
+    let resolved =
+        tokio::net::lookup_host(&addr)
+            .await
+            .map_err(|e| InvalidUrlError::DnsResolutionFailed {
+                host: host.to_string(),
+                source: e,
+            })?;
 
     for socket_addr in resolved {
         if is_private_ip(&socket_addr.ip()) {
-            return Err(OxenError::file_import_error(format!(
-                "URL resolves to a private/reserved IP address: {}",
-                socket_addr.ip()
-            )));
+            return Err(InvalidUrlError::PrivateIp(socket_addr.ip()));
         }
     }
 
@@ -374,7 +388,9 @@ pub async fn import(
         ));
     }
 
-    validate_url_target(&parsed_url).await?;
+    validate_url_target(&parsed_url)
+        .await
+        .map_err(|e| OxenError::ImportFileError(format!("{e}").into()))?;
 
     let auth_header_value = HeaderValue::from_str(auth)
         .map_err(|_e| OxenError::file_import_error(format!("Invalid header auth value {auth}")))?;
@@ -429,12 +445,12 @@ pub async fn upload_zip(
             log::debug!("workspace::commit ✅ success! commit {commit:?}");
             Ok(commit)
         }
-        Err(OxenError::WorkspaceBehind(workspace)) => {
+        workspace_behind_error @ Err(OxenError::WorkspaceBehind(_)) => {
             log::error!(
                 "unable to commit branch {:?}. Workspace behind",
                 branch.name
             );
-            Err(OxenError::WorkspaceBehind(workspace))
+            workspace_behind_error
         }
         Err(err) => {
             log::error!("unable to commit branch {:?}. Err: {}", branch.name, err);
@@ -502,7 +518,9 @@ async fn fetch_file(
                     "Redirect to non-HTTP(S) URL is not allowed",
                 ));
             }
-            validate_url_target(&next_url).await?;
+            validate_url_target(&next_url)
+                .await
+                .map_err(|e| OxenError::ImportFileError(format!("{e}").into()))?;
 
             current_url = next_url;
             continue;

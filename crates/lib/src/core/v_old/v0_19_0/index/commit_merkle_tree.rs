@@ -50,10 +50,12 @@ impl CommitMerkleTree {
         // if you see it in the logs being called too much, it could be why the code is slow.
         log::debug!("Load tree from commit: {} in repo: {:?}", commit, repo.path);
         let node_hash = commit.id.parse()?;
-        let root =
-            CommitMerkleTree::read_node(repo, &node_hash, true)?.ok_or(OxenError::basic_str(
-                format!("Merkle tree hash not found for commit: '{}'", commit.id),
-            ))?;
+        let root = CommitMerkleTree::read_node(repo, &node_hash, true)?.ok_or_else(|| {
+            OxenError::basic_str(format!(
+                "Merkle tree hash not found for commit: '{}'",
+                commit.id
+            ))
+        })?;
         let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
         Ok(Self { root, dir_hashes })
     }
@@ -111,21 +113,21 @@ impl CommitMerkleTree {
         let root = if let Some(node_hash) = node_hash {
             // We are reading a node with children
             log::debug!("Look up dir 🗂️ {node_path:?}");
-            CommitMerkleTree::read_node(repo, &node_hash, load_recursive)?.ok_or(
+            CommitMerkleTree::read_node(repo, &node_hash, load_recursive)?.ok_or_else(|| {
                 OxenError::basic_str(format!(
                     "Merkle tree hash not found for parent: '{}'",
                     node_path.to_str().unwrap()
-                )),
-            )?
+                ))
+            })?
         } else {
             // We are skipping to a file in the tree using the dir_hashes db
             log::debug!("Look up file 📄 {node_path:?}");
-            CommitMerkleTree::read_file(repo, &dir_hashes, node_path)?.ok_or(
+            CommitMerkleTree::read_file(repo, &dir_hashes, node_path)?.ok_or_else(|| {
                 OxenError::basic_str(format!(
                     "Merkle tree hash not found for parent: '{}'",
                     node_path.to_str().unwrap()
-                )),
-            )?
+                ))
+            })?
         };
         Ok(Self { root, dir_hashes })
     }
@@ -338,12 +340,9 @@ impl CommitMerkleTree {
         path: impl AsRef<Path>,
     ) -> Result<HashSet<MerkleTreeNode>, OxenError> {
         let path = path.as_ref();
-        let node = self
-            .root
-            .get_by_path(path)?
-            .ok_or(OxenError::basic_str(format!(
-                "Merkle tree hash not found for parent: {path:?}"
-            )))?;
+        let node = self.root.get_by_path(path)?.ok_or_else(|| {
+            OxenError::basic_str(format!("Merkle tree hash not found for parent: {path:?}"))
+        })?;
         let mut children = HashSet::new();
         for child in &node.children {
             children.extend(child.children.iter().cloned());

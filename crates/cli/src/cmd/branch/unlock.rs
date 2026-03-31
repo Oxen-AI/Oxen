@@ -47,7 +47,7 @@ impl RunCmd for BranchUnlockCmd {
         // Get the remote repo
         let remote = repository
             .get_remote(remote_name)
-            .ok_or(OxenError::remote_not_set(remote_name))?;
+            .ok_or_else(|| OxenError::RemoteNotSet(remote_name.clone()))?;
         let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
 
         // Unlock the branch

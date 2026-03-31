@@ -55,7 +55,7 @@ impl RunCmd for PruneCmd {
             // Remote prune
             let remote = repository
                 .get_remote(remote_name)
-                .ok_or_else(|| OxenError::remote_not_set(remote_name))?;
+                .ok_or_else(|| OxenError::RemoteNotSet(remote_name.to_string()))?;
             let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
 
             if dry_run {

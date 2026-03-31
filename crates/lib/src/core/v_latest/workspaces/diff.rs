@@ -25,7 +25,7 @@ pub fn diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DiffResult,
     );
 
     let file_node = repositories::tree::get_file_by_path(repo, commit, path)?
-        .ok_or(OxenError::entry_does_not_exist(path))?;
+        .ok_or_else(|| OxenError::entry_does_not_exist(path))?;
 
     log::debug!("diff_workspace_df got file_node {file_node}");
 

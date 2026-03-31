@@ -39,8 +39,8 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     // Parse the base and head from the base..head string
     let (base, head) = parse_base_head(&base_head)?;
     let (base_commit, head_commit) = resolve_base_head_branches(&repository, &base, &head)?;
-    let base = base_commit.ok_or(OxenError::revision_not_found(base.into()))?;
-    let head = head_commit.ok_or(OxenError::revision_not_found(head.into()))?;
+    let base = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
+    let head = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
 
     // Check if mergeable
     let conflicts =
@@ -98,10 +98,12 @@ pub async fn merge(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     // Parse the base and head from the base..head string
     let (base, head) = parse_base_head(&base_head)?;
     let (maybe_base_branch, maybe_head_branch) = resolve_base_head_branches(&repo, &base, &head)?;
-    let base_branch =
-        maybe_base_branch.ok_or(OxenError::revision_not_found(base.clone().into()))?;
-    let head_branch =
-        maybe_head_branch.ok_or(OxenError::revision_not_found(head.clone().into()))?;
+    let Some(base_branch) = maybe_base_branch else {
+        return Err(OxenError::RevisionNotFound(base.into()).into());
+    };
+    let Some(head_branch) = maybe_head_branch else {
+        return Err(OxenError::RevisionNotFound(head.into()).into());
+    };
 
     // .unwrap() safe because branches must have commits
     let base_commit = repositories::commits::get_by_id(&repo, &base_branch.commit_id)?.unwrap();
@@ -126,9 +128,9 @@ pub async fn merge(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
         }
         Ok(None) => {
             log::debug!("Merge has conflicts");
-            Err(OxenError::merge_conflict(format!(
-                "Unable to merge {head} into {base} due to conflicts"
-            )))?
+            Err(OxenError::UpstreamMergeConflict(
+                format!("Unable to merge {head} into {base} due to conflicts.").into(),
+            ))?
         }
         Err(err) => {
             log::debug!("Err merging branches {err:?}");

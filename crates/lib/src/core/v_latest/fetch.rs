@@ -116,7 +116,7 @@ pub async fn fetch_remote_branch(
     } else {
         let hash = remote_branch.commit_id.parse()?;
         let commit_node = repositories::tree::get_node_by_id(repo, &hash)?
-            .ok_or(OxenError::basic_str("Commit node not found"))?;
+            .ok_or_else(|| OxenError::basic_str("Commit node not found"))?;
 
         if !fetch_opts.missing_files && core::commit_sync_status::commit_is_synced(repo, &hash) {
             HashSet::new()

@@ -164,7 +164,7 @@ pub async fn delete_remote(
 ) -> Result<Branch, OxenError> {
     let remote = repo
         .get_remote(&remote)
-        .ok_or_else(|| OxenError::remote_not_set(remote))?;
+        .ok_or_else(|| OxenError::RemoteNotSet(remote.as_ref().to_string()))?;
     let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
     let branch = api::client::branches::get_by_name(&remote_repo, &branch_name)
         .await?

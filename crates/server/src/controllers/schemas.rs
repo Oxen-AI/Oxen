@@ -59,7 +59,7 @@ pub async fn list_or_get(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
     let revision = path_param(&req, "resource")?;
 
     let commit = repositories::revisions::get(&repo, &revision)?
-        .ok_or(OxenError::revision_not_found(revision.to_owned().into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(revision.as_str().into()))?;
 
     log::debug!("schemas::list_or_get revision {revision} commit {commit}");
 

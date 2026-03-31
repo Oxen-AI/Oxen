@@ -76,7 +76,7 @@ pub fn path_param(req: &HttpRequest, param: &str) -> Result<String, OxenHttpErro
     Ok(req
         .match_info()
         .get(param)
-        .ok_or(OxenHttpError::PathParamDoesNotExist(param.into()))?
+        .ok_or_else(|| OxenHttpError::PathParamDoesNotExist(param.into()))?
         .to_string())
 }
 
@@ -110,7 +110,7 @@ pub fn parse_resource(
         "parse_resource_from_path looking for resource: {resource:?} decoded_resource: {decoded_resource:?}"
     );
     parse_resource_from_path(repo, &decoded_resource)?
-        .ok_or(OxenError::path_does_not_exist(resource).into())
+        .ok_or_else(|| OxenError::path_does_not_exist(resource).into())
 }
 
 /// Split the base..head string into base and head strings

@@ -34,9 +34,8 @@ pub async fn df_revision(
     revision: impl AsRef<str>,
     opts: DFOpts,
 ) -> Result<(), OxenError> {
-    let commit = repositories::revisions::get(repo, &revision)?.ok_or(OxenError::basic_str(
-        format!("Revision {} not found", revision.as_ref()),
-    ))?;
+    let commit = repositories::revisions::get(repo, &revision)?
+        .ok_or_else(|| OxenError::basic_str(format!("Revision {} not found", revision.as_ref())))?;
     let path = input.as_ref();
     let Some(root) = repositories::tree::get_node_by_path_with_children(repo, &commit, path)?
     else {

@@ -142,7 +142,7 @@ pub async fn list_tabular(
     let commit_or_branch = path_param(&req, "commit_or_branch")?;
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     let commit = repositories::revisions::get(&repo, &commit_or_branch)?
-        .ok_or_else(|| OxenError::revision_not_found(commit_or_branch.into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(commit_or_branch.into()))?;
 
     let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);

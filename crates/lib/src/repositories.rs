@@ -218,12 +218,12 @@ pub async fn create(
 ) -> Result<LocalRepositoryWithEntries, OxenError> {
     // Validate repo name
     if !is_valid_repo_name(&new_repo.name) {
-        return Err(OxenError::invalid_repo_name(&new_repo.name));
+        return Err(OxenError::InvalidRepoName(new_repo.name.into()));
     }
 
     // Validate namespace
     if !is_valid_repo_name(&new_repo.namespace) {
-        return Err(OxenError::invalid_repo_name(&new_repo.namespace));
+        return Err(OxenError::InvalidRepoName(new_repo.namespace.into()));
     }
 
     let repo_dir = root_dir
@@ -231,7 +231,7 @@ pub async fn create(
         .join(Path::new(&new_repo.name));
     if repo_dir.exists() {
         log::error!("Repository already exists {repo_dir:?}");
-        return Err(OxenError::repo_already_exists(new_repo));
+        return Err(OxenError::RepoAlreadyExists(Box::new(new_repo)));
     }
 
     // Create the repo dir

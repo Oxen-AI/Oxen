@@ -269,9 +269,7 @@ impl TabularCompareTargetBody {
         self.left
             .clone()
             .or_else(|| self.right.clone())
-            .ok_or(OxenError::basic_str(
-                "Both 'left' and 'right' fields are None",
-            ))
+            .ok_or_else(|| OxenError::basic_str("Both 'left' and 'right' fields are None"))
     }
 }
 

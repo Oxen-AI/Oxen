@@ -19,7 +19,7 @@ pub async fn fetch_all(
 ) -> Result<Vec<Branch>, OxenError> {
     let remote = repo
         .get_remote(&fetch_opts.remote)
-        .ok_or(OxenError::remote_not_set(fetch_opts.remote.clone()))?;
+        .ok_or_else(|| OxenError::RemoteNotSet(fetch_opts.remote.clone()))?;
     let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
 
     api::client::repositories::pre_fetch(&remote_repo).await?;
@@ -87,7 +87,7 @@ pub async fn fetch_branch(
 ) -> Result<Branch, OxenError> {
     let remote = repo
         .get_remote(&fetch_opts.remote)
-        .ok_or(OxenError::remote_not_set(fetch_opts.remote.clone()))?;
+        .ok_or_else(|| OxenError::RemoteNotSet(fetch_opts.remote.clone()))?;
     let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
 
     api::client::repositories::pre_fetch(&remote_repo).await?;

@@ -1735,10 +1735,7 @@ pub async fn handle_video_thumbnail(
     #[cfg(not(feature = "ffmpeg"))]
     {
         let _ = (version_store, file_hash, video_thumbnail);
-        Err(OxenError::thumbnailing_not_enabled(
-            "Video thumbnail generation requires the 'ffmpeg' feature to be enabled. \
-             Build with --features liboxen/ffmpeg to enable this functionality.",
-        ))
+        Err(OxenError::ThumbnailingNotEnabled)
     }
 
     #[cfg(feature = "ffmpeg")]

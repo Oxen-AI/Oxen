@@ -81,19 +81,19 @@ pub fn list_directory_with_depth(
     let commit = parsed_resource
         .commit
         .clone()
-        .ok_or(OxenError::revision_not_found(revision.into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(revision.into()))?;
 
     log::debug!("list_directory commit {commit}");
 
     let _perf_get_dir = crate::perf_guard!("core::entries::get_dir_with_children");
     let dir = repositories::tree::get_dir_with_children(repo, &commit, directory, None)?
-        .ok_or(OxenError::resource_not_found(directory.to_str().unwrap()))?;
+        .ok_or_else(|| OxenError::resource_not_found(directory.to_string_lossy()))?;
     drop(_perf_get_dir);
 
     log::debug!("list_directory dir {dir}");
 
     let EMerkleTreeNode::Directory(dir_node) = &dir.node else {
-        return Err(OxenError::resource_not_found(directory.to_str().unwrap()));
+        return Err(OxenError::resource_not_found(directory.to_string_lossy()));
     };
 
     log::debug!("list_directory dir_node {dir_node}");
@@ -165,9 +165,7 @@ pub fn get_meta_entry(
     let commit = parsed_resource
         .commit
         .clone()
-        .ok_or(OxenError::parsed_resource_not_found(
-            parsed_resource.clone(),
-        ))?;
+        .ok_or_else(|| OxenError::parsed_resource_not_found(parsed_resource.clone()))?;
     log::debug!("get_meta_entry path: {path:?} commit: {commit}");
     let node = repositories::tree::get_dir_without_children(repo, &commit, path, None)?;
     log::debug!("get_meta_entry node: {node:?}");
@@ -309,9 +307,10 @@ fn dir_node_to_metadata_entry(
         found_commits.entry(*dir_node.last_commit_id())
     {
         let _perf_commit = crate::perf_guard!("core::entries::get_commit_by_hash");
-        let commit = repositories::commits::get_by_hash(repo, dir_node.last_commit_id())?.ok_or(
-            OxenError::commit_id_does_not_exist(dir_node.last_commit_id().to_string()),
-        )?;
+        let commit = repositories::commits::get_by_hash(repo, dir_node.last_commit_id())?
+            .ok_or_else(|| {
+                OxenError::commit_id_does_not_exist(dir_node.last_commit_id().to_string())
+            })?;
         e.insert(commit);
     }
 
@@ -352,9 +351,10 @@ fn file_node_to_metadata_entry(
         found_commits.entry(*file_node.last_commit_id())
     {
         let _perf_commit = crate::perf_guard!("core::entries::get_commit_by_hash");
-        let commit = repositories::commits::get_by_hash(repo, file_node.last_commit_id())?.ok_or(
-            OxenError::commit_id_does_not_exist(file_node.last_commit_id().to_string()),
-        )?;
+        let commit = repositories::commits::get_by_hash(repo, file_node.last_commit_id())?
+            .ok_or_else(|| {
+                OxenError::commit_id_does_not_exist(file_node.last_commit_id().to_string())
+            })?;
         e.insert(commit);
     }
 
@@ -544,7 +544,7 @@ pub fn list_for_commit(
 
 pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<(), OxenError> {
     let commit = repositories::revisions::get(repo, revision.as_ref())?
-        .ok_or_else(|| OxenError::revision_not_found(revision.as_ref().to_string().into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(revision.as_ref().to_string().into()))?;
     let tree: CommitMerkleTree = CommitMerkleTree::from_commit(repo, &commit)?;
     let mut node = tree.root;
 

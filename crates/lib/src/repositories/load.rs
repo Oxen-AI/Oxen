@@ -42,9 +42,9 @@ pub async fn load(
 
     println!("🐂 Unpacking files to working directory {dest_path:?}");
     let branch = repositories::branches::get_by_name(&repo, DEFAULT_BRANCH_NAME)?
-        .ok_or(OxenError::local_branch_not_found(DEFAULT_BRANCH_NAME))?;
+        .ok_or_else(|| OxenError::local_branch_not_found(DEFAULT_BRANCH_NAME))?;
     let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?
-        .ok_or(OxenError::commit_id_does_not_exist(&branch.commit_id))?;
+        .ok_or_else(|| OxenError::commit_id_does_not_exist(&branch.commit_id))?;
     repositories::branches::set_working_repo_to_commit(&repo, &commit, &None).await?;
 
     println!("{done_msg}");

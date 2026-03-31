@@ -31,7 +31,7 @@ pub fn is_queryable_data_frame_indexed(
     match get_queryable_data_frame_workspace(repo, path, commit) {
         Ok(_workspace) => Ok(true),
         Err(e) => match e {
-            OxenError::QueryableWorkspaceNotFound() => Ok(false),
+            OxenError::QueryableWorkspaceNotFound => Ok(false),
             _ => Err(e),
         },
     }
@@ -47,7 +47,7 @@ pub fn is_queryable_data_frame_indexed_from_file_node(
     {
         Ok(_workspace) => Ok(true),
         Err(e) => match e {
-            OxenError::QueryableWorkspaceNotFound() => Ok(false),
+            OxenError::QueryableWorkspaceNotFound => Ok(false),
             _ => Err(e),
         },
     }
@@ -78,7 +78,7 @@ pub fn get_queryable_data_frame_workspace_from_file_node(
         }
     }
 
-    Err(OxenError::QueryableWorkspaceNotFound())
+    Err(OxenError::QueryableWorkspaceNotFound)
 }
 
 pub fn get_queryable_data_frame_workspace(
@@ -89,7 +89,7 @@ pub fn get_queryable_data_frame_workspace(
     let path = path.as_ref();
     log::debug!("get_queryable_data_frame_workspace path: {path:?}");
     let file_node = repositories::tree::get_file_by_path(repo, commit, path)?
-        .ok_or(OxenError::path_does_not_exist(path))?;
+        .ok_or_else(|| OxenError::path_does_not_exist(path))?;
     if *file_node.data_type() != EntryDataType::Tabular {
         return Err(OxenError::basic_str(
             "File format not supported, must be tabular.",
@@ -102,7 +102,7 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     // Is tabular just looks at the file extensions
     let file_node =
         repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
-            .ok_or(OxenError::path_does_not_exist(path))?;
+            .ok_or_else(|| OxenError::path_does_not_exist(path))?;
     if *file_node.data_type() != EntryDataType::Tabular {
         return Err(OxenError::basic_str(
             "File format not supported, must be tabular.",
@@ -242,9 +242,8 @@ pub async fn rename(
         log::debug!("rename: staged_entry after add: {staged_entry:?}");
     }
 
-    let mut new_staged_entry = staged_entry.ok_or(OxenError::basic_str(format!(
-        "rename: staged entry not found: {path:?}"
-    )))?;
+    let mut new_staged_entry = staged_entry
+        .ok_or_else(|| OxenError::basic_str(format!("rename: staged entry not found: {path:?}")))?;
 
     // Update the file name in the staged entry
     if let EMerkleTreeNode::File(file) = &mut new_staged_entry.node.node {

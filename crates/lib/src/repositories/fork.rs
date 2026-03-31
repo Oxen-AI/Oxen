@@ -102,7 +102,7 @@ pub fn start_fork(
 }
 
 pub fn get_fork_status(repo_path: &Path) -> Result<ForkStatusResponse, OxenError> {
-    let status = read_status(repo_path)?.ok_or_else(OxenError::fork_status_not_found)?;
+    let status = read_status(repo_path)?.ok_or(OxenError::ForkStatusNotFound)?;
 
     Ok(ForkStatusResponse {
         repository: repo_path.to_string_lossy().to_string(),
@@ -222,7 +222,7 @@ mod tests {
                     current_status = match get_fork_status(&forked_repo_path) {
                         Ok(status) => status.status,
                         Err(e) => {
-                            if let OxenError::ForkStatusNotFound(_) = e {
+                            if matches!(e, OxenError::ForkStatusNotFound) {
                                 "in_progress".to_string()
                             } else {
                                 return Err(e);

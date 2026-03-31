@@ -231,7 +231,7 @@ pub async fn download_tree_nodes(
 
     let (base_commit_id, maybe_head_commit_id) = maybe_parse_base_head(base_head_str)?;
     let base_commit = repositories::commits::get_by_id(&repository, &base_commit_id)?
-        .ok_or(OxenError::revision_not_found(base_commit_id.into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(base_commit_id.into()))?;
 
     // Parse the subtrees
     let subtrees = get_subtree_paths(&query.subtrees)?;
@@ -283,7 +283,7 @@ fn get_commit_list(
     // The first pull doesn't have a head commit, but subsequent pulls do
     let mut commits = if let Some(head_commit_id) = maybe_head_commit_id {
         let head_commit = repositories::commits::get_by_id(repository, head_commit_id)?
-            .ok_or(OxenError::resource_not_found(head_commit_id))?;
+            .ok_or_else(|| OxenError::resource_not_found(head_commit_id))?;
         repositories::commits::list_between(repository, base_commit, &head_commit)?
     } else {
         // If the subtree is specified, we only want to get the latest commit
