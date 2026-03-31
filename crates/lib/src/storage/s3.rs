@@ -175,34 +175,38 @@ impl VersionStore for S3VersionStore {
         &self,
         hash: &str,
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        size: u64,
     ) -> Result<(), OxenError> {
         let client = self.init_client().await?;
         let key = self.generate_key(hash);
 
-        // S3 multipart upload requires 5MB minimum per part (except the last).
-        // We use 8MB parts for a balance of memory usage and request count.
-        const PART_SIZE: usize = 8 * 1024 * 1024;
-        const MAX_CONCURRENT_UPLOADS: usize = 8;
+        const ONESHOT_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
+        const MIN_PART_SIZE: usize = 5 * 1024 * 1024; // 5 MB, S3 minimum
+        const MAX_PART_SIZE: usize = 5 * 1024 * 1024 * 1024; // 5 GB, S3 maximum
+        const MAX_PARTS: usize = 10_000; // S3 maximum parts per upload
+        const MAX_CONCURRENT_UPLOADS: usize = 16;
 
         let mut reader = tokio::io::BufReader::new(reader);
 
-        // Read the first part to determine if we need multipart upload
-        let mut first_buf = vec![0u8; PART_SIZE];
-        let first_n = read_full(&mut reader, &mut first_buf).await?;
-        first_buf.truncate(first_n);
-
-        if first_n < PART_SIZE {
-            // Small file: single put_object
+        // Files up to 100 MB: single put_object
+        if size <= ONESHOT_SIZE {
+            let mut buf = Vec::with_capacity(size as usize);
+            tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut buf)
+                .await
+                .map_err(|e| OxenError::upload(&format!("Failed to read: {e}")))?;
             client
-                .put_object()
+                .put_object() // AWS recommends switching to multipart uploads for > 100 MB
                 .bucket(&self.bucket)
                 .key(&key)
-                .body(ByteStream::from(first_buf))
+                .body(ByteStream::from(buf))
                 .send()
                 .await
                 .map_err(OxenError::aws_sdk_error)?;
             return Ok(());
         }
+
+        // Scale part size to fit within S3's 10,000 part limit for the file size.
+        let part_size = ((size as usize).div_ceil(MAX_PARTS)).clamp(MIN_PART_SIZE, MAX_PART_SIZE);
 
         // Large file: multipart upload
         let upload = client
@@ -226,22 +230,11 @@ impl VersionStore for S3VersionStore {
         let mut completed_parts = Vec::new();
         let mut part_num = 1;
 
-        uploads.push(tokio::spawn(upload_part(
-            client.clone(),
-            self.bucket.clone(),
-            key.clone(),
-            upload_id.clone(),
-            part_num,
-            first_buf,
-        )));
-        part_num += 1;
-
         let result: Result<(), OxenError> = async {
             loop {
-                let mut buf = vec![0u8; PART_SIZE];
+                let mut buf = vec![0u8; part_size];
                 let n = read_full(&mut reader, &mut buf).await?;
                 if n == 0 {
-                    // No more data to read, break out of the loop to just finish uploading
                     break;
                 }
                 buf.truncate(n);

@@ -94,6 +94,7 @@ impl VersionStore for LocalVersionStore {
         &self,
         hash: &str,
         mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+        _size: u64,
     ) -> Result<(), OxenError> {
         let version_dir = self.version_dir(hash);
         fs::create_dir_all(&version_dir).await?;
@@ -631,7 +632,7 @@ mod tests {
 
         // Store using the reader
         store
-            .store_version_from_reader(hash, Box::new(cursor))
+            .store_version_from_reader(hash, Box::new(cursor), data.len() as u64)
             .await
             .unwrap();
 

@@ -276,7 +276,7 @@ pub async fn try_download_data_from_version_paths(
 
             // Stream the file content directly to version store without loading into memory
             match version_store
-                .store_version_from_reader(&file_hash, Box::new(file))
+                .store_version_from_reader(&file_hash, Box::new(file), file_size)
                 .await
             {
                 Ok(_) => {
