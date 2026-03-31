@@ -994,7 +994,7 @@ async fn unpack_compressed_data(
     }
 
     // Unpack tarball to our hidden dir using async streaming
-    unpack_entry_tarball_async(repo, Cursor::new(buffer)).await?;
+    unpack_entry_tarball_async(repo, &buffer).await?;
 
     Ok(())
 }
@@ -1022,22 +1022,29 @@ pub async fn upload(
     req: HttpRequest,
     mut body: web::Payload, // the actual file body
 ) -> Result<HttpResponse, OxenHttpError> {
+    log::debug!("in regular upload controller");
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?;
     let name = path_param(&req, "repo_name")?;
     let repo = get_repo(&app_data.path, &namespace, &name)?;
 
-    let mut bytes = Vec::new();
+    // Read bytes from body
+    let mut bytes = web::BytesMut::new();
     while let Some(item) = body.next().await {
         bytes.extend_from_slice(&item.map_err(|_| OxenHttpError::FailedToReadRequestPayload)?);
     }
 
+    // Compute total size as u64
+    let total_size: u64 = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
     log::debug!(
         "Got compressed data for repo {}/{} -> {}",
         namespace,
         name,
-        ByteSize::b(bytes.len() as u64),
+        ByteSize::b(total_size)
     );
+
+    // Unpack in background thread because could take awhile
+    // std::thread::spawn(move || {
     // Get tar.gz bytes for history/COMMIT_ID data
     log::debug!(
         "Decompressing {} bytes to repo at {}",
@@ -1045,7 +1052,8 @@ pub async fn upload(
         repo.path.display()
     );
     // Unpack tarball to repo using async streaming
-    unpack_entry_tarball_async(&repo, Cursor::new(bytes)).await?;
+    unpack_entry_tarball_async(&repo, &bytes).await?;
+    // });
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
 }
@@ -1241,13 +1249,14 @@ async fn unpack_tree_tarball(tmp_dir: &Path, data: &[u8]) -> Result<(), OxenErro
 
 async fn unpack_entry_tarball_async(
     repo: &LocalRepository,
-    compressed_reader: impl tokio::io::AsyncRead + Send + Unpin + 'static,
+    compressed_data: &[u8],
 ) -> Result<(), OxenError> {
     let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
     let version_store = repo.version_store()?;
 
     // Create async gzip decoder and tar archive
-    let buf_reader = BufReader::new(compressed_reader);
+    let reader = Cursor::new(compressed_data);
+    let buf_reader = BufReader::new(reader);
     let decoder = GzipDecoder::new(buf_reader);
     let mut archive = Archive::new(decoder);
 
@@ -1263,8 +1272,12 @@ async fn unpack_entry_tarball_async(
             // Handle version files with streaming
             let hash = extract_hash_from_path(&path)?;
 
+            // Convert futures::io::AsyncRead to tokio::io::AsyncRead using compat
+            // let mut tokio_reader = file.compat();
+
+            // Use streaming storage - no memory buffering needed!
             version_store
-                .store_version_from_reader(&hash, Box::new(file))
+                .store_version_from_reader(&hash, &mut file)
                 .await?;
         } else {
             // For non-version files, unpack to hidden dir

@@ -102,11 +102,11 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
-    /// * `reader` - An owned async reader
+    /// * `reader` - Any type that implements Read trait
     async fn store_version_from_reader(
         &self,
         hash: &str,
-        reader: Box<dyn AsyncRead + Send + Unpin>,
+        reader: &mut (dyn AsyncRead + Send + Unpin),
     ) -> Result<(), OxenError>;
 
     /// Store a version file from bytes

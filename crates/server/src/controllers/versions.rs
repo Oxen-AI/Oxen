@@ -541,7 +541,7 @@ pub async fn save_multiparts(
                 field_bytes.extend_from_slice(&chunk);
             }
 
-            let reader: Box<dyn AsyncRead + Send + Unpin> = if is_gzipped {
+            let mut reader: Box<dyn AsyncRead + Send + Unpin> = if is_gzipped {
                 // async decompression
                 let cursor = std::io::Cursor::new(field_bytes);
                 let buf_reader = BufReader::new(cursor);
@@ -552,7 +552,7 @@ pub async fn save_multiparts(
             };
 
             match version_store
-                .store_version_from_reader(&upload_filehash, reader)
+                .store_version_from_reader(&upload_filehash, &mut reader)
                 .await
             {
                 Ok(_) => {

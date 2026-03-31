@@ -364,10 +364,10 @@ async fn compute_staged_merkle_tree_node(
     // Copy file to the version store
     log::debug!("compute_staged_merkle_tree_node writing file to version store");
     let file = File::open(path).await?;
-    let reader = BufReader::new(file);
+    let mut reader = BufReader::new(file);
     let version_store = workspace.base_repo.version_store()?;
     version_store
-        .store_version_from_reader(&hash.to_string(), Box::new(reader))
+        .store_version_from_reader(&hash.to_string(), &mut reader)
         .await?;
 
     let file_extension = path.extension().unwrap_or_default().to_string_lossy();
