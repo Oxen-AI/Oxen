@@ -26,7 +26,7 @@ pub async fn ls_with_opts(
     directory: &Path,
     opts: &PaginateOpts,
     sort_opts: Option<&SortOpts>,
-    depth: Option<usize>,
+    depth: Option<isize>,
 ) -> Result<PaginatedDirEntries, OxenError> {
     api::client::dir::list_with_opts(
         remote_repo,

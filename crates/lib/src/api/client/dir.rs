@@ -38,7 +38,7 @@ pub async fn list_with_opts(
     page: usize,
     page_size: usize,
     sort_opts: Option<&SortOpts>,
-    depth: Option<usize>,
+    depth: Option<isize>,
 ) -> Result<PaginatedDirEntries, OxenError> {
     let revision = revision.as_ref();
     let path = path.as_ref().to_string_lossy();

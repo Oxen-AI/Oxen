@@ -365,7 +365,7 @@ impl PyRemoteRepo {
         page_size: usize,
         sort_by: Option<&str>,
         reverse: bool,
-        depth: Option<usize>,
+        depth: Option<isize>,
     ) -> Result<PyPaginatedDirEntries, PyOxenError> {
         let Some(revision) = &self.revision else {
             return Ok(PyPaginatedDirEntries::empty());
