@@ -3,6 +3,8 @@
 //! Enumeration for all errors that can occur in the oxen library
 //!
 
+use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
+use aws_smithy_runtime_api::client::result::SdkError;
 use duckdb::arrow::error::ArrowError;
 use std::io;
 use std::num::ParseIntError;
@@ -148,7 +150,7 @@ pub enum OxenError {
 
     // External Library Errors
     #[error("AWS SDK error: {0}")]
-    AwsSdkError(Box<dyn std::error::Error + Send + Sync>),
+    AwsSdkError(Box<SdkError<Box<dyn std::error::Error + Send + Sync>, HttpResponse>>),
     #[error("{0}")]
     IO(#[from] io::Error),
     #[error("Authentication failed: {0}")]
@@ -253,8 +255,12 @@ impl OxenError {
         Some(hint)
     }
 
-    pub fn aws_sdk_error(e: impl std::error::Error + Send + Sync + 'static) -> Self {
-        OxenError::AwsSdkError(Box::new(e))
+    pub fn aws_sdk_error<E: std::error::Error + Send + Sync + 'static>(
+        e: SdkError<E, HttpResponse>,
+    ) -> Self {
+        OxenError::AwsSdkError(Box::new(e.map_service_error(|e| {
+            Box::new(e) as Box<dyn std::error::Error + Send + Sync>
+        })))
     }
 
     pub fn basic_str(s: impl AsRef<str>) -> Self {

@@ -4431,6 +4431,7 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-s3",
+ "aws-smithy-runtime-api",
  "bincode",
  "bytecount",
  "bytes",
