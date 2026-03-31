@@ -148,6 +148,16 @@ impl VersionStore for LocalVersionStore {
         Ok(data)
     }
 
+    async fn get_version_derived_size(
+        &self,
+        orig_hash: &str,
+        derived_filename: &str,
+    ) -> Result<u64, OxenError> {
+        let path = self.version_dir(orig_hash).join(derived_filename);
+        let metadata = fs::metadata(&path).await?;
+        Ok(metadata.len())
+    }
+
     async fn get_version_stream(
         &self,
         hash: &str,
@@ -773,6 +783,13 @@ mod tests {
             collected.extend_from_slice(&chunk.unwrap());
         }
         assert_eq!(collected, derived_data);
+        assert_eq!(
+            store
+                .get_version_derived_size(orig_hash, derived_filename)
+                .await
+                .unwrap(),
+            derived_data.len() as u64
+        );
     }
 
     #[tokio::test]

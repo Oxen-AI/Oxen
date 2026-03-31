@@ -4,7 +4,7 @@ members = ["crates/*"]
 exclude = ["crates/data", "experiments/*"]
 
 [workspace.package]
-version = "0.46.8"
+version = "0.46.9"
 edition = "2024"
 license-file = "LICENSE"
 description = "Oxen is a fast, unstructured data version control, to help version large machine learning datasets written in Rust."
@@ -119,6 +119,7 @@ sha2 = "0.10.8"
 simdutf8 = "0.1.4"
 sql_query_builder = { version = "2.1.0", features = ["postgresql"] }
 sqlparser = "0.53.0"
+strum = { version = "0.26.3", features = ["derive"] }
 sysinfo = "0.33.0"
 tar = "0.4.44"
 # TODO: Replace all tempfile use with async-tempfile

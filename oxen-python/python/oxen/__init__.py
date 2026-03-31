@@ -1,7 +1,7 @@
 """Core Oxen Functionality"""
 
 # Rust wrappers
-from .oxen import (
+from .oxen_py import (
     PyRepo,
     PyStagedData,
     PyCommit,
@@ -13,7 +13,7 @@ from .oxen import (
     PyColumn,
     __version__,
 )
-from .oxen import util
+from .oxen_py import util
 
 # Python classes
 from oxen.repo import Repo

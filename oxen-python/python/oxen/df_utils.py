@@ -17,7 +17,7 @@ df_utils.save(df, "path/to/save.csv")
 ```
 """
 
-from .oxen import df_utils
+from .oxen_py import df_utils
 
 import os
 from polars import DataFrame

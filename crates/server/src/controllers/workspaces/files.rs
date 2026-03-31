@@ -1,5 +1,5 @@
 use crate::errors::OxenHttpError;
-use crate::helpers::get_repo;
+use crate::helpers::{file_stream_response, get_repo};
 use crate::params::{app_data, path_param};
 
 use liboxen::core;
@@ -124,6 +124,7 @@ pub async fn get(
     let file_hash = file_node.hash();
     let hash_str = file_hash.to_string();
     let mime_type = file_node.mime_type();
+    let num_bytes = file_node.num_bytes();
     let last_commit_id = file_node.last_commit_id().to_string();
     let query_params = query.into_inner();
 
@@ -137,7 +138,7 @@ pub async fn get(
         };
         log::debug!("img_resize {img_resize:?}");
 
-        let file_stream = util::fs::handle_image_resize(
+        let (file_stream, content_length) = util::fs::handle_image_resize(
             Arc::clone(&version_store),
             hash_str.clone(),
             &PathBuf::from(&path),
@@ -145,10 +146,10 @@ pub async fn get(
         )
         .await?;
 
-        return Ok(HttpResponse::Ok()
-            .content_type(mime_type)
-            .insert_header(("oxen-revision-id", last_commit_id.as_str()))
-            .streaming(file_stream));
+        return Ok(
+            file_stream_response(mime_type, &last_commit_id, Some(content_length))
+                .streaming(file_stream),
+        );
     }
 
     // Handle video thumbnail - requires thumbnail=true parameter
@@ -165,10 +166,7 @@ pub async fn get(
             util::fs::handle_video_thumbnail(Arc::clone(&version_store), hash_str, video_thumbnail)
                 .await?;
 
-        return Ok(HttpResponse::Ok()
-            .content_type("image/jpeg")
-            .insert_header(("oxen-revision-id", last_commit_id.as_str()))
-            .streaming(stream));
+        return Ok(file_stream_response("image/jpeg", &last_commit_id, None).streaming(stream));
     }
 
     log::debug!("did not hit the resize or thumbnail cache");
@@ -176,10 +174,7 @@ pub async fn get(
     // Stream the file
     let stream = version_store.get_version_stream(&hash_str).await?;
 
-    Ok(HttpResponse::Ok()
-        .content_type(mime_type)
-        .insert_header(("oxen-revision-id", last_commit_id.as_str()))
-        .streaming(stream))
+    Ok(file_stream_response(mime_type, &last_commit_id, Some(num_bytes)).streaming(stream))
 }
 
 /// Add files to workspace
@@ -649,6 +644,7 @@ mod tests {
     use crate::app_data::OxenAppData;
     use crate::controllers;
     use crate::test;
+    use actix_web::http::header;
     use actix_web::{App, web};
     use liboxen::error::OxenError;
     use liboxen::repositories;
@@ -693,6 +689,55 @@ mod tests {
         assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
 
         // cleanup
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_workspace_file_get_exposes_content_length() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Workspace-Get-Headers";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let hello_file = repo.path.join("hello.txt");
+        let file_content = "Hello";
+        util::fs::write_to_path(&hello_file, file_content)?;
+        repositories::add(&repo, &hello_file).await?;
+        let commit = repositories::commit(&repo, "First commit")?;
+
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
+
+        let uri =
+            format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/hello.txt");
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path:.*}",
+                    web::get().to(controllers::workspaces::files::get),
+                ),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(header::CONTENT_LENGTH).unwrap(),
+            file_content.len().to_string().as_str()
+        );
+        assert_eq!(
+            resp.headers()
+                .get(header::ACCESS_CONTROL_EXPOSE_HEADERS)
+                .unwrap(),
+            header::CONTENT_LENGTH.as_str()
+        );
+
         test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
     }

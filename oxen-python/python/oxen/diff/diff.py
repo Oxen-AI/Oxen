@@ -36,15 +36,15 @@ print(result.get())
 
 """
 
-from ..oxen import PyDiff
-from ..oxen import diff as py_diff
+import os
+from typing import Optional
 
 from oxen import df_utils
 from oxen.diff.tabular_diff import TabularDiff
 from oxen.diff.text_diff import TextDiff
 
-import os
-from typing import Optional
+from ..oxen_py import PyDiff
+from ..oxen_py import diff as py_diff
 
 
 def diff(
