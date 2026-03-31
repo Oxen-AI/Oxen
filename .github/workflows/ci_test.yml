@@ -102,7 +102,7 @@ jobs:
           mkdir .\data\test\runs
 
       - name: Build oxen rust project
-        run: cargo test --no-run --workspace
+        run: cargo build --workspace
 
       - name: Setup oxen-server user (Linux/macOS)
         if: matrix.platform != 'windows'
