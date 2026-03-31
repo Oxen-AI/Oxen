@@ -61,6 +61,7 @@ use crate::constants;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::model::MerkleHash;
+use crate::model::merkle_tree::node_type::InvalidMerkleTreeNodeType;
 use crate::util;
 
 use crate::model::merkle_tree::node::{
@@ -223,13 +224,14 @@ impl MerkleNodeDB {
     }
 
     pub fn node(&self) -> Result<EMerkleTreeNode, OxenError> {
-        Self::to_node(self.dtype, &self.data())
+        let node = Self::to_node(self.dtype, &self.data())?;
+        Ok(node)
     }
 
     pub fn to_node(
         dtype: MerkleTreeNodeType,
         data: &[u8],
-    ) -> Result<EMerkleTreeNode, InvalidMerkleTreeNodeType> {
+    ) -> Result<EMerkleTreeNode, rmp_serde::decode::Error> {
         match dtype {
             MerkleTreeNodeType::Commit => {
                 Ok(EMerkleTreeNode::Commit(CommitNode::deserialize(data)?))
@@ -257,11 +259,14 @@ impl MerkleNodeDB {
         Self::open(path, true)
     }
 
-    pub fn open_read_write_if_not_exists(
+    pub fn open_read_write_if_not_exists<N: TMerkleTreeNode>(
         repo: &LocalRepository,
-        node: &impl TMerkleTreeNode,
+        node: &N,
         parent_id: Option<MerkleHash>,
-    ) -> Result<Option<Self>, OxenError> {
+    ) -> Result<Option<Self>, OxenError>
+    where
+        OxenError: From<N::SerializationError>,
+    {
         if Self::exists(repo, &node.hash()) {
             let db_path = node_db_path(repo, &node.hash());
             log::debug!(
@@ -274,11 +279,14 @@ impl MerkleNodeDB {
         }
     }
 
-    pub fn open_read_write(
+    pub fn open_read_write<N: TMerkleTreeNode>(
         repo: &LocalRepository,
-        node: &impl TMerkleTreeNode,
+        node: &N,
         parent_id: Option<MerkleHash>,
-    ) -> Result<Self, OxenError> {
+    ) -> Result<Self, OxenError>
+    where
+        OxenError: From<N::SerializationError>,
+    {
         let path = node_db_path(repo, &node.hash());
         if !path.exists() {
             util::fs::create_dir_all(&path)?;
@@ -367,11 +375,14 @@ impl MerkleNodeDB {
     }
 
     /// Write the base node info.
-    fn write_node<N: TMerkleTreeNode + Serialize + Debug + Display>(
+    fn write_node<N: TMerkleTreeNode>(
         &mut self,
         node: &N,
         parent_id: Option<MerkleHash>,
-    ) -> Result<(), OxenError> {
+    ) -> Result<(), OxenError>
+    where
+        OxenError: From<N::SerializationError>,
+    {
         if self.read_only {
             return Err(OxenError::basic_str("Cannot write to read-only db"));
         }
@@ -396,8 +407,7 @@ impl MerkleNodeDB {
         }
 
         // Write data length
-        let mut buf = Vec::new();
-        node.serialize(&mut Serializer::new(&mut buf)).unwrap();
+        let buf = node.to_msgpack_bytes()?;
         let data_len = buf.len() as u32;
         node_file.write_all(&data_len.to_le_bytes())?;
         // log::debug!("write_node Wrote data length {}", data_len);
@@ -416,7 +426,10 @@ impl MerkleNodeDB {
         Ok(())
     }
 
-    pub fn add_child<N: TMerkleTreeNode>(&mut self, item: &N) -> Result<(), OxenError> {
+    pub fn add_child<N: TMerkleTreeNode>(&mut self, item: &N) -> Result<(), OxenError>
+    where
+        OxenError: From<N::SerializationError>,
+    {
         if self.read_only {
             return Err(OxenError::basic_str("Cannot write to read-only db"));
         }
@@ -428,9 +441,7 @@ impl MerkleNodeDB {
             return Err(OxenError::basic_str("Must call open() before writing"));
         };
 
-        // TODO: Abstract and re-use in write_all
-        let mut buf = Vec::new();
-        item.serialize(&mut Serializer::new(&mut buf)).unwrap();
+        let buf = item.to_msgpack_bytes()?;
         let data_len = buf.len() as u64;
         // log::debug!("--add_child-- node_file {:?}", node_file);
         // log::debug!("--add_child-- dtype {:?}", item.dtype());

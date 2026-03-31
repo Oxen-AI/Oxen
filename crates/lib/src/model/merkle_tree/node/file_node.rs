@@ -95,7 +95,7 @@ impl FileNode {
         }
     }
 
-    pub fn deserialize(data: &[u8]) -> Result<FileNode, OxenError> {
+    pub fn deserialize(data: &[u8]) -> Result<FileNode, rmp_serde::decode::Error> {
         let file_node: FileNode = match rmp_serde::from_slice(data) {
             Ok(file_node) => file_node,
             Err(_) => {

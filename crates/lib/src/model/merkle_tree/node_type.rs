@@ -78,6 +78,7 @@ impl MerkleTreeNodeType {
     */
 
     /// Serialize the node type into a stable `u8` value.
+    /// This function is 1:1 with `from_u8`.
     pub fn to_u8(&self) -> u8 {
         match self {
             MerkleTreeNodeType::Commit => 0u8,
@@ -91,10 +92,11 @@ impl MerkleTreeNodeType {
     /// Deserialize a `u8` value into a `MerkleTreeNodeType`.
     /// Panics if the `u8` value is not a valid `MerkleTreeNodeType`.
     pub fn from_u8_unwrap(val: u8) -> MerkleTreeNodeType {
-        from_u8(val).expect("Invalid MerkleTreeNodeType: {val}")
+        Self::from_u8(val).expect("Invalid MerkleTreeNodeType: {val}")
     }
 
     /// Deserialize a `u8` value into a `MerkleTreeNodeType`.
+    /// This function is 1:1 with `to_u8`: all outputs from `to_u8` result in an `Ok`.
     pub fn from_u8(val: u8) -> Result<MerkleTreeNodeType, InvalidMerkleTreeNodeType> {
         match val {
             0u8 => Ok(MerkleTreeNodeType::Commit),
@@ -154,7 +156,10 @@ impl<T: Serialize + MerkleTreeNodeIdType + Debug + Display> TMerkleTreeNode for 
 
 #[cfg(test)]
 mod tests {
-    use crate::model::merkle_tree::node::{CommitNode, DirNode, FileChunkNode, FileNode, VNode};
+    use crate::{
+        error::OxenError,
+        model::merkle_tree::node::{CommitNode, DirNode, FileChunkNode, FileNode, VNode},
+    };
 
     use super::*;
 
@@ -162,7 +167,11 @@ mod tests {
     fn test_nodes_implement_trait() {
         /// this only exists so we can check that all node types implement `TMerkleTreeNode`
         /// it will be a compile-time error if a node type does not implement the trait
-        fn is_tmerkletreenode<T: TMerkleTreeNode>(x: T) {}
+        fn is_tmerkletreenode<T: TMerkleTreeNode>(_: T)
+        where
+            OxenError: From<T::SerializationError>,
+        {
+        }
 
         is_tmerkletreenode(CommitNode::default());
         is_tmerkletreenode(DirNode::default());

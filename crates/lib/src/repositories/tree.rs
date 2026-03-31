@@ -1077,11 +1077,14 @@ pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), O
     Ok(())
 }
 
-fn p_write_tree(
+fn p_write_tree<N: TMerkleTreeNode>(
     repo: &LocalRepository,
     node: &MerkleTreeNode,
-    node_impl: &impl TMerkleTreeNode,
-) -> Result<(), OxenError> {
+    node_impl: &N,
+) -> Result<(), OxenError>
+where
+    OxenError: From<N::SerializationError>,
+{
     let parent_id = node.parent_id;
 
     let mut db = MerkleNodeDB::open_read_write(repo, node_impl, parent_id)?;

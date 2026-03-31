@@ -312,6 +312,10 @@ pub enum OxenError {
     #[error("Invalid integer: {0}")]
     ParseIntError(#[from] ParseIntError),
 
+    /// Wraps any error that we get from encoding message pack data.
+    #[error("Encode error: {0}")]
+    RmpEncodeError(#[from] rmp_serde::encode::Error),
+
     /// Wraps any error that we get from decoding message pack data.
     #[error("Decode error: {0}")]
     RmpDecodeError(#[from] rmp_serde::decode::Error),

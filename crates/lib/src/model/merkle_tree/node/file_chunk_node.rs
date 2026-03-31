@@ -17,9 +17,8 @@ pub struct FileChunkNode {
 }
 
 impl FileChunkNode {
-    pub fn deserialize(data: &[u8]) -> Result<FileChunkNode, OxenError> {
+    pub fn deserialize(data: &[u8]) -> Result<FileChunkNode, rmp_serde::decode::Error> {
         rmp_serde::from_slice(data)
-            .map_err(|e| OxenError::basic_str(format!("Error deserializing file chunk node: {e}")))
     }
 }
 
