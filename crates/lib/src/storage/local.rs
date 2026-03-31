@@ -93,7 +93,7 @@ impl VersionStore for LocalVersionStore {
     async fn store_version_from_reader(
         &self,
         hash: &str,
-        reader: &mut (dyn tokio::io::AsyncRead + Send + Unpin),
+        mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> Result<(), OxenError> {
         let version_dir = self.version_dir(hash);
         fs::create_dir_all(&version_dir).await?;
@@ -102,7 +102,7 @@ impl VersionStore for LocalVersionStore {
 
         if !version_path.exists() {
             let mut file = File::create(&version_path).await?;
-            tokio::io::copy(reader, &mut file).await?;
+            tokio::io::copy(&mut *reader, &mut file).await?;
         }
 
         Ok(())
@@ -631,7 +631,7 @@ mod tests {
 
         // Store using the reader
         store
-            .store_version_from_reader(hash, &mut cursor)
+            .store_version_from_reader(hash, Box::new(cursor))
             .await
             .unwrap();
 

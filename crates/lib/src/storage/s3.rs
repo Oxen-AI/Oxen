@@ -7,8 +7,7 @@ use aws_sdk_s3::operation::head_object::HeadObjectError;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_sdk_s3::{Client, config::Region, primitives::ByteStream};
 use bytes::Bytes;
-use futures::TryStreamExt;
-use futures::stream::StreamExt;
+use futures::StreamExt;
 use log;
 use std::collections::HashMap;
 use std::io::Read;
@@ -17,7 +16,6 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::OnceCell;
 use tokio_stream::Stream;
-use tokio_stream::wrappers::ReceiverStream;
 
 use super::version_store::{LocalFilePath, VersionStore};
 use crate::constants::VERSION_FILE_NAME;
@@ -176,7 +174,7 @@ impl VersionStore for S3VersionStore {
     async fn store_version_from_reader(
         &self,
         hash: &str,
-        reader: &mut (dyn tokio::io::AsyncRead + Send + Unpin),
+        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ) -> Result<(), OxenError> {
         let client = self.init_client().await?;
         let key = self.generate_key(hash);
@@ -184,6 +182,7 @@ impl VersionStore for S3VersionStore {
         // S3 multipart upload requires 5MB minimum per part (except the last).
         // We use 8MB parts for a balance of memory usage and request count.
         const PART_SIZE: usize = 8 * 1024 * 1024;
+        const MAX_CONCURRENT_UPLOADS: usize = 8;
 
         let mut reader = tokio::io::BufReader::new(reader);
 
@@ -194,12 +193,11 @@ impl VersionStore for S3VersionStore {
 
         if first_n < PART_SIZE {
             // Small file: single put_object
-            let body = ByteStream::from(first_buf);
             client
                 .put_object()
                 .bucket(&self.bucket)
                 .key(&key)
-                .body(body)
+                .body(ByteStream::from(first_buf))
                 .send()
                 .await
                 .map_err(OxenError::aws_sdk_error)?;
@@ -220,142 +218,105 @@ impl VersionStore for S3VersionStore {
             .ok_or_else(|| OxenError::upload("S3 multipart upload missing upload_id"))?
             .to_string();
 
-        // Pipeline reading and uploading: read parts on this task and send them through a bounded
-        // channel. A spawned task consumes the channel and uploads parts concurrently via
-        // buffer_unordered. The bounded channel keeps at most MAX_PARTS_WAITING_FOR_UPLOAD parts in
-        // memory.
-        const MAX_CONCURRENT_UPLOADS: usize = 8;
-        const MAX_PARTS_WAITING_FOR_UPLOAD: usize = 16;
+        // Read parts sequentially and upload them concurrently via spawned tasks. Each upload
+        // starts running immediately on the tokio runtime, so uploads proceed in the background
+        // while we read the next part. FuturesUnordered holds the JoinHandles for collecting
+        // results and enforcing backpressure.
+        let mut uploads = futures::stream::FuturesUnordered::new();
+        let mut completed_parts = Vec::new();
+        let mut part_num = 1;
 
-        let (tx, rx) = tokio::sync::mpsc::channel::<(i32, Vec<u8>)>(MAX_PARTS_WAITING_FOR_UPLOAD);
+        uploads.push(tokio::spawn(upload_part(
+            client.clone(),
+            self.bucket.clone(),
+            key.clone(),
+            upload_id.clone(),
+            part_num,
+            first_buf,
+        )));
+        part_num += 1;
 
-        // Spawn the upload consumer on a separate tokio task. It starts executing immediately--you
-        // don't have to call `.await` on the join handle first like you do with a regular future.
-        //
-        // This runs concurrently with the producer loop below, connected via the bounded channel.
-        // Whatever the producer sends, the upload task will upload to S3, concurrently to the
-        // producer because it's in a different task, and concurrently with up to
-        // MAX_CONCURRENT_UPLOADS because buffer_unordered uses that many worker tasks.
-        let upload_client = client.clone();
-        let upload_bucket = self.bucket.clone();
-        let upload_key = key.clone();
-        let upload_id_clone = upload_id.clone();
-
-        let upload_task_join_handle = tokio::spawn(async move {
-            let results: Result<Vec<CompletedPart>, OxenError> = ReceiverStream::new(rx)
-                .map(|(part_num, data)| {
-                    let client = upload_client.clone();
-                    let bucket = upload_bucket.clone();
-                    let key = upload_key.clone();
-                    let upload_id = upload_id_clone.clone();
-                    async move {
-                        let resp = client
-                            .upload_part()
-                            .bucket(bucket)
-                            .key(key)
-                            .upload_id(upload_id)
-                            .part_number(part_num)
-                            .body(ByteStream::from(data))
-                            .send()
-                            .await
-                            .map_err(OxenError::aws_sdk_error)?;
-
-                        let etag = resp.e_tag().map(|s| s.to_string()).ok_or_else(|| {
-                            OxenError::upload("S3 upload_part response missing ETag")
-                        })?;
-
-                        Ok(CompletedPart::builder()
-                            .part_number(part_num)
-                            .e_tag(etag)
-                            .build())
-                    }
-                })
-                .buffer_unordered(MAX_CONCURRENT_UPLOADS)
-                .try_collect()
-                .await;
-            results
-        });
-
-        // Producer: read parts and feed them into the channel. This loop happens on this task.
-        let producer_result: Result<(), OxenError> = async {
-            let mut part_num: i32 = 1;
-            tx.send((part_num, first_buf)).await.map_err(|_| {
-                OxenError::upload("Upload task terminated while sending first part")
-            })?;
-            part_num += 1;
-
+        let result: Result<(), OxenError> = async {
             loop {
                 let mut buf = vec![0u8; PART_SIZE];
                 let n = read_full(&mut reader, &mut buf).await?;
                 if n == 0 {
-                    // We have reached EOF
+                    // No more data to read, break out of the loop to just finish uploading
                     break;
                 }
                 buf.truncate(n);
-                tx.send((part_num, buf))
-                    .await
-                    .map_err(|_| OxenError::upload("Upload task terminated while sending parts"))?;
+                uploads.push(tokio::spawn(upload_part(
+                    client.clone(),
+                    self.bucket.clone(),
+                    key.clone(),
+                    upload_id.clone(),
+                    part_num,
+                    buf,
+                )));
                 part_num += 1;
+
+                // Stop reading until we have less than MAX_CONCURRENT_UPLOADS in flight
+                while uploads.len() >= MAX_CONCURRENT_UPLOADS {
+                    match uploads.next().await {
+                        Some(Ok(result)) => completed_parts.push(result?),
+                        Some(Err(e)) => {
+                            return Err(OxenError::upload(&format!("Upload task panicked: {e}")));
+                        }
+                        None => break, // Shouldn't be possible since we check uploads.len() first
+                    }
+                }
             }
 
+            // Wait for remaining uploads
+            while let Some(join_result) = uploads.next().await {
+                match join_result {
+                    Ok(result) => completed_parts.push(result?),
+                    Err(e) => return Err(OxenError::upload(&format!("Upload task panicked: {e}"))),
+                }
+            }
             Ok(())
         }
         .await;
 
-        // Close the channel so the upload task finishes draining any buffered parts.
-        drop(tx);
-
-        let result = match producer_result {
-            // The producer task completed reading the file and sent all parts to the upload task,
-            // so wait for the upload task to finish next.
+        match result {
+            // All parts uploaded successfully
             Ok(()) => {
-                match upload_task_join_handle
+                // Complete the multipart upload with the required special request
+                completed_parts.sort_by_key(|p| p.part_number);
+
+                let completed = CompletedMultipartUpload::builder()
+                    .set_parts(Some(completed_parts))
+                    .build();
+
+                client
+                    .complete_multipart_upload()
+                    .bucket(&self.bucket)
+                    .key(&key)
+                    .upload_id(&upload_id)
+                    .multipart_upload(completed)
+                    .send()
                     .await
-                    .map_err(|e| OxenError::upload(&format!("Upload task panicked: {e}")))
-                {
-                    Ok(Ok(mut completed_parts)) => {
-                        completed_parts.sort_by_key(|p| p.part_number);
-
-                        let completed = CompletedMultipartUpload::builder()
-                            .set_parts(Some(completed_parts))
-                            .build();
-
-                        client
-                            .complete_multipart_upload()
-                            .bucket(&self.bucket)
-                            .key(&key)
-                            .upload_id(&upload_id)
-                            .multipart_upload(completed)
-                            .send()
-                            .await
-                            .map_err(OxenError::aws_sdk_error)
-                            .map(|_| ())
-                    }
-                    Ok(Err(e)) | Err(e) => Err(e),
+                    .map_err(OxenError::aws_sdk_error)?;
+                Ok(())
+            }
+            // Upload failed
+            Err(e) => {
+                // cancel in-flight tasks
+                for handle in uploads.iter() {
+                    // we don't need to await aborted handles--they stop at the next await point automatically
+                    handle.abort();
                 }
+                // abort the multipart upload
+                let _ = client
+                    .abort_multipart_upload()
+                    .bucket(&self.bucket)
+                    .key(&key)
+                    .upload_id(&upload_id)
+                    .send()
+                    .await;
+                Err(e)
             }
-            // The producer task wasn't able to successfully read the file and send the parts to the
-            // upload task, so we ensure the upload task is cancelled and awaited so that no
-            // in-flight upload_part calls race with abort_multipart_upload below.
-            Err(producer_err) => {
-                upload_task_join_handle.abort();
-                let _ = upload_task_join_handle.await;
-                Err(producer_err)
-            }
-        };
-
-        if let Err(ref e) = result {
-            log::error!("Multipart upload failed, aborting: {e}");
-            let _ = client
-                .abort_multipart_upload()
-                .bucket(&self.bucket)
-                .key(&key)
-                .upload_id(&upload_id)
-                .send()
-                .await;
         }
-
-        result
     }
 
     async fn store_version(&self, hash: &str, data: &[u8]) -> Result<(), OxenError> {
@@ -676,6 +637,36 @@ impl VersionStore for S3VersionStore {
         settings.insert("prefix".to_string(), self.prefix.clone());
         settings
     }
+}
+
+async fn upload_part(
+    client: Arc<Client>,
+    bucket: String,
+    key: String,
+    upload_id: String,
+    part_num: i32,
+    data: Vec<u8>,
+) -> Result<CompletedPart, OxenError> {
+    let resp = client
+        .upload_part()
+        .bucket(bucket)
+        .key(key)
+        .upload_id(upload_id)
+        .part_number(part_num)
+        .body(ByteStream::from(data))
+        .send()
+        .await
+        .map_err(OxenError::aws_sdk_error)?;
+
+    let etag = resp
+        .e_tag()
+        .map(|s| s.to_string())
+        .ok_or_else(|| OxenError::upload("S3 upload_part response missing ETag"))?;
+
+    Ok(CompletedPart::builder()
+        .part_number(part_num)
+        .e_tag(etag)
+        .build())
 }
 
 /// Read from `reader` until `buf` is full or EOF, returning the number of

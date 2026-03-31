@@ -256,7 +256,7 @@ pub async fn try_download_data_from_version_paths(
         // Iterate over archive entries and stream them to version store
         let mut entries = archive.entries()?;
         while let Some(file) = entries.next().await {
-            let mut file = match file {
+            let file = match file {
                 Ok(file) => file,
                 Err(err) => {
                     let err = format!("Could not unwrap file -> {err:?}");
@@ -276,7 +276,7 @@ pub async fn try_download_data_from_version_paths(
 
             // Stream the file content directly to version store without loading into memory
             match version_store
-                .store_version_from_reader(&file_hash, &mut file)
+                .store_version_from_reader(&file_hash, Box::new(file))
                 .await
             {
                 Ok(_) => {
