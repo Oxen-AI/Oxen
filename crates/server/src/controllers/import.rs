@@ -180,9 +180,25 @@ pub async fn import(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
+    let update_timestamp = match body.get("update_timestamp") {
+        Some(value) => value.as_bool().ok_or_else(|| {
+            OxenHttpError::BadRequest(
+                "Invalid type for `update_timestamp`, expected boolean".into(),
+            )
+        })?,
+        None => false,
+    };
+
     // download and save the file into the workspace
-    repositories::workspaces::files::import(download_url, auth, directory, filename, &workspace)
-        .await?;
+    repositories::workspaces::files::import(
+        download_url,
+        auth,
+        directory,
+        filename,
+        &workspace,
+        update_timestamp,
+    )
+    .await?;
 
     // Commit workspace
     let commit_body = NewCommitBody {
