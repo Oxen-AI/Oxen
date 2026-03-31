@@ -220,13 +220,15 @@ jobs:
           cd ${{ github.workspace }}/oxen-python
           uv sync --no-install-project
 
-      # maturin compiles liboxen and all shared deps for the Python extension.
+      # maturin compiles liboxen and all shared deps for the Python extension (dev profile).
+      # cargo build then (hopefully) reuses those artifacts and only links the CLI/server binaries.
       - name: Build oxen (Linux/macOS)
         if: matrix.platform != 'windows'
         run: |
           cd ${{ github.workspace }}/oxen-python
           source .venv/bin/activate
           maturin develop
+          cargo build -p oxen-cli -p oxen-server
 
       - name: Build oxen (Windows)
         if: matrix.platform == 'windows'
@@ -234,6 +236,7 @@ jobs:
           cd ${{ github.workspace }}\oxen-python
           .venv\Scripts\Activate.ps1
           maturin develop
+          cargo build -p oxen-cli -p oxen-server
 
       - name: Setup test directories (Linux/macOS)
         if: matrix.platform != 'windows'
