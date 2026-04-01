@@ -632,6 +632,7 @@ impl VersionStore for S3VersionStore {
     }
 }
 
+/// Uploads a single part in an ongoing multipart S3 upload operation.
 async fn upload_part(
     client: Arc<Client>,
     bucket: String,

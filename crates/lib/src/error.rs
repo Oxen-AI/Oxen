@@ -429,6 +429,7 @@ impl OxenError {
         OxenError::InvalidVersion(StringError::from(s.as_ref()))
     }
 
+    /// Makes an OxenError::Upload error.
     pub fn upload(s: &str) -> Self {
         OxenError::Upload(StringError::from(s))
     }
