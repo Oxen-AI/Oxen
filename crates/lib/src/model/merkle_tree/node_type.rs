@@ -110,7 +110,7 @@ impl MerkleTreeNodeType {
 }
 
 /// Allows for types to identify themselves as a specific kind of merkle tree node via the
-/// `MerkleTreeNodeType` enum. This is ciritical for defining the node's stable on-disk
+/// `MerkleTreeNodeType` enum. This is critical for defining the node's stable on-disk
 /// byte representation.
 pub trait MerkleTreeNodeIdType {
     /// The type of merkle tree node this node can serialize & deserialize into.
