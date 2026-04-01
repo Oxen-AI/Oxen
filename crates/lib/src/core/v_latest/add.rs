@@ -84,6 +84,9 @@ pub async fn add<T: AsRef<Path>>(
     let mut expanded_paths: HashSet<PathBuf> = HashSet::new();
 
     for path in paths {
+
+        println!("[ADD cmd] path: {:?}", path.as_ref());
+
         let path = path.as_ref();
 
         let glob_opts = GlobOpts {
@@ -187,9 +190,11 @@ pub async fn add_files(
             // Collect removed paths in the dir
             // Correction for `oxen add .`
             let removed_paths = util::glob::collect_removed_paths(repo, &corrected_path)?;
+            println!("from path: {:?} we determined we're removing ({}) paths: {:?}", corrected_path.as_ref(), removed_paths.len(), removed_paths);
 
             paths_to_remove.extend(removed_paths);
         } else if corrected_path.is_file() {
+            println!("path is a file: {:?}", corrected_path.as_ref());
             if oxenignore::is_ignored(&corrected_path, &gitignore, corrected_path.is_dir()) {
                 continue;
             }
@@ -202,6 +207,8 @@ pub async fn add_files(
                 version_store,
             )
             .await?;
+
+            println!("file has entry?: {:?}", entry);
 
             if let Some(entry) = entry
                 && let EMerkleTreeNode::File(file_node) = &entry.node.node
@@ -220,6 +227,7 @@ pub async fn add_files(
             continue;
         } else {
             log::debug!("Found nonexistent path {path:?}. Staging for removal. Recursive flag set");
+            println!("removing path: {:?}", path);
             paths_to_remove.insert(path.to_owned());
         }
     }
@@ -227,6 +235,7 @@ pub async fn add_files(
     // Stage the non-existent paths as removed
     // TODO: Make rm_with_staged_db return the stats of the files it removes
     if !paths_to_remove.is_empty() {
+        println!("removing paths: {:?}", paths_to_remove);
         core::v_latest::rm::rm_with_staged_db(&paths_to_remove, repo, &rm_opts, &staged_db)?;
     }
 
