@@ -203,11 +203,6 @@ pub enum OxenError {
     #[error("{0}")]
     ImportFileError(StringError),
 
-    // External Library Errors
-    /// An error encountered dealing with S3
-    #[error("AWS S3 error: {0}")]
-    AwsS3Error(Box<SdkError<Box<dyn std::error::Error + Send + Sync>, HttpResponse>>),
-
     /// An error encountered during SQL parsing.
     #[error("{0}")]
     SQLParseError(StringError),
@@ -217,6 +212,10 @@ pub enum OxenError {
     // Wrappers
     //
     //
+    /// An error encountered dealing with AWS S3
+    #[error("AWS S3 error: {0}")]
+    AwsS3Error(Box<SdkError<Box<dyn std::error::Error + Send + Sync>, HttpResponse>>),
+
     /// Wraps the error from std::path::strip_prefix.
     #[error("Error stripping prefix: {0}")]
     StripPrefixError(#[from] std::path::StripPrefixError),
@@ -449,6 +448,7 @@ impl OxenError {
         OxenError::ImportFileError(StringError::from(s.as_ref()))
     }
 
+    /// Make a new OxenError::AwsS3Error error.
     pub fn aws_s3_error<E: std::error::Error + Send + Sync + 'static>(
         e: SdkError<E, HttpResponse>,
     ) -> Self {

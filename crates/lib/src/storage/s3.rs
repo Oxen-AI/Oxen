@@ -171,6 +171,12 @@ impl VersionStore for S3VersionStore {
         Ok(())
     }
 
+    /// Streams file content to S3 without writing to disk.
+    ///
+    /// The caller must provide the file size up front. Files up to 100 MB are uploaded in a
+    /// single PUT request (per AWS best-practice guidelines). Larger files are uploaded via
+    /// multipart upload with a dynamically chosen part size and up to 16 concurrent part uploads.
+    /// If any part fails, the multipart upload is cancelled so no orphaned parts are left behind.
     async fn store_version_from_reader(
         &self,
         hash: &str,
