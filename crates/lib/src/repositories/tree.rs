@@ -1077,13 +1077,13 @@ pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), O
     Ok(())
 }
 
-fn p_write_tree<N: TMerkleTreeNode>(
+fn p_write_tree<N>(
     repo: &LocalRepository,
     node: &MerkleTreeNode,
     node_impl: &N,
 ) -> Result<(), OxenError>
 where
-    OxenError: From<N::SerializationError>,
+    N: TMerkleTreeNode<SerializationError = rmp_serde::encode::Error>,
 {
     let parent_id = node.parent_id;
 
