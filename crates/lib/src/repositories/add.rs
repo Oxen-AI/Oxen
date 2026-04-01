@@ -52,6 +52,7 @@ pub async fn add_all_with_version<T: AsRef<Path>>(
 
 #[cfg(test)]
 mod tests {
+    use crate::model::StagedEntryStatus;
     use crate::test;
 
     use std::path::Path;
@@ -660,6 +661,58 @@ A: Oxen.ai
 
             // Should stage all 7 files now
             assert_eq!(status.staged_files.len(), 7);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_add_dot_stages_removed_nested_dir() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create nested directory structure: 1/2/3/file.txt
+            let nested_dir = repo.path.join("1").join("2").join("3");
+            util::fs::create_dir_all(&nested_dir)?;
+            let file_path = nested_dir.join("file.txt");
+            test::write_txt_file_to_path(&file_path, "hello")?;
+
+            // Add and commit
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "add nested dir")?;
+
+            // Remove the nested directory from filesystem
+            util::fs::remove_dir_all(repo.path.join("1").join("2").join("3"))?;
+
+            // `oxen add .` should stage the removed directory
+            repositories::add(&repo, &repo.path).await?;
+
+            let status = repositories::status(&repo)?;
+
+            // The file inside 1/2/3 should be staged as removed
+            assert!(status.staged_files.len() >= 1, "Expecting there to only be one staged file, but found ({}): {:?}", status.staged_files.len(), status.staged_files);
+            assert!(status
+                .staged_files
+                .iter()
+                .any(|(_, entry)| entry.status == StagedEntryStatus::Removed),
+            "Expecting file inside 1/2/3 to be staged as removed. Instead found {} staged files: {:?}",
+                status.staged_files.len(), status.staged_files);
+
+            // No remaining unstaged removed files
+            assert_eq!(status.removed_files.len(), 0, "Expecting no removed files but found ({}): {:?}", status.removed_files.len(), status.removed_files);
+
+            // Commit and verify the merkle tree no longer contains dir "3"
+            repositories::commit(&repo, "rm nested dir")?;
+            let head = repositories::commits::head_commit(&repo)?;
+            let dir_2 = repositories::tree::get_dir_without_children(
+                &repo, &head, Path::new("1/2"), None,
+            )?;
+
+            // Dir "2" should exist but have 0 entries (dir "3" removed)
+            assert!(dir_2.is_some(), "Expecting 1/2 to exist but it does not");
+            let dir_3 = repositories::tree::get_dir_without_children(
+                &repo, &head, Path::new("1/2/3"), None,
+            )?;
+            assert!(dir_3.is_none(), "Directory 1/2/3 should not exist in merkle tree after removal");
 
             Ok(())
         })
