@@ -1077,6 +1077,19 @@ pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), O
     Ok(())
 }
 
+/// Write the entire merkle tree, starting from the node (`node_impl`) to the local repository.
+///
+/// Recursively writes the node and all its children to disk. To write a full tree, the node
+/// (`node_impl`) **MUST** be the root of the tree -- i.e. a `Commit` node.
+///
+/// This implementation requires all of the serialization errors for the node types to be the same.
+/// Unfortunately, we cannot a where clause to make this equality constraint [1]. Since this
+/// function is recursive and the `N`s are changing
+/// Instead, since
+/// all of the node implementations use serde for deserialization, we constrain the serialization
+/// error type to `rmp_serde::encode::Error`.
+///
+/// [1] https://github.com/rust-lang/rust/issues/20041)
 fn p_write_tree<N>(
     repo: &LocalRepository,
     node: &MerkleTreeNode,
