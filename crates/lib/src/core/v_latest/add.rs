@@ -190,11 +190,11 @@ pub async fn add_files(
             // Collect removed paths in the dir
             // Correction for `oxen add .`
             let removed_paths = util::glob::collect_removed_paths(repo, &corrected_path)?;
-            println!("from path: {:?} we determined we're removing ({}) paths: {:?}", corrected_path.as_ref(), removed_paths.len(), removed_paths);
+            println!("from path: {:?} we determined we're removing ({}) paths: {:?}", corrected_path, removed_paths.len(), removed_paths);
 
             paths_to_remove.extend(removed_paths);
         } else if corrected_path.is_file() {
-            println!("path is a file: {:?}", corrected_path.as_ref());
+            println!("path is a file: {:?}", corrected_path);
             if oxenignore::is_ignored(&corrected_path, &gitignore, corrected_path.is_dir()) {
                 continue;
             }
