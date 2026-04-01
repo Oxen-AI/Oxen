@@ -33,12 +33,13 @@ pub async fn commit(
     let repo = &workspace.base_repo;
     let commit = &workspace.commit;
 
-    let branch = match repositories::branches::get_by_name_maybe(repo, branch_name)? {
-        Some(branch) => branch,
-        None => {
+    let branch = match repositories::branches::get_by_name(repo, branch_name) {
+        Ok(branch) => branch,
+        Err(OxenError::BranchNotFound(_)) => {
             log::debug!("commit creating branch: {branch_name}");
             repositories::branches::create(repo, branch_name, &commit.id)?
         }
+        Err(e) => return Err(e),
     };
     log::debug!("commit looking up branch: {:#?}", &branch);
 

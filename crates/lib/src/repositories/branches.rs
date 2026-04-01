@@ -24,12 +24,8 @@ pub fn list_with_commits(repo: &LocalRepository) -> Result<Vec<(Branch, Commit)>
 
 /// Get a branch by name, returning an error if it doesn't exist
 pub fn get_by_name(repo: &LocalRepository, name: &str) -> Result<Branch, OxenError> {
-    get_by_name_maybe(repo, name)?.ok_or_else(|| OxenError::local_branch_not_found(name))
-}
-
-/// Get a branch by name, returning None if it doesn't exist
-pub fn get_by_name_maybe(repo: &LocalRepository, name: &str) -> Result<Option<Branch>, OxenError> {
-    with_ref_manager(repo, |manager| manager.get_branch_by_name(name))
+    with_ref_manager(repo, |manager| manager.get_branch_by_name(name))?
+        .ok_or_else(|| OxenError::local_branch_not_found(name))
 }
 
 /// Get branch by name or fall back the current
@@ -57,8 +53,8 @@ pub fn get_commit_id(repo: &LocalRepository, name: &str) -> Result<Option<String
 }
 
 /// Check if a branch exists
-pub fn exists(repo: &LocalRepository, name: &str) -> Result<bool, OxenError> {
-    Ok(get_by_name_maybe(repo, name)?.is_some())
+pub fn exists(repo: &LocalRepository, name: &str) -> bool {
+    get_by_name(repo, name).is_ok()
 }
 
 /// Get the current branch

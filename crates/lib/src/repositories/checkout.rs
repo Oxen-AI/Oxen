@@ -20,7 +20,7 @@ pub async fn checkout(
 ) -> Result<Option<Branch>, OxenError> {
     let value = value.as_ref();
     log::debug!("--- CHECKOUT START {value} ----");
-    if repositories::branches::exists(repo, value)? {
+    if repositories::branches::exists(repo, value) {
         if repositories::branches::is_checked_out(repo, value) {
             println!("Already on branch {value}");
             return Ok(Some(repositories::branches::get_by_name(repo, value)?));

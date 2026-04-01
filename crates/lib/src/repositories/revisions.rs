@@ -18,16 +18,10 @@ pub fn get(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<Option<C
         return Ok(Some(commit));
     }
 
-    if repositories::branches::exists(repo, revision)? {
-        log::debug!("revision is a branch: {revision}");
-        let branch = repositories::branches::get_by_name(repo, revision)?;
-        let commit = repositories::commits::get_by_id(repo, &branch.commit_id)?;
-        Ok(commit)
-    } else {
-        log::debug!("revision is a commit id: {revision}");
-        let commit = repositories::commits::get_by_id(repo, revision)?;
-        Ok(commit)
-    }
+    let commit_id = repositories::branches::get_commit_id(repo, revision)?
+        .unwrap_or_else(|| revision.to_string());
+    let commit = repositories::commits::get_by_id(repo, &commit_id)?;
+    Ok(commit)
 }
 
 /// Get the version file path from a commit id

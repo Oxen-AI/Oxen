@@ -129,9 +129,8 @@ fn get_commit_by_ref<S: AsRef<str> + Clone>(
 }
 
 fn get_commit_by_branch(repo: &LocalRepository, branch_name: &str) -> Option<Commit> {
-    repositories::branches::get_by_name_maybe(repo, branch_name)
+    repositories::branches::get_by_name(repo, branch_name)
         .ok()
-        .flatten()
         .and_then(|branch| get_by_id(repo, &branch.commit_id).ok().flatten())
 }
 
