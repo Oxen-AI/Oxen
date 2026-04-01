@@ -18,7 +18,8 @@ use crate::core::v_old::v0_19_0::index::CommitMerkleTree as CommitMerkleTreeV0_1
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{
-    CommitNode, DirNodeWithPath, EMerkleTreeNode, FileNode, FileNodeWithDir, MerkleTreeNode,
+    CommitNode, DirNode, DirNodeWithPath, EMerkleTreeNode, FileNode, FileNodeWithDir,
+    MerkleTreeNode, VNode,
 };
 use crate::model::{
     Commit, EntryDataType, LocalRepository, MerkleHash, MerkleTreeNodeType, PartialNode,
@@ -1082,21 +1083,29 @@ pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), O
 /// Recursively writes the node and all its children to disk. To write a full tree, the node
 /// (`node_impl`) **MUST** be the root of the tree -- i.e. a `Commit` node.
 ///
-/// This implementation requires all of the serialization errors for the node types to be the same.
-/// Unfortunately, we cannot a where clause to make this equality constraint [1]. Since this
-/// function is recursive and the `N`s are changing
-/// Instead, since
-/// all of the node implementations use serde for deserialization, we constrain the serialization
-/// error type to `rmp_serde::encode::Error`.
+/// This function requires all of the serialization errors (`S`) for the node types to be the same.
 ///
 /// [1] https://github.com/rust-lang/rust/issues/20041)
-fn p_write_tree<N>(
+fn p_write_tree<N, S>(
     repo: &LocalRepository,
     node: &MerkleTreeNode,
     node_impl: &N,
 ) -> Result<(), OxenError>
 where
-    N: TMerkleTreeNode<SerializationError = rmp_serde::encode::Error>,
+    // we make sure we can convert the node's serialization error into an OxenError
+    OxenError: From<N::SerializationError>,
+    // we make sure that the node type implements TMerkleTreeNode
+    N: TMerkleTreeNode<SerializationError = S>,
+    // and we make sure that the nodes we're serializing all have the same serialization error type
+    VNode: TMerkleTreeNode<SerializationError = S>,
+    DirNode: TMerkleTreeNode<SerializationError = S>,
+    FileNode: TMerkleTreeNode<SerializationError = S>,
+    // NOTE:
+    // We could have dropped everything here, have no `S` generic, and have this in the where:
+    //      N: TMerkleTreeNode<SerializationError = rmp_serde::encode::Error>,
+    // But, by doing it this way, we make it so that we can change the actual SerializationError
+    // type without needing to change this function's type. It works so long as the error type
+    // for all of the node's trait implementations align.
 {
     let parent_id = node.parent_id;
 
