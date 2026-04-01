@@ -40,6 +40,7 @@ async-tempfile = { workspace = true }
 async-trait = { workspace = true }
 aws-config = { workspace = true }
 aws-sdk-s3 = { workspace = true }
+aws-smithy-runtime-api = { workspace = true }
 bincode = { workspace = true }
 bytecount = { workspace = true }
 bytes = { workspace = true }

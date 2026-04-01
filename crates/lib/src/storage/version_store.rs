@@ -102,11 +102,13 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
-    /// * `reader` - Any type that implements Read trait
+    /// * `reader` - An owned async reader
+    /// * `size` - Total size in bytes, used to tune upload chunk sizes
     async fn store_version_from_reader(
         &self,
         hash: &str,
-        reader: &mut (dyn AsyncRead + Send + Unpin),
+        reader: Box<dyn AsyncRead + Send + Unpin>,
+        size: u64,
     ) -> Result<(), OxenError>;
 
     /// Store a version file from bytes
