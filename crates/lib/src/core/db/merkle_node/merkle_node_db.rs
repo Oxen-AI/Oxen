@@ -46,10 +46,6 @@ For example, data for a vnode of hash 1234 with two children:
     {dir data node}
 */
 
-use rmp_serde::Serializer;
-use serde::Serialize;
-use std::fmt::Debug;
-use std::fmt::Display;
 use std::fs::File;
 use std::io::Read;
 use std::io::Seek;
@@ -61,7 +57,6 @@ use crate::constants;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::model::MerkleHash;
-use crate::model::merkle_tree::node_type::InvalidMerkleTreeNodeType;
 use crate::util;
 
 use crate::model::merkle_tree::node::{

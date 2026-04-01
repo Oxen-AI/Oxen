@@ -4,8 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::OxenError;
-use crate::model::{MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType, TMerkleTreeNode};
+use crate::model::{MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType};
 
 use std::fmt;
 

@@ -7,7 +7,6 @@ use crate::model::merkle_tree::node::file_node_types::{FileChunkType, FileStorag
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{
     EntryDataType, LocalRepository, MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType,
-    TMerkleTreeNode,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;

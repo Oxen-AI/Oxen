@@ -8,9 +8,7 @@ use crate::core::v_latest::model::merkle_tree::node::dir_node::DirNodeData as Di
 use crate::core::v_old::v0_19_0::model::merkle_tree::node::dir_node::DirNodeData as DirNodeDataV0_19_0;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::{
-    LocalRepository, MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType, TMerkleTreeNode,
-};
+use crate::model::{LocalRepository, MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType};
 use crate::view::DataTypeCount;
 
 pub trait TDirNode {

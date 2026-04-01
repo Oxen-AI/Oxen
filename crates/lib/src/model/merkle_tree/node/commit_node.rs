@@ -9,7 +9,7 @@ use crate::core::v_old::v0_19_0::model::merkle_tree::node::commit_node::CommitNo
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository};
-use crate::model::{MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType, TMerkleTreeNode};
+use crate::model::{MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType};
 
 pub trait TCommitNode {
     fn node_type(&self) -> &MerkleTreeNodeType;
