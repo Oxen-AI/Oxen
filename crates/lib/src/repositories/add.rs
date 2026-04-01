@@ -670,23 +670,25 @@ A: Oxen.ai
     #[tokio::test]
     async fn test_add_dot_stages_removed_nested_dir() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
+
+
             // Create nested directory structure: 1/2/3/file.txt
             let nested_dir = repo.path.join("1").join("2").join("3");
-            util::fs::create_dir_all(&nested_dir)?;
+            util::fs::create_dir_all(&nested_dir).expect("failed to create dir 1/2/3");
             let file_path = nested_dir.join("file.txt");
-            test::write_txt_file_to_path(&file_path, "hello")?;
+            test::write_txt_file_to_path(&file_path, "hello").expect("failed to write text file");
 
             // Add and commit
             repositories::add(&repo, &repo.path).await?;
-            repositories::commit(&repo, "add nested dir")?;
+            repositories::commit(&repo, "add nested dir").expect("intial oxen commit failed");
 
             // Remove the nested directory from filesystem
-            util::fs::remove_dir_all(repo.path.join("1").join("2").join("3"))?;
+            util::fs::remove_dir_all(repo.path.join("1").join("2").join("3")).expect("failed to remove dir 1/2/3");
 
             // `oxen add .` should stage the removed directory
-            repositories::add(&repo, &repo.path).await?;
+            repositories::add(&repo, &repo.path).await.expect("Failed to oxen add");
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).expect("oxen status failed");
 
             // The file inside 1/2/3 should be staged as removed
             assert!(status.staged_files.len() >= 1, "Expecting there to only be one staged file, but found ({}): {:?}", status.staged_files.len(), status.staged_files);
@@ -701,17 +703,17 @@ A: Oxen.ai
             assert_eq!(status.removed_files.len(), 0, "Expecting no removed files but found ({}): {:?}", status.removed_files.len(), status.removed_files);
 
             // Commit and verify the merkle tree no longer contains dir "3"
-            repositories::commit(&repo, "rm nested dir")?;
-            let head = repositories::commits::head_commit(&repo)?;
+            repositories::commit(&repo, "rm nested dir").expect("failed to oxen commit");
+            let head = repositories::commits::head_commit(&repo).expect("failed to get head commit");
             let dir_2 = repositories::tree::get_dir_without_children(
                 &repo, &head, Path::new("1/2"), None,
-            )?;
+            ).expect("failed to get dir 1/2 w/o children");
 
             // Dir "2" should exist but have 0 entries (dir "3" removed)
             assert!(dir_2.is_some(), "Expecting 1/2 to exist but it does not");
             let dir_3 = repositories::tree::get_dir_without_children(
                 &repo, &head, Path::new("1/2/3"), None,
-            )?;
+            ).expect("failed to get dir 1/2/3 w/o children");
             assert!(dir_3.is_none(), "Directory 1/2/3 should not exist in merkle tree after removal");
 
             Ok(())
