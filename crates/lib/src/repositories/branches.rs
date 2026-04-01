@@ -22,8 +22,13 @@ pub fn list_with_commits(repo: &LocalRepository) -> Result<Vec<(Branch, Commit)>
     with_ref_manager(repo, |manager| manager.list_branches_with_commits())
 }
 
-/// Get a branch by name
-pub fn get_by_name(repo: &LocalRepository, name: &str) -> Result<Option<Branch>, OxenError> {
+/// Get a branch by name, returning an error if it doesn't exist
+pub fn get_by_name(repo: &LocalRepository, name: &str) -> Result<Branch, OxenError> {
+    get_by_name_maybe(repo, name)?.ok_or_else(|| OxenError::local_branch_not_found(name))
+}
+
+/// Get a branch by name, returning None if it doesn't exist
+pub fn get_by_name_maybe(repo: &LocalRepository, name: &str) -> Result<Option<Branch>, OxenError> {
     with_ref_manager(repo, |manager| manager.get_branch_by_name(name))
 }
 
@@ -34,10 +39,7 @@ pub fn get_by_name_or_current(
 ) -> Result<Branch, OxenError> {
     if let Some(branch_name) = branch_name {
         let branch_name = branch_name.as_ref();
-        match repositories::branches::get_by_name(repo, branch_name)? {
-            Some(branch) => Ok(branch),
-            None => Err(OxenError::local_branch_not_found(branch_name)),
-        }
+        repositories::branches::get_by_name(repo, branch_name)
     } else {
         match repositories::branches::current_branch(repo)? {
             Some(branch) => Ok(branch),
@@ -56,10 +58,7 @@ pub fn get_commit_id(repo: &LocalRepository, name: &str) -> Result<Option<String
 
 /// Check if a branch exists
 pub fn exists(repo: &LocalRepository, name: &str) -> Result<bool, OxenError> {
-    match get_by_name(repo, name)? {
-        Some(_) => Ok(true),
-        None => Ok(false),
-    }
+    Ok(get_by_name_maybe(repo, name)?.is_some())
 }
 
 /// Get the current branch
@@ -270,8 +269,7 @@ pub fn list_entry_versions_on_branch(
     branch_name: &str,
     path: &Path,
 ) -> Result<Vec<(Commit, CommitEntry)>, OxenError> {
-    let branch = repositories::branches::get_by_name(local_repo, branch_name)?
-        .ok_or_else(|| OxenError::local_branch_not_found(branch_name))?;
+    let branch = repositories::branches::get_by_name(local_repo, branch_name)?;
     log::debug!(
         "get branch commits for branch {:?} -> {}",
         branch.name,
@@ -348,7 +346,7 @@ mod tests {
 
             let commit_3 = repositories::commit(&repo, "adding test file 2")?;
 
-            let _branch = repositories::branches::get_by_name(&repo, DEFAULT_BRANCH_NAME)?.unwrap();
+            let _branch = repositories::branches::get_by_name(&repo, DEFAULT_BRANCH_NAME)?;
 
             let file_versions =
                 repositories::branches::list_entry_versions_on_branch(&repo, "main", &file_path)?;
@@ -434,8 +432,8 @@ mod tests {
             repositories::add(&repo, &repo.path).await?;
             let commit_6 = repositories::commit(&repo, "adding test file 6")?;
 
-            let _main = repositories::branches::get_by_name(&repo, DEFAULT_BRANCH_NAME)?.unwrap();
-            let _branch = repositories::branches::get_by_name(&repo, "test_branch")?.unwrap();
+            let _main = repositories::branches::get_by_name(&repo, DEFAULT_BRANCH_NAME)?;
+            let _branch = repositories::branches::get_by_name(&repo, "test_branch")?;
             let main_versions =
                 repositories::branches::list_entry_versions_on_branch(&repo, "main", &file_path)?;
 

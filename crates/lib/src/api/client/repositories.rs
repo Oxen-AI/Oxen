@@ -647,8 +647,7 @@ mod tests {
             let mock_pre_push = server.mock("POST", &path[..]).create_async().await;
 
             // Branch and commit id we're pushing
-            let branch =
-                repositories::branches::get_by_name(&local_repo, DEFAULT_BRANCH_NAME)?.unwrap();
+            let branch = repositories::branches::get_by_name(&local_repo, DEFAULT_BRANCH_NAME)?;
             let commit_id = branch.commit_id.clone();
 
             api::client::repositories::pre_push(&remote_repo, &branch, &commit_id).await?;

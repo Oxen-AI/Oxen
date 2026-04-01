@@ -23,7 +23,7 @@ pub async fn checkout(
     if repositories::branches::exists(repo, value)? {
         if repositories::branches::is_checked_out(repo, value) {
             println!("Already on branch {value}");
-            return repositories::branches::get_by_name(repo, value);
+            return Ok(Some(repositories::branches::get_by_name(repo, value)?));
         }
 
         println!("Checkout branch: {value}");
@@ -37,7 +37,7 @@ pub async fn checkout(
         repositories::branches::checkout_subtrees_to_commit(repo, &commit, &subtree_paths, depth)
             .await?;
         repositories::branches::set_head(repo, value)?;
-        repositories::branches::get_by_name(repo, value)
+        Ok(Some(repositories::branches::get_by_name(repo, value)?))
     } else {
         // If we are already on the commit, do nothing
         if repositories::branches::is_checked_out(repo, value) {

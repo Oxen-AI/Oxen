@@ -216,8 +216,7 @@ pub async fn merge(
 ) -> Result<Option<Commit>, OxenError> {
     let branch_name = branch_name.as_ref();
 
-    let merge_branch = repositories::branches::get_by_name(repo, branch_name)?
-        .ok_or_else(|| OxenError::local_branch_not_found(branch_name))?;
+    let merge_branch = repositories::branches::get_by_name(repo, branch_name)?;
 
     let base_commit = repositories::commits::head_commit(repo)?;
     let merge_commit = get_commit_or_head(repo, Some(merge_branch.commit_id.clone()))?;

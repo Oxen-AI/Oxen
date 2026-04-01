@@ -40,9 +40,7 @@ pub async fn push_remote_branch(
     // start a timer
     let start = std::time::Instant::now();
 
-    let Some(local_branch) = repositories::branches::get_by_name(repo, &opts.branch)? else {
-        return Err(OxenError::local_branch_not_found(&opts.branch));
-    };
+    let local_branch = repositories::branches::get_by_name(repo, &opts.branch)?;
 
     println!(
         "🐂 oxen push {} {} -> {}",

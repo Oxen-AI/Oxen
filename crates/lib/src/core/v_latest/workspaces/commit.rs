@@ -33,19 +33,14 @@ pub async fn commit(
     let repo = &workspace.base_repo;
     let commit = &workspace.commit;
 
-    let mut branch = repositories::branches::get_by_name(repo, branch_name)?;
+    let branch = match repositories::branches::get_by_name_maybe(repo, branch_name)? {
+        Some(branch) => branch,
+        None => {
+            log::debug!("commit creating branch: {branch_name}");
+            repositories::branches::create(repo, branch_name, &commit.id)?
+        }
+    };
     log::debug!("commit looking up branch: {:#?}", &branch);
-
-    if branch.is_none() {
-        log::debug!("commit creating branch: {branch_name}");
-        branch = Some(repositories::branches::create(
-            repo,
-            branch_name,
-            &commit.id,
-        )?);
-    }
-
-    let branch = branch.unwrap();
 
     let staged_db_path = util::fs::oxen_hidden_dir(&workspace.workspace_repo.path).join(STAGED_DIR);
 
@@ -108,10 +103,7 @@ pub fn mergeability(
     branch_name: impl AsRef<str>,
 ) -> Result<Mergeable, OxenError> {
     let branch_name = branch_name.as_ref();
-    let Some(branch) = repositories::branches::get_by_name(&workspace.base_repo, branch_name)?
-    else {
-        return Err(OxenError::BranchNotFound(branch_name.into()));
-    };
+    let branch = repositories::branches::get_by_name(&workspace.base_repo, branch_name)?;
 
     let base = &workspace.commit;
     let Some(head) = repositories::commits::get_by_id(&workspace.base_repo, &branch.commit_id)?

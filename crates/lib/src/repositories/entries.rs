@@ -76,7 +76,7 @@ pub fn list_directory_w_version(
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {
             let revision_str = revision.as_ref().to_string();
-            let branch = repositories::branches::get_by_name(repo, &revision_str)?;
+            let branch = repositories::branches::get_by_name_maybe(repo, &revision_str)?;
             let commit = repositories::revisions::get(repo, &revision_str)?;
             let parsed_resource = ParsedResource {
                 path: directory.as_ref().to_path_buf(),
@@ -140,7 +140,7 @@ pub fn list_directory_w_workspace_depth(
                 revision_str.clone()
             };
 
-            let branch = repositories::branches::get_by_name(repo, &revision_str)?;
+            let branch = repositories::branches::get_by_name_maybe(repo, &revision_str)?;
             let commit = repositories::revisions::get(repo, &revision_str)?;
             let parsed_resource = ParsedResource {
                 path: directory.as_ref().to_path_buf(),

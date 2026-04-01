@@ -104,7 +104,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     let repository = get_repo(&app_data.path, namespace, name)?;
 
     log::debug!("show branch {branch_name:?}");
-    let branch = repositories::branches::get_by_name(&repository, &branch_name)?
+    let branch = repositories::branches::get_by_name_maybe(&repository, &branch_name)?
         .ok_or_else(|| OxenError::remote_branch_not_found(&branch_name))?;
     log::debug!("show branch found {branch:?}");
 
@@ -171,7 +171,7 @@ fn create_from_branch(
     data: &BranchNewFromBranchName,
 ) -> Result<HttpResponse, OxenHttpError> {
     let maybe_new_branch: Option<liboxen::model::Branch> =
-        repositories::branches::get_by_name(repo, &data.new_name)?;
+        repositories::branches::get_by_name_maybe(repo, &data.new_name)?;
     if let Some(branch) = maybe_new_branch {
         let view = BranchResponse {
             status: StatusMessage::resource_found(),
@@ -180,7 +180,7 @@ fn create_from_branch(
         return Ok(HttpResponse::Ok().json(view));
     }
 
-    let from_branch = repositories::branches::get_by_name(repo, &data.from_name)?
+    let from_branch = repositories::branches::get_by_name_maybe(repo, &data.from_name)?
         .ok_or(OxenHttpError::NotFound)?;
 
     let new_branch = repositories::branches::create(repo, &data.new_name, from_branch.commit_id)?;
@@ -226,7 +226,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     let branch_name = path_param(&req, "branch_name")?;
     let repository = get_repo(&app_data.path, namespace, name)?;
 
-    let branch = repositories::branches::get_by_name(&repository, &branch_name)?
+    let branch = repositories::branches::get_by_name_maybe(&repository, &branch_name)?
         .ok_or_else(|| OxenError::remote_branch_not_found(&branch_name))?;
 
     repositories::branches::force_delete(&repository, &branch.name)?;
@@ -315,7 +315,7 @@ pub async fn maybe_create_merge(
     let name = path_param(&req, "repo_name")?;
     let repository = get_repo(&app_data.path, namespace, name)?;
     let branch_name = path_param(&req, "branch_name")?;
-    let branch = repositories::branches::get_by_name(&repository, &branch_name)?
+    let branch = repositories::branches::get_by_name_maybe(&repository, &branch_name)?
         .ok_or_else(|| OxenError::remote_branch_not_found(&branch_name))?;
 
     let data: Result<BranchRemoteMerge, serde_json::Error> = serde_json::from_str(&body);
@@ -386,7 +386,7 @@ pub async fn list_entry_versions(
 
     // Get branch
     let repo = get_repo(&app_data.path, namespace.clone(), &repo_name)?;
-    let branch = repositories::branches::get_by_name(&repo, &branch_name)?
+    let branch = repositories::branches::get_by_name_maybe(&repo, &branch_name)?
         .ok_or_else(|| OxenError::remote_branch_not_found(&branch_name))?;
 
     let path = PathBuf::from(path_param(&req, "path")?);
