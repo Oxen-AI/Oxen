@@ -21,7 +21,7 @@ pub fn get(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<Option<C
     if repositories::branches::exists(repo, revision)? {
         log::debug!("revision is a branch: {revision}");
         let branch = repositories::branches::get_by_name(repo, revision)?;
-        let branch = branch.ok_or(OxenError::local_branch_not_found(revision))?;
+        let branch = branch.ok_or_else(|| OxenError::local_branch_not_found(revision))?;
         let commit = repositories::commits::get_by_id(repo, &branch.commit_id)?;
         Ok(commit)
     } else {

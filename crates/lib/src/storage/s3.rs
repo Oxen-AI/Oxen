@@ -201,7 +201,7 @@ impl VersionStore for S3VersionStore {
                 .body(ByteStream::from(buf))
                 .send()
                 .await
-                .map_err(OxenError::aws_sdk_error)?;
+                .map_err(OxenError::aws_s3_error)?;
             return Ok(());
         }
 
@@ -215,7 +215,7 @@ impl VersionStore for S3VersionStore {
             .key(&key)
             .send()
             .await
-            .map_err(OxenError::aws_sdk_error)?;
+            .map_err(OxenError::aws_s3_error)?;
 
         let upload_id = upload
             .upload_id()
@@ -289,7 +289,7 @@ impl VersionStore for S3VersionStore {
                     .multipart_upload(completed)
                     .send()
                     .await
-                    .map_err(OxenError::aws_sdk_error)?;
+                    .map_err(OxenError::aws_s3_error)?;
                 Ok(())
             }
             // Upload failed
@@ -649,7 +649,7 @@ async fn upload_part(
         .body(ByteStream::from(data))
         .send()
         .await
-        .map_err(OxenError::aws_sdk_error)?;
+        .map_err(OxenError::aws_s3_error)?;
 
     let etag = resp
         .e_tag()

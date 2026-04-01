@@ -1,4 +1,5 @@
 use bytes::BytesMut;
+use filetime::FileTime;
 use futures::StreamExt;
 use parking_lot::Mutex;
 use reqwest::Client;
@@ -38,13 +39,28 @@ const MAX_COMPRESSION_RATIO: u64 = 100; // Maximum allowed
 
 // TODO: Do we depreciate this, if we always upload to version store?
 pub async fn add(workspace: &Workspace, filepath: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
+    add_with_opts(workspace, filepath, false).await
+}
+
+pub async fn add_with_opts(
+    workspace: &Workspace,
+    filepath: impl AsRef<Path>,
+    update_timestamp: bool,
+) -> Result<PathBuf, OxenError> {
     let filepath = filepath.as_ref();
     let workspace_repo = &workspace.workspace_repo;
     let base_repo = &workspace.base_repo;
 
     // Stage the file using the repositories::add method
     let commit = workspace.commit.clone();
-    p_add_file(base_repo, workspace_repo, &Some(commit), filepath).await?;
+    p_add_file(
+        base_repo,
+        workspace_repo,
+        &Some(commit),
+        filepath,
+        update_timestamp,
+    )
+    .await?;
 
     // Return the relative path of the file in the workspace
     let relative_path = util::fs::path_relative_to_dir(filepath, &workspace_repo.path)?;
@@ -71,6 +87,7 @@ pub fn add_version_file(
     version_path: impl AsRef<Path>,
     dst_path: impl AsRef<Path>,
     file_hash: &str,
+    update_timestamp: bool,
 ) -> Result<PathBuf, OxenError> {
     // version_path is where the file is stored, dst_path is the relative path to the repo
     // let version_path = version_path.as_ref();
@@ -86,6 +103,7 @@ pub fn add_version_file(
         file_hash,
         &staged_db_manager,
         &Arc::new(Mutex::new(HashSet::new())),
+        update_timestamp,
     )?;
 
     Ok(dst_path.to_path_buf())
@@ -96,6 +114,7 @@ pub async fn add_version_files(
     workspace: &Workspace,
     files_with_hash: &[FileWithHash],
     directory: impl AsRef<str>,
+    update_timestamp: bool,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let version_store = repo.version_store()?;
 
@@ -127,6 +146,7 @@ pub async fn add_version_files(
             &item.hash,
             &staged_db_manager,
             &seen_dirs,
+            update_timestamp,
         ) {
             Ok(_) => {
                 // Add parents to staged db
@@ -270,26 +290,40 @@ fn is_cgn_or_reserved_v4(octets: [u8; 4]) -> bool {
     false
 }
 
+#[derive(Debug, thiserror::Error)]
+enum InvalidUrlError {
+    #[error("URL has no host")]
+    NoHost,
+
+    #[error("DNS resolution failed for {host}: {source}")]
+    DnsResolutionFailed {
+        host: String,
+        source: std::io::Error,
+    },
+
+    #[error("URL resolves to a private/reserved IP address: {0}")]
+    PrivateIp(std::net::IpAddr),
+}
+
 /// Resolves a URL's hostname via DNS and rejects it if any resolved address is
 /// private/reserved. This prevents SSRF attacks where a user-supplied URL could reach
 /// internal services (e.g. cloud metadata at 169.254.169.254, internal APIs, etc.).
-async fn validate_url_target(url: &Url) -> Result<(), OxenError> {
-    let host = url
-        .host_str()
-        .ok_or_else(|| OxenError::file_import_error("URL has no host"))?;
+async fn validate_url_target(url: &Url) -> Result<(), InvalidUrlError> {
+    let host = url.host_str().ok_or(InvalidUrlError::NoHost)?;
     let port = url.port_or_known_default().unwrap_or(443);
     let addr = format!("{host}:{port}");
 
-    let resolved = tokio::net::lookup_host(&addr).await.map_err(|e| {
-        OxenError::file_import_error(format!("DNS resolution failed for {host}: {e}"))
-    })?;
+    let resolved =
+        tokio::net::lookup_host(&addr)
+            .await
+            .map_err(|e| InvalidUrlError::DnsResolutionFailed {
+                host: host.to_string(),
+                source: e,
+            })?;
 
     for socket_addr in resolved {
         if is_private_ip(&socket_addr.ip()) {
-            return Err(OxenError::file_import_error(format!(
-                "URL resolves to a private/reserved IP address: {}",
-                socket_addr.ip()
-            )));
+            return Err(InvalidUrlError::PrivateIp(socket_addr.ip()));
         }
     }
 
@@ -342,6 +376,7 @@ pub async fn import(
     directory: PathBuf,
     filename: Option<String>,
     workspace: &Workspace,
+    update_timestamp: bool,
 ) -> Result<(), OxenError> {
     let parsed_url =
         Url::parse(url).map_err(|_| OxenError::file_import_error(format!("Invalid URL: {url}")))?;
@@ -353,7 +388,9 @@ pub async fn import(
         ));
     }
 
-    validate_url_target(&parsed_url).await?;
+    validate_url_target(&parsed_url)
+        .await
+        .map_err(|e| OxenError::ImportFileError(format!("{e}").into()))?;
 
     let auth_header_value = HeaderValue::from_str(auth)
         .map_err(|_e| OxenError::file_import_error(format!("Invalid header auth value {auth}")))?;
@@ -364,6 +401,7 @@ pub async fn import(
         directory,
         filename,
         workspace,
+        update_timestamp,
     )
     .await?;
 
@@ -407,12 +445,12 @@ pub async fn upload_zip(
             log::debug!("workspace::commit ✅ success! commit {commit:?}");
             Ok(commit)
         }
-        Err(OxenError::WorkspaceBehind(workspace)) => {
+        workspace_behind_error @ Err(OxenError::WorkspaceBehind(_)) => {
             log::error!(
                 "unable to commit branch {:?}. Workspace behind",
                 branch.name
             );
-            Err(OxenError::WorkspaceBehind(workspace))
+            workspace_behind_error
         }
         Err(err) => {
             log::error!("unable to commit branch {:?}. Err: {}", branch.name, err);
@@ -434,6 +472,7 @@ async fn fetch_file(
     directory: PathBuf,
     caller_filename: Option<String>,
     workspace: &Workspace,
+    update_timestamp: bool,
 ) -> Result<(), OxenError> {
     let client = Client::builder()
         .redirect(redirect::Policy::none())
@@ -479,7 +518,9 @@ async fn fetch_file(
                     "Redirect to non-HTTP(S) URL is not allowed",
                 ));
             }
-            validate_url_target(&next_url).await?;
+            validate_url_target(&next_url)
+                .await
+                .map_err(|e| OxenError::ImportFileError(format!("{e}").into()))?;
 
             current_url = next_url;
             continue;
@@ -603,12 +644,16 @@ async fn fetch_file(
 
         for file in files.iter() {
             log::debug!("file::import add file {file:?}");
-            let path = repositories::workspaces::files::add(workspace, file).await?;
+            let path =
+                repositories::workspaces::files::add_with_opts(workspace, file, update_timestamp)
+                    .await?;
             log::debug!("file::import add file ✅ success! staged file {path:?}");
         }
     } else {
         log::debug!("file::import add file {:?}", &filepath);
-        let path = repositories::workspaces::files::add(workspace, &save_path).await?;
+        let path =
+            repositories::workspaces::files::add_with_opts(workspace, &save_path, update_timestamp)
+                .await?;
         log::debug!("file::import add file ✅ success! staged file {path:?}");
     }
 
@@ -818,6 +863,7 @@ async fn p_add_file(
     workspace_repo: &LocalRepository,
     maybe_head_commit: &Option<Commit>,
     path: &Path,
+    update_timestamp: bool,
 ) -> Result<(), OxenError> {
     let version_store = base_repo.version_store()?;
     let mut maybe_dir_node = None;
@@ -838,8 +884,18 @@ async fn p_add_file(
     }
 
     // See if this is a new file or a modified file
-    let file_status =
+    let mut file_status =
         core::v_latest::add::determine_file_status(&maybe_dir_node, &file_name, &full_path)?;
+
+    // When update_timestamp is set, override Unmodified status to Modified
+    // and use the current time so the commit gets a new merkle tree hash
+    if update_timestamp && file_status.status == StagedEntryStatus::Unmodified {
+        log::info!(
+            "file {full_path:?} has not changed but update_timestamp is set - staging as modified"
+        );
+        file_status.status = StagedEntryStatus::Modified;
+        file_status.mtime = FileTime::now();
+    }
 
     // Store the file in the version store using the hash as the key
     let hash_str = file_status.hash.to_string();

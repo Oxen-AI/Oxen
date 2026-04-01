@@ -125,13 +125,17 @@ impl StorageOpts {
                     }
                 }
                 "s3" => {
-                    let bucket = storage_backend_bucket.ok_or(OxenError::basic_str(
-                        "storage-backend-bucket is required when storage-backend is s3",
-                    ))?;
+                    let bucket = storage_backend_bucket.ok_or_else(|| {
+                        OxenError::basic_str(
+                            "storage-backend-bucket is required when storage-backend is s3",
+                        )
+                    })?;
 
-                    let prefix = storage_backend_path.ok_or(OxenError::basic_str(
-                        "storage-backend-path is required when storage-backend is s3",
-                    ))?;
+                    let prefix = storage_backend_path.ok_or_else(|| {
+                        OxenError::basic_str(
+                            "storage-backend-path is required when storage-backend is s3",
+                        )
+                    })?;
 
                     Ok(Some(StorageOpts {
                         type_: "s3".to_string(),

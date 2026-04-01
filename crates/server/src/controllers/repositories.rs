@@ -307,7 +307,7 @@ async fn handle_json_creation(
                 },
                 metadata_entries: None,
             })),
-            Err(OxenError::NoCommitsFound(_)) => {
+            Err(OxenError::NoCommitsFound) => {
                 Ok(HttpResponse::Ok().json(RepositoryCreationResponse {
                     status: STATUS_SUCCESS.to_string(),
                     status_message: MSG_RESOURCE_FOUND.to_string(),
@@ -420,10 +420,10 @@ async fn handle_multipart_creation(
                     user: User {
                         name: name
                             .clone()
-                            .ok_or(OxenHttpError::BadRequest("Name is required".into()))?,
+                            .ok_or_else(|| OxenHttpError::BadRequest("Name is required".into()))?,
                         email: email
                             .clone()
-                            .ok_or(OxenHttpError::BadRequest("Email is required".into()))?,
+                            .ok_or_else(|| OxenHttpError::BadRequest("Email is required".into()))?,
                     },
                 });
             }
@@ -453,7 +453,7 @@ async fn handle_multipart_creation(
                 },
                 metadata_entries: repo.entries,
             })),
-            Err(OxenError::NoCommitsFound(_)) => {
+            Err(OxenError::NoCommitsFound) => {
                 Ok(HttpResponse::Ok().json(RepositoryCreationResponse {
                     status: STATUS_SUCCESS.to_string(),
                     status_message: MSG_RESOURCE_FOUND.to_string(),

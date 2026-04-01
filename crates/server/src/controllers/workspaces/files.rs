@@ -35,6 +35,12 @@ pub struct FileUpload {
     pub file: Vec<u8>,
 }
 
+/// Query parameters for staging operations
+#[derive(Deserialize, Debug, Default)]
+pub struct StagingQueryParams {
+    pub update_timestamp: Option<bool>,
+}
+
 /// Combined query parameters for workspace file operations (image resize and video thumbnail)
 #[derive(Deserialize, Debug)]
 pub struct WorkspaceFileQueryParams {
@@ -209,11 +215,12 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
 
     let version_store = repo.version_store()?;
 
-    let (upload_files, err_files) = save_parts(payload, &repo).await?;
+    let (upload_files, err_files, update_timestamp) = save_parts(payload, &repo).await?;
     log::debug!("Save multiparts found {} err_files", err_files.len());
     log::debug!(
-        "Calling add version files from the core workspace logic with {} files",
+        "Calling add version files from the core workspace logic with {} files (update_timestamp: {})",
         upload_files.len(),
+        update_timestamp,
     );
 
     let mut ret_files = vec![];
@@ -227,6 +234,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
             &version_path,
             &dst_path,
             &upload_file.hash,
+            update_timestamp,
         ) {
             Ok(ret_file) => ret_file,
             Err(e) => {
@@ -255,7 +263,8 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
         ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
-        ("directory" = String, Path, description = "The directory to stage the files into", example = "data/train")
+        ("directory" = String, Path, description = "The directory to stage the files into", example = "data/train"),
+        ("update_timestamp" = Option<bool>, Query, description = "Force staging even if file content has not changed, updating the file timestamp", example = false)
     ),
     request_body(
         content = Vec<FileWithHash>,
@@ -275,6 +284,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
 pub async fn add_version_files(
     req: HttpRequest,
     payload: web::Json<Vec<FileWithHash>>,
+    query: web::Query<StagingQueryParams>,
 ) -> Result<HttpResponse, OxenHttpError> {
     // Add file to staging
     let app_data = app_data(&req)?;
@@ -282,6 +292,7 @@ pub async fn add_version_files(
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
     let directory = path_param(&req, "directory")?;
+    let update_timestamp = query.update_timestamp.unwrap_or(false);
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -290,14 +301,16 @@ pub async fn add_version_files(
     };
     let files_with_hash: Vec<FileWithHash> = payload.into_inner();
     log::debug!(
-        "Calling add version files from the core workspace logic with {} files",
+        "Calling add version files from the core workspace logic with {} files (update_timestamp: {})",
         files_with_hash.len(),
+        update_timestamp,
     );
     let err_files = core::v_latest::workspaces::files::add_version_files(
         &repo,
         &workspace,
         &files_with_hash,
         &directory,
+        update_timestamp,
     )
     .await?;
 
@@ -464,7 +477,7 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
 pub async fn save_parts(
     mut payload: Multipart,
     repo: &LocalRepository,
-) -> Result<(Vec<FileWithHash>, Vec<ErrorFileInfo>), Error> {
+) -> Result<(Vec<FileWithHash>, Vec<ErrorFileInfo>, bool), Error> {
     // Receive a multipart request and save the files to the version store
     let version_store = repo.version_store().map_err(|oxen_err: OxenError| {
         log::error!("Failed to get version store: {oxen_err:?}");
@@ -474,11 +487,19 @@ pub async fn save_parts(
 
     let mut upload_files: Vec<FileWithHash> = vec![];
     let mut err_files: Vec<ErrorFileInfo> = vec![];
+    let mut update_timestamp = false;
 
     while let Some(mut field) = payload.try_next().await? {
         let Some(content_disposition) = field.content_disposition().cloned() else {
             continue;
         };
+
+        if let Some(name) = content_disposition.get_name()
+            && name == "update_timestamp"
+        {
+            update_timestamp = parse_bool_field(&mut field).await?;
+            continue;
+        }
 
         if let Some(name) = content_disposition.get_name()
             && (name == "file[]" || name == "file")
@@ -595,7 +616,22 @@ pub async fn save_parts(
         }
     }
 
-    Ok((upload_files, err_files))
+    Ok((upload_files, err_files, update_timestamp))
+}
+
+async fn parse_bool_field(field: &mut actix_multipart::Field) -> Result<bool, Error> {
+    let mut bytes = Vec::new();
+    while let Some(chunk) = field.try_next().await? {
+        bytes.extend_from_slice(&chunk);
+    }
+    let value = String::from_utf8_lossy(&bytes);
+    match value.as_ref() {
+        "true" | "1" => Ok(true),
+        "false" | "0" => Ok(false),
+        _ => Err(actix_web::error::ErrorBadRequest(format!(
+            "Invalid boolean value: {value}"
+        ))),
+    }
 }
 
 // Record the error file info for retry

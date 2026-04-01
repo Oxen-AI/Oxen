@@ -143,7 +143,7 @@ impl PyRepo {
             repositories::branches::delete(&repo, name)
         } else {
             repositories::branches::get_by_name(&repo, name)?
-                .ok_or(OxenError::local_branch_not_found(name))
+                .ok_or_else(|| OxenError::local_branch_not_found(name))
         };
         Ok(PyBranch::from(branch?))
     }
@@ -162,7 +162,7 @@ impl PyRepo {
             pyo3_async_runtimes::tokio::get_runtime().block_on(async {
                 repositories::checkout(&repo, revision)
                     .await?
-                    .ok_or(OxenError::local_branch_not_found(revision))
+                    .ok_or_else(|| OxenError::local_branch_not_found(revision))
             })?
         };
 

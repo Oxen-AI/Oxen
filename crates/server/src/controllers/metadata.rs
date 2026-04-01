@@ -51,7 +51,7 @@ pub async fn file(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     );
 
     let latest_commit = repositories::commits::get_by_id(&repo, &commit.id)?
-        .ok_or(OxenError::revision_not_found(commit.id.clone().into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(commit.id.as_str().into()))?;
 
     log::debug!(
         "{} resolve commit {} -> '{}'",
@@ -126,7 +126,7 @@ pub async fn update_metadata(req: HttpRequest) -> actix_web::Result<HttpResponse
     let version_str = resource
         .version
         .to_str()
-        .ok_or(OxenHttpError::BadRequest("Missing resource version".into()))?;
+        .ok_or_else(|| OxenHttpError::BadRequest("Missing resource version".into()))?;
 
     repositories::entries::update_metadata(&repo, version_str)?;
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))

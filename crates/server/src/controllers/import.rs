@@ -107,9 +107,7 @@ pub async fn import(
     let branch = resource
         .branch
         .clone()
-        .ok_or(OxenError::local_branch_not_found(
-            resource.version.to_string_lossy(),
-        ))?;
+        .ok_or_else(|| OxenError::local_branch_not_found(resource.version.to_string_lossy()))?;
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
     let directory = resource.path.clone();
     log::debug!("workspace::files::import_file Got directory: {directory:?}");
@@ -180,9 +178,25 @@ pub async fn import(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
+    let update_timestamp = match body.get("update_timestamp") {
+        Some(value) => value.as_bool().ok_or_else(|| {
+            OxenHttpError::BadRequest(
+                "Invalid type for `update_timestamp`, expected boolean".into(),
+            )
+        })?,
+        None => false,
+    };
+
     // download and save the file into the workspace
-    repositories::workspaces::files::import(download_url, auth, directory, filename, &workspace)
-        .await?;
+    repositories::workspaces::files::import(
+        download_url,
+        auth,
+        directory,
+        filename,
+        &workspace,
+        update_timestamp,
+    )
+    .await?;
 
     // Commit workspace
     let commit_body = NewCommitBody {
@@ -247,9 +261,7 @@ pub async fn upload_zip(
     let branch = resource
         .branch
         .clone()
-        .ok_or(OxenError::local_branch_not_found(
-            resource.version.to_string_lossy(),
-        ))?;
+        .ok_or_else(|| OxenError::local_branch_not_found(resource.version.to_string_lossy()))?;
     let directory = resource.path.clone();
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
 

@@ -628,7 +628,7 @@ mod tests {
         let data = b"test data from reader";
 
         // Create a cursor with the test data
-        let mut cursor = Cursor::new(data.to_vec());
+        let cursor = Cursor::new(data.to_vec());
 
         // Store using the reader
         store

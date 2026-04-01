@@ -61,7 +61,7 @@ pub async fn commit(
 
         let conflicts = list_conflicts(workspace, &dir_entries, &branch)?;
         if !conflicts.is_empty() {
-            return Err(OxenError::workspace_behind(workspace));
+            return Err(OxenError::WorkspaceBehind(Box::new(workspace.clone())));
         }
 
         let dir_entries = export_tabular_data_frames(workspace, dir_entries).await?;
@@ -110,16 +110,14 @@ pub fn mergeability(
     let branch_name = branch_name.as_ref();
     let Some(branch) = repositories::branches::get_by_name(&workspace.base_repo, branch_name)?
     else {
-        return Err(OxenError::revision_not_found(
-            branch_name.to_string().into(),
-        ));
+        return Err(OxenError::BranchNotFound(branch_name.into()));
     };
 
     let base = &workspace.commit;
     let Some(head) = repositories::commits::get_by_id(&workspace.base_repo, &branch.commit_id)?
     else {
-        return Err(OxenError::revision_not_found(
-            branch.commit_id.clone().into(),
+        return Err(OxenError::RevisionNotFound(
+            branch.commit_id.as_str().into(),
         ));
     };
 
@@ -174,8 +172,8 @@ fn list_conflicts(
     let Some(branch_commit) =
         repositories::commits::get_by_id(&workspace.base_repo, &branch.commit_id)?
     else {
-        return Err(OxenError::revision_not_found(
-            branch.commit_id.clone().into(),
+        return Err(OxenError::RevisionNotFound(
+            branch.commit_id.as_str().into(),
         ));
     };
     log::debug!(
@@ -195,22 +193,22 @@ fn list_conflicts(
     let Some(branch_commit) =
         repositories::commits::get_by_id(&workspace.base_repo, &branch.commit_id)?
     else {
-        return Err(OxenError::revision_not_found(
-            branch.commit_id.clone().into(),
+        return Err(OxenError::RevisionNotFound(
+            branch.commit_id.as_str().into(),
         ));
     };
     let Some(branch_tree) =
         repositories::tree::get_root_with_children(&workspace.base_repo, &branch_commit)?
     else {
-        return Err(OxenError::revision_not_found(
-            branch.commit_id.clone().into(),
+        return Err(OxenError::RevisionNotFound(
+            branch.commit_id.as_str().into(),
         ));
     };
     let Some(workspace_tree) =
         repositories::tree::get_root_with_children(&workspace.base_repo, workspace_commit)?
     else {
-        return Err(OxenError::revision_not_found(
-            workspace.commit.id.clone().into(),
+        return Err(OxenError::RevisionNotFound(
+            workspace.commit.id.as_str().into(),
         ));
     };
 

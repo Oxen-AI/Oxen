@@ -26,7 +26,7 @@ impl PyRemoteDataFrame {
 
     fn size(&self) -> Result<(usize, usize), PyOxenError> {
         let Some(revision) = &self.repo.revision else {
-            return Err(OxenError::no_commits_found().into());
+            return Err(OxenError::NoCommitsFound.into());
         };
 
         pyo3_async_runtimes::tokio::get_runtime().block_on(async {
@@ -50,7 +50,7 @@ impl PyRemoteDataFrame {
 
     fn get_row_by_index(&self, row: usize) -> Result<String, PyOxenError> {
         let Some(revision) = &self.repo.revision else {
-            return Err(OxenError::no_commits_found().into());
+            return Err(OxenError::NoCommitsFound.into());
         };
 
         let data = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
@@ -78,7 +78,7 @@ impl PyRemoteDataFrame {
         columns: Vec<String>,
     ) -> Result<String, PyOxenError> {
         let Some(revision) = &self.repo.revision else {
-            return Err(OxenError::no_commits_found().into());
+            return Err(OxenError::NoCommitsFound.into());
         };
 
         let data = pyo3_async_runtimes::tokio::get_runtime().block_on(async {

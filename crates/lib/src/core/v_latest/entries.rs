@@ -8,7 +8,8 @@ use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{
     Commit, CommitEntry, EntryDataType, LocalRepository, MerkleHash, MetadataEntry, ParsedResource,
 };
-use crate::opts::PaginateOpts;
+use crate::opts::{PaginateOpts, SortBy, SortOpts};
+
 use crate::repositories;
 use crate::util;
 use crate::view::PaginatedDirEntries;
@@ -45,7 +46,14 @@ pub fn list_directory(
     parsed_resource: &ParsedResource,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
-    list_directory_with_depth(repo, directory, parsed_resource, paginate_opts, 0)
+    list_directory_with_depth(
+        repo,
+        directory,
+        parsed_resource,
+        paginate_opts,
+        &SortOpts::default(),
+        0,
+    )
 }
 
 pub fn list_directory_with_depth(
@@ -53,6 +61,7 @@ pub fn list_directory_with_depth(
     directory: impl AsRef<Path>,
     parsed_resource: &ParsedResource,
     paginate_opts: &PaginateOpts,
+    sort_opts: &SortOpts,
     depth: usize,
 ) -> Result<PaginatedDirEntries, OxenError> {
     let _perf = crate::perf_guard!("core::entries::list_directory");
@@ -72,19 +81,19 @@ pub fn list_directory_with_depth(
     let commit = parsed_resource
         .commit
         .clone()
-        .ok_or(OxenError::revision_not_found(revision.into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(revision.into()))?;
 
     log::debug!("list_directory commit {commit}");
 
     let _perf_get_dir = crate::perf_guard!("core::entries::get_dir_with_children");
     let dir = repositories::tree::get_dir_with_children(repo, &commit, directory, None)?
-        .ok_or(OxenError::resource_not_found(directory.to_str().unwrap()))?;
+        .ok_or_else(|| OxenError::resource_not_found(directory.to_string_lossy()))?;
     drop(_perf_get_dir);
 
     log::debug!("list_directory dir {dir}");
 
     let EMerkleTreeNode::Directory(dir_node) = &dir.node else {
-        return Err(OxenError::resource_not_found(directory.to_str().unwrap()));
+        return Err(OxenError::resource_not_found(directory.to_string_lossy()));
     };
 
     log::debug!("list_directory dir_node {dir_node}");
@@ -112,6 +121,7 @@ pub fn list_directory_with_depth(
         directory,
         parsed_resource,
         &mut found_commits,
+        sort_opts,
         depth,
     )?;
     log::debug!("list_directory got {} entries", entries.len());
@@ -155,9 +165,7 @@ pub fn get_meta_entry(
     let commit = parsed_resource
         .commit
         .clone()
-        .ok_or(OxenError::parsed_resource_not_found(
-            parsed_resource.clone(),
-        ))?;
+        .ok_or_else(|| OxenError::parsed_resource_not_found(parsed_resource.clone()))?;
     log::debug!("get_meta_entry path: {path:?} commit: {commit}");
     let node = repositories::tree::get_dir_without_children(repo, &commit, path, None)?;
     log::debug!("get_meta_entry node: {node:?}");
@@ -199,41 +207,15 @@ pub fn dir_entries(
     parsed_resource: &ParsedResource,
     found_commits: &mut HashMap<MerkleHash, Commit>,
 ) -> Result<Vec<MetadataEntry>, OxenError> {
-    let _perf = crate::perf_guard!("core::entries::dir_entries");
-
-    log::debug!(
-        "dir_entries search_directory {:?} dir {}",
-        search_directory.as_ref(),
-        dir
-    );
-    let mut entries: Vec<MetadataEntry> = Vec::new();
-    let current_directory = search_directory.as_ref();
-
-    let _perf_recurse = crate::perf_guard!("core::entries::p_dir_entries_recurse");
-    p_dir_entries(
+    dir_entries_with_depth(
         repo,
         dir,
-        &search_directory,
-        current_directory,
+        search_directory,
         parsed_resource,
         found_commits,
-        &mut entries,
+        &SortOpts::default(),
         0,
-    )?;
-    drop(_perf_recurse);
-
-    log::debug!("dir_entries got {} entries", entries.len());
-
-    let _perf_sort = crate::perf_guard!("core::entries::sort_entries");
-    // Sort entries by is_dir first, then by filename
-    entries.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
-            .then_with(|| a.filename.cmp(&b.filename))
-    });
-    drop(_perf_sort);
-
-    Ok(entries)
+    )
 }
 
 pub fn dir_entries_with_depth(
@@ -242,6 +224,7 @@ pub fn dir_entries_with_depth(
     search_directory: impl AsRef<Path>,
     parsed_resource: &ParsedResource,
     found_commits: &mut HashMap<MerkleHash, Commit>,
+    sort_opts: &SortOpts,
     depth: usize,
 ) -> Result<Vec<MetadataEntry>, OxenError> {
     let _perf = crate::perf_guard!("core::entries::dir_entries");
@@ -264,6 +247,7 @@ pub fn dir_entries_with_depth(
         parsed_resource,
         found_commits,
         &mut entries,
+        sort_opts,
         depth,
     )?;
     drop(_perf_recurse);
@@ -271,15 +255,37 @@ pub fn dir_entries_with_depth(
     log::debug!("dir_entries got {} entries", entries.len());
 
     let _perf_sort = crate::perf_guard!("core::entries::sort_entries");
-    // Sort entries by is_dir first, then by filename
-    entries.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
-            .then_with(|| a.filename.cmp(&b.filename))
-    });
+    sort_entries(&mut entries, sort_opts);
     drop(_perf_sort);
 
     Ok(entries)
+}
+
+fn sort_entries(entries: &mut [MetadataEntry], sort_opts: &SortOpts) {
+    use std::cmp::Ordering;
+
+    entries.sort_by(|a, b| {
+        // Directories always come first
+        let dir_cmp = b.is_dir.cmp(&a.is_dir);
+        if dir_cmp != Ordering::Equal {
+            return dir_cmp;
+        }
+
+        let field_cmp = match sort_opts.sort_by {
+            SortBy::Name => a.filename.cmp(&b.filename),
+            SortBy::Date => {
+                let a_ts = a.latest_commit.as_ref().map(|c| c.timestamp);
+                let b_ts = b.latest_commit.as_ref().map(|c| c.timestamp);
+                a_ts.cmp(&b_ts)
+            }
+        };
+
+        if sort_opts.reverse {
+            field_cmp.reverse()
+        } else {
+            field_cmp
+        }
+    });
 }
 
 fn dir_node_to_metadata_entry(
@@ -301,9 +307,10 @@ fn dir_node_to_metadata_entry(
         found_commits.entry(*dir_node.last_commit_id())
     {
         let _perf_commit = crate::perf_guard!("core::entries::get_commit_by_hash");
-        let commit = repositories::commits::get_by_hash(repo, dir_node.last_commit_id())?.ok_or(
-            OxenError::commit_id_does_not_exist(dir_node.last_commit_id().to_string()),
-        )?;
+        let commit = repositories::commits::get_by_hash(repo, dir_node.last_commit_id())?
+            .ok_or_else(|| {
+                OxenError::commit_id_does_not_exist(dir_node.last_commit_id().to_string())
+            })?;
         e.insert(commit);
     }
 
@@ -344,9 +351,10 @@ fn file_node_to_metadata_entry(
         found_commits.entry(*file_node.last_commit_id())
     {
         let _perf_commit = crate::perf_guard!("core::entries::get_commit_by_hash");
-        let commit = repositories::commits::get_by_hash(repo, file_node.last_commit_id())?.ok_or(
-            OxenError::commit_id_does_not_exist(file_node.last_commit_id().to_string()),
-        )?;
+        let commit = repositories::commits::get_by_hash(repo, file_node.last_commit_id())?
+            .ok_or_else(|| {
+                OxenError::commit_id_does_not_exist(file_node.last_commit_id().to_string())
+            })?;
         e.insert(commit);
     }
 
@@ -400,6 +408,7 @@ fn p_dir_entries(
     parsed_resource: &ParsedResource,
     found_commits: &mut HashMap<MerkleHash, Commit>,
     entries: &mut Vec<MetadataEntry>,
+    sort_opts: &SortOpts,
     depth: usize,
 ) -> Result<(), OxenError> {
     let search_directory = search_directory.as_ref();
@@ -416,6 +425,7 @@ fn p_dir_entries(
                     parsed_resource,
                     found_commits,
                     entries,
+                    sort_opts,
                     depth,
                 )?;
             }
@@ -457,15 +467,11 @@ fn p_dir_entries(
                                 &sub_resource,
                                 found_commits,
                                 &mut children,
+                                sort_opts,
                                 depth - 1,
                             )?;
 
-                            // Sort children
-                            children.sort_by(|a, b| {
-                                b.is_dir
-                                    .cmp(&a.is_dir)
-                                    .then_with(|| a.filename.cmp(&b.filename))
-                            });
+                            sort_entries(&mut children, sort_opts);
 
                             if !children.is_empty() {
                                 metadata.children = Some(children);
@@ -484,6 +490,7 @@ fn p_dir_entries(
                     parsed_resource,
                     found_commits,
                     entries,
+                    sort_opts,
                     depth,
                 )?;
             }
@@ -537,7 +544,7 @@ pub fn list_for_commit(
 
 pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<(), OxenError> {
     let commit = repositories::revisions::get(repo, revision.as_ref())?
-        .ok_or_else(|| OxenError::revision_not_found(revision.as_ref().to_string().into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(revision.as_ref().to_string().into()))?;
     let tree: CommitMerkleTree = CommitMerkleTree::from_commit(repo, &commit)?;
     let mut node = tree.root;
 

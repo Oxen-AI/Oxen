@@ -2880,7 +2880,7 @@ dependencies = [
  "rust_decimal",
  "serde_json",
  "smallvec",
- "strum",
+ "strum 0.25.0",
 ]
 
 [[package]]
@@ -4419,7 +4419,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "liboxen"
-version = "0.46.9"
+version = "0.46.10"
 dependencies = [
  "approx",
  "arrow",
@@ -4497,6 +4497,7 @@ dependencies = [
  "simdutf8",
  "sql_query_builder",
  "sqlparser",
+ "strum 0.26.3",
  "sysinfo",
  "tar",
  "tempfile",
@@ -5180,7 +5181,7 @@ checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
 name = "oxen-cli"
-version = "0.46.9"
+version = "0.46.10"
 dependencies = [
  "async-trait",
  "bytesize",
@@ -5202,7 +5203,7 @@ dependencies = [
 
 [[package]]
 name = "oxen-py"
-version = "0.46.9"
+version = "0.46.10"
 dependencies = [
  "bindgen 0.71.1",
  "cc",
@@ -5221,7 +5222,7 @@ dependencies = [
 
 [[package]]
 name = "oxen-server"
-version = "0.46.9"
+version = "0.46.10"
 dependencies = [
  "actix-http",
  "actix-multipart",
@@ -7725,6 +7726,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "290d54ea6f91c969195bdbcd7442c8c2a2ba87da8bf60a7ee86a235d4bc1e125"
 dependencies = [
  "strum_macros 0.25.3",
+]
+
+[[package]]
+name = "strum"
+version = "0.26.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
+dependencies = [
+ "strum_macros 0.26.4",
 ]
 
 [[package]]

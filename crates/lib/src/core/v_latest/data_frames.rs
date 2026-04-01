@@ -29,7 +29,7 @@ pub async fn get_slice(
         None => resource
             .commit
             .clone()
-            .ok_or(OxenError::basic_str("Commit not found"))?,
+            .ok_or_else(|| OxenError::basic_str("Commit not found"))?,
     };
 
     let (staged_repo, base_repo) = match workspace {
@@ -52,16 +52,16 @@ pub async fn get_slice(
                 // Fall back to commit tree using workspace's commit
                 let commit = &ws.commit;
                 repositories::tree::get_file_by_path(base_repo, commit, &path)?
-                    .ok_or(OxenError::path_does_not_exist(path.as_ref()))?
+                    .ok_or_else(|| OxenError::path_does_not_exist(path.as_ref()))?
             }
         }
         None => {
             let commit = resource
                 .commit
                 .as_ref()
-                .ok_or(OxenError::basic_str("Commit not found"))?;
+                .ok_or_else(|| OxenError::basic_str("Commit not found"))?;
             repositories::tree::get_file_by_path(base_repo, commit, &path)?
-                .ok_or(OxenError::path_does_not_exist(path.as_ref()))?
+                .ok_or_else(|| OxenError::path_does_not_exist(path.as_ref()))?
         }
     };
 

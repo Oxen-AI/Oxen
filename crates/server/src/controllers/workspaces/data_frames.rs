@@ -489,10 +489,10 @@ pub async fn get_by_branch(
 
     // Staged dataframes must be on a branch.
     let branch = repositories::branches::get_by_name(&repo, branch_name)?
-        .ok_or(OxenError::remote_branch_not_found(branch_name))?;
+        .ok_or_else(|| OxenError::remote_branch_not_found(branch_name))?;
 
     let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?
-        .ok_or(OxenError::resource_not_found(&branch.commit_id))?;
+        .ok_or_else(|| OxenError::resource_not_found(&branch.commit_id))?;
 
     let entries = repositories::entries::list_tabular_files_in_repo(&repo, &commit)?;
     log::debug!("got {} tabular entries", entries.len());

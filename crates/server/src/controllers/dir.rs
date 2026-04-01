@@ -3,7 +3,7 @@ use crate::helpers::get_repo;
 use crate::params::{PageNumVersionQuery, app_data, parse_resource, path_param};
 
 use liboxen::core::versions::MinOxenVersion;
-use liboxen::opts::PaginateOpts;
+use liboxen::opts::{PaginateOpts, SortOpts};
 use liboxen::perf_guard;
 use liboxen::view::PaginatedDirEntriesResponse;
 use liboxen::{constants, repositories};
@@ -49,6 +49,13 @@ pub async fn get(
         d if d < 0 => usize::MAX,
         d => d as usize,
     };
+    let sort_opts = SortOpts::from_query(query.sort_by.as_deref(), query.reverse.unwrap_or(false))
+        .map_err(|_| {
+            OxenHttpError::BadRequest(
+                "Invalid value for sort_by, valid options include: `name`, `date`.".into(),
+            )
+        })?
+        .unwrap_or_default();
     drop(_perf_parse);
 
     log::debug!(
@@ -72,6 +79,7 @@ pub async fn get(
             page_num: page,
             page_size,
         },
+        &sort_opts,
         api_version,
         depth,
     )?;
@@ -138,6 +146,91 @@ mod tests {
 
         // Make sure we can fetch all the entries
         assert_eq!(entries_resp.total_entries, num_entries);
+
+        // cleanup
+        test::cleanup_sync_dir(&sync_dir)?;
+
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_controllers_dir_sort_by_date() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let name = "Testing-Name";
+        let repo = test::create_local_repo(&sync_dir, namespace, name)?;
+
+        // Create files in separate commits so they have different timestamps
+        let file_a = repo.path.join("a_file.txt");
+        util::fs::write_to_path(&file_a, "content a")?;
+        repositories::add(&repo, &file_a).await?;
+        repositories::commit(&repo, "adding a_file")?;
+
+        let file_b = repo.path.join("b_file.txt");
+        util::fs::write_to_path(&file_b, "content b")?;
+        repositories::add(&repo, &file_b).await?;
+        let commit = repositories::commit(&repo, "adding b_file")?;
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/dir/{resource:.*}",
+                    web::get().to(controllers::dir::get),
+                ),
+        )
+        .await;
+
+        // Default sort (name ascending)
+        let uri = format!("/oxen/{}/{}/dir/{}/", namespace, name, commit.id);
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&bytes).unwrap();
+        let entries_resp: PaginatedDirEntries = serde_json::from_str(body)?;
+        let filenames: Vec<&str> = entries_resp.entries.iter().map(|e| e.filename()).collect();
+        assert_eq!(filenames, vec!["a_file.txt", "b_file.txt"]);
+
+        // Sort by date ascending (a_file committed first, b_file second)
+        let uri = format!(
+            "/oxen/{}/{}/dir/{}/?sort_by=date",
+            namespace, name, commit.id
+        );
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&bytes).unwrap();
+        let entries_resp: PaginatedDirEntries = serde_json::from_str(body)?;
+        let filenames: Vec<&str> = entries_resp.entries.iter().map(|e| e.filename()).collect();
+        assert_eq!(filenames, vec!["a_file.txt", "b_file.txt"]);
+
+        // Sort by date descending (reverse)
+        let uri = format!(
+            "/oxen/{}/{}/dir/{}/?sort_by=date&reverse=true",
+            namespace, name, commit.id
+        );
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&bytes).unwrap();
+        let entries_resp: PaginatedDirEntries = serde_json::from_str(body)?;
+        let filenames: Vec<&str> = entries_resp.entries.iter().map(|e| e.filename()).collect();
+        assert_eq!(filenames, vec!["b_file.txt", "a_file.txt"]);
+
+        // Sort by name reversed
+        let uri = format!(
+            "/oxen/{}/{}/dir/{}/?sort_by=name&reverse=true",
+            namespace, name, commit.id
+        );
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&bytes).unwrap();
+        let entries_resp: PaginatedDirEntries = serde_json::from_str(body)?;
+        let filenames: Vec<&str> = entries_resp.entries.iter().map(|e| e.filename()).collect();
+        assert_eq!(filenames, vec!["b_file.txt", "a_file.txt"]);
 
         // cleanup
         test::cleanup_sync_dir(&sync_dir)?;

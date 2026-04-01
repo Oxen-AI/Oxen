@@ -51,7 +51,7 @@ pub async fn push_remote_branch(
 
     let remote = repo
         .get_remote(&opts.remote)
-        .ok_or_else(|| OxenError::remote_not_set(&opts.remote))?;
+        .ok_or_else(|| OxenError::RemoteNotSet(opts.remote.to_string()))?;
 
     let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
 
@@ -72,7 +72,7 @@ async fn push_local_branch_to_remote_repo(
 ) -> Result<(), OxenError> {
     // Get the commit from the branch
     let Some(commit) = repositories::commits::get_by_id(repo, &local_branch.commit_id)? else {
-        return Err(OxenError::revision_not_found(
+        return Err(OxenError::RevisionNotFound(
             local_branch.commit_id.clone().into(),
         ));
     };
@@ -136,7 +136,7 @@ async fn push_to_existing_branch(
 
                 let latest_remote_commit =
                     repositories::commits::get_by_id(repo, &remote_branch.commit_id)?.ok_or_else(
-                        || OxenError::revision_not_found(remote_branch.commit_id.clone().into()),
+                        || OxenError::RevisionNotFound(remote_branch.commit_id.clone().into()),
                     )?;
 
                 let mut commits =
@@ -624,6 +624,7 @@ async fn chunk_and_send_large_entries(
                     &*version_path,
                     None::<PathBuf>,
                     None,
+                    false,
                     Some(entry.clone()),
                     Some(&bar),
                 )

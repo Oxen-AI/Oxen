@@ -34,7 +34,7 @@ pub async fn pull_remote_branch(
 
     let remote = repo
         .get_remote(remote)
-        .ok_or(OxenError::remote_not_set(remote))?;
+        .ok_or_else(|| OxenError::remote_not_set(remote))?;
 
     let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
 
@@ -44,7 +44,7 @@ pub async fn pull_remote_branch(
     fetch::fetch_remote_branch(repo, &remote_repo, fetch_opts).await?;
 
     let new_head_commit = repositories::revisions::get(repo, branch)?
-        .ok_or(OxenError::revision_not_found(branch.to_owned().into()))?;
+        .ok_or_else(|| OxenError::RevisionNotFound(branch.to_owned().into()))?;
 
     // Merge if there are changes
     if let Some(previous_head_commit) = &previous_head_commit {

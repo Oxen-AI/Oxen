@@ -22,7 +22,7 @@ pub fn get_cli(
     let entry_path = entry_path.as_ref();
     let base_name = entry_path
         .file_name()
-        .ok_or(OxenError::file_has_no_name(path))?;
+        .ok_or_else(|| OxenError::file_has_no_name(path))?;
     let size = repositories::metadata::get_file_size(path)?;
     let hash = util::hasher::hash_file_contents(path)?;
     let mime_type = util::fs::file_mime_type(path);

@@ -307,7 +307,7 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
     let workspace_id = workspace.id.to_string();
     let workspace_dir = workspace.dir();
     if !workspace_dir.exists() {
-        return Err(OxenError::workspace_not_found(workspace_id.into()));
+        return Err(OxenError::WorkspaceNotFound(workspace_id.into()));
     }
 
     log::debug!("workspace::delete cleaning up workspace dir: {workspace_dir:?}");
@@ -338,7 +338,7 @@ pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), O
 
     if !config_path.exists() {
         log::error!("Workspace config not found: {config_path:?}");
-        return Err(OxenError::workspace_not_found(workspace.id.clone().into()));
+        return Err(OxenError::WorkspaceNotFound(workspace.id.as_str().into()));
     }
 
     let config_contents = util::fs::read_from_path(&config_path)?;

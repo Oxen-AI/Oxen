@@ -105,19 +105,19 @@ impl ObjectsSchemaReader {
         let commit =
             commit_reader
                 .get_commit_by_id(&self.commit_id)?
-                .ok_or(OxenError::basic_str(format!(
+                .ok_or_else(|| OxenError::basic_str(format!(
                     "Could not find commit {}",
                     self.commit_id
                 )))?;
 
         let root_hash = commit
             .root_hash
-            .ok_or(format!("Root hash not found for commit {}", self.commit_id))?;
+            .ok_or_else(|| format!("Root hash not found for commit {}", self.commit_id))?;
 
         let root_node: TreeObject =
             self.object_reader
                 .get_dir(&root_hash)?
-                .ok_or(OxenError::basic_str(
+                .ok_or_else(|| OxenError::basic_str(
                     "Could not find root node in object db",
                 ))?;
 

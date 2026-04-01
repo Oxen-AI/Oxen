@@ -126,7 +126,7 @@ pub async fn download(
     log::debug!("Download resource {namespace}/{repo_name}/{resource} version file");
 
     let entry = repositories::entries::get_file(&repo, &commit, &path)?
-        .ok_or(OxenError::path_does_not_exist(path.clone()))?;
+        .ok_or_else(|| OxenError::path_does_not_exist(path.clone()))?;
     let file_hash = entry.hash();
     let hash_str = file_hash.to_string();
     let mime_type = entry.mime_type();

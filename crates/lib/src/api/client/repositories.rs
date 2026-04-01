@@ -40,7 +40,7 @@ impl fmt::Display for ActionEventState {
 pub async fn get_default_remote(repo: &LocalRepository) -> Result<RemoteRepository, OxenError> {
     let remote = repo
         .get_remote(DEFAULT_REMOTE_NAME)
-        .ok_or(OxenError::remote_not_set(DEFAULT_REMOTE_NAME))?;
+        .ok_or_else(|| OxenError::RemoteNotSet(DEFAULT_REMOTE_NAME.to_string()))?;
     api::client::repositories::get_by_remote(&remote).await
 }
 
@@ -113,7 +113,7 @@ pub async fn get_by_remote(remote: &Remote) -> Result<RemoteRepository, OxenErro
     let res = client.get(&url).send().await?;
     log::debug!("get_by_remote status: {}", res.status());
     if 404 == res.status() {
-        return Err(OxenError::remote_repo_not_found(&remote.url));
+        return Err(OxenError::RemoteRepoNotFound(remote.url.as_str().into()));
     }
 
     let body = client::parse_json_body(&url, res).await?;

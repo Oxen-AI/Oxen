@@ -217,7 +217,7 @@ pub async fn merge(
     let branch_name = branch_name.as_ref();
 
     let merge_branch = repositories::branches::get_by_name(repo, branch_name)?
-        .ok_or(OxenError::local_branch_not_found(branch_name))?;
+        .ok_or_else(|| OxenError::local_branch_not_found(branch_name))?;
 
     let base_commit = repositories::commits::head_commit(repo)?;
     let merge_commit = get_commit_or_head(repo, Some(merge_branch.commit_id.clone()))?;
@@ -297,7 +297,7 @@ pub fn find_merge_commits<S: AsRef<str>>(
     let branch_name = branch_name.as_ref();
 
     let current_branch = repositories::branches::current_branch(repo)?
-        .ok_or(OxenError::basic_str("No current branch"))?;
+        .ok_or_else(|| OxenError::basic_str("No current branch"))?;
 
     let head_commit =
         repositories::commits::get_commit_or_head(repo, Some(current_branch.name.clone()))?;
@@ -396,7 +396,7 @@ pub fn lowest_common_ancestor(
 ) -> Result<Option<Commit>, OxenError> {
     let branch_name = branch_name.as_ref();
     let current_branch = repositories::branches::current_branch(repo)?
-        .ok_or(OxenError::basic_str("No current branch"))?;
+        .ok_or_else(|| OxenError::basic_str("No current branch"))?;
 
     let base_commit =
         repositories::commits::get_commit_or_head(repo, Some(current_branch.name.clone()))?;
