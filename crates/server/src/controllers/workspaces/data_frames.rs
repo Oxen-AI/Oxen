@@ -488,8 +488,7 @@ pub async fn get_by_branch(
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
 
     // Staged dataframes must be on a branch.
-    let branch = repositories::branches::get_by_name(&repo, branch_name)?
-        .ok_or_else(|| OxenError::remote_branch_not_found(branch_name))?;
+    let branch = repositories::branches::get_by_name(&repo, branch_name)?;
 
     let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?
         .ok_or_else(|| OxenError::resource_not_found(&branch.commit_id))?;

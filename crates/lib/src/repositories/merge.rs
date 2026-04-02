@@ -655,9 +655,8 @@ mod tests {
             assert!(result.is_some());
 
             // But now there should be conflicts when trying to merge in the human branch
-            let base_branch = repositories::branches::get_by_name(&repo, &og_branch.name)?.unwrap();
-            let merge_branch =
-                repositories::branches::get_by_name(&repo, human_branch_name)?.unwrap();
+            let base_branch = repositories::branches::get_by_name(&repo, &og_branch.name)?;
+            let merge_branch = repositories::branches::get_by_name(&repo, human_branch_name)?;
 
             // Check if there are conflicts
             let has_conflicts =
@@ -979,8 +978,8 @@ mod tests {
             repositories::commit(&repo, "Adding fish to labels.txt file")?;
 
             // 4. merge main onto new branch (re-fetch branches to get current commit IDs)
-            let og_branch = repositories::branches::get_by_name(&repo, &og_branch.name)?.unwrap();
-            let new_branch = repositories::branches::get_by_name(&repo, new_branch_name)?.unwrap();
+            let og_branch = repositories::branches::get_by_name(&repo, &og_branch.name)?;
+            let new_branch = repositories::branches::get_by_name(&repo, new_branch_name)?;
             let merge_result =
                 repositories::merge::merge_into_base(&repo, &og_branch, &new_branch).await;
 

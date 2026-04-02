@@ -63,9 +63,9 @@ pub async fn get_or_create(
     };
 
     // Try to get the branch, or create it if the repo is empty
-    let branch = match repositories::branches::get_by_name(&repo, &data.branch_name)? {
-        Some(branch) => branch,
-        None => {
+    let branch = match repositories::branches::get_by_name(&repo, &data.branch_name) {
+        Ok(branch) => branch,
+        Err(OxenError::BranchNotFound(_)) => {
             // Branch doesn't exist - check if repo is empty
             if repositories::commits::head_commit_maybe(&repo)?.is_some() {
                 // Repo has commits but branch doesn't exist - this is an error
@@ -95,8 +95,8 @@ pub async fn get_or_create(
 
             // Now get the newly created branch
             repositories::branches::get_by_name(&repo, &data.branch_name)?
-                .ok_or_else(|| OxenError::basic_str("Failed to create initial branch"))?
         }
+        Err(e) => return Err(e.into()),
     };
 
     // Return workspace if it already exists
@@ -401,8 +401,14 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    let Some(branch) = repositories::branches::get_by_name(&repo, &branch_name)? else {
-        return Ok(HttpResponse::NotFound().json(StatusMessageDescription::not_found(branch_name)));
+    let branch = match repositories::branches::get_by_name(&repo, &branch_name) {
+        Ok(branch) => branch,
+        Err(OxenError::BranchNotFound(_)) => {
+            return Ok(
+                HttpResponse::NotFound().json(StatusMessageDescription::not_found(branch_name))
+            );
+        }
+        Err(e) => return Err(e.into()),
     };
 
     match repositories::workspaces::commit(&workspace, &data, &branch_name).await {

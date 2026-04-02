@@ -155,8 +155,11 @@ pub fn resolve_revision(
 }
 
 pub fn resolve_branch(repo: &LocalRepository, name: &str) -> Result<Option<Branch>, OxenError> {
-    // Lookup branch name
-    repositories::branches::get_by_name(repo, name)
+    match repositories::branches::get_by_name(repo, name) {
+        Ok(branch) => Ok(Some(branch)),
+        Err(OxenError::BranchNotFound(_)) => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 fn user_cli_is_out_of_date(user_agent: &str) -> bool {

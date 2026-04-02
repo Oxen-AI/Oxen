@@ -144,8 +144,7 @@ pub async fn checkout(
     from_commit: &Option<Commit>,
 ) -> Result<(), OxenError> {
     log::debug!("checkout {branch_name}");
-    let branch = repositories::branches::get_by_name(repo, branch_name)?
-        .ok_or_else(|| OxenError::local_branch_not_found(branch_name))?;
+    let branch = repositories::branches::get_by_name(repo, branch_name)?;
 
     let commit = repositories::commits::get_by_id(repo, &branch.commit_id)?
         .ok_or_else(|| OxenError::commit_id_does_not_exist(&branch.commit_id))?;

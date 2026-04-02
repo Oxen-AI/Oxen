@@ -142,8 +142,7 @@ impl PyRepo {
         let branch = if delete {
             repositories::branches::delete(&repo, name)
         } else {
-            repositories::branches::get_by_name(&repo, name)?
-                .ok_or_else(|| OxenError::local_branch_not_found(name))
+            repositories::branches::get_by_name(&repo, name)
         };
         Ok(PyBranch::from(branch?))
     }
