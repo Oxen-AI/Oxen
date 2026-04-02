@@ -3,6 +3,8 @@
 //! Enumeration for all errors that can occur in the oxen library
 //!
 
+use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
+use aws_smithy_runtime_api::client::result::SdkError;
 use duckdb::arrow::error::ArrowError;
 use std::io;
 use std::num::ParseIntError;
@@ -139,6 +141,12 @@ pub enum OxenError {
     #[error("Invalid version: {0}")]
     InvalidVersion(StringError),
 
+    // Version Store
+    /// An error uploading a file to the version store
+    #[error("{0}")]
+    Upload(StringError),
+
+    // Entry
     /// A commit entry is not present in the repository.
     #[error("{0}")]
     CommitEntryNotFound(StringError),
@@ -204,6 +212,10 @@ pub enum OxenError {
     // Wrappers
     //
     //
+    /// An error encountered dealing with AWS S3
+    #[error("AWS S3 error: {0}")]
+    AwsS3Error(Box<SdkError<Box<dyn std::error::Error + Send + Sync>, HttpResponse>>),
+
     /// Wraps the error from std::path::strip_prefix.
     #[error("Error stripping prefix: {0}")]
     StripPrefixError(#[from] std::path::StripPrefixError),
@@ -416,6 +428,11 @@ impl OxenError {
         OxenError::InvalidVersion(StringError::from(s.as_ref()))
     }
 
+    /// Makes an OxenError::Upload error.
+    pub fn upload(s: &str) -> Self {
+        OxenError::Upload(StringError::from(s))
+    }
+
     /// Make a new OxenError::OxenUpdateRequired error.
     pub fn oxen_update_required(s: impl AsRef<str>) -> Self {
         OxenError::OxenUpdateRequired(StringError::from(s.as_ref()))
@@ -429,6 +446,15 @@ impl OxenError {
     /// Make a new OxenError::FileImportError error.
     pub fn file_import_error(s: impl AsRef<str>) -> Self {
         OxenError::ImportFileError(StringError::from(s.as_ref()))
+    }
+
+    /// Make a new OxenError::AwsS3Error error.
+    pub fn aws_s3_error<E: std::error::Error + Send + Sync + 'static>(
+        e: SdkError<E, HttpResponse>,
+    ) -> Self {
+        OxenError::AwsS3Error(Box::new(e.map_service_error(|e| {
+            Box::new(e) as Box<dyn std::error::Error + Send + Sync>
+        })))
     }
 
     /// Makes a new OxenError::ResourceNotFound error.

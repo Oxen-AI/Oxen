@@ -40,6 +40,7 @@ async-tempfile = { workspace = true }
 async-trait = { workspace = true }
 aws-config = { workspace = true }
 aws-sdk-s3 = { workspace = true }
+aws-smithy-runtime-api = { workspace = true }
 bincode = { workspace = true }
 bytecount = { workspace = true }
 bytes = { workspace = true }
@@ -123,7 +124,11 @@ zip = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
 mockito = { workspace = true }
+s3s = { workspace = true }
+s3s-fs = { workspace = true }
 serial_test = { workspace = true }
 
 [[bench]]
