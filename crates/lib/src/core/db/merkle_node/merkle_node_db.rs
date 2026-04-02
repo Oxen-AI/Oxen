@@ -258,10 +258,7 @@ impl MerkleNodeDB {
         repo: &LocalRepository,
         node: &N,
         parent_id: Option<MerkleHash>,
-    ) -> Result<Option<Self>, OxenError>
-    where
-        OxenError: From<N::SerializationError>,
-    {
+    ) -> Result<Option<Self>, OxenError> {
         if Self::exists(repo, &node.hash()) {
             let db_path = node_db_path(repo, &node.hash());
             log::debug!(
@@ -278,10 +275,7 @@ impl MerkleNodeDB {
         repo: &LocalRepository,
         node: &N,
         parent_id: Option<MerkleHash>,
-    ) -> Result<Self, OxenError>
-    where
-        OxenError: From<N::SerializationError>,
-    {
+    ) -> Result<Self, OxenError> {
         let path = node_db_path(repo, &node.hash());
         if !path.exists() {
             util::fs::create_dir_all(&path)?;
@@ -374,10 +368,7 @@ impl MerkleNodeDB {
         &mut self,
         node: &N,
         parent_id: Option<MerkleHash>,
-    ) -> Result<(), OxenError>
-    where
-        OxenError: From<N::SerializationError>,
-    {
+    ) -> Result<(), OxenError> {
         if self.read_only {
             return Err(OxenError::basic_str("Cannot write to read-only db"));
         }
@@ -421,10 +412,7 @@ impl MerkleNodeDB {
         Ok(())
     }
 
-    pub fn add_child<N: TMerkleTreeNode>(&mut self, item: &N) -> Result<(), OxenError>
-    where
-        OxenError: From<N::SerializationError>,
-    {
+    pub fn add_child<N: TMerkleTreeNode>(&mut self, item: &N) -> Result<(), OxenError> {
         if self.read_only {
             return Err(OxenError::basic_str("Cannot write to read-only db"));
         }

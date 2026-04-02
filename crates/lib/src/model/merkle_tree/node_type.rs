@@ -134,20 +134,14 @@ pub trait MerkleTreeNodeIdType {
 /// that do implement `Serialize`, there's a blanket implementation that delegates the `serialize`
 /// call to the `to_msgpack_bytes` method.
 pub trait TMerkleTreeNode: MerkleTreeNodeIdType + Debug + Display {
-    /// The error type that can occur during serialization.
-    type SerializationError: std::error::Error + Send + Sync + 'static;
-
     /// Serialize this node to a MsgPack byte array.
-    fn to_msgpack_bytes(&self) -> Result<Vec<u8>, Self::SerializationError>;
+    fn to_msgpack_bytes(&self) -> Result<Vec<u8>, rmp_serde::encode::Error>;
 }
 
 /// Blanket implementation for Merkle tree nodes that implement serde's `Serialize` trait.
 impl<T: Serialize + MerkleTreeNodeIdType + Debug + Display> TMerkleTreeNode for T {
-    /// Serialization errors come from serde.
-    type SerializationError = rmp_serde::encode::Error;
-
     /// Uses serde to serialize this node.
-    fn to_msgpack_bytes(&self) -> Result<Vec<u8>, Self::SerializationError> {
+    fn to_msgpack_bytes(&self) -> Result<Vec<u8>, rmp_serde::encode::Error> {
         let mut buf = Vec::new();
         let x = self.serialize(&mut rmp_serde::Serializer::new(&mut buf));
         x.map(|_| buf)
@@ -156,10 +150,7 @@ impl<T: Serialize + MerkleTreeNodeIdType + Debug + Display> TMerkleTreeNode for 
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        error::OxenError,
-        model::merkle_tree::node::{CommitNode, DirNode, FileChunkNode, FileNode, VNode},
-    };
+    use crate::model::merkle_tree::node::{CommitNode, DirNode, FileChunkNode, FileNode, VNode};
 
     use super::*;
 
@@ -167,11 +158,7 @@ mod tests {
     fn test_nodes_implement_trait() {
         /// this only exists so we can check that all node types implement `TMerkleTreeNode`
         /// it will be a compile-time error if a node type does not implement the trait
-        fn is_tmerkletreenode<T: TMerkleTreeNode>(_: T)
-        where
-            OxenError: From<T::SerializationError>,
-        {
-        }
+        fn is_tmerkletreenode<T: TMerkleTreeNode>(_: T) {}
 
         is_tmerkletreenode(CommitNode::default());
         is_tmerkletreenode(DirNode::default());

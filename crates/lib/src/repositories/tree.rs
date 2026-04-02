@@ -18,8 +18,8 @@ use crate::core::v_old::v0_19_0::index::CommitMerkleTree as CommitMerkleTreeV0_1
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{
-    CommitNode, DirNode, DirNodeWithPath, EMerkleTreeNode, FileNode, FileNodeWithDir,
-    MerkleTreeNode, VNode,
+    CommitNode, DirNodeWithPath, EMerkleTreeNode, FileNode, FileNodeWithDir,
+    MerkleTreeNode,
 };
 use crate::model::{
     Commit, EntryDataType, LocalRepository, MerkleHash, MerkleTreeNodeType, PartialNode,
@@ -1086,27 +1086,11 @@ pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), O
 /// This function requires all of the serialization errors (`S`) for the node types to be the same.
 ///
 /// [1] https://github.com/rust-lang/rust/issues/20041)
-fn p_write_tree<N, S>(
+fn p_write_tree<N: TMerkleTreeNode>(
     repo: &LocalRepository,
     node: &MerkleTreeNode,
     node_impl: &N,
-) -> Result<(), OxenError>
-where
-    // we make sure we can convert the node's serialization error into an OxenError
-    OxenError: From<N::SerializationError>,
-    // we make sure that the node type implements TMerkleTreeNode
-    N: TMerkleTreeNode<SerializationError = S>,
-    // and we make sure that the nodes we're serializing all have the same serialization error type
-    VNode: TMerkleTreeNode<SerializationError = S>,
-    DirNode: TMerkleTreeNode<SerializationError = S>,
-    FileNode: TMerkleTreeNode<SerializationError = S>,
-    // NOTE:
-    // We could have dropped everything here, have no `S` generic, and have this in the where:
-    //      N: TMerkleTreeNode<SerializationError = rmp_serde::encode::Error>,
-    // But, by doing it this way, we make it so that we can change the actual SerializationError
-    // type without needing to change this function's type. It works so long as the error type
-    // for all of the node's trait implementations align.
-{
+) -> Result<(), OxenError> {
     let parent_id = node.parent_id;
 
     let mut db = MerkleNodeDB::open_read_write(repo, node_impl, parent_id)?;
