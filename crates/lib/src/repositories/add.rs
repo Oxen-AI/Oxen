@@ -771,10 +771,16 @@ A: Oxen.ai
             expect_staged(&status, 1, 0, 0);
             commit_staged(&repo, "added", &file);
 
+            expect_filesystem(&repo.path, &[&file]);
+
             remove_and_stage(&repo, &file).await;
             let status = repositories::status(&repo).expect("oxen status failed");
             expect_staged(&status, 0, 1, 0);
             commit_staged(&repo, "removed", &file);
+
+            let status = repositories::status(&repo).expect("oxen status failed");
+            expect_staged(&status, 0, 0, 0);
+            expect_filesystem(&repo.path, &[]);
 
             Ok(())
         })
@@ -785,52 +791,26 @@ A: Oxen.ai
     #[tokio::test]
     async fn test_remove_dir_depth_1() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
-            let dir = repo.path.join("1");
-            tokio::fs::create_dir_all(&dir)
-                .await
-                .expect("failed to create dir 1");
+            let file = repo.path.join("1").join("file.txt");
 
-            let file_path = dir.join("file.txt");
-            tokio::fs::write(&file_path, "hello")
-                .await
-                .expect("failed to write text file");
+            create_and_stage(&repo, &file, "hello world!").await;
+            let status = repositories::status(&repo).expect("oxen status failed");
+            expect_staged(&status, 1, 0, 0);
+            commit_staged(&repo, "added", &file);
 
-            // Add and commit
-            repositories::add(&repo, &repo.path).await?;
-            repositories::commit(&repo, "add 1/file.txt").expect("intial oxen commit failed");
+            expect_filesystem(&repo.path, &[&file]);
 
-            // Remove the directory and file from the filesystem
-            tokio::fs::remove_file(repo.path.join("1"))
-                .await
-                .expect("failed to remove dir + file");
+            let dir = file.parent().unwrap();
+            remove_and_stage(&repo, &dir).await;
+            let status = repositories::status(&repo).expect("oxen status failed");
+            expect_staged(&status, 0, 2, 0);
+            commit_staged(&repo, "removed dir + contents", &dir);
 
-            // `oxen add .` should stage the removed directory
-            repositories::add(&repo, &repo.path)
-                .await
-                .expect("Failed to oxen add");
+            /////////////////
 
             let status = repositories::status(&repo).expect("oxen status failed");
-
-            println!("\n\nSTATUS:\n{:?}", status);
-
-            assert!(
-                status.staged_files.len() >= 1,
-                "Expecting there to only be one staged file, but found ({}): {:?}",
-                status.staged_files.len(),
-                status.staged_files
-            );
-            assert!(
-                status
-                    .staged_files
-                    .iter()
-                    .any(|(_, entry)| entry.status == StagedEntryStatus::Removed),
-                "Expecting file to be staged as removed. Instead found {} staged files: {:?}",
-                status.staged_files.len(),
-                status.staged_files
-            );
-
-            // No remaining unstaged removed files
-            // assert_eq!(status.removed_files.len(), 1, "Expecting 1 removed files but found ({}): {:?}", status.removed_files.len(), status.removed_files);
+            expect_staged(&status, 0, 0, 0);
+            expect_filesystem(&repo.path, &[]);
 
             // Commit and verify the merkle tree no longer contains dir "3"
             repositories::commit(&repo, "rm file in dir").expect("failed to oxen commit");
