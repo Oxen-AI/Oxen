@@ -31,7 +31,7 @@ actix-multipart-test = "0.0.3"
 actix-web = { version = "4.9.0", features = ["rustls"] }
 actix-web-httpauth = "0.8.0"
 approx = "0.5.1"
-arrow = "=53.4.0"
+arrow = "=58.1.0"
 astral-tokio-tar = "0.5.2"
 async-compression = { version = "0.4.2", features = ["tokio", "gzip", "futures-io"] }
 async-recursion = "1.1.1"
@@ -60,7 +60,7 @@ dialoguer = "0.11.0"
 difference = "2.0.0"
 dirs = "5.0.1"
 dotenv = "0.15.0"
-duckdb = { package = "duckdb", version = "=1.1.1", default-features = false, features = ["serde_json"] }
+duckdb = { package = "duckdb", version = "=1.10501.0", default-features = false, features = ["serde_json"] }
 dunce = "1.0.4"
 env_logger = "0.11.3"
 fd-lock = "4.0.1"
@@ -74,6 +74,8 @@ glob-match = "0.2.1"
 hex = "0.4.3"
 http = "1.1.0"
 humantime = "2.1.0"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 ignore = "0.4.20"
 image = "0.25.2"
 indicatif = "0.17.6"
@@ -82,7 +84,7 @@ itertools = "0.13.0"
 jsonwebtoken = "9.3.0"
 jwalk = "0.8.1"
 lazy_static = "1.4.0"
-libduckdb-sys = { version = "=1.1.1" }
+libduckdb-sys = { version = "=1.10501.0" }
 lofty = "0.22.2"
 log = "0.4.20"
 lru = "0.14.0"
@@ -109,6 +111,8 @@ regex = "1.10.2"
 reqwest = { version = "0.13.2", features = ["multipart", "json", "gzip", "stream", "query"] }
 rmp-serde = "1.3.0"
 rocksdb = { version = "0.22.0", default-features = false, features = ["lz4", "snappy", "multi-threaded-cf"] }
+s3s = "0.13"
+s3s-fs = "0.13"
 sanitize-filename = "0.6.0"
 serde = { version = "1.0.188", features = ["derive"] }
 serde_derive = "1.0.188"

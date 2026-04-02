@@ -111,6 +111,7 @@ oxen push origin main               # Push to remote
 - Preserve comments whenever possible. Comments that were written by someone other than Claude should always be preserved or updated if possible.
 - The Python project calls into the Rust project. Whenever changing the Rust code, check to see if the Python code needs to be updated.
 - After changing any Rust or Python code, verify that Rust tests pass with `bin/test-rust` and Python tests pass with `bin/test-rust -p`
+- When updating a dependency, prefer updating to the latest stable version.
 
 # Testing Rules
 - Use the test helpers in `crates/lib/src/test.rs` (e.g., `run_empty_local_repo_test`) for unit tests in the lib code.

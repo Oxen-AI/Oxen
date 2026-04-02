@@ -124,7 +124,11 @@ zip = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
 mockito = { workspace = true }
+s3s = { workspace = true }
+s3s-fs = { workspace = true }
 serial_test = { workspace = true }
 
 [[bench]]
