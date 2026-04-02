@@ -194,6 +194,11 @@ pub async fn rename(
     let new_db_path = repositories::workspaces::data_frames::duckdb_path(workspace, new_path);
     let new_db_path_parent = new_db_path.parent().unwrap();
 
+    // Close the cached connection before copying so DuckDB flushes its WAL to
+    // disk. Without this, the copy would include a WAL file that references
+    // the original catalog name, causing replay failures when the copy is opened.
+    df_db::remove_df_db_from_cache(&og_db_path)?;
+
     if !new_db_path_parent.exists() {
         util::fs::create_dir_all(new_db_path_parent)?;
     }

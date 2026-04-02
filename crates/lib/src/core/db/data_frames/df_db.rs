@@ -41,7 +41,7 @@ static DF_DB_INSTANCES: LazyLock<RwLock<LruCache<PathBuf, Arc<Mutex<duckdb::Conn
 pub fn remove_df_db_from_cache(db_path: impl AsRef<Path>) -> Result<(), OxenError> {
     let db_path = db_path.as_ref().to_path_buf();
     let mut instances = DF_DB_INSTANCES.write();
-    let _ = instances.pop(&db_path); // drop immediately
+    let _ = instances.pop(&db_path);
     Ok(())
 }
 
@@ -129,7 +129,6 @@ impl DfDBManager {
         F: FnOnce(&duckdb::Connection) -> Result<T, OxenError>,
     {
         let conn = self.df_db.lock();
-
         operation(&conn)
     }
 
