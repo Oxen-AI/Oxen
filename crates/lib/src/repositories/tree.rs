@@ -18,8 +18,7 @@ use crate::core::v_old::v0_19_0::index::CommitMerkleTree as CommitMerkleTreeV0_1
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{
-    CommitNode, DirNodeWithPath, EMerkleTreeNode, FileNode, FileNodeWithDir,
-    MerkleTreeNode,
+    CommitNode, DirNodeWithPath, EMerkleTreeNode, FileNode, FileNodeWithDir, MerkleTreeNode,
 };
 use crate::model::{
     Commit, EntryDataType, LocalRepository, MerkleHash, MerkleTreeNodeType, PartialNode,

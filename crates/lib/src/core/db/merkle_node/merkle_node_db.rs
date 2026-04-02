@@ -322,10 +322,11 @@ impl MerkleNodeDB {
             (None, Some(node_file), Some(children_file))
         };
 
-        let dtype = lookup
-            .as_ref()
-            .map(|l| MerkleTreeNodeType::from_u8_unwrap(l.data_type))
-            .unwrap_or(MerkleTreeNodeType::Commit);
+        let dtype = match lookup.as_ref() {
+            Some(l) => MerkleTreeNodeType::from_u8(l.data_type)?,
+            None => MerkleTreeNodeType::Commit,
+        };
+
         let parent_id = lookup.as_ref().map(|l| l.parent_id);
         Ok(Self {
             read_only,
@@ -495,7 +496,7 @@ impl MerkleNodeDB {
         };
 
         // Parse the node parent id
-        let data_type = MerkleTreeNodeType::from_u8_unwrap(lookup.data_type);
+        let data_type = MerkleTreeNodeType::from_u8(lookup.data_type)?;
         let parent_id = MerkleTreeNode::deserialize_id(&lookup.data, data_type)?;
 
         let mut file_data = Vec::new();
@@ -514,7 +515,7 @@ impl MerkleNodeDB {
             cursor.seek(SeekFrom::Start(*offset))?;
             let mut data = vec![0; *len as usize];
             cursor.read_exact(&mut data)?;
-            let dtype = MerkleTreeNodeType::from_u8_unwrap(*dtype);
+            let dtype = MerkleTreeNodeType::from_u8(*dtype)?;
             let node = MerkleTreeNode {
                 parent_id: Some(parent_id),
                 hash: MerkleHash::new(*hash),

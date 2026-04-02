@@ -90,12 +90,6 @@ impl MerkleTreeNodeType {
     }
 
     /// Deserialize a `u8` value into a `MerkleTreeNodeType`.
-    /// Panics if the `u8` value is not a valid `MerkleTreeNodeType`.
-    pub fn from_u8_unwrap(val: u8) -> MerkleTreeNodeType {
-        Self::from_u8(val).expect("Invalid MerkleTreeNodeType: {val}")
-    }
-
-    /// Deserialize a `u8` value into a `MerkleTreeNodeType`.
     /// This function is 1:1 with `to_u8`: all outputs from `to_u8` result in an `Ok`.
     pub fn from_u8(val: u8) -> Result<MerkleTreeNodeType, InvalidMerkleTreeNodeType> {
         match val {
