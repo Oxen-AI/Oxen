@@ -707,7 +707,7 @@ A: Oxen.ai
 
     /// Commit a staged file (either added, removed, or modified) to the repository.
     /// Use the message_prefix as 'added', 'removed', or 'modified'.
-    async fn commit_staged(repo: &LocalRepository, message_prefix: &str, file_relative: &Path) {
+    fn commit_staged(repo: &LocalRepository, message_prefix: &str, file_relative: &Path) {
         repositories::commit(
             repo,
             &format!("{message_prefix} {}", file_relative.display()),
@@ -783,7 +783,7 @@ A: Oxen.ai
 
     /// Test removal of a single directory at the root containing a single file.
     #[tokio::test]
-    async fn test_remove_file_in_dir() -> Result<(), OxenError> {
+    async fn test_remove_dir_depth_1() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
             let dir = repo.path.join("1");
             tokio::fs::create_dir_all(&dir)
@@ -861,7 +861,7 @@ A: Oxen.ai
 
     /// Tests removal of nested directories and their contents.
     #[tokio::test]
-    async fn test_add_dot_stages_removed_nested_dir() -> Result<(), OxenError> {
+    async fn test_remove_dir_depth_3() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Create nested directory structure: 1/2/3/file.txt
             let nested_dir = repo.path.join("1").join("2").join("3");
