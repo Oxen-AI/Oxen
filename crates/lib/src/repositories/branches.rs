@@ -52,9 +52,15 @@ pub fn get_commit_id(repo: &LocalRepository, name: &str) -> Result<Option<String
     with_ref_manager(repo, |manager| manager.get_commit_id_for_branch(name))
 }
 
-/// Check if a branch exists
-pub fn exists(repo: &LocalRepository, name: &str) -> bool {
-    get_by_name(repo, name).is_ok()
+/// Check if a branch exists.
+/// Returns Ok(false) if the branch doesn't exist.
+/// Returns Err() if there was some other problem accessing the local repository.
+pub fn exists(repo: &LocalRepository, name: &str) -> Result<bool, OxenError> {
+    match get_by_name(repo, name) {
+        Ok(_) => Ok(true),
+        Err(OxenError::BranchNotFound(_)) => Ok(false),
+        Err(e) => Err(e),
+    }
 }
 
 /// Get the current branch
