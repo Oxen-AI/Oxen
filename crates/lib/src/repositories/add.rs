@@ -52,11 +52,14 @@ pub async fn add_all_with_version<T: AsRef<Path>>(
 
 #[cfg(test)]
 mod tests {
+    use futures::StreamExt;
+
     use crate::model::LocalRepository;
     use crate::model::StagedData;
     use crate::model::StagedEntryStatus;
     use crate::test;
 
+    use std::collections::HashSet;
     use std::path::Path;
     use std::path::PathBuf;
 
@@ -757,6 +760,56 @@ A: Oxen.ai
             n_mod, n_expect_mod,
             "Expecting {n_expect_mod} staged file(s) for modification but found ({n_mod}): {:?}",
             status.staged_files
+        );
+    }
+
+    use futures::stream;
+
+    use async_walkdir::WalkDir;
+
+    /// Checks that only the expected relative paths exist from the given root.
+    async fn expect_filesystem(root: &Path, expected_relative: &[&Path]) {
+        let expected_not_present: Vec<&Path> = stream::iter(expected_relative)
+            .filter({
+                let root = root.clone();
+                async move |p| {
+                    let full = root.join(p);
+                    tokio::fs::try_exists(&full)
+                        .await
+                        .expect(&format!("could not check existence of: {}", full.display()))
+                }
+            })
+            .collect()
+            .await;
+
+        assert!(
+            expected_not_present.is_empty(),
+            "Missing {} expected files/paths: {:?}",
+            expected_not_present.len(),
+            expected_not_present,
+        );
+
+        let all_from_root: HashSet<PathBuf> = {
+            let mut all_from_root = HashSet::new();
+            let mut entries = WalkDir::new(root);
+            loop {
+                match entries.next().await {
+                    Some(Ok(entry)) => all_from_root.insert(entry.path()),
+                    Some(Err(e)) => panic!("{e:?}"),
+                    None => break,
+                };
+            }
+            all_from_root
+        };
+
+        assert_eq!(
+            expected_relative.len(),
+            all_from_root.len(),
+            "Expected only {} files but found {}:\nexpected: {:?}\nactual: {:?}",
+            expected_relative.len(),
+            all_from_root.len(),
+            expected_relative,
+            all_from_root,
         );
     }
 
