@@ -16,7 +16,7 @@ crate-type = ["cdylib"] # PyO3 needs this crate to be a cdylib so it can link ag
 
 [dependencies]
 env_logger = { workspace = true }
-liboxen = { path = "../lib", features = ["perf-logging"] }
+liboxen = { path = "../lib" }
 log = { workspace = true }
 pyo3 = { workspace = true }
 pyo3-async-runtimes = { workspace = true }
