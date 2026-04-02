@@ -722,4 +722,112 @@ A: Oxen.ai
         })
         .await
     }
+
+    #[tokio::test]
+    async fn test_remove_file() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+
+            let dir = repo.path.join("1");
+            tokio::fs::create_dir_all(&dir).await.expect("failed to create dir 1");
+
+            let file_path = dir.join("file.txt");
+            tokio::fs::write(&file_path, "hello").await.expect("failed to write text file");
+
+            // Add and commit
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "add 1/file.txt").expect("intial oxen commit failed");
+
+            // Remove the directory and file from the filesystem
+            tokio::fs::remove_file(repo.path.join("1")).await.expect("failed to remove dir + file");
+
+            // `oxen add .` should stage the removed directory
+            repositories::add(&repo, &repo.path).await.expect("Failed to oxen add");
+
+            let status = repositories::status(&repo).expect("oxen status failed");
+
+            println!("\n\nSTATUS:\n{:?}", status);
+
+            assert!(status.staged_files.len() >= 1, "Expecting there to only be one staged file, but found ({}): {:?}", status.staged_files.len(), status.staged_files);
+            assert!(status
+                .staged_files
+                .iter()
+                .any(|(_, entry)| entry.status == StagedEntryStatus::Removed),
+            "Expecting file to be staged as removed. Instead found {} staged files: {:?}",
+                status.staged_files.len(), status.staged_files);
+
+            // No remaining unstaged removed files
+            // assert_eq!(status.removed_files.len(), 1, "Expecting 1 removed files but found ({}): {:?}", status.removed_files.len(), status.removed_files);
+
+            // Commit and verify the merkle tree no longer contains dir "3"
+            repositories::commit(&repo, "rm file in dir").expect("failed to oxen commit");
+            let head = repositories::commits::head_commit(&repo).expect("failed to get head commit");
+            let dir_2 = repositories::tree::get_dir_without_children(
+                &repo, &head, Path::new("1/2"), None,
+            ).expect("failed to get dir 1/2 w/o children");
+
+            // Dir "2" should exist but have 0 entries (dir "3" removed)
+            assert!(dir_2.is_some(), "Expecting 1/2 to exist but it does not");
+            let dir_3 = repositories::tree::get_dir_without_children(
+                &repo, &head, Path::new("1/2/3"), None,
+            ).expect("failed to get dir 1/2/3 w/o children");
+            assert!(dir_3.is_none(), "Directory 1/2/3 should not exist in merkle tree after removal");
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_remove_file_in_dir() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+
+            let dir = repo.path.join("1");
+            tokio::fs::create_dir_all(&dir).await.expect("failed to create dir 1");
+
+            let file_path = dir.join("file.txt");
+            tokio::fs::write(&file_path, "hello").await.expect("failed to write text file");
+
+            // Add and commit
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "add 1/file.txt").expect("intial oxen commit failed");
+
+            // Remove the directory and file from the filesystem
+            tokio::fs::remove_file(repo.path.join("1")).await.expect("failed to remove dir + file");
+
+            // `oxen add .` should stage the removed directory
+            repositories::add(&repo, &repo.path).await.expect("Failed to oxen add");
+
+            let status = repositories::status(&repo).expect("oxen status failed");
+
+            println!("\n\nSTATUS:\n{:?}", status);
+
+            assert!(status.staged_files.len() >= 1, "Expecting there to only be one staged file, but found ({}): {:?}", status.staged_files.len(), status.staged_files);
+            assert!(status
+                .staged_files
+                .iter()
+                .any(|(_, entry)| entry.status == StagedEntryStatus::Removed),
+            "Expecting file to be staged as removed. Instead found {} staged files: {:?}",
+                status.staged_files.len(), status.staged_files);
+
+            // No remaining unstaged removed files
+            // assert_eq!(status.removed_files.len(), 1, "Expecting 1 removed files but found ({}): {:?}", status.removed_files.len(), status.removed_files);
+
+            // Commit and verify the merkle tree no longer contains dir "3"
+            repositories::commit(&repo, "rm file in dir").expect("failed to oxen commit");
+            let head = repositories::commits::head_commit(&repo).expect("failed to get head commit");
+            let dir_2 = repositories::tree::get_dir_without_children(
+                &repo, &head, Path::new("1/2"), None,
+            ).expect("failed to get dir 1/2 w/o children");
+
+            // Dir "2" should exist but have 0 entries (dir "3" removed)
+            assert!(dir_2.is_some(), "Expecting 1/2 to exist but it does not");
+            let dir_3 = repositories::tree::get_dir_without_children(
+                &repo, &head, Path::new("1/2/3"), None,
+            ).expect("failed to get dir 1/2/3 w/o children");
+            assert!(dir_3.is_none(), "Directory 1/2/3 should not exist in merkle tree after removal");
+
+            Ok(())
+        })
+        .await
+    }
 }
