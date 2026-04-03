@@ -15,7 +15,7 @@ repos:
 
       - id: cargo-clippy
         name: cargo clippy
-        entry: bash -c 'cargo clippy --workspace --no-deps -- -D warnings'
+        entry: bash -c 'cargo clippy --workspace --all-targets --no-deps -- -D warnings'
         language: system
         files: \.rs$
         pass_filenames: false

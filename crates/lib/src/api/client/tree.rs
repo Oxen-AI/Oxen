@@ -535,10 +535,10 @@ mod tests {
             let dir_count = entries
                 .filter_map(|entry| match entry {
                     Ok(e) => {
-                        if let Ok(file_type) = e.file_type() {
-                            if file_type.is_dir() {
-                                return Some(1);
-                            }
+                        if let Ok(file_type) = e.file_type()
+                            && file_type.is_dir()
+                        {
+                            return Some(1);
                         }
                         None
                     }
@@ -562,10 +562,10 @@ mod tests {
             let dir_count = entries
                 .filter_map(|entry| match entry {
                     Ok(e) => {
-                        if let Ok(file_type) = e.file_type() {
-                            if file_type.is_dir() {
-                                return Some(1);
-                            }
+                        if let Ok(file_type) = e.file_type()
+                            && file_type.is_dir()
+                        {
+                            return Some(1);
                         }
                         None
                     }
@@ -604,10 +604,10 @@ mod tests {
             let dir_count = entries
                 .filter_map(|entry| match entry {
                     Ok(e) => {
-                        if let Ok(file_type) = e.file_type() {
-                            if file_type.is_dir() {
-                                return Some(1);
-                            }
+                        if let Ok(file_type) = e.file_type()
+                            && file_type.is_dir()
+                        {
+                            return Some(1);
                         }
                         None
                     }
@@ -642,10 +642,10 @@ mod tests {
             let dir_count = entries
                 .filter_map(|entry| match entry {
                     Ok(e) => {
-                        if let Ok(file_type) = e.file_type() {
-                            if file_type.is_dir() {
-                                return Some(1);
-                            }
+                        if let Ok(file_type) = e.file_type()
+                            && file_type.is_dir()
+                        {
+                            return Some(1);
                         }
                         None
                     }

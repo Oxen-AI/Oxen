@@ -81,7 +81,7 @@ mod tests {
                 let head_commit = repositories::commits::head_commit(&cloned_repo)?;
                 repositories::remote_mode::restore(
                     &cloned_repo,
-                    &[readme_path.clone()],
+                    std::slice::from_ref(&readme_path),
                     &head_commit.id,
                 )
                 .await?;
@@ -130,7 +130,7 @@ mod tests {
                 let head_commit = repositories::commits::head_commit(&cloned_repo)?;
                 repositories::remote_mode::restore(
                     &cloned_repo,
-                    &[full_path.clone()],
+                    std::slice::from_ref(&full_path),
                     &head_commit.id,
                 )
                 .await?;
@@ -180,7 +180,7 @@ mod tests {
                     let head_commit = repositories::commits::head_commit(&cloned_repo)?;
                     repositories::remote_mode::restore(
                         &cloned_repo,
-                        &[file_path.clone()],
+                        std::slice::from_ref(&file_path),
                         &head_commit.id,
                     )
                     .await?;
@@ -240,12 +240,13 @@ mod tests {
                 let head_commit = repositories::commits::head_commit(&cloned_repo)?;
                 repositories::remote_mode::restore(
                     &cloned_repo,
-                    &[annotations_path.clone()],
+                    std::slice::from_ref(&annotations_path),
                     &head_commit.id,
                 )
                 .await?;
 
-                let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
+                let status_opts =
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&repo_path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,

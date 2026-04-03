@@ -476,7 +476,7 @@ A: Oxen.ai
                 status
                     .untracked_dirs
                     .iter()
-                    .any(|(path, _)| *path == PathBuf::from("empty_dir"))
+                    .any(|(path, _)| *path == Path::new("empty_dir"))
             );
 
             // Add the empty dir

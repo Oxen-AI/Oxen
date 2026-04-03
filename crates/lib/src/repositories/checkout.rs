@@ -1482,7 +1482,7 @@ mod tests {
 
             // -- Simulate user manually replacing "data/" dir with a file --
             std::fs::remove_dir_all(&dir)?;
-            util::fs::write_to_path(&repo.path.join("data"), "I am a plain file, not a dir")?;
+            util::fs::write_to_path(repo.path.join("data"), "I am a plain file, not a dir")?;
 
             // Sanity: "data" is now a regular file on disk
             let data_path = repo.path.join("data");

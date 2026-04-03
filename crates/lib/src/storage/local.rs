@@ -790,12 +790,11 @@ mod tests {
         let derived_data = b"fake resized image bytes for hash bbbbbbbbbbbbbbbb";
 
         // Should not exist before store
-        assert_eq!(
-            store
+        assert!(
+            !store
                 .derived_version_exists(orig_hash, derived_filename)
                 .await
-                .unwrap(),
-            false
+                .unwrap()
         );
 
         // Store and check again
@@ -803,12 +802,11 @@ mod tests {
             .store_version_derived(orig_hash, derived_filename, derived_data)
             .await
             .unwrap();
-        assert_eq!(
+        assert!(
             store
                 .derived_version_exists(orig_hash, derived_filename)
                 .await
-                .unwrap(),
-            true
+                .unwrap()
         );
     }
 }

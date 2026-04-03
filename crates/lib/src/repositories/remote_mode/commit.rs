@@ -96,7 +96,7 @@ mod tests {
 
                 // Verify repo is clean
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -163,8 +163,9 @@ mod tests {
                     )
                     .await?;
 
-                    let status_opts =
-                        StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    let status_opts = StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(
+                        &cloned_repo.path,
+                    ));
                     let status = repositories::remote_mode::status(
                         &cloned_repo,
                         &remote_repo,
@@ -240,7 +241,7 @@ mod tests {
                 let annotations_dir = PathBuf::from("annotations");
                 repositories::remote_mode::restore(
                     &cloned_repo,
-                    &[annotations_dir.clone()],
+                    std::slice::from_ref(&annotations_dir),
                     &head_commit.id,
                 )
                 .await?;
@@ -249,7 +250,7 @@ mod tests {
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,

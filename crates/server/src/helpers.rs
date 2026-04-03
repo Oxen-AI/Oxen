@@ -89,7 +89,6 @@ mod tests {
         let values: Vec<&str> = response
             .headers()
             .get_all(header::ACCESS_CONTROL_EXPOSE_HEADERS)
-            .into_iter()
             .map(|value| value.to_str().unwrap())
             .collect();
 

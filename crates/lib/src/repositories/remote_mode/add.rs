@@ -36,7 +36,7 @@ mod tests {
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -114,7 +114,7 @@ mod tests {
 
                 // Get status, should show staged file
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -168,7 +168,7 @@ mod tests {
 
                 // Get status, should show staged file
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -216,7 +216,7 @@ mod tests {
 
                 // Status displays only the untracked file and dirs
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let directory = String::from(".");
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
@@ -246,7 +246,7 @@ mod tests {
 
                 // Status displays only the staged file and dirs
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -280,7 +280,7 @@ mod tests {
 
                 // Status now displays the modified as well as the staged entries
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -313,7 +313,7 @@ mod tests {
 
                 // Status again displays only the staged file
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -366,7 +366,7 @@ mod tests {
 
                 // Get status, should show untracked files
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -454,7 +454,7 @@ mod tests {
 
                 // Status should now show the files as staged
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -505,7 +505,7 @@ mod tests {
 
                 // Verify new paths were added
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -573,7 +573,7 @@ mod tests {
 
                 // Check status for all staged files
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -643,7 +643,7 @@ mod tests {
 
                 // Verify repo is still clean
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
