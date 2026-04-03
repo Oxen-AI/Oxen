@@ -628,29 +628,52 @@ fn split_into_vnodes(
             // Overwrite the existing child
             // if add or modify, replace the child
             // if remove, remove the child
-            if let Ok(path) = child.node.maybe_path()
-                && path != Path::new("")
+            if let Ok(child_path) = child.node.maybe_path()
+                && child_path != Path::new("")
             {
+                // Staged directory entries keep only the leaf name (e.g. "3"),
+                // but existing children from `node_data_to_staged_node` use the
+                // full repo-relative path (e.g. "1/2/3"). Reconstruct the full
+                // path so that HashSet lookups (which compare via maybe_path) match.
+                let needs_prefix =
+                    !directory.as_os_str().is_empty() && !child_path.starts_with(directory);
+                let child = if needs_prefix {
+                    let full_path = directory.join(&child_path);
+                    let mut prefixed = child.clone();
+                    match &mut prefixed.node.node {
+                        EMerkleTreeNode::Directory(dn) => {
+                            dn.set_name(full_path.to_str().unwrap());
+                        }
+                        EMerkleTreeNode::File(fn_) => {
+                            fn_.set_name(full_path.to_str().unwrap());
+                        }
+                        _ => {}
+                    }
+                    prefixed
+                } else {
+                    child.clone()
+                };
+
                 match child.status {
                     StagedEntryStatus::Removed => {
                         log::debug!(
                             "removing child {:?} {:?} with {:?}",
                             child.node.node.node_type(),
-                            path,
+                            child.node.maybe_path().unwrap(),
                             child.node.maybe_path().unwrap()
                         );
-                        children.remove(child);
-                        removed_children.insert(child.to_owned());
+                        children.remove(&child);
+                        removed_children.insert(child);
                     }
                     _ => {
                         log::debug!(
                             "replacing child {:?} {:?} with {:?}",
                             child.node.node.node_type(),
-                            path,
+                            child.node.maybe_path().unwrap(),
                             child.node.maybe_path().unwrap()
                         );
                         log::debug!("replaced child {}", child.node);
-                        children.replace(child.clone());
+                        children.replace(child);
                     }
                 }
             }
@@ -811,6 +834,30 @@ fn write_commit_entries(
         &mut total_written,
     )?;
 
+    // The dir_hash_db was pre-populated from the previous commit, so
+    // removed directories still have stale entries that must be deleted;
+    // otherwise tree lookups will find the old subtree.
+    cache_invalidate_dir_hash_db(dir_hash_db, entries)
+}
+
+/// Perform cache-invalidation: remove dir_hash entries for directories that were removed.
+/// The `entries` are staged files. This removes every directory that is staged for removal
+/// from the supplied `dir_hash_db`.
+fn cache_invalidate_dir_hash_db(
+    dir_hash_db: &DBWithThreadMode<SingleThreaded>,
+    entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
+) -> Result<(), OxenError> {
+    for (_, removed_children) in entries.values() {
+        for child in removed_children {
+            if child.status == StagedEntryStatus::Removed
+                && let EMerkleTreeNode::Directory(_) = &child.node.node
+                && let Ok(child_path) = child.node.maybe_path() {
+                    let path_str = child_path.to_string_lossy();
+                    log::debug!("deleting removed dir hash: {path_str:?}");
+                    str_val_db::delete(dir_hash_db, path_str)?;
+                }
+        }
+    }
     Ok(())
 }
 
