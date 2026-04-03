@@ -827,6 +827,43 @@ A: Oxen.ai
         );
     }
 
+    fn check_tree_doesnt_contain_file(repo: &LocalRepository, file: &Path) {
+        let head = repositories::commits::head_commit(&repo).expect("failed to get head commit");
+
+        let fi = repositories::tree::get_file_by_path(
+            &repo,
+            &head,
+            file.strip_prefix(&repo.path)
+                .expect("could not get relative path"),
+        )
+        .expect(&format!("failed to get file {}", file.display()));
+
+        assert!(
+            fi.is_none(),
+            "expecting nothing in {head} for {} but found: {fi:?}",
+            file.display()
+        )
+    }
+
+    fn check_tree_doesnt_contain_dir(repo: &LocalRepository, dir: &Path) {
+        let head = repositories::commits::head_commit(&repo).expect("failed to get head commit");
+
+        let dir_1 = repositories::tree::get_dir_without_children(
+            &repo,
+            &head,
+            dir.strip_prefix(&repo.path)
+                .expect("could not get relative path"),
+            None,
+        )
+        .expect(&format!("failed to get dir {} w/o children", dir.display()));
+
+        assert!(
+            dir_1.is_none(),
+            "expecting nothing in {head} for {} but found: {dir_1:?}",
+            dir.display()
+        )
+    }
+
     /// Test removal of a single file at the root.
     #[tokio::test]
     async fn test_remove_file() -> Result<(), OxenError> {
@@ -849,6 +886,8 @@ A: Oxen.ai
             expect_staged(&status, 0, 0, 0);
             expect_fs(&repo.path, &[]).await;
 
+            check_tree_doesnt_contain_file(&repo, &file);
+
             Ok(())
         })
         .await
@@ -858,48 +897,27 @@ A: Oxen.ai
     #[tokio::test]
     async fn test_remove_dir_depth_1() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
-            let file = repo.path.join("1").join("file.txt");
+            let dir = repo.path.join("1");
+            let file = dir.join("file.txt");
 
             create_and_stage(&repo, &file, "hello world!").await;
             let status = repositories::status(&repo).expect("oxen status failed");
             expect_staged(&status, 1, 0, 0);
             commit_staged(&repo, "added", &file);
 
-            expect_fs(&repo.path, &[&file]).await;
+            expect_fs(&repo.path, &[&dir, &file]).await;
 
-            let dir = file.parent().unwrap();
             remove_and_stage(&repo, &dir).await;
             let status = repositories::status(&repo).expect("oxen status failed");
-            expect_staged(&status, 0, 2, 0);
+            expect_staged(&status, 0, 1, 0);
             commit_staged(&repo, "removed dir + contents", &dir);
-
-            /////////////////
 
             let status = repositories::status(&repo).expect("oxen status failed");
             expect_staged(&status, 0, 0, 0);
             expect_fs(&repo.path, &[]).await;
 
-            // Commit and verify the merkle tree no longer contains dir "3"
-            repositories::commit(&repo, "rm file in dir").expect("failed to oxen commit");
-            let head =
-                repositories::commits::head_commit(&repo).expect("failed to get head commit");
-            let dir_2 =
-                repositories::tree::get_dir_without_children(&repo, &head, Path::new("1/2"), None)
-                    .expect("failed to get dir 1/2 w/o children");
-
-            // Dir "2" should exist but have 0 entries (dir "3" removed)
-            assert!(dir_2.is_some(), "Expecting 1/2 to exist but it does not");
-            let dir_3 = repositories::tree::get_dir_without_children(
-                &repo,
-                &head,
-                Path::new("1/2/3"),
-                None,
-            )
-            .expect("failed to get dir 1/2/3 w/o children");
-            assert!(
-                dir_3.is_none(),
-                "Directory 1/2/3 should not exist in merkle tree after removal"
-            );
+            // verify the merkle tree no longer contains dir "1/"
+            check_tree_doesnt_contain_dir(&repo, &dir);
 
             Ok(())
         })
