@@ -239,12 +239,13 @@ pub async fn download_entries_to_repo(
 
             // Save contents to version store
             let version_store = local_repo.version_store()?;
-            let file = std::fs::read(local_path).map_err(|e| {
-                OxenError::basic_str(format!("Failed to read file '{remote_path:?}': {e}"))
-            })?;
-            let hash = util::hasher::hash_buffer(&file);
+
+            let file_bytes = tokio::fs::read(local_path).await?;
+            let hash = util::hasher::hash_buffer(&file_bytes);
+            let size = file_bytes.len() as u64;
+            let cursor = std::io::Cursor::new(file_bytes);
             version_store
-                .store_version_from_path(&hash, local_path)
+                .store_version_from_reader(&hash, Box::new(cursor), size)
                 .await?;
         }
     }

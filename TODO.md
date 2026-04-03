@@ -36,3 +36,9 @@
   * Local Backend
   * S3 Backend
     * This would be ridiculous # of files if chunking is turned on...
+
+# Large File Support
+
+- First phase: S3 backend -- gives us room on the server to store files
+- Second phase: Stream version files from disk -- allows manipulating files that don't fit in memory
+- Third phase: Move to chunked version file storage(?). We should discuss the pros/cons of this approach. See [Merkle Tree Refactor](#merkle-tree-refactor) above.

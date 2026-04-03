@@ -55,8 +55,11 @@ pub async fn create_checkout(
         let full_path = repo.path.join(&path);
 
         if full_path.exists() {
+            let file = tokio::fs::File::open(&full_path).await?;
+            let size = file.metadata().await?.len();
+            let reader = tokio::io::BufReader::new(file);
             version_store
-                .store_version_from_path(&node.hash.to_string(), &full_path)
+                .store_version_from_reader(&node.hash.to_string(), Box::new(reader), size)
                 .await?;
         }
     }
@@ -448,7 +451,7 @@ mod tests {
     // Regression test: checkout in remote mode should not fail when a file
     // exists in the source branch's tree but is not materialized on disk.
     // Previously, r_remove_if_not_in_target would push non-existent paths
-    // into files_to_store, causing store_version_from_path to fail with NotFound.
+    // into files_to_store, causing store_version_from_reader to fail with NotFound.
     #[tokio::test]
     async fn test_remote_mode_checkout_file_in_tree_but_not_on_disk() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {

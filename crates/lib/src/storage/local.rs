@@ -79,17 +79,6 @@ impl VersionStore for LocalVersionStore {
         Ok(())
     }
 
-    async fn store_version_from_path(&self, hash: &str, file_path: &Path) -> Result<(), OxenError> {
-        let version_dir = self.version_dir(hash);
-        fs::create_dir_all(&version_dir).await?;
-
-        let version_path = self.version_path(hash);
-        if !version_path.exists() {
-            fs::copy(file_path, &version_path).await?;
-        }
-        Ok(())
-    }
-
     async fn store_version_from_reader(
         &self,
         hash: &str,

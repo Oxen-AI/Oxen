@@ -899,8 +899,11 @@ async fn p_add_file(
 
     // Store the file in the version store using the hash as the key
     let hash_str = file_status.hash.to_string();
+    let file = tokio::fs::File::open(&full_path).await?;
+    let size = file.metadata().await?.len();
+    let reader = tokio::io::BufReader::new(file);
     version_store
-        .store_version_from_path(&hash_str, &full_path)
+        .store_version_from_reader(&hash_str, Box::new(reader), size)
         .await?;
     let conflicts: HashSet<PathBuf> = repositories::merge::list_conflicts(workspace_repo)?
         .into_iter()
