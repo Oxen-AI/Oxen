@@ -12,9 +12,11 @@ use log;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::fs::{File, create_dir_all};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::OnceCell;
 use tokio_stream::Stream;
+use tokio_util::io::StreamReader;
 
 use super::version_store::{LocalFilePath, VersionStore};
 use crate::constants::VERSION_FILE_NAME;
@@ -492,17 +494,26 @@ impl VersionStore for S3VersionStore {
         Ok(LocalFilePath::Temp(tmp))
     }
 
+    /// Copy a version file to a destination path on the local filesystem, creating any necessary
+    /// parent directories and overwriting any existing file at the destination path.
+    // TODO: We should probably only allow writing to a specific set of path prefixes
     async fn copy_version_to_path(&self, hash: &str, dest_path: &Path) -> Result<(), OxenError> {
-        // TODO: This needs to be updated to handle large files that won't fit in memory
-        let data = self.get_version(hash).await?;
         if let Some(parent) = dest_path.parent() {
-            tokio::fs::create_dir_all(parent)
+            create_dir_all(parent)
                 .await
                 .map_err(|e| OxenError::basic_str(format!("Failed to create parent dirs: {e}")))?;
         }
-        tokio::fs::write(dest_path, &data)
+
+        let file = File::create(dest_path)
             .await
-            .map_err(|e| OxenError::basic_str(format!("Failed to write file: {e}")))?;
+            .map_err(|e| OxenError::basic_str(format!("Failed to create file: {e}")))?;
+        let mut writer = tokio::io::BufWriter::with_capacity(10 * 1024 * 1024, file);
+
+        let mut stream = StreamReader::new(self.get_version_stream(hash).await?);
+        tokio::io::copy_buf(&mut stream, &mut writer)
+            .await
+            .map_err(|e| OxenError::basic_str(format!("Failed to copy S3 stream to file: {e}")))?;
+
         Ok(())
     }
 
@@ -828,5 +839,24 @@ mod tests {
 
         let retrieved = store.get_version("ddddef1234567890").await.unwrap();
         assert!(retrieved.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_copy_version_to_path_streams_to_dest() {
+        let (store, _tmp, _server) = setup().await;
+        let data = b"streamed to destination";
+
+        store.store_version("eeedef1234567890", data).await.unwrap();
+
+        let dest_dir = async_tempfile::TempDir::new().await.unwrap();
+        let dest_path = dest_dir.dir_path().join("subdir/output.bin");
+
+        store
+            .copy_version_to_path("eeedef1234567890", &dest_path)
+            .await
+            .unwrap();
+
+        let contents = tokio::fs::read(&dest_path).await.unwrap();
+        assert_eq!(contents, data);
     }
 }
