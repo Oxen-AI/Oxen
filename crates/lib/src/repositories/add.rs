@@ -944,20 +944,23 @@ A: Oxen.ai
     #[tokio::test]
     async fn test_remove_dir_depth_3() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
-            let nested_dir = repo.path.join("1").join("2").join("3");
-            let file = nested_dir.join("file.txt");
+            let dir_1 = repo.path.join("1");
+            let dir_2 = dir_1.join("2");
+            let dir_3 = dir_2.join("3");
+            let file = dir_3.join("file.txt");
 
             create_and_stage(&repo, &file, "hello world!").await;
             let status = repositories::status(&repo).expect("oxen status failed");
             expect_staged(&status, 1, 0, 0);
             commit_staged(&repo, "added", &file);
 
-            expect_fs(&repo.path, &[&nested_dir, &file]).await;
+            expect_fs(&repo.path, &[&dir_1, &dir_2, &dir_3, &file]).await;
 
-            remove_and_stage(&repo, &nested_dir).await;
+            // remove_and_stage(&repo, &dir_3).await;
+            remove_and_stage(&repo, &dir_1).await;
             let status = repositories::status(&repo).expect("oxen status failed");
             expect_staged(&status, 0, 1, 0);
-            commit_staged(&repo, "removed dir + contents", &nested_dir);
+            commit_staged(&repo, "removed dir + contents", &dir_1);
 
             let status = repositories::status(&repo).expect("oxen status failed");
             expect_staged(&status, 0, 0, 0);
@@ -967,7 +970,13 @@ A: Oxen.ai
             check_tree_doesnt_contain_file(&repo, &file);
 
             // verify the merkle tree no longer contains dir "1/2/3/"
-            check_tree_doesnt_contain_dir(&repo, &nested_dir);
+            check_tree_doesnt_contain_dir(&repo, &dir_3);
+
+            // // verify the merkle tree no longer contains dir "1/2"
+            check_tree_doesnt_contain_dir(&repo, &dir_2);
+
+            // // verify the merkle tree no longer contains dir "1/"
+            check_tree_doesnt_contain_dir(&repo, &dir_1);
 
             Ok(())
         })
