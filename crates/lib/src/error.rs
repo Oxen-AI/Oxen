@@ -16,6 +16,7 @@ use crate::model::ParsedResource;
 use crate::model::RepoNew;
 use crate::model::Schema;
 use crate::model::Workspace;
+use crate::model::merkle_tree::node_type::InvalidMerkleTreeNodeType;
 
 pub mod path_buf_error;
 pub mod string_error;
@@ -150,6 +151,14 @@ pub enum OxenError {
     /// A commit entry is not present in the repository.
     #[error("{0}")]
     CommitEntryNotFound(StringError),
+
+    //
+    // Merkle Tree Operations
+    //
+    /// A failure during serialization or deserialization of a merkle tree node: it has an unknown
+    /// u8 marker for its node type.
+    #[error("{0}")]
+    MerkleTreeError(#[from] InvalidMerkleTreeNodeType),
 
     //
     // Schema (dataframes)
@@ -314,6 +323,10 @@ pub enum OxenError {
     /// Wraps any error that we get from parsing integers from strings.
     #[error("Invalid integer: {0}")]
     ParseIntError(#[from] ParseIntError),
+
+    /// Wraps any error that we get from encoding message pack data.
+    #[error("Encode error: {0}")]
+    RmpEncodeError(#[from] rmp_serde::encode::Error),
 
     /// Wraps any error that we get from decoding message pack data.
     #[error("Decode error: {0}")]

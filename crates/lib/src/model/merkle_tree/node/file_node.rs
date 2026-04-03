@@ -7,7 +7,6 @@ use crate::model::merkle_tree::node::file_node_types::{FileChunkType, FileStorag
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{
     EntryDataType, LocalRepository, MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType,
-    TMerkleTreeNode,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -95,7 +94,7 @@ impl FileNode {
         }
     }
 
-    pub fn deserialize(data: &[u8]) -> Result<FileNode, OxenError> {
+    pub fn deserialize(data: &[u8]) -> Result<FileNode, rmp_serde::decode::Error> {
         let file_node: FileNode = match rmp_serde::from_slice(data) {
             Ok(file_node) => file_node,
             Err(_) => {
@@ -262,8 +261,6 @@ impl Hash for FileNode {
         self.hash().hash(state);
     }
 }
-
-impl TMerkleTreeNode for FileNode {}
 
 /// Debug is used for verbose multi-line output with println!("{:?}", node)
 impl fmt::Debug for FileNode {

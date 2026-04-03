@@ -46,10 +46,6 @@ For example, data for a vnode of hash 1234 with two children:
     {dir data node}
 */
 
-use rmp_serde::Serializer;
-use serde::Serialize;
-use std::fmt::Debug;
-use std::fmt::Display;
 use std::fs::File;
 use std::io::Read;
 use std::io::Seek;
@@ -223,10 +219,14 @@ impl MerkleNodeDB {
     }
 
     pub fn node(&self) -> Result<EMerkleTreeNode, OxenError> {
-        Self::to_node(self.dtype, &self.data())
+        let node = Self::to_node(self.dtype, &self.data())?;
+        Ok(node)
     }
 
-    pub fn to_node(dtype: MerkleTreeNodeType, data: &[u8]) -> Result<EMerkleTreeNode, OxenError> {
+    pub fn to_node(
+        dtype: MerkleTreeNodeType,
+        data: &[u8],
+    ) -> Result<EMerkleTreeNode, rmp_serde::decode::Error> {
         match dtype {
             MerkleTreeNodeType::Commit => {
                 Ok(EMerkleTreeNode::Commit(CommitNode::deserialize(data)?))
@@ -254,9 +254,9 @@ impl MerkleNodeDB {
         Self::open(path, true)
     }
 
-    pub fn open_read_write_if_not_exists(
+    pub fn open_read_write_if_not_exists<N: TMerkleTreeNode>(
         repo: &LocalRepository,
-        node: &impl TMerkleTreeNode,
+        node: &N,
         parent_id: Option<MerkleHash>,
     ) -> Result<Option<Self>, OxenError> {
         if Self::exists(repo, &node.hash()) {
@@ -271,9 +271,9 @@ impl MerkleNodeDB {
         }
     }
 
-    pub fn open_read_write(
+    pub fn open_read_write<N: TMerkleTreeNode>(
         repo: &LocalRepository,
-        node: &impl TMerkleTreeNode,
+        node: &N,
         parent_id: Option<MerkleHash>,
     ) -> Result<Self, OxenError> {
         let path = node_db_path(repo, &node.hash());
@@ -322,10 +322,11 @@ impl MerkleNodeDB {
             (None, Some(node_file), Some(children_file))
         };
 
-        let dtype = lookup
-            .as_ref()
-            .map(|l| MerkleTreeNodeType::from_u8(l.data_type))
-            .unwrap_or(MerkleTreeNodeType::Commit);
+        let dtype = match lookup.as_ref() {
+            Some(l) => MerkleTreeNodeType::from_u8(l.data_type)?,
+            None => MerkleTreeNodeType::Commit,
+        };
+
         let parent_id = lookup.as_ref().map(|l| l.parent_id);
         Ok(Self {
             read_only,
@@ -364,7 +365,7 @@ impl MerkleNodeDB {
     }
 
     /// Write the base node info.
-    fn write_node<N: TMerkleTreeNode + Serialize + Debug + Display>(
+    fn write_node<N: TMerkleTreeNode>(
         &mut self,
         node: &N,
         parent_id: Option<MerkleHash>,
@@ -393,8 +394,7 @@ impl MerkleNodeDB {
         }
 
         // Write data length
-        let mut buf = Vec::new();
-        node.serialize(&mut Serializer::new(&mut buf)).unwrap();
+        let buf = node.to_msgpack_bytes()?;
         let data_len = buf.len() as u32;
         node_file.write_all(&data_len.to_le_bytes())?;
         // log::debug!("write_node Wrote data length {}", data_len);
@@ -425,9 +425,7 @@ impl MerkleNodeDB {
             return Err(OxenError::basic_str("Must call open() before writing"));
         };
 
-        // TODO: Abstract and re-use in write_all
-        let mut buf = Vec::new();
-        item.serialize(&mut Serializer::new(&mut buf)).unwrap();
+        let buf = item.to_msgpack_bytes()?;
         let data_len = buf.len() as u64;
         // log::debug!("--add_child-- node_file {:?}", node_file);
         // log::debug!("--add_child-- dtype {:?}", item.dtype());
@@ -498,7 +496,7 @@ impl MerkleNodeDB {
         };
 
         // Parse the node parent id
-        let data_type = MerkleTreeNodeType::from_u8(lookup.data_type);
+        let data_type = MerkleTreeNodeType::from_u8(lookup.data_type)?;
         let parent_id = MerkleTreeNode::deserialize_id(&lookup.data, data_type)?;
 
         let mut file_data = Vec::new();
@@ -517,7 +515,7 @@ impl MerkleNodeDB {
             cursor.seek(SeekFrom::Start(*offset))?;
             let mut data = vec![0; *len as usize];
             cursor.read_exact(&mut data)?;
-            let dtype = MerkleTreeNodeType::from_u8(*dtype);
+            let dtype = MerkleTreeNodeType::from_u8(*dtype)?;
             let node = MerkleTreeNode {
                 parent_id: Some(parent_id),
                 hash: MerkleHash::new(*hash),

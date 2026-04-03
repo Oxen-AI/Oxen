@@ -8,9 +8,7 @@ use crate::core::v_latest::model::merkle_tree::node::dir_node::DirNodeData as Di
 use crate::core::v_old::v0_19_0::model::merkle_tree::node::dir_node::DirNodeData as DirNodeDataV0_19_0;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::{
-    LocalRepository, MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType, TMerkleTreeNode,
-};
+use crate::model::{LocalRepository, MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType};
 use crate::view::DataTypeCount;
 
 pub trait TDirNode {
@@ -120,7 +118,7 @@ impl DirNode {
         }
     }
 
-    pub fn deserialize(data: &[u8]) -> Result<DirNode, OxenError> {
+    pub fn deserialize(data: &[u8]) -> Result<DirNode, rmp_serde::decode::Error> {
         // In order to support versions that didn't have the enum,
         // if it fails we will fall back to the old struct, then populate the enum
         let dir_node: DirNode = match rmp_serde::from_slice(data) {
@@ -261,8 +259,6 @@ impl MerkleTreeNodeIdType for DirNode {
         *self.node().hash()
     }
 }
-
-impl TMerkleTreeNode for DirNode {}
 
 /// Debug is used for verbose multi-line output with println!("{:?}", node)
 impl fmt::Debug for DirNode {

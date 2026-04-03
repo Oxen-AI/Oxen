@@ -1077,10 +1077,16 @@ pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), O
     Ok(())
 }
 
-fn p_write_tree(
+/// Write the entire merkle tree, starting from the node (`node_impl`) to the local repository.
+///
+/// Recursively writes the node and all its children to disk. To write a full tree, the node
+/// (`node_impl`) **MUST** be the root of the tree -- i.e. a `Commit` node.
+///
+/// [1] https://github.com/rust-lang/rust/issues/20041)
+fn p_write_tree<N: TMerkleTreeNode>(
     repo: &LocalRepository,
     node: &MerkleTreeNode,
-    node_impl: &impl TMerkleTreeNode,
+    node_impl: &N,
 ) -> Result<(), OxenError> {
     let parent_id = node.parent_id;
 

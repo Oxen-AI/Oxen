@@ -684,7 +684,10 @@ impl MerkleTreeNode {
         self.node.clone()
     }
 
-    pub fn deserialize_id(data: &[u8], dtype: MerkleTreeNodeType) -> Result<MerkleHash, OxenError> {
+    pub fn deserialize_id(
+        data: &[u8],
+        dtype: MerkleTreeNodeType,
+    ) -> Result<MerkleHash, rmp_serde::decode::Error> {
         match dtype {
             MerkleTreeNodeType::Commit => {
                 CommitNode::deserialize(data).map(|commit| *commit.hash())
