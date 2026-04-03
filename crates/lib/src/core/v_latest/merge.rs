@@ -817,9 +817,12 @@ async fn create_merge_commit_on_branch(
     // The author in this case is the pusher - the author of the merge commit
 
     let commit = commit_writer::commit_with_parent_ids(repo, &commit_msg, parent_ids)?;
-    let mut opts = RmOpts::from_path(PathBuf::from("/"));
-    opts.staged = true;
-    opts.recursive = true;
+    let opts = RmOpts {
+        path: PathBuf::from("/"),
+        staged: true,
+        recursive: true,
+    };
+
     rm::remove_staged(repo, &HashSet::from([PathBuf::from("/")]), &opts)?;
 
     Ok(commit)
