@@ -784,6 +784,9 @@ A: Oxen.ai
                     Some(Ok(entry)) => {
                         let path = entry.path().canonicalize().expect("could not canonicalize");
                         if let Some(relative) = ensure_relative(&root, &path) {
+                            if relative.as_os_str().is_empty() {
+                                continue;
+                            }
                             let ok_to_add = ingore_prefixes
                                 .iter()
                                 .filter(|prefix| relative.starts_with(prefix))
@@ -900,6 +903,7 @@ A: Oxen.ai
 
             let status = repositories::status(&repo).expect("oxen status failed");
             expect_staged(&status, 0, 0, 0);
+            assert!(status.staged_dirs.is_empty());
             expect_fs(&repo.path, &[]).await;
 
             check_tree_doesnt_contain_file(&repo, &file);
@@ -930,6 +934,7 @@ A: Oxen.ai
 
             let status = repositories::status(&repo).expect("oxen status failed");
             expect_staged(&status, 0, 0, 0);
+            assert!(status.staged_dirs.is_empty());
             expect_fs(&repo.path, &[]).await;
 
             // verify the merkle tree no longer contains dir "1/"
@@ -964,6 +969,7 @@ A: Oxen.ai
 
             let status = repositories::status(&repo).expect("oxen status failed");
             expect_staged(&status, 0, 0, 0);
+            assert!(status.staged_dirs.is_empty());
             expect_fs(&repo.path, &[]).await;
 
             // verify the merkle tree no longer contains file "1/2/3/file.txt"
