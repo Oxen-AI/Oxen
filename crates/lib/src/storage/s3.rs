@@ -504,12 +504,13 @@ impl VersionStore for S3VersionStore {
                 .map_err(|e| OxenError::basic_str(format!("Failed to create parent dirs: {e}")))?;
         }
 
-        let mut file = File::create(dest_path)
+        let file = File::create(dest_path)
             .await
             .map_err(|e| OxenError::basic_str(format!("Failed to create file: {e}")))?;
+        let mut writer = tokio::io::BufWriter::with_capacity(10 * 1024 * 1024, file);
 
         let mut stream = StreamReader::new(self.get_version_stream(hash).await?);
-        tokio::io::copy(&mut stream, &mut file)
+        tokio::io::copy_buf(&mut stream, &mut writer)
             .await
             .map_err(|e| OxenError::basic_str(format!("Failed to copy S3 stream to file: {e}")))?;
 
