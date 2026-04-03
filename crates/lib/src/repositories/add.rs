@@ -763,36 +763,58 @@ A: Oxen.ai
         );
     }
 
-    use futures::stream;
-
     use async_walkdir::WalkDir;
 
-    /// Checks that only the expected relative paths exist from the given root.
-    async fn expect_filesystem(root: &Path, expected_relative: &[&Path]) {
-        let expected_not_present = expected_relative
-            .iter()
-            .filter(|p| root.join(p).exists())
-            .collect::<Vec<_>>();
+    /// Checks that only the expected relative paths exist from the given root,
+    /// ignoring the '.oxen/' folder.
+    async fn expect_fs(root: &Path, expected_relative: &[&Path]) {
+        expect_filesystem(root, expected_relative, &[".oxen"]).await
+    }
 
-        assert!(
-            expected_not_present.is_empty(),
-            "Missing {} expected files/paths: {:?}",
-            expected_not_present.len(),
-            expected_not_present,
-        );
+    /// Checks that only the expected relative paths exist from the given root.
+    /// Ignores any relative paths that start with one of the [ignore_prefixes].
+    async fn expect_filesystem(root: &Path, expected_relative: &[&Path], ingore_prefixes: &[&str]) {
+        let root = root.canonicalize().expect("could not canonicalize");
 
         let all_from_root: HashSet<PathBuf> = {
             let mut all_from_root = HashSet::new();
-            let mut entries = WalkDir::new(root);
+            let mut entries = WalkDir::new(&root);
             loop {
                 match entries.next().await {
-                    Some(Ok(entry)) => all_from_root.insert(entry.path()),
+                    Some(Ok(entry)) => {
+                        let path = entry.path().canonicalize().expect("could not canonicalize");
+                        if let Some(relative) = (&path).strip_prefix(&root).ok() {
+                            let ok_to_add = ingore_prefixes
+                                .iter()
+                                .filter(|prefix| relative.starts_with(prefix))
+                                .next()
+                                .is_none();
+
+                            if ok_to_add {
+                                all_from_root.insert(relative.to_path_buf());
+                            }
+                        }
+                    }
                     Some(Err(e)) => panic!("{e:?}"),
                     None => break,
                 };
             }
             all_from_root
         };
+
+        let expected_not_present = expected_relative
+            .iter()
+            .filter(|p| !root.join(p).exists())
+            .collect::<Vec<_>>();
+
+        assert!(
+            expected_not_present.is_empty(),
+            "Missing {} expected files/paths: {:?}\nActually have ({}): {:?}",
+            expected_not_present.len(),
+            expected_not_present,
+            all_from_root.len(),
+            all_from_root,
+        );
 
         assert_eq!(
             expected_relative.len(),
@@ -816,7 +838,7 @@ A: Oxen.ai
             expect_staged(&status, 1, 0, 0);
             commit_staged(&repo, "added", &file);
 
-            expect_filesystem(&repo.path, &[&file]);
+            expect_fs(&repo.path, &[&file]).await;
 
             remove_and_stage(&repo, &file).await;
             let status = repositories::status(&repo).expect("oxen status failed");
@@ -825,7 +847,7 @@ A: Oxen.ai
 
             let status = repositories::status(&repo).expect("oxen status failed");
             expect_staged(&status, 0, 0, 0);
-            expect_filesystem(&repo.path, &[]);
+            expect_fs(&repo.path, &[]).await;
 
             Ok(())
         })
@@ -843,7 +865,7 @@ A: Oxen.ai
             expect_staged(&status, 1, 0, 0);
             commit_staged(&repo, "added", &file);
 
-            expect_filesystem(&repo.path, &[&file]);
+            expect_fs(&repo.path, &[&file]).await;
 
             let dir = file.parent().unwrap();
             remove_and_stage(&repo, &dir).await;
@@ -855,7 +877,7 @@ A: Oxen.ai
 
             let status = repositories::status(&repo).expect("oxen status failed");
             expect_staged(&status, 0, 0, 0);
-            expect_filesystem(&repo.path, &[]);
+            expect_fs(&repo.path, &[]).await;
 
             // Commit and verify the merkle tree no longer contains dir "3"
             repositories::commit(&repo, "rm file in dir").expect("failed to oxen commit");
