@@ -1062,8 +1062,8 @@ mod tests {
             // Remove the empty dir
             let rm_opts = RmOpts {
                 path: PathBuf::from("empty_dir"),
-                staged: false,
                 recursive: true,
+                ..Default::default()
             };
 
             repositories::rm(&repo, &rm_opts)?;

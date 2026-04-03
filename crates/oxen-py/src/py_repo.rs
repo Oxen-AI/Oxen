@@ -116,8 +116,8 @@ impl PyRepo {
         let repo = LocalRepository::from_dir(&self.path)?;
         let rm_opts = RmOpts {
             path,
-            recursive,
             staged,
+            recursive,
         };
 
         repositories::rm(&repo, &rm_opts)?;

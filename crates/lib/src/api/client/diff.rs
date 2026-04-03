@@ -1254,8 +1254,8 @@ who won the game?,The packers beat up on the bears,packers
             // THIS IS THE CRUX of this test, do not remove images/cats, just remove images/
             let rm_opts = RmOpts {
                 path: PathBuf::from("images"),
-                staged: false,
                 recursive: true,
+                ..Default::default()
             };
             repositories::rm(&repo, &rm_opts)?;
             repositories::commit(&repo, "Removing cat images")?;
@@ -1757,8 +1757,8 @@ who won the game?,The packers beat up on the bears,packers
 
             let rm_opts = RmOpts {
                 path: PathBuf::from("images"),
-                staged: false,
                 recursive: true,
+                ..Default::default()
             };
             repositories::rm(&repo, &rm_opts)?;
             repositories::commit(&repo, "Removing cat images")?;
