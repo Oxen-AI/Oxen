@@ -727,10 +727,19 @@ fn r_process_remove_dir(
     match &node.node {
         // if node is a Directory, stage it for removal
         EMerkleTreeNode::Directory(_) => {
-            // node has the correct relative path to the dir, so no need for updates
+            // Update the dir name to the full relative path so that it
+            // matches the naming convention used by `get_node_dir_children`
+            // during commit (which joins `base_dir / name`).  Without this
+            // the remove entry has only the leaf name (e.g. "3") while the
+            // existing child is keyed by the full path ("1/2/3"), causing
+            // the HashSet::remove in `split_into_vnodes` to miss.
+            let mut updated_node = node.clone();
+            if let EMerkleTreeNode::Directory(ref mut dir_node) = updated_node.node {
+                dir_node.set_name(path.to_string_lossy().as_ref());
+            }
             let staged_entry = StagedMerkleTreeNode {
                 status: StagedEntryStatus::Removed,
-                node: node.clone(),
+                node: updated_node,
             };
 
             // Write removed node to staged db
