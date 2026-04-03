@@ -241,8 +241,12 @@ mod tests {
                 let cloned_repo =
                     repositories::clone_url(&cloned_remote_repo.remote.url, &new_repo_dir).await?;
 
-                let mut rm_opts = RmOpts::from_path(Path::new("phi-4"));
-                rm_opts.recursive = true;
+                let rm_opts = RmOpts {
+                    path: PathBuf::from("phi-4"),
+                    staged: false,
+                    recursive: true,
+                };
+
                 repositories::rm(&cloned_repo, &rm_opts)?;
                 repositories::commit(&cloned_repo, "Removing phi-4")?;
 
@@ -292,8 +296,11 @@ mod tests {
                 util::fs::remove_file(&repo_filepath)?;
             }
 
-            let mut rm_opts = RmOpts::from_path(Path::new("images"));
-            rm_opts.recursive = true;
+            let rm_opts = RmOpts {
+                path: PathBuf::from("images"),
+                staged: false,
+                recursive: true,
+            };
             repositories::rm(&repo, &rm_opts)?;
             let commit = repositories::commit(&repo, "Removing cat images")?;
 
@@ -403,8 +410,12 @@ mod tests {
             repositories::branches::create_checkout(&repo, branch_name)?;
 
             // Remove all the cat images and subdirectories
-            let mut rm_opts = RmOpts::from_path(Path::new("images"));
-            rm_opts.recursive = true;
+            let rm_opts = RmOpts {
+                path: PathBuf::from("images"),
+                staged: false,
+                recursive: true,
+            };
+
             repositories::rm(&repo, &rm_opts)?;
             let commit = repositories::commit(&repo, "Removing cat images and sub_directories")?;
 

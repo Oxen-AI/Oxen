@@ -1088,8 +1088,12 @@ mod tests {
             util::fs::rename(&train_images, &new_path)?;
 
             repositories::add(&local_repo, new_path).await?;
-            let mut rm_opts = RmOpts::from_path("train");
-            rm_opts.recursive = true;
+            let rm_opts = RmOpts {
+                path: PathBuf::from("train"),
+                staged: false,
+                recursive: true,
+            };
+
             repositories::rm(&local_repo, &rm_opts)?;
             let commit =
                 repositories::commit(&local_repo, "Moved all the train image files to images/")?;

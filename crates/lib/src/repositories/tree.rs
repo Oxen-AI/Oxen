@@ -1510,8 +1510,12 @@ mod tests {
             // Remove the deeply nested dir
             util::fs::remove_dir_all(&dir_path)?;
 
-            let mut opts = RmOpts::from_path(dir_path);
-            opts.recursive = true;
+            let opts = RmOpts {
+                path: dir_path,
+                staged: false,
+                recursive: true,
+            };
+
             repositories::rm(&repo, &opts)?;
             let commit = repositories::commit(&repo, "Removing dir")?;
 

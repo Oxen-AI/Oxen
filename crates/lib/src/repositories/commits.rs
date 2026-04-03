@@ -1060,8 +1060,12 @@ mod tests {
             assert!(tree.get_by_path(PathBuf::from("empty_dir"))?.is_some());
 
             // Remove the empty dir
-            let mut rm_opts = RmOpts::from_path(PathBuf::from("empty_dir"));
-            rm_opts.recursive = true;
+            let rm_opts = RmOpts {
+                path: PathBuf::from("empty_dir"),
+                staged: false,
+                recursive: true,
+            };
+
             repositories::rm(&repo, &rm_opts)?;
             let commit_2 = repositories::commit(&repo, "removing empty dir")?;
 

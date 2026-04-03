@@ -153,8 +153,11 @@ pub async fn add_files(
     let gitignore = oxenignore::create(repo);
 
     let mut paths_to_remove = HashSet::new();
-    let mut rm_opts = RmOpts::new();
-    rm_opts.recursive = true;
+    let rm_opts = RmOpts {
+        path: PathBuf::from(""),
+        staged: false,
+        recursive: true,
+    };
 
     for path in paths {
         let corrected_path = match (path.is_absolute(), repo_path.is_absolute()) {

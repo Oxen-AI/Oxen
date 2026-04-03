@@ -1135,8 +1135,11 @@ who won the game?,The packers beat up on the bears,packers
                 util::fs::remove_file(&repo_filepath)?;
             }
 
-            let mut rm_opts = RmOpts::from_path(Path::new("images").join("cats"));
-            rm_opts.recursive = true;
+            let rm_opts = RmOpts {
+                path: PathBuf::from("images").join("cats"),
+                staged: false,
+                recursive: true,
+            };
             repositories::rm(&repo, &rm_opts)?;
             repositories::commit(&repo, "Removing cat images")?;
 
@@ -1249,8 +1252,11 @@ who won the game?,The packers beat up on the bears,packers
             }
 
             // THIS IS THE CRUX of this test, do not remove images/cats, just remove images/
-            let mut rm_opts = RmOpts::from_path(Path::new("images"));
-            rm_opts.recursive = true;
+            let rm_opts = RmOpts {
+                path: PathBuf::from("images"),
+                staged: false,
+                recursive: true,
+            };
             repositories::rm(&repo, &rm_opts)?;
             repositories::commit(&repo, "Removing cat images")?;
 
@@ -1749,8 +1755,11 @@ who won the game?,The packers beat up on the bears,packers
                 util::fs::remove_file(&repo_filepath)?;
             }
 
-            let mut rm_opts = RmOpts::from_path("images");
-            rm_opts.recursive = true;
+            let rm_opts = RmOpts {
+                path: PathBuf::from("images"),
+                staged: false,
+                recursive: true,
+            };
             repositories::rm(&repo, &rm_opts)?;
             repositories::commit(&repo, "Removing cat images")?;
 
