@@ -51,6 +51,12 @@ cargo build --workspace                           # Debug build
 ```
 
 ### Testing
+Many tests require the oxen server to be running. If it is not running on port 3000 and
+a test fails because it cannot connect to oxen-server, then start it:
+```bash
+cargo run -p oxen-server start
+```
+
 Run specific tests:
 ```bash
 cargo test test_function_name         # Run specific matching tests
@@ -92,13 +98,16 @@ oxen push origin main               # Push to remote
 ```
 
 ## Code Organization
-
 - We define module exports in a `<module_name>.rs` file at the same level as the corresponding `module_name/` directory and *NOT* the older `mod.rs` pattern.
 
 ## Error Handling
-- Use `OxenError` for all error types
-- Functions should return `Result<T, OxenError>`
-- Implement proper error propagation through the `?` operator
+- Use the result type (`Result<T, Error>`) when an operation could fail.
+- Never use `.unwrap()` or `.expect()` on a `Result` or on an `Option`.
+  + Exception: In test-only code, it is ok to use use `.expect(<descriptive explanation of invariant that was violated>)` since we want to fail fast and have good stack traces for failing test cases.
+- Use as specific of an error type as possible for a function. Don't use a wider type unless it's necessary. When making modules and related pieces of code, try to use a locally-defined error enum for them if they all have similar errors.
+- Make sure there's an `OxenError` variant for every error type. Be liberal in wrapping other modules error types, or other specific error types, in a new variant. Use a `Box<>` wrapper for it and have a `#[from]` to derive.
+- `OxenError` is the top-level type for everything. If you need to unify different error types into one, use `OxenError`. These kinds of functions should return `Result<T, OxenError>`
+- Implement proper error propagation through the `?` operator.
 
 # Making Changes
 
