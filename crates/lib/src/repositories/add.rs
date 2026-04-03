@@ -769,18 +769,10 @@ A: Oxen.ai
 
     /// Checks that only the expected relative paths exist from the given root.
     async fn expect_filesystem(root: &Path, expected_relative: &[&Path]) {
-        let expected_not_present: Vec<&Path> = stream::iter(expected_relative)
-            .filter({
-                let root = root.clone();
-                async move |p| {
-                    let full = root.join(p);
-                    tokio::fs::try_exists(&full)
-                        .await
-                        .expect(&format!("could not check existence of: {}", full.display()))
-                }
-            })
-            .collect()
-            .await;
+        let expected_not_present = expected_relative
+            .iter()
+            .filter(|p| root.join(p).exists())
+            .collect::<Vec<_>>();
 
         assert!(
             expected_not_present.is_empty(),
