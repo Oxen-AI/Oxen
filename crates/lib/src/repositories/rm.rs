@@ -243,8 +243,8 @@ mod tests {
 
                 let rm_opts = RmOpts {
                     path: PathBuf::from("phi-4"),
-                    staged: false,
                     recursive: true,
+                    ..Default::default()
                 };
 
                 repositories::rm(&cloned_repo, &rm_opts)?;
@@ -298,8 +298,8 @@ mod tests {
 
             let rm_opts = RmOpts {
                 path: PathBuf::from("images"),
-                staged: false,
                 recursive: true,
+                ..Default::default()
             };
             repositories::rm(&repo, &rm_opts)?;
             let commit = repositories::commit(&repo, "Removing cat images")?;
@@ -412,8 +412,8 @@ mod tests {
             // Remove all the cat images and subdirectories
             let rm_opts = RmOpts {
                 path: PathBuf::from("images"),
-                staged: false,
                 recursive: true,
+                ..Default::default()
             };
 
             repositories::rm(&repo, &rm_opts)?;
@@ -646,8 +646,7 @@ mod tests {
             // Remove with wildcard
             let rm_opts = RmOpts {
                 path: PathBuf::from("images/*"),
-                recursive: false,
-                staged: false,
+                ..Default::default()
             };
 
             repositories::rm(&repo, &rm_opts)?;
@@ -661,8 +660,8 @@ mod tests {
             // Unstage the changes with staged rm
             let rm_opts = RmOpts {
                 path: PathBuf::from("images/*"),
-                recursive: false,
                 staged: true,
+                ..Default::default()
             };
 
             repositories::rm(&repo, &rm_opts)?;
@@ -1131,8 +1130,7 @@ mod tests {
             // Remove only the files in annotations/test/
             let rm_opts = RmOpts {
                 path: PathBuf::from("annotations/test/*"),
-                recursive: false,
-                staged: false,
+                ..Default::default()
             };
             repositories::rm(&repo, &rm_opts)?;
 

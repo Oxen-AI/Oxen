@@ -554,7 +554,7 @@ pub async fn make_many_commits(local_repo: &LocalRepository) -> Result<(), OxenE
     let rm_opts = RmOpts {
         path: PathBuf::from("test"),
         recursive: true,
-        staged: false,
+        ..Default::default()
     };
 
     repositories::rm(local_repo, &rm_opts)?;

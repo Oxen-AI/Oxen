@@ -154,9 +154,8 @@ pub async fn add_files(
 
     let mut paths_to_remove = HashSet::new();
     let rm_opts = RmOpts {
-        path: PathBuf::from(""),
-        staged: false,
         recursive: true,
+        ..Default::default()
     };
 
     for path in paths {

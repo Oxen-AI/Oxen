@@ -1840,8 +1840,7 @@ mod tests {
                     // Remove the README.md on the remote
                     let rm_opts = RmOpts {
                         path: PathBuf::from("README.md"),
-                        staged: false,
-                        recursive: false,
+                        ..Default::default()
                     };
                     repositories::rm(&user_b_repo, &rm_opts)?;
                     repositories::commit(&user_b_repo, "Removing the README.md on the remote")?;

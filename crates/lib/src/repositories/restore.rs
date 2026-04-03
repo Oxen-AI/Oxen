@@ -525,8 +525,7 @@ mod tests {
             // Remove all the things
             let rm_opts = RmOpts {
                 path: PathBuf::from("images/*"),
-                recursive: false,
-                staged: false,
+                ..Default::default()
             };
 
             repositories::rm(&repo, &rm_opts)?;
@@ -583,8 +582,7 @@ mod tests {
             // Repo has 7 images in train/
             let rm_opts = RmOpts {
                 path: PathBuf::from("train/*"),
-                recursive: false,
-                staged: false,
+                ..Default::default()
             };
             repositories::rm(&repo, &rm_opts)?;
 
