@@ -783,7 +783,7 @@ A: Oxen.ai
                 match entries.next().await {
                     Some(Ok(entry)) => {
                         let path = entry.path().canonicalize().expect("could not canonicalize");
-                        if let Some(relative) = (&path).strip_prefix(&root).ok() {
+                        if let Some(relative) = ensure_relative(&root, &path) {
                             let ok_to_add = ingore_prefixes
                                 .iter()
                                 .filter(|prefix| relative.starts_with(prefix))
@@ -827,14 +827,27 @@ A: Oxen.ai
         );
     }
 
+    /// Returns `path` if it's already realtive. Otherwise it strips `root` from it
+    /// and returns that. If `path` is not relative to root, then `None` is returned.
+    fn ensure_relative<'a>(root: &Path, path: &'a Path) -> Option<&'a Path> {
+        if path.is_relative() {
+            Some(path)
+        } else {
+            path.strip_prefix(root).ok()
+        }
+    }
+
     fn check_tree_doesnt_contain_file(repo: &LocalRepository, file: &Path) {
         let head = repositories::commits::head_commit(&repo).expect("failed to get head commit");
 
         let fi = repositories::tree::get_file_by_path(
             &repo,
             &head,
-            file.strip_prefix(&repo.path)
-                .expect("could not get relative path"),
+            ensure_relative(&repo.path, file).expect(&format!(
+                "non-repo ({}) relative path: {}",
+                repo.path.display(),
+                file.display()
+            )),
         )
         .expect(&format!("failed to get file {}", file.display()));
 
@@ -851,8 +864,11 @@ A: Oxen.ai
         let dir_1 = repositories::tree::get_dir_without_children(
             &repo,
             &head,
-            dir.strip_prefix(&repo.path)
-                .expect("could not get relative path"),
+            ensure_relative(&repo.path, dir).expect(&format!(
+                "non-repo ({}) relative path: {}",
+                repo.path.display(),
+                dir.display()
+            )),
             None,
         )
         .expect(&format!("failed to get dir {} w/o children", dir.display()));
@@ -928,68 +944,30 @@ A: Oxen.ai
     #[tokio::test]
     async fn test_remove_dir_depth_3() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
-            // Create nested directory structure: 1/2/3/file.txt
             let nested_dir = repo.path.join("1").join("2").join("3");
-            util::fs::create_dir_all(&nested_dir).expect("failed to create dir 1/2/3");
-            let file_path = nested_dir.join("file.txt");
-            test::write_txt_file_to_path(&file_path, "hello").expect("failed to write text file");
+            let file = nested_dir.join("file.txt");
 
-            // Add and commit
-            repositories::add(&repo, &repo.path).await?;
-            repositories::commit(&repo, "add nested dir").expect("intial oxen commit failed");
+            create_and_stage(&repo, &file, "hello world!").await;
+            let status = repositories::status(&repo).expect("oxen status failed");
+            expect_staged(&status, 1, 0, 0);
+            commit_staged(&repo, "added", &file);
 
-            // Remove the nested directory from filesystem
-            util::fs::remove_dir_all(repo.path.join("1").join("2").join("3"))
-                .expect("failed to remove dir 1/2/3");
+            expect_fs(&repo.path, &[&nested_dir, &file]).await;
 
-            // `oxen add .` should stage the removed directory
-            repositories::add(&repo, &repo.path)
-                .await
-                .expect("Failed to oxen add");
+            remove_and_stage(&repo, &nested_dir).await;
+            let status = repositories::status(&repo).expect("oxen status failed");
+            expect_staged(&status, 0, 1, 0);
+            commit_staged(&repo, "removed dir + contents", &nested_dir);
 
             let status = repositories::status(&repo).expect("oxen status failed");
+            expect_staged(&status, 0, 0, 0);
+            expect_fs(&repo.path, &[]).await;
 
-            println!("\n\nSTATUS:\n{:?}", status);
+            // verify the merkle tree no longer contains file "1/2/3/file.txt"
+            check_tree_doesnt_contain_file(&repo, &file);
 
-            // // The file inside 1/2/3 should be staged as removed
-            // assert!(status.staged_files.len() >= 1, "Expecting there to only be one staged file, but found ({}): {:?}", status.staged_files.len(), status.staged_files);
-            // assert!(status
-            //     .staged_files
-            //     .iter()
-            //     .any(|(_, entry)| entry.status == StagedEntryStatus::Removed),
-            // "Expecting file inside 1/2/3 to be staged as removed. Instead found {} staged files: {:?}",
-            //     status.staged_files.len(), status.staged_files);
-
-            // No remaining unstaged removed files
-            assert_eq!(
-                status.removed_files.len(),
-                1,
-                "Expecting 1 removed files but found ({}): {:?}",
-                status.removed_files.len(),
-                status.removed_files
-            );
-
-            // Commit and verify the merkle tree no longer contains dir "3"
-            repositories::commit(&repo, "rm nested dir").expect("failed to oxen commit");
-            let head =
-                repositories::commits::head_commit(&repo).expect("failed to get head commit");
-            let dir_2 =
-                repositories::tree::get_dir_without_children(&repo, &head, Path::new("1/2"), None)
-                    .expect("failed to get dir 1/2 w/o children");
-
-            // Dir "2" should exist but have 0 entries (dir "3" removed)
-            assert!(dir_2.is_some(), "Expecting 1/2 to exist but it does not");
-            let dir_3 = repositories::tree::get_dir_without_children(
-                &repo,
-                &head,
-                Path::new("1/2/3"),
-                None,
-            )
-            .expect("failed to get dir 1/2/3 w/o children");
-            assert!(
-                dir_3.is_none(),
-                "Directory 1/2/3 should not exist in merkle tree after removal"
-            );
+            // verify the merkle tree no longer contains dir "1/2/3/"
+            check_tree_doesnt_contain_dir(&repo, &nested_dir);
 
             Ok(())
         })
