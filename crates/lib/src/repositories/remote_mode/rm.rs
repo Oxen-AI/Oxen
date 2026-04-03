@@ -35,7 +35,7 @@ mod tests {
                 let head_commit = repositories::commits::head_commit(&cloned_repo)?;
                 repositories::remote_mode::restore(
                     &cloned_repo,
-                    &[file_path.clone()],
+                    std::slice::from_ref(&file_path),
                     &head_commit.id,
                 )
                 .await?;
@@ -53,7 +53,7 @@ mod tests {
 
                 // Get status, should show staged file
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -104,7 +104,7 @@ mod tests {
 
                 // Get status, should show staged file
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -157,7 +157,7 @@ mod tests {
 
                 // Get status, should show staged file
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -209,7 +209,7 @@ mod tests {
 
                 // Get status, should show staged file
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -299,7 +299,7 @@ mod tests {
 
                 // Check status to confirm it's staged
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -407,7 +407,7 @@ mod tests {
 
                 // Check status: only one file should be staged for removal
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -485,7 +485,7 @@ mod tests {
 
                 // Check status to verify files are staged for removal
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -555,7 +555,7 @@ mod tests {
 
                 // Check status to verify files are staged for removal
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[cloned_repo.path.clone()]);
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,

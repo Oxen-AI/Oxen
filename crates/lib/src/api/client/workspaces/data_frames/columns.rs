@@ -326,14 +326,12 @@ mod tests {
                 .iter()
                 .enumerate()
                 .find(|(_index, field)| field.name == column.name)
-            {
-                if <std::option::Option<Changes> as Clone>::clone(&field.changes)
+                && <std::option::Option<Changes> as Clone>::clone(&field.changes)
                     .unwrap()
                     .status
                     != "deleted"
-                {
-                    panic!("Column {} still exists in the data frame", column.name);
-                }
+            {
+                panic!("Column {} still exists in the data frame", column.name);
             }
 
             Ok(remote_repo)

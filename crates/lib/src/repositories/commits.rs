@@ -1044,7 +1044,7 @@ mod tests {
                 status
                     .untracked_dirs
                     .iter()
-                    .any(|(path, _)| *path == PathBuf::from("empty_dir"))
+                    .any(|(path, _)| *path == Path::new("empty_dir"))
             );
 
             // Add the empty dir
@@ -1224,7 +1224,7 @@ A: Oxen.ai
             let head_commit = repositories::commits::head_commit(&repo)?;
             assert_eq!(head_commit.id, commit_e.id);
 
-            let expected_commits = vec![commit_e.clone(), commit_c.clone(), commit_a.clone()];
+            let expected_commits = [commit_e.clone(), commit_c.clone(), commit_a.clone()];
 
             let pagination_opts = PaginateOpts::default();
             let paginated_result = repositories::commits::list_by_path_from_paginated(

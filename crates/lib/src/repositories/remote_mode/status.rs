@@ -172,7 +172,8 @@ mod tests {
                 let repo_path = cloned_repo.path.clone();
 
                 let directory = ".".to_string();
-                let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
+                let status_opts =
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&repo_path));
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
@@ -197,19 +198,19 @@ mod tests {
                 let head_commit = repositories::commits::head_commit(&cloned_repo)?;
                 repositories::remote_mode::restore(
                     &cloned_repo,
-                    &[one_shot_path.clone()],
+                    std::slice::from_ref(&one_shot_path),
                     &head_commit.id,
                 )
                 .await?;
                 repositories::remote_mode::restore(
                     &cloned_repo,
-                    &[two_shot_path.clone()],
+                    std::slice::from_ref(&two_shot_path),
                     &head_commit.id,
                 )
                 .await?;
                 repositories::remote_mode::restore(
                     &cloned_repo,
-                    &[bounding_box_path.clone()],
+                    std::slice::from_ref(&bounding_box_path),
                     &head_commit.id,
                 )
                 .await?;
@@ -241,7 +242,8 @@ mod tests {
 
                 // Check status for corresponding changes
                 let directory = ".".to_string();
-                let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
+                let status_opts =
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&repo_path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -275,7 +277,8 @@ mod tests {
 
                 // Re-check status
                 let directory = ".".to_string();
-                let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
+                let status_opts =
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&repo_path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -334,7 +337,7 @@ mod tests {
                 util::fs::rename(&og_file, &new_file)?;
 
                 // Status before adding should show 4 unsynced files (README.md,  LICENSE, prompts.jsonl, labels.txt) and an untracked file
-                let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
+                let status_opts = StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&repo_path));
                 let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
                 status.print();
                 assert_eq!(status.moved_files.len(), 0);
@@ -343,7 +346,7 @@ mod tests {
 
                 // Remove the previous file
                 api::client::workspaces::files::rm_files(&cloned_repo, &remote_repo, &workspace_identifier, vec![og_basename.clone()]).await?;
-                let status_opts = StagedDataOpts::from_paths_remote_mode(&[repo_path.clone()]);
+                let status_opts = StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&repo_path));
                 let status = repositories::remote_mode::status(&cloned_repo, &remote_repo, &workspace_identifier, &directory, &status_opts).await?;
                 status.print();
                 assert_eq!(status.moved_files.len(), 0);
