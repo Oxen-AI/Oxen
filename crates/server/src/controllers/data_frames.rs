@@ -251,5 +251,6 @@ pub async fn from_directory(
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
         commit,
+        merged_content: None,
     }))
 }

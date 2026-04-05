@@ -296,6 +296,7 @@ pub async fn put(
 
     // Check if the resource path is a file and handle conflicts
     let node = repositories::tree::get_node_by_path(&repo, &commit, &resource.path)?;
+    let mut merged_content: Option<String> = None;
     if let Some(ref n) = node
         && n.is_file()
     {
@@ -303,16 +304,66 @@ pub async fn put(
         let current_commit_hash = n.latest_commit_id()?.to_string();
 
         // Only fail if claimed hash is provided but doesn't match current hash
-        if let Some(claimed_hash) = claimed_commit_hash
-            && current_commit_hash != claimed_hash
+        if let Some(ref claimed_hash) = claimed_commit_hash
+            && current_commit_hash != *claimed_hash
         {
-            return Err(OxenHttpError::BasicError(
-                format!(
-                    "File has been modified since claimed revision. Current: {}, Claimed: {}. Your changes would overwrite another change without that being from a merge",
-                    current_commit_hash, claimed_hash
-                )
-                .into(),
-            ));
+            // Attempt server-side 3-way merge for single text files
+            let merge_result = if let Some(temp_file) = file_parts {
+                let uploaded_bytes = match &temp_file.contents {
+                    FileContents::Text(t) => t.as_bytes().to_vec(),
+                    FileContents::Binary(b) => b.clone(),
+                };
+
+                let base_commit = repositories::commits::get_by_id(&repo, claimed_hash)?
+                    .ok_or(OxenHttpError::NotFound)?;
+                let version_store = repo.version_store()?;
+
+                let base_entry =
+                    repositories::entries::get_file(&repo, &base_commit, &resource.path)?;
+                let current_entry =
+                    repositories::entries::get_file(&repo, &commit, &resource.path)?;
+
+                match (base_entry, current_entry) {
+                    (Some(base_file), Some(current_file)) => {
+                        let base_bytes = version_store
+                            .get_version(&base_file.hash().to_string())
+                            .await?;
+                        let theirs_bytes = version_store
+                            .get_version(&current_file.hash().to_string())
+                            .await?;
+                        liboxen::core::v_latest::merge::try_text_merge(
+                            &base_bytes,
+                            &uploaded_bytes,
+                            &theirs_bytes,
+                        )
+                        .ok()
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
+
+            match merge_result {
+                Some(merged) => {
+                    log::info!(
+                        "file::put auto-merged {} (base: {}, current: {})",
+                        resource.path.display(),
+                        claimed_hash,
+                        current_commit_hash
+                    );
+                    merged_content = Some(merged);
+                }
+                None => {
+                    return Err(OxenHttpError::BasicError(
+                        format!(
+                            "File has been modified since claimed revision. Current: {}, Claimed: {}. Your changes would overwrite another change without that being from a merge",
+                            current_commit_hash, claimed_hash
+                        )
+                        .into(),
+                    ));
+                }
+            }
         }
     }
 
@@ -344,13 +395,22 @@ pub async fn put(
     }
 
     let user = create_user_from_options(name.clone(), email.clone())?;
-    let files = build_files_from_upload_parts(
+    let mut files = build_files_from_upload_parts(
         &resource.path,
         upload_mode,
         file_parts,
         &files_array_parts,
         &user,
     )?;
+
+    // If auto-merge produced merged content, replace the file contents
+    let response_merged_content = merged_content.clone();
+    if let Some(merged) = merged_content
+        && let Some(file) = files.first_mut()
+    {
+        file.contents = FileContents::Text(merged);
+    }
+
     let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
 
     for file in &files {
@@ -368,13 +428,26 @@ pub async fn put(
         }),
     };
 
-    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
+    let commit_result =
+        repositories::workspaces::commit(&workspace, &commit_body, branch.name).await;
+
+    let commit = match commit_result {
+        Ok(c) => c,
+        Err(ref e) if response_merged_content.is_some() && e.to_string().contains("No changes") => {
+            // Auto-merge produced content identical to HEAD — nothing to commit.
+            // Return the current commit as success.
+            log::info!("file::put auto-merge produced no net change, returning current commit");
+            commit
+        }
+        Err(e) => return Err(e.into()),
+    };
 
     log::debug!("file::put workspace commit ✅ success! commit {commit:?}");
 
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
         commit,
+        merged_content: response_merged_content,
     }))
 }
 
@@ -476,6 +549,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_deleted(),
         commit,
+        merged_content: None,
     }))
 }
 
@@ -590,6 +664,7 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_updated(),
         commit,
+        merged_content: None,
     }))
 }
 
@@ -639,6 +714,7 @@ async fn handle_initial_put_empty_repo(
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
         commit: commit.unwrap(),
+        merged_content: None,
     }))
 }
 
@@ -828,8 +904,15 @@ pub async fn import(
     .ok_or_else(|| OxenHttpError::BadRequest("Invalid filename in URL".into()))?;
 
     // download and save the file into the workspace
-    repositories::workspaces::files::import(download_url, auth, directory, filename, &workspace)
-        .await?;
+    repositories::workspaces::files::import(
+        download_url,
+        auth,
+        directory,
+        Some(filename),
+        &workspace,
+        false,
+    )
+    .await?;
 
     // Commit workspace
     let commit_body = NewCommitBody {
@@ -847,6 +930,7 @@ pub async fn import(
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
         commit,
+        merged_content: None,
     }))
 }
 

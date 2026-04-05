@@ -417,6 +417,7 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
             Ok(HttpResponse::Ok().json(CommitResponse {
                 status: StatusMessage::resource_created(),
                 commit,
+                merged_content: None,
             }))
         }
         Err(OxenError::WorkspaceBehind(workspace)) => {

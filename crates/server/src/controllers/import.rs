@@ -212,6 +212,7 @@ pub async fn import(
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
         commit,
+        merged_content: None,
     }))
 }
 
@@ -297,6 +298,7 @@ pub async fn upload_zip(
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
         commit,
+        merged_content: None,
     }))
 }
 
@@ -342,6 +344,7 @@ async fn handle_initial_upload_zip_empty_repo(
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
         commit,
+        merged_content: None,
     }))
 }
 

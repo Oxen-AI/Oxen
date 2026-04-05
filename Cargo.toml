@@ -58,6 +58,7 @@ deadqueue = "0.2.4"
 derive_more = { version = "1.0.0", features = ["full"] }
 dialoguer = "0.11.0"
 difference = "2.0.0"
+diffy = "0.4"
 dirs = "5.0.1"
 dotenv = "0.15.0"
 duckdb = { package = "duckdb", version = "=1.10501.0", default-features = false, features = ["serde_json"] }

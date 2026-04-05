@@ -1,9 +1,6 @@
 use clap::Parser;
-use liboxen::core::db::webhooks::WebhookDB;
 use liboxen::core::webhook_dispatcher::WebhookEvent;
 use liboxen::core::webhooks::WebhookNotifier;
-use liboxen::model::LocalRepository;
-use serde_json;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::sleep;

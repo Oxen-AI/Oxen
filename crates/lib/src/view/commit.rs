@@ -26,6 +26,11 @@ pub struct CommitResponse {
     )]
     pub status: StatusMessage,
     pub commit: Commit,
+    /// When present, indicates the server performed a 3-way auto-merge and
+    /// this field contains the merged file content. Clients should update
+    /// their local copy with this content.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merged_content: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug, ToSchema)]

@@ -52,6 +52,7 @@ comfy-table = { workspace = true }
 deadqueue = { workspace = true }
 derive_more = { workspace = true }
 difference = { workspace = true }
+diffy = { workspace = true }
 dirs = { workspace = true }
 duckdb = { workspace = true, optional = true }
 dunce = { workspace = true }

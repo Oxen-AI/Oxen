@@ -1096,3 +1096,18 @@ pub async fn find_merge_conflicts(
 
     Ok(conflicts)
 }
+
+/// Attempt a line-based 3-way text merge using the diffy crate.
+/// Returns Ok(merged_string) if the merge is conflict-free, Err otherwise.
+/// All three inputs must be valid UTF-8; binary files are rejected.
+pub fn try_text_merge(base: &[u8], ours: &[u8], theirs: &[u8]) -> Result<String, OxenError> {
+    let base_str = std::str::from_utf8(base)
+        .map_err(|_| OxenError::basic_str("Base file is not valid UTF-8 text"))?;
+    let ours_str = std::str::from_utf8(ours)
+        .map_err(|_| OxenError::basic_str("Uploaded file is not valid UTF-8 text"))?;
+    let theirs_str = std::str::from_utf8(theirs)
+        .map_err(|_| OxenError::basic_str("Current file is not valid UTF-8 text"))?;
+
+    diffy::merge(base_str, ours_str, theirs_str)
+        .map_err(|_conflict| OxenError::basic_str("Merge has conflicts — cannot auto-merge"))
+}
