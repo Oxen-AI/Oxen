@@ -4500,7 +4500,6 @@ dependencies = [
  "log",
  "lru 0.14.0",
  "metrics",
- "metrics-exporter-prometheus",
  "minus",
  "mockito",
  "mp4",
