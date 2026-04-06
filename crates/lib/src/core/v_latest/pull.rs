@@ -6,6 +6,7 @@ use crate::repositories;
 use crate::core::v_latest::fetch;
 use crate::opts::fetch_opts::FetchOpts;
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub async fn pull(repo: &LocalRepository) -> Result<(), OxenError> {
     let mut fetch_opts = FetchOpts::new();
     fetch_opts.depth = repo.depth();
@@ -13,6 +14,7 @@ pub async fn pull(repo: &LocalRepository) -> Result<(), OxenError> {
     pull_remote_branch(repo, &fetch_opts).await
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub async fn pull_all(repo: &LocalRepository) -> Result<(), OxenError> {
     let fetch_opts = FetchOpts {
         all: true,
@@ -24,6 +26,7 @@ pub async fn pull_all(repo: &LocalRepository) -> Result<(), OxenError> {
 }
 
 /// Pull a specific remote and branch
+#[tracing::instrument(skip(repo, fetch_opts), fields(repo_path = %repo.path.display()))]
 pub async fn pull_remote_branch(
     repo: &LocalRepository,
     fetch_opts: &FetchOpts,

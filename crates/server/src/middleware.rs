@@ -5,6 +5,7 @@ use actix_web::{
 use futures_util::future::LocalBoxFuture;
 use liboxen::request_context::REQUEST_ID;
 use std::future::{Ready, ready};
+use std::time::Instant;
 // Oxen request Id
 pub const OXEN_REQUEST_ID: &str = "x-oxen-request-id";
 
@@ -81,6 +82,95 @@ where
                 Ok(res)
             },
         ))
+    }
+}
+
+/// Middleware that records HTTP request count and latency for every route.
+///
+/// Emits two Prometheus metrics per request:
+///   - `http_requests_total{method, path, status}` — counter
+///   - `http_request_duration_ms{method, path}` — histogram (milliseconds)
+///
+/// The `path` label uses the matched Actix route pattern (e.g.
+/// `/api/repos/{namespace}/{repo_name}/branches`) to keep cardinality low.
+pub struct MetricsMiddleware;
+
+impl<S, B> Transform<S, ServiceRequest> for MetricsMiddleware
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+    S::Future: 'static,
+    B: 'static,
+{
+    type Response = ServiceResponse<B>;
+    type Error = Error;
+    type InitError = ();
+    type Transform = MetricsMiddlewareService<S>;
+    type Future = Ready<Result<Self::Transform, Self::InitError>>;
+
+    fn new_transform(&self, service: S) -> Self::Future {
+        ready(Ok(MetricsMiddlewareService { service }))
+    }
+}
+
+pub struct MetricsMiddlewareService<S> {
+    service: S,
+}
+
+impl<S, B> Service<ServiceRequest> for MetricsMiddlewareService<S>
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+    S::Future: 'static,
+    B: 'static,
+{
+    type Response = ServiceResponse<B>;
+    type Error = Error;
+    type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+    forward_ready!(service);
+
+    fn call(&self, req: ServiceRequest) -> Self::Future {
+        let start = Instant::now();
+        let method = req.method().to_string();
+
+        let fut = self.service.call(req);
+
+        Box::pin(async move {
+            match fut.await {
+                Ok(res) => {
+                    let status = res.status().as_u16().to_string();
+                    let path = res
+                        .request()
+                        .match_pattern()
+                        .unwrap_or_else(|| "unmatched".to_string());
+                    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+                    metrics::counter!("http_requests_total", "method" => method.clone(), "path" => path.clone(), "status" => status.clone())
+                        .increment(1);
+                    if res.status().is_client_error() || res.status().is_server_error() {
+                        metrics::counter!("http_errors_total", "method" => method.clone(), "path" => path.clone(), "status" => status)
+                            .increment(1);
+                    }
+                    metrics::histogram!("http_request_duration_ms", "method" => method, "path" => path)
+                        .record(elapsed_ms);
+
+                    Ok(res)
+                }
+                Err(err) => {
+                    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+                    let status = "500";
+                    let path = "unmatched";
+
+                    metrics::counter!("http_requests_total", "method" => method.clone(), "path" => path, "status" => status)
+                        .increment(1);
+                    metrics::counter!("http_errors_total", "method" => method.clone(), "path" => path, "status" => status)
+                        .increment(1);
+                    metrics::histogram!("http_request_duration_ms", "method" => method, "path" => path)
+                        .record(elapsed_ms);
+
+                    Err(err)
+                }
+            }
+        })
     }
 }
 

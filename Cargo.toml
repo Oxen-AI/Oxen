@@ -95,6 +95,9 @@ minus = { version = "5.4.0", features = ["static_output", "search"] }
 mockito = "1.1.0"
 mp4 = "0.14.0"
 num_cpus = "1.16.0"
+opentelemetry = "0.31"
+opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic", "http-json", "trace"] }
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
 os_path = "0.8.0"
 par-stream = { version = "0.10.2", features = ["runtime-tokio"] }
 parking_lot = "0.12.1"
@@ -140,8 +143,10 @@ tokio-stream = "0.1.17"
 tokio-util = { version = "0.7.8", features = ["compat"] }
 toml = "0.8.19"
 tracing = "0.1"
+tracing-actix-web = "0.7"
 tracing-appender = "0.2"
 tracing-log = "0.2"
+tracing-opentelemetry = "0.32"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter", "registry"] }
 url = "2.4.1"
 urlencoding = "2.1.3"

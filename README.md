@@ -250,6 +250,17 @@ tail -f ~/.oxen/logs/oxen-server.2026-04-06 | jq 'select(.level == "ERROR")'
 `oxen-server` exposes a Prometheus-compatible metrics endpoint.
 See [Prometheus Metrics](crates/server/README.md#prometheus-metrics) for details.
 
+## OpenTelemetry Tracing
+
+`oxen-server` can export tracing spans to any OTLP-compatible collector (Jaeger, Tempo, etc.).
+Requires building with the `otel` feature flag.
+See [OpenTelemetry Tracing](crates/server/README.md#opentelemetry-tracing) for details.
+
+## FmtSpan Events
+
+Span lifecycle events can be emitted as log lines on stderr for lightweight tracing.
+See [FmtSpan Events](crates/server/README.md#fmtspan-events) for details.
+
 ## Why build Oxen?
 
 Oxen was build by a team of machine learning engineers, who have spent countless hours in their careers managing datasets. We have used many different tools, but none of them were as easy to use and as ergonomic as we would like.

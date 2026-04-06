@@ -336,6 +336,7 @@ pub async fn root_commit_maybe(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, path), fields(commit_id))]
 pub async fn download_dir_hashes_from_commit(
     remote_repo: &RemoteRepository,
     commit_id: &str,
@@ -347,6 +348,7 @@ pub async fn download_dir_hashes_from_commit(
     download_dir_hashes_from_url(url, path).await
 }
 
+#[tracing::instrument(skip(remote_repo, path), fields(base_commit_id, head_commit_id))]
 pub async fn download_base_head_dir_hashes(
     remote_repo: &RemoteRepository,
     base_commit_id: &str,
@@ -438,6 +440,7 @@ pub async fn download_dir_hashes_from_url(
     }
 }
 
+#[tracing::instrument(skip(remote_repo, path), fields(commit_id))]
 pub async fn download_dir_hashes_db_to_path(
     remote_repo: &RemoteRepository,
     commit_id: &str,

@@ -35,8 +35,5 @@ tempfile = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-tracing-appender = { workspace = true }
-tracing-log = { workspace = true }
-tracing-subscriber = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }

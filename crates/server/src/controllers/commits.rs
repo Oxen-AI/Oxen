@@ -439,6 +439,7 @@ pub async fn parents(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHt
 }
 
 /// Download commits DB
+#[tracing::instrument(skip_all)]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits_db",
@@ -488,6 +489,7 @@ fn compress_commits_db(repository: &LocalRepository) -> Result<Vec<u8>, OxenErro
 }
 
 /// Download dir hashes DB
+#[tracing::instrument(skip_all)]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/{base_head}/dir_hashes_db",
