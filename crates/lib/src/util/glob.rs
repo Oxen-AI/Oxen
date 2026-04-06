@@ -417,17 +417,22 @@ pub fn r_collect_removed_paths(
     if dir_path.is_dir() {
         let glob_path = util::fs::path_relative_to_dir(dir_path, &repo_path)?.join("*");
 
-        // Search the merkle tree for all paths in the directory
-        search_merkle_tree(removed_paths, repo, &glob_path)?;
-        let paths = removed_paths.clone();
+        // Search the merkle tree for immediate children of this directory
+        let mut new_paths = HashSet::new();
+        search_merkle_tree(&mut new_paths, repo, &glob_path)?;
 
-        // Recurse into present directories to find removed subdirs and files
-        for path in paths.iter() {
-            if repo_path.join(path).is_dir() {
-                let dir_path = dir_path.join(path);
-                r_collect_removed_paths(repo, &dir_path, removed_paths)?;
+        // Recurse into child directories that still exist on disk to find
+        // removed entries deeper in the tree. Use repo_path.join(path) since
+        // paths returned by search_merkle_tree are full relative paths from
+        // the repo root (e.g., "1/2"), not just the child name.
+        for path in new_paths.iter() {
+            let full_path = repo_path.join(path);
+            if full_path.is_dir() {
+                r_collect_removed_paths(repo, &full_path, removed_paths)?;
             }
         }
+
+        removed_paths.extend(new_paths);
     }
 
     Ok(())

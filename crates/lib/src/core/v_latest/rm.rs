@@ -727,10 +727,16 @@ fn r_process_remove_dir(
     match &node.node {
         // if node is a Directory, stage it for removal
         EMerkleTreeNode::Directory(_) => {
-            // node has the correct relative path to the dir, so no need for updates
+            // Update the dir node name to the full relative path so that
+            // split_into_vnodes and cleanup_rm_dirs can match it against
+            // existing children (which use full relative paths).
+            let mut updated_node = node.clone();
+            if let EMerkleTreeNode::Directory(ref mut dir_node) = updated_node.node {
+                dir_node.set_name(path.to_str().unwrap());
+            }
             let staged_entry = StagedMerkleTreeNode {
                 status: StagedEntryStatus::Removed,
-                node: node.clone(),
+                node: updated_node,
             };
 
             // Write removed node to staged db
