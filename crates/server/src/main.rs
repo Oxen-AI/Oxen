@@ -21,12 +21,15 @@ pub mod services;
 #[cfg(test)]
 pub(crate) mod test;
 
+pub(crate) mod telemetry;
+
 extern crate log;
 extern crate lru;
 
 use actix_web::middleware::{Condition, DefaultHeaders, Logger};
 use actix_web::{App, HttpServer, web};
 use actix_web_httpauth::middleware::HttpAuthentication;
+use metrics_exporter_prometheus::BuildError;
 use thiserror::Error;
 
 use middleware::RequestIdMiddleware;
@@ -65,6 +68,7 @@ use liboxen::view::{
     ParseResourceResponse, RepositoryResponse, RepositoryView, RootCommitResponse, StatusMessage,
 };
 
+use tracing::level_filters::LevelFilter;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 use utoipa_swagger_ui::SwaggerUi;
@@ -72,7 +76,11 @@ use utoipa_swagger_ui::SwaggerUi;
 use clap::{Parser, Subcommand};
 
 use std::env;
+use std::num::ParseIntError;
 use std::path::{Path, PathBuf};
+
+use crate::telemetry::MetricsGuard;
+use crate::telemetry::init_metrics_prometheus;
 
 const VERSION: &str = liboxen::constants::OXEN_VERSION;
 
@@ -348,16 +356,32 @@ enum ServerCommand {
     },
 }
 
+#[actix_web::main]
+async fn main() {
+    // fail-fast if we cannot initialize logging
+    let _tracing_guard = util::telemetry::init_tracing("oxen-server", LevelFilter::WARN)
+        .expect("Failed to initialize tracing & logging for oxen-server.");
+    // We want to show the error's display(), not the debug() representation.
+    // actix_web::main() will show the error's debug() representation.
+    if let Err(e) = server().await {
+        log::error!("{e}");
+    }
+}
+
 #[derive(Debug, Error)]
 enum ServerError {
     #[error("{0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]
     Oxen(#[from] OxenError),
+    #[error("Invalid OXEN_METRICS_PORT value: {0} (parsing error: {1})")]
+    InvalidPort(String, ParseIntError),
+    #[error("Failed to start Prometheus metrics server: {0}")]
+    Metrics(#[from] BuildError),
 }
 
-#[actix_web::main]
-async fn main() -> Result<(), ServerError> {
+/// The actual main oxen-server loop.
+async fn server() -> Result<(), ServerError> {
     dotenv().ok();
 
     match from_filename(Path::new("src").join("server").join("env.local")) {
@@ -365,7 +389,6 @@ async fn main() -> Result<(), ServerError> {
         Err(e) => log::debug!("Failed to load .env file: {e}"),
     }
 
-    util::logging::init_logging();
     util::perf::init_perf_logging();
 
     let sync_dir = match env::var("SYNC_DIR") {
@@ -375,6 +398,9 @@ async fn main() -> Result<(), ServerError> {
 
     match ServerCli::parse().command {
         ServerCommand::Start { ip, port, auth } => {
+            let _metrics_guard = init_metrics()?;
+
+            // KEEP as println! -- do not log!
             println!("🐂 v{VERSION}");
             println!("{SUPPORT}");
 
@@ -399,11 +425,48 @@ async fn main() -> Result<(), ServerError> {
         } => {
             log::debug!("Saving to sync dir: {sync_dir:?}");
             let token = add_user(&email, &name, output.as_path(), &sync_dir)?;
+            // KEEP as println! -- do not log!
             println!(
                 "User access token created:\n\n{token}\n\nTo give user access have them run the command `oxen config --auth <HOST> <TOKEN>`"
             );
             Ok(())
         }
+    }
+}
+
+/// Initialize the Prometheus metrics server on `OXEN_METRICS_PORT`, defaulting to port 9090.
+/// Returns `Ok(None)` if `OXEN_METRICS_PORT='off'`.
+///
+/// # Errors
+///   - `OXEN_METRICS_PORT` is set to a value that cannot be parsed as a `u16`
+///   - The port is already bound by another process
+///   - The Prometheus exporter fails to start
+///
+/// Callers should propagate or handle the returned error.
+fn init_metrics() -> Result<Option<MetricsGuard>, ServerError> {
+    let enable_metrics = match env::var("OXEN_METRICS_PORT").as_deref() {
+        Ok(val) if val.to_lowercase() == "off" => {
+            log::info!("Prometheus metrics disabled.");
+            None
+        }
+        Ok(val) => {
+            let port: u16 = val
+                .parse()
+                .map_err(|e| ServerError::InvalidPort(val.to_string(), e))?;
+            Some(port)
+        }
+        Err(_) => Some(9090),
+    };
+
+    if let Some(port) = enable_metrics {
+        let guard = init_metrics_prometheus(port)?;
+        log::info!(
+            "Prometheus metrics at http://0.0.0.0:{port}/metrics \
+             (set OXEN_METRICS_PORT to change, OXEN_METRICS_PORT='off' to disable)"
+        );
+        Ok(Some(guard))
+    } else {
+        Ok(None)
     }
 }
 
@@ -438,8 +501,12 @@ async fn start(
 
     let data = app_data::OxenAppData::new(PathBuf::from(sync_dir));
 
-    println!("Running on {host}:{port}");
-    println!("Syncing to directory: {}", sync_dir.display());
+    {
+        let running = format!("Running on {host}:{port}");
+        eprintln!("{running}");
+        log::info!("{running}");
+    }
+    log::info!("Syncing to directory: {}", sync_dir.display());
 
     HttpServer::new(move || {
         App::new()

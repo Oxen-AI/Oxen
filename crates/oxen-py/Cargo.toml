@@ -15,7 +15,6 @@ name = "oxen_py" # The native extension module. Users still `import oxen` via th
 crate-type = ["cdylib"] # PyO3 needs this crate to be a cdylib so it can link against it.
 
 [dependencies]
-env_logger = { workspace = true }
 liboxen = { path = "../lib" }
 log = { workspace = true }
 pyo3 = { workspace = true }
@@ -23,6 +22,8 @@ pyo3-async-runtimes = { workspace = true }
 pyo3-polars = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = { workspace = true }
 uuid = { workspace = true }
 
 [build-dependencies]

@@ -203,6 +203,53 @@ pre-commit install
 ```
 
 
+## Logging
+
+Oxen uses structured logging via the [`tracing`](https://docs.rs/tracing) crate. All log output goes to **stderr** by default in a human-readable format. This applies to the CLI (`oxen`), the server (`oxen-server`), and any code using `liboxen` (including the Python bindings).
+
+### Controlling Log Level
+
+Set the `RUST_LOG` environment variable to control verbosity.
+
+```bash
+# Show debug logs from the oxen library
+RUST_LOG=debug oxen push origin main
+
+# Show only warnings and errors
+RUST_LOG=warn oxen-server start
+
+# Fine-grained: debug for liboxen, warn for everything else
+RUST_LOG=warn,liboxen=debug oxen-server start
+```
+
+### File Logging with `OXEN_LOG_DIR`
+
+Set `OXEN_LOG_DIR` to enable file-based logging in addition to stderr. This env var is a directory where rotating log files are written. Log files are written as **newline-delimited JSON** (one JSON object per line), rotated daily. Each line includes the timestamp, level, target, thread ID, source file, and line number.
+
+```bash
+OXEN_LOG_DIR=./logs/ RUST_LOG=warn oxen clone https://hub.oxen.ai/ox/CatDogBBox
+OXEN_LOG_DIR=/var/log/oxen oxen-server start
+```
+
+Log files are named `{app_name}.{date}` (e.g. `oxen-server.2026-04-06`) inside the configured directory.
+
+To ingest these logs with standard tooling:
+
+- **Promtail / Grafana Loki** -- point a `file_sd` or static target at the log directory; Loki handles newline-delimited JSON natively.
+- **Filebeat / Elasticsearch** -- configure a `filebeat.inputs` entry with `type: filestream` and `parsers: [{ ndjson: {} }]`.
+- **Vector** -- use a `file` source with `decoding.codec = "json"`.
+- **`jq`** -- for ad-hoc inspection:
+
+```bash
+# Stream logs, filter for errors
+tail -f ~/.oxen/logs/oxen-server.2026-04-06 | jq 'select(.level == "ERROR")'
+```
+
+## Prometheus Metrics
+
+`oxen-server` exposes a Prometheus-compatible metrics endpoint.
+See [Prometheus Metrics](crates/server/README.md#prometheus-metrics) for details.
+
 ## Why build Oxen?
 
 Oxen was build by a team of machine learning engineers, who have spent countless hours in their careers managing datasets. We have used many different tools, but none of them were as easy to use and as ergonomic as we would like.

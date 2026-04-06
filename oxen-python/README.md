@@ -2,12 +2,12 @@
 
 The Oxen python interface makes it easy to integrate Oxen datasets directly into machine learning dataloaders or other data pipelines.
 
+
 ## Repositories
 
 There are two types of repositories one can interact with, a `Repo` and a `RemoteRepo`.
 
-
-## Local Repo
+### Local Repo
 
 To fully clone all the data to your local machine, you can use the `Repo` class.
 
@@ -36,7 +36,7 @@ repo.clone("https://hub.oxen.ai/ox/CatDogBBox")
 repo.checkout()
 ```
 
-## Remote Repo
+### Remote Repo
 
 If you don't want to download the data locally, you can use the `RemoteRepo` class to interact with a remote repository on OxenHub.
 
@@ -65,14 +65,7 @@ Note that no "push" command is required here, since the above code creates a com
 
 ## Build 🔨
 
-### Pre-Requistes
-
-If you're developing the Python interface, you'll need to:
-1. [Install the Rust toolchain](../README.md#build-)
-2. [Install `uv`](https://docs.astral.sh/uv/getting-started/installation/)
-3. Install the [pre-commit hooks](../README.md#pre-commit-hooks) to ensure your code is consistent
-
-### Development Cycle
+**See the [prerequisites](../../README.md#prerequisites) section of the main readme before developing.**
 
 To get and build dependencies, as well as the `oxen-python` code, run:
 ```bash
@@ -83,6 +76,7 @@ To build the PyO3 oxen wrappers only, use [`maturin`](https://github.com/PyO3/ma
 ```bash
 uv run --no-sync maturin develop
 ```
+
 
 ## Test
 
@@ -104,3 +98,12 @@ Format and lint code with:
 uvx ruff check .
 uvx ruff format .
 ```
+
+
+## Logging
+
+Oxen uses structured logging.
+It outputs to STDERR by default but can be configured with rotating log files.
+See [Logging](../../README.md#logging) for details.
+
+By default, the `oxen-python` does not perform any logging. Set `RUST_LOG` to change.

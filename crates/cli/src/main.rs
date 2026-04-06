@@ -7,6 +7,7 @@ use crate::cmd::WorkspaceCmd;
 use clap::Command;
 use liboxen::model::LocalRepository;
 use liboxen::util;
+use tracing::level_filters::LevelFilter;
 // use env_logger::Env;
 
 pub mod cli_error;
@@ -44,7 +45,14 @@ fn main() -> ExitCode {
 }
 
 async fn async_main() -> ExitCode {
-    util::logging::init_logging();
+    // NOTE: if we fail to initialze logging, we do not crash here
+    let _tracing_guard = match util::telemetry::init_tracing("oxen", LevelFilter::OFF) {
+        Ok(guard) => guard,
+        Err(e) => {
+            eprintln!("[ERROR] Failed to initialize tracing for oxen:\n{e}");
+            None
+        }
+    };
 
     let cmds: Vec<Box<dyn cmd::RunCmd>> = vec![
         Box::new(cmd::AddCmd),

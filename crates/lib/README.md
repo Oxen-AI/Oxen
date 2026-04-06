@@ -179,9 +179,18 @@ Then run the server like this
 bacon server
 ```
 
+## Logging
+Oxen uses structured logging.
+It outputs to STDERR by default but can be configured with rotating log files.
+See [Logging](../../README.md#logging) for details.
+
+Only main applications can initialize logging and set log levels.
+
+## Prometheus Metrics
+`oxen-server` exposes a Prometheus-compatible metrics endpoint.
+See [Prometheus Metrics](../server/README.md#prometheus-metrics) for details.
 
 ## Nix Flake
-
 If you have [Nix installed](https://github.com/DeterminateSystems/nix-installer)
 you can use the flake to build and run the server. This will automatically
 install and configure the required build toolchain dependencies for Linux & macOS.

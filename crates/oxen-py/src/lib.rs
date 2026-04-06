@@ -1,5 +1,14 @@
+use std::sync::{LazyLock, Mutex};
+
 use liboxen::config::RuntimeConfig;
 use pyo3::prelude::*;
+use tracing::level_filters::LevelFilter;
+use tracing_appender::non_blocking::WorkerGuard;
+
+/// Process-global owner of the tracing file-logging guard. Stored here so the
+/// tracing subscriber stays alive for the entire Python process instead of
+/// being dropped when `oxen_py()` returns.
+static TRACING_GUARD: LazyLock<Mutex<Option<WorkerGuard>>> = LazyLock::new(|| Mutex::new(None));
 
 pub mod auth;
 pub mod df_utils;
@@ -42,9 +51,22 @@ fn oxen_py(m: Bound<'_, PyModule>) -> PyResult<()> {
     builder.enable_all();
     pyo3_async_runtimes::tokio::init(builder);
 
-    // Initialize env_logger so that RUST_LOG is respected.
-    // We use env_logger instead of pyo3_log to avoid GIL deadlocks.
-    let _ = env_logger::try_init();
+    // Initialize tracing so that RUST_LOG is respected.
+    // We use tracing (via liboxen) instead of pyo3_log to avoid GIL deadlocks.
+    // The guard is stored in TRACING_GUARD so it outlives this function;
+    // dropping it would tear down the tracing subscriber.
+    if let Ok(mut slot) = TRACING_GUARD.lock()
+        && slot.is_none()
+    {
+        match liboxen::util::telemetry::init_tracing("oxen-py", LevelFilter::OFF) {
+            Ok(guard) => {
+                *slot = guard;
+            }
+            Err(e) => {
+                eprintln!("[ERROR] Failed to initialize tracing for oxen-py:\n{e}");
+            }
+        }
+    }
 
     m.add_class::<diff::py_tabular_diff::PyTabularDiff>()?;
     m.add_class::<diff::py_text_diff::PyChangeType>()?;
