@@ -42,7 +42,7 @@ impl RunCmd for SchemasShowCmd {
 
         let Some(path) = args.get_one::<String>("PATH") else {
             return Err(OxenError::basic_str(
-                "Must supply a path of the schema you want to show.",
+                "Must supply a path of the schema you want to show.".to_string(),
             ));
         };
         let verbose = args.get_flag("verbose");

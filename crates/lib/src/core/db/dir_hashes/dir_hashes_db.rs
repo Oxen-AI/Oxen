@@ -35,7 +35,7 @@ pub fn dir_hash_db_path_from_commit_id(repo: &LocalRepository, commit_id: &str) 
 /// Used in test cleanup to release file handles before directory deletion.
 pub fn remove_from_cache_with_children(db_path_prefix: &Path) -> Result<(), OxenError> {
     let mut instances = DB_INSTANCES.write().map_err(|e| {
-        OxenError::basic_str(&format!("Could not write LRU for dir hash db cache: {e:?}"))
+        OxenError::basic_str(format!("Could not write LRU for dir hash db cache: {e:?}"))
     })?;
 
     let dbs_to_remove = instances
@@ -67,7 +67,7 @@ where
             let cache_r = match DB_INSTANCES.read() {
                 Ok(cache_r) => cache_r,
                 Err(e) => {
-                    return Err(OxenError::basic_str(&format!(
+                    return Err(OxenError::basic_str(format!(
                         "Could not open LRU for dir hash db cache: {e:?}"
                     )));
                 }
@@ -83,7 +83,7 @@ where
         let mut cache_w = match DB_INSTANCES.write() {
             Ok(cache_w) => cache_w,
             Err(e) => {
-                return Err(OxenError::basic_str(&format!(
+                return Err(OxenError::basic_str(format!(
                     "Could not open LRU for dir hash db cache: {e:?}"
                 )));
             }
@@ -95,7 +95,7 @@ where
             // Cache miss: open a new connection to the db
 
             if !dir_hashes_db_dir.exists() {
-                return Err(OxenError::basic_str(&format!(
+                return Err(OxenError::basic_str(format!(
                     "Could not find dir_hashes db for commit {commit_id}"
                 )));
             }

@@ -69,7 +69,7 @@ pub fn parse_glob_paths(
                 // If staged flag set, only match against the staged db
                 let Some(repo) = repo else {
                     return Err(OxenError::basic_str(
-                        "Cannot parse staged_db for paths without a repo",
+                        "Cannot parse staged_db for paths without a repo".to_string(),
                     ));
                 };
 
@@ -82,7 +82,8 @@ pub fn parse_glob_paths(
                     search_merkle_tree(&mut expanded_paths, repo, &glob_path)?;
                 } else {
                     return Err(OxenError::basic_str(
-                        "Error: Cannot parse paths from merkle tree without local repository",
+                        "Error: Cannot parse paths from merkle tree without local repository"
+                            .to_string(),
                     ));
                 }
             }
@@ -132,7 +133,7 @@ fn search_staged_db(path: &Path, repo: &LocalRepository) -> Result<HashSet<PathB
     let mut paths = HashSet::new();
     let path_str = path
         .to_str()
-        .ok_or_else(|| OxenError::basic_str("Invalid UTF-8 in search path"))?;
+        .ok_or_else(|| OxenError::basic_str("Invalid UTF-8 in search path".to_string()))?;
     let glob_pattern = Pattern::new(path_str)?;
     let staged_data = repositories::status::status(repo)?;
 
@@ -140,7 +141,7 @@ fn search_staged_db(path: &Path, repo: &LocalRepository) -> Result<HashSet<PathB
         let entry_path_str = entry
             .0
             .to_str()
-            .ok_or_else(|| OxenError::basic_str("Invalid UTF-8 in entry path"))?;
+            .ok_or_else(|| OxenError::basic_str("Invalid UTF-8 in entry path".to_string()))?;
         if glob_pattern.matches(entry_path_str) {
             let entry_path = entry.0.to_owned();
             paths.insert(entry_path);
@@ -271,7 +272,7 @@ fn expand_glob_pattern(
                     }
                 }
                 _ => {
-                    return Err(OxenError::basic_str("Unexpected node type"));
+                    return Err(OxenError::basic_str("Unexpected node type".to_string()));
                 }
             }
         }
@@ -289,7 +290,7 @@ fn search_working_dir(
     let full_path = repo_path.join(glob_path);
     let path_str = full_path
         .to_str()
-        .ok_or_else(|| OxenError::basic_str("Invalid UTF-8 in search path"))?;
+        .ok_or_else(|| OxenError::basic_str("Invalid UTF-8 in search path".to_string()))?;
 
     if let Some(oxenignore) = oxenignore {
         let oxenignore = Some(oxenignore);

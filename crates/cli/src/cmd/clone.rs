@@ -114,14 +114,14 @@ impl RunCmd for CloneCmd {
                     || path.components().any(|c| matches!(c, Component::ParentDir))
                 {
                     return Err(OxenError::basic_str(
-                        "Invalid destination: absolute paths or '..' not allowed",
+                        "Invalid destination: absolute paths or '..' not allowed".to_string(),
                     ));
                 }
 
                 let joined = current_dir.join(path);
                 if !joined.starts_with(&current_dir) {
                     return Err(OxenError::basic_str(
-                        "Invalid destination: path escapes base directory",
+                        "Invalid destination: path escapes base directory".to_string(),
                     ));
                 }
                 joined
@@ -147,7 +147,7 @@ impl RunCmd for CloneCmd {
                 StorageOpts::default()
             }
             unsupported_backend => {
-                return Err(OxenError::basic_str(&format!(
+                return Err(OxenError::basic_str(format!(
                     "Unsupported async storage type: {unsupported_backend}"
                 )));
             }

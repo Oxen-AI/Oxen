@@ -96,13 +96,13 @@ where
             {
                 std::fs::create_dir_all(parent).map_err(|e| {
                     log::error!("Failed to create df db directory: {e}");
-                    OxenError::basic_str(&format!("Failed to create df db directory: {e}"))
+                    OxenError::basic_str(format!("Failed to create df db directory: {e}"))
                 })?;
             }
 
             let conn = get_connection(&db_path).map_err(|e| {
                 log::error!("Failed to open df db: {e}");
-                OxenError::basic_str(&format!("Failed to open df db: {e}"))
+                OxenError::basic_str(format!("Failed to open df db: {e}"))
             })?;
 
             // Wrap the Connection in a Mutex and store it in the cache
@@ -265,7 +265,7 @@ pub fn count(conn: &duckdb::Connection, table_name: &str) -> Result<usize, OxenE
         let size: usize = row.get(0)?;
         Ok(size)
     } else {
-        Err(OxenError::basic_str(&format!(
+        Err(OxenError::basic_str(format!(
             "No rows in table {table_name}"
         )))
     }
@@ -284,7 +284,7 @@ pub fn count_where(
         let size: usize = row.get(0)?;
         Ok(size)
     } else {
-        Err(OxenError::basic_str(&format!(
+        Err(OxenError::basic_str(format!(
             "No rows in table {table_name}"
         )))
     }
@@ -315,7 +315,7 @@ pub fn export(
     // Get the file extension from the tmp_path
     if !is_valid_export_extension(tmp_path) {
         return Err(OxenError::basic_str(
-            "Invalid file type: expected .csv, .tsv, .parquet, .jsonl, .json, .ndjson",
+            "Invalid file type: expected .csv, .tsv, .parquet, .jsonl, .json, .ndjson".to_string(),
         ));
     }
     let export_sql = wrap_sql_for_export(sql, tmp_path);
@@ -474,7 +474,7 @@ pub fn modify_row_with_polars_df(
 ) -> Result<DataFrame, OxenError> {
     if df.height() != 1 {
         return Err(OxenError::basic_str(
-            "df must have exactly one row to be used for modification",
+            "df must have exactly one row to be used for modification".to_string(),
         ));
     }
 
@@ -612,7 +612,8 @@ pub fn index_file(path: &Path, conn: &duckdb::Connection) -> Result<(), OxenErro
         }
         _ => {
             return Err(OxenError::basic_str(
-                "Invalid file type: expected .csv, .tsv, .parquet, .jsonl, .json, .ndjson",
+                "Invalid file type: expected .csv, .tsv, .parquet, .jsonl, .json, .ndjson"
+                    .to_string(),
             ));
         }
     }
@@ -688,7 +689,8 @@ pub fn index_file_with_id(
         }
         _ => {
             return Err(OxenError::basic_str(
-                "Invalid file type: expected .csv, .tsv, .parquet, .jsonl, .json, .ndjson",
+                "Invalid file type: expected .csv, .tsv, .parquet, .jsonl, .json, .ndjson"
+                    .to_string(),
             ));
         }
     }
@@ -727,7 +729,7 @@ pub fn from_clause_from_disk_path(path: &Path) -> Result<String, OxenError> {
             Ok(format!("read_json('{str_path}')"))
         }
         _ => Err(OxenError::basic_str(
-            "Invalid file type: expected .csv, .tsv, .parquet, .jsonl, .json, .ndjson",
+            "Invalid file type: expected .csv, .tsv, .parquet, .jsonl, .json, .ndjson".to_string(),
         )),
     }
 }

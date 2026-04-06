@@ -298,7 +298,9 @@ pub fn create_version_store(
     match storage_opts.type_.as_str() {
         "local" => {
             let Some(ref local_storage_opts) = storage_opts.local_storage_opts else {
-                return Err(OxenError::basic_str("local storage opts not found"));
+                return Err(OxenError::basic_str(
+                    "local storage opts not found".to_string(),
+                ));
             };
 
             let versions_dir = if let Some(path) = &local_storage_opts.path {
@@ -320,7 +322,9 @@ pub fn create_version_store(
         }
         "s3" => {
             let Some(ref s3_opts) = storage_opts.s3_opts else {
-                return Err(OxenError::basic_str("s3 storage opts not found"));
+                return Err(OxenError::basic_str(
+                    "s3 storage opts not found".to_string(),
+                ));
             };
 
             let bucket = s3_opts.bucket.clone();
@@ -329,7 +333,7 @@ pub fn create_version_store(
 
             Ok(Arc::new(store))
         }
-        _ => Err(OxenError::basic_str(&format!(
+        _ => Err(OxenError::basic_str(format!(
             "Unsupported async storage type: {}",
             storage_opts.type_
         ))),

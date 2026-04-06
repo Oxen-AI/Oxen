@@ -269,17 +269,17 @@ fn is_cgn_or_reserved_v4(octets: [u8; 4]) -> bool {
 async fn validate_url_target(url: &Url) -> Result<(), OxenError> {
     let host = url
         .host_str()
-        .ok_or_else(|| OxenError::file_import_error("URL has no host"))?;
+        .ok_or_else(|| OxenError::file_import_error("URL has no host".to_string()))?;
     let port = url.port_or_known_default().unwrap_or(443);
     let addr = format!("{host}:{port}");
 
     let resolved = tokio::net::lookup_host(&addr).await.map_err(|e| {
-        OxenError::file_import_error(&format!("DNS resolution failed for {host}: {e}"))
+        OxenError::file_import_error(format!("DNS resolution failed for {host}: {e}"))
     })?;
 
     for socket_addr in resolved {
         if is_private_ip(&socket_addr.ip()) {
-            return Err(OxenError::file_import_error(&format!(
+            return Err(OxenError::file_import_error(format!(
                 "URL resolves to a private/reserved IP address: {}",
                 socket_addr.ip()
             )));
@@ -336,20 +336,20 @@ pub async fn import(
     filename: Option<String>,
     workspace: &Workspace,
 ) -> Result<(), OxenError> {
-    let parsed_url = Url::parse(url)
-        .map_err(|_| OxenError::file_import_error(&format!("Invalid URL: {url}")))?;
+    let parsed_url =
+        Url::parse(url).map_err(|_| OxenError::file_import_error(format!("Invalid URL: {url}")))?;
 
     let scheme = parsed_url.scheme();
     if scheme != "http" && scheme != "https" {
         return Err(OxenError::file_import_error(
-            "Only http and https URLs are allowed",
+            "Only http and https URLs are allowed".to_string(),
         ));
     }
 
     validate_url_target(&parsed_url).await?;
 
     let auth_header_value = HeaderValue::from_str(auth)
-        .map_err(|_e| OxenError::file_import_error(&format!("Invalid header auth value {auth}")))?;
+        .map_err(|_e| OxenError::file_import_error(format!("Invalid header auth value {auth}")))?;
 
     fetch_file(
         &parsed_url,
@@ -431,7 +431,7 @@ async fn fetch_file(
     let client = Client::builder()
         .redirect(redirect::Policy::none())
         .build()
-        .map_err(|e| OxenError::file_import_error(&format!("Failed to build HTTP client: {e}")))?;
+        .map_err(|e| OxenError::file_import_error(format!("Failed to build HTTP client: {e}")))?;
 
     let mut current_url = url.clone();
     let mut response = None;
@@ -442,33 +442,38 @@ async fn fetch_file(
             req = req.header("Authorization", auth_header_value.clone());
         }
 
-        let resp = req.send().await.map_err(|e| {
-            OxenError::file_import_error(&format!("Fetch file request failed: {e}"))
-        })?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| OxenError::file_import_error(format!("Fetch file request failed: {e}")))?;
 
         let status = resp.status();
         if status.is_redirection() {
             if hop == MAX_REDIRECTS {
-                return Err(OxenError::file_import_error("Too many redirects (max 10)"));
+                return Err(OxenError::file_import_error(
+                    "Too many redirects (max 10)".to_string(),
+                ));
             }
             let location = resp
                 .headers()
                 .get("location")
                 .and_then(|v| v.to_str().ok())
                 .ok_or_else(|| {
-                    OxenError::file_import_error("Redirect response missing Location header")
+                    OxenError::file_import_error(
+                        "Redirect response missing Location header".to_string(),
+                    )
                 })?;
 
             // Resolve relative redirects
             let next_url = current_url
                 .join(location)
-                .map_err(|e| OxenError::file_import_error(&format!("Invalid redirect URL: {e}")))?;
+                .map_err(|e| OxenError::file_import_error(format!("Invalid redirect URL: {e}")))?;
 
             // Validate redirect target
             let scheme = next_url.scheme();
             if scheme != "http" && scheme != "https" {
                 return Err(OxenError::file_import_error(
-                    "Redirect to non-HTTP(S) URL is not allowed",
+                    "Redirect to non-HTTP(S) URL is not allowed".to_string(),
                 ));
             }
             validate_url_target(&next_url).await?;
@@ -478,7 +483,7 @@ async fn fetch_file(
         }
 
         if !status.is_success() {
-            return Err(OxenError::file_import_error(&format!(
+            return Err(OxenError::file_import_error(format!(
                 "HTTP request failed with status {status}"
             )));
         }
@@ -487,8 +492,9 @@ async fn fetch_file(
         break;
     }
 
-    let response = response
-        .ok_or_else(|| OxenError::file_import_error("Failed to get a successful response"))?;
+    let response = response.ok_or_else(|| {
+        OxenError::file_import_error("Failed to get a successful response".to_string())
+    })?;
 
     let resp_headers = response.headers();
 
@@ -501,7 +507,7 @@ async fn fetch_file(
     if let Some(content_length) = content_length
         && content_length > MAX_CONTENT_LENGTH
     {
-        return Err(OxenError::file_import_error(&format!(
+        return Err(OxenError::file_import_error(format!(
             "Content length {content_length} exceeds maximum allowed size of 1GB"
         )));
     }
@@ -519,7 +525,7 @@ async fn fetch_file(
 
     let filename = sanitize_filename(&raw_filename);
     if filename.is_empty() {
-        return Err(OxenError::file_import_error(&format!(
+        return Err(OxenError::file_import_error(format!(
             "Could not determine a valid filename for {url}"
         )));
     }
@@ -538,7 +544,8 @@ async fn fetch_file(
     let mut bytes_downloaded: u64 = 0;
 
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|_| OxenError::file_import_error("Error reading file stream"))?;
+        let chunk = chunk
+            .map_err(|_| OxenError::file_import_error("Error reading file stream".to_string()))?;
         let processed_chunk = chunk.to_vec();
         buffer.extend_from_slice(&processed_chunk);
         bytes_downloaded += processed_chunk.len() as u64;
@@ -546,14 +553,14 @@ async fn fetch_file(
         if bytes_downloaded > MAX_CONTENT_LENGTH {
             delete_file(workspace, &filepath)?;
             return Err(OxenError::file_import_error(
-                "Content length exceeds maximum allowed size of 1GB",
+                "Content length exceeds maximum allowed size of 1GB".to_string(),
             ));
         }
         if buffer.len() > BUFFER_SIZE_THRESHOLD {
             save_path = save_stream(workspace, &filepath, buffer.split().freeze().to_vec())
                 .await
                 .map_err(|e| {
-                    OxenError::file_import_error(&format!(
+                    OxenError::file_import_error(format!(
                         "Error occurred when saving file stream: {e}"
                     ))
                 })?;
@@ -564,9 +571,7 @@ async fn fetch_file(
         save_path = save_stream(workspace, &filepath, buffer.freeze().to_vec())
             .await
             .map_err(|e| {
-                OxenError::file_import_error(&format!(
-                    "Error occurred when saving file stream: {e}"
-                ))
+                OxenError::file_import_error(format!("Error occurred when saving file stream: {e}"))
             })?;
     }
     log::debug!("workspace::files::import_file save_path is {save_path:?}");
@@ -585,7 +590,7 @@ async fn fetch_file(
 
         if bytes_written != content_length {
             return Err(OxenError::file_import_error(
-                "Content length does not match. File incomplete.",
+                "Content length does not match. File incomplete.".to_string(),
             ));
         }
     }
@@ -616,7 +621,7 @@ fn delete_file(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
 
     if full_path.exists() {
         std::fs::remove_file(&full_path).map_err(|e| {
-            OxenError::file_import_error(&format!(
+            OxenError::file_import_error(format!(
                 "Failed to remove file {}: {}",
                 full_path.display(),
                 e
@@ -662,13 +667,13 @@ pub async fn save_stream(
             .open(full_dir_cpy)
     })
     .await
-    .map_err(|e| OxenError::basic_str(&format!("spawn_blocking join error: {e}")))??;
+    .map_err(|e| OxenError::basic_str(format!("spawn_blocking join error: {e}")))??;
 
     log::debug!("liboxen::workspace::files::save_stream is writing to file: {file:?}");
 
     tokio::task::spawn_blocking(move || file.write_all(&chunk).map(|_| file))
         .await
-        .map_err(|e| OxenError::basic_str(&format!("spawn_blocking join error: {e}")))??;
+        .map_err(|e| OxenError::basic_str(format!("spawn_blocking join error: {e}")))??;
 
     Ok(full_dir)
 }
@@ -678,13 +683,13 @@ pub fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenError>
     let mut files: Vec<PathBuf> = vec![];
     let file = File::open(zip_filepath)?;
     let mut archive = ZipArchive::new(file)
-        .map_err(|e| OxenError::basic_str(&format!("Failed to access zip file: {e}")))?;
+        .map_err(|e| OxenError::basic_str(format!("Failed to access zip file: {e}")))?;
 
     // Calculate total uncompressed size
     let mut total_size: u64 = 0;
     for i in 0..archive.len() {
         let zip_file = archive.by_index(i).map_err(|e| {
-            OxenError::basic_str(&format!("Failed to access zip file at index {i}: {e}"))
+            OxenError::basic_str(format!("Failed to access zip file at index {i}: {e}"))
         })?;
 
         let uncompressed_size = zip_file.size();
@@ -694,14 +699,15 @@ pub fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenError>
         if compressed_size > 0 {
             let compression_ratio = uncompressed_size / compressed_size;
             if compression_ratio > MAX_COMPRESSION_RATIO {
-                return Err(OxenError::basic_str(&format!(
+                return Err(OxenError::basic_str(format!(
                     "Suspicious zip compression ratio: {compression_ratio} detected"
                 )));
             }
         } else if uncompressed_size > 0 {
             // If compressed size is 0 but uncompressed isn't, that's suspicious
             return Err(OxenError::basic_str(
-                "Suspicious zip file: compressed size is 0 but uncompressed size is not",
+                "Suspicious zip file: compressed size is 0 but uncompressed size is not"
+                    .to_string(),
             ));
         }
         // If both are 0, it's likely a directory entry, which is fine
@@ -711,7 +717,7 @@ pub fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenError>
         // Check total size limit
         if total_size > MAX_DECOMPRESSED_SIZE {
             return Err(OxenError::file_import_error(
-                "Decompressed size exceeds size limit of 1GB",
+                "Decompressed size exceeds size limit of 1GB".to_string(),
             ));
         }
     }
@@ -727,7 +733,7 @@ pub fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenError>
     // iterate thru zip archive and save the decompressed file
     for i in 0..archive.len() {
         let mut zip_file = archive.by_index(i).map_err(|e| {
-            OxenError::basic_str(&format!("Failed to access zip file at index {i}: {e}"))
+            OxenError::basic_str(format!("Failed to access zip file at index {i}: {e}"))
         })?;
 
         let mut zipfile_name = zip_file.mangled_name();
@@ -749,7 +755,7 @@ pub fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenError>
 
         // Verify the final path is within the parent directory
         if !outpath.starts_with(&parent) {
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "Attempted path traversal detected: {outpath:?}"
             )));
         }
@@ -795,7 +801,7 @@ fn sanitize_path(path: &PathBuf) -> Result<PathBuf, OxenError> {
             Component::Normal(c) => components.push(c),
             Component::CurDir => {} // Skip current directory components (.)
             Component::ParentDir | Component::Prefix(_) | Component::RootDir => {
-                return Err(OxenError::basic_str(&format!(
+                return Err(OxenError::basic_str(format!(
                     "Invalid path component in zip file: {path:?}"
                 )));
             }
@@ -930,7 +936,9 @@ fn p_modify_file(
             &seen_dirs,
         )
     } else {
-        Err(OxenError::basic_str("file not found in head commit"))
+        Err(OxenError::basic_str(
+            "file not found in head commit".to_string(),
+        ))
     }
 }
 
@@ -954,7 +962,7 @@ fn has_dir_node(dir_node: &Option<MerkleTreeNode>, path: &Path) -> Result<bool, 
 /// This stages the old path as "Removed" and the new path as "Added".
 pub fn mv(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), OxenError> {
     if path == new_path {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Source and destination are the same: {path:?}"
         )));
     }
@@ -970,7 +978,7 @@ pub fn mv(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), Oxe
     } else {
         // File not staged, get it from the base repo
         repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
-            .ok_or_else(|| OxenError::path_does_not_exist(path))?
+            .ok_or_else(|| OxenError::path_does_not_exist(path.to_path_buf()))?
     };
 
     // Create the new file node with updated name (full path for the new location)
@@ -992,7 +1000,7 @@ pub fn mv(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), Oxe
 
     let staged_db_manager = get_staged_db_manager(workspace_repo)?;
     if staged_db_manager.read_from_staged_db(new_path)?.is_some() {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Destination already staged: {new_path:?}"
         )));
     }

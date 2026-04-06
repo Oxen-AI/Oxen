@@ -88,10 +88,10 @@ pub fn get_queryable_data_frame_workspace(
 ) -> Result<Workspace, OxenError> {
     log::debug!("get_queryable_data_frame_workspace path: {path:?}");
     let file_node = repositories::tree::get_file_by_path(repo, commit, path)?
-        .ok_or(OxenError::path_does_not_exist(path))?;
+        .ok_or(OxenError::path_does_not_exist(path.to_path_buf()))?;
     if *file_node.data_type() != EntryDataType::Tabular {
         return Err(OxenError::basic_str(
-            "File format not supported, must be tabular.",
+            "File format not supported, must be tabular.".to_string(),
         ));
     }
     get_queryable_data_frame_workspace_from_file_node(repo, &commit.id.parse()?, path)
@@ -101,10 +101,10 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     // Is tabular just looks at the file extensions
     let file_node =
         repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
-            .ok_or(OxenError::path_does_not_exist(path))?;
+            .ok_or(OxenError::path_does_not_exist(path.to_path_buf()))?;
     if *file_node.data_type() != EntryDataType::Tabular {
         return Err(OxenError::basic_str(
-            "File format not supported, must be tabular.",
+            "File format not supported, must be tabular.".to_string(),
         ));
     }
 
@@ -118,7 +118,7 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     let Ok(Some(commit_merkle_tree)) =
         repositories::tree::get_node_by_path_with_children(repo, commit, path)
     else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Merkle tree for commit {commit} not found"
         )));
     };
@@ -132,7 +132,7 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
 
     let Some(parent) = db_path.parent() else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Failed to get parent directory for {db_path:?}"
         )));
     };
@@ -150,7 +150,9 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     let extension = match &commit_merkle_tree.node {
         EMerkleTreeNode::File(file_node) => file_node.extension(),
         _ => {
-            return Err(OxenError::basic_str("File node is not a file node"));
+            return Err(OxenError::basic_str(
+                "File node is not a file node".to_string(),
+            ));
         }
     };
 
@@ -239,7 +241,7 @@ pub async fn rename(
         log::debug!("rename: staged_entry after add: {staged_entry:?}");
     }
 
-    let mut new_staged_entry = staged_entry.ok_or(OxenError::basic_str(&format!(
+    let mut new_staged_entry = staged_entry.ok_or(OxenError::basic_str(format!(
         "rename: staged entry not found: {path:?}"
     )))?;
 

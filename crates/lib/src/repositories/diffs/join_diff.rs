@@ -45,7 +45,7 @@ pub fn diff(
 ) -> Result<TabularDiff, OxenError> {
     if !targets.is_empty() && keys.is_empty() {
         let targets = targets.iter().map(|k| k.as_ref()).collect::<Vec<&str>>();
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Must specify at least one key column if specifying target columns. Targets: {targets:?}"
         )));
     }

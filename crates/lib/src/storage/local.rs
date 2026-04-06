@@ -310,7 +310,9 @@ impl VersionStore for LocalVersionStore {
 
         let read_len = std::cmp::min(size, file_len - offset);
         if read_len > usize::MAX as u64 {
-            return Err(OxenError::basic_str("requested chunk too large"));
+            return Err(OxenError::basic_str(
+                "requested chunk too large".to_string(),
+            ));
         }
 
         use tokio::io::{AsyncSeekExt, SeekFrom};

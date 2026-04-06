@@ -14,7 +14,7 @@ pub async fn commit(
         &local_repo.workspace_name.clone().unwrap()
     } else {
         return Err(OxenError::basic_str(
-            "Error: Cannot run remote mode commands outside remote mode repo",
+            "Error: Cannot run remote mode commands outside remote mode repo".to_string(),
         ));
     };
 

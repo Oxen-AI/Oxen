@@ -16,7 +16,7 @@ pub async fn load(
     let dest_path = if dest_path.exists() {
         if dest_path.is_file() {
             return Err(OxenError::basic_str(
-                "Destination path is a file, must be a directory",
+                "Destination path is a file, must be a directory".to_string(),
             ));
         }
         dest_path.to_path_buf()

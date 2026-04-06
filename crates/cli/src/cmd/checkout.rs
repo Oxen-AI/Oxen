@@ -52,7 +52,7 @@ impl RunCmd for CheckoutCmd {
         } else if args.get_flag("ours") {
             let Some(name) = args.get_one::<String>("name") else {
                 return Err(OxenError::basic_str(
-                    "Err: Usage `oxen checkout --ours <name>`",
+                    "Err: Usage `oxen checkout --ours <name>`".to_string(),
                 ));
             };
 
@@ -60,7 +60,7 @@ impl RunCmd for CheckoutCmd {
         } else if args.get_flag("theirs") {
             let Some(name) = args.get_one::<String>("name") else {
                 return Err(OxenError::basic_str(
-                    "Err: Usage `oxen checkout --theirs <name>`",
+                    "Err: Usage `oxen checkout --theirs <name>`".to_string(),
                 ));
             };
 

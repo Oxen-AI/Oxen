@@ -66,14 +66,14 @@ where
             if !refs_dir.exists() {
                 util::fs::create_dir_all(&refs_dir).map_err(|e| {
                     log::error!("Failed to create refs directory: {e}");
-                    OxenError::basic_str(&format!("Failed to create refs directory: {e}"))
+                    OxenError::basic_str(format!("Failed to create refs directory: {e}"))
                 })?;
             }
 
             let opts = db::key_val::opts::default();
             let db = DB::open(&opts, dunce::simplified(&refs_dir)).map_err(|e| {
                 log::error!("Failed to open refs database: {e}");
-                OxenError::basic_str(&format!("Failed to open refs database: {e}"))
+                OxenError::basic_str(format!("Failed to open refs database: {e}"))
             })?;
             let arc_db = Arc::new(db);
             instances.put(refs_dir, arc_db.clone());
@@ -127,7 +127,7 @@ impl RefManager {
             Ok(None) => Ok(None),
             Err(err) => {
                 log::error!("get_commit_id_for_branch error finding commit id for branch {name}");
-                Err(OxenError::basic_str(err.as_ref()))
+                Err(OxenError::basic_str(err.as_ref().to_string()))
             }
         }
     }
@@ -171,12 +171,14 @@ impl RefManager {
                         });
                     }
                     _ => {
-                        return Err(OxenError::basic_str("Could not read utf8 val..."));
+                        return Err(OxenError::basic_str(
+                            "Could not read utf8 val...".to_string(),
+                        ));
                     }
                 },
                 Err(err) => {
                     let err = format!("Error reading refs db\nErr: {err}");
-                    return Err(OxenError::basic_str(&err));
+                    return Err(OxenError::basic_str(err));
                 }
             }
         }
@@ -208,12 +210,14 @@ impl RefManager {
                         }
                     }
                     _ => {
-                        return Err(OxenError::basic_str("Could not read utf8 val..."));
+                        return Err(OxenError::basic_str(
+                            "Could not read utf8 val...".to_string(),
+                        ));
                     }
                 },
                 Err(err) => {
                     let err = format!("Error reading refs db\nErr: {err}");
-                    return Err(OxenError::basic_str(&err));
+                    return Err(OxenError::basic_str(err));
                 }
             }
         }
@@ -229,12 +233,12 @@ impl RefManager {
     pub fn create_branch(&self, name: &str, commit_id: &str) -> Result<Branch, OxenError> {
         if self.is_invalid_branch_name(name) {
             let err = format!("'{name}' is not a valid branch name.");
-            return Err(OxenError::basic_str(&err));
+            return Err(OxenError::basic_str(err));
         }
 
         if self.has_branch(name) {
             let err = format!("Branch already exists: {name}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         } else {
             self.set_branch_commit_id(name, commit_id)?;
             Ok(Branch {
@@ -268,11 +272,11 @@ impl RefManager {
         if !self.has_branch(old_name) {
             Err(OxenError::local_branch_not_found(old_name))
         } else if self.has_branch(new_name) {
-            Err(OxenError::basic_str(&format!(
+            Err(OxenError::basic_str(format!(
                 "Branch already exists: {new_name}"
             )))
         } else if self.is_invalid_branch_name(new_name) {
-            Err(OxenError::basic_str(&format!(
+            Err(OxenError::basic_str(format!(
                 "'{new_name}' is not a valid branch name."
             )))
         } else {
@@ -286,7 +290,7 @@ impl RefManager {
     pub fn delete_branch(&self, name: &str) -> Result<Branch, OxenError> {
         let Some(branch) = self.get_branch_by_name(name)? else {
             let err = format!("Branch does not exist: {name}");
-            return Err(OxenError::basic_str(&err));
+            return Err(OxenError::basic_str(err));
         };
         self.refs_db.delete(name)?;
         Ok(branch)

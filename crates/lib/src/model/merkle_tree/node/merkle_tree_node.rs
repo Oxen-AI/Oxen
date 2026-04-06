@@ -135,7 +135,7 @@ impl MerkleTreeNode {
             EMerkleTreeNode::File(file_node) => Ok(file_node.last_commit_id()),
             EMerkleTreeNode::Directory(dir_node) => Ok(dir_node.last_commit_id()),
             _ => Err(OxenError::basic_str(
-                "MerkleTreeNode::latest_commit_id called on invalid node type",
+                "MerkleTreeNode::latest_commit_id called on invalid node type".to_string(),
             )),
         }
     }
@@ -212,7 +212,7 @@ impl MerkleTreeNode {
         if let EMerkleTreeNode::File(file_node) = &self.node {
             return Ok(PathBuf::from(file_node.name()));
         }
-        Err(OxenError::basic_str(&format!(
+        Err(OxenError::basic_str(format!(
             "MerkleTreeNode::maybe_path called on non-file or non-dir node: {self:?}"
         )))
     }
@@ -507,13 +507,13 @@ impl MerkleTreeNode {
     /// Get all the vnodes for a given directory
     pub fn get_vnodes_for_dir(&self, path: &Path) -> Result<Vec<MerkleTreeNode>, OxenError> {
         let Some(node) = self.get_by_path(path)? else {
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "Merkle tree directory not found: '{path:?}'"
             )));
         };
 
         if MerkleTreeNodeType::Dir != node.node.node_type() {
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "get_vnodes_for_dir Merkle tree node is not a directory: '{path:?}'"
             )));
         }
@@ -698,7 +698,7 @@ impl MerkleTreeNode {
             Ok(commit_node.clone())
         } else {
             Err(OxenError::basic_str(
-                "MerkleTreeNode::commit called on non-commit node",
+                "MerkleTreeNode::commit called on non-commit node".to_string(),
             ))
         }
     }
@@ -708,7 +708,7 @@ impl MerkleTreeNode {
             Ok(vnode.clone())
         } else {
             Err(OxenError::basic_str(
-                "MerkleTreeNode::vnode called on non-vnode node",
+                "MerkleTreeNode::vnode called on non-vnode node".to_string(),
             ))
         }
     }
@@ -718,7 +718,7 @@ impl MerkleTreeNode {
             Ok(dir_node.clone())
         } else {
             Err(OxenError::basic_str(
-                "MerkleTreeNode::dir called on non-dir node",
+                "MerkleTreeNode::dir called on non-dir node".to_string(),
             ))
         }
     }
@@ -728,7 +728,7 @@ impl MerkleTreeNode {
             Ok(file_node.clone())
         } else {
             Err(OxenError::basic_str(
-                "MerkleTreeNode::file called on non-file node",
+                "MerkleTreeNode::file called on non-file node".to_string(),
             ))
         }
     }
@@ -738,7 +738,7 @@ impl MerkleTreeNode {
             Ok(file_chunk_node.clone())
         } else {
             Err(OxenError::basic_str(
-                "MerkleTreeNode::file_chunk called on non-file_chunk node",
+                "MerkleTreeNode::file_chunk called on non-file_chunk node".to_string(),
             ))
         }
     }

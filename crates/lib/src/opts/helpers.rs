@@ -12,7 +12,9 @@ pub async fn remote_commit_id(
         // Fallback to main branch
         let main_branch = api::client::branches::get_by_name(repo, DEFAULT_BRANCH_NAME).await?;
         if main_branch.is_none() {
-            return Err(OxenError::basic_str("No main branch found on remote."));
+            return Err(OxenError::basic_str(
+                "No main branch found on remote.".to_string(),
+            ));
         }
         return Ok(main_branch.unwrap().commit_id);
     };
@@ -31,5 +33,7 @@ pub async fn remote_commit_id(
     }
 
     // Should not get here
-    Err(OxenError::basic_str("No remote commit specified."))
+    Err(OxenError::basic_str(
+        "No remote commit specified.".to_string(),
+    ))
 }

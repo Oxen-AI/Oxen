@@ -47,7 +47,7 @@ impl RunCmd for WorkspaceCreateCmd {
                     Some(branch) => branch.name,
                     None => {
                         return Err(OxenError::basic_str(
-                            "No current branch. Use --branch to specify a branch name.",
+                            "No current branch. Use --branch to specify a branch name.".to_string(),
                         ));
                     }
                 }

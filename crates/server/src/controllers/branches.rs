@@ -322,11 +322,11 @@ pub async fn maybe_create_merge(
     let data = data.map_err(|err| OxenHttpError::BadRequest(format!("{err:?}").into()))?;
     let incoming_commit_id = data.client_commit_id;
     let incoming_commit = repositories::commits::get_by_id(&repository, &incoming_commit_id)?
-        .ok_or(OxenError::resource_not_found(&incoming_commit_id))?;
+        .ok_or(OxenError::resource_not_found(incoming_commit_id.clone()))?;
 
     let current_commit_id = data.server_commit_id;
     let current_commit = repositories::commits::get_by_id(&repository, &current_commit_id)?
-        .ok_or(OxenError::resource_not_found(&current_commit_id))?;
+        .ok_or(OxenError::resource_not_found(current_commit_id.clone()))?;
 
     log::debug!("maybe_create_merge got client head commit {incoming_commit_id:?}");
 

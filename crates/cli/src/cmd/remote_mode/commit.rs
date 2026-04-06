@@ -36,7 +36,7 @@ impl RunCmd for RemoteModeCommitCmd {
         // Parse Args
         let Some(message) = args.get_one::<String>("message") else {
             return Err(OxenError::basic_str(
-                "Err: Usage `oxen workspace commit -w <workspace_id> -m <message>`",
+                "Err: Usage `oxen workspace commit -w <workspace_id> -m <message>`".to_string(),
             ));
         };
 

@@ -27,10 +27,10 @@ pub async fn download_dir_as_zip(
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 let e = "Err: unauthorized request to download data".to_string();
                 log::error!("{e}");
-                return Err(OxenError::authentication(&e));
+                return Err(OxenError::authentication(e));
             }
 
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "download_dir_as_zip failed with status {status} for {url}"
             )));
         }
@@ -45,7 +45,7 @@ pub async fn download_dir_as_zip(
             Ok(s) => s,
             Err(e) => {
                 let _ = tokio::fs::remove_file(local_path).await;
-                return Err(OxenError::basic_str(&format!(
+                return Err(OxenError::basic_str(format!(
                     "Failed to download ZIP to {local_path:?}: {e}"
                 )));
             }
@@ -56,7 +56,7 @@ pub async fn download_dir_as_zip(
         Ok(size)
     } else {
         let err = format!("try_download_dir_as_zip failed to send request {url}");
-        Err(OxenError::basic_str(&err))
+        Err(OxenError::basic_str(err))
     }
 }
 

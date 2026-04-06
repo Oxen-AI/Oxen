@@ -188,11 +188,11 @@ pub fn write_to_path(path: &Path, value: &str) -> Result<(), OxenError> {
     match File::create(path) {
         Ok(mut file) => match file.write(value.as_bytes()) {
             Ok(_) => Ok(()),
-            Err(err) => Err(OxenError::basic_str(&format!(
+            Err(err) => Err(OxenError::basic_str(format!(
                 "Could not write file {path:?}\n{err}"
             ))),
         },
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "Could not create file to write {path:?}\n{err}"
         ))),
     }
@@ -202,11 +202,11 @@ pub fn write_data(path: &Path, data: &[u8]) -> Result<(), OxenError> {
     match File::create(path) {
         Ok(mut file) => match file.write(data) {
             Ok(_) => Ok(()),
-            Err(err) => Err(OxenError::basic_str(&format!(
+            Err(err) => Err(OxenError::basic_str(format!(
                 "Could not write file {path:?}\n{err}"
             ))),
         },
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "Could not create file to write {path:?}\n{err}"
         ))),
     }
@@ -216,11 +216,11 @@ pub fn append_to_file(path: &Path, value: &str) -> Result<(), OxenError> {
     match OpenOptions::new().append(true).open(path) {
         Ok(mut file) => match file.write(value.as_bytes()) {
             Ok(_) => Ok(()),
-            Err(err) => Err(OxenError::basic_str(&format!(
+            Err(err) => Err(OxenError::basic_str(format!(
                 "Could not append to file {path:?}\n{err}"
             ))),
         },
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "Could not open file to append {path:?}\n{err}"
         ))),
     }
@@ -298,7 +298,7 @@ pub fn read_first_line_from_file(file: &File) -> Result<String, OxenError> {
     if let Some(Ok(line)) = reader.lines().next() {
         Ok(line)
     } else {
-        Err(OxenError::basic_str(&format!(
+        Err(OxenError::basic_str(format!(
             "Could not read line from file: {file:?}"
         )))
     }
@@ -529,7 +529,7 @@ pub fn copy(src: &Path, dst: &Path) -> Result<(), OxenError> {
                 if err.raw_os_error() == Some(32) {
                     attempt += 1;
                     if attempt == max_retries {
-                        return Err(OxenError::basic_str(&format!(
+                        return Err(OxenError::basic_str(format!(
                             "File is in use by another process after {max_retries} attempts: {src:?}"
                         )));
                     }
@@ -1206,7 +1206,7 @@ pub fn canonicalize(path: &Path) -> Result<PathBuf, OxenError> {
     //log::debug!("Path to canonicalize: {path:?}");
     match dunce::canonicalize(path) {
         Ok(canon_path) => Ok(canon_path),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "path {path:?} cannot be canonicalized due to err {err:?}"
         ))),
     }
@@ -1232,7 +1232,7 @@ fn stem_from_canonical_child_path(
     let relative_components: Vec<Component> = relative_path.components().collect();
 
     if child_components.len() < parent_components.len() + relative_components.len() {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Invalid path relationship: child path {child_path:?} is not under parent path {parent_path:?}"
         )));
     }
@@ -1443,7 +1443,7 @@ pub fn disk_usage_for_path(path: &Path) -> Result<DiskUsage, OxenError> {
     let disks = sysinfo::Disks::new_with_refreshed_list();
 
     if disks.is_empty() {
-        return Err(OxenError::basic_str("No disks found"));
+        return Err(OxenError::basic_str("No disks found".to_string()));
     }
 
     // try to choose the disk that the path is on
@@ -1494,7 +1494,7 @@ pub fn is_any_parent_in_set(file_path: &Path, path_set: &HashSet<PathBuf>) -> bo
 pub fn open_file(path: &Path) -> Result<File, OxenError> {
     match File::open(path) {
         Ok(file) => Ok(file),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "Failed to open file: {:?}\n{:?}",
             path, err
         ))),
@@ -1511,7 +1511,7 @@ async fn detect_image_format_from_version(
     while header.len() < 16 {
         if let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| {
-                OxenError::basic_str(&format!("Failed to read version file {hash}: {e}"))
+                OxenError::basic_str(format!("Failed to read version file {hash}: {e}"))
             })?;
             let to_take = 16 - header.len();
             header.extend_from_slice(&chunk[..to_take.min(chunk.len())]);
@@ -1521,13 +1521,13 @@ async fn detect_image_format_from_version(
     }
 
     if header.is_empty() {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Version file {hash} is empty"
         )));
     }
 
     let format = image::guess_format(&header)
-        .map_err(|_| OxenError::basic_str(&format!("Unknown image format for version: {hash}")))?;
+        .map_err(|_| OxenError::basic_str(format!("Unknown image format for version: {hash}")))?;
 
     Ok(format)
 }
@@ -1657,12 +1657,12 @@ async fn generate_video_thumbnail_version_store(
         // Generate thumbnail from video file
         let thumb_image = thumbnailer
             .get(&version_path)
-            .map_err(|e| OxenError::basic_str(&format!("Failed to generate thumbnail: {e}.")))?;
+            .map_err(|e| OxenError::basic_str(format!("Failed to generate thumbnail: {e}.")))?;
 
         let mut buf = Vec::new();
         thumb_image
             .write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Jpeg)
-            .map_err(|e| OxenError::basic_str(&format!("Failed to encode thumbnail: {e}")))?;
+            .map_err(|e| OxenError::basic_str(format!("Failed to encode thumbnail: {e}")))?;
         Ok(buf)
     })
     .await??;
@@ -1859,17 +1859,21 @@ pub fn validate_and_normalize_path(path: &Path) -> Result<PathBuf, OxenError> {
                 let segment_str = segment.to_string_lossy();
                 // Reject empty segments (e.g., from "foo//bar")
                 if segment_str.is_empty() {
-                    return Err(OxenError::basic_str("path contains empty segments"));
+                    return Err(OxenError::basic_str(
+                        "path contains empty segments".to_string(),
+                    ));
                 }
                 normalized.push(segment);
             }
             Component::ParentDir => {
                 return Err(OxenError::basic_str(
-                    "path cannot contain parent directory references (..)",
+                    "path cannot contain parent directory references (..)".to_string(),
                 ));
             }
             Component::RootDir | Component::Prefix(_) => {
-                return Err(OxenError::basic_str("path must be relative, not absolute"));
+                return Err(OxenError::basic_str(
+                    "path must be relative, not absolute".to_string(),
+                ));
             }
             Component::CurDir => {
                 // Skip "." components (current directory)
@@ -1880,7 +1884,7 @@ pub fn validate_and_normalize_path(path: &Path) -> Result<PathBuf, OxenError> {
     // Ensure we have a valid path after normalization
     if normalized.as_os_str().is_empty() {
         return Err(OxenError::basic_str(
-            "path resolves to empty after normalization",
+            "path resolves to empty after normalization".to_string(),
         ));
     }
 

@@ -10,7 +10,7 @@ pub fn init(path: &Path) -> Result<LocalRepository, OxenError> {
     let hidden_dir = util::fs::oxen_hidden_dir(path);
     if hidden_dir.exists() {
         let err = format!("Oxen repository already exists: {path:?}");
-        return Err(OxenError::basic_str(&err));
+        return Err(OxenError::basic_str(err));
     }
 
     // Cleanup the .oxen dir if init fails
@@ -33,7 +33,7 @@ pub fn init_with_version_default(
     util::fs::create_dir_all(&hidden_dir)?;
     if util::fs::config_filepath(path).try_exists()? {
         let err = format!("Oxen repository already exists: {path:?}");
-        return Err(OxenError::basic_str(&err));
+        return Err(OxenError::basic_str(err));
     }
 
     let repo = LocalRepository::new_from_version(path, &version.to_string(), None)?;
@@ -52,7 +52,7 @@ pub async fn init_with_version_and_storage_opts(
     util::fs::create_dir_all(&hidden_dir)?;
     if util::fs::config_filepath(path).try_exists()? {
         let err = format!("Oxen repository already exists: {path:?}");
-        return Err(OxenError::basic_str(&err));
+        return Err(OxenError::basic_str(err));
     }
 
     let repo = LocalRepository::new_from_version(path, &version.to_string(), storage_opts)?;

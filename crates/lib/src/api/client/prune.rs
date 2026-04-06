@@ -65,7 +65,7 @@ pub async fn prune(remote_repo: &RemoteRepository, dry_run: bool) -> Result<Prun
                 }
                 Err(err) => {
                     log::error!("Failed to parse PruneResponse from body: {body}");
-                    Err(OxenError::basic_str(&format!(
+                    Err(OxenError::basic_str(format!(
                         "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                     )))
                 }
@@ -73,7 +73,7 @@ pub async fn prune(remote_repo: &RemoteRepository, dry_run: bool) -> Result<Prun
         }
         Err(err) => {
             let err = format!("Request failed: {url}\nErr {err:?}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }

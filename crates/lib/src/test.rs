@@ -2190,9 +2190,7 @@ pub fn append_line_txt_file(path: &Path, line: &str) -> Result<PathBuf, OxenErro
     let mut file = OpenOptions::new().append(true).open(path)?;
 
     if let Err(e) = writeln!(file, "{line}") {
-        return Err(OxenError::basic_str(&format!(
-            "Couldn't write to file: {e}"
-        )));
+        return Err(OxenError::basic_str(format!("Couldn't write to file: {e}")));
     }
 
     Ok(path.to_path_buf())
@@ -2245,7 +2243,7 @@ pub fn add_img_file_to_dir(dir: &Path, file_path: &Path) -> Result<PathBuf, Oxen
         Ok(full_new_path)
     } else {
         let err = format!("Unknown extension file: {file_path:?}");
-        Err(OxenError::basic_str(&err))
+        Err(OxenError::basic_str(err))
     }
 }
 

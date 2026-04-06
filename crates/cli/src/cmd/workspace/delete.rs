@@ -51,7 +51,7 @@ impl RunCmd for WorkspaceDeleteCmd {
                     name
                 } else {
                     return Err(OxenError::basic_str(
-                        "Either workspace-id or workspace-name must be provided.",
+                        "Either workspace-id or workspace-name must be provided.".to_string(),
                     ));
                 }
             }

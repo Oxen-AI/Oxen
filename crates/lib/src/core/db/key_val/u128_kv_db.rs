@@ -27,7 +27,7 @@ where
             if let Ok(entry) = D::decode::<u8>(&value) {
                 Ok(Some(entry))
             } else {
-                Err(OxenError::basic_str(&format!(
+                Err(OxenError::basic_str(format!(
                     "Could not decode value {value:?}"
                 )))
             }
@@ -43,7 +43,7 @@ where
                 err,
                 db.path()
             );
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -66,7 +66,9 @@ where
         }
         Err(err) => {
             log::error!("Err: Could not encode value {err}");
-            Err(OxenError::basic_str("Could not encode value..."))
+            Err(OxenError::basic_str(
+                "Could not encode value...".to_string(),
+            ))
         }
     }
 }

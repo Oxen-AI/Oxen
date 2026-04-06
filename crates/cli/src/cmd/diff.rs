@@ -21,12 +21,12 @@ pub struct DiffCmd;
 
 fn write_to_pager(output: &mut Pager, text: &str) -> Result<(), OxenError> {
     write!(output, "{text}")
-        .map_err(|e| OxenError::basic_str(&format!("Could not write to pager: {e}")))
+        .map_err(|e| OxenError::basic_str(format!("Could not write to pager: {e}")))
 }
 
 fn writeln_to_pager(output: &mut Pager, text: &str) -> Result<(), OxenError> {
     writeln!(output, "{text}")
-        .map_err(|e| OxenError::basic_str(&format!("Could not write to pager: {e}")))
+        .map_err(|e| OxenError::basic_str(format!("Could not write to pager: {e}")))
 }
 
 #[async_trait]

@@ -283,7 +283,7 @@ fn get_commit_list(
     // The first pull doesn't have a head commit, but subsequent pulls do
     let mut commits = if let Some(head_commit_id) = maybe_head_commit_id {
         let head_commit = repositories::commits::get_by_id(repository, head_commit_id)?
-            .ok_or(OxenError::resource_not_found(head_commit_id))?;
+            .ok_or(OxenError::resource_not_found(head_commit_id.to_string()))?;
         repositories::commits::list_between(repository, base_commit, &head_commit)?
     } else {
         // If the subtree is specified, we only want to get the latest commit
@@ -343,7 +343,7 @@ fn maybe_parse_base_head(base_head: &str) -> Result<(String, Option<String>), Ox
             Ok((base.to_string(), Some(head.to_string())))
         } else {
             Err(OxenError::basic_str(
-                "Could not parse commits. Format should be base..head",
+                "Could not parse commits. Format should be base..head".to_string(),
             ))
         }
     } else {

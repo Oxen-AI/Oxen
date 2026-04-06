@@ -221,7 +221,7 @@ pub fn list_from_with_depth(
 ) -> Result<HashMap<Commit, usize>, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => Err(OxenError::basic_str(
-            "list_from_with_depth not supported in v0.10.0",
+            "list_from_with_depth not supported in v0.10.0".to_string(),
         )),
         _ => core::v_latest::commits::list_from_with_depth(repo, revision),
     }
@@ -339,7 +339,9 @@ pub fn list_by_path_from_paginated(
 
 pub fn count_from(repo: &LocalRepository, revision: &str) -> Result<(usize, bool), OxenError> {
     match repo.min_version() {
-        MinOxenVersion::V0_10_0 => Err(OxenError::basic_str("count_from not supported in v0.10.0")),
+        MinOxenVersion::V0_10_0 => Err(OxenError::basic_str(
+            "count_from not supported in v0.10.0".to_string(),
+        )),
         _ => core::v_latest::commits::count_from(repo, revision),
     }
 }

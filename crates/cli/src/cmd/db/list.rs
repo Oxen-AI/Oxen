@@ -33,7 +33,7 @@ impl RunCmd for DbListCmd {
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
         // Parse Args
         let Some(path) = args.get_one::<String>("PATH") else {
-            return Err(OxenError::basic_str("Must supply path"));
+            return Err(OxenError::basic_str("Must supply path".to_string()));
         };
 
         let limit = args

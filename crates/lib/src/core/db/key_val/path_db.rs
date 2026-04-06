@@ -87,7 +87,7 @@ pub fn count<T: ThreadMode>(
             }
             _ => {
                 return Err(OxenError::basic_str(
-                    "Could not read iterate over db values",
+                    "Could not read iterate over db values".to_string(),
                 ));
             }
         }
@@ -121,7 +121,7 @@ pub fn list_paths<T: ThreadMode>(
             }
             _ => {
                 return Err(OxenError::basic_str(
-                    "Could not read iterate over db values",
+                    "Could not read iterate over db values".to_string(),
                 ));
             }
         }
@@ -168,7 +168,7 @@ where
             }
             _ => {
                 return Err(OxenError::basic_str(
-                    "Could not read iterate over db values",
+                    "Could not read iterate over db values".to_string(),
                 ));
             }
         }
@@ -211,7 +211,7 @@ where
             }
             _ => {
                 return Err(OxenError::basic_str(
-                    "Could not read iterate over db values",
+                    "Could not read iterate over db values".to_string(),
                 ));
             }
         }
@@ -254,7 +254,7 @@ where
             }
             _ => {
                 return Err(OxenError::basic_str(
-                    "Could not read iterate over db values",
+                    "Could not read iterate over db values".to_string(),
                 ));
             }
         }
@@ -307,7 +307,7 @@ where
             }
             _ => {
                 return Err(OxenError::basic_str(
-                    "Could not read iterate over db values",
+                    "Could not read iterate over db values".to_string(),
                 ));
             }
         }

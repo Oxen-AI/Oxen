@@ -55,9 +55,10 @@ impl RunCmd for WorkspaceDownloadCmd {
 
     async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
         // Parse Args
-        let file_path = args
-            .get_one::<String>("file")
-            .map_or_else(|| Err(OxenError::basic_str("Must supply --file (-f)")), Ok)?;
+        let file_path = args.get_one::<String>("file").map_or_else(
+            || Err(OxenError::basic_str("Must supply --file (-f)".to_string())),
+            Ok,
+        )?;
 
         let workspace_name = args.get_one::<String>("workspace-name");
         let workspace_id = args.get_one::<String>("workspace-id");
@@ -86,7 +87,7 @@ impl RunCmd for WorkspaceDownloadCmd {
             }
             // This should never be reached due to clap's required_unless_present
             _ => Err(OxenError::basic_str(
-                "Either --workspace-id or --workspace-name must be provided.",
+                "Either --workspace-id or --workspace-name must be provided.".to_string(),
             ))?,
         };
 
@@ -100,7 +101,7 @@ impl RunCmd for WorkspaceDownloadCmd {
         {
             Ok(_) => Ok(()),
             Err(OxenError::PathDoesNotExist(_)) => Err(OxenError::resource_not_found(
-                "File not found in workspace staged DB or base repo",
+                "File not found in workspace staged DB or base repo".to_string(),
             )),
             unexpected_error => unexpected_error,
         }
@@ -115,5 +116,5 @@ fn workspace_not_found(message: &str) -> OxenError {
     //       CLI error rendering needs to be updated so we can use error variants properly & have precise
     //       error message formatting control.
     // OxenError::WorkspaceNotFound(Box::new(StringError::new(format!("Workspace {message} does not exist"))))
-    OxenError::basic_str(&format!("Workspace {message} does not exist"))
+    OxenError::basic_str(format!("Workspace {message} does not exist"))
 }

@@ -66,10 +66,10 @@ pub fn get_by_dir(
 
     let config_contents = util::fs::read_from_path(&config_path)?;
     let config: WorkspaceConfig = toml::from_str(&config_contents)
-        .map_err(|e| OxenError::basic_str(&format!("Failed to parse workspace config: {e}")))?;
+        .map_err(|e| OxenError::basic_str(format!("Failed to parse workspace config: {e}")))?;
 
     let Some(commit) = repositories::commits::get_by_id(repo, &config.workspace_commit_id)? else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Workspace {} has invalid commit_id {}",
             workspace_id, config.workspace_commit_id
         )));
@@ -133,7 +133,7 @@ pub fn create_with_name(
 
     if oxen_dir.exists() {
         log::debug!("index::workspaces::create already have oxen repo directory {oxen_dir:?}");
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Workspace {workspace_id} already exists"
         )));
     }
@@ -164,7 +164,7 @@ pub fn create_with_name(
     let toml_string = match toml::to_string(&workspace_config) {
         Ok(s) => s,
         Err(e) => {
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "Failed to serialize workspace config to TOML: {e}"
             )));
         }
@@ -226,7 +226,7 @@ pub fn create_temporary(
 
 fn check_non_editable_workspace(workspace: &Workspace, commit: &Commit) -> Result<(), OxenError> {
     if workspace.commit.id == commit.id && !workspace.is_editable {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "A non-editable workspace already exists for commit {}",
             commit.id
         )));
@@ -239,7 +239,7 @@ fn check_existing_workspace_name(
     workspace_name: &str,
 ) -> Result<(), OxenError> {
     if workspace.name == Some(workspace_name.to_string()) || *workspace_name == workspace.id {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "A workspace with the name {workspace_name} already exists"
         )));
     }
@@ -256,7 +256,7 @@ fn iter_workspaces(
 
     let workspace_hashes = if workspaces_dir.exists() {
         util::fs::list_dirs_in_dir(&workspaces_dir).map_err(|e| {
-            OxenError::basic_str(&format!("Error listing workspace directories: {e}"))
+            OxenError::basic_str(format!("Error listing workspace directories: {e}"))
         })?
     } else {
         Vec::new()
@@ -293,7 +293,7 @@ pub fn get_non_editable_by_commit_id(
         }
     }
     Err(OxenError::basic_str(
-        "No non-editable workspace found for the given commit ID",
+        "No non-editable workspace found for the given commit ID".to_string(),
     ))
 }
 
@@ -338,7 +338,7 @@ pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), O
     let config_contents = util::fs::read_from_path(&config_path)?;
     let mut config: WorkspaceConfig = toml::from_str(&config_contents).map_err(|e| {
         log::error!("Failed to parse workspace config: {config_path:?}, err: {e}");
-        OxenError::basic_str(&format!("Failed to parse workspace config: {e}"))
+        OxenError::basic_str(format!("Failed to parse workspace config: {e}"))
     })?;
 
     log::debug!(
@@ -351,9 +351,7 @@ pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), O
 
     let toml_string = toml::to_string(&config).map_err(|e| {
         log::error!("Failed to serialize workspace config to TOML: {config_path:?}, err: {e}");
-        OxenError::basic_str(&format!(
-            "Failed to serialize workspace config to TOML: {e}"
-        ))
+        OxenError::basic_str(format!("Failed to serialize workspace config to TOML: {e}"))
     })?;
 
     util::fs::write_to_path(&config_path, &toml_string)?;
@@ -424,7 +422,7 @@ pub fn populate_entries_with_workspace_data(
             let staged_node = get_staged_db_manager(&workspace.workspace_repo)?
                 .read_from_staged_db(Path::new(file_path))?
                 .ok_or_else(|| {
-                    OxenError::basic_str(&format!(
+                    OxenError::basic_str(format!(
                         "Staged entry disappeared while resolving workspace metadata: {file_path:?}"
                     ))
                 })?;
@@ -438,7 +436,7 @@ pub fn populate_entries_with_workspace_data(
                 }
                 _ => {
                     return Err(OxenError::basic_str(
-                        "Unexpected node type found in staged db",
+                        "Unexpected node type found in staged db".to_string(),
                     ));
                 }
             };
@@ -484,7 +482,7 @@ pub fn get_added_entry(
     if let Some(status) = additions_map.get(file_path.to_str().unwrap()).cloned() {
         if status != StagedEntryStatus::Added {
             return Err(OxenError::basic_str(
-                "Entry is not in the workspace's staged database",
+                "Entry is not in the workspace's staged database".to_string(),
             ));
         }
 
@@ -501,7 +499,7 @@ pub fn get_added_entry(
             }
             _ => {
                 return Err(OxenError::basic_str(
-                    "Unexpected node type found in staged db",
+                    "Unexpected node type found in staged db".to_string(),
                 ));
             }
         };
@@ -514,7 +512,7 @@ pub fn get_added_entry(
         Ok(EMetadataEntry::WorkspaceMetadataEntry(ws_entry))
     } else {
         Err(OxenError::basic_str(
-            "Entry is not in the workspace's staged database",
+            "Entry is not in the workspace's staged database".to_string(),
         ))
     }
 }
@@ -960,7 +958,7 @@ mod tests {
             for handle in handles {
                 handle
                     .await
-                    .map_err(|e| OxenError::basic_str(&format!("Task error: {e}")))??;
+                    .map_err(|e| OxenError::basic_str(format!("Task error: {e}")))??;
             }
 
             Ok(remote_repo)

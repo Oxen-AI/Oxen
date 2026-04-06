@@ -28,15 +28,15 @@ pub fn get_metadata(path: &Path) -> Result<MetadataVideo, OxenError> {
                 .filter_map(|t| match t.track_type() {
                     Ok(TrackType::Video) => Some(Ok(t)),
                     Ok(_) => None,
-                    Err(e) => Some(Err(OxenError::basic_str(&format!(
+                    Err(e) => Some(Err(OxenError::basic_str(format!(
                         "Could not get track type: {e:?}"
                     )))),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
 
-            let video = video_tracks
-                .first()
-                .ok_or(OxenError::basic_str("Could not get video track"))?;
+            let video = video_tracks.first().ok_or(OxenError::basic_str(
+                "Could not get video track".to_string(),
+            ))?;
 
             Ok(MetadataVideo::new(
                 duration,
@@ -46,7 +46,7 @@ pub fn get_metadata(path: &Path) -> Result<MetadataVideo, OxenError> {
         }
         Err(err) => {
             let err = format!("Could not get video metadata {err:?}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }

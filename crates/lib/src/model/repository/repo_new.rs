@@ -62,7 +62,7 @@ impl RepoNew {
     /// repo_id is the "{namespace}/{repo_name}"
     pub fn new(repo_id: String, storage_opts: Option<StorageOpts>) -> Result<RepoNew, OxenError> {
         if !repo_id.contains('/') {
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "Invalid repo id: {repo_id:?}"
             )));
         }
@@ -166,7 +166,7 @@ impl RepoNew {
         let mut split_path: Vec<&str> = uri.path().split('/').collect();
 
         if split_path.len() < 3 {
-            return Err(OxenError::basic_str("Invalid repo url"));
+            return Err(OxenError::basic_str("Invalid repo url".to_string()));
         }
 
         // Pop in reverse to get repo_name then namespace

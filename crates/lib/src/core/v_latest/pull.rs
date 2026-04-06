@@ -73,7 +73,8 @@ pub async fn pull_remote_branch(
                     Ok(None) => {
                         // Merge conflict, keep the previous commit
                         return Err(OxenError::merge_conflict(
-                            "There was a merge conflict, please resolve it before pulling",
+                            "There was a merge conflict, please resolve it before pulling"
+                                .to_string(),
                         ));
                     }
                     Err(e) => return Err(e),

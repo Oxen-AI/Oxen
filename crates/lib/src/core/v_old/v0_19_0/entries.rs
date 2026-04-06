@@ -88,7 +88,9 @@ pub fn get_meta_entry(
                 "get_meta_entry path not found: {:?}",
                 path.to_str().unwrap()
             );
-            Err(OxenError::resource_not_found(path.to_str().unwrap()))
+            Err(OxenError::resource_not_found(
+                path.to_str().unwrap().to_string(),
+            ))
         }
     }
 }

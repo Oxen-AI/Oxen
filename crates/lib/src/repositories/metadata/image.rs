@@ -20,7 +20,9 @@ pub fn get_metadata(path: &Path) -> Result<MetadataImage, OxenError> {
         Ok((width, height)) => Ok(MetadataImage::new(width, height)),
         Err(e) => {
             log::debug!("Could not get image metadata {e:?}");
-            Err(OxenError::basic_str("Could not get image metadata"))
+            Err(OxenError::basic_str(
+                "Could not get image metadata".to_string(),
+            ))
         }
     }
 }

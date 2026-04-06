@@ -17,7 +17,7 @@ pub fn list_unmigrated(
 
     if !global_last_migration.exists() {
         return Err(OxenError::basic_str(
-            "No global migration file found on server.",
+            "No global migration file found on server.".to_string(),
         ));
     }
 

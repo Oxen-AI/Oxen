@@ -52,7 +52,7 @@ impl RunCmd for DbCmd {
             })?;
         } else {
             return Err(OxenError::basic_str(
-                "No db subcommand provided. Run `oxen db --help` for usage.",
+                "No db subcommand provided. Run `oxen db --help` for usage.".to_string(),
             ));
         }
 

@@ -85,7 +85,7 @@ pub async fn download_data_from_version_paths(
             tar.append_path_with_name(path_to_read, content_file)?;
         } else {
             log::error!("Could not find content: {content_file:?} -> {path_to_read:?}");
-            return Err(OxenError::path_does_not_exist(&path_to_read).into());
+            return Err(OxenError::path_does_not_exist(path_to_read).into());
         }
     }
 

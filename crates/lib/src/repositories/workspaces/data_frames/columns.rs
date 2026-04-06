@@ -79,7 +79,7 @@ pub fn add_column_metadata(
     metadata: &serde_json::Value,
 ) -> Result<HashMap<PathBuf, Schema>, OxenError> {
     match repo.min_version() {
-        MinOxenVersion::V0_10_0 => Err(OxenError::basic_str("Not implemented")),
+        MinOxenVersion::V0_10_0 => Err(OxenError::basic_str("Not implemented".to_string())),
         _ => core::v_latest::workspaces::data_frames::columns::add_column_metadata(
             repo, workspace, &file_path, &column, metadata,
         ),
@@ -157,7 +157,9 @@ pub fn decorate_fields_with_column_diffs(
                             }
                             Ok(())
                         }
-                        Err(_) => Err(OxenError::basic_str("Error deserializing value")),
+                        Err(_) => Err(OxenError::basic_str(
+                            "Error deserializing value".to_string(),
+                        )),
                     }
                 }
                 Ok(None) => Ok(()),
@@ -183,7 +185,9 @@ pub fn decorate_fields_with_column_diffs(
                             }
                             Ok(())
                         }
-                        Err(_) => Err(OxenError::basic_str("Error deserializing value")),
+                        Err(_) => Err(OxenError::basic_str(
+                            "Error deserializing value".to_string(),
+                        )),
                     }
                 }
                 Ok(None) => Ok(()),
@@ -208,13 +212,13 @@ pub fn handle_data_frame_column_change(
         })),
         "modified" => {
             let column_before = change.column_before.ok_or(OxenError::basic_str(
-                "A modified column needs to have a column before value",
+                "A modified column needs to have a column before value".to_string(),
             ))?;
 
             let previous_field = PreviousField {
                 name: column_before.column_name.clone(),
                 dtype: column_before.column_data_type.ok_or(OxenError::basic_str(
-                    "A modified column needs to have a before datatype value",
+                    "A modified column needs to have a before datatype value".to_string(),
                 ))?,
                 metadata: None,
             };
@@ -238,19 +242,19 @@ pub fn reinsert_deleted_columns_into_schema(
         match item {
             Ok((_key, value_bytes)) => {
                 let column_change: DataFrameColumnChange = serde_json::from_slice(&value_bytes)
-                    .map_err(|_| OxenError::basic_str("Error deserializing value"))?;
+                    .map_err(|_| OxenError::basic_str("Error deserializing value".to_string()))?;
 
                 if column_change.operation == "deleted" {
                     deleted_columns.push(column_change.column_before);
                 }
             }
-            Err(_) => return Err(OxenError::basic_str("Error reading from db")),
+            Err(_) => return Err(OxenError::basic_str("Error reading from db".to_string())),
         }
     }
 
     for deleted_column in &deleted_columns {
         let before_column = deleted_column.clone().ok_or(OxenError::basic_str(
-            "A deleted column needs to have a column before value",
+            "A deleted column needs to have a column before value".to_string(),
         ))?;
 
         df_views.source.schema.fields.push(Field {
@@ -259,7 +263,7 @@ pub fn reinsert_deleted_columns_into_schema(
                 .column_data_type
                 .clone()
                 .ok_or(OxenError::basic_str(
-                    "A deleted column needs to have a before datatype value",
+                    "A deleted column needs to have a before datatype value".to_string(),
                 ))?
                 .clone(),
             metadata: None,
@@ -271,7 +275,7 @@ pub fn reinsert_deleted_columns_into_schema(
             dtype: before_column
                 .column_data_type
                 .ok_or(OxenError::basic_str(
-                    "A deleted column needs to have a before datatype value",
+                    "A deleted column needs to have a before datatype value".to_string(),
                 ))?
                 .clone(),
             metadata: None,

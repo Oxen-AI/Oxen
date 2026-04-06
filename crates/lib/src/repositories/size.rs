@@ -46,7 +46,7 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
                 size: parsed.size,
             },
             Err(e) => {
-                return Err(OxenError::basic_str(&format!(
+                return Err(OxenError::basic_str(format!(
                     "Failed to parse size file: {e}"
                 )));
             }

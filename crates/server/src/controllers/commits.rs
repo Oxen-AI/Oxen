@@ -1211,7 +1211,9 @@ async fn unpack_tree_tarball(tmp_dir: &Path, data: &[u8]) -> Result<(), OxenErro
         Err(e) => {
             log::error!("Could not unpack tree database from archive...");
             log::error!("Err: {e:?}");
-            return Err(OxenError::basic_str("Failed to get archive entries"));
+            return Err(OxenError::basic_str(
+                "Failed to get archive entries".to_string(),
+            ));
         }
     };
 
@@ -1224,7 +1226,9 @@ async fn unpack_tree_tarball(tmp_dir: &Path, data: &[u8]) -> Result<(), OxenErro
                     Ok(stripped) => stripped,
                     Err(err) => {
                         log::error!("Could not strip prefix from path {err:?}");
-                        return Err(OxenError::basic_str("Failed to strip path prefix"));
+                        return Err(OxenError::basic_str(
+                            "Failed to strip path prefix".to_string(),
+                        ));
                     }
                 }
             } else {
@@ -1266,7 +1270,7 @@ async fn unpack_entry_tarball_async(
         let mut file = entry?;
         let path = file
             .path()
-            .map_err(|e| OxenError::basic_str(&format!("Invalid path in archive: {e}")))?;
+            .map_err(|e| OxenError::basic_str(format!("Invalid path in archive: {e}")))?;
 
         if path.starts_with("versions") && path.to_string_lossy().contains("files") {
             // Handle version files with streaming
@@ -1283,7 +1287,7 @@ async fn unpack_entry_tarball_async(
             // For non-version files, unpack to hidden dir
             file.unpack_in(&hidden_dir)
                 .await
-                .map_err(|e| OxenError::basic_str(&format!("Failed to unpack file: {e}")))?;
+                .map_err(|e| OxenError::basic_str(format!("Failed to unpack file: {e}")))?;
         }
     }
 
@@ -1313,7 +1317,7 @@ fn extract_hash_from_path(path: &Path) -> Result<String, OxenError> {
         }
     }
 
-    Err(OxenError::basic_str(&format!(
+    Err(OxenError::basic_str(format!(
         "Could not get hash for file: {path:?}"
     )))
 }

@@ -116,7 +116,7 @@ pub async fn fetch_remote_branch(
     } else {
         let hash = remote_branch.commit_id.parse()?;
         let commit_node = repositories::tree::get_node_by_id(repo, &hash)?
-            .ok_or(OxenError::basic_str("Commit node not found"))?;
+            .ok_or(OxenError::basic_str("Commit node not found".to_string()))?;
 
         if !fetch_opts.missing_files && core::commit_sync_status::commit_is_synced(repo, &hash) {
             HashSet::new()
@@ -637,13 +637,17 @@ pub async fn pull_entries_to_versions_dir(
         }
         (Err(err), Ok(_)) => {
             let err = format!("Error syncing large entries: {err}");
-            return Err(OxenError::basic_str(&err));
+            return Err(OxenError::basic_str(err));
         }
         (Ok(_), Err(err)) => {
             let err = format!("Error syncing small entries: {err}");
-            return Err(OxenError::basic_str(&err));
+            return Err(OxenError::basic_str(err));
         }
-        _ => return Err(OxenError::basic_str("Unknown error syncing entries")),
+        _ => {
+            return Err(OxenError::basic_str(
+                "Unknown error syncing entries".to_string(),
+            ));
+        }
     }
 
     Ok(())
@@ -711,7 +715,7 @@ async fn pull_large_entries(
     for res in join_results {
         match res {
             // TODO: return join error!
-            Err(e) => return Err(OxenError::basic_str(&format!("worker task panicked: {e}"))),
+            Err(e) => return Err(OxenError::basic_str(format!("worker task panicked: {e}"))),
             Ok(Err(e)) => return Err(e),
             Ok(Ok(())) => {}
         }
@@ -799,7 +803,7 @@ async fn pull_small_entries(
     for res in join_results {
         match res {
             // TODO: return join error!
-            Err(e) => return Err(OxenError::basic_str(&format!("worker task panicked: {e}"))),
+            Err(e) => return Err(OxenError::basic_str(format!("worker task panicked: {e}"))),
             Ok(Err(e)) => return Err(e),
             Ok(Ok(())) => {}
         }
@@ -862,13 +866,17 @@ pub async fn download_entries_to_working_dir(
         }
         (Err(err), Ok(_)) => {
             let err = format!("Error syncing large entries: {err}");
-            return Err(OxenError::basic_str(&err));
+            return Err(OxenError::basic_str(err));
         }
         (Ok(_), Err(err)) => {
             let err = format!("Error syncing small entries: {err}");
-            return Err(OxenError::basic_str(&err));
+            return Err(OxenError::basic_str(err));
         }
-        _ => return Err(OxenError::basic_str("Unknown error syncing entries")),
+        _ => {
+            return Err(OxenError::basic_str(
+                "Unknown error syncing entries".to_string(),
+            ));
+        }
     }
     log::info!("Finished download_entries_to_working_dir");
     Ok(())
@@ -951,7 +959,7 @@ async fn download_large_entries(
     for res in join_results {
         match res {
             // TODO: return join error!
-            Err(e) => return Err(OxenError::basic_str(&format!("worker task panicked: {e}"))),
+            Err(e) => return Err(OxenError::basic_str(format!("worker task panicked: {e}"))),
             Ok(Err(e)) => return Err(e),
             Ok(Ok(())) => {}
         }
@@ -1039,7 +1047,7 @@ async fn download_small_entries(
     for res in join_results {
         match res {
             // TODO: return join error!
-            Err(e) => return Err(OxenError::basic_str(&format!("worker task panicked: {e}"))),
+            Err(e) => return Err(OxenError::basic_str(format!("worker task panicked: {e}"))),
             Ok(Err(e)) => return Err(e),
             Ok(Ok(())) => {}
         }

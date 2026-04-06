@@ -18,7 +18,7 @@ pub async fn clone_repo(
     let repo_path = &opts.dst;
     if repo_path.exists() {
         let err = format!("Directory already exists: {}", repo_path.to_string_lossy());
-        return Err(OxenError::basic_str(&err));
+        return Err(OxenError::basic_str(err));
     }
 
     // if directory does not exist, create it
@@ -73,7 +73,7 @@ pub async fn clone_repo_remote_mode(
     let repo_path = &opts.dst;
     if repo_path.exists() {
         let err = format!("Directory already exists: {}", repo_path.to_string_lossy());
-        return Err(OxenError::basic_str(&err));
+        return Err(OxenError::basic_str(err));
     }
 
     // if directory does not exist, create it
@@ -131,7 +131,7 @@ pub async fn clone_repo_remote_mode(
                 workspace_id.clone()
             );
             println!("{}", err_msg.yellow().bold());
-            return Err(OxenError::basic_str("Err: Cannot "));
+            return Err(OxenError::basic_str("Err: Cannot ".to_string()));
         }
         other => {
             println!("{}", format!("Unexpected workspace status: {other}").red());

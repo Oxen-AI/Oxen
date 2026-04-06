@@ -149,7 +149,9 @@ pub async fn update(
     repositories::workspaces::data_frames::schemas::update_schema(
         workspace,
         file_path,
-        &og_schema.ok_or(OxenError::basic_str("Original schema not found"))?,
+        &og_schema.ok_or(OxenError::basic_str(
+            "Original schema not found".to_string(),
+        ))?,
         &column_to_update.name,
         &column_after_name,
     )?;
@@ -299,8 +301,9 @@ pub async fn restore(
                         ))?
                         .column_name,
                 )?;
-                let og_schema =
-                    og_schema.ok_or(OxenError::basic_str("Original schema not found"))?;
+                let og_schema = og_schema.ok_or(OxenError::basic_str(
+                    "Original schema not found".to_string(),
+                ))?;
 
                 repositories::data_frames::schemas::restore_schema(
                     &workspace.workspace_repo,
@@ -310,14 +313,16 @@ pub async fn restore(
                         .column_before
                         .clone()
                         .ok_or(OxenError::basic_str(
-                            "To restore a modify, the column before object has to be defined",
+                            "To restore a modify, the column before object has to be defined"
+                                .to_string(),
                         ))?
                         .column_name,
                     &change
                         .column_after
                         .clone()
                         .ok_or(OxenError::basic_str(
-                            "To restore a modify, the column after object has to be defined",
+                            "To restore a modify, the column after object has to be defined"
+                                .to_string(),
                         ))?
                         .column_name,
                 )?;
@@ -355,7 +360,7 @@ pub fn add_column_metadata(
             // Get the FileNode from the CommitMerkleTree
             let commit = workspace.commit.clone();
             let node = repositories::tree::get_node_by_path(repo, &commit, &path)?.ok_or(
-                OxenError::basic_str("Node does not exist at the specified path"),
+                OxenError::basic_str("Node does not exist at the specified path".to_string()),
             )?;
             let mut parent_id = node.parent_id;
             let mut dir_path = path.clone();
@@ -387,7 +392,7 @@ pub fn add_column_metadata(
 
             let Some(file_node) = repositories::tree::get_file_by_path(repo, &commit, &path)?
             else {
-                return Err(OxenError::path_does_not_exist(&path));
+                return Err(OxenError::path_does_not_exist(path));
             };
             file_node
         };
@@ -420,7 +425,7 @@ pub fn add_column_metadata(
                 results.insert(path.clone(), m.tabular.schema.clone());
             }
             _ => {
-                return Err(OxenError::path_does_not_exist(&path));
+                return Err(OxenError::path_does_not_exist(path));
             }
         }
 

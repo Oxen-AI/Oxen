@@ -77,7 +77,7 @@ impl RunCmd for WorkspaceAddCmd {
                         (name, directory.as_str())
                     } else {
                         return Err(OxenError::basic_str(
-                            "Either workspace-id or workspace-name must be provided.",
+                            "Either workspace-id or workspace-name must be provided.".to_string(),
                         ));
                     }
                 }
@@ -95,7 +95,7 @@ impl RunCmd for WorkspaceAddCmd {
         // If no paths left after filtering, return early
         if paths.is_empty() {
             return Err(OxenError::basic_str(
-                "No files to add after filtering with .oxenignore.",
+                "No files to add after filtering with .oxenignore.".to_string(),
             ));
         }
 

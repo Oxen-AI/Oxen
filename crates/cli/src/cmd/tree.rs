@@ -95,7 +95,7 @@ impl TreeCmd {
         let node_hash = node.parse()?;
         // REFACTOR: Get through repositories::tree
         let tree = CommitMerkleTree::read_node(repo, &node_hash, true)?
-            .ok_or_else(|| OxenError::resource_not_found(&format!("Node {node_hash} not found")))?;
+            .ok_or_else(|| OxenError::resource_not_found(format!("Node {node_hash} not found")))?;
         CommitMerkleTree::print_node_depth(&tree, depth);
 
         Ok(())
@@ -114,9 +114,9 @@ impl TreeCmd {
                 println!("Working with subtrees: {subtrees:?}");
                 println!("Depth: {depth}");
                 println!("Loading first tree...");
-                let first = subtrees
-                    .first()
-                    .ok_or_else(|| OxenError::basic_str("No subtree paths configured"))?;
+                let first = subtrees.first().ok_or_else(|| {
+                    OxenError::basic_str("No subtree paths configured".to_string())
+                })?;
                 repositories::tree::print_tree_depth_subtree(repo, commit, depth, first)?;
             }
             (_, _) => {

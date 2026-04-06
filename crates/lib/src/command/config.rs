@@ -16,7 +16,7 @@ pub fn set_remote(repo: &mut LocalRepository, name: &str, url: &str) -> Result<R
 
     if repo.is_remote_mode() {
         return Err(OxenError::basic_str(
-            "Error: Cannot change remote of remote-mode repos",
+            "Error: Cannot change remote of remote-mode repos".to_string(),
         ));
     }
 
@@ -30,7 +30,7 @@ pub fn set_remote(repo: &mut LocalRepository, name: &str, url: &str) -> Result<R
 pub fn delete_remote(repo: &mut LocalRepository, name: &str) -> Result<(), OxenError> {
     if repo.is_remote_mode() {
         return Err(OxenError::basic_str(
-            "Error: Cannot delete from remote of remote-mode repos",
+            "Error: Cannot delete from remote of remote-mode repos".to_string(),
         ));
     }
 

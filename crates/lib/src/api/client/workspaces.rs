@@ -24,7 +24,7 @@ pub async fn list(remote_repo: &RemoteRepository) -> Result<Vec<WorkspaceRespons
         serde_json::from_str(&body);
     match response {
         Ok(val) => Ok(val.workspaces),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }
@@ -64,13 +64,13 @@ pub async fn get_by_name(
             } else if val.workspaces.is_empty() {
                 Ok(None)
             } else {
-                Err(OxenError::basic_str(&format!(
+                Err(OxenError::basic_str(format!(
                     "expected 1 workspace, got {}",
                     val.workspaces.len()
                 )))
             }
         }
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }
@@ -134,7 +134,7 @@ pub async fn create_with_path(
             commit: val.workspace.commit,
             status: val.status.status_message,
         }),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }
@@ -155,7 +155,7 @@ pub async fn delete(
     let response: Result<WorkspaceResponseView, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(val) => Ok(val.workspace),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }
@@ -173,7 +173,7 @@ pub async fn clear(remote_repo: &RemoteRepository) -> Result<(), OxenError> {
     let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(_) => Ok(()),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }

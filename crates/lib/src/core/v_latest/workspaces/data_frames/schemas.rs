@@ -53,7 +53,7 @@ pub fn update_schema(
     } else {
         file_node =
             repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
-                .ok_or(OxenError::basic_str("File not found"))?;
+                .ok_or(OxenError::basic_str("File not found".to_string()))?;
     }
 
     if let Some(GenericMetadata::MetadataTabular(tabular_metadata)) = &file_node.metadata() {
@@ -65,7 +65,9 @@ pub fn update_schema(
             ),
         )));
     } else {
-        return Err(OxenError::basic_str("Expected tabular metadata"));
+        return Err(OxenError::basic_str(
+            "Expected tabular metadata".to_string(),
+        ));
     }
 
     staged_db_manager.upsert_file_node(path, StagedEntryStatus::Modified, &file_node)?;

@@ -64,7 +64,9 @@ impl RunCmd for PackCmd {
             .expect("Chunk size must be a valid integer.");
 
         if _paths.len() != 1 {
-            return Err(OxenError::basic_str("Must supply exactly one file"));
+            return Err(OxenError::basic_str(
+                "Must supply exactly one file".to_string(),
+            ));
         }
         Ok(())
     }

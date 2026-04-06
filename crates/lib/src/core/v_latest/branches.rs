@@ -198,7 +198,7 @@ pub async fn checkout_subtrees(
                 &mut partial_nodes,
             )
             .map_err(|e| {
-                OxenError::basic_str(&format!("Cannot get root node for base commit: {e:?}"))
+                OxenError::basic_str(format!("Cannot get root node for base commit: {e:?}"))
             })?
         } else {
             log::warn!("head commit missing, might be a clone");
@@ -310,7 +310,7 @@ pub async fn set_working_repo_to_commit(
     )?
     else {
         return Err(OxenError::basic_str(
-            "Cannot get root node for target commit",
+            "Cannot get root node for target commit".to_string(),
         ));
     };
 
@@ -334,7 +334,7 @@ pub async fn set_working_repo_to_commit(
             Some(&mut shared_hashes),
             &mut partial_nodes,
         )
-        .map_err(|_| OxenError::basic_str("Cannot get root node for base commit"))?
+        .map_err(|_| OxenError::basic_str("Cannot get root node for base commit".to_string()))?
     } else {
         None
     };
@@ -724,7 +724,7 @@ fn r_restore_missing_or_modified_files(
         }
         _ => {
             return Err(OxenError::basic_str(
-                "Got an unexpected node type during checkout",
+                "Got an unexpected node type during checkout".to_string(),
             ));
         }
     }

@@ -249,7 +249,9 @@ impl RunCmd for DFCmd {
         // Parse Args
         let mut opts = DFCmd::parse_df_args(args)?;
         let Some(path) = args.get_one::<String>("PATH") else {
-            return Err(OxenError::basic_str("Must supply a DataFrame to process."));
+            return Err(OxenError::basic_str(
+                "Must supply a DataFrame to process.".to_string(),
+            ));
         };
         opts.path = Some(PathBuf::from(path));
 

@@ -31,14 +31,14 @@ pub async fn list(
                     log::debug!("got ListSchemaResponse: {val:?}");
                     Ok(val.schemas)
                 }
-                Err(err) => Err(OxenError::basic_str(&format!(
+                Err(err) => Err(OxenError::basic_str(format!(
                     "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                 ))),
             }
         }
         Err(err) => {
             let err = format!("Request failed: {url}\nErr {err:?}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -67,14 +67,14 @@ pub async fn get(
                         Ok(None)
                     }
                 }
-                Err(err) => Err(OxenError::basic_str(&format!(
+                Err(err) => Err(OxenError::basic_str(format!(
                     "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                 ))),
             }
         }
         Err(err) => {
             let err = format!("Request failed: {url}\nErr {err:?}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }

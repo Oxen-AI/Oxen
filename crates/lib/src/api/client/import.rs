@@ -19,7 +19,7 @@ pub async fn upload_zip(
     let zip_data = std::fs::read(zip_path)?;
     let file_name = zip_path
         .file_name()
-        .ok_or_else(|| OxenError::basic_str("Invalid ZIP file path"))?
+        .ok_or_else(|| OxenError::basic_str("Invalid ZIP file path".to_string()))?
         .to_string_lossy();
 
     // Create the URL for workspace ZIP upload endpoint
@@ -45,7 +45,7 @@ pub async fn upload_zip(
 
     // Parse the response
     let response: crate::view::CommitResponse = serde_json::from_str(&body)
-        .map_err(|e| OxenError::basic_str(&format!("Failed to parse response: {e}")))?;
+        .map_err(|e| OxenError::basic_str(format!("Failed to parse response: {e}")))?;
 
     Ok(response.commit)
 }

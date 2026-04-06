@@ -494,7 +494,7 @@ pub async fn get_by_branch(
         .ok_or(OxenError::remote_branch_not_found(branch_name))?;
 
     let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?
-        .ok_or(OxenError::resource_not_found(&branch.commit_id))?;
+        .ok_or(OxenError::resource_not_found(branch.commit_id.clone()))?;
 
     let entries = repositories::entries::list_tabular_files_in_repo(&repo, &commit)?;
     log::debug!("got {} tabular entries", entries.len());

@@ -73,7 +73,9 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
                 }
             }
             _ => {
-                return Err(OxenError::basic_str("Error: Unexpected node type"));
+                return Err(OxenError::basic_str(
+                    "Error: Unexpected node type".to_string(),
+                ));
             }
         }
     }
@@ -109,7 +111,7 @@ fn restore_staged(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenE
                             break; // Stop when we've passed all entries with the given prefix
                         }
                     }
-                    Err(e) => return Err(OxenError::basic_str(e.as_ref())),
+                    Err(e) => return Err(OxenError::basic_str(e.as_ref().to_string())),
                 }
             }
 

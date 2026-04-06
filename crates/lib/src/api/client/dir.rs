@@ -37,7 +37,7 @@ pub async fn list(
     let response: Result<PaginatedDirEntries, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(val) => Ok(val),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "api::dir::list_dir error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }
@@ -54,15 +54,15 @@ pub async fn file_counts(
         Some(dir_entry) => match dir_entry {
             EMetadataEntry::MetadataEntry(metadata_entry) => match metadata_entry.metadata {
                 Some(GenericMetadata::MetadataDir(metadata)) => Ok(metadata),
-                _ => Err(OxenError::basic_str(&format!(
+                _ => Err(OxenError::basic_str(format!(
                     "No metadata on directory found at {path_str}"
                 ))),
             },
             EMetadataEntry::WorkspaceMetadataEntry(_) => Err(OxenError::basic_str(
-                "Workspace metadata entry is not implemented",
+                "Workspace metadata entry is not implemented".to_string(),
             )),
         },
-        None => Err(OxenError::basic_str(&format!(
+        None => Err(OxenError::basic_str(format!(
             "No directory found at {path_str}"
         ))),
     }
@@ -84,7 +84,7 @@ pub async fn get_dir(
         serde_json::from_str(&body);
     match response {
         Ok(val) => Ok(val),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "api::dir::get_dir error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }

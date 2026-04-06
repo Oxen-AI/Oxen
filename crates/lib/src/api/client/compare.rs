@@ -52,7 +52,7 @@ pub async fn create_compare(
     let response: Result<CompareTabularResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(tabular_compare) => Ok(tabular_compare.dfs),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "create_compare() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -97,12 +97,14 @@ pub async fn update_compare(
             serde_json::from_str(&body);
         match response {
             Ok(tabular_compare) => Ok(tabular_compare.dfs),
-            Err(err) => Err(OxenError::basic_str(&format!(
+            Err(err) => Err(OxenError::basic_str(format!(
                 "update_compare() Could not deserialize response [{err}]\n{body}"
             ))),
         }
     } else {
-        Err(OxenError::basic_str("update_compare() Request failed"))
+        Err(OxenError::basic_str(
+            "update_compare() Request failed".to_string(),
+        ))
     }
 }
 
@@ -122,7 +124,7 @@ pub async fn get_derived_compare_df(
         serde_json::from_str(&body);
     match response {
         Ok(df) => Ok(df.data_frame.view),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "get_derived_compare_df() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -144,7 +146,7 @@ pub async fn commits(
     let response: Result<CompareCommitsResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(commits) => Ok(commits.compare.commits),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "commits() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -166,7 +168,7 @@ pub async fn dir_tree(
     let response: Result<DirTreeDiffResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(dir_tree) => Ok(dir_tree.dirs),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "commits() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -188,7 +190,7 @@ pub async fn entries(
     let response: Result<CompareEntriesResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(entries) => Ok(entries.compare),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "commits() Could not deserialize response [{err}]\n{body}"
         ))),
     }

@@ -103,7 +103,7 @@ pub fn get_root_with_children_and_partial_nodes(
 /// Will error if the node is not a commit node, because only CommitNodes have a root directory
 pub fn get_root_dir(node: &MerkleTreeNode) -> Result<&MerkleTreeNode, OxenError> {
     if node.node.node_type() != MerkleTreeNodeType::Commit {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Expected a commit node, but got: '{:?}'",
             node.node.node_type()
         )));
@@ -111,7 +111,7 @@ pub fn get_root_dir(node: &MerkleTreeNode) -> Result<&MerkleTreeNode, OxenError>
 
     // A commit node should have exactly one child, which is the root directory
     if node.children.len() != 1 {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Commit node should have exactly one child (root directory) but got: {} from {}",
             node.children.len(),
             node
@@ -120,7 +120,7 @@ pub fn get_root_dir(node: &MerkleTreeNode) -> Result<&MerkleTreeNode, OxenError>
 
     let root_dir = &node.children[0];
     if root_dir.node.node_type() != MerkleTreeNodeType::Dir {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "The child of a commit node should be a directory, but got: '{:?}'",
             root_dir.node.node_type()
         )));
@@ -396,7 +396,7 @@ pub fn list_nodes_from_paths(
 /// List the files and folders given a directory node
 pub fn list_files_and_folders(node: &MerkleTreeNode) -> Result<Vec<MerkleTreeNode>, OxenError> {
     if MerkleTreeNodeType::Dir != node.node.node_type() {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "list_files_and_folders Merkle tree node is not a directory: '{:?}'",
             node.node.node_type()
         )));
@@ -417,7 +417,7 @@ pub fn list_files_and_folders_set(
     node: &MerkleTreeNode,
 ) -> Result<HashSet<MerkleTreeNode>, OxenError> {
     if MerkleTreeNodeType::Dir != node.node.node_type() {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "list_files_and_folders Merkle tree node is not a directory: '{:?}'",
             node.node.node_type()
         )));
@@ -438,7 +438,7 @@ pub fn list_files_and_folders_map(
     node: &MerkleTreeNode,
 ) -> Result<HashMap<PathBuf, MerkleTreeNode>, OxenError> {
     if MerkleTreeNodeType::Dir != node.node.node_type() {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "list_files_and_folders_map Merkle tree node is not a directory: '{:?}'",
             node.node.node_type()
         )));
@@ -476,9 +476,9 @@ pub fn collect_nodes_along_path(
     // Grab the first path or error if empty
     let root_path = paths
         .first()
-        .ok_or(OxenError::basic_str("No paths provided"))?;
+        .ok_or(OxenError::basic_str("No paths provided".to_string()))?;
     let node = get_node_by_path_with_children(repo, commit, root_path)?
-        .ok_or(OxenError::basic_str("Node not found"))?;
+        .ok_or(OxenError::basic_str("Node not found".to_string()))?;
 
     let (_root_node, nodes) = node.get_nodes_along_paths(paths)?;
 
@@ -512,12 +512,12 @@ pub async fn list_missing_file_hashes(
 ) -> Result<HashSet<MerkleHash>, OxenError> {
     if repo.min_version() == MinOxenVersion::V0_19_0 {
         let Some(node) = CommitMerkleTreeV0_19_0::read_depth(repo, hash, 1)? else {
-            return Err(OxenError::basic_str(&format!("Node {hash} not found")));
+            return Err(OxenError::basic_str(format!("Node {hash} not found")));
         };
         node.list_missing_file_hashes(repo).await
     } else {
         let Some(node) = CommitMerkleTreeLatest::read_depth(repo, hash, 1)? else {
-            return Err(OxenError::basic_str(&format!("Node {hash} not found")));
+            return Err(OxenError::basic_str(format!("Node {hash} not found")));
         };
         node.list_missing_file_hashes(repo).await
     }
@@ -608,7 +608,7 @@ pub fn dir_entries_with_paths(
         }
         EMerkleTreeNode::File(_) => {}
         _ => {
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "Unexpected node type: {:?}",
                 node.node.node_type()
             )));
@@ -652,7 +652,7 @@ pub fn unique_dir_entries(
         }
         EMerkleTreeNode::File(_) => {}
         _ => {
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "Unexpected node type: {:?}",
                 node.node.node_type()
             )));
@@ -1013,7 +1013,7 @@ pub fn unpack_nodes(
     log::debug!("Archive created");
     let Ok(entries) = archive.entries() else {
         return Err(OxenError::basic_str(
-            "Could not unpack tree database from archive",
+            "Could not unpack tree database from archive".to_string(),
         ));
     };
     log::debug!("Extracting entries...");
@@ -1056,7 +1056,7 @@ pub fn unpack_nodes(
 /// Write a node to disk
 pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), OxenError> {
     let EMerkleTreeNode::Commit(commit_node) = &node.node else {
-        return Err(OxenError::basic_str("Expected commit node"));
+        return Err(OxenError::basic_str("Expected commit node".to_string()));
     };
     let commit_node = CommitNode::new(repo, commit_node.get_opts())?;
     p_write_tree(repo, node, &commit_node)?;
@@ -1143,9 +1143,9 @@ pub fn get_node_hashes_between_commits(
         commits.len(),
         maybe_subtrees
     );
-    let (first_commit, new_commits) = commits
-        .split_first()
-        .ok_or(OxenError::basic_str("Must provide at least one commit"))?;
+    let (first_commit, new_commits) = commits.split_first().ok_or(OxenError::basic_str(
+        "Must provide at least one commit".to_string(),
+    ))?;
 
     let mut starting_node_hashes = HashSet::new();
 
@@ -1329,7 +1329,7 @@ pub fn get_ancestor_nodes(
                     let Some(node) =
                         repositories::tree::get_node_by_path_with_children(repo, commit, ancestor)?
                     else {
-                        return Err(OxenError::basic_str(&format!(
+                        return Err(OxenError::basic_str(format!(
                             "Ancestor {ancestor:?} for subtree path {subtree_path:?} not found in merkle tree"
                         )));
                     };

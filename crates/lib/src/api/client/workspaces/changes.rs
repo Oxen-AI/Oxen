@@ -29,14 +29,14 @@ pub async fn list(
                 serde_json::from_str(&body);
             match response {
                 Ok(val) => Ok(val.staged),
-                Err(err) => Err(OxenError::basic_str(&format!(
+                Err(err) => Err(OxenError::basic_str(format!(
                     "api::staging::status error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                 ))),
             }
         }
         Err(err) => {
             let err = format!("api::staging::status Request failed: {url}\nErr {err:?}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -60,7 +60,7 @@ pub async fn rm(
         }
         Err(err) => {
             let err = format!("rm_file Request failed: {url}\n\nErr {err:?}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }

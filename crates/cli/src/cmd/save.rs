@@ -41,7 +41,7 @@ impl RunCmd for SaveCmd {
         let output_path = Path::new(output_str);
         let repo_path = Path::new(repo_str);
         let repo_dir = util::fs::get_repo_root(repo_path)
-            .ok_or_else(|| OxenError::local_repo_not_found(repo_path))?;
+            .ok_or_else(|| OxenError::local_repo_not_found(repo_path.to_path_buf()))?;
         let repo = LocalRepository::from_dir(&repo_dir)?;
 
         repositories::save(&repo, output_path)?;

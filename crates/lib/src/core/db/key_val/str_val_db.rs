@@ -54,7 +54,7 @@ where
                 err,
                 db.path()
             );
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -82,7 +82,9 @@ where
         }
         Err(err) => {
             log::error!("Err: Could not encode value {err}");
-            Err(OxenError::basic_str("Could not encode value..."))
+            Err(OxenError::basic_str(
+                "Could not encode value...".to_string(),
+            ))
         }
     }
 }
@@ -107,7 +109,7 @@ where
             }
             _ => {
                 return Err(OxenError::basic_str(
-                    "Could not read iterate over db values",
+                    "Could not read iterate over db values".to_string(),
                 ));
             }
         }
@@ -141,7 +143,7 @@ where
             },
             _ => {
                 return Err(OxenError::basic_str(
-                    "Could not read iterate over db values",
+                    "Could not read iterate over db values".to_string(),
                 ));
             }
         }
@@ -175,7 +177,7 @@ where
             },
             _ => {
                 return Err(OxenError::basic_str(
-                    "Could not read iterate over db values",
+                    "Could not read iterate over db values".to_string(),
                 ));
             }
         }

@@ -88,7 +88,7 @@ pub async fn diff(opts: DiffOpts) -> Result<Vec<DiffResult>, OxenError> {
             let path_1 = opts.path_1;
             let Some(path_2) = opts.path_2 else {
                 return Err(OxenError::basic_str(
-                    "Error: `oxen diff` requires a repo or file paths",
+                    "Error: `oxen diff` requires a repo or file paths".to_string(),
                 ));
             };
 
@@ -158,7 +158,7 @@ pub async fn diff(opts: DiffOpts) -> Result<Vec<DiffResult>, OxenError> {
         }
 
         _ => Err(OxenError::basic_str(
-            "Single file comparison mode not supported",
+            "Single file comparison mode not supported".to_string(),
         )),
     }
 }
@@ -451,7 +451,7 @@ pub async fn diff_path(
         _ => {
             println!("Unable to compare directory and file");
             Err(OxenError::basic_str(
-                "Cannot compare a directory with a file",
+                "Cannot compare a directory with a file".to_string(),
             ))
         }
     }
@@ -638,7 +638,7 @@ pub async fn diff_file_nodes(
             ))),
         },
         (None, None) => Err(OxenError::basic_str(
-            "Could not find one or both of the files to compare",
+            "Could not find one or both of the files to compare".to_string(),
         )),
     }
 }
@@ -749,7 +749,7 @@ pub async fn diff_tabular_file_nodes(
             diff_dfs(&df_1, &df_2, keys, targets, display)
         }
         _ => Err(OxenError::basic_str(
-            "Could not find one or both of the files to compare",
+            "Could not find one or both of the files to compare".to_string(),
         )),
     }
 }
@@ -817,7 +817,7 @@ pub async fn diff_text_file_nodes(
             )
         }
         (None, None) => Err(OxenError::basic_str(
-            "Could not find one or both of the files to compare",
+            "Could not find one or both of the files to compare".to_string(),
         )),
     }
 }
@@ -850,7 +850,7 @@ async fn read_version_file_to_string(
             Err(_) => {
                 let err = format!("could not decode version {} as UTF-8", hash);
                 log::warn!("{err}");
-                Err(OxenError::basic_str(&err))
+                Err(OxenError::basic_str(err))
             }
         },
         Err(err) => Err(err),
@@ -970,7 +970,7 @@ fn get_keys_targets_smart_defaults(
             Ok((keys, filled_targets))
         }
         (false, true) => Err(OxenError::basic_str(
-            "Must specify at least one key column if specifying target columns.",
+            "Must specify at least one key column if specifying target columns.".to_string(),
         )),
         (false, false) => {
             let filled_keys = schema_diff.unchanged_cols.to_vec();

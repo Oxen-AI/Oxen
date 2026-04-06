@@ -39,7 +39,7 @@ pub async fn get(
             let err = format!(
                 "workspaces::data_frames::get error parsing from {url}\n\nErr {err:?} \n\n{body}"
             );
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -58,7 +58,7 @@ pub async fn download(
 
     // Download the file and save it to the output path
     let Some(output_path_str) = &opts.output else {
-        return Err(OxenError::basic_str("output path is required"));
+        return Err(OxenError::basic_str("output path is required".to_string()));
     };
     let output_path = Path::new(&output_path_str);
     let client = client::new_for_url(&url)?;
@@ -68,12 +68,12 @@ pub async fn download(
         let status = res.status();
 
         if status == reqwest::StatusCode::NOT_FOUND {
-            return Err(OxenError::resource_not_found(&file_path_str));
+            return Err(OxenError::resource_not_found(file_path_str.to_string()));
         }
 
         log::error!("api::client::workspaces::data_frames::download failed with status: {status}");
         let body = client::parse_json_body(&url, res).await?;
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Error: Could not download data frame {body:?}"
         )));
     }
@@ -120,7 +120,7 @@ pub async fn list(
             let err = format!(
                 "api::workspaces::get_by_branch error parsing from {url}\n\nErr {err:?} \n\n{body}"
             );
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -175,7 +175,7 @@ pub async fn put(
         Err(err) => {
             let err =
                 format!("api::workspaces::put error parsing from {url}\n\nErr {err:?} \n\n{body}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -236,14 +236,14 @@ pub async fn diff(
             match response {
                 Ok(data) => Ok(data.data_frame),
 
-                Err(err) => Err(OxenError::basic_str(&format!(
+                Err(err) => Err(OxenError::basic_str(format!(
                     "api::staging::diff error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                 ))),
             }
         }
         Err(err) => {
             let err = format!("api::staging::diff Request failed: {url}\nErr {err:?}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -271,7 +271,7 @@ pub async fn rename_data_frame(
         Err(err) => {
             let err =
                 format!("api::workspaces::put error parsing from {url}\n\nErr {err:?} \n\n{body}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }

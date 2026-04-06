@@ -31,10 +31,10 @@ impl RunCmd for DbGetCmd {
         // Parse Args
         let error = "Usage: oxen db get <PATH> <KEY>";
         let Some(path) = args.get_one::<String>("PATH") else {
-            return Err(OxenError::basic_str(error));
+            return Err(OxenError::basic_str(error.to_string()));
         };
         let Some(key) = args.get_one::<String>("KEY") else {
-            return Err(OxenError::basic_str(error));
+            return Err(OxenError::basic_str(error.to_string()));
         };
 
         let dtype = args.get_one::<String>("dtype").map(|x| x.as_str());

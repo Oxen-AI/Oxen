@@ -57,7 +57,7 @@ impl RunCmd for WorkspaceCommitCmd {
         // Parse Args
         let Some(message) = args.get_one::<String>("message") else {
             return Err(OxenError::basic_str(
-                "Err: Usage `oxen workspace commit -w <workspace_id> -m <message>`",
+                "Err: Usage `oxen workspace commit -w <workspace_id> -m <message>`".to_string(),
             ));
         };
 
@@ -76,7 +76,7 @@ impl RunCmd for WorkspaceCommitCmd {
                         name
                     } else {
                         return Err(OxenError::basic_str(
-                            "Either workspace-id or workspace-name must be provided.",
+                            "Either workspace-id or workspace-name must be provided.".to_string(),
                         ));
                     }
                 }
@@ -93,7 +93,8 @@ impl RunCmd for WorkspaceCommitCmd {
                     Some(branch) => branch.name,
                     None => {
                         return Err(OxenError::basic_str(
-                            "No current branch. Use --branch to specify a target branch to commit the workspace to.",
+                            "No current branch. Use --branch to specify a target branch to commit the workspace to.".to_string(),
+
                         ));
                     }
                 }

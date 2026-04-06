@@ -162,7 +162,7 @@ impl ChunkShardFile {
 
     pub fn add_buffer(&mut self, hash: u128, buffer: &[u8]) -> Result<(), OxenError> {
         if !self.has_capacity(buffer.len()) {
-            return Err(OxenError::basic_str("Shard is full"));
+            return Err(OxenError::basic_str("Shard is full".to_string()));
         }
 
         self.index
@@ -334,7 +334,7 @@ impl ChunkShardManager {
         let shard_idx = self
             .db
             .get(hash)?
-            .ok_or(OxenError::basic_str("Chunk not found"))?;
+            .ok_or(OxenError::basic_str("Chunk not found".to_string()))?;
         log::debug!("Reading chunk from shard: [{shard_idx}] for hash: {hash}");
         // Cache the current shard file for faster reads of the same shard
         if shard_idx as i32 != self.current_idx {
@@ -348,7 +348,7 @@ impl ChunkShardManager {
 
     pub fn write_chunk(&mut self, hash: u128, chunk: &[u8]) -> Result<u32, OxenError> {
         let Some(current_file) = self.current_file.as_mut() else {
-            return Err(OxenError::basic_str("Not open for writing"));
+            return Err(OxenError::basic_str("Not open for writing".to_string()));
         };
 
         // log::debug!("Writing chunk {} -> {} to shard: [{}]", hash, chunk.len(), self.current_idx);
@@ -373,7 +373,7 @@ impl ChunkShardManager {
 
     pub fn save_all(&mut self) -> Result<(), OxenError> {
         let Some(current_file) = self.current_file.as_mut() else {
-            return Err(OxenError::basic_str("Not open for writing"));
+            return Err(OxenError::basic_str("Not open for writing".to_string()));
         };
 
         current_file.save()?;

@@ -16,7 +16,7 @@ pub async fn get(
     path: &Path,
 ) -> Result<EmbeddingColumnsResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
         )));
     };
@@ -40,7 +40,7 @@ pub async fn neighbors(
     paginate_opts: &PaginateOpts,
 ) -> Result<WorkspaceJsonDataFrameViewResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
         )));
     };
@@ -73,7 +73,7 @@ pub async fn index(
     use_background_thread: bool,
 ) -> Result<EmbeddingColumnsResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
         )));
     };

@@ -44,7 +44,7 @@ pub async fn has_node(
     let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(_) => Ok(true),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "api::client::tree::get_by_id() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -245,7 +245,7 @@ pub async fn download_tree_from_path(
     } else {
         let parent_path = path
             .parent()
-            .ok_or_else(|| OxenError::basic_str("Parent path not found"))?;
+            .ok_or_else(|| OxenError::basic_str("Parent path not found".to_string()))?;
         let hash = get_node_hash_by_path(remote_repo, commit_id, parent_path.to_path_buf()).await?;
         let file_node = CommitMerkleTree::read_node(local_repo, &hash, true)?.unwrap();
 
@@ -402,7 +402,7 @@ pub async fn list_missing_node_hashes(
     let response: Result<MerkleHashesResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(response) => Ok(response.hashes),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "api::client::tree::list_missing_node_hashes() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -420,7 +420,7 @@ pub async fn list_missing_file_hashes(
     let response: Result<MerkleHashesResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(response) => Ok(response.hashes),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "api::client::tree::list_missing_file_hashes() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -447,7 +447,7 @@ pub async fn list_missing_file_hashes_from_commits(
     let response: Result<MerkleHashesResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(response) => Ok(response.hashes),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "api::client::tree::list_missing_file_hashes_from_commits() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -471,7 +471,7 @@ pub async fn mark_nodes_as_synced(
     let response: Result<MerkleHashesResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(_response) => Ok(()),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "api::client::tree::list_missing_hashes() Could not deserialize response [{err}]\n{body}"
         ))),
     }

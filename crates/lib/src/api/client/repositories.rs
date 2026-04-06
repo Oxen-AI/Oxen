@@ -110,7 +110,7 @@ pub async fn get_by_remote(remote: &Remote) -> Result<RemoteRepository, OxenErro
     let res = client.get(&url).send().await?;
     log::debug!("get_by_remote status: {}", res.status());
     if 404 == res.status() {
-        return Err(OxenError::remote_repo_not_found(&remote.url));
+        return Err(OxenError::remote_repo_not_found(remote.url.clone()));
     }
 
     let body = client::parse_json_body(&url, res).await?;
@@ -121,7 +121,7 @@ pub async fn get_by_remote(remote: &Remote) -> Result<RemoteRepository, OxenErro
         Ok(j_res) => Ok(RemoteRepository::from_view(&j_res.repository, remote)),
         Err(err) => {
             log::debug!("Err: {err}");
-            Err(OxenError::basic_str(&format!(
+            Err(OxenError::basic_str(format!(
                 "get_by_remote Could not deserialize repository [{url}]"
             )))
         }
@@ -151,7 +151,7 @@ pub async fn get_repo_data_by_remote(
                 Ok(j_res) => Ok(Some(j_res.repository)),
                 Err(err) => {
                     log::debug!("Err: {err}");
-                    Err(OxenError::basic_str(&format!(
+                    Err(OxenError::basic_str(format!(
                         "api::repositories::get_repo_data_by_remote() Could not deserialize repository [{url}]"
                     )))
                 }
@@ -159,7 +159,7 @@ pub async fn get_repo_data_by_remote(
         }
         Err(err) => {
             log::error!("Failed to get remote url {url}\n{err:?}");
-            Err(OxenError::basic_str(&format!(
+            Err(OxenError::basic_str(format!(
                 "api::repositories::get_repo_data_by_remote() Request failed at url {url}"
             )))
         }
@@ -205,7 +205,7 @@ pub async fn create_empty(repo: RepoNew) -> Result<RemoteRepository, OxenError> 
             let err = format!(
                 "Create repository could not connect to {url}. Make sure you have the correct server and that it is running."
             );
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -244,14 +244,14 @@ pub async fn create(repo_new: RepoNew) -> Result<RemoteRepository, OxenError> {
                     "Could not create or find repository [{}]: {err}\n{body}",
                     repo_new.repo_id()
                 );
-                Err(OxenError::basic_str(&err))
+                Err(OxenError::basic_str(err))
             }
         }
     } else {
         let err = format!(
             "Create repository could not connect to {url}. Make sure you have the correct server and that it is running."
         );
-        Err(OxenError::basic_str(&err))
+        Err(OxenError::basic_str(err))
     }
 }
 
@@ -311,7 +311,7 @@ pub async fn create_repo_with_files(
                 "Could not create or find repository [{}]: {err}\n{body}",
                 repo_new.repo_id()
             );
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -352,7 +352,7 @@ pub async fn create_from_local(
                 "Could not create or find repository [{}]: {err}\n{body}",
                 repo_new.repo_id()
             );
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -366,13 +366,13 @@ pub async fn delete(repository: &RemoteRepository) -> Result<StatusMessage, Oxen
         let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
         match response {
             Ok(val) => Ok(val),
-            Err(_) => Err(OxenError::basic_str(&format!(
+            Err(_) => Err(OxenError::basic_str(format!(
                 "Could not delete repository \n\n{body}"
             ))),
         }
     } else {
         Err(OxenError::basic_str(
-            "api::repositories::delete() Request failed",
+            "api::repositories::delete() Request failed".to_string(),
         ))
     }
 }
@@ -384,13 +384,13 @@ pub async fn delete_from_url(url: String) -> Result<StatusMessage, OxenError> {
         let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
         match response {
             Ok(val) => Ok(val),
-            Err(_) => Err(OxenError::basic_str(&format!(
+            Err(_) => Err(OxenError::basic_str(format!(
                 "Could not delete repository \n\n{body}"
             ))),
         }
     } else {
         Err(OxenError::basic_str(
-            "api::repositories::delete() Request failed",
+            "api::repositories::delete() Request failed".to_string(),
         ))
     }
 }
@@ -433,12 +433,12 @@ pub async fn transfer_namespace(
             }
             Err(err) => {
                 let err = format!("Could not transfer repository: {err}\n{body}");
-                Err(OxenError::basic_str(&err))
+                Err(OxenError::basic_str(err))
             }
         }
     } else {
         Err(OxenError::basic_str(
-            "api::repositories::transfer_namespace() Request failed",
+            "api::repositories::transfer_namespace() Request failed".to_string(),
         ))
     }
 }
@@ -570,7 +570,7 @@ async fn action_hook(
         Ok(_) => Ok(()),
         _ => {
             let err = "api::repositories::action_hook() Request failed";
-            Err(OxenError::basic_str(err))
+            Err(OxenError::basic_str(err.to_string()))
         }
     }
 }

@@ -36,7 +36,7 @@ pub fn get_indices(
         Err(err) => {
             // error from the DB
             let err = format!("Err could not fetch value {key:?} from db: {err:?}",);
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -59,12 +59,14 @@ pub fn list_indices(
                     results.push((key, value));
                 }
                 _ => {
-                    return Err(OxenError::basic_str("Could not read utf8 val..."));
+                    return Err(OxenError::basic_str(
+                        "Could not read utf8 val...".to_string(),
+                    ));
                 }
             },
             _ => {
                 return Err(OxenError::basic_str(
-                    "Could not read iterate over db values",
+                    "Could not read iterate over db values".to_string(),
                 ));
             }
         }
@@ -95,7 +97,7 @@ pub fn hash_map_indices(
             },
             _ => {
                 return Err(OxenError::basic_str(
-                    "Could not read iterate over db values",
+                    "Could not read iterate over db values".to_string(),
                 ));
             }
         }

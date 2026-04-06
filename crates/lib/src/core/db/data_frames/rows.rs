@@ -69,7 +69,9 @@ pub fn modify_row(
     uuid: &str,
 ) -> Result<DataFrame, OxenError> {
     if df.height() != 1 {
-        return Err(OxenError::basic_str("Modify row requires exactly one row"));
+        return Err(OxenError::basic_str(
+            "Modify row requires exactly one row".to_string(),
+        ));
     }
 
     let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
@@ -125,7 +127,7 @@ pub fn modify_row(
     ))?;
     let result = df_db::modify_row_with_polars_df(conn, TABLE_NAME, uuid, &new_row)?;
     if result.height() == 0 {
-        return Err(OxenError::resource_not_found(uuid));
+        return Err(OxenError::resource_not_found(uuid.to_string()));
     }
     Ok(result)
 }
@@ -142,7 +144,7 @@ pub fn modify_rows(
     for (row_id, df) in row_map.iter() {
         if df.height() != 1 {
             return Err(OxenError::basic_str(
-                "df must have exactly one row to be used for modification",
+                "df must have exactly one row to be used for modification".to_string(),
             ));
         }
         let schema = df.schema();
@@ -196,11 +198,11 @@ pub fn modify_rows(
 
     let result = df_db::modify_rows_with_polars_df(conn, TABLE_NAME, &update_map)?;
     if result.height() == 0 {
-        return Err(OxenError::resource_not_found(""));
+        return Err(OxenError::resource_not_found("".to_string()));
     }
 
     if result.height() != update_map.len() {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Expected {} rows to be modified, but got {}",
             update_map.len(),
             result.height()
@@ -219,7 +221,7 @@ pub fn delete_row(conn: &duckdb::Connection, uuid: &str) -> Result<DataFrame, Ox
     let row_to_delete = df_db::select(conn, &select_stmt, None)?;
 
     if row_to_delete.height() == 0 {
-        return Err(OxenError::resource_not_found(uuid));
+        return Err(OxenError::resource_not_found(uuid.to_string()));
     }
 
     // If it's newly added, delete it. Otherwise, set it to removed
@@ -228,7 +230,11 @@ pub fn delete_row(conn: &duckdb::Connection, uuid: &str) -> Result<DataFrame, Ox
 
     let status = match status_str {
         Some(status) => status,
-        None => return Err(OxenError::basic_str("Diff status column is not a string")),
+        None => {
+            return Err(OxenError::basic_str(
+                "Diff status column is not a string".to_string(),
+            ));
+        }
     };
     log::debug!("status is: {status}");
 
@@ -267,7 +273,7 @@ fn get_hash_and_status_for_modification(
     let old_status = old_row.column(DIFF_STATUS_COL)?.get(0)?;
     let old_status = old_status
         .get_str()
-        .ok_or_else(|| OxenError::basic_str("Diff status column is not a string"))?;
+        .ok_or_else(|| OxenError::basic_str("Diff status column is not a string".to_string()))?;
 
     let old_hash = old_row.column(DIFF_HASH_COL)?.get(0)?;
 
@@ -275,7 +281,7 @@ fn get_hash_and_status_for_modification(
     let new_hash = new_hash_df.column("_temp_hash")?.get(0)?;
     let new_hash = new_hash
         .get_str()
-        .ok_or_else(|| OxenError::basic_str("Diff hash column is not a string"))?;
+        .ok_or_else(|| OxenError::basic_str("Diff hash column is not a string".to_string()))?;
 
     // We need to calculate the original hash for the row
     // Use a temp hash column to avoid collision with the column that's already there.
@@ -285,12 +291,12 @@ fn get_hash_and_status_for_modification(
         let original_data_hash = original_data_hash.column("_temp_hash")?.get(0)?;
         original_data_hash
             .get_str()
-            .ok_or_else(|| OxenError::basic_str("Diff hash column is not a string"))?
+            .ok_or_else(|| OxenError::basic_str("Diff hash column is not a string".to_string()))?
             .to_owned()
     } else {
         old_hash
             .get_str()
-            .ok_or_else(|| OxenError::basic_str("Diff hash column is not a string"))?
+            .ok_or_else(|| OxenError::basic_str("Diff hash column is not a string".to_string()))?
             .to_owned()
     };
 

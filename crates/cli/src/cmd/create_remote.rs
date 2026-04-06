@@ -86,7 +86,7 @@ impl RunCmd for CreateRemoteCmd {
         // Parse Args
         let Some(namespace_name) = args.get_one::<String>("name") else {
             return Err(OxenError::basic_str(
-                "Must supply a namespace/name for the remote repository.",
+                "Must supply a namespace/name for the remote repository.".to_string(),
             ));
         };
 
@@ -115,7 +115,7 @@ impl RunCmd for CreateRemoteCmd {
         let parts: Vec<&str> = namespace_name.split('/').collect();
         if parts.len() != 2 {
             return Err(OxenError::basic_str(
-                "Invalid name format. Must be namespace/name",
+                "Invalid name format. Must be namespace/name".to_string(),
             ));
         }
 

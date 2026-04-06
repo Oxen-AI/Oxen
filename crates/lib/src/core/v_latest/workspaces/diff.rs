@@ -24,12 +24,12 @@ pub fn diff(workspace: &Workspace, path: &Path) -> Result<DiffResult, OxenError>
     );
 
     let file_node = repositories::tree::get_file_by_path(repo, commit, path)?
-        .ok_or(OxenError::entry_does_not_exist(path))?;
+        .ok_or(OxenError::entry_does_not_exist(path.to_path_buf()))?;
 
     log::debug!("diff_workspace_df got file_node {file_node}");
 
     if !is_indexed(workspace, path)? {
-        return Err(OxenError::basic_str("Dataset is not indexed"));
+        return Err(OxenError::basic_str("Dataset is not indexed".to_string()));
     };
 
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);

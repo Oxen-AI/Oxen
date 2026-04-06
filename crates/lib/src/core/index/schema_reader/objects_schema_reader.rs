@@ -105,7 +105,7 @@ impl ObjectsSchemaReader {
         let commit =
             commit_reader
                 .get_commit_by_id(&self.commit_id)?
-                .ok_or(OxenError::basic_str(&format!(
+                .ok_or(OxenError::basic_str(format!(
                     "Could not find commit {}",
                     self.commit_id
                 )))?;

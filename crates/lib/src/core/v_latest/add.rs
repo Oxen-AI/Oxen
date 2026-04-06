@@ -102,7 +102,7 @@ pub async fn add<'a>(
 
             if !util::fs::is_canonical(path)? {
                 return Err(OxenError::basic_str(
-                    "Err: Cannot use relative paths outside repo scope",
+                    "Err: Cannot use relative paths outside repo scope".to_string(),
                 ));
             }
 

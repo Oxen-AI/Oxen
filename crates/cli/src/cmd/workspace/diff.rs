@@ -42,7 +42,9 @@ impl RunCmd for WorkspaceDiffCmd {
         } else if let Some(id) = args.get_one::<String>("workspace-id") {
             Some(id.to_string())
         } else {
-            return Err(OxenError::basic_str("Must supply a workspace id."));
+            return Err(OxenError::basic_str(
+                "Must supply a workspace id.".to_string(),
+            ));
         }
         .unwrap();
 

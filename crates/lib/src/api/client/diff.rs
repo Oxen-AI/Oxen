@@ -23,7 +23,7 @@ pub async fn list_diff_entries(
     let response: Result<CompareEntriesResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(val) => Ok(val.compare),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "api::client::diff::list_diff_entries error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }
@@ -44,7 +44,7 @@ pub async fn diff_entries(
     let response: Result<CompareEntryResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(val) => Ok(val.compare),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "api::client::diff::diff_entries error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }

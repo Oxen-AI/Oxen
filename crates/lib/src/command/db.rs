@@ -34,13 +34,13 @@ pub fn list(path: &Path, limit: Option<usize>) -> Result<(), OxenError> {
                     // deserialize as u128
                     if key.len() == 16 {
                         let key: [u8; 16] = (*key).try_into().map_err(|_| {
-                            OxenError::basic_str("Could not convert key to [u8; 16]")
+                            OxenError::basic_str("Could not convert key to [u8; 16]".to_string())
                         })?;
                         let key = u128::from_le_bytes(key);
                         format!("{key}")
                     } else {
                         return Err(OxenError::basic_str(
-                            "Could not read iterate over db values",
+                            "Could not read iterate over db values".to_string(),
                         ));
                     }
                 };
@@ -63,7 +63,7 @@ pub fn list(path: &Path, limit: Option<usize>) -> Result<(), OxenError> {
             }
             _ => {
                 return Err(OxenError::basic_str(
-                    "Could not read iterate over db values",
+                    "Could not read iterate over db values".to_string(),
                 ));
             }
         }
@@ -123,6 +123,6 @@ pub fn get(path: &Path, key: &str, dtype: Option<&str>) -> Result<String, OxenEr
             Ok(format!("<{} bytes>", value.len()))
         }
     } else {
-        Err(OxenError::basic_str(&format!("Key {str_key} not found")))
+        Err(OxenError::basic_str(format!("Key {str_key} not found")))
     }
 }

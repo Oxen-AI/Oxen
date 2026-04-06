@@ -69,7 +69,7 @@ fn get_storage_for_repo(repo: &LocalRepository) -> Result<u64, OxenError> {
             }
             repositories::size::SizeStatus::Error => {
                 log::warn!("Size calculation failed, returning 0");
-                Err(OxenError::basic_str("Size calculation failed"))
+                Err(OxenError::basic_str("Size calculation failed".to_string()))
             }
         },
         Err(e) => {

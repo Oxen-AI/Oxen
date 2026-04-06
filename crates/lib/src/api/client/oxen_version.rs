@@ -15,7 +15,7 @@ pub async fn get_remote_version(scheme: &str, host: &str) -> Result<String, Oxen
     let response: StatusMessage = serde_json::from_str(&body)?;
     response
         .oxen_version
-        .ok_or_else(|| OxenError::basic_str("Remote server did not return a version"))
+        .ok_or_else(|| OxenError::basic_str("Remote server did not return a version".to_string()))
 }
 
 pub async fn get_min_oxen_version(scheme: &str, host: &str) -> Result<String, OxenError> {

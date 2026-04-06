@@ -251,7 +251,7 @@ impl OxenError {
         Some(hint)
     }
 
-    pub fn basic_str(s: &str) -> Self {
+    pub fn basic_str(s: String) -> Self {
         OxenError::Basic(StringError::from(s))
     }
 
@@ -259,19 +259,19 @@ impl OxenError {
         OxenError::ThumbnailingNotEnabled(StringError::from(s))
     }
 
-    pub fn authentication(s: &str) -> Self {
+    pub fn authentication(s: String) -> Self {
         OxenError::Authentication(StringError::from(s))
     }
 
-    pub fn migration_required(s: &str) -> Self {
+    pub fn migration_required(s: String) -> Self {
         OxenError::MigrationRequired(StringError::from(s))
     }
 
-    pub fn invalid_version(s: &str) -> Self {
+    pub fn invalid_version(s: String) -> Self {
         OxenError::InvalidVersion(StringError::from(s))
     }
 
-    pub fn oxen_update_required(s: &str) -> Self {
+    pub fn oxen_update_required(s: String) -> Self {
         OxenError::OxenUpdateRequired(StringError::from(s))
     }
 
@@ -283,12 +283,12 @@ impl OxenError {
         OxenError::RepoNotFound(Box::new(repo))
     }
 
-    pub fn file_import_error(s: &str) -> Self {
+    pub fn file_import_error(s: String) -> Self {
         OxenError::ImportFileError(StringError::from(s))
     }
 
     pub fn remote_not_set(name: &str) -> Self {
-        OxenError::basic_str(&format!(
+        OxenError::basic_str(format!(
             "Remote not set, you can set a remote by running:\n\noxen config --set-remote {name} <url>\n"
         ))
     }
@@ -305,7 +305,7 @@ impl OxenError {
         ))
     }
 
-    pub fn merge_conflict(desc: &str) -> Self {
+    pub fn merge_conflict(desc: String) -> Self {
         OxenError::UpstreamMergeConflict(StringError::from(desc))
     }
 
@@ -325,19 +325,19 @@ impl OxenError {
         OxenError::OperationCancelled(StringError::from("\nOperation cancelled.\n"))
     }
 
-    pub fn resource_not_found(value: &str) -> Self {
+    pub fn resource_not_found(value: String) -> Self {
         OxenError::ResourceNotFound(StringError::from(value))
     }
 
-    pub fn path_does_not_exist(path: &Path) -> Self {
+    pub fn path_does_not_exist(path: PathBuf) -> Self {
         OxenError::PathDoesNotExist(Box::new(path.into()))
     }
 
-    pub fn image_metadata_error(s: &str) -> Self {
+    pub fn image_metadata_error(s: String) -> Self {
         OxenError::ImageMetadataParseError(StringError::from(s))
     }
 
-    pub fn sql_parse_error(s: &str) -> Self {
+    pub fn sql_parse_error(s: String) -> Self {
         OxenError::SQLParseError(StringError::from(s))
     }
 
@@ -345,7 +345,7 @@ impl OxenError {
         OxenError::ParsedResourceNotFound(Box::new(resource.resource.into()))
     }
 
-    pub fn invalid_repo_name(s: &str) -> Self {
+    pub fn invalid_repo_name(s: String) -> Self {
         OxenError::InvalidRepoName(StringError::from(s))
     }
 
@@ -394,7 +394,7 @@ impl OxenError {
         OxenError::NoCommitsFound(StringError::from("\n No commits found.\n"))
     }
 
-    pub fn local_repo_not_found(dir: &Path) -> OxenError {
+    pub fn local_repo_not_found(dir: PathBuf) -> OxenError {
         OxenError::LocalRepoNotFound(Box::new(dir.into()))
     }
 
@@ -402,7 +402,7 @@ impl OxenError {
         OxenError::user_config_not_found(EMAIL_AND_NAME_NOT_FOUND.to_string().into())
     }
 
-    pub fn remote_repo_not_found(url: &str) -> OxenError {
+    pub fn remote_repo_not_found(url: String) -> OxenError {
         OxenError::RemoteRepoNotFound(Box::new(StringError::from(url)))
     }
 
@@ -411,50 +411,50 @@ impl OxenError {
     }
 
     pub fn home_dir_not_found() -> OxenError {
-        OxenError::basic_str("Home directory not found")
+        OxenError::basic_str("Home directory not found".to_string())
     }
 
     pub fn cache_dir_not_found() -> OxenError {
-        OxenError::basic_str("Cache directory not found")
+        OxenError::basic_str("Cache directory not found".to_string())
     }
 
     pub fn must_be_on_valid_branch() -> OxenError {
         OxenError::basic_str(
-            "Repository is in a detached HEAD state, checkout a valid branch to continue.\n\n  oxen checkout <branch>\n",
+            "Repository is in a detached HEAD state, checkout a valid branch to continue.\n\n  oxen checkout <branch>\n".to_string(),
         )
     }
 
     pub fn no_schemas_staged() -> OxenError {
         OxenError::basic_str(
-            "No schemas staged\n\nAuto detect schema on file with:\n\n  oxen add path/to/file.csv\n\nOr manually add a schema override with:\n\n  oxen schemas add path/to/file.csv 'name:str, age:i32'\n",
+            "No schemas staged\n\nAuto detect schema on file with:\n\n  oxen add path/to/file.csv\n\nOr manually add a schema override with:\n\n  oxen schemas add path/to/file.csv 'name:str, age:i32'\n".to_string(),
         )
     }
 
     pub fn no_schemas_committed() -> OxenError {
         OxenError::basic_str(
-            "No schemas committed\n\nAuto detect schema on file with:\n\n  oxen add path/to/file.csv\n\nOr manually add a schema override with:\n\n  oxen schemas add path/to/file.csv 'name:str, age:i32'\n\nThen commit the schema with:\n\n  oxen commit -m 'Adding schema for path/to/file.csv'\n",
+            "No schemas committed\n\nAuto detect schema on file with:\n\n  oxen add path/to/file.csv\n\nOr manually add a schema override with:\n\n  oxen schemas add path/to/file.csv 'name:str, age:i32'\n\nThen commit the schema with:\n\n  oxen commit -m 'Adding schema for path/to/file.csv'\n".to_string(),
         )
     }
 
     pub fn schema_does_not_exist_for_file(path: &Path) -> OxenError {
         let err = format!("Schema does not exist for file {:?}", path);
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn schema_does_not_exist(path: &Path) -> OxenError {
         let err = format!("Schema does not exist {:?}", path);
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn schema_does_not_have_field(field: &str) -> OxenError {
         let err = format!("Schema does not have field {:?}", field);
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn schema_has_changed(old_schema: Schema, current_schema: Schema) -> OxenError {
         let err =
             format!("\nSchema has changed\n\nOld\n{old_schema}\n\nCurrent\n{current_schema}\n");
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn remote_branch_not_found(name: &str) -> OxenError {
@@ -469,51 +469,51 @@ impl OxenError {
 
     pub fn commit_db_corrupted(commit_id: &str) -> OxenError {
         let err = format!("Commit db corrupted, could not find commit: {}", commit_id);
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn commit_id_does_not_exist(commit_id: &str) -> OxenError {
         let err = format!("Could not find commit: {}", commit_id);
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn local_parent_link_broken(commit_id: &str) -> OxenError {
         let err = format!("Broken link to parent commit: {}", commit_id);
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
-    pub fn entry_does_not_exist(path: &Path) -> OxenError {
+    pub fn entry_does_not_exist(path: PathBuf) -> OxenError {
         OxenError::ParsedResourceNotFound(Box::new(path.into()))
     }
 
     pub fn file_error(path: &Path, error: std::io::Error) -> OxenError {
         let err = format!("File does not exist: {:?} error {:?}", path, error);
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn file_create_error(path: &Path, error: std::io::Error) -> OxenError {
         let err = format!("Could not create file: {:?} error {:?}", path, error);
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn dir_create_error(path: &Path, error: std::io::Error) -> OxenError {
         let err = format!("Could not create directory: {:?} error {:?}", path, error);
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn file_open_error(path: &Path, error: std::io::Error) -> OxenError {
         let err = format!("Could not open file: {:?} error {:?}", path, error,);
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn file_read_error(path: &Path, error: std::io::Error) -> OxenError {
         let err = format!("Could not read file: {:?} error {:?}", path, error,);
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn file_metadata_error(path: &Path, error: std::io::Error) -> OxenError {
         let err = format!("Could not get file metadata: {:?} error {:?}", path, error);
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn file_copy_error(src: &Path, dst: &Path, err: impl std::fmt::Debug) -> OxenError {
@@ -521,7 +521,7 @@ impl OxenError {
             "File copy error: {err:?}\nCould not copy from `{:?}` to `{:?}`",
             src, dst
         );
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn file_rename_error(src: &Path, dst: &Path, err: impl std::fmt::Debug) -> OxenError {
@@ -529,7 +529,7 @@ impl OxenError {
             "File rename error: {err:?}\nCould not move from `{:?}` to `{:?}`",
             src, dst
         );
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn workspace_add_file_not_in_repo(path: &Path) -> OxenError {
@@ -537,7 +537,7 @@ impl OxenError {
             "File is outside of the repo {:?}\n\nYou must specify a path you would like to add the file at with the -d flag.\n\n  oxen workspace add /path/to/file.png -d my-images/\n",
             path
         );
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn cannot_overwrite_files(paths: &[PathBuf]) -> OxenError {
@@ -547,7 +547,7 @@ impl OxenError {
             .collect::<Vec<String>>()
             .join("\n  ");
 
-        OxenError::basic_str(&format!(
+        OxenError::basic_str(format!(
             "\nError: your local changes to the following files would be overwritten. Please commit the following changes before continuing:\n\n  {paths_str}\n"
         ))
     }
@@ -559,38 +559,38 @@ impl OxenError {
 
     pub fn must_supply_valid_api_key() -> OxenError {
         OxenError::basic_str(
-            "Must supply valid API key. Create an account at https://oxen.ai and then set the API key with:\n\n  oxen config --auth hub.oxen.ai <API_KEY>\n",
+            "Must supply valid API key. Create an account at https://oxen.ai and then set the API key with:\n\n  oxen config --auth hub.oxen.ai <API_KEY>\n".to_string(),
         )
     }
 
     pub fn file_has_no_parent(path: &Path) -> OxenError {
         let err = format!("File has no parent: {:?}", path);
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn file_has_no_name(path: &Path) -> OxenError {
         let err = format!("File has no file_name: {:?}", path);
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn could_not_convert_path_to_str(path: &Path) -> OxenError {
         let err = format!("File has no name: {:?}", path);
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn local_revision_not_found(name: &str) -> OxenError {
         let err = format!("Local branch or commit reference `{}` not found", name);
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn could_not_find_merge_conflict(path: &Path) -> OxenError {
         let err = format!("Could not find merge conflict for path: {:?}", path);
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn could_not_decode_value_for_key_error(key: &str) -> OxenError {
         let err = format!("Could not decode value for key: {:?}", key);
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn invalid_set_remote_url(url: &str) -> OxenError {
@@ -598,7 +598,7 @@ impl OxenError {
             "\nRemote invalid, must be fully qualified URL, got: {:?}\n\n  oxen config --set-remote origin https://hub.oxen.ai/<namespace>/<reponame>\n",
             url
         );
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn invalid_file_type(file_type: &str) -> OxenError {
@@ -622,11 +622,11 @@ impl OxenError {
 
     pub fn parse_error(value: &str) -> OxenError {
         let err = format!("Parse error: {:?}", value);
-        OxenError::basic_str(&err)
+        OxenError::basic_str(err)
     }
 
     pub fn unknown_subcommand(parent: &str, name: &str) -> OxenError {
-        OxenError::basic_str(&format!("Unknown {} subcommand '{}'", parent, name))
+        OxenError::basic_str(format!("Unknown {} subcommand '{}'", parent, name))
     }
 }
 
@@ -639,18 +639,18 @@ impl From<String> for OxenError {
 
 impl From<StripPrefixError> for OxenError {
     fn from(error: StripPrefixError) -> Self {
-        OxenError::basic_str(&format!("Error stripping prefix: {error}"))
+        OxenError::basic_str(format!("Error stripping prefix: {error}"))
     }
 }
 
 impl From<JoinError> for OxenError {
     fn from(error: JoinError) -> Self {
-        OxenError::basic_str(&error.to_string())
+        OxenError::basic_str(error.to_string())
     }
 }
 
 impl From<std::string::FromUtf8Error> for OxenError {
     fn from(error: std::string::FromUtf8Error) -> Self {
-        OxenError::basic_str(&format!("UTF8 conversion error: {error}"))
+        OxenError::basic_str(format!("UTF8 conversion error: {error}"))
     }
 }

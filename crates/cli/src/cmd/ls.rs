@@ -62,7 +62,7 @@ impl RunCmd for LsCmd {
             repositories::commits::head_commit(&repo)?
         } else {
             let Some(commit) = repositories::commits::get_by_id(&repo, commit_id)? else {
-                return Err(OxenError::basic_str(&format!(
+                return Err(OxenError::basic_str(format!(
                     "Commit {commit_id} not found"
                 )));
             };

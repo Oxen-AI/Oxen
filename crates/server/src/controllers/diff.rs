@@ -866,10 +866,10 @@ fn parse_base_head_resource(
     let mut split = base_head.split("..");
     let base = split
         .next()
-        .ok_or(OxenError::resource_not_found(base_head))?;
+        .ok_or(OxenError::resource_not_found(base_head.to_string()))?;
     let head = split
         .next()
-        .ok_or(OxenError::resource_not_found(base_head))?;
+        .ok_or(OxenError::resource_not_found(base_head.to_string()))?;
 
     let base_commit = repositories::revisions::get(repo, base)?
         .ok_or(OxenError::revision_not_found(base.into()))?;

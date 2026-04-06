@@ -135,7 +135,7 @@ fn builder_for_host(host: &str, should_add_user_agent: bool) -> Result<ClientBui
             Err(e) => {
                 log::debug!("Invalid header value: {e}");
                 return Err(OxenError::basic_str(
-                    "Error setting request auth. Please check your Oxen config.",
+                    "Error setting request auth. Please check your Oxen config.".to_string(),
                 ));
             }
         };
@@ -215,7 +215,7 @@ async fn parse_json_body_with_err_msg(
         ),
         Err(err) => {
             log::debug!("Err: {err}");
-            Err(OxenError::basic_str(&format!(
+            Err(OxenError::basic_str(format!(
                 "Could not deserialize response from [{url}]\n{status}"
             )))
         }
@@ -234,7 +234,7 @@ fn parse_status_and_message(
         http::STATUS_SUCCESS => {
             log::debug!("Status success: {status}");
             if !status.is_success() {
-                return Err(OxenError::basic_str(&format!(
+                return Err(OxenError::basic_str(format!(
                     "Err status [{}] from url {} [{}]",
                     status,
                     url,
@@ -246,7 +246,7 @@ fn parse_status_and_message(
         }
         http::STATUS_WARNING => {
             log::debug!("Status warning: {status}");
-            Err(OxenError::basic_str(&format!(
+            Err(OxenError::basic_str(format!(
                 "Remote Warning: {}",
                 response.desc_or_msg()
             )))
@@ -258,12 +258,12 @@ fn parse_status_and_message(
                 && let Some(response_type) = response_type
                 && response.desc_or_msg() == response_type
             {
-                return Err(OxenError::basic_str(msg));
+                return Err(OxenError::basic_str(msg.to_string()));
             }
 
-            Err(OxenError::basic_str(&response.full_err_msg()))
+            Err(OxenError::basic_str(response.full_err_msg()))
         }
-        status => Err(OxenError::basic_str(&format!("Unknown status [{status}]"))),
+        status => Err(OxenError::basic_str(format!("Unknown status [{status}]"))),
     }
 }
 

@@ -128,7 +128,7 @@ pub fn commit_with_cfg(
     log::debug!("got dir entries: {:?}", dir_entries.len());
 
     if dir_entries.is_empty() {
-        return Err(OxenError::basic_str("No changes to commit"));
+        return Err(OxenError::basic_str("No changes to commit".to_string()));
     }
 
     // let mut dir_tree = entries_to_dir_tree(&dir_entries)?;
@@ -436,7 +436,7 @@ pub fn commit_dir_entries(
     }
 
     if dir_entries.is_empty() {
-        return Err(OxenError::basic_str("No changes to commit"));
+        return Err(OxenError::basic_str("No changes to commit".to_string()));
     }
 
     let message = &new_commit.message;
@@ -995,7 +995,7 @@ fn r_create_dir_node(
                     // }
                 }
                 _ => {
-                    return Err(OxenError::basic_str(&format!(
+                    return Err(OxenError::basic_str(format!(
                         "r_create_dir_node found unexpected node type: {:?}",
                         entry.node
                     )));
@@ -1065,7 +1065,7 @@ fn compute_dir_node(
     for child in children.iter() {
         let Some((vnodes, removed_entries)) = entries.get(child) else {
             let err_msg = format!("compute_dir_node No entries found for directory {path:?}");
-            return Err(OxenError::basic_str(&err_msg));
+            return Err(OxenError::basic_str(err_msg));
         };
         // log::debug!(
         //     "Aggregating dir {:?} child {:?} with {} vnodes",
@@ -1120,7 +1120,7 @@ fn compute_dir_node(
                         }
                     }
                     _ => {
-                        return Err(OxenError::basic_str(&format!(
+                        return Err(OxenError::basic_str(format!(
                             "compute_dir_node found unexpected node type: {:?}",
                             entry.node
                         )));
@@ -1154,7 +1154,7 @@ fn compute_dir_node(
                     }
                 }
                 _ => {
-                    return Err(OxenError::basic_str(&format!(
+                    return Err(OxenError::basic_str(format!(
                         "compute_dir_node found unexpected node type: {:?}",
                         entry.node
                     )));

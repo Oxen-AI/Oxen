@@ -64,7 +64,9 @@ fn handle_unindexed_error() -> Result<DataFrame, OxenError> {
     println!(
         "Dataset not indexed for remote editing. Use `oxen df --index <path>` to index it, or `oxen df <path> --committed` to view the committed resource in view-only mode.\n"
     );
-    Err(OxenError::basic_str("No dataset staged for this resource."))
+    Err(OxenError::basic_str(
+        "No dataset staged for this resource.".to_string(),
+    ))
 }
 
 // TODO: Only difference between this and `df` is for `get` operations - everything above
@@ -107,7 +109,9 @@ pub async fn staged_df(
         println!(
             "Dataset not indexed for remote editing. Use `oxen df --index <path>` to index it, or `oxen df <path> --committed` to view the committed resource in view-only mode.\n"
         );
-        Err(OxenError::basic_str("No dataset staged for this resource."))
+        Err(OxenError::basic_str(
+            "No dataset staged for this resource.".to_string(),
+        ))
     }
 }
 

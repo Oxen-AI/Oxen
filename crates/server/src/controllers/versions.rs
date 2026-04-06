@@ -126,7 +126,7 @@ pub async fn download(
     log::debug!("Download resource {namespace}/{repo_name}/{resource} version file");
 
     let entry = repositories::entries::get_file(&repo, &commit, &path)?
-        .ok_or(OxenError::path_does_not_exist(&path.clone()))?;
+        .ok_or(OxenError::path_does_not_exist(path.clone()))?;
     let file_hash = entry.hash();
     let hash_str = file_hash.to_string();
     let mime_type = entry.mime_type();
@@ -251,7 +251,7 @@ pub async fn stream_versions_tar_gz(
                     if let Err(e) = header.set_path(file_hash) {
                         log::error!("Failed to set path for {file_hash}: {e}");
                         error_tx
-                            .send(OxenError::basic_str(&format!(
+                            .send(OxenError::basic_str(format!(
                                 "Failed to set path for {file_hash}: {e}"
                             )))
                             .ok();
@@ -351,7 +351,7 @@ pub async fn stream_versions_zip(
                 Some(path) => path,
                 None => {
                     let err = "Invalid UTF-8 in path".to_string();
-                    error_tx.send(OxenError::basic_str(&err)).ok();
+                    error_tx.send(OxenError::basic_str(err)).ok();
                     had_error = true;
                     break;
                 }

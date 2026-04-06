@@ -166,7 +166,7 @@ fn get_embedding_length(
         })
     })?;
     let Some(item) = result_set.first() else {
-        return Err(OxenError::basic_str("No items found"));
+        return Err(OxenError::basic_str("No items found".to_string()));
     };
     let first_column = item.column(0);
     log::debug!("First column: {first_column:?}");
@@ -178,12 +178,14 @@ fn get_embedding_length(
                 let array = first_column
                     .as_any()
                     .downcast_ref::<ListArray>()
-                    .ok_or_else(|| OxenError::basic_str("Failed to downcast to ListArray"))?;
+                    .ok_or_else(|| {
+                        OxenError::basic_str("Failed to downcast to ListArray".to_string())
+                    })?;
                 if let Some(first_value) = array.value(0).as_any().downcast_ref::<Float32Array>() {
                     first_value.len()
                 } else {
                     return Err(OxenError::basic_str(
-                        "Expected Float32Array inside ListArray",
+                        "Expected Float32Array inside ListArray".to_string(),
                     ));
                 }
             }
@@ -191,18 +193,20 @@ fn get_embedding_length(
                 let array = first_column
                     .as_any()
                     .downcast_ref::<ListArray>()
-                    .ok_or_else(|| OxenError::basic_str("Failed to downcast to ListArray"))?;
+                    .ok_or_else(|| {
+                        OxenError::basic_str("Failed to downcast to ListArray".to_string())
+                    })?;
                 if let Some(first_value) = array.value(0).as_any().downcast_ref::<Float64Array>() {
                     first_value.len()
                 } else {
                     return Err(OxenError::basic_str(
-                        "Expected Float64Array inside ListArray",
+                        "Expected Float64Array inside ListArray".to_string(),
                     ));
                 }
             }
             _ => {
                 return Err(OxenError::basic_str(
-                    "Column must be a list of float32 or float64",
+                    "Column must be a list of float32 or float64".to_string(),
                 ));
             }
         },
@@ -210,11 +214,15 @@ fn get_embedding_length(
             arrow::datatypes::DataType::Float32 => *size as usize,
             _ => {
                 return Err(OxenError::basic_str(
-                    "Column FixedSizeList must be a float32 type",
+                    "Column FixedSizeList must be a float32 type".to_string(),
                 ));
             }
         },
-        _ => return Err(OxenError::basic_str("Column must be a list type")),
+        _ => {
+            return Err(OxenError::basic_str(
+                "Column must be a list type".to_string(),
+            ));
+        }
     };
 
     log::debug!("Vector length: {vector_length}");
@@ -239,7 +247,7 @@ pub fn embedding_from_query(
     // Read the vector length from the file we wrote in the index function
     let Ok(config) = embedding_config(workspace, path) else {
         return Err(OxenError::basic_str(
-            "Must index embeddings before querying",
+            "Must index embeddings before querying".to_string(),
         ));
     };
     let vector_length = config.columns[&column].vector_length;
@@ -494,37 +502,8 @@ fn get_avg_embedding(result_set: Vec<RecordBatch>) -> Result<Vec<f32>, OxenError
                     let array = first_column
                         .as_any()
                         .downcast_ref::<ListArray>()
-                        .ok_or_else(|| OxenError::basic_str("Failed to downcast to ListArray"))?;
-                    if let Some(first_value) =
-                        array.value(0).as_any().downcast_ref::<Float32Array>()
-                    {
-                        embeddings.push(first_value.values().to_vec());
-                        if vector_length == 0 {
-                            vector_length = first_value.len();
-                        } else if first_value.len() != vector_length {
-                            return Err(OxenError::basic_str(
-                                "All embeddings must be the same length",
-                            ));
-                        }
-                    } else {
-                        return Err(OxenError::basic_str(
-                            "Expected Float32Array inside ListArray",
-                        ));
-                    }
-                }
-                _ => {
-                    return Err(OxenError::basic_str(
-                        "Expected arrow::datatypes::DataType::Float32 inside List",
-                    ));
-                }
-            },
-            arrow::datatypes::DataType::FixedSizeList(field, _) => match field.data_type() {
-                arrow::datatypes::DataType::Float32 => {
-                    let array = first_column
-                        .as_any()
-                        .downcast_ref::<FixedSizeListArray>()
                         .ok_or_else(|| {
-                            OxenError::basic_str("Failed to downcast to FixedSizeListArray")
+                            OxenError::basic_str("Failed to downcast to ListArray".to_string())
                         })?;
                     if let Some(first_value) =
                         array.value(0).as_any().downcast_ref::<Float32Array>()
@@ -534,20 +513,53 @@ fn get_avg_embedding(result_set: Vec<RecordBatch>) -> Result<Vec<f32>, OxenError
                             vector_length = first_value.len();
                         } else if first_value.len() != vector_length {
                             return Err(OxenError::basic_str(
-                                "All embeddings must be the same length",
+                                "All embeddings must be the same length".to_string(),
+                            ));
+                        }
+                    } else {
+                        return Err(OxenError::basic_str(
+                            "Expected Float32Array inside ListArray".to_string(),
+                        ));
+                    }
+                }
+                _ => {
+                    return Err(OxenError::basic_str(
+                        "Expected arrow::datatypes::DataType::Float32 inside List".to_string(),
+                    ));
+                }
+            },
+            arrow::datatypes::DataType::FixedSizeList(field, _) => match field.data_type() {
+                arrow::datatypes::DataType::Float32 => {
+                    let array = first_column
+                        .as_any()
+                        .downcast_ref::<FixedSizeListArray>()
+                        .ok_or_else(|| {
+                            OxenError::basic_str(
+                                "Failed to downcast to FixedSizeListArray".to_string(),
+                            )
+                        })?;
+                    if let Some(first_value) =
+                        array.value(0).as_any().downcast_ref::<Float32Array>()
+                    {
+                        embeddings.push(first_value.values().to_vec());
+                        if vector_length == 0 {
+                            vector_length = first_value.len();
+                        } else if first_value.len() != vector_length {
+                            return Err(OxenError::basic_str(
+                                "All embeddings must be the same length".to_string(),
                             ));
                         }
                     }
                 }
                 _ => {
                     return Err(OxenError::basic_str(
-                        "Column FixedSizeList must be a float32 type",
+                        "Column FixedSizeList must be a float32 type".to_string(),
                     ));
                 }
             },
             _ => {
                 return Err(OxenError::basic_str(
-                    "Expected arrow::datatypes::DataType::List inside as data type",
+                    "Expected arrow::datatypes::DataType::List inside as data type".to_string(),
                 ));
             }
         }
@@ -559,7 +571,7 @@ fn get_avg_embedding(result_set: Vec<RecordBatch>) -> Result<Vec<f32>, OxenError
 
     if vector_length == 0 {
         return Err(OxenError::basic_str(
-            "Vector's must have a length greater than 0",
+            "Vector's must have a length greater than 0".to_string(),
         ));
     }
 

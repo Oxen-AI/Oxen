@@ -30,7 +30,7 @@ use std::fmt::Write;
 fn write_to_pager(output: &mut Pager, text: &str) -> Result<(), OxenError> {
     match writeln!(output, "{text}") {
         Ok(_) => Ok(()),
-        Err(_) => Err(OxenError::basic_str("Could not write to pager")),
+        Err(_) => Err(OxenError::basic_str("Could not write to pager".to_string())),
     }
 }
 

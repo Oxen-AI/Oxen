@@ -138,7 +138,7 @@ pub fn update(
     let mut df = tabular::parse_json_to_df(data)?;
     let mut row = repositories::workspaces::data_frames::rows::get_by_id(workspace, path, row_id)?;
     if row.height() == 0 {
-        return Err(OxenError::resource_not_found("row not found"));
+        return Err(OxenError::resource_not_found("row not found".to_string()));
     }
 
     let mut result = with_df_db_manager(&db_path, |manager| {
@@ -181,7 +181,7 @@ pub fn batch_update(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
 
     let Some(array) = data.as_array() else {
-        return Err(OxenError::basic_str("Data is not an array"));
+        return Err(OxenError::basic_str("Data is not an array".to_string()));
     };
 
     let mut keys: Vec<String> = Vec::new();
@@ -192,14 +192,14 @@ pub fn batch_update(
             let row_id = obj
                 .get("row_id")
                 .and_then(Value::as_str)
-                .ok_or_else(|| OxenError::basic_str("Missing row_id"))?
+                .ok_or_else(|| OxenError::basic_str("Missing row_id".to_string()))?
                 .to_owned();
 
             keys.push(row_id.clone());
 
             let df = tabular::parse_json_to_df(
                 obj.get("value")
-                    .ok_or_else(|| OxenError::basic_str("Missing value"))?,
+                    .ok_or_else(|| OxenError::basic_str("Missing value".to_string()))?,
             )?;
             Ok((row_id, df))
         })
@@ -224,20 +224,20 @@ pub async fn prepare_modified_or_removed_row(
     row_df: &DataFrame,
 ) -> Result<DataFrame, OxenError> {
     let row_idx = repositories::workspaces::data_frames::rows::get_row_idx(row_df)?
-        .ok_or_else(|| OxenError::basic_str("Row index not found"))?;
+        .ok_or_else(|| OxenError::basic_str("Row index not found".to_string()))?;
     let row_idx_og = (row_idx - 1) as i64;
 
     let Some(commit_merkle_tree) =
         repositories::tree::get_node_by_path_with_children(repo, commit, path)?
     else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Merkle tree for commit {commit:?} not found"
         )));
     };
 
     let file_node = match commit_merkle_tree.node {
         EMerkleTreeNode::File(file_node) => file_node,
-        _ => return Err(OxenError::basic_str("File node not found")),
+        _ => return Err(OxenError::basic_str("File node not found".to_string())),
     };
 
     log::debug!(
@@ -290,11 +290,11 @@ pub async fn restore_row_in_db(
     let row = repositories::workspaces::data_frames::rows::get_by_id(workspace, path, row_id)?;
 
     if row.height() == 0 {
-        return Err(OxenError::resource_not_found(row_id));
+        return Err(OxenError::resource_not_found(row_id.to_string()));
     };
 
     let row_status = repositories::workspaces::data_frames::rows::get_row_status(&row)?
-        .ok_or_else(|| OxenError::basic_str("Row status not found"))?;
+        .ok_or_else(|| OxenError::basic_str("Row status not found".to_string()))?;
     let result_row = match row_status {
         StagedRowStatus::Added => {
             // Row is added, just delete it

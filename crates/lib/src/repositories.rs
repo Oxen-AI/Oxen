@@ -99,7 +99,7 @@ fn is_repo_forked(repo_dir: &Path) -> Result<Option<LocalRepository>, OxenError>
     if status_path.exists() {
         Ok(Some(LocalRepository::from_dir(repo_dir)?))
     } else {
-        Err(OxenError::local_repo_not_found(repo_dir))
+        Err(OxenError::local_repo_not_found(repo_dir.to_path_buf()))
     }
 }
 
@@ -198,7 +198,7 @@ pub fn transfer_namespace(
     match updated_repo {
         Some(new_repo) => Ok(new_repo),
         None => Err(OxenError::basic_str(
-            "Repository not found after attempted transfer",
+            "Repository not found after attempted transfer".to_string(),
         )),
     }
 }
@@ -216,12 +216,12 @@ pub async fn create(
 ) -> Result<LocalRepositoryWithEntries, OxenError> {
     // Validate repo name
     if !is_valid_repo_name(&new_repo.name) {
-        return Err(OxenError::invalid_repo_name(&new_repo.name));
+        return Err(OxenError::invalid_repo_name(new_repo.name.clone()));
     }
 
     // Validate namespace
     if !is_valid_repo_name(&new_repo.namespace) {
-        return Err(OxenError::invalid_repo_name(&new_repo.namespace));
+        return Err(OxenError::invalid_repo_name(new_repo.namespace.clone()));
     }
 
     let repo_dir = root_dir
@@ -329,7 +329,7 @@ pub async fn create(
 pub fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenError> {
     if !repo.path.exists() {
         let err = format!("Repository does not exist {:?}", repo.path);
-        return Err(OxenError::basic_str(&err));
+        return Err(OxenError::basic_str(err));
     }
 
     // Close DB instances before trying to delete the directory

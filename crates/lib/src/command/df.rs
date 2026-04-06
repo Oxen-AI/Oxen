@@ -35,11 +35,11 @@ pub async fn df_revision(
     opts: DFOpts,
 ) -> Result<(), OxenError> {
     let commit = repositories::revisions::get(repo, revision)?.ok_or(OxenError::basic_str(
-        &format!("Revision {} not found", revision),
+        format!("Revision {} not found", revision),
     ))?;
     let Some(root) = repositories::tree::get_node_by_path_with_children(repo, &commit, input)?
     else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Merkle tree for revision {} not found",
             revision
         )));
@@ -69,7 +69,7 @@ pub async fn add_row(path: &Path, data: &str) -> Result<(), OxenError> {
         df(path, opts).await
     } else {
         let err = format!("{} is not a tabular file", path.display());
-        Err(OxenError::basic_str(&err))
+        Err(OxenError::basic_str(err))
     }
 }
 
@@ -82,6 +82,6 @@ pub async fn add_column(path: &Path, data: &str) -> Result<(), OxenError> {
         df(path, opts).await
     } else {
         let err = format!("{} is not a tabular file", path.display());
-        Err(OxenError::basic_str(&err))
+        Err(OxenError::basic_str(err))
     }
 }

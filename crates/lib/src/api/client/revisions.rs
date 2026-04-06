@@ -23,7 +23,7 @@ pub async fn get(
     let response: Result<ParseResourceResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(j_res) => Ok(Some(j_res.resource)),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "api::client::revisions::get() Could not deserialize response [{err}]\n{body}"
         ))),
     }

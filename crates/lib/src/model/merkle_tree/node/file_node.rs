@@ -90,7 +90,7 @@ impl FileNode {
                 })
             }
             _ => Err(OxenError::basic_str(
-                "FileNode not supported in this version",
+                "FileNode not supported in this version".to_string(),
             )),
         }
     }

@@ -53,7 +53,7 @@ impl RunCmd for DeleteRemoteCmd {
         // Parse Args
         let Some(namespace_name) = args.get_one::<String>("name") else {
             return Err(OxenError::basic_str(
-                "Must supply a namespace/name for the remote repository.",
+                "Must supply a namespace/name for the remote repository.".to_string(),
             ));
         };
         // Default the host to the oxen.ai hub
@@ -88,7 +88,7 @@ impl RunCmd for DeleteRemoteCmd {
                     return Ok(());
                 }
                 Err(e) => {
-                    return Err(OxenError::basic_str(&format!(
+                    return Err(OxenError::basic_str(format!(
                         "Error confirming deletion: {e}"
                     )));
                 }

@@ -68,16 +68,18 @@ impl RunCmd for EmbeddingsQueryCmd {
 
         let Some(path) = path else {
             return Err(OxenError::basic_str(
-                "Must supply a path to the data frame.",
+                "Must supply a path to the data frame.".to_string(),
             ));
         };
 
         let Some(column) = column else {
-            return Err(OxenError::basic_str("Must supply a column name."));
+            return Err(OxenError::basic_str(
+                "Must supply a column name.".to_string(),
+            ));
         };
 
         let Some(query) = args.get_one::<String>("query") else {
-            return Err(OxenError::basic_str("Must supply a query."));
+            return Err(OxenError::basic_str("Must supply a query.".to_string()));
         };
 
         let page_size = args
@@ -102,7 +104,7 @@ impl RunCmd for EmbeddingsQueryCmd {
 
         if opts.parse_query().is_err() {
             return Err(OxenError::basic_str(
-                "Query must be in the format key=value",
+                "Query must be in the format key=value".to_string(),
             ));
         }
 
@@ -110,7 +112,7 @@ impl RunCmd for EmbeddingsQueryCmd {
         let commit = repositories::commits::head_commit(&repository)?;
         let workspace_id = format!("{}-{}", path, commit.id);
         let Some(workspace) = repositories::workspaces::get(&repository, &workspace_id)? else {
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "Workspace not found: {workspace_id}"
             )));
         };

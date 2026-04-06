@@ -49,7 +49,7 @@ pub fn list_keys<T: ThreadMode>(db: &DBWithThreadMode<T>) -> Result<Vec<String>,
             }
             _ => {
                 return Err(OxenError::basic_str(
-                    "Could not read iterate over db values",
+                    "Could not read iterate over db values".to_string(),
                 ));
             }
         }
@@ -67,7 +67,7 @@ pub fn clear<T: ThreadMode>(db: &DBWithThreadMode<T>) -> Result<(), OxenError> {
             }
             _ => {
                 return Err(OxenError::basic_str(
-                    "Could not read iterate over db values",
+                    "Could not read iterate over db values".to_string(),
                 ));
             }
         }

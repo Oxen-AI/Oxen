@@ -127,12 +127,12 @@ fn resolve_paths_in_place(base_dir: &Path, paths: &mut [PathBuf]) -> Result<(), 
         paths[i] = std::path::absolute(&(paths[i]))?;
 
         if !paths[i].is_file() {
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "Cannot upload non-existent file: {}",
                 paths[i].display()
             )));
         } else if !paths[i].starts_with(base_dir) {
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "Cannot upload path that doesn't exist in base directory ({}): {}",
                 base_dir.display(),
                 paths[i].display()
@@ -159,14 +159,14 @@ pub async fn add_files(
     let base_dir = std::path::absolute(base_dir)?;
 
     if !base_dir.is_dir() {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "base_dir is not a directory: {}",
             base_dir.display()
         )));
     }
 
     if paths.is_empty() {
-        return Err(OxenError::basic_str("No paths to add!"));
+        return Err(OxenError::basic_str("No paths to add!".to_string()));
     }
 
     let paths: Vec<PathBuf> = {
@@ -223,7 +223,7 @@ pub async fn upload_single_file(
     path: &Path,
 ) -> Result<PathBuf, OxenError> {
     let Ok(metadata) = path.metadata() else {
-        return Err(OxenError::path_does_not_exist(path));
+        return Err(OxenError::path_does_not_exist(path.to_path_buf()));
     };
 
     log::debug!("Uploading file with size: {}", metadata.len());
@@ -293,7 +293,7 @@ async fn upload_multiple_files(
 
         if !path.exists() {
             log::debug!("Path does not exist: {path:?}");
-            return Err(OxenError::path_does_not_exist(&path));
+            return Err(OxenError::path_does_not_exist(path));
         }
 
         match path.metadata() {
@@ -520,7 +520,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                     };
 
                                     let file = std::fs::read(&path).map_err(|e| {
-                                        OxenError::basic_str(&format!(
+                                        OxenError::basic_str(format!(
                                             "Failed to read file '{path:?}': {e}"
                                         ))
                                     })?;
@@ -533,7 +533,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
 
                                         std::io::copy(&mut file.as_slice(), &mut encoder).map_err(
                                             |e| {
-                                                OxenError::basic_str(&format!(
+                                                OxenError::basic_str(format!(
                                                     "Failed to copy file '{path:?}' to encoder: {e}"
                                                 ))
                                             },
@@ -543,7 +543,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                             Ok(bytes) => bytes,
                                             Err(e) => {
                                                 // If compressing a file fails, cancel the operation
-                                                return Err(OxenError::basic_str(&format!(
+                                                return Err(OxenError::basic_str(format!(
                                                     "Failed to finish gzip for file {}: {}",
                                                     &hash, e
                                                 )));
@@ -581,13 +581,13 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                 (batch_parts, files_to_stage, batch_size);
                             match tx_clone.send(processed_batch).await {
                                 Ok(_) => Ok(()),
-                                Err(e) => Err(OxenError::basic_str(&format!("{e:?}"))),
+                                Err(e) => Err(OxenError::basic_str(format!("{e:?}"))),
                             }
                         }
                         .await;
 
                         if let Err(e) = result {
-                            errors.lock().push(OxenError::basic_str(&format!("{e:?}")));
+                            errors.lock().push(OxenError::basic_str(format!("{e:?}")));
                         }
                     }
                 }
@@ -680,7 +680,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                         // If staging failed, cancel the operation
                                         Err(e) => {
                                             log::error!("failed to stage files to workspace: {e}");
-                                            return Err(OxenError::basic_str(&format!(
+                                            return Err(OxenError::basic_str(format!(
                                                 "failed to stage to workspace: {e}"
                                             )));
                                         }
@@ -703,7 +703,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                     );
 
                                     log::error!("failed to upload version files to workspace: {e}");
-                                    Err(OxenError::basic_str(&format!(
+                                    Err(OxenError::basic_str(format!(
                                         "failed to upload version files to workspace: {e}"
                                     )))
                                 }
@@ -711,7 +711,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
                         }.await;
 
                         if let Err(e) = result {
-                            errors.lock().push(OxenError::basic_str(&format!("{e:?}")));
+                            errors.lock().push(OxenError::basic_str(format!("{e:?}")));
                         }
                     }
                 }
@@ -728,7 +728,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
         Err(e) => {
             let err = format!("Couldn't acquire mutex guard for err_files: {e:?}");
             log::error!("{err}");
-            return Err(OxenError::basic_str(&err));
+            return Err(OxenError::basic_str(err));
         }
     };
 
@@ -740,7 +740,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
         Err(e) => {
             let err = format!("Couldn't acquire mutex guard for errors: {e:?}");
             log::error!("{err}");
-            return Err(OxenError::basic_str(&err));
+            return Err(OxenError::basic_str(err));
         }
     };
 
@@ -799,7 +799,7 @@ pub async fn stage_files_to_workspace_with_retry(
             Err(e) => {
                 log::error!("Error staging files to workspace: {e:?}");
                 if retry_count == max_retries {
-                    return Err(OxenError::basic_str(&format!(
+                    return Err(OxenError::basic_str(format!(
                         "failed to stage files to workspace after retries: {e:?}"
                     )));
                 }
@@ -815,7 +815,7 @@ pub async fn stage_files_to_workspace_with_retry(
         files_to_add.len()
     );
     Err(OxenError::basic_str(
-        "failed to stage files to workspace after retries",
+        "failed to stage files to workspace after retries".to_string(),
     ))
 }
 
@@ -862,7 +862,7 @@ async fn p_upload_single_file(
     log::debug!("multipart_file_upload path: {path:?}");
     let Ok(file) = std::fs::read(path) else {
         let err = format!("Error reading file at path: {path:?}");
-        return Err(OxenError::basic_str(&err));
+        return Err(OxenError::basic_str(err));
     };
 
     let uri = format!("/workspaces/{workspace_id}/files/{directory_name}");
@@ -883,14 +883,16 @@ async fn p_upload_single_file(
             if let Some(path) = val.paths.first() {
                 Ok(path.clone())
             } else {
-                Err(OxenError::basic_str("No file path returned from server"))
+                Err(OxenError::basic_str(
+                    "No file path returned from server".to_string(),
+                ))
             }
         }
         Err(err) => {
             let err = format!(
                 "api::staging::add_file error parsing response from {url}\n\nErr {err:?} \n\n{body}"
             );
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -911,7 +913,7 @@ async fn p_upload_bytes_as_file(
             ByteSize::b(total_size),
             ByteSize::b(limit)
         );
-        return Err(OxenError::basic_str(&error_msg));
+        return Err(OxenError::basic_str(error_msg));
     }
 
     let directory_name = directory.to_string_lossy();
@@ -925,7 +927,7 @@ async fn p_upload_bytes_as_file(
     let compressed_bytes = match encoder.finish() {
         Ok(bytes) => bytes,
         Err(e) => {
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "Failed to finish gzip for file {}: {}",
                 &file_name, e
             )));
@@ -951,14 +953,16 @@ async fn p_upload_bytes_as_file(
             if let Some(path) = val.paths.first() {
                 Ok(path.clone())
             } else {
-                Err(OxenError::basic_str("No file path returned from server"))
+                Err(OxenError::basic_str(
+                    "No file path returned from server".to_string(),
+                ))
             }
         }
         Err(err) => {
             let err = format!(
                 "api::staging::add_file error parsing response from {url}\n\nErr {err:?} \n\n{body}"
             );
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -1033,7 +1037,7 @@ pub async fn rm_files(
         log::error!("rm_files failed with status: {}", response.status());
         let body = client::parse_json_body(&url, response).await?;
 
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Error: Could not remove paths {body:?}"
         )));
     }
@@ -1059,7 +1063,8 @@ pub async fn rm_files_from_staged(
             else {
                 // TODO: Better error message?
                 return Err(OxenError::basic_str(
-                    "Error: Cannot rm with glob paths in remote-mode repo without HEAD commit",
+                    "Error: Cannot rm with glob paths in remote-mode repo without HEAD commit"
+                        .to_string(),
                 ));
             };
             let glob_pattern = relative_path
@@ -1133,7 +1138,7 @@ pub async fn mv(
             let err = format!(
                 "api::workspaces::files::mv error parsing from {url}\n\nErr {err:?} \n\n{body}"
             );
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -1177,12 +1182,12 @@ pub async fn download(
         let status = response.status();
 
         if status == reqwest::StatusCode::NOT_FOUND {
-            return Err(OxenError::path_does_not_exist(Path::new(path)));
+            return Err(OxenError::path_does_not_exist(PathBuf::from(path)));
         }
 
         log::error!("api::client::workspace::files::download failed with status: {status}");
         let body = client::parse_json_body(&url, response).await?;
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Error: Could not download file {body:?}"
         )));
     }

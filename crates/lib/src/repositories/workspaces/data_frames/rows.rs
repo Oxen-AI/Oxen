@@ -131,7 +131,7 @@ pub fn get_row_status(row_df: &DataFrame) -> Result<Option<StagedRowStatus>, Oxe
         let anyval_status = row_df.column(DIFF_STATUS_COL).unwrap().get(0)?;
         let str_status = anyval_status
             .get_str()
-            .ok_or_else(|| OxenError::basic_str("Row status not found"))?;
+            .ok_or_else(|| OxenError::basic_str("Row status not found".to_string()))?;
         let status = StagedRowStatus::from_string(str_status)?;
         Ok(Some(status))
     } else {

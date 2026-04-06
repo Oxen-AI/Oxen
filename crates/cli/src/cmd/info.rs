@@ -43,7 +43,7 @@ impl RunCmd for InfoCmd {
         let revision = args.get_one::<String>("revision").map(String::from);
 
         if path.is_none() {
-            return Err(OxenError::basic_str("Must supply path."));
+            return Err(OxenError::basic_str("Must supply path.".to_string()));
         }
 
         let path = path.unwrap();

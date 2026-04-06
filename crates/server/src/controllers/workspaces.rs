@@ -94,8 +94,9 @@ pub async fn get_or_create(
             )?;
 
             // Now get the newly created branch
-            repositories::branches::get_by_name(&repo, &data.branch_name)?
-                .ok_or_else(|| OxenError::basic_str("Failed to create initial branch"))?
+            repositories::branches::get_by_name(&repo, &data.branch_name)?.ok_or_else(|| {
+                OxenError::basic_str("Failed to create initial branch".to_string())
+            })?
         }
     };
 

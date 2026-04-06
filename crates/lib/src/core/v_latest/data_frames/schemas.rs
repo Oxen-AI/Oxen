@@ -77,11 +77,11 @@ pub fn get_by_path(
 ) -> Result<Option<Schema>, OxenError> {
     let node = repositories::tree::get_file_by_path(repo, commit, path)?;
     let Some(node) = node else {
-        return Err(OxenError::path_does_not_exist(path));
+        return Err(OxenError::path_does_not_exist(path.to_path_buf()));
     };
 
     let Some(GenericMetadata::MetadataTabular(metadata)) = &node.metadata() else {
-        return Err(OxenError::path_does_not_exist(path));
+        return Err(OxenError::path_does_not_exist(path.to_path_buf()));
     };
 
     Ok(Some(metadata.tabular.schema.clone()))
@@ -178,7 +178,9 @@ pub fn restore_schema(
             ),
         )));
     } else {
-        return Err(OxenError::basic_str("Expected tabular metadata"));
+        return Err(OxenError::basic_str(
+            "Expected tabular metadata".to_string(),
+        ));
     }
 
     staged_db_manager.upsert_file_node(&path, StagedEntryStatus::Modified, &file_node)?;
@@ -202,7 +204,7 @@ pub fn list_staged(repo: &LocalRepository) -> Result<HashMap<PathBuf, Schema>, O
             }
             _ => {
                 return Err(OxenError::basic_str(
-                    "Could not read iterate over db values",
+                    "Could not read iterate over db values".to_string(),
                 ));
             }
         }
@@ -217,12 +219,16 @@ fn db_val_to_schema(val: &StagedMerkleTreeNode) -> Result<Schema, OxenError> {
             Some(GenericMetadata::MetadataTabular(m)) => Ok(m.tabular.schema.to_owned()),
             _ => {
                 log::error!("File node metadata must be tabular.");
-                Err(OxenError::basic_str("File node metadata must be tabular."))
+                Err(OxenError::basic_str(
+                    "File node metadata must be tabular.".to_string(),
+                ))
             }
         },
         _ => {
             log::error!("Merkle tree node type must be file.");
-            Err(OxenError::basic_str("Merkle tree node type must be file."))
+            Err(OxenError::basic_str(
+                "Merkle tree node type must be file.".to_string(),
+            ))
         }
     }
 }
@@ -261,11 +267,11 @@ pub fn add_schema_metadata(
         // Get the FileNode from the CommitMerkleTree
         let Some(commit) = repositories::commits::head_commit_maybe(repo)? else {
             return Err(OxenError::basic_str(
-                "Cannot add metadata, no commits found.",
+                "Cannot add metadata, no commits found.".to_string(),
             ));
         };
         let Some(file_node) = repositories::tree::get_file_by_path(repo, &commit, path)? else {
-            return Err(OxenError::path_does_not_exist(path));
+            return Err(OxenError::path_does_not_exist(path.to_path_buf()));
         };
         let node = repositories::tree::get_node_by_path(repo, &commit, path)?.unwrap();
         let mut parent_id = node.parent_id;
@@ -297,7 +303,7 @@ pub fn add_schema_metadata(
             m.tabular.schema.metadata = Some(metadata.to_owned());
         }
         _ => {
-            return Err(OxenError::path_does_not_exist(path));
+            return Err(OxenError::path_does_not_exist(path.to_path_buf()));
         }
     }
 
@@ -364,12 +370,12 @@ pub fn add_column_metadata(
         // Get the FileNode from the CommitMerkleTree
         let Some(commit) = repositories::commits::head_commit_maybe(repo)? else {
             return Err(OxenError::basic_str(
-                "Cannot add metadata, no commits found.",
+                "Cannot add metadata, no commits found.".to_string(),
             ));
         };
         log::debug!("add_column_metadata: commit: {commit} path: {path:?}");
         let Some(node) = repositories::tree::get_node_by_path(repo, &commit, &path)? else {
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "path {path:?} not found in commit {commit:?}"
             )));
         };
@@ -395,7 +401,7 @@ pub fn add_column_metadata(
         }
 
         let Some(file_node) = repositories::tree::get_file_by_path(repo, &commit, &path)? else {
-            return Err(OxenError::path_does_not_exist(&path));
+            return Err(OxenError::path_does_not_exist(path));
         };
         file_node
     };
@@ -416,7 +422,7 @@ pub fn add_column_metadata(
             results.insert(path.clone(), m.tabular.schema.clone());
         }
         _ => {
-            return Err(OxenError::path_does_not_exist(&path));
+            return Err(OxenError::path_does_not_exist(path));
         }
     }
 

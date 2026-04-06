@@ -16,7 +16,7 @@ pub async fn get(
     row_id: &str,
 ) -> Result<JsonDataFrameRowResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
         )));
     };
@@ -35,7 +35,7 @@ pub async fn get(
             let err = format!(
                 "api::staging::get_row error parsing response from {url}\n\nErr {err:?} \n\n{body}"
             );
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -48,7 +48,7 @@ pub async fn update(
     data: String,
 ) -> Result<JsonDataFrameRowResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
         )));
     };
@@ -73,7 +73,7 @@ pub async fn update(
             let err = format!(
                 "api::staging::update_row error parsing response from {url}\n\nErr {err:?} \n\n{body}"
             );
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -85,7 +85,7 @@ pub async fn delete(
     row_id: &str,
 ) -> Result<DataFrame, OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
         )));
     };
@@ -106,7 +106,7 @@ pub async fn delete(
             let err = format!(
                 "api::staging::rm_df_mod error parsing response from {url}\n\nErr {err:?} \n\n{body}"
             );
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -118,7 +118,7 @@ pub async fn add(
     data: String,
 ) -> Result<(DataFrame, Option<String>), OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
         )));
     };
@@ -145,13 +145,13 @@ pub async fn add(
                     let err = format!(
                         "api::staging::modify_df error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                     );
-                    Err(OxenError::basic_str(&err))
+                    Err(OxenError::basic_str(err))
                 }
             }
         }
         Err(err) => {
             let err = format!("api::staging::modify_df Request failed: {url}\n\nErr {err:?}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -163,7 +163,7 @@ pub async fn restore_row(
     row_id: &str,
 ) -> Result<JsonDataFrameRowResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
         )));
     };
@@ -189,13 +189,13 @@ pub async fn restore_row(
                     let err = format!(
                         "api::staging::update_row error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                     );
-                    Err(OxenError::basic_str(&err))
+                    Err(OxenError::basic_str(err))
                 }
             }
         }
         Err(err) => {
             let err = format!("api::staging::update_row Request failed: {url}\n\nErr {err:?}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -207,7 +207,7 @@ pub async fn batch_update(
     data: String,
 ) -> Result<VecBatchUpdateResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
         )));
     };
@@ -233,13 +233,13 @@ pub async fn batch_update(
                     let err = format!(
                         "api::staging::batch_update error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                     );
-                    Err(OxenError::basic_str(&err))
+                    Err(OxenError::basic_str(err))
                 }
             }
         }
         Err(err) => {
             let err = format!("api::staging::batch_update Request failed: {url}\n\nErr {err:?}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }

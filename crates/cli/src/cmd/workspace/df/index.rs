@@ -56,12 +56,14 @@ impl RunCmd for WorkspaceDFIndexCmd {
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
         // Parse Args
         let Some(workspace_id) = args.get_one::<String>("workspace-id") else {
-            return Err(OxenError::basic_str("Must supply a workspace id."));
+            return Err(OxenError::basic_str(
+                "Must supply a workspace id.".to_string(),
+            ));
         };
 
         let Some(path) = args.get_one::<String>("path") else {
             return Err(OxenError::basic_str(
-                "Must supply a path to the data frame you want to index.",
+                "Must supply a path to the data frame you want to index.".to_string(),
             ));
         };
 
@@ -94,7 +96,7 @@ impl RunCmd for WorkspaceDFIndexCmd {
         if args.get_flag("embeddings") {
             let Some(column) = args.get_one::<String>("column") else {
                 return Err(OxenError::basic_str(
-                    "Must supply a column to index for embeddings.",
+                    "Must supply a column to index for embeddings.".to_string(),
                 ));
             };
             let use_background_thread = args.get_flag("use-background-thread");

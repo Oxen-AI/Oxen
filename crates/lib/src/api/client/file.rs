@@ -109,9 +109,9 @@ pub async fn get_file_with_params(
     timestamp: Option<f64>,
 ) -> Result<Bytes, OxenError> {
     let path_ref = file_path;
-    let file_path = path_ref.to_str().ok_or_else(|| {
-        OxenError::basic_str(&format!("Invalid UTF-8 in file path: {path_ref:?}"))
-    })?;
+    let file_path = path_ref
+        .to_str()
+        .ok_or_else(|| OxenError::basic_str(format!("Invalid UTF-8 in file path: {path_ref:?}")))?;
     let uri = format!("/file/{branch}/{file_path}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
@@ -140,8 +140,8 @@ pub async fn get_file_with_params(
     let mut stream = res.bytes_stream();
     let mut buffer = BytesMut::new();
     while let Some(chunk_result) = stream.next().await {
-        let chunk = chunk_result
-            .map_err(|e| OxenError::basic_str(&format!("Failed to read chunk: {e}")))?;
+        let chunk =
+            chunk_result.map_err(|e| OxenError::basic_str(format!("Failed to read chunk: {e}")))?;
         buffer.extend_from_slice(&chunk);
     }
 

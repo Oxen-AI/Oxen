@@ -99,7 +99,7 @@ pub async fn rename(
 ) -> Result<PathBuf, OxenError> {
     match workspace.base_repo.min_version() {
         MinOxenVersion::V0_10_0 => Err(OxenError::basic_str(
-            "rename is not supported for this version of oxen",
+            "rename is not supported for this version of oxen".to_string(),
         )),
         _ => core::v_latest::workspaces::data_frames::rename(workspace, path, new_path).await,
     }
@@ -228,7 +228,7 @@ pub fn full_diff(workspace: &Workspace, path: &Path) -> Result<DiffResult, OxenE
     log::debug!("diff_workspace_df got repo at path {:?}", repo.path);
 
     if !is_indexed(workspace, path)? {
-        return Err(OxenError::basic_str("Dataset is not indexed"));
+        return Err(OxenError::basic_str("Dataset is not indexed".to_string()));
     };
 
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
@@ -287,7 +287,7 @@ pub async fn from_directory(
 ) -> Result<Commit, OxenError> {
     let has_dir = repositories::tree::has_dir(repo, &workspace.commit, path)?;
     if !has_dir {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Directory not found: {:?}",
             path
         )));
@@ -516,13 +516,13 @@ fn add_exclude_to_sql(sql: &str) -> Result<String, OxenError> {
     let select_idx = sql
         .to_lowercase()
         .find("select")
-        .ok_or_else(|| OxenError::basic_str("No SELECT found in query"))?;
+        .ok_or_else(|| OxenError::basic_str("No SELECT found in query".to_string()))?;
 
     // Find the first FROM after SELECT (case insensitive)
     let from_idx = sql[select_idx..]
         .to_lowercase()
         .find("from")
-        .ok_or_else(|| OxenError::basic_str("No FROM found in query"))?;
+        .ok_or_else(|| OxenError::basic_str("No FROM found in query".to_string()))?;
 
     // Split into parts
     let before_from = &sql[..select_idx + from_idx];

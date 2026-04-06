@@ -39,7 +39,7 @@ impl MinOxenVersion {
             "0.19.0" => Ok(MinOxenVersion::V0_19_0),
             "0.25.0" => Ok(MinOxenVersion::V0_25_0),
             "0.36.0" => Ok(MinOxenVersion::LATEST),
-            _ => Err(OxenError::invalid_version(s)),
+            _ => Err(OxenError::invalid_version(s.to_string())),
         }
     }
 

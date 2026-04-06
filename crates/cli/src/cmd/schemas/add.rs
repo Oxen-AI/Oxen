@@ -63,13 +63,13 @@ impl RunCmd for SchemasAddCmd {
         let err_msg = "Must supply a file path, column name and either -m for metadata or -t for data type\n\n  oxen schemas add file.csv -c 'col1' -t 'str'\n";
 
         let Some(path) = &path else {
-            return Err(OxenError::basic_str(err_msg));
+            return Err(OxenError::basic_str(err_msg.to_string()));
         };
 
         // If there is a render flag without a column, return an error
         if render.is_some() && column.is_none() {
             return Err(OxenError::basic_str(
-                "Must supply a column name with the -c flag when using --render.",
+                "Must supply a column name with the -c flag when using --render.".to_string(),
             ));
         }
 
@@ -122,7 +122,7 @@ impl SchemasAddCmd {
     ) -> Result<(), OxenError> {
         // make sure metadata is valid json, return oxen error if not
         let metadata: serde_json::Value = serde_json::from_str(metadata).map_err(|e| {
-            OxenError::basic_str(&format!(
+            OxenError::basic_str(format!(
                 "Metadata must be valid JSON: '{}'\n{}",
                 metadata, e
             ))
@@ -144,7 +144,7 @@ impl SchemasAddCmd {
         metadata: &str,
     ) -> Result<(), OxenError> {
         let metadata: serde_json::Value = serde_json::from_str(metadata).map_err(|e| {
-            OxenError::basic_str(&format!(
+            OxenError::basic_str(format!(
                 "Metadata must be valid JSON: '{}'\n{}",
                 metadata, e
             ))
@@ -172,7 +172,7 @@ impl SchemasAddCmd {
 
             Ok(serde_json::to_string(&json)?)
         } else {
-            Err(OxenError::basic_str(&format!(
+            Err(OxenError::basic_str(format!(
                 "Invalid render type: {render_type}"
             )))
         }

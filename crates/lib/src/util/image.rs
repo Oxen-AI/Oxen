@@ -6,7 +6,7 @@ pub fn resize_and_save(src: &Path, dst: &Path, dims: u32) -> Result<(), OxenErro
     let src_path = src;
     let img = match image::open(src_path) {
         Ok(img) => img,
-        Err(e) => return Err(OxenError::basic_str(&e.to_string())),
+        Err(e) => return Err(OxenError::basic_str(e.to_string())),
     };
 
     // If the path ends in .jpg or .jpeg, convert to RGB

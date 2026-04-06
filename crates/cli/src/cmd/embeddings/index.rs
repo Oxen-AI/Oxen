@@ -43,12 +43,12 @@ impl RunCmd for EmbeddingsIndexCmd {
 
         let err_msg = "Must supply a path to the data frame.";
         let Some(path) = path else {
-            return Err(OxenError::basic_str(err_msg));
+            return Err(OxenError::basic_str(err_msg.to_string()));
         };
 
         let err_msg = "Must supply a column name.";
         let Some(column) = column else {
-            return Err(OxenError::basic_str(err_msg));
+            return Err(OxenError::basic_str(err_msg.to_string()));
         };
 
         let use_background_thread = args.get_flag("use-background-thread");
@@ -75,7 +75,9 @@ impl RunCmd for EmbeddingsIndexCmd {
                 use_background_thread,
             )
         } else {
-            Err(OxenError::basic_str("Data frame is already indexed."))
+            Err(OxenError::basic_str(
+                "Data frame is already indexed.".to_string(),
+            ))
         }
     }
 }

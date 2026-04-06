@@ -35,7 +35,7 @@ impl RunCmd for SchemasRmCmd {
 
         let Some(schema_ref) = args.get_one::<String>("NAME_OR_HASH") else {
             return Err(OxenError::basic_str(
-                "Must supply a name, hash, or path of the schema you want to remove.",
+                "Must supply a name, hash, or path of the schema you want to remove.".to_string(),
             ));
         };
 

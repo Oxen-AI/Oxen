@@ -86,7 +86,7 @@ impl RunCmd for NodeCmd {
         } else if let Some(node_hash) = args.get_one::<String>("node") {
             let node_hash = node_hash.parse()?;
             let Some(node) = repositories::tree::get_node_by_id(&repository, &node_hash)? else {
-                return Err(OxenError::resource_not_found(&format!(
+                return Err(OxenError::resource_not_found(format!(
                     "Node {node_hash} not found in repo"
                 )));
             };
@@ -99,7 +99,9 @@ impl RunCmd for NodeCmd {
                 }
             }
         } else {
-            return Err(OxenError::basic_str("Must supply file path or node hash"));
+            return Err(OxenError::basic_str(
+                "Must supply file path or node hash".to_string(),
+            ));
         }
 
         Ok(())

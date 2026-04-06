@@ -60,7 +60,7 @@ pub fn rm_with_staged_db(
 ) -> Result<(), OxenError> {
     if has_modified_files(repo, paths)? {
         let error = "There are modified files in the working directory.\n\tUse `oxen status` to see the modified files.".to_string();
-        return Err(OxenError::basic_str(&error));
+        return Err(OxenError::basic_str(error));
     }
 
     if opts.staged && opts.recursive {
@@ -105,12 +105,14 @@ fn remove_staged_recursively_inner(
                     }
                 }
                 _ => {
-                    return Err(OxenError::basic_str("Could not read utf8 val..."));
+                    return Err(OxenError::basic_str(
+                        "Could not read utf8 val...".to_string(),
+                    ));
                 }
             },
             _ => {
                 return Err(OxenError::basic_str(
-                    "Could not read iterate over db values",
+                    "Could not read iterate over db values".to_string(),
                 ));
             }
         }
@@ -161,13 +163,13 @@ fn cleanup_empty_dirs(
                 }
                 _ => {
                     return Err(OxenError::basic_str(
-                        "Could not read iterate over db values",
+                        "Could not read iterate over db values".to_string(),
                     ));
                 }
             },
             _ => {
                 return Err(OxenError::basic_str(
-                    "Could not read iterate over db values",
+                    "Could not read iterate over db values".to_string(),
                 ));
             }
         }
@@ -194,7 +196,7 @@ fn remove_staged_inner(
         };
         if entry.node.is_dir() && !rm_opts.recursive {
             let error = format!("`oxen rm` on directory {path:?} requires -r");
-            return Err(OxenError::basic_str(&error));
+            return Err(OxenError::basic_str(error));
         }
         remove_staged_entry(&relative_path, staged_db)?;
     }
@@ -263,11 +265,11 @@ fn remove_file_inner(
         }
         Err(e) => {
             let error = format!("Error adding file {path:?}: {e:?}");
-            Err(OxenError::basic_str(&error))
+            Err(OxenError::basic_str(error))
         }
         _ => {
             let error = format!("Error adding file {path:?}");
-            Err(OxenError::basic_str(&error))
+            Err(OxenError::basic_str(error))
         }
     }
 }
@@ -351,7 +353,9 @@ pub fn remove_dir_with_db_manager(
                 }
             }
             _ => {
-                return Err(OxenError::basic_str("Error: Unexpected node type"));
+                return Err(OxenError::basic_str(
+                    "Error: Unexpected node type".to_string(),
+                ));
             }
         };
 
@@ -463,7 +467,7 @@ fn remove_inner(
     // Head commit should always exist here, because we're removing committed files
     let Some(head_commit) = repositories::commits::head_commit_maybe(repo)? else {
         let error = "Error: head commit not found".to_string();
-        return Err(OxenError::basic_str(&error));
+        return Err(OxenError::basic_str(error));
     };
 
     let mut total = CumulativeStats {
@@ -483,7 +487,7 @@ fn remove_inner(
             dir_node
         } else {
             let error = format!("Error: parent dir not found in tree for {path:?}");
-            return Err(OxenError::basic_str(&error));
+            return Err(OxenError::basic_str(error));
         };
 
         // Get file name without parent paths for lookup in Merkle Tree
@@ -494,7 +498,7 @@ fn remove_inner(
             if let EMerkleTreeNode::Directory(_) = &node.node {
                 if !opts.recursive {
                     let error = format!("`oxen rm` on directory {path:?} requires -r");
-                    return Err(OxenError::basic_str(&error));
+                    return Err(OxenError::basic_str(error));
                 }
 
                 total += remove_dir_inner(repo, &head_commit, &path, staged_db)?;
@@ -520,11 +524,11 @@ fn remove_inner(
                 }
             } else {
                 let error = "Error: Unexpected file type".to_string();
-                return Err(OxenError::basic_str(&error));
+                return Err(OxenError::basic_str(error));
             }
         } else {
             let error = format!("Error: {path:?} must be committed in order to use `oxen rm`");
-            return Err(OxenError::basic_str(&error));
+            return Err(OxenError::basic_str(error));
         }
     }
 
@@ -581,7 +585,7 @@ fn remove_dir_inner(
         Some(node) => node,
         None => {
             let error = format!("Error: {path:?} must be committed in order to use `oxen rm`");
-            return Err(OxenError::basic_str(&error));
+            return Err(OxenError::basic_str(error));
         }
     };
 
@@ -632,7 +636,7 @@ fn process_remove_dir(
 
         let Some(relative_path_str) = relative_path.to_str() else {
             let error = format!("Error: {relative_path:?} is not a valid string");
-            return Err(OxenError::basic_str(&error));
+            return Err(OxenError::basic_str(error));
         };
 
         // Ensures that removed entries don't have their parents re-added by oxen rm
@@ -709,17 +713,17 @@ fn r_process_remove_dir(
                     }
                     Err(e) => {
                         let error = format!("Error adding file {new_path:?}: {e:?}");
-                        return Err(OxenError::basic_str(&error));
+                        return Err(OxenError::basic_str(error));
                     }
                     _ => {
                         let error = format!("Error adding file {new_path:?}");
-                        return Err(OxenError::basic_str(&error));
+                        return Err(OxenError::basic_str(error));
                     }
                 }
             }
             _ => {
                 let error = "Error: Unexpected node type".to_string();
-                return Err(OxenError::basic_str(&error));
+                return Err(OxenError::basic_str(error));
             }
         }
     }
@@ -749,7 +753,7 @@ fn r_process_remove_dir(
 
         // node should always be a directory or vnode, so any other types result in an error
         _ => {
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "Unexpected node type: {:?}",
                 node.node.node_type()
             )));

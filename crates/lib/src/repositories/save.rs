@@ -15,7 +15,7 @@ pub fn save(repo: &LocalRepository, dst_path: &Path) -> Result<(), OxenError> {
         match (dst_path.is_file(), dst_path.is_dir()) {
             (true, false) => dst_path.to_path_buf(),
             (false, true) => dst_path.join("oxen-archive.tar.gz"),
-            _ => return Err(OxenError::basic_str(dst_path.to_str().unwrap())),
+            _ => return Err(OxenError::basic_str(dst_path.to_str().unwrap().to_string())),
         }
     };
 

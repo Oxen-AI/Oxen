@@ -82,7 +82,9 @@ impl LocalRepository {
     pub fn version_store(&self) -> Result<Arc<dyn VersionStore>, OxenError> {
         match &self.version_store {
             Some(store) => Ok(Arc::clone(store)),
-            None => Err(OxenError::basic_str("Version store not initialized")),
+            None => Err(OxenError::basic_str(
+                "Version store not initialized".to_string(),
+            )),
         }
     }
 
@@ -117,7 +119,7 @@ impl LocalRepository {
     pub fn from_current_dir() -> Result<LocalRepository, OxenError> {
         let current_dir = std::env::current_dir().map_err(OxenError::from)?;
         let repo_dir = util::fs::get_repo_root_from_current_dir()
-            .ok_or_else(|| OxenError::local_repo_not_found(&current_dir))?;
+            .ok_or_else(|| OxenError::local_repo_not_found(current_dir))?;
 
         LocalRepository::from_dir(&repo_dir)
     }
@@ -312,7 +314,7 @@ impl LocalRepository {
                 match store.storage_type() {
                     "local" => {
                         let path = settings.get("path").ok_or_else(|| {
-                            OxenError::basic_str("Storage settings missing 'path' key")
+                            OxenError::basic_str("Storage settings missing 'path' key".to_string())
                         })?;
                         let storage_path = if util::fs::is_relative_to_dir(
                             Path::new(path),
@@ -431,7 +433,7 @@ impl LocalRepository {
 
     pub fn delete_workspace(&mut self, name: &str) -> Result<(), OxenError> {
         if self.workspaces.is_none() {
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "Error: Cannot delete workspace {name:?} as it does not exist"
             )));
         }
@@ -440,7 +442,7 @@ impl LocalRepository {
         // This seems like an impossible scenario...
         if self.workspace_name.is_some() && name == self.workspace_name.as_ref().unwrap() {
             return Err(OxenError::basic_str(
-                "Error: Cannot delete current workspace",
+                "Error: Cannot delete current workspace".to_string(),
             ));
         }
 

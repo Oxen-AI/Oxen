@@ -63,7 +63,7 @@ impl PyRemoteDataFrame {
             // convert view to json string
             match serde_json::to_string(&response.data_frame.view.data) {
                 Ok(json) => Ok(json),
-                Err(e) => Err(OxenError::basic_str(&format!(
+                Err(e) => Err(OxenError::basic_str(format!(
                     "Could not convert view to json: {e}",
                 ))),
             }
@@ -97,7 +97,7 @@ impl PyRemoteDataFrame {
             // convert view to json string
             match serde_json::to_string(&response.data_frame.view.data) {
                 Ok(json) => Ok(json),
-                Err(e) => Err(OxenError::basic_str(&format!(
+                Err(e) => Err(OxenError::basic_str(format!(
                     "Could not convert view to json: {e}",
                 ))),
             }

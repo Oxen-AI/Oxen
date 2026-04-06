@@ -170,14 +170,16 @@ fn hash_small_file_contents(path: &Path) -> Result<u128, OxenError> {
                 }
                 Err(_) => {
                     eprintln!("Could not read file for hashing {path:?}");
-                    Err(OxenError::basic_str("Could not read file for hashing"))
+                    Err(OxenError::basic_str(
+                        "Could not read file for hashing".to_string(),
+                    ))
                 }
             }
         }
         Err(err) => {
             let err =
                 format!("util::hasher::hash_file_contents Could not open file {path:?} {err:?}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -185,7 +187,7 @@ fn hash_small_file_contents(path: &Path) -> Result<u128, OxenError> {
 fn hash_large_file_contents(path: &Path) -> Result<u128, OxenError> {
     let file = File::open(path).map_err(|err| {
         eprintln!("Could not open file {path:?} due to {err:?}");
-        OxenError::basic_str(&format!("Could not open file {path:?} due to {err:?}"))
+        OxenError::basic_str(format!("Could not open file {path:?} due to {err:?}"))
     })?;
 
     let mut reader = BufReader::new(file);
@@ -195,7 +197,7 @@ fn hash_large_file_contents(path: &Path) -> Result<u128, OxenError> {
     loop {
         let count = reader.read(&mut buffer).map_err(|_| {
             eprintln!("Could not read file for hashing {path:?}");
-            OxenError::basic_str("Could not read file for hashing")
+            OxenError::basic_str("Could not read file for hashing".to_string())
         })?;
 
         if count == 0 {

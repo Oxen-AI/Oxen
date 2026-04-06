@@ -120,12 +120,14 @@ fn run_on_commit(repository: &LocalRepository, commit: &Commit) -> Result<(), Ox
     // *******************************************************************
 
     let Some(root_node) = repositories::tree::get_root_with_children(&old_repo, commit)? else {
-        return Err(OxenError::basic_str("Root node not found"));
+        return Err(OxenError::basic_str("Root node not found".to_string()));
     };
 
     let root_dir_node = repositories::tree::get_root_dir(&root_node)?;
     let EMerkleTreeNode::Directory(dir_node) = root_dir_node.node.clone() else {
-        return Err(OxenError::basic_str("Root node must be CommitNode"));
+        return Err(OxenError::basic_str(
+            "Root node must be CommitNode".to_string(),
+        ));
     };
 
     // ✍️ Do all the rewriting

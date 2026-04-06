@@ -29,7 +29,7 @@ pub async fn get_slice(
         None => resource
             .commit
             .clone()
-            .ok_or(OxenError::basic_str("Commit not found"))?,
+            .ok_or(OxenError::basic_str("Commit not found".to_string()))?,
     };
 
     let (staged_repo, base_repo) = match workspace {
@@ -45,23 +45,23 @@ pub async fn get_slice(
                 match staged_node.node.node {
                     EMerkleTreeNode::File(f) => Ok(f),
                     _ => Err(OxenError::basic_str(
-                        "Only single file download is supported",
+                        "Only single file download is supported".to_string(),
                     )),
                 }?
             } else {
                 // Fall back to commit tree using workspace's commit
                 let commit = &ws.commit;
                 repositories::tree::get_file_by_path(base_repo, commit, path)?
-                    .ok_or(OxenError::path_does_not_exist(path))?
+                    .ok_or(OxenError::path_does_not_exist(path.to_path_buf()))?
             }
         }
         None => {
             let commit = resource
                 .commit
                 .as_ref()
-                .ok_or(OxenError::basic_str("Commit not found"))?;
+                .ok_or(OxenError::basic_str("Commit not found".to_string()))?;
             repositories::tree::get_file_by_path(base_repo, commit, path)?
-                .ok_or(OxenError::path_does_not_exist(path))?
+                .ok_or(OxenError::path_does_not_exist(path.to_path_buf()))?
         }
     };
 
@@ -71,11 +71,13 @@ pub async fn get_slice(
         Some(metadata) => match metadata {
             GenericMetadata::MetadataTabular(metadata) => Ok(metadata.tabular.clone()),
             _ => {
-                return Err(OxenError::basic_str("Metadata is not tabular"));
+                return Err(OxenError::basic_str("Metadata is not tabular".to_string()));
             }
         },
         None => {
-            return Err(OxenError::basic_str("File node does not have metadata"));
+            return Err(OxenError::basic_str(
+                "File node does not have metadata".to_string(),
+            ));
         }
     };
     let metadata = metadata?;
@@ -189,5 +191,7 @@ async fn handle_sql_querying(
         });
     }
 
-    Err(OxenError::basic_str("Could not query data frame"))
+    Err(OxenError::basic_str(
+        "Could not query data frame".to_string(),
+    ))
 }

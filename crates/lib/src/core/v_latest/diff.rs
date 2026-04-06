@@ -70,7 +70,7 @@ pub async fn list_diff_entries(
                     head_dirs.extend(dirs);
                 }
                 _ => {
-                    return Err(OxenError::basic_str(&format!(
+                    return Err(OxenError::basic_str(format!(
                         "Failed to get base tree for commit: {base_commit}"
                     )));
                 }
@@ -94,7 +94,7 @@ pub async fn list_diff_entries(
                 base_dirs.extend(dirs);
             }
             _ => {
-                return Err(OxenError::basic_str(&format!(
+                return Err(OxenError::basic_str(format!(
                     "Failed to get base tree for commit: {base_commit}"
                 )));
             }
@@ -117,7 +117,7 @@ pub async fn list_diff_entries(
                 head_dirs.extend(dirs);
             }
             _ => {
-                return Err(OxenError::basic_str(&format!(
+                return Err(OxenError::basic_str(format!(
                     "Failed to get head tree for commit: {head_commit}"
                 )));
             }
@@ -303,12 +303,12 @@ pub fn list_changed_dirs(
     let mut changed_dirs: Vec<(PathBuf, DiffEntryStatus)> = vec![];
 
     let Some(base_tree) = repositories::tree::get_root_with_children(repo, base_commit)? else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Failed to get base tree for commit: {base_commit}"
         )));
     };
     let Some(head_tree) = repositories::tree::get_root_with_children(repo, head_commit)? else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Failed to get head tree for commit: {head_commit}"
         )));
     };
@@ -335,7 +335,7 @@ pub fn list_changed_dirs(
         let base_dir_hash = match base_dir {
             Some(base_dir) => base_dir.hash,
             None => {
-                return Err(OxenError::basic_str(&format!(
+                return Err(OxenError::basic_str(format!(
                     "Could not calculate dir diff tree: base_dir_hash not found for dir {:?} in commit {}",
                     dir, base_commit.id
                 )));
@@ -345,7 +345,7 @@ pub fn list_changed_dirs(
         let head_dir_hash = match head_dir {
             Some(head_dir) => head_dir.hash,
             None => {
-                return Err(OxenError::basic_str(&format!(
+                return Err(OxenError::basic_str(format!(
                     "Could not calculate dir diff tree: head_dir_hash not found for dir {:?} in commit {}",
                     dir, head_commit.id
                 )));
@@ -371,12 +371,12 @@ pub fn get_dir_diff_entry_with_summary(
     summary: GenericDiffSummary,
 ) -> Result<Option<DiffEntry>, OxenError> {
     let Some(base_tree) = repositories::tree::get_root_with_children(repo, base_commit)? else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Failed to get base tree for commit: {base_commit}"
         )));
     };
     let Some(head_tree) = repositories::tree::get_root_with_children(repo, head_commit)? else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Failed to get head tree for commit: {head_commit}"
         )));
     };
@@ -422,7 +422,7 @@ pub fn get_dir_diff_entry_with_summary(
             DiffEntryStatus::Removed,
         )?)),
         (None, None) => Err(OxenError::basic_str(
-            "Could not calculate dir diff tree: dir does not exist in either commit.",
+            "Could not calculate dir diff tree: dir does not exist in either commit.".to_string(),
         )),
     }
 }
@@ -438,7 +438,7 @@ pub async fn diff_entries(
 ) -> Result<DiffEntry, OxenError> {
     if base_entry.is_none() && head_entry.is_none() {
         return Err(OxenError::basic_str(
-            "Could not calculate diff: neither base nor head entries exist.",
+            "Could not calculate diff: neither base nor head entries exist.".to_string(),
         ));
     }
 

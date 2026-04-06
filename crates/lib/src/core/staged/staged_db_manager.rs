@@ -108,13 +108,13 @@ pub fn get_staged_db_manager(repository: &LocalRepository) -> Result<StagedDBMan
     if !staged_db_dir.exists() {
         std::fs::create_dir_all(&staged_db_dir).map_err(|e| {
             log::error!("Failed to create staged db directory: {e}");
-            OxenError::basic_str(&format!("Failed to create staged db directory: {e}"))
+            OxenError::basic_str(format!("Failed to create staged db directory: {e}"))
         })?;
     }
     let opts = db::key_val::opts::default();
     let db = DB::open(&opts, dunce::simplified(&staged_db_dir)).map_err(|e| {
         log::error!("Failed to open staged db: {e}");
-        OxenError::basic_str(&format!("Failed to open staged db: {e}"))
+        OxenError::basic_str(format!("Failed to open staged db: {e}"))
     })?;
     let db_lock = Arc::new(RwLock::new(db));
     cache_w.put(staged_db_dir.clone(), db_lock.clone());
@@ -161,7 +161,7 @@ impl StagedDBManager {
         let mut buf = Vec::new();
         staged_node
             .serialize(&mut Serializer::new(&mut buf))
-            .map_err(|e| OxenError::basic_str(&e.to_string()))?;
+            .map_err(|e| OxenError::basic_str(e.to_string()))?;
 
         match db_w {
             Some(write_guard) => {
@@ -234,7 +234,7 @@ impl StagedDBManager {
         dir_entry
             .serialize(&mut Serializer::new(&mut buf))
             .map_err(|e| {
-                OxenError::basic_str(&format!("Failed to serialize directory entry: {e}"))
+                OxenError::basic_str(format!("Failed to serialize directory entry: {e}"))
             })?;
         let db_w = self.staged_db.write();
         db_w.put(directory_path_str, &buf)?;
@@ -275,7 +275,7 @@ impl StagedDBManager {
             Ok(val) => Ok(Some(val)),
             Err(e) => {
                 log::error!("Failed to deserialize data for key {key}: {e}");
-                Err(OxenError::basic_str(&format!(
+                Err(OxenError::basic_str(format!(
                     "Failed to deserialize staged data: {e}"
                 )))
             }
@@ -299,7 +299,7 @@ impl StagedDBManager {
                 Ok((key, value)) => {
                     // log::debug!("Key is {key:?}, value is {value:?}");
                     let key =
-                        str::from_utf8(&key).map_err(|e| OxenError::basic_str(&e.to_string()))?;
+                        str::from_utf8(&key).map_err(|e| OxenError::basic_str(e.to_string()))?;
                     let path = Path::new(key);
                     if !path.starts_with(&start_path) {
                         continue;
@@ -391,14 +391,14 @@ impl StagedDBManager {
                         }
                     }
                     Err(e) => {
-                        return Err(OxenError::basic_str(&format!(
+                        return Err(OxenError::basic_str(format!(
                             "Could not read utf8 val: {e}"
                         )));
                     }
                 },
                 _ => {
                     return Err(OxenError::basic_str(
-                        "Could not read iterate over db values",
+                        "Could not read iterate over db values".to_string(),
                     ));
                 }
             }
@@ -425,14 +425,14 @@ impl StagedDBManager {
                         }
                     }
                     Err(e) => {
-                        return Err(OxenError::basic_str(&format!(
+                        return Err(OxenError::basic_str(format!(
                             "Could not read utf8 val: {e}"
                         )));
                     }
                 },
                 _ => {
                     return Err(OxenError::basic_str(
-                        "Could not read iterate over db values",
+                        "Could not read iterate over db values".to_string(),
                     ));
                 }
             }

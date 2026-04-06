@@ -17,7 +17,7 @@ pub async fn create(
     data: String,
 ) -> Result<DataFrame, OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
         )));
     };
@@ -44,13 +44,13 @@ pub async fn create(
                     let err = format!(
                         "api::staging::modify_df error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                     );
-                    Err(OxenError::basic_str(&err))
+                    Err(OxenError::basic_str(err))
                 }
             }
         }
         Err(err) => {
             let err = format!("api::staging::modify_df Request failed: {url}\n\nErr {err:?}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -62,7 +62,7 @@ pub async fn delete(
     column_name: &str,
 ) -> Result<DataFrame, OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
         )));
     };
@@ -86,13 +86,13 @@ pub async fn delete(
                     let err = format!(
                         "api::staging::rm_df_mod error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                     );
-                    Err(OxenError::basic_str(&err))
+                    Err(OxenError::basic_str(err))
                 }
             }
         }
         Err(err) => {
             let err = format!("rm_df_mod Request failed: {url}\n\nErr {err:?}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -105,7 +105,7 @@ pub async fn update(
     data: String,
 ) -> Result<JsonDataFrameColumnResponse, OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
         )));
     };
@@ -134,13 +134,13 @@ pub async fn update(
                     let err = format!(
                         "api::staging::update_row error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                     );
-                    Err(OxenError::basic_str(&err))
+                    Err(OxenError::basic_str(err))
                 }
             }
         }
         Err(err) => {
             let err = format!("api::staging::update_row Request failed: {url}\n\nErr {err:?}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -153,7 +153,7 @@ pub async fn add_column_metadata(
     metadata: serde_json::Value,
 ) -> Result<(), OxenError> {
     let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Path must be a string: {path:?}"
         )));
     };
@@ -178,7 +178,7 @@ pub async fn add_column_metadata(
         Ok(_) => Ok(()),
         Err(err) => {
             let err = format!("add_column_metadata Request failed: {url}\n\nErr {err:?}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }

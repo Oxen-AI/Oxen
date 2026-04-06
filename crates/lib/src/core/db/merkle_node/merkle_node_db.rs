@@ -345,14 +345,18 @@ impl MerkleNodeDB {
             node_file.flush()?;
             node_file.sync_data()?;
         } else {
-            return Err(OxenError::basic_str("Must call open before closing"));
+            return Err(OxenError::basic_str(
+                "Must call open before closing".to_string(),
+            ));
         }
 
         if let Some(children_file) = &mut self.children_file {
             children_file.flush()?;
             children_file.sync_data()?;
         } else {
-            return Err(OxenError::basic_str("Must call open before closing"));
+            return Err(OxenError::basic_str(
+                "Must call open before closing".to_string(),
+            ));
         }
 
         self.node_file = None;
@@ -368,15 +372,21 @@ impl MerkleNodeDB {
         parent_id: Option<MerkleHash>,
     ) -> Result<(), OxenError> {
         if self.read_only {
-            return Err(OxenError::basic_str("Cannot write to read-only db"));
+            return Err(OxenError::basic_str(
+                "Cannot write to read-only db".to_string(),
+            ));
         }
 
         if self.data_offset > 0 {
-            return Err(OxenError::basic_str("Cannot write size after writing data"));
+            return Err(OxenError::basic_str(
+                "Cannot write size after writing data".to_string(),
+            ));
         }
 
         let Some(node_file) = self.node_file.as_mut() else {
-            return Err(OxenError::basic_str("Must call open before writing"));
+            return Err(OxenError::basic_str(
+                "Must call open before writing".to_string(),
+            ));
         };
         // log::debug!("write_node node: {}", node);
 
@@ -413,14 +423,20 @@ impl MerkleNodeDB {
 
     pub fn add_child<N: TMerkleTreeNode>(&mut self, item: &N) -> Result<(), OxenError> {
         if self.read_only {
-            return Err(OxenError::basic_str("Cannot write to read-only db"));
+            return Err(OxenError::basic_str(
+                "Cannot write to read-only db".to_string(),
+            ));
         }
 
         let Some(node_file) = self.node_file.as_mut() else {
-            return Err(OxenError::basic_str("Must call open() before writing"));
+            return Err(OxenError::basic_str(
+                "Must call open() before writing".to_string(),
+            ));
         };
         let Some(children_file) = self.children_file.as_mut() else {
-            return Err(OxenError::basic_str("Must call open() before writing"));
+            return Err(OxenError::basic_str(
+                "Must call open() before writing".to_string(),
+            ));
         };
 
         // TODO: Abstract and re-use in write_all
@@ -477,7 +493,7 @@ impl MerkleNodeDB {
         children_file.read_exact(&mut data)?;
 
         let val: D = rmp_serde::from_slice(&data).map_err(|e| {
-            OxenError::basic_str(&format!(
+            OxenError::basic_str(format!(
                 "MerkleNodeDB.get({}): Error deserializing data: {:?}",
                 hash, e
             ))
@@ -489,10 +505,14 @@ impl MerkleNodeDB {
     pub fn map(&mut self) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, OxenError> {
         // log::debug!("Loading merkle node db map");
         let Some(lookup) = self.lookup.as_ref() else {
-            return Err(OxenError::basic_str("Must call open before reading"));
+            return Err(OxenError::basic_str(
+                "Must call open before reading".to_string(),
+            ));
         };
         let Some(children_file) = self.children_file.as_mut() else {
-            return Err(OxenError::basic_str("Must call open before writing"));
+            return Err(OxenError::basic_str(
+                "Must call open before writing".to_string(),
+            ));
         };
 
         // Parse the node parent id

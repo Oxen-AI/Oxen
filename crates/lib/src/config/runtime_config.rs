@@ -47,7 +47,7 @@ impl RuntimeConfig {
         get_runtime_config()
             .read()
             .map(|config| config.clone())
-            .map_err(|_| OxenError::basic_str("Failed to read global configuration"))
+            .map_err(|_| OxenError::basic_str("Failed to read global configuration".to_string()))
     }
 
     pub fn update(config: RuntimeConfig) -> Result<(), OxenError> {
@@ -56,7 +56,7 @@ impl RuntimeConfig {
             Ok(())
         } else {
             Err(OxenError::basic_str(
-                "Failed to update global configuration",
+                "Failed to update global configuration".to_string(),
             ))
         }
     }

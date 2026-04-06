@@ -77,7 +77,7 @@ pub async fn get(
     let response: Result<VersionFileResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(version_file) => Ok(Some(version_file.version)),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "api::client::versions::get() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -97,7 +97,7 @@ pub async fn clean(
         serde_json::from_str(&body);
     match response {
         Ok(response) => Ok(response),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "api::client::versions::clean() Could not deserialize response [{err}]\n{body}"
         ))),
     }
@@ -150,7 +150,7 @@ async fn create_multipart_large_file_upload(
         None => {
             // Figure out how many parts we need to upload
             let Ok(metadata) = file_path.metadata() else {
-                return Err(OxenError::path_does_not_exist(file_path));
+                return Err(OxenError::path_does_not_exist(file_path.to_path_buf()));
             };
             let file_size = metadata.len();
             let hash = util::hasher::hash_file_contents(file_path)?;
@@ -216,7 +216,7 @@ pub async fn download_data_from_version_paths(
         hashes.len(),
         total_retries
     );
-    Err(OxenError::basic_str(&err))
+    Err(OxenError::basic_str(err))
 }
 
 pub async fn try_download_data_from_version_paths(
@@ -257,13 +257,13 @@ pub async fn try_download_data_from_version_paths(
                 Ok(file) => file,
                 Err(err) => {
                     let err = format!("Could not unwrap file -> {err:?}");
-                    return Err(OxenError::basic_str(&err));
+                    return Err(OxenError::basic_str(err));
                 }
             };
 
             let file_hash = file
                 .path()
-                .map_err(|e| OxenError::basic_str(&format!("Failed to get entry path: {e}")))?
+                .map_err(|e| OxenError::basic_str(format!("Failed to get entry path: {e}")))?
                 .to_string_lossy()
                 .to_string();
 
@@ -284,7 +284,7 @@ pub async fn try_download_data_from_version_paths(
                 Err(err) => {
                     let err =
                         format!("Could not store file {file_hash} to version store -> {err:?}");
-                    return Err(OxenError::basic_str(&err));
+                    return Err(OxenError::basic_str(err));
                 }
             }
         }
@@ -293,7 +293,7 @@ pub async fn try_download_data_from_version_paths(
     } else {
         let err =
             format!("api::entries::download_data_from_version_paths Err request failed: {url}");
-        Err(OxenError::basic_str(&err))
+        Err(OxenError::basic_str(err))
     }
 }
 
@@ -329,19 +329,19 @@ async fn upload_chunks(
                         .clone()
                         .acquire_owned()
                         .await
-                        .map_err(|err| OxenError::basic_str(&format!("Error acquiring semaphore: {err}")))?;
+                        .map_err(|err| OxenError::basic_str(format!("Error acquiring semaphore: {err}")))?;
                     let mut chunk = upload_chunk(&client, &remote_repo, &upload, start, chunk_size).await;
                     let mut i = 0;
                     if parallel_failures > 0 {
                         while let Err(ul_err) = chunk {
                             if i >= max_retries {
-                                return Err(OxenError::basic_str(&format!(
+                                return Err(OxenError::basic_str(format!(
                                     "Failed after too many retries ({max_retries}): {ul_err}"
                                 )));
                             }
 
                             let parallel_failure_permit = parallel_failures_semaphore.clone().try_acquire_owned().map_err(|err| {
-                                OxenError::basic_str(&format!(
+                                OxenError::basic_str(format!(
                                     "Failed too many failures in parallel ({parallel_failures}): {ul_err} ({err})"
                                 ))
                             })?;
@@ -356,7 +356,7 @@ async fn upload_chunks(
                     }
                     drop(permit);
                     chunk
-                    .map_err(|e| OxenError::basic_str(&format!("Upload error {e}")))
+                    .map_err(|e| OxenError::basic_str(format!("Upload error {e}")))
                     .map(|chunk| (chunk_number, chunk, chunk_size))
                 }));
     }
@@ -376,7 +376,7 @@ async fn upload_chunks(
                 return Err(py_err);
             }
             Err(err) => {
-                return Err(OxenError::basic_str(&format!(
+                return Err(OxenError::basic_str(format!(
                     "Error occurred while uploading: {err}"
                 )));
             }
@@ -426,7 +426,7 @@ async fn upload_chunk(
             name.to_string(),
             value
                 .to_str()
-                .map_err(|e| OxenError::basic_str(&format!("Invalid header value: {e}")))?
+                .map_err(|e| OxenError::basic_str(format!("Invalid header value: {e}")))?
                 .to_owned(),
         );
     }
@@ -498,7 +498,7 @@ pub async fn multipart_batch_upload_with_retry(
     if files_to_retry.is_empty() {
         Ok(())
     } else {
-        Err(OxenError::basic_str(&format!(
+        Err(OxenError::basic_str(format!(
             "Failed to upload files: {files_to_retry:#?}"
         )))
     }
@@ -632,13 +632,11 @@ pub(crate) async fn workspace_multipart_batch_upload_versions(
             }
 
             let Some(_file_name) = path.file_name() else {
-                return Err(OxenError::basic_str(&format!(
-                    "Invalid file path: {path:?}"
-                )));
+                return Err(OxenError::basic_str(format!("Invalid file path: {path:?}")));
             };
 
             let file = std::fs::read(&path).map_err(|e| {
-                OxenError::basic_str(&format!("Failed to read file '{path:?}': {e}"))
+                OxenError::basic_str(format!("Failed to read file '{path:?}': {e}"))
             })?;
 
             let hash = hasher::hash_buffer(&file);
@@ -781,7 +779,7 @@ pub(crate) async fn workspace_multipart_batch_upload_parts_with_retry(
     }
 
     if !files_to_retry.is_empty() {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Failed to upload version files after {max_retries} retries"
         )));
     }

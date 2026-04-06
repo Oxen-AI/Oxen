@@ -157,20 +157,20 @@ pub async fn get(
                 match staged_node.node.node {
                     EMerkleTreeNode::File(f) => Ok(f),
                     _ => Err(OxenError::basic_str(
-                        "Only single file download is supported",
+                        "Only single file download is supported".to_string(),
                     )),
                 }?
             } else {
                 // Fall back to commit tree using workspace's commit
                 let commit = &ws.commit;
                 repositories::tree::get_file_by_path(base_repo, commit, &path)?
-                    .ok_or(OxenError::path_does_not_exist(&path))?
+                    .ok_or(OxenError::path_does_not_exist(path.clone()))?
             }
         }
         None => {
             let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
             repositories::tree::get_file_by_path(base_repo, &commit, &path)?
-                .ok_or(OxenError::path_does_not_exist(&path))?
+                .ok_or(OxenError::path_does_not_exist(path.clone()))?
         }
     };
 

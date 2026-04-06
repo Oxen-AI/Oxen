@@ -87,7 +87,7 @@ pub async fn create_checkout_branch(
     let workspace_name = format!("{branch_name}: {workspace_id}");
     let Some(remote) = repo.remote() else {
         return Err(OxenError::basic_str(
-            "Error: local repository has no remote",
+            "Error: local repository has no remote".to_string(),
         ));
     };
     let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
@@ -120,7 +120,7 @@ pub async fn create_checkout_branch(
                 workspace_id.clone()
             );
             println!("{}", err_msg.yellow().bold());
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "Error: Remote-mode repo already exists for workspace {workspace_id}"
             )));
         }

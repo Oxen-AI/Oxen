@@ -87,7 +87,8 @@ impl RunCmd for InitCmd {
         if backend.is_none() && (storage_backend_path.is_some() || storage_backend_bucket.is_some())
         {
             return Err(OxenError::basic_str(
-                "storage-backend must be specified when storage-backend-path or storage-backend-bucket is provided",
+                "storage-backend must be specified when storage-backend-path or storage-backend-bucket is provided".to_string(),
+
             ));
         }
 

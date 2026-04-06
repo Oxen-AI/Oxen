@@ -25,14 +25,14 @@ pub async fn get(remote_repo: &RemoteRepository) -> Result<RepositoryStatsView, 
                     log::debug!("got RepositoryStatsResponse: {val:?}");
                     Ok(val.repository)
                 }
-                Err(err) => Err(OxenError::basic_str(&format!(
+                Err(err) => Err(OxenError::basic_str(format!(
                     "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
                 ))),
             }
         }
         Err(err) => {
             let err = format!("Request failed: {url}\nErr {err:?}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }

@@ -69,7 +69,7 @@ impl CommitNode {
                 }),
             }),
             _ => Err(OxenError::basic_str(
-                "CommitNode not supported in this version",
+                "CommitNode not supported in this version".to_string(),
             )),
         }
     }

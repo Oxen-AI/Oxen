@@ -18,7 +18,7 @@ pub async fn mergeability(
     let response: Result<MergeableResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(val) => Ok(val.mergeable),
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "api::workspaces::commits::merge error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }
@@ -57,7 +57,7 @@ pub async fn commit(
             println!("🐂 commit {commit} complete!");
             Ok(commit)
         }
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "api::workspaces::commits error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }

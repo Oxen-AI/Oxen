@@ -26,12 +26,12 @@ pub fn get_metadata(path: &Path) -> Result<MetadataAudio, OxenError> {
             }
             Err(err) => {
                 let error_str = format!("Could not read audio stream from {path:?} {err}");
-                Err(OxenError::basic_str(&error_str))
+                Err(OxenError::basic_str(error_str))
             }
         },
         Err(err) => {
             let error_str = format!("Could not probe audio stream from {path:?}: {err}");
-            Err(OxenError::basic_str(&error_str))
+            Err(OxenError::basic_str(error_str))
         }
     }
 }

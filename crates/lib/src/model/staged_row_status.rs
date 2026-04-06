@@ -16,7 +16,7 @@ impl StagedRowStatus {
             "modified" => Ok(StagedRowStatus::Modified),
             "removed" => Ok(StagedRowStatus::Removed),
             "unchanged" => Ok(StagedRowStatus::Unchanged),
-            _ => Err(OxenError::basic_str("Invalid row status")),
+            _ => Err(OxenError::basic_str("Invalid row status".to_string())),
         }
     }
 }

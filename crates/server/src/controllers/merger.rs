@@ -126,7 +126,7 @@ pub async fn merge(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
         }
         Ok(None) => {
             log::debug!("Merge has conflicts");
-            Err(OxenError::merge_conflict(&format!(
+            Err(OxenError::merge_conflict(format!(
                 "Unable to merge {head} into {base} due to conflicts"
             )))?
         }

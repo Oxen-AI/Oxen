@@ -51,7 +51,7 @@ impl PyRemoteRepo {
         let (namespace, repo_name) = match repo.split_once('/') {
             Some((namespace, repo_name)) => (namespace.to_string(), repo_name.to_string()),
             None => {
-                return Err(OxenError::basic_str(&format!(
+                return Err(OxenError::basic_str(format!(
                     "Invalid repo name, must be in format namespace/repo_name. Got {repo}"
                 ))
                 .into());
@@ -144,7 +144,8 @@ impl PyRemoteRepo {
             // parse storage backend options
             if storage_backend.is_none() && (storage_backend_path.is_some() || storage_backend_bucket.is_some()) {
                 return Err(OxenError::basic_str(
-                    "storage_backend must be specified when storage_backend_path or storage_backend_bucket is provided"
+                    "storage_backend must be specified when storage_backend_path or storage_backend_bucket is provided".to_string()
+
                 ));
             }
 
@@ -219,7 +220,7 @@ impl PyRemoteRepo {
                 repositories::download(&self.repo, &remote_path, &local_path, revision).await
             } else {
                 Err(OxenError::basic_str(
-                    "Invalid Revision: Cannot download without a version.",
+                    "Invalid Revision: Cannot download without a version.".to_string(),
                 ))
             }
         })?;
@@ -252,7 +253,7 @@ impl PyRemoteRepo {
                 .await
             } else {
                 Err(OxenError::basic_str(
-                    "Invalid Revision: Cannot download zip file without a revision.",
+                    "Invalid Revision: Cannot download zip file without a revision.".to_string(),
                 ))
             }
         })?;

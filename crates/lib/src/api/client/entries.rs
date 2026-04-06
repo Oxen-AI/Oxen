@@ -67,7 +67,7 @@ pub async fn upload_entries(
     opts: &UploadOpts,
 ) -> Result<(), OxenError> {
     if opts.paths.is_empty() {
-        return Err(OxenError::basic_str("No files to upload"));
+        return Err(OxenError::basic_str("No files to upload".to_string()));
     }
 
     // Filter down to only files
@@ -132,11 +132,11 @@ pub async fn download_entry(
         Some(EMetadataEntry::MetadataEntry(entry)) => entry,
         Some(EMetadataEntry::WorkspaceMetadataEntry(_entry)) => {
             return Err(OxenError::basic_str(
-                "Workspace entries are not supported for download",
+                "Workspace entries are not supported for download".to_string(),
             ));
         }
         None => {
-            return Err(OxenError::path_does_not_exist(&download_path));
+            return Err(OxenError::path_does_not_exist(download_path));
         }
     };
 
@@ -148,14 +148,14 @@ pub async fn download_entry(
     // * if the dst parent is a file, we error because cannot copy to a file subdirectory
     if let Some(parent) = local_path.parent() {
         if parent.is_file() {
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "{parent:?} is not a directory"
             )));
         }
 
         // * if the dst parent does not exist, we error because cannot copy a directory to a non-existent location
         if !parent.exists() && parent != Path::new("") {
-            return Err(OxenError::basic_str(&format!("{parent:?} does not exist")));
+            return Err(OxenError::basic_str(format!("{parent:?} does not exist")));
         }
     }
 
@@ -192,18 +192,18 @@ pub async fn download_entries_to_repo(
             Some(EMetadataEntry::MetadataEntry(entry)) => entry,
             Some(EMetadataEntry::WorkspaceMetadataEntry(_entry)) => {
                 return Err(OxenError::basic_str(
-                    "Workspace entries are not supported for download",
+                    "Workspace entries are not supported for download".to_string(),
                 ));
             }
             None => {
-                return Err(OxenError::path_does_not_exist(remote_path));
+                return Err(OxenError::path_does_not_exist(remote_path.to_path_buf()));
             }
         };
 
         // * if the dst parent is a file, we error because cannot copy to a file subdirectory
         if let Some(parent) = local_path.parent() {
             if parent.is_file() {
-                return Err(OxenError::basic_str(&format!(
+                return Err(OxenError::basic_str(format!(
                     "{parent:?} is not a directory"
                 )));
             }
@@ -229,7 +229,7 @@ pub async fn download_entries_to_repo(
             // Save contents to version store
             let version_store = local_repo.version_store()?;
             let file = std::fs::read(local_path).map_err(|e| {
-                OxenError::basic_str(&format!("Failed to read file '{remote_path:?}': {e}"))
+                OxenError::basic_str(format!("Failed to read file '{remote_path:?}': {e}"))
             })?;
             let hash = util::hasher::hash_buffer(&file);
             version_store
@@ -270,7 +270,7 @@ pub async fn download_small_entry(
         .get(&url)
         .send()
         .await
-        .map_err(|_| OxenError::resource_not_found(&url))?;
+        .map_err(|_| OxenError::resource_not_found(url))?;
 
     let status = response.status();
     match status {
@@ -286,18 +286,20 @@ pub async fn download_small_entry(
             let mut stream = response.bytes_stream();
             while let Some(chunk_result) = stream.next().await {
                 let chunk = chunk_result
-                    .map_err(|e| OxenError::basic_str(&format!("Failed to read chunk: {e}")))?;
+                    .map_err(|e| OxenError::basic_str(format!("Failed to read chunk: {e}")))?;
                 dest_file.write_all(&chunk).await?;
             }
 
             dest_file.flush().await?;
             Ok(())
         }
-        reqwest::StatusCode::NOT_FOUND => Err(OxenError::path_does_not_exist(remote_path)),
+        reqwest::StatusCode::NOT_FOUND => {
+            Err(OxenError::path_does_not_exist(remote_path.to_path_buf()))
+        }
         reqwest::StatusCode::UNAUTHORIZED => Err(OxenError::must_supply_valid_api_key()),
         _ => {
             let err = format!("Could not download entry status: {status}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -348,7 +350,7 @@ pub async fn pull_large_entry(
 
     // Try to download the first chunk and return error if it fails
     if tasks.is_empty() {
-        return Err(OxenError::basic_str("No chunks to download"));
+        return Err(OxenError::basic_str("No chunks to download".to_string()));
     }
     let item = tasks.remove(0);
     let (version_store, remote_repo, remote_path, hash, revision, chunk_start, chunk_size) = item;
@@ -450,7 +452,9 @@ async fn try_pull_entry_chunk(
             }
         }
     }
-    Err(OxenError::basic_str("Retry download chunk failed"))
+    Err(OxenError::basic_str(
+        "Retry download chunk failed".to_string(),
+    ))
 }
 
 /// Downloads a chunk of a file
@@ -498,11 +502,13 @@ async fn pull_entry_chunk(
                 .await?;
             Ok(status)
         }
-        reqwest::StatusCode::NOT_FOUND => Err(OxenError::path_does_not_exist(remote_path)),
+        reqwest::StatusCode::NOT_FOUND => {
+            Err(OxenError::path_does_not_exist(remote_path.to_path_buf()))
+        }
         reqwest::StatusCode::UNAUTHORIZED => Err(OxenError::must_supply_valid_api_key()),
         _ => {
             let err = format!("Could not download entry status: {status}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -565,7 +571,7 @@ pub async fn download_large_entry(
 
     // Try to download the first chunk and return error if it fails
     if tasks.is_empty() {
-        return Err(OxenError::basic_str("No chunks to download"));
+        return Err(OxenError::basic_str("No chunks to download".to_string()));
     }
     let item = tasks.remove(0);
     let (remote_repo, remote_path, tmp_file, revision, chunk_start, chunk_size) = item;
@@ -653,7 +659,9 @@ pub async fn download_large_entry(
     if should_cleanup {
         log::error!("Cleaning up tmp dir {tmp_dir:?}");
         util::fs::remove_dir_all(&tmp_dir)?;
-        return Err(OxenError::basic_str("Could not write all data to disk"));
+        return Err(OxenError::basic_str(
+            "Could not write all data to disk".to_string(),
+        ));
     }
 
     Ok(())
@@ -700,7 +708,9 @@ async fn try_download_entry_chunk(
             }
         }
     }
-    Err(OxenError::basic_str("Retry download chunk failed"))
+    Err(OxenError::basic_str(
+        "Retry download chunk failed".to_string(),
+    ))
 }
 
 /// Downloads a chunk of a file
@@ -756,11 +766,13 @@ async fn download_entry_chunk(
             std::io::copy(&mut content, &mut dest)?;
             Ok(status)
         }
-        reqwest::StatusCode::NOT_FOUND => Err(OxenError::path_does_not_exist(remote_path)),
+        reqwest::StatusCode::NOT_FOUND => {
+            Err(OxenError::path_does_not_exist(remote_path.to_path_buf()))
+        }
         reqwest::StatusCode::UNAUTHORIZED => Err(OxenError::must_supply_valid_api_key()),
         _ => {
             let err = format!("Could not download entry status: {status}");
-            Err(OxenError::basic_str(&err))
+            Err(OxenError::basic_str(err))
         }
     }
 }
@@ -792,7 +804,7 @@ pub async fn download_data_from_version_paths(
         content_ids.len(),
         total_retries
     );
-    Err(OxenError::basic_str(&err))
+    Err(OxenError::basic_str(err))
 }
 
 pub async fn try_download_data_from_version_paths(
@@ -833,7 +845,7 @@ pub async fn try_download_data_from_version_paths(
                 Ok(file) => file,
                 Err(err) => {
                     let err = format!("Could not unwrap file {entry_path:?} -> {err:?}");
-                    return Err(OxenError::basic_str(&err));
+                    return Err(OxenError::basic_str(err));
                 }
             };
 
@@ -851,7 +863,7 @@ pub async fn try_download_data_from_version_paths(
                 }
                 Err(err) => {
                     let err = format!("Could not unpack file {entry_path:?} -> {err:?}");
-                    return Err(OxenError::basic_str(&err));
+                    return Err(OxenError::basic_str(err));
                 }
             }
 
@@ -864,7 +876,7 @@ pub async fn try_download_data_from_version_paths(
     } else {
         let err =
             format!("api::entries::download_data_from_version_paths Err request failed: {url}");
-        Err(OxenError::basic_str(&err))
+        Err(OxenError::basic_str(err))
     }
 }
 

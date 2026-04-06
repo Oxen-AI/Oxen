@@ -76,14 +76,17 @@ pub fn list_directory_with_depth(
     log::debug!("list_directory commit {commit}");
 
     let _perf_get_dir = crate::perf_guard!("core::entries::get_dir_with_children");
-    let dir = repositories::tree::get_dir_with_children(repo, &commit, directory, None)?
-        .ok_or(OxenError::resource_not_found(directory.to_str().unwrap()))?;
+    let dir = repositories::tree::get_dir_with_children(repo, &commit, directory, None)?.ok_or(
+        OxenError::resource_not_found(directory.to_str().unwrap().to_string()),
+    )?;
     drop(_perf_get_dir);
 
     log::debug!("list_directory dir {dir}");
 
     let EMerkleTreeNode::Directory(dir_node) = &dir.node else {
-        return Err(OxenError::resource_not_found(directory.to_str().unwrap()));
+        return Err(OxenError::resource_not_found(
+            directory.to_str().unwrap().to_string(),
+        ));
     };
 
     log::debug!("list_directory dir_node {dir_node}");
@@ -186,7 +189,9 @@ pub fn get_meta_entry(
                 "get_meta_entry path not found: {:?}",
                 path.to_str().unwrap()
             );
-            Err(OxenError::resource_not_found(path.to_str().unwrap()))
+            Err(OxenError::resource_not_found(
+                path.to_str().unwrap().to_string(),
+            ))
         }
     }
 }
@@ -429,10 +434,9 @@ fn p_dir_entries(
                     // Populate children if depth > 0
                     if depth > 0 {
                         let child_path = search_directory.join(child_dir.name());
-                        let commit = parsed_resource
-                            .commit
-                            .as_ref()
-                            .ok_or_else(|| OxenError::basic_str("No commit in parsed resource"))?;
+                        let commit = parsed_resource.commit.as_ref().ok_or_else(|| {
+                            OxenError::basic_str("No commit in parsed resource".to_string())
+                        })?;
 
                         if let Some(subdir_node) = repositories::tree::get_dir_with_children(
                             repo,
@@ -611,7 +615,7 @@ fn traverse_and_update_sizes_and_counts(
                 .or_insert(0) += file_node.num_bytes();
         }
         _ => {
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "compute_dir_node found unexpected node type: {:?}",
                 node.node
             )));
@@ -660,7 +664,7 @@ fn add_children_to_db(
                 dir_db.add_child(vnode)?;
             }
             _ => {
-                return Err(OxenError::basic_str("Unsupported node type"));
+                return Err(OxenError::basic_str("Unsupported node type".to_string()));
             }
         }
     }

@@ -143,7 +143,8 @@ impl RunCmd for ConfigCmd {
                 .get_one::<String>("storage-backend")
                 .ok_or_else(|| {
                     OxenError::basic_str(
-                        "storage-backend must be specified when storage-backend-path is provided",
+                        "storage-backend must be specified when storage-backend-path is provided"
+                            .to_string(),
                     )
                 })?
                 .to_string();
@@ -165,7 +166,7 @@ impl ConfigCmd {
         if host.contains("://") {
             Ok(url::Url::parse(host)?
                 .host_str()
-                .ok_or_else(|| OxenError::basic_str("Unable to parse host."))?
+                .ok_or_else(|| OxenError::basic_str("Unable to parse host.".to_string()))?
                 .to_string())
         } else {
             Ok(host.to_string())

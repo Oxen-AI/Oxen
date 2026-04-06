@@ -122,7 +122,7 @@ pub fn list_commits_between_branches(
     let head_commit = get_commit_or_head(repo, Some(&head_branch.commit_id.clone()))?;
 
     let Some(lca) = lowest_common_ancestor_from_commits(repo, &base_commit, &head_commit)? else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Error: head commit {:?} and base commit {:?} have no common ancestor",
             head_commit.id, base_commit.id
         )));
@@ -142,7 +142,7 @@ pub fn list_commits_between_commits(
     log::debug!("list_commits_between_commits()\nbase: {base_commit}\nhead: {head_commit}");
 
     let Some(lca) = lowest_common_ancestor_from_commits(repo, base_commit, head_commit)? else {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Error: head commit {:?} and base commit {:?} have no common ancestor",
             head_commit.id, base_commit.id
         )));
@@ -290,7 +290,7 @@ pub fn find_merge_commits(
     branch_name: &str,
 ) -> Result<MergeCommits, OxenError> {
     let current_branch = repositories::branches::current_branch(repo)?
-        .ok_or(OxenError::basic_str("No current branch"))?;
+        .ok_or(OxenError::basic_str("No current branch".to_string()))?;
 
     let head_commit =
         repositories::commits::get_commit_or_head(repo, Some(&current_branch.name.clone()))?;
@@ -388,7 +388,7 @@ pub fn lowest_common_ancestor(
     branch_name: &str,
 ) -> Result<Option<Commit>, OxenError> {
     let current_branch = repositories::branches::current_branch(repo)?
-        .ok_or(OxenError::basic_str("No current branch"))?;
+        .ok_or(OxenError::basic_str("No current branch".to_string()))?;
 
     let base_commit =
         repositories::commits::get_commit_or_head(repo, Some(&current_branch.name.clone()))?;
@@ -420,7 +420,9 @@ async fn fast_forward_merge(
         None,
     )?
     else {
-        return Err(OxenError::basic_str("Cannot get root node for base commit"));
+        return Err(OxenError::basic_str(
+            "Cannot get root node for base commit".to_string(),
+        ));
     };
 
     // Collect every shared dir/vnode hash between the trees, load the base tree's unique nodes and collect them as 'partial nodes'
@@ -437,7 +439,7 @@ async fn fast_forward_merge(
     )?
     else {
         return Err(OxenError::basic_str(
-            "Cannot get root node for merge commit",
+            "Cannot get root node for merge commit".to_string(),
         ));
     };
 
@@ -603,7 +605,7 @@ fn r_ff_merge_commit(
         }
         _ => {
             return Err(OxenError::basic_str(
-                "Got an unexpected node type during checkout",
+                "Got an unexpected node type during checkout".to_string(),
             ));
         }
     }

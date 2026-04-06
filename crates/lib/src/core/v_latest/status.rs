@@ -253,7 +253,7 @@ pub fn status_from_dir_entries(
                     }
                 }
                 _ => {
-                    return Err(OxenError::basic_str(&format!(
+                    return Err(OxenError::basic_str(format!(
                         "status_from_dir found unexpected node type: {:?}",
                         entry.node
                     )));
@@ -466,7 +466,7 @@ fn find_changes(
     let mut entries: Vec<(PathBuf, bool, Result<std::fs::Metadata, OxenError>)> = Vec::new();
     if is_dir {
         let Ok(dir_entries) = std::fs::read_dir(&full_path) else {
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "Could not read dir {full_path:?}"
             )));
         };
@@ -478,7 +478,7 @@ fn find_changes(
                     let is_dir = path.is_dir();
                     let md = match entry.metadata() {
                         Ok(md) => Ok(md),
-                        Err(err) => Err(OxenError::basic_str(&err.to_string())),
+                        Err(err) => Err(OxenError::basic_str(err.to_string())),
                     };
                     Some((path, is_dir, md))
                 }
@@ -682,7 +682,7 @@ fn find_local_changes(
     let mut entries: Vec<(PathBuf, bool, std::fs::Metadata)> = Vec::new();
     if is_dir {
         let Ok(dir_entries) = std::fs::read_dir(&full_path) else {
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "Could not read dir {full_path:?}"
             )));
         };

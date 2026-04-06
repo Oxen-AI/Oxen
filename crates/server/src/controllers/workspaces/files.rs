@@ -97,7 +97,7 @@ pub async fn get(
         Some(staged_node) => match staged_node.node.node {
             EMerkleTreeNode::File(f) => Ok(f),
             _ => Err(OxenError::basic_str(
-                "Only single file download is supported",
+                "Only single file download is supported".to_string(),
             )),
         }?,
         None => {
@@ -108,7 +108,7 @@ pub async fn get(
                 file_node
             } else {
                 return Err(OxenHttpError::InternalOxenError(
-                    OxenError::resource_not_found(&path.to_string_lossy()),
+                    OxenError::resource_not_found(path.to_string_lossy().to_string()),
                 ));
             }
         }
@@ -517,7 +517,7 @@ pub async fn save_parts(
                         let mut decoder = GzDecoder::new(&field_bytes[..]);
                         let mut decompressed_bytes: Vec<u8> = Vec::new();
                         decoder.read_to_end(&mut decompressed_bytes).map_err(|e| {
-                            OxenError::basic_str(&format!("Failed to decompress gzipped data: {e}"))
+                            OxenError::basic_str(format!("Failed to decompress gzipped data: {e}"))
                         })?;
 
                         // Hash file contents

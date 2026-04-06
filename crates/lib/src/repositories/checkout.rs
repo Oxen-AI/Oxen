@@ -157,16 +157,16 @@ pub async fn checkout_combine(repo: &LocalRepository, path: &Path) -> Result<(),
                             let output_path = repo.path.join(&conflict.base_entry.path);
                             tabular::write_df(&mut uniq, &output_path)
                         }
-                        _ => Err(OxenError::basic_str("Could not uniq data")),
+                        _ => Err(OxenError::basic_str("Could not uniq data".to_string())),
                     }
                 }
                 _ => Err(OxenError::basic_str(
-                    "Could not combine data, make sure schema's match",
+                    "Could not combine data, make sure schema's match".to_string(),
                 )),
             }
         } else {
             Err(OxenError::basic_str(
-                "Cannot use --combine on non-tabular data file.",
+                "Cannot use --combine on non-tabular data file.".to_string(),
             ))
         }
     } else {

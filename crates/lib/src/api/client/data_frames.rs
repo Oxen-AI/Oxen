@@ -32,7 +32,7 @@ pub async fn get(
             log::debug!("got JsonDataFrameViewResponse: {val:?}");
             Ok(val)
         }
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }
@@ -58,7 +58,7 @@ pub async fn index(
             log::debug!("got StatusMessage: {val:?}");
             Ok(val)
         }
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }
@@ -93,7 +93,7 @@ pub async fn from_directory(
             log::debug!("got CommitResponse: {val:?}");
             Ok(val)
         }
-        Err(err) => Err(OxenError::basic_str(&format!(
+        Err(err) => Err(OxenError::basic_str(format!(
             "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
     }

@@ -18,7 +18,7 @@ impl EmbeddingQueryOpts {
         let parts: Vec<&str> = self.query.split('=').collect();
         if parts.len() != 2 {
             return Err(OxenError::basic_str(
-                "Query must be in the format key=value",
+                "Query must be in the format key=value".to_string(),
             ));
         }
         Ok((parts[0].trim().to_string(), parts[1].trim().to_string()))

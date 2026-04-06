@@ -117,7 +117,7 @@ impl RunCmd for WorkspaceStatusCmd {
                     name
                 } else {
                     return Err(OxenError::basic_str(
-                        "Either workspace-id or workspace-name must be provided.",
+                        "Either workspace-id or workspace-name must be provided.".to_string(),
                     ));
                 }
             }
@@ -147,7 +147,7 @@ impl RunCmd for WorkspaceStatusCmd {
 
         let current_dir = std::env::current_dir().map_err(OxenError::from)?;
         let repo_dir = util::fs::get_repo_root_from_current_dir()
-            .ok_or_else(|| OxenError::local_repo_not_found(&current_dir))?;
+            .ok_or_else(|| OxenError::local_repo_not_found(current_dir))?;
 
         let repository = LocalRepository::from_dir(&repo_dir)?;
 

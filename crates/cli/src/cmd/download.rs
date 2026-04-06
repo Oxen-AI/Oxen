@@ -67,7 +67,7 @@ impl RunCmd for DownloadCmd {
         // Check that the id format is namespace/repo-name
         if id.chars().filter(|&c| c == '/').count() != 1 {
             return Err(OxenError::basic_str(
-                "Invalid repository ID format. Must be namespace/repo-name",
+                "Invalid repository ID format. Must be namespace/repo-name".to_string(),
             ));
         }
         let paths: Vec<PathBuf> = args
@@ -76,7 +76,9 @@ impl RunCmd for DownloadCmd {
             .map(PathBuf::from)
             .collect();
         if paths.is_empty() {
-            return Err(OxenError::basic_str("Must supply a path to download."));
+            return Err(OxenError::basic_str(
+                "Must supply a path to download.".to_string(),
+            ));
         }
         let dst = args
             .get_one::<String>("output")

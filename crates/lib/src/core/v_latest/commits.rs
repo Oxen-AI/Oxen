@@ -69,7 +69,7 @@ pub fn commit_allow_empty(repo: &LocalRepository, message: &str) -> Result<Commi
         // No changes, create an empty commit
         let cfg = crate::config::UserConfig::get()?;
         let branch = repositories::branches::current_branch(repo)?
-            .ok_or_else(|| OxenError::basic_str("No current branch found"))?;
+            .ok_or_else(|| OxenError::basic_str("No current branch found".to_string()))?;
 
         let head_commit = head_commit(repo)?;
 
@@ -117,7 +117,7 @@ pub fn get_commit_or_head(
 fn get_commit_by_ref(repo: &LocalRepository, ref_name: &str) -> Result<Commit, OxenError> {
     get_by_id(repo, ref_name)?
         .or_else(|| get_commit_by_branch(repo, ref_name))
-        .ok_or_else(|| OxenError::basic_str("Commit not found"))
+        .ok_or_else(|| OxenError::basic_str("Commit not found".to_string()))
 }
 
 fn get_commit_by_branch(repo: &LocalRepository, branch_name: &str) -> Option<Commit> {
@@ -167,7 +167,7 @@ pub fn head_commit(repo: &LocalRepository) -> Result<Commit, OxenError> {
 
     let node =
         repositories::tree::get_node_by_id(repo, &head_commit_id)?.ok_or(OxenError::basic_str(
-            &format!("Merkle tree node not found for head commit: '{head_commit_id}'"),
+            format!("Merkle tree node not found for head commit: '{head_commit_id}'"),
         ))?;
     let commit = node.commit()?;
     Ok(commit.to_commit())
@@ -200,7 +200,9 @@ fn root_commit_recursive(
     loop {
         // Check if we've already seen this commit
         if !seen.insert(current_id.to_string()) {
-            return Err(OxenError::basic_str("Cycle detected in commit history"));
+            return Err(OxenError::basic_str(
+                "Cycle detected in commit history".to_string(),
+            ));
         }
 
         if let Some(commit) = get_by_hash(repo, &current_id)? {
@@ -215,7 +217,7 @@ fn root_commit_recursive(
             }
         }
 
-        return Err(OxenError::basic_str("No root commit found"));
+        return Err(OxenError::basic_str("No root commit found".to_string()));
     }
 }
 
@@ -249,7 +251,7 @@ pub fn create_empty_commit(
     let existing_commit_id = existing_commit.id.parse()?;
     let existing_node =
         repositories::tree::get_node_by_id_with_children(repo, &existing_commit_id)?.ok_or(
-            OxenError::basic_str(&format!(
+            OxenError::basic_str(format!(
                 "Merkle tree node not found for commit: '{}'",
                 existing_commit.id
             )),
@@ -296,7 +298,7 @@ pub fn create_initial_commit(
     // Ensure the repository is actually empty
     if head_commit_maybe(repo)?.is_some() {
         return Err(OxenError::basic_str(
-            "Cannot create initial commit: repository already has commits",
+            "Cannot create initial commit: repository already has commits".to_string(),
         ));
     }
 
@@ -812,7 +814,7 @@ pub fn search_entries(
 
     let mut results = HashSet::new();
     let tree = repositories::tree::get_root_with_children(repo, commit)?
-        .ok_or(OxenError::basic_str("Root not found"))?;
+        .ok_or(OxenError::basic_str("Root not found".to_string()))?;
     let (files, _) = repositories::tree::list_files_and_dirs(&tree)?;
     for file in files {
         let path = file.dir.join(file.file_node.name());
@@ -921,13 +923,13 @@ pub fn list_by_path_from_paginated(
     // Check if the path is a directory or file
     let _perf_node = crate::perf_guard!("core::commits::get_node_by_path");
     let node = repositories::tree::get_node_by_path(repo, commit, path)?.ok_or(
-        OxenError::basic_str(&format!("Merkle tree node not found for path: {path:?}")),
+        OxenError::basic_str(format!("Merkle tree node not found for path: {path:?}")),
     )?;
     let last_commit_id = match &node.node {
         EMerkleTreeNode::File(file_node) => file_node.last_commit_id(),
         EMerkleTreeNode::Directory(dir_node) => dir_node.last_commit_id(),
         _ => {
-            return Err(OxenError::basic_str(&format!(
+            return Err(OxenError::basic_str(format!(
                 "Merkle tree node not found for path: {path:?}"
             )));
         }

@@ -96,7 +96,8 @@ fn get_message_from_editor(maybe_config: Option<&UserConfig>) -> Result<String, 
              To set your preferred editor, run:\n    \
              oxen config --editor <EDITOR>\n\n\
              Or manually add the following to ~/.config/oxen/user_config.toml:\n    \
-             editor = \"vim\"",
+             editor = \"vim\""
+                .to_string(),
         )
     })?;
 
@@ -125,7 +126,7 @@ fn get_message_from_editor(maybe_config: Option<&UserConfig>) -> Result<String, 
     let parts: Vec<&str> = editor.split_whitespace().collect();
     if parts.is_empty() {
         return Err(OxenError::basic_str(
-            "Must supply valid editor path, not an empty/whitespace-only string.",
+            "Must supply valid editor path, not an empty/whitespace-only string.".to_string(),
         ));
     }
     let status = std::process::Command::new(parts[0])
@@ -134,7 +135,7 @@ fn get_message_from_editor(maybe_config: Option<&UserConfig>) -> Result<String, 
         .status()?;
 
     if !status.success() {
-        return Err(OxenError::basic_str(&format!(
+        return Err(OxenError::basic_str(format!(
             "Editor '{editor}' exited with non-zero status."
         )));
     }
@@ -152,7 +153,7 @@ fn get_message_from_editor(maybe_config: Option<&UserConfig>) -> Result<String, 
 
     if message.is_empty() {
         return Err(OxenError::basic_str(
-            "Aborting commit due to empty commit message.",
+            "Aborting commit due to empty commit message.".to_string(),
         ));
     }
 

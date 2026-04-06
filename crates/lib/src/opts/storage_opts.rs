@@ -47,7 +47,7 @@ impl StorageOpts {
                 let bucket = config
                     .settings
                     .get("bucket")
-                    .ok_or_else(|| OxenError::basic_str("S3 bucket not specified"))?;
+                    .ok_or_else(|| OxenError::basic_str("S3 bucket not specified".to_string()))?;
 
                 let prefix = config
                     .settings
@@ -68,7 +68,7 @@ impl StorageOpts {
                     s3_opts: Some(s3_opts),
                 })
             }
-            _ => Err(OxenError::basic_str(&format!(
+            _ => Err(OxenError::basic_str(format!(
                 "Unsupported async storage type: {}",
                 config.type_
             ))),
@@ -108,7 +108,8 @@ impl StorageOpts {
                 "local" => {
                     if storage_backend_bucket.is_some() {
                         return Err(OxenError::basic_str(
-                            "Error: storage-backend-bucket should not be set when storage-backend is local",
+                            "Error: storage-backend-bucket should not be set when storage-backend is local".to_string(),
+
                         ));
                     }
                     if let Some(storage_path) = storage_backend_path {
@@ -126,11 +127,11 @@ impl StorageOpts {
                 }
                 "s3" => {
                     let bucket = storage_backend_bucket.ok_or(OxenError::basic_str(
-                        "storage-backend-bucket is required when storage-backend is s3",
+                        "storage-backend-bucket is required when storage-backend is s3".to_string(),
                     ))?;
 
                     let prefix = storage_backend_path.ok_or(OxenError::basic_str(
-                        "storage-backend-path is required when storage-backend is s3",
+                        "storage-backend-path is required when storage-backend is s3".to_string(),
                     ))?;
 
                     Ok(Some(StorageOpts {
@@ -143,7 +144,7 @@ impl StorageOpts {
                     }))
                 }
                 _ => Err(OxenError::basic_str(
-                    "storage-backend can only be local or s3",
+                    "storage-backend can only be local or s3".to_string(),
                 )),
             }
         } else {

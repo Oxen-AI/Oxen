@@ -106,7 +106,7 @@ impl RunCmd for UploadCmd {
         let paths = &opts.paths;
         if paths.is_empty() {
             return Err(OxenError::basic_str(
-                "Must supply repository and a file to upload.",
+                "Must supply repository and a file to upload.".to_string(),
             ));
         }
 

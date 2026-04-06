@@ -35,7 +35,8 @@ impl RunCmd for MergeCmd {
         // Don't allow in remote mode
         if repository.is_remote_mode() {
             return Err(OxenError::basic_str(
-                "Error: Command 'oxen merge' not implemented for remote mode repositories",
+                "Error: Command 'oxen merge' not implemented for remote mode repositories"
+                    .to_string(),
             ));
         }
 
@@ -44,13 +45,13 @@ impl RunCmd for MergeCmd {
             current
         } else {
             return Err(OxenError::basic_str(
-                "Error: Cannot use 'oxen merge' in an empty repository",
+                "Error: Cannot use 'oxen merge' in an empty repository".to_string(),
             ));
         };
 
         if current.name == *branch {
             return Err(OxenError::basic_str(
-                "Error: Cannot merge into current branch",
+                "Error: Cannot merge into current branch".to_string(),
             ));
         }
 
