@@ -37,6 +37,8 @@ jsonwebtoken = { workspace = true }
 liboxen = { path = "../lib" }
 log = { workspace = true }
 lru = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 mime = { workspace = true }
 os_path = { workspace = true }
 percent-encoding = { workspace = true }
@@ -49,6 +51,10 @@ tar = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = { workspace = true }
+tracing-log = { workspace = true }
+tracing-subscriber = { workspace = true }
 url = { workspace = true }
 utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }
