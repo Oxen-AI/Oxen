@@ -392,8 +392,6 @@ async fn server() -> Result<(), ServerError> {
 
     util::perf::init_perf_logging();
 
-    let _metrics_guard = init_metrics();
-
     let sync_dir = match env::var("SYNC_DIR") {
         Ok(dir) => PathBuf::from(dir),
         Err(_) => PathBuf::from("data"),
