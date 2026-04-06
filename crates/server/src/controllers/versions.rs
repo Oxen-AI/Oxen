@@ -89,6 +89,7 @@ pub async fn clean(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 
 // TODO: Refactor places that call /file/{resource:*} to use this new version store download endpoint
 /// Download version file
+#[tracing::instrument(skip_all)]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/versions/{resource}",
@@ -157,6 +158,7 @@ pub async fn download(
 }
 
 /// Batch download version files
+#[tracing::instrument(skip_all)]
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/versions/batch-download",

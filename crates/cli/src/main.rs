@@ -47,7 +47,7 @@ fn main() -> ExitCode {
 async fn async_main() -> ExitCode {
     // NOTE: if we fail to initialze logging, we do not crash here
     let _tracing_guard = match util::telemetry::init_tracing("oxen", LevelFilter::OFF) {
-        Ok(guard) => guard,
+        Ok(guard) => Some(guard),
         Err(e) => {
             eprintln!("[ERROR] Failed to initialize tracing for oxen:\n{e}");
             None

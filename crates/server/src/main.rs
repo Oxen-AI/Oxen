@@ -32,7 +32,8 @@ use actix_web_httpauth::middleware::HttpAuthentication;
 use metrics_exporter_prometheus::BuildError;
 use thiserror::Error;
 
-use middleware::RequestIdMiddleware;
+use middleware::{MetricsMiddleware, RequestIdMiddleware};
+use tracing_actix_web::TracingLogger;
 
 // Note: These 'view' imports are all for the auto-generated docs with utoipa
 use liboxen::model::metadata::{
@@ -391,8 +392,6 @@ async fn server() -> Result<(), ServerError> {
 
     util::perf::init_perf_logging();
 
-    let _metrics_guard = init_metrics();
-
     let sync_dir = match env::var("SYNC_DIR") {
         Ok(dir) => PathBuf::from(dir),
         Err(_) => PathBuf::from("data"),
@@ -549,6 +548,8 @@ async fn start(
                 "%a \"%r\" %s %b \"%{Referer}i\" \"%{User-Agent}i\" %T %{x-oxen-request-id}o",
             ))
             .wrap(RequestIdMiddleware)
+            .wrap(MetricsMiddleware)
+            .wrap(TracingLogger::default())
     })
     .bind((host.to_owned(), port))?
     .run()

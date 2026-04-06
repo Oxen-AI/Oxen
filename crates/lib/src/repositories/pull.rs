@@ -12,14 +12,21 @@ use crate::opts::fetch_opts::FetchOpts;
 /// Pull a repository's data from default branches origin/main
 /// Defaults defined in
 /// `constants::DEFAULT_REMOTE_NAME` and `constants::DEFAULT_BRANCH_NAME`
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub async fn pull(repo: &LocalRepository) -> Result<(), OxenError> {
-    match repo.min_version() {
+    metrics::counter!("oxen_pull_total").increment(1);
+    let timer = std::time::Instant::now();
+    let result = match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::pull::pull(repo).await,
-    }
+    };
+    metrics::histogram!("oxen_pull_duration_ms").record(timer.elapsed().as_millis() as f64);
+    result
 }
 
+#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub async fn pull_all(repo: &LocalRepository) -> Result<(), OxenError> {
+    metrics::counter!("oxen_pull_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::pull::pull_all(repo).await,
@@ -27,6 +34,7 @@ pub async fn pull_all(repo: &LocalRepository) -> Result<(), OxenError> {
 }
 
 /// Pull a specific remote and branch
+#[tracing::instrument(skip(repo, fetch_opts), fields(repo_path = %repo.path.display()))]
 pub async fn pull_remote_branch(
     repo: &LocalRepository,
     fetch_opts: &FetchOpts,

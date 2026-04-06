@@ -19,6 +19,7 @@ use crate::model::{LocalRepository, RemoteRepository};
 use crate::opts::RmOpts;
 use crate::repositories;
 use crate::util;
+use crate::util::telemetry::TracingGuard;
 
 use rand::Rng;
 use rand::distributions::Alphanumeric;
@@ -81,8 +82,7 @@ static ENV_LOCK: LazyLock<Arc<Mutex<bool>>> = LazyLock::new(|| Arc::new(Mutex::n
 /// Process-global owner of the tracing `WorkerGuard`. Stored here so the
 /// file-logging writer stays alive for the entire test run instead of being
 /// dropped at the end of the `init_test_env` call.
-static WORKER_GUARD: LazyLock<Mutex<Option<tracing_appender::non_blocking::WorkerGuard>>> =
-    LazyLock::new(|| Mutex::new(None));
+static WORKER_GUARD: LazyLock<Mutex<Option<TracingGuard>>> = LazyLock::new(|| Mutex::new(None));
 
 pub fn init_test_env() {
     match ENV_LOCK.lock() {
@@ -94,7 +94,7 @@ pub fn init_test_env() {
 
                 // Store the guard globally so it outlives this block.
                 if let Ok(mut slot) = WORKER_GUARD.lock() {
-                    *slot = guard;
+                    *slot = Some(guard);
                 }
 
                 *logging_setup = true;

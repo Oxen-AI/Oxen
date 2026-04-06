@@ -5,11 +5,16 @@ Remote repositories have the same internal structure as local ones, with the cav
 
 **Notable configuration sections**:
 - [Prometheus Metrics](#prometheus-metrics)
+- [OpenTelemetry Tracing](#opentelemetry-tracing)
+- [FmtSpan Events](#fmtspan-events)
+- [Stacking Tracing Layers | Writing Spans to Logs & OTel](#stacking-tracing-layers)
+
 
 ## Build
 
 See the [prerequisites](../../README.md#prerequisites) section of the main readme before developing.
 Use the standard `cargo ... --workspace` commands and `cargo ... -p oxen-server` commands.
+
 
 ## Run
 
@@ -35,16 +40,6 @@ export SYNC_DIR=/path/to/sync/dir
 
 You can also create a `.env.local` file in the `crates/server/` directory which can contain the `SYNC_DIR` variable to avoid setting it every time you run the server.
 
-Server defaults to localhost 3000:
-```bash
-set SERVER 0.0.0.0:3000
-```
-
-You can grab your auth token from the config file above (`~/.oxen/user_config.toml`):
-```bash
-set TOKEN <YOUR_TOKEN>
-```
-
 Run the server:
 ```bash
 cargo run -p oxen-server start
@@ -67,6 +62,13 @@ bacon server
 
 ### API Examples
 
+Server defaults to localhost 3000.
+
+You can grab your auth token from the config file above (`~/.oxen/user_config.toml`):
+```bash
+export TOKEN="<YOUR_TOKEN>"
+```
+
 #### List Repositories
 ```bash
 curl -H "Authorization: Bearer $TOKEN" "http://0.0.0.0:3000/api/repos"
@@ -77,6 +79,7 @@ curl -H "Authorization: Bearer $TOKEN" "http://0.0.0.0:3000/api/repos"
 curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"name": "MyRepo"}' "http://0.0.0.0:3000api/repos"
 ```
 
+
 ## Logging
 
 Oxen uses structured logging.
@@ -84,6 +87,7 @@ It outputs to STDERR by default but can be configured with rotating log files.
 See [Logging](../../README.md#logging) for details.
 
 By default, `oxen-server` logs at the `WARN` level. Set `RUST_LOG` to change.
+
 
 ## Prometheus Metrics
 
@@ -164,4 +168,124 @@ For example:
 
 ```
 rate(oxen_errors_total[5m])
+```
+
+
+## OpenTelemetry Tracing
+
+`oxen-server` can export tracing spans to any OTLP-compatible collector
+(Jaeger, Tempo, Honeycomb, Datadog, etc.). This requires building with the
+`otel` feature flag:
+
+```bash
+cargo build -p oxen-server --features otel
+```
+
+At runtime, set `OXEN_OTEL_ENDPOINT` to enable export:
+
+```bash
+# gRPC (default protocol)
+OXEN_OTEL_ENDPOINT=localhost:4317 oxen-server start
+
+# HTTP/JSON
+OXEN_OTEL_ENDPOINT=localhost:4318 OXEN_OTEL_PROTOCOL=http oxen-server start
+
+# Or include the protocol in the endpoint string directly
+OXEN_OTEL_ENDPOINT=http://localhost:4318 oxen-server start
+OXEN_OTEL_ENDPOINT=grpc://localhost:4318 oxen-server start
+```
+
+| Variable | Description | Default |
+|---|---|---|
+| `OXEN_OTEL_ENDPOINT` | Collector endpoint URL. Absent = disabled. | *(none)* |
+| `OXEN_OTEL_PROTOCOL` | Transport: `grpc` or `http` | `grpc` or whatever is listed in `OXEN_OTEL_ENDPOINT` |
+
+The standard `OTEL_EXPORTER_OTLP_ENDPOINT` variable is also respected as a
+fallback if `OXEN_OTEL_ENDPOINT` is not set.
+
+When the `otel` feature is not compiled in, no OpenTelemetry dependencies are
+included and the env vars are ignored.
+
+### `RUST_LOG` and span visibility
+
+The `RUST_LOG` filter is global — it gates what reaches **all** tracing
+outputs, including the OpenTelemetry exporter. `#[tracing::instrument]`
+creates spans at `INFO` level by default. The server defaults to
+`LevelFilter::WARN` when `RUST_LOG` is not set, which means **all
+`#[instrument]` spans are silently dropped** before the OTel layer sees
+them.
+
+To get full traces in Jaeger (or any collector), explicitly set
+`RUST_LOG=info`:
+
+```bash
+OXEN_OTEL_ENDPOINT=http://localhost:4317 RUST_LOG=info oxen-server start
+```
+
+Without `RUST_LOG=info`, the OTel exporter is active but receives no spans.
+The `TracingLogger` HTTP root span is also at `INFO` level, so it is
+similarly affected.
+
+For targeted verbosity (e.g. keep third-party crates quiet), use a
+filter directive:
+
+```bash
+RUST_LOG="warn,liboxen=info,oxen_server=info,tracing_actix_web=info"
+```
+
+### Quick Start with Jaeger
+
+```bash
+# Start Jaeger all-in-one: https://www.jaegertracing.io/docs/2.17/
+docker run --rm --name jaeger \
+  -p 16686:16686 \
+  -p 4317:4317 \
+  -p 4318:4318 \
+  -p 5778:5778 \
+  -p 9411:9411 \
+  cr.jaegertracing.io/jaegertracing/jaeger:2.17.0
+
+# Start oxen-server with OTel export
+OXEN_OTEL_ENDPOINT=http://localhost:4317 RUST_LOG=info cargo run --features otel -p oxen-server start
+
+# View traces at http://localhost:16686 under service "oxen-server"
+```
+
+
+## FmtSpan Events
+
+Span lifecycle events (creation, entry, exit, close) can be emitted as
+additional log lines on stderr. This is useful for seeing timing of
+`#[instrument]`-annotated functions without a full tracing collector.
+
+Set `OXEN_FMT_SPAN` to enable:
+
+```bash
+# Log when spans close (includes elapsed time)
+OXEN_FMT_SPAN=CLOSE oxen-server start
+
+# Log all span lifecycle events
+OXEN_FMT_SPAN=FULL oxen-server start
+
+# Combine specific events
+OXEN_FMT_SPAN="NEW|CLOSE" oxen-server start
+```
+
+Accepted values: `NEW`, `CLOSE`, `ENTER`, `EXIT`, `ACTIVE` (enter+exit),
+`FULL` (all), `NONE`, `1`/`true` (alias for `CLOSE`).
+
+No feature flag or additional dependencies are required.
+
+
+## Stacking Tracing Layers
+
+All tracing outputs can be enabled simultaneously. For example, to get stderr
+output with span timing, JSON file logs, and OpenTelemetry export:
+
+```bash
+OXEN_LOG_DIR='/var/log/oxen' \
+OXEN_FMT_SPAN='CLOSE' \
+OXEN_OTEL_ENDPOINT='http://localhost:4317' \
+RUST_LOG='info' \
+oxen-server start
 ```

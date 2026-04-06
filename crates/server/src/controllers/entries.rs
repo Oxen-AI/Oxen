@@ -95,6 +95,7 @@ pub async fn download_data_from_version_paths(
 }
 
 /// Download a chunk of a larger file
+#[tracing::instrument(skip_all)]
 pub async fn download_chunk(
     req: HttpRequest,
     query: web::Query<ChunkQuery>,

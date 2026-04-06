@@ -18,6 +18,7 @@ use liboxen::view::{
 use liboxen::{constants, repositories};
 
 /// List all branches
+#[tracing::instrument(skip_all)]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches",
@@ -81,6 +82,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 }
 
 /// Get an existing branch
+#[tracing::instrument(skip_all)]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/branches/{branch_name}",
