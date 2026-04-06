@@ -77,6 +77,7 @@ lofty = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
 metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 minus = { workspace = true }
 mp4 = { workspace = true }
 num_cpus = { workspace = true }
