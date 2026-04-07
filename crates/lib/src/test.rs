@@ -31,6 +31,7 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
 use tokio::time::sleep;
+use tracing::level_filters::LevelFilter;
 
 pub const DEFAULT_TEST_HOST: &str = "localhost:3000";
 
@@ -74,14 +75,25 @@ pub fn repo_remote_url_from(name: &str) -> String {
 
 static ENV_LOCK: LazyLock<Arc<Mutex<bool>>> = LazyLock::new(|| Arc::new(Mutex::new(false)));
 
-pub fn init_test_env() {
-    // check if logger is already initialized
-    util::logging::init_logging();
+/// Process-global owner of the tracing `WorkerGuard`. Stored here so the
+/// file-logging writer stays alive for the entire test run instead of being
+/// dropped at the end of the `init_test_env` call.
+static WORKER_GUARD: LazyLock<Mutex<Option<tracing_appender::non_blocking::WorkerGuard>>> =
+    LazyLock::new(|| Mutex::new(None));
 
+pub fn init_test_env() {
     match ENV_LOCK.lock() {
         Ok(mut logging_setup) => {
             if !*logging_setup {
-                util::logging::init_logging();
+                // fail fast if we can't initialize logging -- find the error in tests & fix!
+                let guard = util::telemetry::init_tracing("oxen-test", LevelFilter::ERROR)
+                    .expect("Failed to initialize tracing for test environment!");
+
+                // Store the guard globally so it outlives this block.
+                if let Ok(mut slot) = WORKER_GUARD.lock() {
+                    *slot = guard;
+                }
+
                 *logging_setup = true;
             }
 
