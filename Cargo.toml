@@ -88,6 +88,8 @@ libduckdb-sys = { version = "=1.10501.0" }
 lofty = "0.22.2"
 log = "0.4.20"
 lru = "0.14.0"
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"
 mime = "0.3.17"
 minus = { version = "5.4.0", features = ["static_output", "search"] }
 mockito = "1.1.0"
@@ -137,6 +139,10 @@ tokio-console = "0.1.13"
 tokio-stream = "0.1.17"
 tokio-util = { version = "0.7.8", features = ["compat"] }
 toml = "0.8.19"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-log = "0.2"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter", "registry"] }
 url = "2.4.1"
 urlencoding = "2.1.3"
 utoipa = { version = "5", features = ["time"] }
