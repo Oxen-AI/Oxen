@@ -202,6 +202,20 @@ Install `Oxen`'s pre-commit hooks locally using:
 pre-commit install
 ```
 
+### Production Release Build
+
+For deployment, build with the `production` feature flag and `--release`:
+
+```bash
+cargo build --workspace --release --features production
+```
+
+This enables:
+- **OpenTelemetry tracing** (`otel`) -- export spans to any OTLP-compatible collector (Jaeger, Tempo, Datadog, etc.). See [OpenTelemetry Tracing](crates/server/README.md#opentelemetry-tracing) for runtime configuration.
+- **FFmpeg thumbnails** (`ffmpeg`) -- generate video/image thumbnails via FFmpeg (requires FFmpeg libraries installed on the host).
+- **Performance logging** (`perf-logging`) -- additional timing instrumentation for internal operations.
+
+Without `--features production`, the default build excludes OTel dependencies and FFmpeg support, keeping the binary smaller for local development.
 
 ## Logging
 

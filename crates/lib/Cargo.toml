@@ -34,6 +34,7 @@ otel = [
     "dep:tracing-opentelemetry",
 ]
 perf-logging = []
+production = ["otel", "ffmpeg", "perf-logging", "default"]
 
 [dependencies]
 approx = { workspace = true }

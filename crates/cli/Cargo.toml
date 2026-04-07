@@ -19,6 +19,11 @@ categories = [
 name = "oxen"
 path = "src/main.rs"
 
+[features]
+default = []
+otel = ["liboxen/otel"]
+production = ["otel", "default"]
+
 [dependencies]
 async-trait = { workspace = true }
 bytesize = { workspace = true }

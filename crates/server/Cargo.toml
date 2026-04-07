@@ -20,6 +20,7 @@ path = "src/main.rs"
 [features]
 default = []
 otel = ["liboxen/otel"]
+production = ["otel", "liboxen/production", "default"]
 
 [dependencies]
 actix-http = { workspace = true }
