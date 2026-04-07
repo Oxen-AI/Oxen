@@ -851,11 +851,12 @@ fn cache_invalidate_dir_hash_db(
         for child in removed_children {
             if child.status == StagedEntryStatus::Removed
                 && let EMerkleTreeNode::Directory(_) = &child.node.node
-                && let Ok(child_path) = child.node.maybe_path() {
-                    let path_str = child_path.to_string_lossy();
-                    log::debug!("deleting removed dir hash: {path_str:?}");
-                    str_val_db::delete(dir_hash_db, path_str)?;
-                }
+                && let Ok(child_path) = child.node.maybe_path()
+            {
+                let path_str = child_path.to_string_lossy();
+                log::debug!("deleting removed dir hash: {path_str:?}");
+                str_val_db::delete(dir_hash_db, path_str)?;
+            }
         }
     }
     Ok(())

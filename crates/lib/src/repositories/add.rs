@@ -672,7 +672,7 @@ A: Oxen.ai
         .await
     }
 
-    /// Given the relative path (posibly nested) to a file and contents it should have,
+    /// Given the relative path (possibly nested) to a file and contents it should have,
     /// this function creates the file and stages it to the repository using `oxen add`.
     async fn create_and_stage(repo: &LocalRepository, file_relative: &Path, content: &str) {
         let file_full = repo.path.join(file_relative);
@@ -764,13 +764,6 @@ A: Oxen.ai
     }
 
     use async_walkdir::WalkDir;
-
-    /// Checks that only the expected relative paths exist from the given root,
-    /// ignoring the '.oxen/' folder.
-    async fn expect_fs(root: &Path, expected_relative: &[&Path]) {
-        expect_filesystem(root, expected_relative, &[".oxen"]).await
-    }
-
     /// Checks that only the expected relative paths exist from the given root.
     /// Ignores any relative paths that start with one of the [ignore_prefixes].
     async fn expect_filesystem(root: &Path, expected_relative: &[&Path], ingore_prefixes: &[&str]) {
@@ -894,7 +887,7 @@ A: Oxen.ai
             expect_staged(&status, 1, 0, 0);
             commit_staged(&repo, "added", &file);
 
-            expect_fs(&repo.path, &[&file]).await;
+            expect_filesystem(&repo.path, &[&file], &[".oxen"]).await;
 
             remove_and_stage(&repo, &file).await;
             let status = repositories::status(&repo).expect("oxen status failed");
@@ -904,7 +897,7 @@ A: Oxen.ai
             let status = repositories::status(&repo).expect("oxen status failed");
             expect_staged(&status, 0, 0, 0);
             assert!(status.staged_dirs.is_empty());
-            expect_fs(&repo.path, &[]).await;
+            expect_filesystem(&repo.path, &[], &[".oxen"]).await;
 
             check_tree_doesnt_contain_file(&repo, &file);
 
@@ -925,7 +918,7 @@ A: Oxen.ai
             expect_staged(&status, 1, 0, 0);
             commit_staged(&repo, "added", &file);
 
-            expect_fs(&repo.path, &[&dir, &file]).await;
+            expect_filesystem(&repo.path, &[&dir, &file], &[".oxen"]).await;
 
             remove_and_stage(&repo, &dir).await;
             let status = repositories::status(&repo).expect("oxen status failed");
@@ -935,7 +928,7 @@ A: Oxen.ai
             let status = repositories::status(&repo).expect("oxen status failed");
             expect_staged(&status, 0, 0, 0);
             assert!(status.staged_dirs.is_empty());
-            expect_fs(&repo.path, &[]).await;
+            expect_filesystem(&repo.path, &[], &[".oxen"]).await;
 
             // verify the merkle tree no longer contains dir "1/"
             check_tree_doesnt_contain_dir(&repo, &dir);
@@ -959,7 +952,7 @@ A: Oxen.ai
             expect_staged(&status, 1, 0, 0);
             commit_staged(&repo, "added", &file);
 
-            expect_fs(&repo.path, &[&dir_1, &dir_2, &dir_3, &file]).await;
+            expect_filesystem(&repo.path, &[&dir_1, &dir_2, &dir_3, &file], &[".oxen"]).await;
 
             // remove_and_stage(&repo, &dir_3).await;
             remove_and_stage(&repo, &dir_1).await;
@@ -970,7 +963,7 @@ A: Oxen.ai
             let status = repositories::status(&repo).expect("oxen status failed");
             expect_staged(&status, 0, 0, 0);
             assert!(status.staged_dirs.is_empty());
-            expect_fs(&repo.path, &[]).await;
+            expect_filesystem(&repo.path, &[], &[".oxen"]).await;
 
             // verify the merkle tree no longer contains file "1/2/3/file.txt"
             check_tree_doesnt_contain_file(&repo, &file);
