@@ -1,4 +1,4 @@
-name: 🐂🏭 Continuous integration - Production Build
+name: 🐂🏭 Continuous integration - Production Build & Telemetry
 
 on:
   workflow_call:
@@ -9,7 +9,7 @@ defaults:
 
 jobs:
   build-production:
-    name: Build (production features)
+    name: Build & verify production features
     runs-on: ubuntu-latest
 
     steps:
@@ -32,11 +32,14 @@ jobs:
       - name: Setup Rust Toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          # Only cache builds from main. Otherwise our caches will be too big and start to churn. (10 GB limit in GitHub Actions)
-          # Other branches will still use the cache but won't save it.
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: "."
 
@@ -46,5 +49,183 @@ jobs:
           sudo apt-get install -y clang libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev pkg-config
 
       - name: Build with production features
+        run: cargo build --workspace --features production
+
+      # ── Test 1: Log file writing (OXEN_LOG_DIR + NDJSON) ──────────────
+      - name: Test log file writing
         run: |
-          cargo build --workspace --features production
+          set -euo pipefail
+          OXEN="$GITHUB_WORKSPACE/target/debug/oxen"
+
+          mkdir -p /tmp/oxen-logs /tmp/test-logfile
+          cd /tmp/test-logfile
+          OXEN_LOG_DIR=/tmp/oxen-logs RUST_LOG=debug "$OXEN" init
+
+          LOG_FILE=$(ls /tmp/oxen-logs/oxen.* 2>/dev/null | head -1)
+          if [ -z "$LOG_FILE" ]; then
+            echo "FAIL: No log file created in /tmp/oxen-logs/"
+            ls -la /tmp/oxen-logs/
+            exit 1
+          fi
+
+          LINE_COUNT=$(wc -l < "$LOG_FILE")
+          if [ "$LINE_COUNT" -eq 0 ]; then
+            echo "FAIL: Log file is empty"
+            exit 1
+          fi
+
+          # Verify first line is valid JSON (NDJSON format)
+          if ! head -1 "$LOG_FILE" | jq . > /dev/null 2>&1; then
+            echo "FAIL: Log output is not valid JSON"
+            head -3 "$LOG_FILE"
+            exit 1
+          fi
+
+          echo "PASS: Log file writing works ($LINE_COUNT NDJSON lines in $LOG_FILE)"
+
+      # ── Test 2: FmtSpan events (OXEN_FMT_SPAN=CLOSE) ─────────────────
+      - name: Test FmtSpan span events
+        run: |
+          set -euo pipefail
+          SERVER="$GITHUB_WORKSPACE/target/debug/oxen-server"
+
+          # Start server with span-close events on stderr
+          mkdir -p "$GITHUB_WORKSPACE/data/test/config"
+          OXEN_FMT_SPAN=CLOSE RUST_LOG=info "$SERVER" start 2>/tmp/span-stderr.txt &
+          SERVER_PID=$!
+          sleep 2
+
+          # Hit an endpoint so TracingLogger creates (and closes) a span
+          curl -sf http://localhost:3000/api/health > /dev/null || true
+          sleep 1
+
+          kill "$SERVER_PID" 2>/dev/null || true
+          wait "$SERVER_PID" 2>/dev/null || true
+
+          # Span CLOSE events include "time.busy" / "time.idle"
+          if grep -q "time.busy" /tmp/span-stderr.txt; then
+            echo "PASS: FmtSpan CLOSE events detected"
+            grep "time.busy" /tmp/span-stderr.txt | head -3
+          else
+            echo "FAIL: No span close events found in stderr output"
+            echo "--- stderr output ---"
+            cat /tmp/span-stderr.txt
+            exit 1
+          fi
+
+      # ── Test 3: OTel telemetry (Jaeger + full push/pull workflow) ─────
+      - name: Test OTel telemetry with Jaeger
+        run: |
+          set -euo pipefail
+          OXEN="$GITHUB_WORKSPACE/target/debug/oxen"
+          SERVER="$GITHUB_WORKSPACE/target/debug/oxen-server"
+
+          # ── Start Jaeger all-in-one ──
+          docker run -d --name jaeger \
+            -p 4317:4317 -p 16686:16686 \
+            jaegertracing/all-in-one:latest
+
+          # Wait for Jaeger query API to be ready
+          echo "Waiting for Jaeger..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:16686/api/services > /dev/null 2>&1; then
+              echo "Jaeger is ready"
+              break
+            fi
+            sleep 1
+          done
+
+          # ── Setup oxen-server ──
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p data/test/config ~/.oxen
+
+          ADD_USER_OUTPUT=$("$SERVER" add-user \
+            --email ci@test.com --name CI --output /tmp/ci-user.toml)
+
+          cp /tmp/ci-user.toml ~/.oxen/user_config.toml
+          cp /tmp/ci-user.toml data/test/config/user_config.toml
+
+          # Token is on the 3rd line of the add-user output
+          TOKEN=$(echo "$ADD_USER_OUTPUT" | sed -n '3p' | tr -d '[:space:]')
+          echo "Auth token: ${TOKEN:0:8}..."
+
+          # Configure CLI identity and auth
+          "$OXEN" config --name "CI Test" --email "ci@test.com"
+          "$OXEN" config --auth localhost:3000 "$TOKEN"
+
+          # ── Start oxen-server with OTel export ──
+          OXEN_OTEL_ENDPOINT=http://localhost:4317 \
+          RUST_LOG=info \
+          "$SERVER" start &
+          SERVER_PID=$!
+          sleep 3
+
+          # ── Full push / clone / modify / push / pull workflow ──
+
+          # Create remote repository (namespace "ox", name "otel-test")
+          curl -sf -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -X POST -d '{"namespace":"ox","name":"otel-test"}' \
+            http://localhost:3000/api/repos
+
+          # Repo A: init, commit, push
+          mkdir -p /tmp/repo-a && cd /tmp/repo-a
+          "$OXEN" init
+          "$OXEN" config --set-remote origin http://localhost:3000/ox/otel-test
+          echo "hello from CI" > test-file.txt
+          "$OXEN" add test-file.txt
+          "$OXEN" commit -m "initial commit"
+          "$OXEN" push origin main
+
+          # Clone to Repo B
+          cd /tmp
+          "$OXEN" clone http://localhost:3000/ox/otel-test /tmp/repo-b
+
+          # Repo B: modify, commit, push
+          cd /tmp/repo-b
+          echo "modified in repo-b" >> test-file.txt
+          "$OXEN" add test-file.txt
+          "$OXEN" commit -m "modify from repo-b"
+          "$OXEN" push origin main
+
+          # Repo A: pull (with client-side OTel too)
+          cd /tmp/repo-a
+          OXEN_OTEL_ENDPOINT=http://localhost:4317 \
+          RUST_LOG=info \
+          "$OXEN" pull
+
+          # Wait for OTel batch exporter to flush
+          sleep 10
+
+          # ── Verify traces in Jaeger ──
+
+          SERVICES=$(curl -sf http://localhost:16686/api/services)
+          echo "Jaeger services: $SERVICES"
+
+          if ! echo "$SERVICES" | jq -e '.data | index("oxen-server")' > /dev/null 2>&1; then
+            echo "FAIL: 'oxen-server' not found in Jaeger services"
+            exit 1
+          fi
+          echo "PASS: oxen-server service registered in Jaeger"
+
+          TRACES=$(curl -sf "http://localhost:16686/api/traces?service=oxen-server&limit=5")
+          TRACE_COUNT=$(echo "$TRACES" | jq '.data | length')
+
+          if [ "$TRACE_COUNT" -gt 0 ]; then
+            echo "PASS: OTel traces exported to Jaeger ($TRACE_COUNT traces)"
+          else
+            echo "FAIL: No traces found for oxen-server"
+            exit 1
+          fi
+
+          # Check for client traces too
+          if echo "$SERVICES" | jq -e '.data | index("oxen")' > /dev/null 2>&1; then
+            echo "PASS: oxen client traces also found in Jaeger"
+          else
+            echo "INFO: oxen client traces not found (client OTel export may not have flushed)"
+          fi
+
+          # ── Cleanup ──
+          kill "$SERVER_PID" 2>/dev/null || true
+          docker stop jaeger 2>/dev/null || true
+          docker rm jaeger 2>/dev/null || true
