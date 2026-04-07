@@ -1,0 +1,45 @@
+name: 🐂🏭 Continuous integration - Production Build
+
+on:
+  workflow_call:
+
+defaults:
+  run:
+    shell: bash -leo pipefail {0}
+
+jobs:
+  build-production:
+    name: Build (production features)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Free up disk space
+        run: |
+          echo "=== Before cleanup ==="
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo apt-get clean
+          echo "=== After cleanup ==="
+          df -h
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Only cache builds from main. Otherwise our caches will be too big and start to churn. (10 GB limit in GitHub Actions)
+          # Other branches will still use the cache but won't save it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: "."
+
+      - name: Build with production features
+        run: |
+          cargo build --workspace --features production
