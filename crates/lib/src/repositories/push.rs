@@ -1631,7 +1631,7 @@ A: Checkout Oxen.ai
                 );
 
                 // Verify the file contents match the original data
-                let downloaded_data = util::fs::read_bytes_from_path(&download_path)?;
+                let downloaded_data = tokio::fs::read(&download_path).await?;
                 assert_eq!(
                     downloaded_data, file_data,
                     "Downloaded file contents should match the original data"
@@ -1855,7 +1855,7 @@ A: Checkout Oxen.ai
 
                 // Verify the file contents match the original data
                 println!("Verifying file contents match...");
-                let cloned_data = util::fs::read_bytes_from_path(&cloned_file_path)?;
+                let cloned_data = tokio::fs::read(&cloned_file_path).await?;
                 assert_eq!(
                     cloned_data.len(),
                     file_data_clone.len(),
@@ -1939,7 +1939,7 @@ A: Checkout Oxen.ai
                     "Cloned file size should match original"
                 );
 
-                let cloned_data = util::fs::read_bytes_from_path(&cloned_file)?;
+                let cloned_data = tokio::fs::read(&cloned_file).await?;
                 assert_eq!(
                     cloned_data, file_data_clone,
                     "Cloned file contents should match the original data"

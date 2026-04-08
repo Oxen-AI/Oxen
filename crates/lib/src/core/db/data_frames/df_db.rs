@@ -683,9 +683,9 @@ pub fn modify_rows_with_polars_df(
 
 pub fn index_file(path: &Path, conn: &duckdb::Connection) -> Result<(), OxenError> {
     log::debug!("df_db:index_file() at path {path:?}");
-    let extension: &str = &util::fs::extension_from_path(path);
+    let extension = util::fs::extension_from_path(path).to_string_lossy();
     let path_str = path.to_string_lossy().to_string();
-    match extension {
+    match extension.as_ref() {
         "csv" => {
             let query = format!(
                 "CREATE TABLE {DUCKDB_DF_TABLE_NAME} AS SELECT * FROM read_csv('{path_str}')"
@@ -808,28 +808,20 @@ pub fn index_file_with_id(
 }
 
 pub fn from_clause_from_disk_path(path: &Path) -> Result<String, OxenError> {
-    let extension: &str = &util::fs::extension_from_path(path);
-    match extension {
-        "csv" => {
-            let str_path = path.to_string_lossy().to_string();
-            Ok(format!("read_csv('{str_path}')"))
+    let extension = util::fs::extension_from_path(path).to_string_lossy();
+    let str_path = path.to_string_lossy();
+    let read_type = match extension.as_ref() {
+        "csv" | "tsv" => "csv",
+        "parquet" => "parquet",
+        "jsonl" | "json" | "ndjson" => "json",
+        _ => {
+            return Err(OxenError::basic_str(format!(
+                "Invalid file type: expected .csv, .tsv, .parquet, .jsonl, .json, .ndjson. Found: {} from file: {}",
+                extension, str_path,
+            )));
         }
-        "tsv" => {
-            let str_path = path.to_string_lossy().to_string();
-            Ok(format!("read_csv('{str_path}')"))
-        }
-        "parquet" => {
-            let str_path = path.to_string_lossy().to_string();
-            Ok(format!("read_parquet('{str_path}')"))
-        }
-        "jsonl" | "json" | "ndjson" => {
-            let str_path = path.to_string_lossy().to_string();
-            Ok(format!("read_json('{str_path}')"))
-        }
-        _ => Err(OxenError::basic_str(
-            "Invalid file type: expected .csv, .tsv, .parquet, .jsonl, .json, .ndjson",
-        )),
-    }
+    };
+    Ok(format!("read_{read_type}('{str_path}')"))
 }
 
 pub fn preview(

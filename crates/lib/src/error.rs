@@ -138,6 +138,10 @@ pub enum OxenError {
     #[error("Resource not found: {0}")]
     ParsedResourceNotFound(PathBufError),
 
+    /// A failure from common file system operations.
+    #[error("{0}")]
+    FsError(#[from] crate::util::fs::FsError),
+
     //
     // Versioning
     //

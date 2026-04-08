@@ -22,6 +22,7 @@ production = ["metrics", "otel", "default"]
 
 [dependencies]
 liboxen = { path = "../lib" }
+thiserror = { workspace = true }
 log = { workspace = true }
 pyo3 = { workspace = true }
 pyo3-async-runtimes = { workspace = true }

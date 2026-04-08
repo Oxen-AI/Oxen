@@ -7,8 +7,12 @@ use bytes::Bytes;
 use futures::StreamExt;
 use jwalk::WalkDir;
 
+use thiserror::Error;
+
 use simdutf8::compat::from_utf8;
 use std::collections::HashSet;
+use std::ffi::OsStr;
+use std::ffi::OsString;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::BufReader;
@@ -38,12 +42,32 @@ use image::{ImageFormat, ImageReader};
 #[cfg(feature = "ffmpeg")]
 use thumbnails::Thumbnailer;
 
+#[derive(Debug, Error)]
+pub enum FsError {
+    #[error("dir bounds violation")]
+    DirBoundsViolation,
+    #[error("path bounds violation")]
+    PathBoundsViolation,
+    #[error("File does not exist: {0} error {1}")]
+    FileError(PathBuf, std::io::Error),
+    #[error("File copy error: {err}\nCould not copy from `{src:?}` to `{dst:?}`")]
+    FileCopyError {
+        src: PathBuf,
+        dst: PathBuf,
+        err: std::io::Error,
+    },
+    #[error("Home directory not found")]
+    HomeDirNotFound,
+    #[error("Cache directory not found")]
+    CacheDirNotFound,
+}
+
 // Deprecated
 pub fn oxen_hidden_dir(repo_path: impl AsRef<Path>) -> PathBuf {
     PathBuf::from(repo_path.as_ref()).join(Path::new(constants::OXEN_HIDDEN_DIR))
 }
 
-pub fn oxen_tmp_dir() -> Result<PathBuf, OxenError> {
+pub fn oxen_tmp_dir() -> Result<PathBuf, FsError> {
     // Override the cache dir with the OXEN_TMP_DIR env var if it is set
     if let Ok(tmp_dir) = std::env::var("OXEN_TMP_DIR") {
         return Ok(PathBuf::from(tmp_dir));
@@ -51,11 +75,11 @@ pub fn oxen_tmp_dir() -> Result<PathBuf, OxenError> {
 
     match dirs::cache_dir() {
         Some(cache_dir) => Ok(cache_dir.join(constants::OXEN)),
-        None => Err(OxenError::cache_dir_not_found()),
+        None => Err(FsError::CacheDirNotFound),
     }
 }
 
-pub fn oxen_config_dir() -> Result<PathBuf, OxenError> {
+pub fn oxen_config_dir() -> Result<PathBuf, FsError> {
     // Override the home dir with the OXEN_CONFIG_DIR env var if it is set
     if let Ok(config_dir) = std::env::var("OXEN_CONFIG_DIR") {
         return Ok(PathBuf::from(config_dir));
@@ -63,7 +87,7 @@ pub fn oxen_config_dir() -> Result<PathBuf, OxenError> {
 
     match dirs::home_dir() {
         Some(home_dir) => Ok(home_dir.join(constants::CONFIG_DIR).join(constants::OXEN)),
-        None => Err(OxenError::home_dir_not_found()),
+        None => Err(FsError::HomeDirNotFound),
     }
 }
 
@@ -86,42 +110,61 @@ pub async fn handle_image_resize(
     log::debug!("img_resize {img_resize:?}");
     let derived_filename = resized_filename(file_path, img_resize.width, img_resize.height);
 
-    let stream =
-        resize_cache_image_version_store(version_store, &file_hash, &derived_filename, img_resize)
-            .await?;
-    log::debug!("Got the resized image! {derived_filename}");
+    let stream = resize_cache_image_version_store(
+        version_store,
+        &file_hash,
+        derived_filename.to_string_lossy().as_ref(),
+        img_resize,
+    )
+    .await?;
+    log::debug!("Got the resized image! {derived_filename:?}");
 
     Ok(stream)
 }
 
-pub fn resized_filename(img_path: &Path, width: Option<u32>, height: Option<u32>) -> String {
-    let extension = img_path.extension().unwrap().to_str().unwrap();
-    let width = width.map(|w| w.to_string());
-    let height = height.map(|w| w.to_string());
-    format!(
-        "{}x{}.{}",
-        width.unwrap_or("".to_string()),
-        height.unwrap_or("".to_string()),
-        extension
-    )
+/// Constructs '{width}x{height}.{extension}' as an OS-friendly string using the image path's extension.
+/// Uses an empty string if the width or height is None or if the image path doesn't have an extension.
+pub fn resized_filename(img_path: &Path, width: Option<u32>, height: Option<u32>) -> OsString {
+    // {width}x{height}.{extension}
+    let mut s = OsString::new();
+    push_or(&mut s, width.map(|w| w.to_string()), "");
+    s.push("x");
+    push_or(&mut s, height.map(|h| h.to_string()), "");
+    s.push(".");
+    s.push(extension_from_path(img_path));
+    s
 }
 
+/// Pushes the value into the OsString if Some, otherwise pushes the default value.
+fn push_or<A: AsRef<OsStr>, B: AsRef<OsStr>>(s: &mut OsString, value: Option<A>, default: B) {
+    match value {
+        Some(v) => s.push(v),
+        None => s.push(default),
+    }
+}
+
+/// Returns a reference to the path's extension or an empty string if there is none.
+pub fn extension_from_path(path: &Path) -> &OsStr {
+    path.extension().unwrap_or_else(|| OsStr::new(""))
+}
+
+// Creats a filename for a video thumbnail with the given width, height, and timestamp in the name.
+// Formatted as: `"thumbnail_{width_str}x{height_str}_{timestamp_str}.{extension}"`
 pub fn video_thumbnail_filename(
     width: Option<u32>,
     height: Option<u32>,
     timestamp: Option<f64>,
-) -> String {
-    let extension = "jpg";
-    let (width_str, height_str) = match (width, height) {
-        (Some(w), Some(h)) => (w.to_string(), h.to_string()),
-        (Some(w), None) => (w.to_string(), "auto".to_string()),
-        (None, Some(h)) => ("auto".to_string(), h.to_string()),
-        (None, None) => ("320".to_string(), "240".to_string()),
-    };
-    let timestamp_str = timestamp
-        .map(|t| format!("t{t:.1}"))
-        .unwrap_or_else(|| "t1.0".to_string());
-    format!("thumbnail_{width_str}x{height_str}_{timestamp_str}.{extension}")
+) -> OsString {
+    // "thumbnail_{width_str}x{height_str}_{timestamp_str}.{extension}"
+    let mut s = OsString::new();
+    s.push("thumbnail_");
+    push_or(&mut s, width.map(|w| w.to_string()), "auto");
+    s.push("x");
+    push_or(&mut s, height.map(|h| h.to_string()), "auto");
+    s.push("_");
+    push_or(&mut s, timestamp.map(|t| format!("t{t:.1}")), "t1.0");
+    s.push(".jpg"); // extension is hardcoded as "jpg"
+    s
 }
 
 pub fn chunk_path(repo: &LocalRepository, hash: impl AsRef<str>) -> PathBuf {
@@ -130,19 +173,6 @@ pub fn chunk_path(repo: &LocalRepository, hash: impl AsRef<str>) -> PathBuf {
         .join(CHUNKS_DIR)
         .join(hash.as_ref())
         .join("data")
-}
-
-pub fn extension_from_path(path: &Path) -> String {
-    if let Some(ext) = path.extension() {
-        String::from(ext.to_str().unwrap_or(""))
-    } else {
-        String::from("")
-    }
-}
-
-pub fn read_bytes_from_path(path: impl AsRef<Path>) -> Result<Vec<u8>, OxenError> {
-    let path = path.as_ref();
-    Ok(std::fs::read(path)?)
 }
 
 pub fn read_file(path: Option<impl AsRef<Path>>) -> Result<String, OxenError> {
@@ -1074,7 +1104,7 @@ fn stem_from_canonical_child_path(
 pub fn path_relative_to_dir(
     path: impl AsRef<Path>,
     dir: impl AsRef<Path>,
-) -> Result<PathBuf, OxenError> {
+) -> Result<PathBuf, FsError> {
     let path = path.as_ref();
     let dir = dir.as_ref();
 
@@ -1114,27 +1144,35 @@ pub fn path_relative_to_dir(
     let mut start_index = 0;
 
     for _ in 0..(path_components.len()) {
-        let path_component = path_iter.next().expect("Path bounds violated");
+        let Some(path_component) = path_iter.next() else {
+            return Err(FsError::PathBoundsViolation);
+        };
         let path_str = path_component.as_os_str();
         let dir_str = dir_component.as_os_str();
 
         if path_str == dir_str {
             matches += 1;
             if matches == dir_components.len() {
-                let mut result = PathBuf::new();
-                let path_slice = &path_components[(start_index + 1)..];
+                let result = {
+                    let mut result = PathBuf::new();
+                    let path_slice = &path_components[(start_index + 1)..];
 
-                // Adjust for special paths like '.', '..', etc
-                for component in path_slice.iter() {
-                    if matches!(component, Component::Normal(_)) {
-                        result.push::<&Path>(component.as_ref());
+                    // Adjust for special paths like '.', '..', etc
+                    for component in path_slice.iter() {
+                        if matches!(component, Component::Normal(_)) {
+                            result.push::<&Path>(component.as_ref());
+                        }
                     }
-                }
+                    result
+                };
                 // log::debug!("result: {result:?}");
                 return Ok(result);
             }
             start_index += 1;
-            dir_component = dir_iter.next().expect("Dir bounds violated");
+            dir_component = match dir_iter.next() {
+                Some(updated) => updated,
+                None => return Err(FsError::DirBoundsViolation),
+            };
             continue;
         }
 
@@ -1423,8 +1461,11 @@ pub async fn resize_cache_image_version_store(
     };
 
     let image_format = ImageFormat::from_path(derived_filename)?;
-    let mut buf = Vec::new();
-    resized_img.write_to(&mut Cursor::new(&mut buf), image_format)?;
+    let buf = {
+        let mut buf = Vec::new();
+        resized_img.write_to(&mut Cursor::new(&mut buf), image_format)?;
+        buf
+    };
     version_store
         .store_version_derived(img_hash, derived_filename, &buf)
         .await?;
