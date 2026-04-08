@@ -177,9 +177,9 @@ jobs:
           "$OXEN" commit -m "initial commit"
           "$OXEN" push origin main
 
-          # Clone to Repo B
+          # Clone to Repo B (oxen clone rejects absolute paths)
           cd /tmp
-          "$OXEN" clone http://localhost:3000/ox/otel-test /tmp/repo-b
+          "$OXEN" clone http://localhost:3000/ox/otel-test repo-b
 
           # Repo B: modify, commit, push
           cd /tmp/repo-b
