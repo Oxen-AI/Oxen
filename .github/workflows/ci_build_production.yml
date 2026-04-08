@@ -125,9 +125,17 @@ jobs:
             -p 4317:4317 -p 16686:16686 \
             jaegertracing/all-in-one:latest
 
+          docker run --rm --name jaeger \
+            -p 16686:16686 \
+            -p 4317:4317 \
+            -p 4318:4318 \
+            -p 5778:5778 \
+            -p 9411:9411 \
+            cr.jaegertracing.io/jaegertracing/jaeger:2.17.0
+
           # Wait for Jaeger query API to be ready
           echo "Waiting for Jaeger..."
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             if curl -sf http://localhost:16686/api/services > /dev/null 2>&1; then
               echo "Jaeger is ready"
               break
@@ -159,6 +167,8 @@ jobs:
           "$SERVER" start &
           SERVER_PID=$!
           sleep 3
+
+          # TODO: add server health check
 
           # ── Full push / clone / modify / push / pull workflow ──
 
@@ -202,9 +212,11 @@ jobs:
           SERVICES=$(curl -sf http://localhost:16686/api/services)
           echo "Jaeger services: $SERVICES"
 
+          local did_fail=false
+
           if ! echo "$SERVICES" | jq -e '.data | index("oxen-server")' > /dev/null 2>&1; then
             echo "FAIL: 'oxen-server' not found in Jaeger services"
-            exit 1
+            did_fail=true
           fi
           echo "PASS: oxen-server service registered in Jaeger"
 
@@ -215,15 +227,21 @@ jobs:
             echo "PASS: OTel traces exported to Jaeger ($TRACE_COUNT traces)"
           else
             echo "FAIL: No traces found for oxen-server"
-            exit 1
+            did_fail=true
           fi
 
           # Check for client traces too
           if echo "$SERVICES" | jq -e '.data | index("oxen")' > /dev/null 2>&1; then
             echo "PASS: oxen client traces also found in Jaeger"
           else
-            echo "INFO: oxen client traces not found (client OTel export may not have flushed)"
+            echo "FAIL: oxen client traces not found (client OTel export may not have flushed)"
+            did_fail=true
           fi
+
+          if [ "$did_fail" = true ]; then
+            exit 1
+          fi
+
 
           # ── Cleanup ──
           kill "$SERVER_PID" 2>/dev/null || true
