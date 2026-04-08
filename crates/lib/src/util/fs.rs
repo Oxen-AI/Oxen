@@ -1314,71 +1314,50 @@ pub fn path_relative_to_dir(
         return Ok(result);
     }
 
-    // Get iterators for the component vectors
-    let mut path_iter = path_components.iter();
-    let mut dir_iter = dir_components.iter();
-    let starting_dir_iter = dir_iter.clone();
+    // Use index-based access so we can backtrack the path position
+    // after a failed partial match against dir.
+    let mut path_idx = 0;
+    let mut dir_idx = 0;
+    let mut match_start = 0;
 
-    let mut dir_component = dir_iter.next().unwrap();
-    let mut matches = 0;
-    let mut start_index = 0;
+    while path_idx < path_components.len() {
+        let path_str = path_components[path_idx].as_os_str();
+        let dir_str = dir_components[dir_idx].as_os_str();
 
-    for _ in 0..(path_components.len()) {
-        let path_component = path_iter.next().expect("Path bounds violated");
-        let path_str = path_component.as_os_str();
-        let dir_str = dir_component.as_os_str();
+        // Check for exact match, then fall back to case-insensitive (Windows)
+        let is_match = path_str == dir_str
+            || (path_str.len() == dir_str.len() && {
+                let path_lower = path_str.to_string_lossy().to_lowercase();
+                let dir_lower = dir_str.to_string_lossy().to_lowercase();
+                path_lower == dir_lower
+            });
 
-        if path_str == dir_str {
-            matches += 1;
-            if matches == dir_components.len() {
+        if is_match {
+            if dir_idx == 0 {
+                match_start = path_idx;
+            }
+            dir_idx += 1;
+            path_idx += 1;
+
+            if dir_idx == dir_components.len() {
+                // Full match found — return everything after the matched region
                 let mut result = PathBuf::new();
-                let path_slice = &path_components[(start_index + 1)..];
-
                 // Adjust for special paths like '.', '..', etc
-                for component in path_slice.iter() {
+                for component in &path_components[path_idx..] {
                     if matches!(component, Component::Normal(_)) {
                         result.push::<&Path>(component.as_ref());
                     }
                 }
-                // log::debug!("result: {result:?}");
                 return Ok(result);
             }
-            start_index += 1;
-            dir_component = dir_iter.next().expect("Dir bounds violated");
-            continue;
+        } else if dir_idx > 0 {
+            // Partial match failed — backtrack path to one past where the attempt started
+            path_idx = match_start + 1;
+            dir_idx = 0;
+        } else {
+            // No match in progress, just advance
+            path_idx += 1;
         }
-
-        // Check length first as an optimization
-        if path_str.len() == dir_str.len() {
-            // On Windows, if the components don't match, it may be because of casing inconsistency
-            // So, if the raw components don't match, convert them to lowercase strings
-            let path_lower = path_str.to_string_lossy().to_lowercase();
-            let dir_lower = dir_str.to_string_lossy().to_lowercase();
-
-            if path_lower == dir_lower {
-                matches += 1;
-                if matches == dir_components.len() {
-                    let mut result = PathBuf::new();
-                    let path_slice = &path_components[(start_index + 1)..];
-
-                    for component in path_slice.iter() {
-                        if matches!(component, Component::Normal(_)) {
-                            result.push::<&Path>(component.as_ref());
-                        }
-                    }
-                    // log::debug!("result: {result:?}");
-                    return Ok(result);
-                }
-                start_index += 1;
-                dir_component = dir_iter.next().expect("Dir bounds violated");
-                continue;
-            }
-        }
-
-        // If the components don't match, reset dir_iter and dir_component
-        dir_iter = starting_dir_iter.clone();
-        dir_component = dir_iter.next().unwrap();
-        start_index += 1;
     }
 
     // If the loop finishes, the path cannot be found relative to the dir
