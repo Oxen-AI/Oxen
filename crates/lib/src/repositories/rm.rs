@@ -1146,4 +1146,136 @@ mod tests {
         })
         .await
     }
+
+    /// Regression: `oxen rm -r` on a nested directory that was already deleted
+    /// from disk should stage the removal and commit it successfully.
+    ///
+    /// mkdir -p 1/2/3 && echo content > 1/2/3/file.txt
+    /// oxen add . && oxen commit -m "init"
+    /// rm -rf 1/2/3
+    /// oxen rm -r 1/2/3
+    /// oxen commit -m "remove dir"
+    /// oxen status   # should be clean
+    #[tokio::test]
+    async fn test_rm_r_already_deleted_nested_dir() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create nested directory with a file
+            let nested_dir = repo.path.join("1/2/3");
+            std::fs::create_dir_all(&nested_dir)?;
+            let file_path = nested_dir.join("file.txt");
+            util::fs::write(&file_path, "content")?;
+
+            // Add and commit
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "init")?;
+
+            // Physically delete the directory (simulating `rm -rf 1/2/3`)
+            util::fs::remove_dir_all(&nested_dir)?;
+            assert!(!nested_dir.exists());
+
+            // oxen rm -r 1/2/3 — stage the removal
+            let rm_opts = RmOpts {
+                path: PathBuf::from("1/2/3"),
+                recursive: true,
+                staged: false,
+            };
+            repositories::rm(&repo, &rm_opts)?;
+
+            // Should have staged the file for removal
+            let status = repositories::status(&repo)?;
+            let has_staged_removal = status
+                .staged_files
+                .iter()
+                .any(|(_, entry)| entry.status == StagedEntryStatus::Removed);
+            assert!(has_staged_removal, "file should be staged for removal");
+
+            // Commit the removal
+            repositories::commit(&repo, "remove dir")?;
+
+            // Status should be clean — no removed files
+            let status = repositories::status(&repo)?;
+            assert!(
+                status.removed_files.is_empty(),
+                "status should be clean after committing removal, but got removed_files: {:?}",
+                status.removed_files
+            );
+            assert!(
+                status.staged_files.is_empty(),
+                "no staged files should remain"
+            );
+
+            // Verify the directory is gone from the committed tree
+            let head = repositories::commits::head_commit(&repo)?;
+            let dir_node = repositories::tree::get_dir_without_children(
+                &repo,
+                &head,
+                Path::new("1/2/3"),
+                None,
+            )?;
+            assert!(
+                dir_node.is_none(),
+                "directory 1/2/3 should not exist in the committed tree"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Regression: `oxen add .` should detect and stage a nested directory
+    /// that was physically deleted from disk.
+    ///
+    /// mkdir -p 1/2/3 && echo content > 1/2/3/file.txt
+    /// oxen add . && oxen commit -m "init"
+    /// rm -rf 1/2/3
+    /// oxen add .
+    /// oxen commit -m "remove dir"
+    /// oxen status   # should be clean
+    #[tokio::test]
+    async fn test_add_dot_stages_deleted_nested_dir() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create nested directory with a file
+            let nested_dir = repo.path.join("1/2/3");
+            std::fs::create_dir_all(&nested_dir)?;
+            let file_path = nested_dir.join("file.txt");
+            util::fs::write(&file_path, "content")?;
+
+            // Add and commit
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "init")?;
+
+            // Physically delete only the leaf directory (1/ and 1/2/ remain)
+            util::fs::remove_dir_all(&nested_dir)?;
+            assert!(!nested_dir.exists());
+            assert!(repo.path.join("1/2").exists());
+
+            // oxen add . — should detect and stage the removal
+            repositories::add(&repo, &repo.path).await?;
+
+            // Should have staged the file for removal
+            let status = repositories::status(&repo)?;
+            let has_staged_removal = status
+                .staged_files
+                .iter()
+                .any(|(_, entry)| entry.status == StagedEntryStatus::Removed);
+            assert!(
+                has_staged_removal,
+                "file should be staged for removal after `oxen add .`"
+            );
+
+            // Commit the removal
+            repositories::commit(&repo, "remove dir")?;
+
+            // Status should be clean
+            let status = repositories::status(&repo)?;
+            assert!(
+                status.removed_files.is_empty(),
+                "status should be clean after committing removal, but got removed_files: {:?}",
+                status.removed_files
+            );
+
+            Ok(())
+        })
+        .await
+    }
 }
