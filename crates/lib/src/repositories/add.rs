@@ -679,13 +679,13 @@ A: Oxen.ai
         let dir = file_full.parent().expect("parent dir should exist");
         tokio::fs::create_dir_all(dir)
             .await
-            .expect(&format!("could not create directory: {}", dir.display()));
+            .unwrap_or_else(|_| panic!("could not create directory: {}", dir.display()));
         tokio::fs::write(&file_full, content)
             .await
-            .expect(&format!("could not write file: {}", file_full.display()));
-        repositories::add(&repo, file_relative)
+            .unwrap_or_else(|_| panic!("could not write file: {}", file_full.display()));
+        repositories::add(repo, file_relative)
             .await
-            .expect(&format!("could not oxen add file: {}", file_full.display()));
+            .unwrap_or_else(|_| panic!("could not oxen add file: {}", file_full.display()));
     }
 
     /// Given a relative path to a file or directory in the repository,
@@ -695,17 +695,17 @@ A: Oxen.ai
         if full.is_file() {
             tokio::fs::remove_file(&full)
                 .await
-                .expect(&format!("could not remove file: {}", full.display()));
+                .unwrap_or_else(|_| panic!("could not remove file: {}", full.display()));
         } else if full.is_dir() {
             tokio::fs::remove_dir_all(&full)
                 .await
-                .expect(&format!("could not remove directory: {}", full.display()));
+                .unwrap_or_else(|_| panic!("could not remove directory: {}", full.display()));
         } else {
             panic!("path is neither a file nor a directory: {}", full.display())
         }
         repositories::add(repo, relative)
             .await
-            .expect(&format!("could not oxen add: {}", relative.display()));
+            .unwrap_or_else(|_| panic!("could not oxen add: {}", relative.display()));
     }
 
     /// Commit a staged file (either added, removed, or modified) to the repository.
@@ -782,8 +782,7 @@ A: Oxen.ai
                             }
                             let ok_to_add = ingore_prefixes
                                 .iter()
-                                .filter(|prefix| relative.starts_with(prefix))
-                                .next()
+                                .find(|prefix| relative.starts_with(prefix))
                                 .is_none();
 
                             if ok_to_add {
@@ -834,18 +833,20 @@ A: Oxen.ai
     }
 
     fn check_tree_doesnt_contain_file(repo: &LocalRepository, file: &Path) {
-        let head = repositories::commits::head_commit(&repo).expect("failed to get head commit");
+        let head = repositories::commits::head_commit(repo).expect("failed to get head commit");
 
         let fi = repositories::tree::get_file_by_path(
-            &repo,
+            repo,
             &head,
-            ensure_relative(&repo.path, file).expect(&format!(
-                "non-repo ({}) relative path: {}",
-                repo.path.display(),
-                file.display()
-            )),
+            ensure_relative(&repo.path, file).unwrap_or_else(|| {
+                panic!(
+                    "non-repo ({}) relative path: {}",
+                    repo.path.display(),
+                    file.display()
+                )
+            }),
         )
-        .expect(&format!("failed to get file {}", file.display()));
+        .unwrap_or_else(|_| panic!("failed to get file {}", file.display()));
 
         assert!(
             fi.is_none(),
@@ -855,19 +856,21 @@ A: Oxen.ai
     }
 
     fn check_tree_doesnt_contain_dir(repo: &LocalRepository, dir: &Path) {
-        let head = repositories::commits::head_commit(&repo).expect("failed to get head commit");
+        let head = repositories::commits::head_commit(repo).expect("failed to get head commit");
 
         let dir_1 = repositories::tree::get_dir_without_children(
-            &repo,
+            repo,
             &head,
-            ensure_relative(&repo.path, dir).expect(&format!(
-                "non-repo ({}) relative path: {}",
-                repo.path.display(),
-                dir.display()
-            )),
+            ensure_relative(&repo.path, dir).unwrap_or_else(|| {
+                panic!(
+                    "non-repo ({}) relative path: {}",
+                    repo.path.display(),
+                    dir.display()
+                )
+            }),
             None,
         )
-        .expect(&format!("failed to get dir {} w/o children", dir.display()));
+        .unwrap_or_else(|_| panic!("failed to get dir {} w/o children", dir.display()));
 
         assert!(
             dir_1.is_none(),
@@ -882,24 +885,24 @@ A: Oxen.ai
         test::run_empty_local_repo_test_async(|repo| async move {
             let file = Path::new("file.txt");
 
-            create_and_stage(&repo, &file, "hello").await;
+            create_and_stage(&repo, file, "hello").await;
             let status = repositories::status(&repo).expect("oxen status failed");
             expect_staged(&status, 1, 0, 0);
-            commit_staged(&repo, "added", &file);
+            commit_staged(&repo, "added", file);
 
-            expect_filesystem(&repo.path, &[&file], &[".oxen"]).await;
+            expect_filesystem(&repo.path, &[file], &[".oxen"]).await;
 
-            remove_and_stage(&repo, &file).await;
+            remove_and_stage(&repo, file).await;
             let status = repositories::status(&repo).expect("oxen status failed");
             expect_staged(&status, 0, 1, 0);
-            commit_staged(&repo, "removed", &file);
+            commit_staged(&repo, "removed", file);
 
             let status = repositories::status(&repo).expect("oxen status failed");
             expect_staged(&status, 0, 0, 0);
             assert!(status.staged_dirs.is_empty());
             expect_filesystem(&repo.path, &[], &[".oxen"]).await;
 
-            check_tree_doesnt_contain_file(&repo, &file);
+            check_tree_doesnt_contain_file(&repo, file);
 
             Ok(())
         })
