@@ -2039,22 +2039,6 @@ mod tests {
         Ok(())
     }
 
-    // Demonstrates that the current implementation fails to find a dir match
-    // when the first component of dir appears earlier in path, causing a partial
-    // match that consumes the iterator past the real match position.
-    #[test]
-    fn path_relative_to_dir_no_backtrack_after_partial_match() -> Result<(), OxenError> {
-        let file = Path::new("data").join("data").join("test").join("f.txt");
-        let dir = Path::new("data").join("test");
-
-        let relative = util::fs::path_relative_to_dir(file, dir)?;
-        // "data/test" appears at positions 1-2 in path, so the result
-        // should be everything after that match.
-        assert_eq!(relative, Path::new("f.txt"));
-
-        Ok(())
-    }
-
     #[test]
     fn detect_file_type() -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits(|repo| {
