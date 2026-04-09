@@ -112,6 +112,23 @@ pub fn create_checkout(repo: &LocalRepository, name: impl AsRef<str>) -> Result<
     })
 }
 
+/// Force update a branch to point to a specific commit id, validating the commit exists.
+/// Creates the branch if it doesn't exist.
+pub fn force_update(
+    repo: &LocalRepository,
+    name: impl AsRef<str>,
+    commit_id: impl AsRef<str>,
+) -> Result<Branch, OxenError> {
+    let name = name.as_ref();
+    let commit_id = commit_id.as_ref();
+
+    if !repositories::commits::commit_id_exists(repo, commit_id)? {
+        return Err(OxenError::commit_id_does_not_exist(commit_id));
+    }
+
+    update(repo, name, commit_id)
+}
+
 /// Update the branch name to point to a commit id
 pub fn update(
     repo: &LocalRepository,

@@ -29,7 +29,20 @@ impl RunCmd for BranchCmd {
         Command::new(NAME)
             .about("Manage branches in repository")
             .subcommand(unlock::BranchUnlockCmd.args())
-            .arg(Arg::new("name").help("Name of the branch").exclusive(true))
+            .arg(Arg::new("name").help("Name of the branch"))
+            .arg(
+                Arg::new("commit_id")
+                    .help("Commit ID to point the branch to (used with --force)")
+                    .requires("force"),
+            )
+            .arg(
+                Arg::new("force")
+                    .long("force")
+                    .short('f')
+                    .help("Force update an existing branch to point to a specific commit")
+                    .requires("name")
+                    .action(clap::ArgAction::SetTrue),
+            )
             .arg(
                 Arg::new("all")
                     .long("all")
@@ -95,7 +108,14 @@ impl RunCmd for BranchCmd {
                 self.list_remote_branches(&repo, remote_name).await
             }
         } else if let Some(name) = args.get_one::<String>("name") {
-            self.create_branch(&repo, name)
+            if args.get_flag("force") {
+                let commit_id = args
+                    .get_one::<String>("commit_id")
+                    .ok_or_else(|| OxenError::basic_str("Must supply a commit ID with --force"))?;
+                self.force_update_branch(&repo, name, commit_id)
+            } else {
+                self.create_branch(&repo, name)
+            }
         } else if let Some(name) = args.get_one::<String>("delete") {
             self.delete_branch(&repo, name)
         } else if let Some(name) = args.get_one::<String>("force-delete") {
@@ -167,6 +187,17 @@ impl BranchCmd {
 
     pub fn create_branch(&self, repo: &LocalRepository, name: &str) -> Result<(), OxenError> {
         repositories::branches::create_from_head(repo, name)?;
+        Ok(())
+    }
+
+    pub fn force_update_branch(
+        &self,
+        repo: &LocalRepository,
+        name: &str,
+        commit_id: &str,
+    ) -> Result<(), OxenError> {
+        let branch = repositories::branches::force_update(repo, name, commit_id)?;
+        println!("Updated branch '{}' to {}", branch.name, branch.commit_id);
         Ok(())
     }
 
