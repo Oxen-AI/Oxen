@@ -117,8 +117,8 @@ mod tests {
                 .await?;
 
             // Make sure the file is the same
-            let readme_1_contents = util::fs::read_from_path(&download_path)?;
-            let readme_2_contents = util::fs::read_from_path(&readme_path)?;
+            let readme_1_contents = tokio::fs::read_to_string(&download_path).await?;
+            let readme_2_contents = tokio::fs::read_to_string(&readme_path).await?;
             assert_eq!(readme_1_contents, readme_2_contents);
 
             api::client::repositories::delete(&remote_repo).await?;

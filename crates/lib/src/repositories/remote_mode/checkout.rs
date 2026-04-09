@@ -560,7 +560,10 @@ mod tests {
                     NewCommitBody::from_config(&UserConfig::get()?, "Added hello.txt");
                 let _initial_commit =
                     repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
-                assert_eq!(util::fs::read_from_path(&hello_file)?, initial_content);
+                assert_eq!(
+                    tokio::fs::read_to_string(&hello_file).await?,
+                    initial_content
+                );
 
                 // Create a new branch and checkout
                 let branch_name = "feature";
@@ -583,15 +586,24 @@ mod tests {
                 let commit_body =
                     NewCommitBody::from_config(&UserConfig::get()?, "Changed file to world");
                 repositories::remote_mode::commit(&cloned_repo, &commit_body).await?;
-                assert_eq!(util::fs::read_from_path(&hello_file)?, modified_content);
+                assert_eq!(
+                    tokio::fs::read_to_string(&hello_file).await?,
+                    modified_content
+                );
 
                 // Go back to the main branch
                 repositories::remote_mode::checkout(&mut cloned_repo, &main_branch.name).await?;
-                assert_eq!(util::fs::read_from_path(&hello_file)?, initial_content);
+                assert_eq!(
+                    tokio::fs::read_to_string(&hello_file).await?,
+                    initial_content
+                );
 
                 // Checkout the new branch
                 repositories::remote_mode::checkout(&mut cloned_repo, branch_name).await?;
-                assert_eq!(util::fs::read_from_path(&hello_file)?, modified_content);
+                assert_eq!(
+                    tokio::fs::read_to_string(&hello_file).await?,
+                    modified_content
+                );
 
                 Ok(())
             })

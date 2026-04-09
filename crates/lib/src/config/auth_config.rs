@@ -45,8 +45,14 @@ pub struct AuthConfig {
 
 impl AuthConfig {
     pub fn new(path: &Path) -> AuthConfig {
-        let contents = util::fs::read_from_path(path).unwrap();
-        toml::from_str(&contents).unwrap()
+        let contents = std::fs::read_to_string(path).expect(&format!(
+            "Could not read auth config file: {}",
+            path.display()
+        ));
+        toml::from_str(&contents).expect(&format!(
+            "Could not TOML parse auth config file: {}",
+            path.display()
+        ))
     }
 
     pub fn new_empty() -> AuthConfig {

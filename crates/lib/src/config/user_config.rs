@@ -18,7 +18,10 @@ pub struct UserConfig {
 
 impl UserConfig {
     pub fn new(path: &Path) -> UserConfig {
-        let contents = util::fs::read_from_path(path).unwrap();
+        let contents = std::fs::read_to_string(path).expect(&format!(
+            "Failed to read user config file ({})",
+            path.display()
+        ));
         toml::from_str(&contents).unwrap()
     }
 

@@ -39,7 +39,7 @@ impl fmt::Display for RepoSizeFile {
 
 pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
     let path = repo_size_path(repo);
-    let size = match util::fs::read_from_path(&path) {
+    let size = match std::fs::read_to_string(&path) {
         Ok(content) => match serde_json::from_str::<RepoSizeFile>(&content) {
             Ok(parsed) => RepoSizeFile {
                 status: SizeStatus::Pending,
@@ -95,7 +95,7 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
 
 pub fn get_size(repo: &LocalRepository) -> Result<RepoSizeFile, OxenError> {
     let path = repo_size_path(repo);
-    let size = util::fs::read_from_path(&path);
+    let size = std::fs::read_to_string(&path);
     match size {
         Ok(size) => {
             let size: RepoSizeFile = serde_json::from_str(&size)?;

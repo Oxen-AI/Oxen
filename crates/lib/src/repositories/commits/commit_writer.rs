@@ -1204,8 +1204,8 @@ fn create_merge_commit(
     let orig_head_path = hidden_dir.join(ORIG_HEAD_FILE);
 
     // Read parent commit ids
-    let merge_commit_id = util::fs::read_from_path(&merge_head_path)?;
-    let head_commit_id = util::fs::read_from_path(&orig_head_path)?;
+    let merge_commit_id = std::fs::read_to_string(&merge_head_path)?;
+    let head_commit_id = std::fs::read_to_string(&orig_head_path)?;
 
     // Cleanup
     util::fs::remove_file(merge_head_path)?;

@@ -891,7 +891,7 @@ mod tests {
 
                     // Verify User B has both changes locally:
                     // 1. The README should still have User B's changes
-                    let readme_content_after_pull = util::fs::read_from_path(&readme_path)?;
+                    let readme_content_after_pull = tokio::fs::read_to_string(&readme_path).await?;
                     assert_eq!(
                         readme_content_after_pull, readme_content,
                         "README should still have User B's changes"
