@@ -1278,4 +1278,61 @@ mod tests {
         })
         .await
     }
+
+    /// Regression: `oxen add .` should detect a single deleted file inside a
+    /// nested directory that still exists on disk.
+    ///
+    /// mkdir -p 1/2/3 && echo content > 1/2/3/file.txt
+    /// oxen add . && oxen commit -m "init"
+    /// rm 1/2/3/file.txt
+    /// oxen add .
+    /// oxen commit -m "remove file"
+    /// oxen status   # should be clean
+    #[tokio::test]
+    async fn test_add_dot_stages_deleted_file_in_nested_dir() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create nested directory with a file
+            let nested_dir = repo.path.join("1/2/3");
+            std::fs::create_dir_all(&nested_dir)?;
+            let file_path = nested_dir.join("file.txt");
+            util::fs::write(&file_path, "content")?;
+
+            // Add and commit
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "init")?;
+
+            // Delete just the file (directory 1/2/3 still exists)
+            util::fs::remove_file(&file_path)?;
+            assert!(!file_path.exists());
+            assert!(nested_dir.exists());
+
+            // oxen add . — should detect and stage the file removal
+            repositories::add(&repo, &repo.path).await?;
+
+            // Should have staged the file for removal
+            let status = repositories::status(&repo)?;
+            let has_staged_removal = status
+                .staged_files
+                .iter()
+                .any(|(_, entry)| entry.status == StagedEntryStatus::Removed);
+            assert!(
+                has_staged_removal,
+                "file should be staged for removal after `oxen add .`"
+            );
+
+            // Commit the removal
+            repositories::commit(&repo, "remove file")?;
+
+            // Status should be clean
+            let status = repositories::status(&repo)?;
+            assert!(
+                status.removed_files.is_empty(),
+                "status should be clean after committing removal, but got removed_files: {:?}",
+                status.removed_files
+            );
+
+            Ok(())
+        })
+        .await
+    }
 }

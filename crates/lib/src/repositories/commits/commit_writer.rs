@@ -631,10 +631,11 @@ fn split_into_vnodes(
             if let Ok(child_path) = child.node.maybe_path()
                 && child_path != Path::new("")
             {
-                // Staged directory entries keep only the leaf name (e.g. "3"),
-                // but existing children from `node_data_to_staged_node` use the
-                // full repo-relative path (e.g. "1/2/3"). Reconstruct the full
-                // path so that HashSet lookups (which compare via maybe_path) match.
+                // Defensive normalization: staged entries should already carry full
+                // repo-relative paths (set during rm staging), but if a leaf-only
+                // name slips through, reconstruct the full path so that HashSet
+                // lookups (which compare via maybe_path) match existing children
+                // from `node_data_to_staged_node`.
                 let needs_prefix =
                     !directory.as_os_str().is_empty() && !child_path.starts_with(directory);
                 let child = if needs_prefix {

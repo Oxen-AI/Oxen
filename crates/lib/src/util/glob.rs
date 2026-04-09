@@ -417,15 +417,18 @@ pub fn r_collect_removed_paths(
     if dir_path.is_dir() {
         let glob_path = util::fs::path_relative_to_dir(dir_path, &repo_path)?.join("*");
 
-        // Search the merkle tree for all paths in the directory
+        // Snapshot before search so we only recurse into newly found paths,
+        // avoiding infinite recursion from re-visiting ancestors.
+        let before: HashSet<PathBuf> = removed_paths.clone();
         search_merkle_tree(removed_paths, repo, &glob_path)?;
-        let paths = removed_paths.clone();
+        let new_paths: Vec<PathBuf> = removed_paths.difference(&before).cloned().collect();
 
-        // Recurse into present directories to find removed subdirs and files
-        for path in paths.iter() {
+        // Recurse into present directories to find removed subdirs and files.
+        // Use repo_path.join(path) — `path` is repo-relative (e.g. "1/2"),
+        // so joining with repo_path gives the correct absolute path.
+        for path in new_paths.iter() {
             if repo_path.join(path).is_dir() {
-                let dir_path = dir_path.join(path);
-                r_collect_removed_paths(repo, &dir_path, removed_paths)?;
+                r_collect_removed_paths(repo, &repo_path.join(path), removed_paths)?;
             }
         }
     }
