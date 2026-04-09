@@ -1240,9 +1240,10 @@ async fn unpack_entry_tarball_async(
             // because unpack_in() calls canonicalize() internally, which fails on Windows ramdisks
             // (imdisk).
             let entry_type = file.header().entry_type();
-            if entry_type.is_symlink() || entry_type.is_hard_link() {
+            if !entry_type.is_file() && !entry_type.is_dir() {
                 return Err(OxenError::basic_str(format!(
-                    "Symlinks/hard links not allowed in archive: {}",
+                    "Unsupported archive entry type for {}: only regular files and \
+                     directories are allowed",
                     path.display()
                 )));
             }
