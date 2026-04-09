@@ -196,7 +196,7 @@ impl BranchCmd {
         name: &str,
         commit_id: &str,
     ) -> Result<(), OxenError> {
-        let branch = repositories::branches::force_update(repo, name, commit_id)?;
+        let branch = repositories::branches::update(repo, name, commit_id)?;
         println!("Updated branch '{}' to {}", branch.name, branch.commit_id);
         Ok(())
     }

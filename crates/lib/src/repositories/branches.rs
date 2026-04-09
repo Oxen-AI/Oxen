@@ -112,9 +112,9 @@ pub fn create_checkout(repo: &LocalRepository, name: impl AsRef<str>) -> Result<
     })
 }
 
-/// Force update a branch to point to a specific commit id, validating the commit exists.
-/// Creates the branch if it doesn't exist.
-pub fn force_update(
+/// Update the branch name to point to a commit id, creating the branch if it doesn't exist.
+/// Validates that the commit exists before updating.
+pub fn update(
     repo: &LocalRepository,
     name: impl AsRef<str>,
     commit_id: impl AsRef<str>,
@@ -126,24 +126,14 @@ pub fn force_update(
         return Err(OxenError::commit_id_does_not_exist(commit_id));
     }
 
-    update(repo, name, commit_id)
-}
-
-/// Update the branch name to point to a commit id
-pub fn update(
-    repo: &LocalRepository,
-    name: impl AsRef<str>,
-    commit_id: impl AsRef<str>,
-) -> Result<Branch, OxenError> {
-    let name = name.as_ref();
-    let commit_id = commit_id.as_ref();
     with_ref_manager(repo, |manager| {
-        if let Some(branch) = manager.get_branch_by_name(name)? {
+        if let Some(mut branch) = manager.get_branch_by_name(name)? {
             // Set the branch to point to the commit
             manager.set_branch_commit_id(name, commit_id)?;
+            branch.commit_id = commit_id.to_string();
             Ok(branch)
         } else {
-            create(repo, name, commit_id)
+            manager.create_branch(name, commit_id)
         }
     })
 }
@@ -505,7 +495,7 @@ mod tests {
             repositories::branches::create_checkout(&repo, "test-branch")?;
 
             // Force update it back to commit_1
-            repositories::branches::force_update(&repo, "test-branch", &commit_1.id)?;
+            repositories::branches::update(&repo, "test-branch", &commit_1.id)?;
 
             // Verify the branch now points to commit_1
             let fetched = repositories::branches::get_by_name(&repo, "test-branch")?.unwrap();
@@ -522,7 +512,7 @@ mod tests {
             let head = repositories::commits::head_commit(&repo)?;
 
             // Force update a branch that doesn't exist yet
-            let branch = repositories::branches::force_update(&repo, "new-branch", &head.id)?;
+            let branch = repositories::branches::update(&repo, "new-branch", &head.id)?;
             assert_eq!(branch.commit_id, head.id);
             assert_eq!(branch.name, "new-branch");
 
@@ -535,7 +525,7 @@ mod tests {
     async fn test_force_update_invalid_commit_fails() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|repo| async move {
             let result =
-                repositories::branches::force_update(&repo, "test-branch", "nonexistent_commit_id");
+                repositories::branches::update(&repo, "test-branch", "nonexistent_commit_id");
             assert!(result.is_err());
 
             Ok(())
