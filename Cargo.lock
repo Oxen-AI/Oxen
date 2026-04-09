@@ -5470,6 +5470,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-actix-web",
+ "tracing-opentelemetry",
  "url",
  "utoipa",
  "utoipa-swagger-ui",

@@ -74,15 +74,25 @@ fn get_app_data(req: &HttpRequest) -> Result<&OxenAppData, OxenHttpError> {
 
 /// Dynamically access a path parameter by name.
 ///
-/// Also logs the parameter & value to the currently active tracing span as "http.path.{param}".
-/// The tracing span is unmodified if the parameter is not found in the request.
+/// When the `otel` feature is enabled, records the parameter as an OpenTelemetry
+/// attribute (`http.path.{param}`) on the current span. This bypasses the tracing
+/// field system and adds tags directly to the OTel span, so the values appear in
+/// OTel collectors (e.g. Jaeger) but **not** in stderr/file log events for spans.
 pub fn path_param<'a>(request: &'a HttpRequest, param: &str) -> Result<&'a str, OxenHttpError> {
     let value = request
         .match_info()
         .get(param)
         .ok_or_else(|| OxenHttpError::PathParamDoesNotExist(param.into()))?;
 
-    tracing::Span::current().record(format!("http.path.{param}").as_str(), value);
+    #[cfg(feature = "otel")]
+    {
+        use tracing_opentelemetry::OpenTelemetrySpanExt;
+        // TODO: Replace this dynamic approach with statically typed `web::Path<T>` extractors
+        // and compile-time span field declaration. See the refactor plan at:
+        // `experiments/todo_plan/refactor_http_handlers_structured_static_types_auto_tracing_logging_and_auto_doc_gen.md`
+        tracing::Span::current().set_attribute(format!("http.path.{param}"), value.to_string());
+    }
+
     Ok(value)
 }
 
@@ -90,11 +100,22 @@ pub fn path_param<'a>(request: &'a HttpRequest, param: &str) -> Result<&'a str, 
 ///
 /// Unlike path params, this returns an empty string if the query parameter is not found in the request.
 ///
-/// Also logs the parameter & value to the currently active tracing span as "http.query.{param}".
-/// The tracing span is unmodified if the parameter is not found in the request.
+/// When the `otel` feature is enabled, records the parameter as an OpenTelemetry
+/// attribute (`http.query.{param}`) on the current span. This bypasses the tracing
+/// field system and adds tags directly to the OTel span, so the values appear in
+/// OTel collectors (e.g. Jaeger) but **not** in stderr/file log events for spans.
 pub fn query_param<'a>(request: &'a HttpRequest, param: &str) -> &'a str {
     let value = request.match_info().query(param);
-    tracing::Span::current().record(format!("http.query.{param}").as_str(), value);
+
+    #[cfg(feature = "otel")]
+    {
+        use tracing_opentelemetry::OpenTelemetrySpanExt;
+        // TODO: Replace this dynamic approach with statically typed `web::Query<T>` extractors
+        // and compile-time span field declaration. See the refactor plan at:
+        // `experiments/todo_plan/refactor_http_handlers_structured_static_types_auto_tracing_logging_and_auto_doc_gen.md`
+        tracing::Span::current().set_attribute(format!("http.query.{param}"), value.to_string());
+    }
+
     value
 }
 
