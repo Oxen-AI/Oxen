@@ -54,9 +54,8 @@ cd "$SCRIPT_DIR/.."
 SERVER_PID=""
 RAMDISK_DEV=""
 
-# Create a ramdisk for test data. On macOS this creates an APFS RAM disk via
-# hdiutil; on Linux it uses /dev/shm (tmpfs). Falls back to the regular
-# filesystem if ramdisk creation fails.
+# Create a ramdisk for test data. On macOS this creates an APFS RAM disk via hdiutil; on Linux it
+# uses /dev/shm (tmpfs). Falls back to the regular filesystem if ramdisk creation fails.
 setup_ramdisk() {
     local size_mb=4096
     if [ "$(uname)" = "Darwin" ]; then

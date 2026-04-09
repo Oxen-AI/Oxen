@@ -1003,18 +1003,17 @@ pub fn is_canonical(path: impl AsRef<Path>) -> Result<bool, OxenError> {
     Ok(false)
 }
 
-// Return canonicalized path if possible. Falls back to converting to an absolute path
-// without symlink resolution, which is needed on filesystems that don't support
-// canonicalization (e.g. Windows imdisk ramdisks).
+// Return canonicalized path if possible. Falls back to converting to an absolute path without
+// symlink resolution, which is needed on filesystems that don't support canonicalization (e.g.
+// Windows imdisk ramdisks).
 pub fn canonicalize(path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
     let path = path.as_ref();
     match dunce::canonicalize(path) {
         Ok(canon_path) => Ok(canon_path),
         Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
-            // Fallback: convert to absolute path without symlink resolution.
-            // This is needed on filesystems whose drivers don't implement
-            // canonicalization (e.g. Windows imdisk ramdisks return
-            // ERROR_INVALID_FUNCTION which maps to ErrorKind::Unsupported).
+            // Fallback: convert to absolute path without symlink resolution. This is needed on
+            // filesystems whose drivers don't implement canonicalization (e.g. Windows imdisk
+            // ramdisks return ERROR_INVALID_FUNCTION which maps to ErrorKind::Unsupported).
             if path.is_absolute() {
                 Ok(path.to_path_buf())
             } else {
@@ -1676,11 +1675,10 @@ pub fn validate_and_normalize_path(path: impl AsRef<Path>) -> Result<PathBuf, Ox
     Ok(normalized)
 }
 
-/// Unpack an async-tar archive to a destination directory without calling
-/// `canonicalize`. This is needed because `archive.unpack()` and
-/// `entry.unpack_in()` internally call `std::fs::canonicalize`, which fails on
-/// filesystems that don't support it (e.g. Windows imdisk ramdisks). Path
-/// traversal is checked by rejecting parent components.
+/// Unpack an async-tar archive to a destination directory without calling `canonicalize`. This is
+/// needed because `archive.unpack()` and `entry.unpack_in()` internally call
+/// `std::fs::canonicalize`, which fails on filesystems that don't support it (e.g. Windows imdisk
+/// ramdisks). Path traversal is checked by rejecting parent components.
 pub async fn unpack_async_tar_archive<R: futures_util::AsyncRead + Unpin>(
     archive: async_tar::Archive<R>,
     dst: &Path,
