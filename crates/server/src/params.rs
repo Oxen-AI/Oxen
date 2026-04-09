@@ -72,12 +72,32 @@ fn get_app_data(req: &HttpRequest) -> Result<&OxenAppData, OxenHttpError> {
         .ok_or(OxenHttpError::AppDataDoesNotExist)
 }
 
+/// Dynamically access a path parameter by name.
+/// Also logs the parameter & value to the currently active tracing span as "http.path.{param}".
+/// The tracing span is unmodified if the parameter is not found in the request.
 pub fn path_param(req: &HttpRequest, param: &str) -> Result<String, OxenHttpError> {
-    Ok(req
+    let value = req
         .match_info()
         .get(param)
-        .ok_or_else(|| OxenHttpError::PathParamDoesNotExist(param.into()))?
-        .to_string())
+        .ok_or_else(|| OxenHttpError::PathParamDoesNotExist(param.into()))?;
+
+    tracing::Span::current().record("http.path.{param}", value);
+
+    Ok(value.to_string())
+}
+
+/// Dynamically accesses a query parameter by name.
+/// Also logs the parameter & value to the currently active tracing span as "http.query.{param}".
+/// The tracing span is unmodified if the parameter is not found in the request.
+pub fn query_param(req: &HttpRequest, param: &str) -> Result<String, OxenHttpError> {
+    let value = req.match_info().query(param);
+    if value.is_empty() {
+        Err(OxenHttpError::QueryParamDoesNotExist(param.into()))
+    } else {
+        tracing::Span::current().record("http.query.{param}", value);
+
+        Ok(value.to_string())
+    }
 }
 
 fn decode_resource_path(resource_path_str: &str) -> String {

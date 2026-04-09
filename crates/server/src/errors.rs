@@ -39,6 +39,7 @@ pub enum OxenHttpError {
     NotFound,
     AppDataDoesNotExist,
     PathParamDoesNotExist(StringError),
+    QueryParamDoesNotExist(StringError),
     SQLParseError(StringError),
     NotQueryable,
     DatasetNotIndexed(PathBufError),
@@ -131,6 +132,12 @@ impl error::ResponseError for OxenHttpError {
             OxenHttpError::PathParamDoesNotExist(param) => {
                 log::error!(
                     "Param {param} does not exist in resource path, make sure it matches in routes.rs"
+                );
+                HttpResponse::BadRequest().json(StatusMessage::bad_request())
+            }
+            OxenHttpError::QueryParamDoesNotExist(param) => {
+                log::error!(
+                    "Param {param} does not exist in query parameters, make sure it matches in routes.rs"
                 );
                 HttpResponse::BadRequest().json(StatusMessage::bad_request())
             }
