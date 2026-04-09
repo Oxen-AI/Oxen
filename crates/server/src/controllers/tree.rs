@@ -27,10 +27,10 @@ use crate::params::{app_data, path_param};
 #[tracing::instrument(skip_all)]
 pub async fn get_node_by_id(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(&app_data.path, namespace, repo_name)?;
-    let hash_str = path_param(&req, "hash")?;
+    let hash_str = path_param(&req, "hash")?.to_string();
 
     let node = repositories::tree::get_node_by_id(&repository, &hash_str.parse()?)?
         .ok_or(OxenHttpError::NotFound)?;
@@ -44,8 +44,8 @@ pub async fn list_missing_node_hashes(
     mut body: web::Payload,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(&app_data.path, namespace, repo_name)?;
 
     let mut bytes = web::BytesMut::new();
@@ -76,8 +76,8 @@ pub async fn list_missing_file_hashes_from_commits(
     mut body: web::Payload,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(&app_data.path, namespace, repo_name)?;
 
     let mut bytes = web::BytesMut::new();
@@ -113,10 +113,10 @@ pub async fn list_missing_file_hashes(
     req: HttpRequest,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(&app_data.path, namespace, repo_name)?;
-    let hash_str = path_param(&req, "hash")?;
+    let hash_str = path_param(&req, "hash")?.to_string();
     let hash = hash_str.parse()?;
 
     let hashes = repositories::tree::list_missing_file_hashes(&repository, &hash).await?;
@@ -137,8 +137,8 @@ pub async fn mark_nodes_as_synced(
     mut body: web::Payload,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(&app_data.path, namespace, repo_name)?;
 
     let mut bytes = web::BytesMut::new();
@@ -167,8 +167,8 @@ pub async fn create_nodes(
     mut body: web::Payload,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(&app_data.path, namespace, repo_name)?;
 
     let mut bytes = web::BytesMut::new();
@@ -189,8 +189,8 @@ pub async fn create_nodes(
 #[tracing::instrument(skip_all)]
 pub async fn download_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(&app_data.path, namespace, name)?;
 
     // Download the entire tree
@@ -204,8 +204,8 @@ pub async fn get_node_hash_by_path(
     req: HttpRequest,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(&app_data.path, namespace, repo_name)?;
     let resource = parse_resource(&req, &repository)?;
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
@@ -225,10 +225,10 @@ pub async fn download_tree_nodes(
     query: web::Query<TreeDepthQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(&app_data.path, namespace, name)?;
-    let base_head_str = path_param(&req, "base_head")?;
+    let base_head_str = path_param(&req, "base_head")?.to_string();
     let is_download = query.is_download.unwrap_or(false);
 
     log::debug!("download_tree_nodes for base_head: {base_head_str}");
@@ -311,9 +311,9 @@ fn get_commit_list(
 #[tracing::instrument(skip_all)]
 pub async fn download_node(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let hash_str = path_param(&req, "hash")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
+    let hash_str = path_param(&req, "hash")?.to_string();
     let hash = hash_str.parse()?;
     let repository = get_repo(&app_data.path, namespace, name)?;
 

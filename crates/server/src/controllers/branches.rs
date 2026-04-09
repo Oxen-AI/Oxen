@@ -68,8 +68,8 @@ use liboxen::{constants, repositories};
 )]
 pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, name)?;
 
     let branches = repositories::branches::list(&repo)?;
@@ -100,9 +100,9 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 )]
 pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let branch_name = path_param(&req, "branch_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
+    let branch_name = path_param(&req, "branch_name")?.to_string();
     let repository = get_repo(&app_data.path, namespace, name)?;
 
     log::debug!("show branch {branch_name:?}");
@@ -143,8 +143,8 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
 )]
 pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
@@ -224,9 +224,9 @@ fn create_from_commit(
 )]
 pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let branch_name = path_param(&req, "branch_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
+    let branch_name = path_param(&req, "branch_name")?.to_string();
     let repository = get_repo(&app_data.path, namespace, name)?;
 
     let branch = repositories::branches::get_by_name(&repository, &branch_name)?;
@@ -267,9 +267,9 @@ pub async fn update(
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let branch_name = path_param(&req, "branch_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
+    let branch_name = path_param(&req, "branch_name")?.to_string();
     let repository = get_repo(&app_data.path, namespace, name)?;
 
     let data: Result<BranchUpdate, serde_json::Error> = serde_json::from_str(&body);
@@ -313,10 +313,10 @@ pub async fn maybe_create_merge(
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(&app_data.path, namespace, name)?;
-    let branch_name = path_param(&req, "branch_name")?;
+    let branch_name = path_param(&req, "branch_name")?.to_string();
     let branch = repositories::branches::get_by_name(&repository, &branch_name)?;
 
     let data: Result<BranchRemoteMerge, serde_json::Error> = serde_json::from_str(&body);
@@ -382,9 +382,9 @@ pub async fn list_entry_versions(
     query: web::Query<PageNumQuery>,
 ) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let branch_name = path_param(&req, "branch_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let branch_name = path_param(&req, "branch_name")?.to_string();
 
     // Get branch
     let repo = get_repo(&app_data.path, namespace.clone(), &repo_name)?;

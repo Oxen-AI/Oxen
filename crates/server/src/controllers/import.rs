@@ -8,7 +8,7 @@ use utoipa::ToSchema;
 
 use crate::errors::OxenHttpError;
 use crate::helpers::{create_user_from_options, get_repo};
-use crate::params::{app_data, parse_resource, path_param};
+use crate::params::{app_data, parse_resource, path_param, query_param};
 
 use liboxen::core::v_latest::workspaces::files::decompress_zip;
 use liboxen::error::OxenError;
@@ -98,8 +98,8 @@ pub async fn import(
     body: web::Json<Value>,
 ) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
     let resource = parse_resource(&req, &repo)?;
 
@@ -242,8 +242,8 @@ pub async fn upload_zip(
     log::debug!("file::upload_zip path {:?}", req.path());
 
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     // If there's no head commit, handle initial upload
@@ -305,7 +305,7 @@ async fn handle_initial_upload_zip_empty_repo(
     payload: Multipart,
     repo: &liboxen::model::LocalRepository,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let resource: PathBuf = PathBuf::from(query_param(req, "resource"));
+    let resource: PathBuf = PathBuf::from(query_param(&req, "resource"));
 
     // Parse the resource for the path and branch name
     let mut resource = resource.components();

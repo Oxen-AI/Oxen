@@ -22,9 +22,9 @@ pub async fn list_root(
     query: web::Query<PageNumQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
     log::debug!("/changes looking up repo: {namespace}/{repo_name}");
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
@@ -59,9 +59,9 @@ pub async fn list(
     query: web::Query<PageNumQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
     log::debug!("/changes looking up repo: {namespace}/{repo_name}");
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
@@ -110,9 +110,9 @@ pub async fn list(
 )]
 pub async fn unstage(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     let path = PathBuf::from(path_param(&req, "path")?);
 
@@ -151,9 +151,9 @@ pub async fn unstage_many(
     payload: web::Json<Vec<PathBuf>>,
 ) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
     log::debug!("unstage_many found repo {repo_name}, workspace_id {workspace_id}");
 

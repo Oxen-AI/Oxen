@@ -58,9 +58,9 @@ pub async fn commits(
     query: web::Query<PageNumQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let base_head = path_param(&req, "base_head")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
+    let base_head = path_param(&req, "base_head")?.to_string();
 
     // Get the repository or return error
     let repository = get_repo(&app_data.path, namespace, name)?;
@@ -117,9 +117,9 @@ pub async fn entries(
     query: web::Query<PageNumQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let base_head = path_param(&req, "base_head")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
+    let base_head = path_param(&req, "base_head")?.to_string();
 
     // Get the repository or return error
     let repository = get_repo(&app_data.path, namespace, name)?;
@@ -196,9 +196,9 @@ pub async fn entries(
 )]
 pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let base_head = path_param(&req, "base_head")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
+    let base_head = path_param(&req, "base_head")?.to_string();
 
     // Get the repository or return error
     let repository = get_repo(&app_data.path, namespace, name)?;
@@ -248,10 +248,10 @@ pub async fn dir_entries(
     query: web::Query<PageNumQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let base_head = path_param(&req, "base_head")?;
-    let dir = path_param(&req, "dir")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
+    let base_head = path_param(&req, "base_head")?.to_string();
+    let dir = path_param(&req, "dir")?.to_string();
 
     // Get the repository or return error
     let repository = get_repo(&app_data.path, namespace, name)?;
@@ -333,9 +333,9 @@ pub async fn file(
     query: web::Query<DFOptsQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let base_head = path_param(&req, "base_head")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
+    let base_head = path_param(&req, "base_head")?.to_string();
 
     // Get the repository or return error
     let repository = get_repo(&app_data.path, namespace, name)?;
@@ -405,8 +405,8 @@ pub async fn create_df_diff(
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
 
     let repository = get_repo(&app_data.path, namespace, name)?;
 
@@ -512,9 +512,9 @@ pub async fn update_df_diff(
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let compare_id = path_param(&req, "compare_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
+    let compare_id = path_param(&req, "compare_id")?.to_string();
     let repository = get_repo(&app_data.path, namespace, name)?;
 
     let data: Result<TabularCompareBody, serde_json::Error> = serde_json::from_str(&body);
@@ -621,11 +621,11 @@ pub async fn get_df_diff(
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let compare_id = path_param(&req, "compare_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
+    let compare_id = path_param(&req, "compare_id")?.to_string();
     let repository = get_repo(&app_data.path, namespace, name)?;
-    let base_head = path_param(&req, "base_head")?;
+    let base_head = path_param(&req, "base_head")?.to_string();
 
     let data: TabularCompareBody = serde_json::from_str(&body)?;
 
@@ -702,9 +702,9 @@ pub async fn get_df_diff(
 )]
 pub async fn delete_df_diff(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let compare_id = path_param(&req, "compare_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let compare_id = path_param(&req, "compare_id")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     repositories::diffs::delete_df_diff(&repo, &compare_id)?;
@@ -735,11 +735,11 @@ pub async fn get_derived_df(
     query: web::Query<DFOptsQuery>,
 ) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    let compare_id = path_param(&req, "compare_id")?;
-    // let base_head = path_param(&req, "base_head")?;
+    let compare_id = path_param(&req, "compare_id")?.to_string();
+    // let base_head = path_param(&req, "base_head")?.to_string();
 
     let compare_dir = repositories::diffs::get_diff_dir(&repo, &compare_id);
 

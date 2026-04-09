@@ -51,9 +51,9 @@ const DOWNLOAD_BUFFER_SIZE: usize = 2 * 1024 * 1024;
 )]
 pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let version_id = path_param(&req, "version_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let version_id = path_param(&req, "version_id")?.to_string();
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
@@ -75,8 +75,8 @@ pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 // Clean corrupted version files for the remote repo
 pub async fn clean(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
     let version_store = repo.version_store()?;
     let result = version_store.clean_corrupted_versions(false).await?;
@@ -116,8 +116,8 @@ pub async fn download(
     query: web::Query<ImgResize>,
 ) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let version_store = repo.version_store()?;
     let resource = parse_resource(&req, &repo)?;
@@ -183,8 +183,8 @@ pub async fn batch_download(
     mut body: web::Payload,
 ) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
 
     let mut bytes = web::BytesMut::new();
@@ -485,8 +485,8 @@ pub async fn batch_upload(
 ) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
     let err_files = save_multiparts(payload, &repo).await?;
     log::debug!("batch upload complete with err_files: {}", err_files.len());

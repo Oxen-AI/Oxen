@@ -29,9 +29,9 @@ use liboxen::view::merge::{
 )]
 pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let base_head = path_param(&req, "base_head")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
+    let base_head = path_param(&req, "base_head")?.to_string();
 
     // Get the repository or return error
     let repository = get_repo(&app_data.path, namespace, name)?;
@@ -88,9 +88,9 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
 )]
 pub async fn merge(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let base_head = path_param(&req, "base_head")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
+    let base_head = path_param(&req, "base_head")?.to_string();
 
     // Get the repository or return error
     let repo = get_repo(&app_data.path, namespace, name)?;

@@ -43,7 +43,7 @@ use utoipa;
 )]
 pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
 
     let namespace_path = &app_data.path.join(&namespace);
 
@@ -79,8 +79,8 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 )]
 pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
 
     // Get the repository or return error
     let repository = get_repo(&app_data.path, &namespace, &name)?;
@@ -136,8 +136,8 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
 pub async fn stats(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
-    let namespace: Option<&str> = req.match_info().get("namespace");
-    let name: Option<&str> = req.match_info().get("repo_name");
+    let namespace: Option<&str> = path_param(&req, "namespace").ok();
+    let name: Option<&str> = path_param(&req, "repo_name").ok();
     if let (Some(name), Some(namespace)) = (name, namespace) {
         match repositories::get_by_namespace_and_name(&app_data.path, namespace, name) {
             Ok(Some(repo)) => {
@@ -194,8 +194,8 @@ pub async fn stats(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 )]
 pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
 
     let repository = get_repo(&app_data.path, &namespace, &name)?;
     repositories::size::update_size(&repository)?;
@@ -220,8 +220,8 @@ pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
 )]
 pub async fn get_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
 
     let repository = get_repo(&app_data.path, &namespace, &name)?;
     let size = repositories::size::get_size(&repository)?;
@@ -506,8 +506,8 @@ async fn handle_multipart_creation(
 )]
 pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
 
     let Ok(repository) = get_repo(&app_data.path, &namespace, &name) else {
         return Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()));
@@ -551,8 +551,8 @@ pub async fn transfer_namespace(
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     // Parse body
-    let from_namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
+    let from_namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
     let data: NamespaceView = serde_json::from_str(&body)?;
     let to_namespace = data.namespace;
 

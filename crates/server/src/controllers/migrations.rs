@@ -12,7 +12,7 @@ use crate::{
 pub async fn list_unmigrated(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     log::debug!("in the list_unmigrated controller");
     let app_data = app_data(&req)?;
-    let migration_tstamp = path_param(&req, "migration_tstamp")?;
+    let migration_tstamp = path_param(&req, "migration_tstamp")?.to_string();
 
     let unmigrated_repos =
         migrations::list_unmigrated(&app_data.path, migration_tstamp.to_string())?;

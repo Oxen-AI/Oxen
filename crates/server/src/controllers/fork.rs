@@ -33,8 +33,8 @@ pub async fn fork(
 ) -> Result<HttpResponse, OxenHttpError> {
     log::debug!("Forking repository with request: {req:?}");
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
 
     let original_repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
@@ -76,8 +76,8 @@ pub async fn fork(
 )]
 pub async fn get_status(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
 
     log::debug!("Getting fork status for repo: {namespace}/{repo_name}");
 

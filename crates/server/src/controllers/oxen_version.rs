@@ -1,4 +1,4 @@
-use crate::params::app_data;
+use crate::params::{app_data, path_param};
 use actix_web::{HttpRequest, HttpResponse};
 use liboxen::constants::MIN_OXEN_VERSION;
 use liboxen::repositories;
@@ -39,8 +39,8 @@ struct ResolveResponse {
 pub async fn resolve(req: HttpRequest) -> HttpResponse {
     let app_data = app_data(&req).unwrap();
 
-    let namespace: Option<&str> = req.match_info().get("namespace");
-    let name: Option<&str> = req.match_info().get("repo_name");
+    let namespace: Option<&str> = path_param(&req, "namespace").ok();
+    let name: Option<&str> = path_param(&req, "repo_name").ok();
     if let (Some(name), Some(namespace)) = (name, namespace) {
         match repositories::get_by_namespace_and_name(&app_data.path, namespace, name) {
             Ok(Some(_)) => match req.url_for("repo_root", [namespace, name]) {

@@ -20,9 +20,9 @@ use liboxen::view::{
 pub async fn create(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(&app_data.path, namespace.clone(), repo_name.clone())?;
     let file_path = PathBuf::from(path_param(&req, "path")?);
 
@@ -88,13 +88,13 @@ pub async fn create(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
 pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    let file_path = path_param(&req, "path")?;
-    let row_id = path_param(&req, "row_id")?;
+    let file_path = path_param(&req, "path")?.to_string();
+    let row_id = path_param(&req, "row_id")?.to_string();
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
@@ -131,10 +131,10 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
-    let row_id = path_param(&req, "row_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
+    let row_id = path_param(&req, "row_id")?.to_string();
 
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
@@ -192,10 +192,10 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
 pub async fn delete(req: HttpRequest, _bytes: Bytes) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
-    let row_id = path_param(&req, "row_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
+    let row_id = path_param(&req, "row_id")?.to_string();
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
@@ -229,10 +229,10 @@ pub async fn delete(req: HttpRequest, _bytes: Bytes) -> Result<HttpResponse, Oxe
 pub async fn restore(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
-    let row_id = path_param(&req, "row_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
+    let row_id = path_param(&req, "row_id")?.to_string();
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
@@ -272,9 +272,9 @@ pub async fn restore(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 pub async fn batch_update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
 
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 

@@ -76,14 +76,14 @@ fn get_app_data(req: &HttpRequest) -> Result<&OxenAppData, OxenHttpError> {
 ///
 /// Also logs the parameter & value to the currently active tracing span as "http.path.{param}".
 /// The tracing span is unmodified if the parameter is not found in the request.
-pub fn path_param(request: &HttpRequest, param: &str) -> Result<String, OxenHttpError> {
+pub fn path_param<'a>(request: &'a HttpRequest, param: &str) -> Result<&'a str, OxenHttpError> {
     let value = request
         .match_info()
         .get(param)
         .ok_or_else(|| OxenHttpError::PathParamDoesNotExist(param.into()))?;
 
     tracing::Span::current().record("http.path.{param}", value);
-    Ok(value.to_string())
+    Ok(value)
 }
 
 /// Dynamically accesses a query parameter by name.
@@ -92,10 +92,10 @@ pub fn path_param(request: &HttpRequest, param: &str) -> Result<String, OxenHttp
 ///
 /// Also logs the parameter & value to the currently active tracing span as "http.query.{param}".
 /// The tracing span is unmodified if the parameter is not found in the request.
-pub fn query_param(request: &HttpRequest, param: &str) -> String {
+pub fn query_param<'a>(request: &'a HttpRequest, param: &str) -> &'a str {
     let value = request.match_info().query(param);
     tracing::Span::current().record("http.query.{param}", value);
-    value.to_string()
+    value
 }
 
 fn decode_resource_path(resource_path_str: &str) -> String {

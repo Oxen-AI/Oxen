@@ -31,8 +31,8 @@ pub async fn download_data_from_version_paths(
     mut body: web::Payload,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
 
     let mut bytes = web::BytesMut::new();
@@ -101,8 +101,8 @@ pub async fn download_chunk(
     query: web::Query<ChunkQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
     let resource = parse_resource(&req, &repo)?;
     let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
@@ -138,9 +138,9 @@ pub async fn list_tabular(
     query: web::Query<PageNumQuery>,
 ) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let commit_or_branch = path_param(&req, "commit_or_branch")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let commit_or_branch = path_param(&req, "commit_or_branch")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     let commit = repositories::revisions::get(&repo, &commit_or_branch)?
         .ok_or_else(|| OxenError::RevisionNotFound(commit_or_branch.into()))?;

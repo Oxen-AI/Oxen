@@ -26,9 +26,9 @@ pub async fn upload(
     mut body: web::Payload,
 ) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let version_id = path_param(&req, "version_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let version_id = path_param(&req, "version_id")?.to_string();
 
     let offset = query.offset.unwrap_or(0);
 
@@ -66,9 +66,9 @@ pub async fn upload(
 
 pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let version_id = path_param(&req, "version_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let version_id = path_param(&req, "version_id")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     log::debug!("/complete version chunk upload to repo: {:?}", repo.path);
@@ -152,9 +152,9 @@ pub async fn download(
     query: web::Query<ChunkQuery>,
 ) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let version_id = path_param(&req, "version_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let version_id = path_param(&req, "version_id")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     let offset = query.offset.unwrap_or(0);

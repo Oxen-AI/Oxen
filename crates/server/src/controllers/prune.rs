@@ -40,8 +40,8 @@ pub async fn prune(
     body: web::Json<PruneRequest>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
 
     // Get the repository
     let repository = get_repo(&app_data.path, &namespace, &repo_name)?;
