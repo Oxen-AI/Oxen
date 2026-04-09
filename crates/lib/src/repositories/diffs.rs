@@ -1933,7 +1933,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             util::fs::write_to_path(&file2, "hello\nhi\nhow are you doing?")?;
 
             let opts = DiffOpts {
-                repo_dir: Some(dir.canonicalize()?),
+                repo_dir: Some(util::fs::canonicalize(&dir)?),
                 path_1: file1,
                 path_2: Some(file2),
                 keys: vec![],

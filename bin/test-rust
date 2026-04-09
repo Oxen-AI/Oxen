@@ -52,6 +52,41 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
 SERVER_PID=""
+RAMDISK_DEV=""
+
+# Create a ramdisk for test data. On macOS this creates an APFS RAM disk via
+# hdiutil; on Linux it uses /dev/shm (tmpfs). Falls back to the regular
+# filesystem if ramdisk creation fails.
+setup_ramdisk() {
+    local size_mb=4096
+    if [ "$(uname)" = "Darwin" ]; then
+        local sectors=$(( size_mb * 2048 ))  # 512-byte sectors
+        local vol_name="OxenTest_$$"
+        RAMDISK_DEV=$(hdiutil attach -nomount "ram://$sectors" 2>/dev/null | xargs) || return 1
+        diskutil eraseDisk APFS "$vol_name" "$RAMDISK_DEV" >/dev/null 2>&1 || {
+            hdiutil detach "$RAMDISK_DEV" 2>/dev/null
+            RAMDISK_DEV=""
+            return 1
+        }
+        RAMDISK_PATH="/Volumes/$vol_name"
+    else
+        RAMDISK_PATH=$(mktemp -d /dev/shm/oxen_test_XXXXXX 2>/dev/null) || return 1
+    fi
+
+    export OXEN_TEST_RUN_DIR="$RAMDISK_PATH/test"
+    export SYNC_DIR="$RAMDISK_PATH/sync"
+    mkdir -p "$OXEN_TEST_RUN_DIR" "$SYNC_DIR"
+    echo "==> Ramdisk at $RAMDISK_PATH"
+}
+
+cleanup_ramdisk() {
+    if [ "$(uname)" = "Darwin" ] && [ -n "$RAMDISK_DEV" ]; then
+        echo "==> Detaching ramdisk $RAMDISK_DEV..."
+        hdiutil detach "$RAMDISK_DEV" -force 2>/dev/null || true
+    elif [ -n "${RAMDISK_PATH:-}" ] && [[ "${RAMDISK_PATH:-}" == /dev/shm/* ]]; then
+        rm -rf "$RAMDISK_PATH"
+    fi
+}
 
 cleanup() {
     if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
@@ -69,15 +104,18 @@ cleanup() {
         echo "==> Removing test data..."
         rm -rf ./data/ox
         rm -rf ./data/test/runs
-        if [ -n "${OXEN_TEST_RUN_DIR:-}" ]; then
-            rm -rf "$OXEN_TEST_RUN_DIR"
-        fi
+        cleanup_ramdisk
     else
         echo "==> Keeping test data in data/ox and data/test/runs"
     fi
 }
 
 trap cleanup EXIT INT TERM
+
+# Set up ramdisk for test data
+if ! setup_ramdisk; then
+    echo "==> Ramdisk setup failed, using regular filesystem."
+fi
 
 # Ensure all prerequisites are installed
 if [ "$SKIP_DEPS" = false ]; then

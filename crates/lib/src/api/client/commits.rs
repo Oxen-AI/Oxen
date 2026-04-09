@@ -329,9 +329,8 @@ pub async fn download_dir_hashes_from_url(
             // }
 
             log::debug!("unpacking to {full_unpacked_path:?}");
-            let archive_result = archive.unpack(&full_unpacked_path).await;
-            log::debug!("archive_result for url {url} is {archive_result:?}");
-            archive_result?;
+            util::fs::unpack_async_tar_archive(archive, full_unpacked_path).await?;
+            log::debug!("archive_result for url {url} is ok");
 
             // if !full_unpacked_path.exists() {
             //     log::debug!("{} creating {:?}", current_function!(), full_unpacked_path);
@@ -407,9 +406,8 @@ pub async fn download_dir_hashes_db_to_path(
             // create the temp path if it doesn't exist
             util::fs::create_dir_all(&tmp_path)?;
 
-            let archive_result = archive.unpack(&tmp_path).await;
-            log::debug!("archive_result for commit {commit_id:?} is {archive_result:?}");
-            archive_result?;
+            util::fs::unpack_async_tar_archive(archive, &tmp_path).await?;
+            log::debug!("archive_result for commit {commit_id:?} is ok");
 
             if full_unpacked_path.exists() {
                 log::debug!(
