@@ -1260,6 +1260,10 @@ async fn unpack_entry_tarball_async(
                     _ => continue,
                 }
             }
+            // Skip empty paths (e.g. entries that were only "." or "/")
+            if dest == hidden_dir {
+                continue;
+            }
             if let Some(parent) = dest.parent() {
                 util::fs::create_dir_all(parent)?;
             }
