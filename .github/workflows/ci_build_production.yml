@@ -208,7 +208,7 @@ jobs:
           SERVICES=$(curl -sf http://localhost:16686/api/services)
           echo "Jaeger services: $SERVICES"
 
-          local did_fail=false
+          did_fail=false
 
           if ! echo "$SERVICES" | jq -e '.data | index("oxen-server")' > /dev/null 2>&1; then
             echo "FAIL: 'oxen-server' not found in Jaeger services"
