@@ -73,6 +73,7 @@ fn get_app_data(req: &HttpRequest) -> Result<&OxenAppData, OxenHttpError> {
 }
 
 /// Dynamically access a path parameter by name.
+///
 /// Also logs the parameter & value to the currently active tracing span as "http.path.{param}".
 /// The tracing span is unmodified if the parameter is not found in the request.
 pub fn path_param(req: &HttpRequest, param: &str) -> Result<String, OxenHttpError> {
@@ -86,16 +87,15 @@ pub fn path_param(req: &HttpRequest, param: &str) -> Result<String, OxenHttpErro
 }
 
 /// Dynamically accesses a query parameter by name.
+///
+/// Unlike path params, this returns an empty string if the query parameter is not found in the request.
+///
 /// Also logs the parameter & value to the currently active tracing span as "http.query.{param}".
 /// The tracing span is unmodified if the parameter is not found in the request.
-pub fn query_param(req: &HttpRequest, param: &str) -> Result<String, OxenHttpError> {
+pub fn query_param(req: &HttpRequest, param: &str) -> String {
     let value = req.match_info().query(param);
-    if value.is_empty() {
-        Err(OxenHttpError::QueryParamDoesNotExist(param.into()))
-    } else {
-        tracing::Span::current().record("http.query.{param}", value);
-        Ok(value.to_string())
-    }
+    tracing::Span::current().record("http.query.{param}", value);
+    value.to_string()
 }
 
 fn decode_resource_path(resource_path_str: &str) -> String {
@@ -108,7 +108,7 @@ pub fn parse_resource(
     req: &HttpRequest,
     repo: &LocalRepository,
 ) -> Result<ParsedResource, OxenHttpError> {
-    let resource: PathBuf = PathBuf::from(req.match_info().query("resource"));
+    let resource: PathBuf = PathBuf::from(query_param(req, "resource"));
     let resource_path_str = resource.to_string_lossy();
 
     // Decode the URL, handling both %20 and + as spaces
