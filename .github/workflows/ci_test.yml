@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 jobs:
-  rust-tests:
-    name: Rust Tests
+  test:
+    name: Test Suite
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -71,7 +71,6 @@ jobs:
           cache: true # This is the default--making it explicit. This uses Swatinem/rust-cache under the hood.
           cache-all-crates: true
           cache-workspace-crates: true
-          cache-key: rust
 
       - name: Install uv
         uses: astral-sh/setup-uv@v8.0.0
@@ -148,128 +147,25 @@ jobs:
           uv sync
           uv run pytest tests -v
 
-  python-tests:
-    name: Python Tests
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        shell: ${{ matrix.shell }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-x64-8cpu-32ram-300ssd]
-        include:
-          - os: ubuntu-latest
-            platform: linux
-            shell: bash -leo pipefail {0}
-          - os: macos-latest
-            platform: macos
-            shell: bash -leo pipefail {0}
-          - os: windows-x64-8cpu-32ram-300ssd
-            platform: windows
-            shell: powershell
-      fail-fast: false
-
-    steps:
-      - name: Free up disk space
-        if: matrix.platform == 'linux'
-        run: |
-          echo "=== Before cleanup ==="
-          df -h
-
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/share/swift
-          sudo rm -rf /usr/local/share/powershell
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo apt-get clean
-
-          echo "=== After cleanup ==="
-          df -h
-
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ env.AWS_ROLE }}
-          role-duration-seconds: 3600
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Setup Rust Toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          rustflags: ${{ matrix.platform == 'windows' && '-D warnings -C link-arg=/DEBUG:NONE' || '-D warnings' }}
-          cache: true
-          cache-all-crates: true
-          cache-workspace-crates: true
-          cache-key: python
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.0.0
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies (macOS)
-        if: matrix.platform == 'macos'
-        run: |
-          brew update
-          brew install redis pkg-config
-          brew services start redis
-
+      # Oxen Python Tests
       - name: Setup Python venv
         run: |
           cd ${{ github.workspace }}/oxen-python
           uv sync --no-install-project
 
-      # maturin compiles liboxen and all shared deps for the Python extension (dev profile).
-      # cargo build then (hopefully) reuses those artifacts and only links the CLI/server binaries.
-      - name: Build oxen (Linux/macOS)
+      - name: Build Python extension (Linux/macOS)
         if: matrix.platform != 'windows'
         run: |
           cd ${{ github.workspace }}/oxen-python
           source .venv/bin/activate
           maturin develop
-          cargo build -p oxen-cli -p oxen-server
 
-      - name: Build oxen (Windows)
+      - name: Build Python extension (Windows)
         if: matrix.platform == 'windows'
         run: |
           cd ${{ github.workspace }}\oxen-python
           .venv\Scripts\Activate.ps1
           maturin develop
-          cargo build -p oxen-cli -p oxen-server
-
-      - name: Setup test directories (Linux/macOS)
-        if: matrix.platform != 'windows'
-        run: |
-          mkdir -p data/test/runs
-          mkdir -p /tmp/oxen_sync/
-
-      - name: Setup test directories (Windows)
-        if: matrix.platform == 'windows'
-        run: |
-          mkdir .\data\test\runs
-
-      - name: Setup oxen-server user (Linux/macOS)
-        if: matrix.platform != 'windows'
-        run: |
-          ./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
-          cp user_config.toml data/test/config/user_config.toml
-
-      - name: Setup oxen-server user (Windows)
-        if: matrix.platform == 'windows'
-        run: |
-          .\target\debug\oxen-server.exe add-user --email ox@oxen.ai --name Ox --output user_config.toml
-          copy user_config.toml data\test\config\user_config.toml
-
-      - name: Start oxen-server (Linux/macOS)
-        if: matrix.platform != 'windows'
-        run: ./target/debug/oxen-server start &
-
-      - name: Start oxen-server (Windows)
-        if: matrix.platform == 'windows'
-        run: Start-Process ".\target\debug\oxen-server.exe" -ArgumentList "start"
 
       - name: Configure oxen user (Linux/macOS)
         if: matrix.platform != 'windows'
