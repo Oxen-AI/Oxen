@@ -409,6 +409,25 @@ async fn push_commits(
         })
         .collect::<Result<Vec<(Commit, PushCommitInfo)>, OxenError>>()?;
 
+    // Spot-check that file data exists locally before pushing. A shallow clone
+    // has merkle tree metadata for all commits but only the version store files
+    // for the commits that were fetched. Checking one file per commit is enough:
+    // fetch operates at the commit level, so either all or none of a commit's
+    // unique files will be present.
+    let version_store = repo.version_store()?;
+    for (commit, info) in &commits_with_info {
+        if let Some(entry) = info.unique_file_hashes.first()
+            && !version_store.version_exists(&entry.hash()).await?
+        {
+            return Err(OxenError::basic_str(format!(
+                "Cannot push commit '{}' (\"{}\"): file data is not available locally.\n\
+                 This usually means the repository was cloned without full history.\n\
+                 Run `oxen pull --all` to fetch all data, then try again.",
+                commit.id, commit.message
+            )));
+        }
+    }
+
     let total_bytes = commits_with_info
         .iter()
         .map(|(_, info)| info.total_bytes)
@@ -508,6 +527,7 @@ pub async fn push_entries(
         commit.id,
         commit.message
     );
+
     // Some files may be much larger than others....so we can't just zip them up and send them
     // since bodies will be too big. Hence we chunk and send the big ones, and bundle and send the small ones
 
