@@ -109,32 +109,17 @@ pub async fn merge(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     let base_commit = repositories::commits::get_by_id(&repo, &base_branch.commit_id)?.unwrap();
     let head_commit = repositories::commits::get_by_id(&repo, &head_branch.commit_id)?.unwrap();
 
-    // Check if mergeable
-    match repositories::merge::merge_into_base(&repo, &head_branch, &base_branch).await {
-        Ok(Some(merge_commit)) => {
-            // If the merge was successful, update the branch
-            repositories::branches::update(&repo, &base_branch.name, &merge_commit.id)?;
+    let merge_commit =
+        repositories::merge::merge_into_base(&repo, &head_branch, &base_branch).await?;
 
-            let response = MergeSuccessResponse {
-                status: StatusMessage::resource_found(),
-                commits: MergeResult {
-                    base: base_commit,
-                    head: head_commit,
-                    merge: merge_commit,
-                },
-            };
+    let response = MergeSuccessResponse {
+        status: StatusMessage::resource_found(),
+        commits: MergeResult {
+            base: base_commit,
+            head: head_commit,
+            merge: merge_commit,
+        },
+    };
 
-            Ok(HttpResponse::Ok().json(response))
-        }
-        Ok(None) => {
-            log::debug!("Merge has conflicts");
-            Err(OxenError::UpstreamMergeConflict(
-                format!("Unable to merge {head} into {base} due to conflicts.").into(),
-            ))?
-        }
-        Err(err) => {
-            log::debug!("Err merging branches {err:?}");
-            Ok(HttpResponse::InternalServerError().json(StatusMessage::internal_server_error()))
-        }
-    }
+    Ok(HttpResponse::Ok().json(response))
 }
