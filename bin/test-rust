@@ -63,6 +63,9 @@ cleanup() {
         echo "==> Removing test data..."
         rm -rf ./data/ox
         rm -rf ./data/test/runs
+        if [ -n "${OXEN_TEST_RUN_DIR:-}" ]; then
+            rm -rf "$OXEN_TEST_RUN_DIR"
+        fi
     else
         echo "==> Keeping test data in data/ox and data/test/runs"
     fi
