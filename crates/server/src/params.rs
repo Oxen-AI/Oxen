@@ -82,7 +82,7 @@ pub fn path_param<'a>(request: &'a HttpRequest, param: &str) -> Result<&'a str, 
         .get(param)
         .ok_or_else(|| OxenHttpError::PathParamDoesNotExist(param.into()))?;
 
-    tracing::Span::current().record("http.path.{param}", value);
+    tracing::Span::current().record(format!("http.path.{param}").as_str(), value);
     Ok(value)
 }
 
@@ -94,7 +94,7 @@ pub fn path_param<'a>(request: &'a HttpRequest, param: &str) -> Result<&'a str, 
 /// The tracing span is unmodified if the parameter is not found in the request.
 pub fn query_param<'a>(request: &'a HttpRequest, param: &str) -> &'a str {
     let value = request.match_info().query(param);
-    tracing::Span::current().record("http.query.{param}", value);
+    tracing::Span::current().record(format!("http.query.{param}").as_str(), value);
     value
 }
 
