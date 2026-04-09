@@ -215,7 +215,10 @@ async fn push_missing_files(
         let commit = repositories::commits::get_by_id(repo, commit_id)?
             .ok_or_else(|| OxenError::commit_id_does_not_exist(commit_id))?;
         list_and_push_missing_files(repo, remote_repo, None, &commit).await?;
-    } else if head_commit.id == latest_remote_commit.clone().unwrap().id {
+    } else if latest_remote_commit
+        .as_ref()
+        .is_some_and(|rc| head_commit.id == rc.id)
+    {
         //both remote and local are at same commit
 
         let history = repositories::commits::list_from(repo, &head_commit.id)?;
@@ -243,6 +246,18 @@ async fn list_and_push_missing_files(
             .iter()
             .map(|e| Entry::CommitEntry(e.clone()))
             .collect::<Vec<Entry>>();
+
+    if let Some(entry) = missing_files.first() {
+        let version_store = repo.version_store()?;
+        if !version_store.version_exists(&entry.hash()).await? {
+            return Err(OxenError::basic_str(format!(
+                "Cannot push missing files for commit '{}' (\"{}\"): file data is not available locally.\n\
+                 This usually means the repository was cloned without full history.\n\
+                 To repair the remote, re-run this command from a clone that has the full history.",
+                head_commit.id, head_commit.message
+            )));
+        }
+    }
 
     let total_bytes = missing_files.iter().map(|e| e.num_bytes()).sum();
 
