@@ -82,7 +82,6 @@ pub fn path_param(req: &HttpRequest, param: &str) -> Result<String, OxenHttpErro
         .ok_or_else(|| OxenHttpError::PathParamDoesNotExist(param.into()))?;
 
     tracing::Span::current().record("http.path.{param}", value);
-
     Ok(value.to_string())
 }
 
@@ -95,7 +94,6 @@ pub fn query_param(req: &HttpRequest, param: &str) -> Result<String, OxenHttpErr
         Err(OxenHttpError::QueryParamDoesNotExist(param.into()))
     } else {
         tracing::Span::current().record("http.query.{param}", value);
-
         Ok(value.to_string())
     }
 }
