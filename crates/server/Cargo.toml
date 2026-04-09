@@ -18,7 +18,7 @@ name = "oxen-server"
 path = "src/main.rs"
 
 [features]
-default = ["otel"]
+default = []
 otel = ["liboxen/otel", "dep:tracing-opentelemetry"]
 production = ["otel", "liboxen/production", "default"]
 
