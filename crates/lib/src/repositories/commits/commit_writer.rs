@@ -151,7 +151,6 @@ pub fn commit_with_cfg(
             parent_ids,
             dir_entries,
             &new_commit,
-            staged_db,
             &commit_progress_bar,
             maybe_branch_name
                 .clone()
@@ -159,14 +158,13 @@ pub fn commit_with_cfg(
         )?
     } else {
         log::debug!("no parent ids, committing new");
-        commit_dir_entries_new(
-            repo,
-            dir_entries,
-            &new_commit,
-            staged_db,
-            &commit_progress_bar,
-        )?
+        commit_dir_entries_new(repo, dir_entries, &new_commit, &commit_progress_bar)?
     };
+
+    // Clear the staged db
+    let staged_db_path = staged_db.path().to_owned();
+    drop(staged_db);
+    util::fs::remove_dir_all(staged_db_path)?;
 
     // Write HEAD file and update branch
     let head_path = util::fs::oxen_hidden_dir(&repo.path).join(HEAD_FILE);
@@ -202,7 +200,6 @@ pub fn commit_dir_entries_with_parents(
     parent_commits: Vec<String>,
     dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
     new_commit: &NewCommitBody,
-    staged_db: DBWithThreadMode<SingleThreaded>,
     commit_progress_bar: &ProgressBar,
     target_branch: impl AsRef<str>,
 ) -> Result<Commit, OxenError> {
@@ -301,13 +298,6 @@ pub fn commit_dir_entries_with_parents(
     )?;
     commit_progress_bar.finish_and_clear();
 
-    // Clear the staged db
-    // Close the connection before removing the staged db
-    let staged_db_path = staged_db.path().to_owned();
-    drop(staged_db);
-
-    // Clear the staged db
-    util::fs::remove_dir_all(staged_db_path)?;
     Ok(node.to_commit())
 }
 
@@ -315,7 +305,6 @@ pub fn commit_dir_entries_new(
     repo: &LocalRepository,
     dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
     new_commit: &NewCommitBody,
-    staged_db: DBWithThreadMode<SingleThreaded>,
     commit_progress_bar: &ProgressBar,
 ) -> Result<Commit, OxenError> {
     let message = &new_commit.message;
@@ -408,13 +397,6 @@ pub fn commit_dir_entries_new(
 
     // Remove all the directories that are staged for removal
     cleanup_rm_dirs(&dir_hash_db, &dir_entries)?;
-
-    // Close the connection before removing the staged db
-    let staged_db_path = staged_db.path().to_owned();
-    drop(staged_db);
-
-    // Clear the staged db
-    util::fs::remove_dir_all(staged_db_path)?;
 
     Ok(node.to_commit())
 }
@@ -1043,13 +1025,9 @@ fn compute_dir_node(
         "Aggregating dir {path:?} for [{commit_id}] with {children:?} children num_bytes {num_bytes:?} data_type_counts {data_type_counts:?}"
     );
     let head_commit_maybe = repositories::commits::head_commit_maybe(repo)?;
-    if let Some(head_commit) = head_commit_maybe
-        && let Ok(Some(old_dir_node)) = repositories::tree::get_dir_without_children(
-            repo,
-            &head_commit,
-            &path,
-            Some(dir_hashes),
-        )
+    if let Some(ref head_commit) = head_commit_maybe
+        && let Ok(Some(old_dir_node)) =
+            repositories::tree::get_dir_without_children(repo, head_commit, &path, Some(dir_hashes))
     {
         let old_dir_node = old_dir_node.dir().unwrap();
         num_entries = old_dir_node.num_entries();
@@ -1109,6 +1087,26 @@ fn compute_dir_node(
                                     .entry(file_node.data_type().to_string())
                                     .or_insert(0) += file_node.num_bytes();
                             }
+                            StagedEntryStatus::Modified => {
+                                // The old size is already included in
+                                // num_bytes/data_type_sizes from the parent commit.
+                                // Look up the old file to compute the delta.
+                                if let Some(head) = &head_commit_maybe
+                                    && let Some(old_file) = repositories::tree::get_file_by_path(
+                                        repo,
+                                        head,
+                                        path.join(file_node.name()),
+                                    )?
+                                {
+                                    let delta =
+                                        file_node.num_bytes() as i64 - old_file.num_bytes() as i64;
+                                    num_bytes = (num_bytes as i64 + delta) as u64;
+                                    let size_entry = data_type_sizes
+                                        .entry(file_node.data_type().to_string())
+                                        .or_insert(0);
+                                    *size_entry = (*size_entry as i64 + delta) as u64;
+                                }
+                            }
                             _ => {
                                 // Do nothing
                             }
@@ -1129,22 +1127,21 @@ fn compute_dir_node(
                 EMerkleTreeNode::Directory(_) => {
                     // Do nothing
                 }
-                EMerkleTreeNode::File(_) => {
-                    // log::debug!(
-                    //     "Updating hash for file {} -> hash {} status {:?}",
-                    //     file_node.name(),
-                    //     file_node.hash(),
-                    //     entry.status
-                    // );
-
-                    match entry.status {
-                        StagedEntryStatus::Removed => {
-                            if path == *child {
-                                num_entries -= 1;
-                            }
+                EMerkleTreeNode::File(file_node) => {
+                    if entry.status == StagedEntryStatus::Removed {
+                        if path == *child {
+                            num_entries -= 1;
                         }
-                        _ => {
-                            // Do nothing
+                        num_bytes = num_bytes.saturating_sub(file_node.num_bytes());
+                        if let Some(count) =
+                            data_type_counts.get_mut(&file_node.data_type().to_string())
+                        {
+                            *count = count.saturating_sub(1);
+                        }
+                        if let Some(size) =
+                            data_type_sizes.get_mut(&file_node.data_type().to_string())
+                        {
+                            *size = size.saturating_sub(file_node.num_bytes());
                         }
                     }
                 }

@@ -4,14 +4,16 @@ pub use crate::core::merge::node_merge_conflict_db_reader::NodeMergeConflictDBRe
 use crate::core::merge::node_merge_conflict_reader::NodeMergeConflictReader;
 use crate::core::merge::{db_path, node_merge_conflict_writer};
 use crate::core::refs::with_ref_manager;
+use crate::core::v_latest::add;
 use crate::core::v_latest::commits::{get_commit_or_head, list_between};
-use crate::core::v_latest::{add, rm};
 use crate::error::OxenError;
+use crate::model::StagedEntryStatus;
 use crate::model::merge_conflict::NodeMergeConflict;
+use crate::model::merkle_tree::node::StagedMerkleTreeNode;
+use crate::model::merkle_tree::node::file_node::FileNode;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
 use crate::model::{Branch, Commit, LocalRepository};
 use crate::model::{MerkleHash, PartialNode};
-use crate::opts::RmOpts;
 use crate::repositories;
 use crate::repositories::commits::commit_writer;
 use crate::repositories::merge::MergeCommits;
@@ -42,6 +44,15 @@ impl MergeResult {
             cannot_overwrite_entries: vec![],
         }
     }
+}
+
+/// Result of a three-way merge conflict analysis. Contains both the conflicts found and the files
+/// from the merge branch that should be included in the merge result.
+pub struct MergeConflictAnalysis {
+    pub conflicts: Vec<NodeMergeConflict>,
+    /// Files added, modified, or deleted on the merge branch (relative to LCA) that should be
+    /// applied to the base tree. Each entry carries its `StagedEntryStatus`.
+    pub entries: Vec<(PathBuf, FileNode, StagedEntryStatus)>,
 }
 
 pub async fn has_conflicts(
@@ -79,13 +90,10 @@ pub async fn can_merge_commits(
     base_commit: &Commit,
     merge_commit: &Commit,
 ) -> Result<bool, OxenError> {
-    // If there is no common ancestor, there are no merge conflicts
-    let Some(lca) = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)? else {
-        return Ok(true);
-    };
+    let lca = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)?;
 
     let merge_commits = MergeCommits {
-        lca: Some(lca),
+        lca,
         base: base_commit.clone(),
         merge: merge_commit.clone(),
     };
@@ -95,10 +103,9 @@ pub async fn can_merge_commits(
         return Ok(true);
     }
 
-    let write_to_disk = false;
     let mut _hashes = HashSet::new();
-    let conflicts = find_merge_conflicts(repo, &merge_commits, write_to_disk, &mut _hashes).await?;
-    Ok(conflicts.is_empty())
+    let analysis = find_merge_conflicts(repo, &merge_commits, false, &mut _hashes).await?;
+    Ok(analysis.conflicts.is_empty())
 }
 
 pub async fn list_conflicts_between_branches(
@@ -159,20 +166,17 @@ pub async fn list_conflicts_between_commits(
     base_commit: &Commit,
     merge_commit: &Commit,
 ) -> Result<Vec<PathBuf>, OxenError> {
-    // If there is no common ancestor, there are no merge conflicts
-    let Some(lca) = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)? else {
-        return Ok(vec![]);
-    };
+    let lca = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)?;
 
     let merge_commits = MergeCommits {
-        lca: Some(lca),
+        lca,
         base: base_commit.clone(),
         merge: merge_commit.clone(),
     };
-    let write_to_disk = false;
     let mut _hashes = HashSet::new();
-    let conflicts = find_merge_conflicts(repo, &merge_commits, write_to_disk, &mut _hashes).await?;
-    Ok(conflicts
+    let analysis = find_merge_conflicts(repo, &merge_commits, false, &mut _hashes).await?;
+    Ok(analysis
+        .conflicts
         .iter()
         .map(|c| {
             let (_, path) = &c.base_entry;
@@ -181,35 +185,139 @@ pub async fn list_conflicts_between_commits(
         .collect())
 }
 
-/// Merge a branch into a base branch, returns the merge commit if successful, and None if there is conflicts
+/// Server-side merge: merge a branch into a base branch.
+/// Updates the base branch ref on success. Does not modify the working directory or HEAD.
+///
+/// See the docs for merge_commits for details on how three-way merging works, including definitions
+/// of the terms used.
+///
+/// # Errors
+/// - `OxenError::UpstreamMergeConflict` if the branches have conflicting changes.
+/// - Other `OxenError` variants for internal failures (missing commits, tree corruption, etc.).
 pub async fn merge_into_base(
     repo: &LocalRepository,
     merge_branch: &Branch,
     base_branch: &Branch,
-) -> Result<Option<Commit>, OxenError> {
+) -> Result<Commit, OxenError> {
     log::debug!("merge_into_base merge {merge_branch} into {base_branch}");
 
     if merge_branch.commit_id == base_branch.commit_id {
-        // If the merge branch is the same as the base branch, there is nothing to merge
-        return Ok(None);
+        return Err(OxenError::basic_str("No changes to merge"));
     }
 
     let base_commit = get_commit_or_head(repo, Some(base_branch.commit_id.clone()))?;
     let merge_commit = get_commit_or_head(repo, Some(merge_branch.commit_id.clone()))?;
 
-    let lca = lowest_common_ancestor_from_commits(repo, &base_commit, &merge_commit)?;
+    let lca = lowest_common_ancestor_from_commits(repo, &base_commit, &merge_commit)?
+        .ok_or_else(|| OxenError::basic_str("Cannot merge branches with no common ancestor"))?;
     log::debug!("merge_into_base base: {base_commit:?} merge: {merge_commit:?} lca: {lca:?}");
 
     let commits = MergeCommits {
-        lca,
+        lca: Some(lca),
         base: base_commit,
         merge: merge_commit,
     };
 
-    merge_commits(repo, &commits).await
+    let result = if commits.is_fast_forward_merge() {
+        Ok(commits.merge)
+    } else {
+        server_three_way_merge(repo, &commits).await
+    };
+
+    if let Ok(ref commit) = result {
+        repositories::branches::update(repo, &base_branch.name, &commit.id)?;
+    }
+
+    result
 }
 
-/// Merge into the current branch, returns the merge commit if successful, and None if there is conflicts
+/// Server-side three-way merge: creates a merge commit from tree data without touching the working
+/// directory. Returns `Err(UpstreamMergeConflict)` if there are conflicts.
+async fn server_three_way_merge(
+    repo: &LocalRepository,
+    merge_commits: &MergeCommits,
+) -> Result<Commit, OxenError> {
+    log::debug!(
+        "server_three_way_merge: base commit {} -> merge commit {}",
+        merge_commits.base.id,
+        merge_commits.merge.id
+    );
+
+    // 1. Find conflicts and collect merge entries in a single tree traversal
+    let mut shared_hashes = HashSet::new();
+    let analysis = find_merge_conflicts(repo, merge_commits, false, &mut shared_hashes).await?;
+
+    if !analysis.conflicts.is_empty() {
+        return Err(OxenError::UpstreamMergeConflict(
+            format!(
+                "Unable to merge {} into {} due to {} conflicts.",
+                merge_commits.merge.id,
+                merge_commits.base.id,
+                analysis.conflicts.len()
+            )
+            .into(),
+        ));
+    }
+
+    if analysis.entries.is_empty() {
+        return Err(OxenError::basic_str("No changes to commit"));
+    }
+
+    // 2. Build dir_entries HashMap (parent dir -> staged nodes) for the commit writer
+    let mut dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>> = HashMap::new();
+    for (path, file_node, status) in &analysis.entries {
+        let parent = path.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
+        dir_entries
+            .entry(parent)
+            .or_default()
+            .push(StagedMerkleTreeNode {
+                status: status.clone(),
+                node: MerkleTreeNode::from_file(file_node.clone()),
+            });
+        // Ensure all ancestor directories are present in dir_entries
+        let mut ancestor = path.to_path_buf();
+        while let Some(p) = ancestor.parent() {
+            ancestor = p.to_path_buf();
+            dir_entries.entry(ancestor.clone()).or_default();
+            if ancestor == Path::new("") {
+                break;
+            }
+        }
+    }
+
+    // TODO: This is reading the server's local user config, but we should use the user/email
+    // that initiated the merge request. If initiated from the client, the client should send it's
+    // local user. If initiated from the hub, the hub should send the user/email of the user who
+    // initiated the merge request.
+    let cfg = crate::config::UserConfig::get()?;
+    let new_commit = crate::model::NewCommitBody {
+        message: merge_commits.commit_message(),
+        author: cfg.name.clone(),
+        email: cfg.email.clone(),
+    };
+
+    let parent_ids = vec![
+        merge_commits.base.id.clone(),
+        merge_commits.merge.id.clone(),
+    ];
+
+    // Pass the base commit ID as the target revision so the existing tree comes from the base
+    // commit (revisions::get resolves commit IDs)
+    let progress = indicatif::ProgressBar::hidden();
+    let commit = commit_writer::commit_dir_entries_with_parents(
+        repo,
+        parent_ids,
+        dir_entries,
+        &new_commit,
+        &progress,
+        &merge_commits.base.id,
+    )?;
+
+    Ok(commit)
+}
+
+/// Client-side merge that alters the local checkout. Merge into the current branch. Returns the
+/// merge commit if successful, and None if there are conflicts
 pub async fn merge(
     repo: &LocalRepository,
     branch_name: impl AsRef<str>,
@@ -220,9 +328,10 @@ pub async fn merge(
 
     let base_commit = repositories::commits::head_commit(repo)?;
     let merge_commit = get_commit_or_head(repo, Some(merge_branch.commit_id.clone()))?;
-    let lca = lowest_common_ancestor_from_commits(repo, &base_commit, &merge_commit)?;
+    let lca = lowest_common_ancestor_from_commits(repo, &base_commit, &merge_commit)?
+        .ok_or_else(|| OxenError::basic_str("Cannot merge branches with no common ancestor"))?;
     let commits = MergeCommits {
-        lca,
+        lca: Some(lca),
         base: base_commit,
         merge: merge_commit,
     };
@@ -234,12 +343,13 @@ pub async fn merge_commit_into_base(
     merge_commit: &Commit,
     base_commit: &Commit,
 ) -> Result<Option<Commit>, OxenError> {
-    let lca = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)?;
+    let maybe_lca = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)?;
     log::debug!(
-        "merge_commit_into_base has lca {lca:?} for merge commit {merge_commit:?} and base {base_commit:?}"
+        "merge_commit_into_base has lca {maybe_lca:?} for merge commit {merge_commit:?} and base {base_commit:?}"
     );
+
     let commits = MergeCommits {
-        lca,
+        lca: maybe_lca,
         base: base_commit.to_owned(),
         merge: merge_commit.to_owned(),
     };
@@ -247,25 +357,42 @@ pub async fn merge_commit_into_base(
     merge_commits(repo, &commits).await
 }
 
+/// Server-side merge: merge a commit into a base commit on a specific branch.
+/// Updates the branch ref on success. Does not modify the working directory or HEAD.
+///
+/// # Errors
+/// - `OxenError::UpstreamMergeConflict` if the branches have conflicting changes.
+/// - Other `OxenError` variants for internal failures (missing commits, tree corruption, etc.).
 pub async fn merge_commit_into_base_on_branch(
     repo: &LocalRepository,
     merge_commit: &Commit,
     base_commit: &Commit,
     branch: &Branch,
-) -> Result<Option<Commit>, OxenError> {
-    let lca = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)?;
+) -> Result<Commit, OxenError> {
+    let lca = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)?
+        .ok_or_else(|| OxenError::basic_str("Cannot merge commits with no common ancestor"))?;
 
     log::debug!(
         "merge_commit_into_branch has lca {lca:?} for merge commit {merge_commit:?} and base {base_commit:?}"
     );
 
     let merge_commits = MergeCommits {
-        lca,
+        lca: Some(lca),
         base: base_commit.to_owned(),
         merge: merge_commit.to_owned(),
     };
 
-    merge_commits_on_branch(repo, &merge_commits, branch).await
+    let result = if merge_commits.is_fast_forward_merge() {
+        Ok(merge_commits.merge)
+    } else {
+        server_three_way_merge(repo, &merge_commits).await
+    };
+
+    if let Ok(ref commit) = result {
+        repositories::branches::update(repo, &branch.name, &commit.id)?;
+    }
+
+    result
 }
 
 pub fn has_file(repo: &LocalRepository, path: &Path) -> Result<bool, OxenError> {
@@ -310,82 +437,6 @@ pub fn find_merge_commits<S: AsRef<str>>(
         base: head_commit,
         merge: merge_commit,
     })
-}
-
-async fn merge_commits_on_branch(
-    repo: &LocalRepository,
-    merge_commits: &MergeCommits,
-    branch: &Branch,
-) -> Result<Option<Commit>, OxenError> {
-    // User output
-    println!(
-        "merge_commits_on_branch {} -> {}",
-        merge_commits.base.id, merge_commits.merge.id
-    );
-
-    log::debug!(
-        "FOUND MERGE COMMITS:\nLCA: {} -> {}\nBASE: {} -> {}\nMerge: {} -> {}",
-        merge_commits.lca.as_ref().map_or("None", |c| c.id.as_str()),
-        merge_commits
-            .lca
-            .as_ref()
-            .map_or("None", |c| c.message.as_str()),
-        merge_commits.base.id,
-        merge_commits.base.message,
-        merge_commits.merge.id,
-        merge_commits.merge.message,
-    );
-
-    // Check which type of merge we need to do
-    if merge_commits.is_fast_forward_merge() {
-        let commit = fast_forward_merge(repo, &merge_commits.base, &merge_commits.merge).await?;
-        Ok(commit)
-    } else {
-        log::debug!(
-            "Three way merge! {} -> {}",
-            merge_commits.base.id,
-            merge_commits.merge.id
-        );
-
-        let write_to_disk = true;
-        let mut shared_hashes = HashSet::new();
-        let conflicts =
-            find_merge_conflicts(repo, merge_commits, write_to_disk, &mut shared_hashes).await?;
-        log::debug!("Got {} conflicts", conflicts.len());
-
-        if conflicts.is_empty() {
-            log::debug!("creating merge commit on branch {branch:?}");
-            let commit =
-                create_merge_commit_on_branch(repo, merge_commits, branch, shared_hashes).await?;
-            Ok(Some(commit))
-        } else {
-            println!(
-                r"
-Found {} conflicts, please resolve them before merging.
-
-  oxen checkout --theirs path/to/file_1.txt
-  oxen checkout --ours path/to/file_2.txt
-  oxen add path/to/file_1.txt path/to/file_2.txt
-  oxen commit -m 'Merge conflict resolution'
-
-",
-                conflicts.len()
-            );
-            let db_path = db_path(repo);
-            log::debug!("Merger::new() DB {db_path:?}");
-            let opts = db::key_val::opts::default();
-            let merge_db = DB::open(&opts, dunce::simplified(&db_path))?;
-
-            node_merge_conflict_writer::write_conflicts_to_disk(
-                repo,
-                &merge_db,
-                &merge_commits.merge,
-                &merge_commits.base,
-                &conflicts,
-            )?;
-            Ok(None)
-        }
-    }
 }
 
 /// Check if HEAD is in the direct parent chain of the merge commit. If it is a direct parent, we can just fast forward
@@ -721,12 +772,10 @@ async fn merge_commits(
             merge_commits.merge.id
         );
 
-        let write_to_disk = true;
         let mut shared_hashes = HashSet::new();
-        let conflicts =
-            find_merge_conflicts(repo, merge_commits, write_to_disk, &mut shared_hashes).await?;
+        let analysis = find_merge_conflicts(repo, merge_commits, true, &mut shared_hashes).await?;
 
-        if !conflicts.is_empty() {
+        if !analysis.conflicts.is_empty() {
             println!(
                 r"
 Found {} conflicts, please resolve them before merging.
@@ -737,13 +786,13 @@ Found {} conflicts, please resolve them before merging.
   oxen commit -m 'Merge conflict resolution'
 
 ",
-                conflicts.len()
+                analysis.conflicts.len()
             );
         }
 
-        log::debug!("Got {} conflicts", conflicts.len());
+        log::debug!("Got {} conflicts", analysis.conflicts.len());
 
-        if conflicts.is_empty() {
+        if analysis.conflicts.is_empty() {
             let commit = create_merge_commit(repo, merge_commits, shared_hashes).await?;
             Ok(Some(commit))
         } else {
@@ -757,7 +806,7 @@ Found {} conflicts, please resolve them before merging.
                 &merge_db,
                 &merge_commits.merge,
                 &merge_commits.base,
-                &conflicts,
+                &analysis.conflicts,
             )?;
             Ok(None)
         }
@@ -772,11 +821,7 @@ async fn create_merge_commit(
     let base_commit = merge_commits.base.clone();
     add::add_dir_except(repo, &Some(base_commit), repo.path.clone(), shared_hashes).await?;
 
-    let commit_msg = format!(
-        "Merge commit {} into {}",
-        merge_commits.merge.id, merge_commits.base.id
-    );
-
+    let commit_msg = merge_commits.commit_message();
     log::debug!("create_merge_commit {commit_msg}");
 
     let parent_ids: Vec<String> = vec![
@@ -787,43 +832,6 @@ async fn create_merge_commit(
     let commit = commit_writer::commit_with_parent_ids(repo, &commit_msg, parent_ids)?;
 
     // rm::remove_staged(repo, &HashSet::from([PathBuf::from("/")]))?;
-
-    Ok(commit)
-}
-
-async fn create_merge_commit_on_branch(
-    repo: &LocalRepository,
-    merge_commits: &MergeCommits,
-    branch: &Branch,
-    shared_hashes: HashSet<MerkleHash>,
-) -> Result<Commit, OxenError> {
-    let base_commit = merge_commits.base.clone();
-    add::add_dir_except(repo, &Some(base_commit), repo.path.clone(), shared_hashes).await?;
-
-    let commit_msg = format!(
-        "Merge commit {} into {} on branch {}",
-        merge_commits.merge.id, merge_commits.base.id, branch.name
-    );
-
-    log::debug!("create_merge_commit_on_branch {commit_msg}");
-
-    // Create a commit with both parents
-    // let commit_writer = CommitWriter::new(repo)?;
-    let parent_ids: Vec<String> = vec![
-        merge_commits.base.id.to_owned(),
-        merge_commits.merge.id.to_owned(),
-    ];
-
-    // The author in this case is the pusher - the author of the merge commit
-
-    let commit = commit_writer::commit_with_parent_ids(repo, &commit_msg, parent_ids)?;
-    let opts = RmOpts {
-        path: PathBuf::from("/"),
-        staged: true,
-        recursive: true,
-    };
-
-    rm::remove_staged(repo, &HashSet::from([PathBuf::from("/")]), &opts)?;
 
     Ok(commit)
 }
@@ -871,13 +879,15 @@ pub fn lowest_common_ancestor_from_commits(
     }
 }
 
-/// Will try a three way merge and return conflicts if there are any to indicate that the merge was unsuccessful
+/// Analyze a three-way merge between commits. Always returns conflicts and files changed on the
+/// merge branch. When `write_to_disk` is true, also restores non-conflicting merge files to the
+/// working directory (for client-side merges).
 pub async fn find_merge_conflicts(
     repo: &LocalRepository,
     merge_commits: &MergeCommits,
     write_to_disk: bool,
     shared_hashes: &mut HashSet<MerkleHash>,
-) -> Result<Vec<NodeMergeConflict>, OxenError> {
+) -> Result<MergeConflictAnalysis, OxenError> {
     log::debug!("finding merge conflicts");
     /*
     https://en.wikipedia.org/wiki/Merge_(version_control)#Three-way_merge
@@ -902,8 +912,10 @@ pub async fn find_merge_conflicts(
     Sections that are different in all three files are marked as a conflict situation and left for the user to resolve.
     */
 
-    // We will return conflicts if there are any
+    use StagedEntryStatus::*;
+
     let mut conflicts: Vec<NodeMergeConflict> = vec![];
+    let mut entries: Vec<(PathBuf, FileNode, StagedEntryStatus)> = vec![];
     let mut entries_to_restore: Vec<FileToRestore> = vec![];
     let mut cannot_overwrite_entries: Vec<PathBuf> = vec![];
 
@@ -911,21 +923,18 @@ pub async fn find_merge_conflicts(
     let mut lca_hashes = HashSet::new();
     let mut base_hashes = HashSet::new();
 
-    // If there's no LCA, let the LCA be the base commit
-    let lca = merge_commits
-        .lca
-        .clone()
-        .unwrap_or(merge_commits.base.clone());
-
-    // Load in every node from the LCA tree
-    let lca_commit_tree = repositories::tree::get_root_with_children_and_node_hashes(
-        repo,
-        &lca,
-        None,
-        Some(&mut lca_hashes),
-        None,
-    )?
-    .unwrap();
+    // Load in every node from the LCA tree (if there is one)
+    let lca_commit_tree = if let Some(lca) = &merge_commits.lca {
+        repositories::tree::get_root_with_children_and_node_hashes(
+            repo,
+            lca,
+            None,
+            Some(&mut lca_hashes),
+            None,
+        )?
+    } else {
+        None
+    };
 
     // Then, load in only the nodes of the base commit tree that weren't in the LCA tree
     let base_commit_tree = repositories::tree::get_root_with_children_and_node_hashes(
@@ -959,61 +968,54 @@ pub async fn find_merge_conflicts(
 
     let starting_path = PathBuf::from("");
 
-    let lca_entries =
-        repositories::tree::unique_dir_entries(&starting_path, &lca_commit_tree, shared_hashes)?;
+    let lca_entries = if let Some(lca_tree) = &lca_commit_tree {
+        repositories::tree::unique_dir_entries(&starting_path, lca_tree, shared_hashes)?
+    } else {
+        HashMap::new()
+    };
     let base_entries =
         repositories::tree::unique_dir_entries(&starting_path, &base_commit_tree, shared_hashes)?;
-    let merge_entries =
+    let merge_tree_entries =
         repositories::tree::unique_dir_entries(&starting_path, &merge_commit_tree, shared_hashes)?;
 
     log::debug!("lca_entries.len() {}", lca_entries.len());
     log::debug!("base_entries.len() {}", base_entries.len());
-    log::debug!("merge_entries.len() {}", merge_entries.len());
+    log::debug!("merge_tree_entries.len() {}", merge_tree_entries.len());
 
     // Check all the entries in the candidate merge
-    for merge_entry in merge_entries.iter() {
-        let entry_path = merge_entry.0;
-        let merge_file_node = merge_entry.1;
+    for (entry_path, merge_file_node) in &merge_tree_entries {
         // log::debug!("Considering entry {}", entry_path.to_string_lossy());
         // Check if the entry exists in all 3 commits
-        if base_entries.contains_key(entry_path) {
-            let base_file_node = &base_entries[entry_path];
-            if lca_entries.contains_key(entry_path) {
-                let lca_file_node = &lca_entries[entry_path];
-                // If Base and LCA are the same but Merge is different, take merge
-                /*log::debug!(
-                    "Comparing hashes merge_entry {:?} BASE {} LCA {} MERGE {}",
-                    entry_path,
-                    merge_file_node,
-                    base_file_node,
-                    lca_file_node,
+        if let Some(base_file_node) = base_entries.get(entry_path) {
+            if let Some(lca_file_node) = lca_entries.get(entry_path) {
+                // File exists in all three trees
+                let base_eq_lca = base_file_node.combined_hash() == lca_file_node.combined_hash();
+                let base_eq_merge =
+                    base_file_node.combined_hash() == merge_file_node.combined_hash();
 
-                );*/
-                if base_file_node.combined_hash() == lca_file_node.combined_hash()
-                    && base_file_node.combined_hash() != merge_file_node.combined_hash()
-                    && write_to_disk
-                {
-                    log::debug!("top update entry");
-                    if restore::should_restore_file(
-                        repo,
-                        Some(base_file_node.clone()),
-                        merge_file_node,
-                        entry_path,
-                    )? {
-                        entries_to_restore.push(FileToRestore {
-                            file_node: merge_file_node.clone(),
-                            path: entry_path.clone(),
-                        });
-                    } else {
-                        cannot_overwrite_entries.push(merge_entry.0.clone());
+                if base_eq_lca && !base_eq_merge {
+                    // Changed only on merge branch — include in merge result
+                    entries.push((entry_path.clone(), merge_file_node.clone(), Modified));
+                    if write_to_disk {
+                        if restore::should_restore_file(
+                            repo,
+                            Some(base_file_node.clone()),
+                            merge_file_node,
+                            entry_path,
+                        )? {
+                            entries_to_restore.push(FileToRestore {
+                                file_node: merge_file_node.clone(),
+                                path: entry_path.clone(),
+                            });
+                        } else {
+                            cannot_overwrite_entries.push(entry_path.clone());
+                        }
                     }
                 }
 
                 // If all three are different, mark as conflict
-                if base_file_node.combined_hash() != lca_file_node.combined_hash()
-                    && lca_file_node.combined_hash() != merge_file_node.combined_hash()
-                    && base_file_node.combined_hash() != merge_file_node.combined_hash()
-                {
+                let lca_eq_merge = lca_file_node.combined_hash() == merge_file_node.combined_hash();
+                if !base_eq_lca && !lca_eq_merge && !base_eq_merge {
                     conflicts.push(NodeMergeConflict {
                         lca_entry: (lca_file_node.to_owned(), entry_path.to_path_buf()),
                         base_entry: (base_file_node.to_owned(), entry_path.to_path_buf()),
@@ -1021,7 +1023,7 @@ pub async fn find_merge_conflicts(
                     });
                 }
             } else {
-                // merge entry doesn't exist in LCA, so just check if it's different from base
+                // File in base and merge but not LCA — conflict if different
                 if base_file_node.combined_hash() != merge_file_node.combined_hash() {
                     conflicts.push(NodeMergeConflict {
                         lca_entry: (base_file_node.to_owned(), entry_path.to_path_buf()),
@@ -1030,29 +1032,97 @@ pub async fn find_merge_conflicts(
                     });
                 }
             }
-        } else if write_to_disk {
-            log::debug!("bottom update entry {entry_path:?}");
-            let lca_base_node = lca_commit_tree
-                .get_by_path(entry_path)?
-                .and_then(|node| node.file().ok());
+        } else {
+            // File in merge_tree_entries but not in base_entries. This could mean:
+            // (a) base actually deleted it, or
+            // (b) the file's parent dir was shared between LCA and base, so
+            //     unique_dir_entries skipped it — the file still exists in base.
+            // Look up the file in the full base commit tree (not the optimized one which
+            // skips shared directories).
+            let base_file_node =
+                repositories::tree::get_file_by_path(repo, &merge_commits.base, entry_path)?;
 
-            if lca_base_node.is_some()
-                && let Some(parent) = entry_path.parent()
-                && let Some(dir_node) = lca_commit_tree.get_by_path(parent)?
-            {
-                shared_hashes.remove(&dir_node.hash);
-            }
+            if base_file_node.is_some() {
+                // Case (b): file exists in base via a shared directory.
+                // It's changed on merge but not on base — include merge version.
+                entries.push((entry_path.clone(), merge_file_node.clone(), Modified));
+                if write_to_disk {
+                    // Remove the parent dir from shared_hashes so add_dir_except will
+                    // scan this directory when creating the merge commit.
+                    if let Some(parent) = entry_path.parent()
+                        && let Some(lca_tree) = &lca_commit_tree
+                        && let Some(dir_node) = lca_tree.get_by_path(parent)?
+                    {
+                        shared_hashes.remove(&dir_node.hash);
+                    }
 
-            if restore::should_restore_file(repo, lca_base_node, merge_file_node, entry_path)? {
-                entries_to_restore.push(FileToRestore {
-                    file_node: merge_file_node.clone(),
-                    path: entry_path.to_path_buf(),
-                });
+                    if restore::should_restore_file(
+                        repo,
+                        base_file_node,
+                        merge_file_node,
+                        entry_path,
+                    )? {
+                        entries_to_restore.push(FileToRestore {
+                            file_node: merge_file_node.clone(),
+                            path: entry_path.clone(),
+                        });
+                    } else {
+                        cannot_overwrite_entries.push(entry_path.clone());
+                    }
+                }
+            } else if let Some(lca_node) = lca_entries.get(entry_path) {
+                // Case (a): file was in LCA, base deleted it.
+                if lca_node.combined_hash() != merge_file_node.combined_hash() {
+                    // Merge modified it and base deleted it — conflict
+                    conflicts.push(NodeMergeConflict {
+                        lca_entry: (lca_node.to_owned(), entry_path.to_path_buf()),
+                        base_entry: (lca_node.to_owned(), entry_path.to_path_buf()),
+                        merge_entry: (merge_file_node.to_owned(), entry_path.to_path_buf()),
+                    });
+                }
+                // If merge didn't change it from LCA, base's deletion wins
             } else {
-                cannot_overwrite_entries.push(entry_path.clone());
+                // Truly new file on merge branch
+                entries.push((entry_path.clone(), merge_file_node.clone(), Added));
+                if write_to_disk {
+                    if restore::should_restore_file(repo, None, merge_file_node, entry_path)? {
+                        entries_to_restore.push(FileToRestore {
+                            file_node: merge_file_node.clone(),
+                            path: entry_path.to_path_buf(),
+                        });
+                    } else {
+                        cannot_overwrite_entries.push(entry_path.clone());
+                    }
+                }
             }
         }
     }
+
+    // Detect deletions: files in the LCA that are absent from the merge tree and unchanged on base.
+    // Check the full merge tree, not just merge_tree_entries, because unique_dir_entries skips
+    // files in shared directories.
+    for (entry_path, lca_file_node) in &lca_entries {
+        if merge_tree_entries.contains_key(entry_path)
+            || repositories::tree::get_file_by_path(repo, &merge_commits.merge, entry_path)?
+                .is_some()
+        {
+            continue;
+        }
+        if let Some(base_file_node) = base_entries.get(entry_path) {
+            if base_file_node.combined_hash() == lca_file_node.combined_hash() {
+                // Unchanged on base, deleted on merge — delete it
+                entries.push((entry_path.clone(), lca_file_node.clone(), Removed));
+            } else {
+                // Base modified it, merge deleted it — conflict
+                conflicts.push(NodeMergeConflict {
+                    lca_entry: (lca_file_node.to_owned(), entry_path.to_path_buf()),
+                    base_entry: (base_file_node.to_owned(), entry_path.to_path_buf()),
+                    merge_entry: (lca_file_node.to_owned(), entry_path.to_path_buf()),
+                });
+            }
+        }
+    }
+
     log::debug!("three_way_merge conflicts.len() {}", conflicts.len());
 
     // If there are no conflicts, restore the entries
@@ -1094,5 +1164,5 @@ pub async fn find_merge_conflicts(
         return Err(OxenError::cannot_overwrite_files(&cannot_overwrite_entries));
     }
 
-    Ok(conflicts)
+    Ok(MergeConflictAnalysis { conflicts, entries })
 }
