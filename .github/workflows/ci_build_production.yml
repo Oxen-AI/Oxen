@@ -121,10 +121,6 @@ jobs:
           SERVER="$GITHUB_WORKSPACE/target/debug/oxen-server"
 
           # ── Start Jaeger all-in-one ──
-          docker run -d --name jaeger \
-            -p 4317:4317 -p 16686:16686 \
-            jaegertracing/all-in-one:latest
-
           docker run --rm --name jaeger \
             -p 16686:16686 \
             -p 4317:4317 \
