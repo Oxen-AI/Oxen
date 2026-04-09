@@ -1010,14 +1010,20 @@ pub fn canonicalize(path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
     let path = path.as_ref();
     match dunce::canonicalize(path) {
         Ok(canon_path) => Ok(canon_path),
-        Err(_) => {
+        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
             // Fallback: convert to absolute path without symlink resolution.
+            // This is needed on filesystems whose drivers don't implement
+            // canonicalization (e.g. Windows imdisk ramdisks return
+            // ERROR_INVALID_FUNCTION which maps to ErrorKind::Unsupported).
             if path.is_absolute() {
                 Ok(path.to_path_buf())
             } else {
                 Ok(std::env::current_dir()?.join(path))
             }
         }
+        Err(e) => Err(OxenError::basic_str(format!(
+            "path {path:?} cannot be canonicalized: {e}"
+        ))),
     }
 }
 
