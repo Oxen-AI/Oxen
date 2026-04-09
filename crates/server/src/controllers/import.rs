@@ -305,7 +305,7 @@ async fn handle_initial_upload_zip_empty_repo(
     payload: Multipart,
     repo: &liboxen::model::LocalRepository,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let resource: PathBuf = PathBuf::from(req.match_info().query("resource"));
+    let resource: PathBuf = PathBuf::from(query_param(req, "resource"));
 
     // Parse the resource for the path and branch name
     let mut resource = resource.components();

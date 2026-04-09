@@ -478,7 +478,7 @@ pub async fn get_by_branch(
     let repo_name = path_param(&req, "repo_name")?;
     let workspace_id = path_param(&req, "workspace_id")?;
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    let branch_name: &str = req.match_info().query("branch");
+    let branch_name: &str = query_param(req, "branch");
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));

@@ -535,7 +535,7 @@ async fn handle_initial_put_empty_repo(
     form: FileUploadBody,
     repo: &liboxen::model::LocalRepository,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let resource: PathBuf = PathBuf::from(req.match_info().query("resource"));
+    let resource: PathBuf = PathBuf::from(query_param(req, "resource"));
 
     let mut resource = resource.components();
     let branch_name = resource
