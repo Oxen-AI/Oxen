@@ -16,8 +16,7 @@ use liboxen::test::init_test_env;
 
 pub fn get_sync_dir() -> Result<PathBuf, OxenError> {
     init_test_env();
-    let sync_dir =
-        liboxen::test::REPO_ROOT.join(format!("data/test/runs/{}", uuid::Uuid::new_v4()));
+    let sync_dir = liboxen::test::test_run_dir().join(uuid::Uuid::new_v4().to_string());
     util::fs::create_dir_all(&sync_dir)?;
     Ok(sync_dir)
 }
