@@ -162,11 +162,11 @@ jobs:
           RUST_LOG=info \
           "$SERVER" start &
           SERVER_PID=$!
-          sleep 3
 
+          sleep 3
           # TODO: add server health check
 
-          # ── Full push / clone / modify / push / pull workflow ──
+          # ── oxen client: Full push / clone / modify / push / pull workflow ──
 
           # Create remote repository (namespace "ox", name "otel-test")
           curl -sf -H "Authorization: Bearer $TOKEN" \
@@ -200,10 +200,35 @@ jobs:
           RUST_LOG=info \
           "$OXEN" pull
 
-          # Wait for OTel batch exporter to flush
-          sleep 10
+          # ── oxen-python OTel check ──
+
+          # Build oxen-python with OTel feature
+          cd "$GITHUB_WORKSPACE/oxen-python"
+          uv sync --no-install-project
+          source .venv/bin/activate
+          maturin develop --features "oxen-py/otel"
+
+          # Push a new change from repo-b so repo-a has something to pull
+          cd /tmp/repo-b
+          echo "another change for python test" >> test-file.txt
+          "$OXEN" add test-file.txt
+          "$OXEN" commit -m "change for python pull test"
+          "$OXEN" push origin main
+
+          # Pull from repo-a using Python with OTel enabled
+          cd /tmp/repo-a
+          OXEN_OTEL_ENDPOINT=http://localhost:4317 \
+          RUST_LOG=info \
+          "$GITHUB_WORKSPACE/oxen-python/.venv/bin/python" -c "
+          import oxen
+          repo = oxen.Repo('.')
+          repo.pull()
+          "
 
           # ── Verify traces in Jaeger ──
+
+          # Wait for OTel batch exporter to flush
+          sleep 10
 
           SERVICES=$(curl -sf http://localhost:16686/api/services)
           echo "Jaeger services: $SERVICES"
@@ -234,10 +259,17 @@ jobs:
             did_fail=true
           fi
 
+          # Verify oxen-py traces in Jaeger
+          if echo "$SERVICES" | jq -e '.data | index("oxen-py")' > /dev/null 2>&1; then
+            echo "PASS: oxen-py traces found in Jaeger"
+          else
+            echo "FAIL: oxen-py traces not found in Jaeger"
+            did_fail=true
+          fi
+
           if [ "$did_fail" = true ]; then
             exit 1
           fi
-
 
           # ── Cleanup ──
           kill "$SERVER_PID" 2>/dev/null || true
