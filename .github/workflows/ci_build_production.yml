@@ -206,7 +206,7 @@ jobs:
           cd "$GITHUB_WORKSPACE/oxen-python"
           uv sync --no-install-project
           source .venv/bin/activate
-          maturin develop --features "oxen-py/otel"
+          maturin develop --features "oxen-py/production"
 
           # Push a new change from repo-b so repo-a has something to pull
           cd /tmp/repo-b
