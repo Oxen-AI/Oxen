@@ -1287,9 +1287,8 @@ mod tests {
             repositories::checkout(&repo, &base_branch.name).await?;
 
             // Re-fetch branches to get current commit IDs
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?.unwrap();
-            let base_branch =
-                repositories::branches::get_by_name(&repo, &base_branch.name)?.unwrap();
+            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
+            let base_branch = repositories::branches::get_by_name(&repo, &base_branch.name)?;
 
             // Server-side merge: should succeed and update the branch ref
             let merge_commit =
@@ -1298,8 +1297,7 @@ mod tests {
             assert_eq!(merge_commit.id, merge_branch.commit_id);
 
             // The base branch ref should now point to the merge commit
-            let updated_branch =
-                repositories::branches::get_by_name(&repo, &base_branch.name)?.unwrap();
+            let updated_branch = repositories::branches::get_by_name(&repo, &base_branch.name)?;
             assert_eq!(updated_branch.commit_id, merge_commit.id);
 
             Ok(())
@@ -1333,9 +1331,8 @@ mod tests {
             repositories::commit(&repo, "Adding c.txt on main")?;
 
             // Re-fetch branches
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?.unwrap();
-            let base_branch =
-                repositories::branches::get_by_name(&repo, &base_branch_name)?.unwrap();
+            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
+            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
 
             // Server-side three-way merge should succeed
             let merge_commit =
@@ -1375,9 +1372,8 @@ mod tests {
             repositories::commit(&repo, "Adding bird on main")?;
 
             // Re-fetch branches
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?.unwrap();
-            let base_branch =
-                repositories::branches::get_by_name(&repo, &base_branch_name)?.unwrap();
+            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
+            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
 
             // Server-side merge should return UpstreamMergeConflict error
             let result =
@@ -1417,9 +1413,8 @@ mod tests {
             assert!(!world_file.exists());
 
             // Re-fetch branches
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?.unwrap();
-            let base_branch =
-                repositories::branches::get_by_name(&repo, &base_branch.name)?.unwrap();
+            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
+            let base_branch = repositories::branches::get_by_name(&repo, &base_branch.name)?;
 
             // Server-side merge
             repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
@@ -1452,9 +1447,8 @@ mod tests {
             repositories::commit(&repo, "Modifying hello file")?;
 
             repositories::checkout(&repo, &base_branch.name).await?;
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?.unwrap();
-            let base_branch =
-                repositories::branches::get_by_name(&repo, &base_branch.name)?.unwrap();
+            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
+            let base_branch = repositories::branches::get_by_name(&repo, &base_branch.name)?;
 
             let merge_commit =
                 repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
@@ -1490,9 +1484,8 @@ mod tests {
             repositories::commit(&repo, "Removing world file")?;
 
             repositories::checkout(&repo, &base_branch.name).await?;
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?.unwrap();
-            let base_branch =
-                repositories::branches::get_by_name(&repo, &base_branch.name)?.unwrap();
+            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
+            let base_branch = repositories::branches::get_by_name(&repo, &base_branch.name)?;
 
             let merge_commit =
                 repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
@@ -1527,16 +1520,14 @@ mod tests {
             repositories::commit(&repo, "Adding models/kling/b.toml")?;
 
             repositories::checkout(&repo, &base_branch.name).await?;
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?.unwrap();
-            let base_branch =
-                repositories::branches::get_by_name(&repo, &base_branch.name)?.unwrap();
+            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
+            let base_branch = repositories::branches::get_by_name(&repo, &base_branch.name)?;
 
             let merge_commit =
                 repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
 
             assert_eq!(merge_commit.id, merge_branch.commit_id);
-            let updated_branch =
-                repositories::branches::get_by_name(&repo, &base_branch.name)?.unwrap();
+            let updated_branch = repositories::branches::get_by_name(&repo, &base_branch.name)?;
             assert_eq!(updated_branch.commit_id, merge_commit.id);
 
             Ok(())
@@ -1573,9 +1564,8 @@ mod tests {
             repositories::add(&repo, &file_c).await?;
             repositories::commit(&repo, "Adding scripts/deploy.sh on main")?;
 
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?.unwrap();
-            let base_branch =
-                repositories::branches::get_by_name(&repo, &base_branch_name)?.unwrap();
+            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
+            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
 
             let merge_commit =
                 repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
@@ -1619,9 +1609,8 @@ mod tests {
             repositories::add(&repo, &file_b).await?;
             repositories::commit(&repo, "Modifying b.txt on main")?;
 
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?.unwrap();
-            let base_branch =
-                repositories::branches::get_by_name(&repo, &base_branch_name)?.unwrap();
+            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
+            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
 
             let merge_commit =
                 repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
@@ -1663,9 +1652,8 @@ mod tests {
             repositories::add(&repo, &file_b).await?;
             repositories::commit(&repo, "Modifying b.txt on main")?;
 
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?.unwrap();
-            let base_branch =
-                repositories::branches::get_by_name(&repo, &base_branch_name)?.unwrap();
+            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
+            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
 
             let merge_commit =
                 repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
@@ -1701,9 +1689,8 @@ mod tests {
             repositories::add(&repo, &config).await?;
             repositories::commit(&repo, "Updating config on main")?;
 
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?.unwrap();
-            let base_branch =
-                repositories::branches::get_by_name(&repo, &base_branch_name)?.unwrap();
+            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
+            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
 
             let result =
                 repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await;
@@ -1741,9 +1728,8 @@ mod tests {
             repositories::add(&repo, &new_file).await?;
             repositories::commit(&repo, "Adding new.txt on main")?;
 
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?.unwrap();
-            let base_branch =
-                repositories::branches::get_by_name(&repo, &base_branch_name)?.unwrap();
+            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
+            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
 
             let result =
                 repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await;
@@ -1780,9 +1766,8 @@ mod tests {
             repositories::add(&repo, &file).await?;
             repositories::commit(&repo, "Modifying shared.txt on main")?;
 
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?.unwrap();
-            let base_branch =
-                repositories::branches::get_by_name(&repo, &base_branch_name)?.unwrap();
+            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
+            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
 
             let result =
                 repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await;
@@ -1823,9 +1808,8 @@ mod tests {
             repositories::add(&repo, &file_a).await?;
             repositories::commit(&repo, "Deleting a.txt on main")?;
 
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?.unwrap();
-            let base_branch =
-                repositories::branches::get_by_name(&repo, &base_branch_name)?.unwrap();
+            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
+            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
 
             // Base's deletion should win since merge didn't change the file
             let merge_commit =
@@ -1861,9 +1845,8 @@ mod tests {
             repositories::add(&repo, &file).await?;
             repositories::commit(&repo, "Deleting shared.txt on main")?;
 
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?.unwrap();
-            let base_branch =
-                repositories::branches::get_by_name(&repo, &base_branch_name)?.unwrap();
+            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
+            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
 
             let result =
                 repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await;
@@ -1922,9 +1905,8 @@ mod tests {
             repositories::add(&repo, &file_e).await?;
             repositories::commit(&repo, "Main: add e")?;
 
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?.unwrap();
-            let base_branch =
-                repositories::branches::get_by_name(&repo, &base_branch_name)?.unwrap();
+            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
+            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
 
             // Server-side three-way merge
             let merge_commit =
