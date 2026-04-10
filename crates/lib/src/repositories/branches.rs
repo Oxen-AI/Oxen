@@ -498,7 +498,7 @@ mod tests {
             repositories::branches::update(&repo, "test-branch", &commit_1.id)?;
 
             // Verify the branch now points to commit_1
-            let fetched = repositories::branches::get_by_name(&repo, "test-branch")?.unwrap();
+            let fetched = repositories::branches::get_by_name(&repo, "test-branch")?;
             assert_eq!(fetched.commit_id, commit_1.id);
 
             Ok(())
