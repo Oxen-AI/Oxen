@@ -250,12 +250,11 @@ async fn list_and_push_missing_files(
     if let Some(entry) = missing_files.first() {
         let version_store = repo.version_store()?;
         if !version_store.version_exists(&entry.hash()).await? {
-            return Err(OxenError::basic_str(format!(
-                "Cannot push missing files for commit '{}' (\"{}\"): file data is not available locally.\n\
-                 This usually means the repository was cloned without full history.\n\
-                 To repair the remote, re-run this command from a clone that has the full history.",
-                head_commit.id, head_commit.message
-            )));
+            return Err(OxenError::CannotPushShallowClone {
+                commit_id: head_commit.id.clone(),
+                commit_message: head_commit.message.clone(),
+                help: "To repair the remote, re-run this command from a clone that has the full history.".to_string(),
+            });
         }
     }
 
@@ -434,12 +433,11 @@ async fn push_commits(
         if let Some(entry) = info.unique_file_hashes.first()
             && !version_store.version_exists(&entry.hash()).await?
         {
-            return Err(OxenError::basic_str(format!(
-                "Cannot push commit '{}' (\"{}\"): file data is not available locally.\n\
-                 This usually means the repository was cloned without full history.\n\
-                 Run `oxen pull --all` to fetch all data, then try again.",
-                commit.id, commit.message
-            )));
+            return Err(OxenError::CannotPushShallowClone {
+                commit_id: commit.id.clone(),
+                commit_message: commit.message.clone(),
+                help: "Run `oxen pull --all` to fetch all data, then try again.".to_string(),
+            });
         }
     }
 

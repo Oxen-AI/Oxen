@@ -336,6 +336,15 @@ pub enum OxenError {
     #[error("{0}")]
     JoinError(#[from] JoinError),
 
+    #[error(
+        "Cannot push commit '{commit_id}' (\"{commit_message}\"): file data is not available locally.\nThis usually means the repository was cloned without full history.\n{help}"
+    )]
+    CannotPushShallowClone {
+        commit_id: String,
+        commit_message: String,
+        help: String,
+    },
+
     // Fallback
     // TODO: remove all uses of `Basic` and replace with specific errors.
     #[error("{0}")]
