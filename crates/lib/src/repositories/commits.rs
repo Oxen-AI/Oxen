@@ -1508,4 +1508,214 @@ A: Oxen.ai
         })
         .await
     }
+
+    #[tokio::test]
+    async fn test_count_from_after_three_way_merge() -> Result<(), OxenError> {
+        // Verifies that count_from returns the correct number of unique commits
+        // after a three-way merge (no double-counting shared ancestors).
+        //
+        // Graph:
+        //   init - A - C - D - M (merge)
+        //             \       /
+        //              B --- E
+        //
+        // init = 1 (from run_one_commit_local_repo_test_async)
+        // A, B, C, D, E = 5 commits on branches
+        // M = merge commit
+        // Total unique commits = 7
+
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Commit A on main (shared ancestor)
+            let a_path = repo.path.join("a.txt");
+            util::fs::write_to_path(&a_path, "a")?;
+            repositories::add(&repo, &a_path).await?;
+            repositories::commit(&repo, "Commit A")?;
+
+            // Branch off and create commits B, E
+            let merge_branch_name = "feature";
+            repositories::branches::create_checkout(&repo, merge_branch_name)?;
+            let b_path = repo.path.join("b.txt");
+            util::fs::write_to_path(&b_path, "b")?;
+            repositories::add(&repo, &b_path).await?;
+            repositories::commit(&repo, "Commit B")?;
+
+            let e_path = repo.path.join("e.txt");
+            util::fs::write_to_path(&e_path, "e")?;
+            repositories::add(&repo, &e_path).await?;
+            repositories::commit(&repo, "Commit E")?;
+
+            // Back to main, create commits C, D
+            repositories::checkout(&repo, &main_branch.name).await?;
+            let c_path = repo.path.join("c.txt");
+            util::fs::write_to_path(&c_path, "c")?;
+            repositories::add(&repo, &c_path).await?;
+            repositories::commit(&repo, "Commit C")?;
+
+            let d_path = repo.path.join("d.txt");
+            util::fs::write_to_path(&d_path, "d")?;
+            repositories::add(&repo, &d_path).await?;
+            repositories::commit(&repo, "Commit D")?;
+
+            // Warm the cache for both branch tips before merging
+            let (main_count, _) = repositories::commits::count_from(&repo, &main_branch.name)?;
+            let (feature_count, _) = repositories::commits::count_from(&repo, merge_branch_name)?;
+
+            // main: init -> A -> C -> D = 4 commits
+            assert_eq!(main_count, 4, "main branch should have 4 commits");
+            // feature: init -> A -> B -> E = 4 commits
+            assert_eq!(feature_count, 4, "feature branch should have 4 commits");
+
+            // Merge feature into main
+            let merge_commit = repositories::merge::merge(&repo, merge_branch_name)
+                .await?
+                .expect("merge should produce a commit");
+            assert_eq!(merge_commit.parent_ids.len(), 2);
+
+            // Verify count_from on merge commit
+            let (merge_count, _) = repositories::commits::count_from(&repo, &merge_commit.id)?;
+
+            // Total unique commits: init, A, B, C, D, E, M = 7
+            assert_eq!(
+                merge_count, 7,
+                "merge commit count should be 7 (unique commits), got {merge_count}"
+            );
+
+            // Also verify that list_from returns the same number
+            let all_commits = repositories::commits::list_from(&repo, &merge_commit.id)?;
+            assert_eq!(
+                all_commits.len(),
+                7,
+                "list_from should return 7 commits, got {}",
+                all_commits.len()
+            );
+
+            // count_from should agree with list_from
+            assert_eq!(
+                merge_count,
+                all_commits.len(),
+                "count_from ({merge_count}) should match list_from ({})",
+                all_commits.len()
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_count_from_after_merge_with_deep_shared_history() -> Result<(), OxenError> {
+        // Verifies correct counting when branches share a long history.
+        // The bug would cause near-doubling in this scenario.
+        //
+        // Graph:
+        //   init - H1 - H2 - H3 - H4 - H5 - main_commit - M (merge)
+        //                                    \             /
+        //                                     feat_commit
+        //
+        // Total unique commits = 9
+
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Create 5 commits of shared history
+            for i in 1..=5 {
+                let path = repo.path.join(format!("shared_{i}.txt"));
+                util::fs::write_to_path(&path, format!("shared {i}"))?;
+                repositories::add(&repo, &path).await?;
+                repositories::commit(&repo, &format!("Shared commit {i}"))?;
+            }
+
+            // Branch off for feature
+            let merge_branch_name = "feature";
+            repositories::branches::create_checkout(&repo, merge_branch_name)?;
+            let feat_path = repo.path.join("feature.txt");
+            util::fs::write_to_path(&feat_path, "feature")?;
+            repositories::add(&repo, &feat_path).await?;
+            repositories::commit(&repo, "Feature commit")?;
+
+            // Back to main, add one more commit
+            repositories::checkout(&repo, &main_branch.name).await?;
+            let main_path = repo.path.join("main_only.txt");
+            util::fs::write_to_path(&main_path, "main only")?;
+            repositories::add(&repo, &main_path).await?;
+            repositories::commit(&repo, "Main-only commit")?;
+
+            // Warm cache for both branches
+            let (main_count, _) = repositories::commits::count_from(&repo, &main_branch.name)?;
+            let (feature_count, _) = repositories::commits::count_from(&repo, merge_branch_name)?;
+            assert_eq!(main_count, 7, "main: init + 5 shared + 1 main-only = 7");
+            assert_eq!(feature_count, 7, "feature: init + 5 shared + 1 feature = 7");
+
+            // Merge
+            let merge_commit = repositories::merge::merge(&repo, merge_branch_name)
+                .await?
+                .expect("merge should produce a commit");
+
+            let (merge_count, _) = repositories::commits::count_from(&repo, &merge_commit.id)?;
+
+            // Unique: init + 5 shared + main_only + feat + merge = 9
+            let all_commits = repositories::commits::list_from(&repo, &merge_commit.id)?;
+            assert_eq!(
+                merge_count,
+                all_commits.len(),
+                "count_from ({merge_count}) should match list_from ({})",
+                all_commits.len()
+            );
+            assert_eq!(merge_count, 9, "should be 9, got {merge_count}");
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_count_from_after_merge_no_prior_cache() -> Result<(), OxenError> {
+        // Verifies correct count when parent branch counts are NOT cached
+        // before the merge (no warm-up step).
+
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            let a_path = repo.path.join("a.txt");
+            util::fs::write_to_path(&a_path, "a")?;
+            repositories::add(&repo, &a_path).await?;
+            repositories::commit(&repo, "Commit A")?;
+
+            // Branch and commit
+            repositories::branches::create_checkout(&repo, "feature")?;
+            let b_path = repo.path.join("b.txt");
+            util::fs::write_to_path(&b_path, "b")?;
+            repositories::add(&repo, &b_path).await?;
+            repositories::commit(&repo, "Commit B")?;
+
+            // Back to main and commit
+            repositories::checkout(&repo, &main_branch.name).await?;
+            let c_path = repo.path.join("c.txt");
+            util::fs::write_to_path(&c_path, "c")?;
+            repositories::add(&repo, &c_path).await?;
+            repositories::commit(&repo, "Commit C")?;
+
+            // Merge WITHOUT warming cache first
+            let merge_commit = repositories::merge::merge(&repo, "feature")
+                .await?
+                .expect("merge should produce a commit");
+
+            let (merge_count, _) = repositories::commits::count_from(&repo, &merge_commit.id)?;
+            let all_commits = repositories::commits::list_from(&repo, &merge_commit.id)?;
+
+            // init, A, B, C, M = 5
+            assert_eq!(
+                merge_count,
+                all_commits.len(),
+                "count_from ({merge_count}) should match list_from ({})",
+                all_commits.len()
+            );
+            assert_eq!(merge_count, 5, "should be 5, got {merge_count}");
+
+            Ok(())
+        })
+        .await
+    }
 }

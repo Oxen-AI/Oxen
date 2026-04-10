@@ -335,9 +335,38 @@ pub async fn merge(
         base: base_commit,
         merge: merge_commit,
     };
-    merge_commits(repo, &commits).await
+    merge_commits(repo, &commits, true).await
 }
 
+/// Server-safe merge of two commits. Does not touch the working directory or
+/// HEAD — the caller is responsible for updating the branch ref.
+///
+/// Use this variant from server code paths that must not mutate on-disk files.
+/// For the client-side equivalent that updates the checkout and HEAD, see
+/// [`merge_commit_into_base`].
+pub async fn merge_commit_into_base_server_safe(
+    repo: &LocalRepository,
+    merge_commit: &Commit,
+    base_commit: &Commit,
+) -> Result<Option<Commit>, OxenError> {
+    let maybe_lca = lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)?;
+    log::debug!(
+        "merge_commit_into_base_server_safe has lca {maybe_lca:?} for merge commit {merge_commit:?} and base {base_commit:?}"
+    );
+
+    let commits = MergeCommits {
+        lca: maybe_lca,
+        base: base_commit.to_owned(),
+        merge: merge_commit.to_owned(),
+    };
+
+    merge_commits(repo, &commits, false).await
+}
+
+/// Client-side merge of two commits. Updates files on disk and advances HEAD.
+///
+/// For the server-side equivalent that never touches the working directory,
+/// see [`merge_commit_into_base_server_safe`].
 pub async fn merge_commit_into_base(
     repo: &LocalRepository,
     merge_commit: &Commit,
@@ -354,7 +383,7 @@ pub async fn merge_commit_into_base(
         merge: merge_commit.to_owned(),
     };
 
-    merge_commits(repo, &commits).await
+    merge_commits(repo, &commits, true).await
 }
 
 /// Server-side merge: merge a commit into a base commit on a specific branch.
@@ -455,16 +484,31 @@ pub fn lowest_common_ancestor(
     lowest_common_ancestor_from_commits(repo, &base_commit, &merge_commit)
 }
 
+/// Fast-forward merge.
+///
+/// When `update_working_dir` is `true` (client-side), the function checks for
+/// uncommitted local changes that would be overwritten, restores/removes files
+/// on disk, and advances HEAD.
+///
+/// When `update_working_dir` is `false` (server-side), no working-directory or
+/// HEAD operations are performed — only the merge commit is returned so the
+/// caller can update the branch ref.
 async fn fast_forward_merge(
     repo: &LocalRepository,
     base_commit: &Commit,
     merge_commit: &Commit,
+    update_working_dir: bool,
 ) -> Result<Option<Commit>, OxenError> {
     log::debug!("FF merge!");
 
     if base_commit == merge_commit {
         // If the base commit is the same as the merge commit, there is nothing to merge
         return Ok(None);
+    }
+
+    if !update_working_dir {
+        // Server-side: no checkout to update, just return the merge commit.
+        return Ok(Some(merge_commit.clone()));
     }
 
     // Collect all dir and vnode hashes while loading the merge tree
@@ -737,9 +781,18 @@ fn r_ff_base_dir(
     Ok(())
 }
 
+/// Perform a merge between commits.
+///
+/// When `update_working_dir` is `true` (client-side), working-directory files
+/// are checked, restored/removed, and HEAD is advanced.
+///
+/// When `update_working_dir` is `false` (server-side), no working-directory or
+/// HEAD operations are performed.  For three-way merges the server-safe
+/// `server_three_way_merge` path is used instead.
 async fn merge_commits(
     repo: &LocalRepository,
     merge_commits: &MergeCommits,
+    update_working_dir: bool,
 ) -> Result<Option<Commit>, OxenError> {
     // User output
     println!(
@@ -762,8 +815,13 @@ async fn merge_commits(
 
     // Check which type of merge we need to do
     if merge_commits.is_fast_forward_merge() {
-        // User output
-        let commit = fast_forward_merge(repo, &merge_commits.base, &merge_commits.merge).await?;
+        let commit = fast_forward_merge(
+            repo,
+            &merge_commits.base,
+            &merge_commits.merge,
+            update_working_dir,
+        )
+        .await?;
         Ok(commit)
     } else {
         log::debug!(
@@ -771,6 +829,12 @@ async fn merge_commits(
             merge_commits.base.id,
             merge_commits.merge.id
         );
+
+        if !update_working_dir {
+            // Server-safe: use the server three-way merge path which operates
+            // only on tree data and never touches the working directory.
+            return server_three_way_merge(repo, merge_commits).await.map(Some);
+        }
 
         let mut shared_hashes = HashSet::new();
         let analysis = find_merge_conflicts(repo, merge_commits, true, &mut shared_hashes).await?;
