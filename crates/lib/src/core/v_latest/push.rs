@@ -146,6 +146,11 @@ async fn push_to_existing_branch(
                 api::client::branches::update(remote_repo, &remote_branch.name, commit).await?;
             } else if opts.force {
                 // Force push: push the full history and update the branch pointer
+                log::info!(
+                    "Force pushing branch '{}' to {}",
+                    &remote_branch.name,
+                    commit.id
+                );
                 let latest_remote_commit = find_latest_remote_commit(repo, remote_repo).await?;
                 let history = repositories::commits::list_from(repo, &commit.id)?;
 
