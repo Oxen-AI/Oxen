@@ -777,6 +777,78 @@ mod tests {
         .await
     }
 
+    // Test that force push succeeds when the remote is ahead (non-fast-forward)
+    // * Clone repo to user A and user B
+    // * User A makes a commit and pushes
+    // * User B makes a different commit — normal push fails
+    // * User B force pushes — succeeds and remote matches user B's history
+    #[tokio::test]
+    async fn test_force_push_when_remote_is_ahead() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|_, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+
+            // Clone to user A
+            test::run_empty_dir_test_async(|user_a_dir| async move {
+                let user_a_repo = repositories::clone_url(
+                    &remote_repo.remote.url,
+                    &user_a_dir.join("user_a_repo"),
+                )
+                .await?;
+
+                // Clone to user B
+                test::run_empty_dir_test_async(|user_b_dir| async move {
+                    let user_b_repo = repositories::clone_url(
+                        &remote_repo.remote.url,
+                        &user_b_dir.join("user_b_repo"),
+                    )
+                    .await?;
+
+                    // User A modifies README.md and pushes
+                    let a_file = user_a_repo.path.join("README.md");
+                    test::write_txt_file_to_path(a_file, "User A's changes")?;
+                    repositories::add(&user_a_repo, &user_a_repo.path).await?;
+                    repositories::commit(&user_a_repo, "User A commit")?;
+                    repositories::push(&user_a_repo).await?;
+
+                    // User B modifies README.md and tries to push — should fail
+                    let b_file = user_b_repo.path.join("README.md");
+                    test::write_txt_file_to_path(b_file, "User B's changes")?;
+                    repositories::add(&user_b_repo, &user_b_repo.path).await?;
+                    let user_b_commit = repositories::commit(&user_b_repo, "User B commit")?;
+                    let normal_push = repositories::push(&user_b_repo).await;
+                    assert!(normal_push.is_err());
+
+                    // User B force pushes — should succeed
+                    let opts = PushOpts {
+                        remote: DEFAULT_REMOTE_NAME.to_string(),
+                        branch: DEFAULT_BRANCH_NAME.to_string(),
+                        force: true,
+                        ..Default::default()
+                    };
+                    let force_push =
+                        repositories::push::push_remote_branch(&user_b_repo, &opts).await;
+                    assert!(force_push.is_ok());
+
+                    // Verify remote branch now points to user B's commit
+                    let remote_branch =
+                        api::client::branches::get_by_name(&remote_repo, DEFAULT_BRANCH_NAME)
+                            .await?
+                            .unwrap();
+                    assert_eq!(remote_branch.commit_id, user_b_commit.id);
+
+                    Ok(())
+                })
+                .await?;
+
+                Ok(())
+            })
+            .await?;
+
+            Ok(remote_repo_copy)
+        })
+        .await
+    }
+
     // Test that we cannot push when the remote repo is ahead
     // * Clone repo to user A
     // * Clone repo to user B

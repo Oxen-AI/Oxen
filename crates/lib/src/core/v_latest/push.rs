@@ -129,9 +129,10 @@ async fn push_to_existing_branch(
 
     match repositories::commits::list_from(repo, &commit.id) {
         Ok(commits) => {
-            if commits.iter().any(|c| c.id == remote_branch.commit_id) {
-                //we're ahead
+            let is_ahead = commits.iter().any(|c| c.id == remote_branch.commit_id);
 
+            if is_ahead {
+                // Fast-forward: push only the new commits
                 let latest_remote_commit =
                     repositories::commits::get_by_id(repo, &remote_branch.commit_id)?.ok_or_else(
                         || OxenError::RevisionNotFound(remote_branch.commit_id.clone().into()),
@@ -143,10 +144,22 @@ async fn push_to_existing_branch(
 
                 push_commits(repo, remote_repo, Some(latest_remote_commit), commits, opts).await?;
                 api::client::branches::update(remote_repo, &remote_branch.name, commit).await?;
+            } else if opts.force {
+                // Force push: push the full history and update the branch pointer
+                log::info!(
+                    "Force pushing branch '{}' to {}",
+                    &remote_branch.name,
+                    commit.id
+                );
+                let latest_remote_commit = find_latest_remote_commit(repo, remote_repo).await?;
+                let history = repositories::commits::list_from(repo, &commit.id)?;
+
+                push_commits(repo, remote_repo, latest_remote_commit, history, opts).await?;
+                api::client::branches::update(remote_repo, &remote_branch.name, commit).await?;
             } else {
-                //we're behind
+                // Behind and not forcing
                 let err_str = format!(
-                    "Branch {} is behind remote commit {}.\nRun `oxen pull` to update your local branch",
+                    "Branch {} is behind remote commit {}.\nRun `oxen pull` to update your local branch, or use `oxen push --force` to force push.",
                     remote_branch.name, remote_branch.commit_id
                 );
                 return Err(OxenError::basic_str(err_str));

@@ -112,7 +112,8 @@ pub fn create_checkout(repo: &LocalRepository, name: impl AsRef<str>) -> Result<
     })
 }
 
-/// Update the branch name to point to a commit id
+/// Update the branch name to point to a commit id, creating the branch if it doesn't exist.
+/// Validates that the commit exists before updating.
 pub fn update(
     repo: &LocalRepository,
     name: impl AsRef<str>,
@@ -120,13 +121,19 @@ pub fn update(
 ) -> Result<Branch, OxenError> {
     let name = name.as_ref();
     let commit_id = commit_id.as_ref();
+
+    if !repositories::commits::commit_id_exists(repo, commit_id)? {
+        return Err(OxenError::commit_id_does_not_exist(commit_id));
+    }
+
     with_ref_manager(repo, |manager| {
-        if let Some(branch) = manager.get_branch_by_name(name)? {
+        if let Some(mut branch) = manager.get_branch_by_name(name)? {
             // Set the branch to point to the commit
             manager.set_branch_commit_id(name, commit_id)?;
+            branch.commit_id = commit_id.to_string();
             Ok(branch)
         } else {
-            create(repo, name, commit_id)
+            manager.create_branch(name, commit_id)
         }
     })
 }
@@ -465,6 +472,61 @@ mod tests {
             assert_eq!(branch_versions[1].0.id, commit_4.id);
             assert_eq!(branch_versions[2].0.id, commit_2.id);
             assert_eq!(branch_versions[3].0.id, commit_1.id);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_force_update_existing_branch() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create two commits
+            let file_path = repo.path.join("file.txt");
+            util::fs::write_to_path(&file_path, "first")?;
+            repositories::add(&repo, &file_path).await?;
+            let commit_1 = repositories::commit(&repo, "first commit")?;
+
+            util::fs::write_to_path(&file_path, "second")?;
+            repositories::add(&repo, &file_path).await?;
+            let _commit_2 = repositories::commit(&repo, "second commit")?;
+
+            // Create a branch at current HEAD (commit_2)
+            repositories::branches::create_checkout(&repo, "test-branch")?;
+
+            // Force update it back to commit_1
+            repositories::branches::update(&repo, "test-branch", &commit_1.id)?;
+
+            // Verify the branch now points to commit_1
+            let fetched = repositories::branches::get_by_name(&repo, "test-branch")?;
+            assert_eq!(fetched.commit_id, commit_1.id);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_force_update_creates_new_branch() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let head = repositories::commits::head_commit(&repo)?;
+
+            // Force update a branch that doesn't exist yet
+            let branch = repositories::branches::update(&repo, "new-branch", &head.id)?;
+            assert_eq!(branch.commit_id, head.id);
+            assert_eq!(branch.name, "new-branch");
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_force_update_invalid_commit_fails() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let result =
+                repositories::branches::update(&repo, "test-branch", "nonexistent_commit_id");
+            assert!(result.is_err());
 
             Ok(())
         })
