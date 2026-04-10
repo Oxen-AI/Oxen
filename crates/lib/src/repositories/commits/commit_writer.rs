@@ -396,7 +396,7 @@ pub fn commit_dir_entries_new(
     commit_progress_bar.finish_and_clear();
 
     // Remove all the directories that are staged for removal
-    cleanup_rm_dirs(&dir_hash_db, &dir_entries)?;
+    cache_invalidate_dir_hash_db(&dir_hash_db, dir_entries.iter().map(|(_, removed)| removed))?;
 
     Ok(node.to_commit())
 }
@@ -508,30 +508,9 @@ pub fn commit_dir_entries(
     commit_progress_bar.finish_and_clear();
 
     // Remove all the directories that are staged for removal
-    cleanup_rm_dirs(&dir_hash_db, &dir_entries)?;
+    cache_invalidate_dir_hash_db(&dir_hash_db, dir_entries.iter().map(|(_, removed)| removed))?;
 
     Ok(node.to_commit())
-}
-
-fn cleanup_rm_dirs(
-    dir_hash_db: &DBWithThreadMode<SingleThreaded>,
-    dir_entries: &HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
-) -> Result<(), OxenError> {
-    for (_path, entries) in dir_entries.iter() {
-        for entry in entries.iter() {
-            if let EMerkleTreeNode::Directory(dir_node) = &entry.node.node
-                && entry.status == StagedEntryStatus::Removed
-            {
-                // dir_node.name() already contains the full relative path
-                // (e.g., "annotations/train"), so use it directly as the key.
-                let dir_path = PathBuf::from(dir_node.name());
-                log::debug!("dir path for cleanup: {dir_path:?}");
-                let key = dir_path.to_str().unwrap();
-                dir_hash_db.delete(key)?;
-            }
-        }
-    }
-    Ok(())
 }
 
 fn node_data_to_staged_node(
@@ -838,24 +817,26 @@ fn write_commit_entries(
     // The dir_hash_db was pre-populated from the previous commit, so
     // removed directories still have stale entries that must be deleted;
     // otherwise tree lookups will find the old subtree.
-    cache_invalidate_dir_hash_db(dir_hash_db, entries)
+    cache_invalidate_dir_hash_db(dir_hash_db, entries.iter().map(|(_, (_, removed))| removed))
 }
 
 /// Perform cache-invalidation: remove dir_hash entries for directories that were removed.
 /// The `entries` are staged files. This removes every directory that is staged for removal
 /// from the supplied `dir_hash_db`.
-fn cache_invalidate_dir_hash_db(
+fn cache_invalidate_dir_hash_db<'a>(
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
-    entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
+    entries: impl Iterator<Item = &'a Vec<StagedMerkleTreeNode>>,
 ) -> Result<(), OxenError> {
-    for (_, removed_children) in entries.values() {
+    for removed_children in entries {
         for child in removed_children {
             if child.status == StagedEntryStatus::Removed
-                && let EMerkleTreeNode::Directory(_) = &child.node.node
-                && let Ok(child_path) = child.node.maybe_path()
+                && let EMerkleTreeNode::Directory(dir_node) = &child.node.node
             {
+                let child_path = PathBuf::from(dir_node.name());
+                // `child_path` already contains the full relative path
+                // (e.g., "annotations/train"), so use it directly as the key
                 let path_str = child_path.to_string_lossy();
-                log::debug!("deleting removed dir hash: {path_str:?}");
+                log::debug!("deleting removed dir hash: {path_str}");
                 str_val_db::delete(dir_hash_db, path_str)?;
             }
         }
