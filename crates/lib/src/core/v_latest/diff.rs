@@ -181,6 +181,8 @@ pub async fn list_diff_entries(
         head_commit,
         &mut dir_entries,
         &base_path,
+        &base_files,
+        &head_files,
     )?;
     dir_entries.sort_by(|a, b| a.filename.cmp(&b.filename));
     log::debug!(
@@ -554,6 +556,7 @@ fn collect_removed_directories(
 }
 
 // Find the directories that are in HEAD and are in BASE
+#[allow(clippy::too_many_arguments)]
 fn collect_modified_directories(
     repo: &LocalRepository,
     base_dirs: &HashSet<DirNodeWithPath>,
@@ -562,13 +565,15 @@ fn collect_modified_directories(
     head_commit: &Commit,
     diff_entries: &mut Vec<DiffEntry>,
     base_path: impl AsRef<Path>,
+    base_files: &HashSet<FileNodeWithDir>,
+    head_files: &HashSet<FileNodeWithDir>,
 ) -> Result<(), OxenError> {
     let base_path = base_path.as_ref();
     for head_dir in head_dirs {
         // HEAD entry is in BASE
         if let Some(base_dir) = base_dirs.get(head_dir) {
             log::debug!("collect_modified_directories adding dir {head_dir:?}");
-            let diff_entry = DiffEntry::from_dir_nodes(
+            let mut diff_entry = DiffEntry::from_dir_nodes(
                 repo,
                 base_path.join(&head_dir.path),
                 Some(base_dir.dir_node.clone()),
@@ -579,6 +584,45 @@ fn collect_modified_directories(
             )?;
 
             if diff_entry.has_changes() {
+                // Compute accurate per-directory counts from actual file diffs
+                // rather than relying on net file-count differences.
+                let dir_path = &head_dir.path;
+                let dir_base: HashSet<FileNodeWithDir> = base_files
+                    .iter()
+                    .filter(|f| f.dir.starts_with(dir_path))
+                    .cloned()
+                    .collect();
+                let dir_head: HashSet<FileNodeWithDir> = head_files
+                    .iter()
+                    .filter(|f| f.dir.starts_with(dir_path))
+                    .cloned()
+                    .collect();
+
+                let added = dir_head.difference(&dir_base).count();
+                let removed = dir_base.difference(&dir_head).count();
+                let modified = dir_head
+                    .intersection(&dir_base)
+                    .filter(|f| {
+                        // FileNodeWithDir equality is by name — check if
+                        // the actual content hash changed.
+                        dir_base
+                            .get(f)
+                            .is_some_and(|b| b.file_node.hash() != f.file_node.hash())
+                    })
+                    .count();
+
+                diff_entry.diff_summary = Some(GenericDiffSummary::DirDiffSummary(
+                    crate::model::diff::dir_diff_summary::DirDiffSummary {
+                        dir: crate::model::diff::dir_diff_summary::DirDiffSummaryImpl {
+                            file_counts: AddRemoveModifyCounts {
+                                added,
+                                removed,
+                                modified,
+                            },
+                        },
+                    },
+                ));
+
                 diff_entries.push(diff_entry);
             }
         }

@@ -137,6 +137,34 @@ pub async fn merge(
     }
 }
 
+/// Server-safe merge of two commits. Does not touch the working directory or
+/// HEAD — the caller is responsible for updating the branch ref.
+///
+/// Use this variant from server code paths that must not mutate on-disk files.
+/// For the client-side equivalent that updates the checkout and HEAD, see
+/// [`merge_commit_into_base`].
+pub async fn merge_commit_into_base_server_safe(
+    repo: &LocalRepository,
+    merge_commit: &Commit,
+    base_commit: &Commit,
+) -> Result<Option<Commit>, OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
+        _ => {
+            core::v_latest::merge::merge_commit_into_base_server_safe(
+                repo,
+                merge_commit,
+                base_commit,
+            )
+            .await
+        }
+    }
+}
+
+/// Client-side merge of two commits. Updates files on disk and advances HEAD.
+///
+/// For the server-side equivalent that never touches the working directory,
+/// see [`merge_commit_into_base_server_safe`].
 pub async fn merge_commit_into_base(
     repo: &LocalRepository,
     merge_commit: &Commit,
@@ -1955,6 +1983,113 @@ mod tests {
             assert!(
                 repositories::tree::get_file_by_path(&repo, &merge_commit, "e.txt")?.is_some(),
                 "e.txt should exist"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_merge_commit_into_base_server_safe_ff_does_not_touch_working_dir()
+    -> Result<(), OxenError> {
+        // Verifies that merge_commit_into_base_server_safe succeeds even when
+        // stale files exist in the repo directory (no "local changes would be
+        // overwritten" error).
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Add a file and commit
+            let readme = repo.path.join("README.md");
+            util::fs::write_to_path(&readme, "original")?;
+            repositories::add(&repo, &readme).await?;
+            let base_commit = repositories::commit(&repo, "Add README")?;
+
+            // Branch, modify the file, and commit
+            repositories::branches::create_checkout(&repo, "feature")?;
+            util::fs::write_to_path(&readme, "modified on feature")?;
+            repositories::add(&repo, &readme).await?;
+            let feature_commit = repositories::commit(&repo, "Modify README")?;
+
+            // Go back to main so HEAD is at base_commit (FF scenario)
+            repositories::checkout(&repo, &main_branch.name).await?;
+
+            // Simulate server state: write a stale/different file at the path.
+            // On a real server there is no checkout, but the repo directory may
+            // contain leftover files that differ from the tree.
+            util::fs::write_to_path(&readme, "stale server copy")?;
+
+            // Server-safe merge should NOT check working-dir files → no error
+            let result = repositories::merge::merge_commit_into_base_server_safe(
+                &repo,
+                &feature_commit,
+                &base_commit,
+            )
+            .await?;
+
+            assert!(result.is_some(), "FF merge should return the merge commit");
+            assert_eq!(result.unwrap().id, feature_commit.id);
+
+            // The stale file on disk should be UNTOUCHED (server never writes)
+            let on_disk = util::fs::read_from_path(&readme)?;
+            assert_eq!(
+                on_disk, "stale server copy",
+                "server-safe merge must not modify files on disk"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_merge_commit_into_base_server_safe_three_way_does_not_touch_working_dir()
+    -> Result<(), OxenError> {
+        // Verifies that merge_commit_into_base_server_safe uses the server-safe
+        // three-way merge path and never touches the working directory.
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Shared ancestor
+            let a_path = repo.path.join("a.txt");
+            util::fs::write_to_path(&a_path, "a")?;
+            repositories::add(&repo, &a_path).await?;
+            repositories::commit(&repo, "Add a.txt")?;
+
+            // Feature branch: add b.txt
+            repositories::branches::create_checkout(&repo, "feature")?;
+            let b_path = repo.path.join("b.txt");
+            util::fs::write_to_path(&b_path, "b")?;
+            repositories::add(&repo, &b_path).await?;
+            let feature_commit = repositories::commit(&repo, "Add b.txt")?;
+
+            // Back to main: add c.txt (diverge → forces three-way merge)
+            repositories::checkout(&repo, &main_branch.name).await?;
+            let c_path = repo.path.join("c.txt");
+            util::fs::write_to_path(&c_path, "c")?;
+            repositories::add(&repo, &c_path).await?;
+            let base_commit = repositories::commit(&repo, "Add c.txt")?;
+
+            // Simulate stale server state
+            util::fs::write_to_path(&a_path, "stale")?;
+
+            // Server-safe merge should succeed without checking disk
+            let result = repositories::merge::merge_commit_into_base_server_safe(
+                &repo,
+                &feature_commit,
+                &base_commit,
+            )
+            .await?;
+            assert!(
+                result.is_some(),
+                "three-way merge should return a merge commit"
+            );
+
+            // Stale file should be untouched
+            let on_disk = util::fs::read_from_path(&a_path)?;
+            assert_eq!(
+                on_disk, "stale",
+                "server-safe merge must not modify files on disk"
             );
 
             Ok(())
