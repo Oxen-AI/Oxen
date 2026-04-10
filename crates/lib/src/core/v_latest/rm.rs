@@ -669,11 +669,7 @@ fn r_process_remove_dir(
     node: &MerkleTreeNode,
     staged_db: &DBWithThreadMode<MultiThreaded>,
 ) -> Result<CumulativeStats, OxenError> {
-    let mut total = CumulativeStats {
-        total_files: 0,
-        total_bytes: 0,
-        data_type_counts: HashMap::new(),
-    };
+    let mut total = CumulativeStats::default();
 
     // Iterate through children, removing files
     for child in &node.children {
