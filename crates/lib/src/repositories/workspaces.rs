@@ -1,8 +1,9 @@
 use crate::config::RepositoryConfig;
-use crate::constants::{OXEN_HIDDEN_DIR, REPO_CONFIG_FILENAME};
+use crate::constants::{OXEN_HIDDEN_DIR, REPO_CONFIG_FILENAME, WORKSPACE_NAME_INDEX_DIR};
 use crate::core;
 use crate::core::staged::staged_db_manager::get_staged_db_manager;
 use crate::core::versions::MinOxenVersion;
+use crate::core::workspaces::workspace_name_index;
 use crate::error::OxenError;
 use crate::model::entry::metadata_entry::{WorkspaceChanges, WorkspaceMetadataEntry};
 use crate::model::{MetadataEntry, ParsedResource, StagedData, StagedEntryStatus, merkle_tree};
@@ -32,7 +33,10 @@ use uuid::Uuid;
 
 /// Loads a workspace from the filesystem. Must call create() first to create the workspace.
 ///
-/// Returns an None if the workspace does not exist
+/// Accepts either a workspace ID or a workspace name. Tries ID-based lookup first (O(1)),
+/// then falls back to name lookup (O(1) with index, O(n) without).
+///
+/// Returns None if the workspace does not exist.
 pub fn get(
     repo: &LocalRepository,
     workspace_id: impl AsRef<str>,
@@ -41,19 +45,23 @@ pub fn get(
     let workspace_id_hash = util::hasher::hash_str_sha256(workspace_id);
     log::debug!("workspace::get workspace_id: {workspace_id:?} hash: {workspace_id_hash:?}");
 
+    // First try: treat input as a workspace ID (O(1) directory lookup)
     let workspace_dir = Workspace::workspace_dir(repo, &workspace_id_hash);
     let config_path = Workspace::config_path_from_dir(&workspace_dir);
 
     log::debug!("workspace::get directory: {workspace_dir:?}");
     if config_path.exists() {
-        get_by_dir(repo, workspace_dir)
-    } else if let Some(workspace) = get_by_name(repo, workspace_id)? {
-        let workspace_id = util::hasher::hash_str_sha256(&workspace.id);
-        let workspace_dir = Workspace::workspace_dir(repo, &workspace_id);
-        get_by_dir(repo, workspace_dir)
-    } else {
-        Ok(None)
+        return get_by_dir(repo, workspace_dir);
     }
+
+    // Second try: treat input as a workspace name
+    if let Some(workspace) = get_by_name(repo, workspace_id)? {
+        let id_hash = util::hasher::hash_str_sha256(&workspace.id);
+        let workspace_dir = Workspace::workspace_dir(repo, &id_hash);
+        return get_by_dir(repo, workspace_dir);
+    }
+
+    Ok(None)
 }
 
 pub fn get_by_dir(
@@ -103,6 +111,28 @@ pub fn get_by_name(
     workspace_name: impl AsRef<str>,
 ) -> Result<Option<Workspace>, OxenError> {
     let workspace_name = workspace_name.as_ref();
+
+    // Fast path: use the name index if it exists (O(1))
+    if workspace_name_index::index_exists(repo) {
+        let maybe_id =
+            workspace_name_index::with_index(repo, |idx| idx.get_id_by_name(workspace_name))?;
+        if let Some(id) = maybe_id {
+            let id_hash = util::hasher::hash_str_sha256(&id);
+            let workspace_dir = Workspace::workspace_dir(repo, &id_hash);
+            let result = get_by_dir(repo, &workspace_dir)?;
+            if result.is_some() {
+                return Ok(result);
+            }
+            // Stale index entry: workspace dir no longer exists. Clean it up.
+            log::warn!(
+                "workspace_name_index: stale entry for name '{workspace_name}' -> id '{id}', removing"
+            );
+            workspace_name_index::with_index(repo, |idx| idx.delete(workspace_name))?;
+        }
+        return Ok(None);
+    }
+
+    // Slow path: iterate all workspaces (O(n)), used when index hasn't been created yet
     for workspace in iter_workspaces(repo)? {
         if let Some(workspace) = workspace?
             && workspace.name.as_deref() == Some(workspace_name)
@@ -143,16 +173,10 @@ pub fn create_with_name(
             "Workspace {workspace_id} already exists"
         )));
     }
-    let workspaces = list(base_repo)?;
 
-    // Check for existing non-editable workspaces on the same commit
-    for workspace in workspaces {
-        if !is_editable {
-            check_non_editable_workspace(&workspace, commit)?;
-        }
-        if let Some(workspace_name) = workspace_name.clone() {
-            check_existing_workspace_name(&workspace, &workspace_name)?;
-        }
+    // Validate name uniqueness and non-editable constraints
+    if workspace_name.is_some() || !is_editable {
+        validate_create_constraints(base_repo, commit, &workspace_name, is_editable)?;
     }
 
     log::debug!("index::workspaces::create Initializing oxen repo! 🐂");
@@ -181,6 +205,12 @@ pub fn create_with_name(
     log::debug!("index::workspaces::create writing workspace config to: {workspace_config_path:?}");
     util::fs::write_to_path(&workspace_config_path, toml_string)?;
 
+    // Update the name index
+    if let Some(ref name) = workspace_name {
+        ensure_name_index(base_repo)?;
+        workspace_name_index::with_index(base_repo, |idx| idx.put(name, workspace_id))?;
+    }
+
     Ok(Workspace {
         id: workspace_id.to_owned(),
         name: workspace_name,
@@ -189,6 +219,61 @@ pub fn create_with_name(
         commit: commit.clone(),
         is_editable,
     })
+}
+
+/// Validates name uniqueness and non-editable constraints before workspace creation.
+/// Uses the name index for O(1) checks when available, falls back to list() iteration.
+fn validate_create_constraints(
+    base_repo: &LocalRepository,
+    commit: &Commit,
+    workspace_name: &Option<String>,
+    is_editable: bool,
+) -> Result<(), OxenError> {
+    let has_index = workspace_name_index::index_exists(base_repo);
+
+    // Fast path: use the index for name checks when we don't need to iterate for non-editable
+    if has_index && is_editable {
+        if let Some(name) = workspace_name {
+            // Check name doesn't collide with an existing workspace name
+            let name_taken =
+                workspace_name_index::with_index(base_repo, |idx| Ok(idx.has_name(name)))?;
+            if name_taken {
+                return Err(OxenError::basic_str(format!(
+                    "A workspace with the name {name} already exists"
+                )));
+            }
+            // Check name doesn't collide with an existing workspace ID
+            let name_as_id_hash = util::hasher::hash_str_sha256(name);
+            let name_as_id_dir = Workspace::workspace_dir(base_repo, &name_as_id_hash);
+            if Workspace::config_path_from_dir(&name_as_id_dir).exists() {
+                return Err(OxenError::basic_str(format!(
+                    "A workspace with the name {name} already exists"
+                )));
+            }
+        }
+        return Ok(());
+    }
+
+    // Slow path: iterate all workspaces (needed when index doesn't exist or !is_editable)
+    let workspaces = list(base_repo)?;
+    for workspace in workspaces {
+        if !is_editable {
+            check_non_editable_workspace(&workspace, commit)?;
+        }
+        if let Some(name) = workspace_name {
+            check_existing_workspace_name(&workspace, name)?;
+        }
+    }
+    Ok(())
+}
+
+/// Ensures the workspace name index exists, lazily creating it if needed.
+/// On first call for a repo, rebuilds the index from disk (one-time O(n)).
+fn ensure_name_index(repo: &LocalRepository) -> Result<(), OxenError> {
+    if !workspace_name_index::index_exists(repo) {
+        workspace_name_index::with_index(repo, |idx| idx.rebuild_from_disk(repo))?;
+    }
+    Ok(())
 }
 
 /// A wrapper around Workspace that automatically deletes the workspace when dropped
@@ -312,6 +397,13 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
 
     log::debug!("workspace::delete cleaning up workspace dir: {workspace_dir:?}");
 
+    // Remove from name index before deleting the workspace directory
+    if let Some(ref name) = workspace.name
+        && workspace_name_index::index_exists(&workspace.base_repo)
+    {
+        workspace_name_index::with_index(&workspace.base_repo, |idx| idx.delete(name))?;
+    }
+
     // Clean up caches before deleting the workspace
     merkle_tree::merkle_tree_node_cache::remove_from_cache(&workspace.workspace_repo.path)?;
     core::staged::remove_from_cache(&workspace.workspace_repo.path)?;
@@ -327,6 +419,16 @@ pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
     let workspaces_dir = Workspace::workspaces_dir(repo);
     if !workspaces_dir.exists() {
         return Ok(());
+    }
+
+    // Clean up the name index: evict from cache, then remove directory
+    workspace_name_index::remove_from_cache(&repo.path)?;
+    let index_dir = repo
+        .path
+        .join(OXEN_HIDDEN_DIR)
+        .join(WORKSPACE_NAME_INDEX_DIR);
+    if index_dir.exists() {
+        util::fs::remove_dir_all(&index_dir)?;
     }
 
     util::fs::remove_dir_all(&workspaces_dir)?;

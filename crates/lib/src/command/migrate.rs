@@ -5,6 +5,9 @@ use crate::{error::OxenError, model::LocalRepository};
 pub mod m20250111083535_add_child_counts_to_nodes;
 pub use m20250111083535_add_child_counts_to_nodes::AddChildCountsToNodesMigration;
 
+pub mod m20260408_add_workspace_name_index;
+pub use m20260408_add_workspace_name_index::AddWorkspaceNameIndexMigration;
+
 pub trait Migrate {
     fn up(&self, path: &Path, all: bool) -> Result<(), OxenError>;
     fn down(&self, path: &Path, all: bool) -> Result<(), OxenError>;
