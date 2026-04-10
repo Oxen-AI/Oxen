@@ -396,7 +396,7 @@ pub fn commit_dir_entries_new(
     commit_progress_bar.finish_and_clear();
 
     // Remove all the directories that are staged for removal
-    cache_invalidate_dir_hash_db(&dir_hash_db, dir_entries.iter().map(|(_, removed)| removed))?;
+    cache_invalidate_dir_hash_db(&dir_hash_db, dir_entries.values())?;
 
     Ok(node.to_commit())
 }
@@ -508,7 +508,7 @@ pub fn commit_dir_entries(
     commit_progress_bar.finish_and_clear();
 
     // Remove all the directories that are staged for removal
-    cache_invalidate_dir_hash_db(&dir_hash_db, dir_entries.iter().map(|(_, removed)| removed))?;
+    cache_invalidate_dir_hash_db(&dir_hash_db, dir_entries.values())?;
 
     Ok(node.to_commit())
 }
@@ -637,20 +637,20 @@ fn split_into_vnodes(
                 match child.status {
                     StagedEntryStatus::Removed => {
                         log::debug!(
-                            "removing child {:?} {:?} with {:?}",
+                            "removing child {:?} {:?} (was {:?})",
                             child.node.node.node_type(),
                             child.node.maybe_path().unwrap(),
-                            child.node.maybe_path().unwrap()
+                            child_path
                         );
                         children.remove(&child);
                         removed_children.insert(child);
                     }
                     _ => {
                         log::debug!(
-                            "replacing child {:?} {:?} with {:?}",
+                            "replacing child {:?} {:?} (was {:?})",
                             child.node.node.node_type(),
                             child.node.maybe_path().unwrap(),
-                            child.node.maybe_path().unwrap()
+                            child_path
                         );
                         log::debug!("replaced child {}", child.node);
                         children.replace(child);

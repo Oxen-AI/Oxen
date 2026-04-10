@@ -1274,6 +1274,25 @@ mod tests {
                 status.removed_files
             );
 
+            // Verify the directory and file are gone from the committed tree
+            let head = repositories::commits::head_commit(&repo)?;
+            let dir_node = repositories::tree::get_dir_without_children(
+                &repo,
+                &head,
+                Path::new("1/2/3"),
+                None,
+            )?;
+            assert!(
+                dir_node.is_none(),
+                "directory 1/2/3 should not exist in the committed tree"
+            );
+            let file_node =
+                repositories::tree::get_file_by_path(&repo, &head, Path::new("1/2/3/file.txt"))?;
+            assert!(
+                file_node.is_none(),
+                "file 1/2/3/file.txt should not exist in the committed tree"
+            );
+
             Ok(())
         })
         .await
@@ -1329,6 +1348,15 @@ mod tests {
                 status.removed_files.is_empty(),
                 "status should be clean after committing removal, but got removed_files: {:?}",
                 status.removed_files
+            );
+
+            // Verify the file is gone from the committed tree
+            let head = repositories::commits::head_commit(&repo)?;
+            let file_node =
+                repositories::tree::get_file_by_path(&repo, &head, Path::new("1/2/3/file.txt"))?;
+            assert!(
+                file_node.is_none(),
+                "file 1/2/3/file.txt should not exist in the committed tree"
             );
 
             Ok(())

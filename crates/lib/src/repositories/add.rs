@@ -766,7 +766,7 @@ A: Oxen.ai
     use async_walkdir::WalkDir;
     /// Checks that only the expected relative paths exist from the given root.
     /// Ignores any relative paths that start with one of the [ignore_prefixes].
-    async fn expect_filesystem(root: &Path, expected_relative: &[&Path], ingore_prefixes: &[&str]) {
+    async fn expect_filesystem(root: &Path, expected_relative: &[&Path], ignore_prefixes: &[&str]) {
         let root = root.canonicalize().expect("could not canonicalize");
 
         let all_from_root: HashSet<PathBuf> = {
@@ -780,7 +780,7 @@ A: Oxen.ai
                             if relative.as_os_str().is_empty() {
                                 continue;
                             }
-                            let ok_to_add = ingore_prefixes
+                            let ok_to_add = ignore_prefixes
                                 .iter()
                                 .find(|prefix| relative.starts_with(prefix))
                                 .is_none();
@@ -957,7 +957,6 @@ A: Oxen.ai
 
             expect_filesystem(&repo.path, &[&dir_1, &dir_2, &dir_3, &file], &[".oxen"]).await;
 
-            // remove_and_stage(&repo, &dir_3).await;
             remove_and_stage(&repo, &dir_1).await;
             let status = repositories::status(&repo).expect("oxen status failed");
             expect_staged(&status, 0, 1, 0);
@@ -974,10 +973,10 @@ A: Oxen.ai
             // verify the merkle tree no longer contains dir "1/2/3/"
             check_tree_doesnt_contain_dir(&repo, &dir_3);
 
-            // // verify the merkle tree no longer contains dir "1/2"
+            // verify the merkle tree no longer contains dir "1/2"
             check_tree_doesnt_contain_dir(&repo, &dir_2);
 
-            // // verify the merkle tree no longer contains dir "1/"
+            // verify the merkle tree no longer contains dir "1/"
             check_tree_doesnt_contain_dir(&repo, &dir_1);
 
             Ok(())
