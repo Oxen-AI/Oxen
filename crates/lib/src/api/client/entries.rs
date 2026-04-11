@@ -324,7 +324,7 @@ pub async fn download_small_entry(
 }
 
 /// Download a file from the remote repository in parallel chunks
-#[tracing::instrument(skip(repo, remote_repo, remote_path, entry))]
+#[tracing::instrument(skip_all)]
 pub async fn pull_large_entry(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,

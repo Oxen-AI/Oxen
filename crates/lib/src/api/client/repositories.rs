@@ -105,7 +105,7 @@ pub async fn get_by_url(url: &str) -> Result<RemoteRepository, OxenError> {
     get_by_remote(&remote).await
 }
 
-#[tracing::instrument(skip(remote))]
+#[tracing::instrument(skip_all)]
 pub async fn get_by_remote(remote: &Remote) -> Result<RemoteRepository, OxenError> {
     let url = api::endpoint::url_from_remote(remote, "")?;
     log::debug!("get_by_remote url: {url}");
@@ -477,25 +477,25 @@ pub async fn post_download(repository: &RemoteRepository) -> Result<(), OxenErro
     action_hook(repository, action_name, ActionEventState::Completed, None).await
 }
 
-#[tracing::instrument(skip(repository))]
+#[tracing::instrument(skip_all)]
 pub async fn pre_pull(repository: &RemoteRepository) -> Result<(), OxenError> {
     let action_name = PULL;
     action_hook(repository, action_name, ActionEventState::Started, None).await
 }
 
-#[tracing::instrument(skip(repository))]
+#[tracing::instrument(skip_all)]
 pub async fn post_pull(repository: &RemoteRepository) -> Result<(), OxenError> {
     let action_name = PULL;
     action_hook(repository, action_name, ActionEventState::Completed, None).await
 }
 
-#[tracing::instrument(skip(repository))]
+#[tracing::instrument(skip_all)]
 pub async fn pre_fetch(repository: &RemoteRepository) -> Result<(), OxenError> {
     let action_name = FETCH;
     action_hook(repository, action_name, ActionEventState::Started, None).await
 }
 
-#[tracing::instrument(skip(repository))]
+#[tracing::instrument(skip_all)]
 pub async fn post_fetch(repository: &RemoteRepository) -> Result<(), OxenError> {
     let action_name = FETCH;
     action_hook(repository, action_name, ActionEventState::Completed, None).await

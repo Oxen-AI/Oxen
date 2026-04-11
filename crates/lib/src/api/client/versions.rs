@@ -206,7 +206,7 @@ async fn create_multipart_large_file_upload(
 }
 
 /// Batch download
-#[tracing::instrument(skip(remote_repo, hashes, local_repo))]
+#[tracing::instrument(skip_all)]
 pub async fn download_data_from_version_paths(
     remote_repo: &RemoteRepository,
     hashes: &[String],
@@ -246,7 +246,7 @@ pub async fn download_data_from_version_paths(
     Err(OxenError::basic_str(err))
 }
 
-#[tracing::instrument(skip(remote_repo, hashes, local_repo))]
+#[tracing::instrument(skip_all)]
 pub async fn try_download_data_from_version_paths(
     remote_repo: &RemoteRepository,
     hashes: &[String],

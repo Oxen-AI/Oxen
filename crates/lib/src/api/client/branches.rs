@@ -11,7 +11,7 @@ use crate::view::{
 use serde_json::json;
 use std::path::Path;
 
-#[tracing::instrument(skip(repository, branch_name))]
+#[tracing::instrument(skip_all)]
 pub async fn get_by_name(
     repository: &RemoteRepository,
     branch_name: impl AsRef<str>,
@@ -104,7 +104,7 @@ pub async fn create_from_commit_id(
 }
 
 /// List all branches on the remote
-#[tracing::instrument(skip(repository))]
+#[tracing::instrument(skip_all)]
 pub async fn list(repository: &RemoteRepository) -> Result<Vec<Branch>, OxenError> {
     let url = api::endpoint::url_from_repo(repository, "/branches")?;
 
