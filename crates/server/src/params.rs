@@ -88,8 +88,6 @@ pub fn path_param<'a>(request: &'a HttpRequest, param: &str) -> Result<&'a str, 
     {
         use tracing_opentelemetry::OpenTelemetrySpanExt;
         // TODO: Replace this dynamic approach with statically typed `web::Path<T>` extractors
-        // and compile-time span field declaration. See the refactor plan at:
-        // `experiments/todo_plan/refactor_http_handlers_structured_static_types_auto_tracing_logging_and_auto_doc_gen.md`
         tracing::Span::current().set_attribute(format!("http.path.{param}"), value.to_string());
     }
 
@@ -111,8 +109,6 @@ pub fn query_param<'a>(request: &'a HttpRequest, param: &str) -> &'a str {
     {
         use tracing_opentelemetry::OpenTelemetrySpanExt;
         // TODO: Replace this dynamic approach with statically typed `web::Query<T>` extractors
-        // and compile-time span field declaration. See the refactor plan at:
-        // `experiments/todo_plan/refactor_http_handlers_structured_static_types_auto_tracing_logging_and_auto_doc_gen.md`
         tracing::Span::current().set_attribute(format!("http.query.{param}"), value.to_string());
     }
 

@@ -114,7 +114,6 @@ pub async fn parallel_large_file_upload(
     entry: Option<Entry>,                 // entry is provided for push workflow
     progress: Option<&Arc<PushProgress>>, // for push workflow
 ) -> Result<MultipartLargeFileUpload, OxenError> {
-    let timer = std::time::Instant::now();
     log::debug!("multipart_large_file_upload path: {:?}", file_path.as_ref());
 
     let mut upload =
@@ -134,19 +133,14 @@ pub async fn parallel_large_file_upload(
     .await?;
     let num_chunks = results.len();
     log::debug!("multipart_large_file_upload num_chunks: {num_chunks:?}");
-    let result = complete_multipart_large_file_upload(
+    complete_multipart_large_file_upload(
         remote_repo,
         upload,
         num_chunks,
         workspace_id,
         update_timestamp,
     )
-    .await;
-    log::debug!(
-        "parallel_large_file_upload completed in {:?}",
-        timer.elapsed()
-    );
-    result
+    .await
 }
 
 /// Creates a new multipart large file upload
@@ -212,22 +206,13 @@ pub async fn download_data_from_version_paths(
     hashes: &[String],
     local_repo: &LocalRepository,
 ) -> Result<u64, OxenError> {
-    let timer = std::time::Instant::now();
     let total_retries = max_retries().try_into().unwrap_or(max_retries() as u64);
     let mut num_retries = 0;
 
     while num_retries < total_retries {
         match try_download_data_from_version_paths(remote_repo, hashes, local_repo).await {
-            Ok(val) => {
-                log::debug!(
-                    "download_data_from_version_paths completed in {:?}",
-                    timer.elapsed()
-                );
-                return Ok(val);
-            }
-            Err(OxenError::Authentication(val)) => {
-                return Err(OxenError::Authentication(val));
-            }
+            Ok(val) => return Ok(val),
+            Err(OxenError::Authentication(val)) => return Err(OxenError::Authentication(val)),
             Err(err) => {
                 num_retries += 1;
                 // Exponentially back off
@@ -508,7 +493,6 @@ pub async fn multipart_batch_upload_with_retry(
     chunk: &Vec<Entry>,
     client: &reqwest::Client,
 ) -> Result<(), OxenError> {
-    let timer = std::time::Instant::now();
     let mut files_to_retry: Vec<ErrorFileInfo> = vec![];
     let mut first_try = true;
     let mut retry_count: usize = 0;
@@ -527,10 +511,6 @@ pub async fn multipart_batch_upload_with_retry(
         }
     }
     if files_to_retry.is_empty() {
-        log::debug!(
-            "multipart_batch_upload_with_retry completed in {:?}",
-            timer.elapsed()
-        );
         Ok(())
     } else {
         Err(OxenError::basic_str(format!(

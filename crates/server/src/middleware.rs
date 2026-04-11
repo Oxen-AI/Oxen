@@ -87,13 +87,22 @@ where
 
 /// Middleware that records HTTP request count and latency for every route.
 ///
-/// Emits two Prometheus metrics per request:
-///   - `http_requests_total{method, path, status}` — counter
-///   - `http_request_duration_ms{method, path}` — histogram (milliseconds)
+/// Emits three (3) Prometheus metrics per request:
+///   1. `http_requests_total{method, path, status}` — counter
+///   2. 'http_errors_total{method, path, status}`   — counter
+///   3. `http_request_duration_ms{method, path}`    — histogram (milliseconds)
 ///
 /// The `path` label uses the matched Actix route pattern (e.g.
 /// `/api/repos/{namespace}/{repo_name}/branches`) to keep cardinality low.
 pub struct MetricsMiddleware;
+
+const HTTP_REQUESTS_TOTAL: &str = "http_requests_total";
+const HTTP_ERRORS_TOTAL: &str = "http_errors_total";
+const HTTP_REQUEST_DURATION_MS: &str = "http_request_duration_ms";
+
+const METHOD: &str = "method";
+const PATH: &str = "path";
+const STATUS: &str = "status";
 
 impl<S, B> Transform<S, ServiceRequest> for MetricsMiddleware
 where
@@ -144,13 +153,13 @@ where
                         .unwrap_or_else(|| "unmatched".to_string());
                     let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
 
-                    metrics::counter!("http_requests_total", "method" => method.clone(), "path" => path.clone(), "status" => status.clone())
+                    metrics::counter!(HTTP_REQUESTS_TOTAL, METHOD => method.clone(), PATH => path.clone(), STATUS => status.clone())
                         .increment(1);
                     if res.status().is_client_error() || res.status().is_server_error() {
-                        metrics::counter!("http_errors_total", "method" => method.clone(), "path" => path.clone(), "status" => status)
+                        metrics::counter!(HTTP_ERRORS_TOTAL, METHOD => method.clone(), PATH => path.clone(), STATUS => status)
                             .increment(1);
                     }
-                    metrics::histogram!("http_request_duration_ms", "method" => method, "path" => path)
+                    metrics::histogram!(HTTP_REQUEST_DURATION_MS, METHOD => method, PATH => path)
                         .record(elapsed_ms);
 
                     Ok(res)
@@ -160,11 +169,11 @@ where
                     let status = "500";
                     let path = "unmatched";
 
-                    metrics::counter!("http_requests_total", "method" => method.clone(), "path" => path, "status" => status)
+                    metrics::counter!(HTTP_REQUESTS_TOTAL, METHOD => method.clone(), PATH => path, STATUS => status)
                         .increment(1);
-                    metrics::counter!("http_errors_total", "method" => method.clone(), "path" => path, "status" => status)
+                    metrics::counter!(HTTP_ERRORS_TOTAL, METHOD => method.clone(), PATH => path, STATUS => status)
                         .increment(1);
-                    metrics::histogram!("http_request_duration_ms", "method" => method, "path" => path)
+                    metrics::histogram!(HTTP_REQUEST_DURATION_MS, METHOD => method, PATH => path)
                         .record(elapsed_ms);
 
                     Err(err)
