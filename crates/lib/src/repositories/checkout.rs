@@ -807,7 +807,7 @@ mod tests {
                 assert!(test_dir_path.exists());
 
                 // list files in test_dir_path
-                let test_dir_files = util::fs::list_files_in_dir(&test_dir_path);
+                let test_dir_files = util::fs::list_files_in_dir(&test_dir_path).await?;
                 println!("test_dir_files: {:?}", test_dir_files.len());
                 for file in test_dir_files.iter() {
                     println!("file: {file:?}");

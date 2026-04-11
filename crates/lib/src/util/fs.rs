@@ -393,26 +393,16 @@ pub fn list_dirs_in_dir(dir: &Path) -> Result<Vec<PathBuf>, OxenError> {
     Ok(dirs)
 }
 
-pub fn list_files_in_dir(dir: &Path) -> Vec<PathBuf> {
+pub async fn list_files_in_dir(dir: &Path) -> Result<Vec<PathBuf>, OxenError> {
     let mut files: Vec<PathBuf> = Vec::new();
-    match std::fs::read_dir(dir) {
-        Ok(paths) => {
-            for path in paths.flatten() {
-                if path.path().is_file() {
-                    files.push(path.path());
-                }
-            }
-        }
-        Err(err) => {
-            eprintln!(
-                "util::fs::list_files_in_dir Could not find dir: {} err: {}",
-                dir.display(),
-                err
-            )
+    let mut entries = tokio::fs::read_dir(dir).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        if entry.file_type().await?.is_file() {
+            files.push(path);
         }
     }
-
-    files
+    Ok(files)
 }
 
 pub fn rlist_paths_in_dir(dir: &Path) -> Vec<PathBuf> {
@@ -2181,5 +2171,43 @@ def add(a, b):
             util::fs::to_unix_str(Path::new("data\\test\\file.txt")),
             "data/test/file.txt"
         );
+    }
+
+    #[tokio::test]
+    async fn test_list_files_in_dir() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|dir| async move {
+            // Create a few files and a subdirectory
+            tokio::fs::write(dir.join("a.txt"), b"a").await?;
+            tokio::fs::write(dir.join("b.csv"), b"b").await?;
+            tokio::fs::create_dir(dir.join("subdir")).await?;
+            tokio::fs::write(dir.join("subdir").join("nested.txt"), b"n").await?;
+
+            let mut files = util::fs::list_files_in_dir(&dir).await?;
+            files.sort();
+
+            // Should only contain the two top-level files, not the subdir or its contents
+            assert_eq!(files.len(), 2);
+            assert!(files.contains(&dir.join("a.txt")));
+            assert!(files.contains(&dir.join("b.csv")));
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_list_files_in_dir_empty() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|dir| async move {
+            let files = util::fs::list_files_in_dir(&dir).await?;
+            assert!(files.is_empty());
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_list_files_in_dir_nonexistent() {
+        let result = util::fs::list_files_in_dir(Path::new("/nonexistent/path")).await;
+        assert!(result.is_err());
     }
 }

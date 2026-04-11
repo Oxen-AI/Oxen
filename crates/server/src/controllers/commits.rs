@@ -797,7 +797,7 @@ pub async fn upload_chunk(
                     // but we should find a more elegant solution because we're
                     // doing a lot of extra work unpacking tarballs multiple
                     // times.
-                    check_if_upload_complete_and_unpack(
+                    if let Err(err) = check_if_upload_complete_and_unpack(
                         &repo,
                         tmp_dir,
                         total_chunks,
@@ -805,7 +805,12 @@ pub async fn upload_chunk(
                         query.is_compressed,
                         query.filename.to_owned(),
                     )
-                    .await;
+                    .await
+                    {
+                        log::error!("upload_chunk unpack failed: {err:?}");
+                        return Ok(HttpResponse::InternalServerError()
+                            .json(StatusMessage::internal_server_error()));
+                    }
 
                     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
                 }
@@ -834,8 +839,8 @@ async fn check_if_upload_complete_and_unpack(
     total_size: usize,
     is_compressed: bool,
     filename: Option<String>,
-) {
-    let mut files = util::fs::list_files_in_dir(&tmp_dir);
+) -> Result<(), OxenError> {
+    let mut files = util::fs::list_files_in_dir(&tmp_dir).await?;
 
     log::debug!(
         "check_if_upload_complete_and_unpack checking if complete... {} / {}",
@@ -844,20 +849,14 @@ async fn check_if_upload_complete_and_unpack(
     );
 
     if total_chunks < files.len() {
-        return;
+        return Ok(());
     }
     files.sort();
 
     let mut uploaded_size: u64 = 0;
     for file in files.iter() {
-        match util::fs::metadata(file) {
-            Ok(metadata) => {
-                uploaded_size += metadata.len();
-            }
-            Err(err) => {
-                log::warn!("Err getting metadata on {file:?}\n{err:?}");
-            }
-        }
+        let metadata = util::fs::metadata(file)?;
+        uploaded_size += metadata.len();
     }
 
     log::debug!(
@@ -868,7 +867,6 @@ async fn check_if_upload_complete_and_unpack(
     // But if we have all the chunks we should be good
 
     if (uploaded_size as usize) >= total_size {
-        // std::thread::spawn(move || {
         // Get tar.gz bytes for history/COMMIT_ID data
         log::debug!(
             "check_if_upload_complete_and_unpack decompressing {} bytes to {:?}",
@@ -879,55 +877,27 @@ async fn check_if_upload_complete_and_unpack(
         // TODO: Cleanup these if / else / match statements
         // Combine into actual file data
         if is_compressed {
-            match unpack_compressed_data(&files, repo).await {
-                Ok(_) => {
-                    log::debug!(
-                        "check_if_upload_complete_and_unpack unpacked {} files successfully",
-                        files.len()
-                    );
-                }
-                Err(err) => {
-                    log::error!(
-                        "check_if_upload_complete_and_unpack could not unpack compressed data {err:?}"
-                    );
-                }
-            }
+            unpack_compressed_data(&files, repo).await?;
         } else {
-            match filename {
-                Some(filename) => match unpack_to_file(&files, repo, &filename) {
-                    Ok(_) => {
-                        log::debug!(
-                            "check_if_upload_complete_and_unpack unpacked {} files successfully",
-                            files.len()
-                        );
-                    }
-                    Err(err) => {
-                        log::error!(
-                            "check_if_upload_complete_and_unpack could not unpack compressed data {err:?}"
-                        );
-                    }
-                },
-                None => {
-                    log::error!(
-                        "check_if_upload_complete_and_unpack must supply filename if !compressed"
-                    );
-                }
-            }
+            let filename = filename.ok_or_else(|| {
+                OxenError::basic_str(
+                    "check_if_upload_complete_and_unpack must supply filename if !compressed",
+                )
+            })?;
+            unpack_to_file(&files, repo, &filename)?;
         }
 
+        log::debug!(
+            "check_if_upload_complete_and_unpack unpacked {} files successfully",
+            files.len()
+        );
+
         // Cleanup tmp files
-        match util::fs::remove_dir_all(&tmp_dir) {
-            Ok(_) => {
-                log::debug!("check_if_upload_complete_and_unpack removed tmp dir {tmp_dir:?}");
-            }
-            Err(err) => {
-                log::error!(
-                    "check_if_upload_complete_and_unpack could not remove tmp dir {tmp_dir:?} {err:?}"
-                );
-            }
-        }
-        // });
+        util::fs::remove_dir_all(&tmp_dir)?;
+        log::debug!("check_if_upload_complete_and_unpack removed tmp dir {tmp_dir:?}");
     }
+
+    Ok(())
 }
 
 fn unpack_to_file(
