@@ -267,12 +267,16 @@ async fn server_three_way_merge(
     let mut dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>> = HashMap::new();
     for (path, file_node, status) in &analysis.entries {
         let parent = path.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
+        // The commit writer's existing children use full relative paths (e.g. "data/b.txt") as
+        // their names, so our staged entries must match.
+        let mut named_node = file_node.clone();
+        named_node.set_name(path.to_str().unwrap());
         dir_entries
             .entry(parent)
             .or_default()
             .push(StagedMerkleTreeNode {
                 status: status.clone(),
-                node: MerkleTreeNode::from_file(file_node.clone()),
+                node: MerkleTreeNode::from_file(named_node),
             });
         // Ensure all ancestor directories are present in dir_entries
         let mut ancestor = path.to_path_buf();
@@ -1032,8 +1036,12 @@ pub async fn find_merge_conflicts(
 
     let starting_path = PathBuf::from("");
 
+    // Walk the full LCA tree without the shared_hashes filter. The LCA tree is fully loaded
+    // (no exclusions), and pruning it would hide files in directories shared between LCA and
+    // base — causing missed deletions and incorrect "not in LCA" classifications.
+    let no_filter = HashSet::new();
     let lca_entries = if let Some(lca_tree) = &lca_commit_tree {
-        repositories::tree::unique_dir_entries(&starting_path, lca_tree, shared_hashes)?
+        repositories::tree::unique_dir_entries(&starting_path, lca_tree, &no_filter)?
     } else {
         HashMap::new()
     };
@@ -1162,9 +1170,8 @@ pub async fn find_merge_conflicts(
         }
     }
 
-    // Detect deletions: files in the LCA that are absent from the merge tree and unchanged on base.
-    // Check the full merge tree, not just merge_tree_entries, because unique_dir_entries skips
-    // files in shared directories.
+    // Detect deletions: files in the LCA that are absent from the merge tree. `base_entries` is
+    // pruned (shared dirs skipped), so we use `get_file_by_path` for base lookups.
     for (entry_path, lca_file_node) in &lca_entries {
         if merge_tree_entries.contains_key(entry_path)
             || repositories::tree::get_file_by_path(repo, &merge_commits.merge, entry_path)?
@@ -1172,7 +1179,10 @@ pub async fn find_merge_conflicts(
         {
             continue;
         }
-        if let Some(base_file_node) = base_entries.get(entry_path) {
+        // File is in LCA but absent from merge — check base to decide delete vs conflict.
+        let base_file_node =
+            repositories::tree::get_file_by_path(repo, &merge_commits.base, entry_path)?;
+        if let Some(base_file_node) = base_file_node {
             if base_file_node.combined_hash() == lca_file_node.combined_hash() {
                 // Unchanged on base, deleted on merge — delete it
                 entries.push((entry_path.clone(), lca_file_node.clone(), Removed));
