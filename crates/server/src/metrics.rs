@@ -1,19 +1,26 @@
+#[cfg(feature = "metrics")]
 use metrics_exporter_prometheus::{BuildError, PrometheusBuilder};
 
 /// Guard for the Prometheus metrics exporter. Dropping this aborts the
 /// background HTTP server that serves the `/metrics` endpoint.
 ///
 /// Use `init_metrics_prometheus` to create an instance.
+#[cfg(feature = "metrics")]
 pub(crate) struct MetricsGuard {
     handle: tokio::task::JoinHandle<Result<(), String>>,
 }
 
+#[cfg(feature = "metrics")]
 impl Drop for MetricsGuard {
     /// Aborts the background HTTP server that serves the `/metrics` endpoint.
     fn drop(&mut self) {
         self.handle.abort();
     }
 }
+
+/// An empty struct used as a placeholder when the `metrics` feature is disabled.
+#[cfg(not(feature = "metrics"))]
+pub(crate) struct MetricsGuard {}
 
 /// Install the Prometheus metrics exporter, listening on the given port.
 ///
@@ -27,6 +34,7 @@ impl Drop for MetricsGuard {
 ///
 /// Returns an error if the port is already in use or if the Prometheus recorder
 /// or exporter cannot be initialized.
+#[cfg(feature = "metrics")]
 pub(crate) fn init_metrics_prometheus(port: u16) -> Result<MetricsGuard, BuildError> {
     // Verify the port is free before committing to the recorder and spawning
     // the background task. The listener is dropped immediately so the exporter

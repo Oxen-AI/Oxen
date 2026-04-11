@@ -96,31 +96,67 @@ metrics endpoint. This allows you to monitor server health, track request
 counts, error rates, and other operational metrics using standard Prometheus
 tooling.
 
+### Compile-time feature flag
+
+Metrics collection requires the `metrics` Cargo feature. Without it, all
+metric collections (`counter!`, `histogram!`, etc.) compile to no-ops —
+no counters are recorded and no `/metrics` endpoint is served,
+regardless of environment variables.
+
+The `metrics` feature is included in `production`, so a production build
+already has it:
+
+```bash
+cargo build --workspace --features production
+```
+
+To enable metrics alone (without OpenTelemetry tracing or other production
+features):
+
+```bash
+# just metrics, for any crate
+cargo build --workspace --features metrics
+
+# or per-crate
+cargo build -p oxen-server --features metrics
+cargo build -p oxen        --features metrics
+cargo build -p liboxen     --features metrics
+```
+
+If `OXEN_METRICS_PORT` is set at runtime (to a value other than `off`)
+but the binary was compiled **without** the `metrics` feature, the server
+logs an error at startup explaining the mismatch.
+
 ### How it works
 
-On startup, `oxen-server` launches a lightweight HTTP server (separate from
-the main API) that serves metrics in the Prometheus exposition format. Any
-counters, gauges, or histograms recorded via the [`metrics`](https://docs.rs/metrics)
-crate are automatically exposed.
+On startup (when compiled with `metrics`), `oxen-server` launches a
+lightweight HTTP server (separate from the main API) that serves metrics
+in the Prometheus exposition format. Any counters, gauges, or histograms
+recorded via the [`metrics`](https://docs.rs/metrics) crate are
+automatically exposed.
 
 ### Configuration
 
-The metrics endpoint is **enabled by default** on port **9090**.
+The metrics endpoint is **opt-in**. Set `OXEN_METRICS_PORT` to a port number
+to enable it.
 
 | Variable | Description | Default |
 |---|---|---|
-| `OXEN_METRICS_PORT` | Port for the metrics HTTP server | `9090` |
-| `OXEN_METRICS_PORT=off` | Disable the metrics endpoint entirely | -- |
+| `OXEN_METRICS_PORT` | Port for the metrics HTTP server (opt-in) | *(none — disabled)* |
+| `OXEN_METRICS_PORT=off` | Explicitly disable the metrics endpoint | -- |
 
 ```bash
-# Use the default port (9090)
-cargo run -p oxen-server start
+# No metrics server (default)
+cargo run -p oxen-server --features metrics start
 
-# Use a custom port
-OXEN_METRICS_PORT=9100 cargo run -p oxen-server start
+# Enable metrics on port 9090
+OXEN_METRICS_PORT=9090 cargo run -p oxen-server --features metrics start
 
-# Disable metrics entirely
-OXEN_METRICS_PORT=off cargo run -p oxen-server start
+# Enable metrics on a custom port
+OXEN_METRICS_PORT=9100 cargo run -p oxen-server --features metrics start
+
+# Explicitly disable metrics
+OXEN_METRICS_PORT=off cargo run -p oxen-server --features metrics start
 ```
 
 ### Verifying with `curl`

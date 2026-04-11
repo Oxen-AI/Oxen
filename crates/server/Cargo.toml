@@ -19,8 +19,9 @@ path = "src/main.rs"
 
 [features]
 default = []
+metrics = ["liboxen/metrics", "dep:metrics", "dep:metrics-exporter-prometheus"]
 otel = ["liboxen/otel", "dep:tracing-opentelemetry"]
-production = ["otel", "liboxen/production", "default"]
+production = ["metrics", "otel", "liboxen/production", "default"]
 
 [dependencies]
 actix-http = { workspace = true }
@@ -42,8 +43,8 @@ jsonwebtoken = { workspace = true }
 liboxen = { path = "../lib" }
 log = { workspace = true }
 lru = { workspace = true }
-metrics = { workspace = true }
-metrics-exporter-prometheus = { workspace = true }
+metrics = { workspace = true, optional = true }
+metrics-exporter-prometheus = { workspace = true, optional = true }
 mime = { workspace = true }
 os_path = { workspace = true }
 percent-encoding = { workspace = true }

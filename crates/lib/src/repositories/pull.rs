@@ -14,18 +14,28 @@ use crate::opts::fetch_opts::FetchOpts;
 /// `constants::DEFAULT_REMOTE_NAME` and `constants::DEFAULT_BRANCH_NAME`
 #[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub async fn pull(repo: &LocalRepository) -> Result<(), OxenError> {
+    #[cfg(feature = "metrics")]
     metrics::counter!("oxen_pull_total").increment(1);
+    #[cfg(feature = "metrics")]
     let timer = std::time::Instant::now();
+
     let result = match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::pull::pull(repo).await,
     };
-    metrics::histogram!("oxen_pull_duration_ms").record(timer.elapsed().as_millis() as f64);
+
+    #[cfg(feature = "metrics")]
+    {
+        let end = timer.elapsed();
+        metrics::histogram!("oxen_pull_duration_ms").record(end.as_millis() as f64);
+    }
+
     result
 }
 
 #[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub async fn pull_all(repo: &LocalRepository) -> Result<(), OxenError> {
+    #[cfg(feature = "metrics")]
     metrics::counter!("oxen_pull_total").increment(1);
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),

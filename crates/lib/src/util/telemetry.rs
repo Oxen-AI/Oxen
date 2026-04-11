@@ -19,8 +19,10 @@ pub enum TelemetryError {
     CreateLogDir(PathBuf, std::io::Error),
     #[error("Failed to initialize tracing: {0}")]
     InitFail(#[from] TryInitError),
+    #[cfg(feature = "otel")]
     #[error("Unknown OXEN_OTEL_PROTOCOL value: {0}")]
     UnknownProtocol(String),
+    #[cfg(feature = "otel")]
     #[error("OXEN_OTEL_ENDPOINT must start with http:// (got: {0})")]
     InvalidEndpoint(String),
 }

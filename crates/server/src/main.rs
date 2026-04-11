@@ -21,15 +21,15 @@ pub mod services;
 #[cfg(test)]
 pub(crate) mod test;
 
-pub(crate) mod telemetry;
+pub(crate) mod metrics;
 
+extern crate liboxen;
 extern crate log;
 extern crate lru;
 
 use actix_web::middleware::{Condition, DefaultHeaders, Logger};
 use actix_web::{App, HttpServer, web};
 use actix_web_httpauth::middleware::HttpAuthentication;
-use metrics_exporter_prometheus::BuildError;
 use thiserror::Error;
 
 use middleware::{MetricsMiddleware, RequestIdMiddleware};
@@ -77,11 +77,9 @@ use utoipa_swagger_ui::SwaggerUi;
 use clap::{Parser, Subcommand};
 
 use std::env;
-use std::num::ParseIntError;
 use std::path::{Path, PathBuf};
 
-use crate::telemetry::MetricsGuard;
-use crate::telemetry::init_metrics_prometheus;
+use crate::metrics::MetricsGuard;
 
 const VERSION: &str = liboxen::constants::OXEN_VERSION;
 
@@ -375,10 +373,12 @@ enum ServerError {
     Io(#[from] std::io::Error),
     #[error("{0}")]
     Oxen(#[from] OxenError),
+    #[cfg(feature = "metrics")]
     #[error("Invalid OXEN_METRICS_PORT value: {0} (parsing error: {1})")]
-    InvalidPort(String, ParseIntError),
+    InvalidPort(String, std::num::ParseIntError),
+    #[cfg(feature = "metrics")]
     #[error("Failed to start Prometheus metrics server: {0}")]
-    Metrics(#[from] BuildError),
+    Metrics(#[from] metrics_exporter_prometheus::BuildError),
 }
 
 /// The actual main oxen-server loop.
@@ -435,8 +435,9 @@ async fn server() -> Result<(), ServerError> {
     }
 }
 
-/// Initialize the Prometheus metrics server on `OXEN_METRICS_PORT`, defaulting to port 9090.
-/// Returns `Ok(None)` if `OXEN_METRICS_PORT='off'`.
+/// Initialize the Prometheus metrics server on the port specified by `OXEN_METRICS_PORT`.
+/// Metrics are **opt-in**: if the variable is not set, no metrics server is started.
+/// Returns `Ok(None)` if `OXEN_METRICS_PORT` is unset or `'off'`.
 ///
 /// # Errors
 ///   - `OXEN_METRICS_PORT` is set to a value that cannot be parsed as a `u16`
@@ -444,10 +445,11 @@ async fn server() -> Result<(), ServerError> {
 ///   - The Prometheus exporter fails to start
 ///
 /// Callers should propagate or handle the returned error.
+#[cfg(feature = "metrics")]
 fn init_metrics() -> Result<Option<MetricsGuard>, ServerError> {
     let enable_metrics = match env::var("OXEN_METRICS_PORT").as_deref() {
         Ok(val) if val.to_lowercase() == "off" => {
-            log::info!("Prometheus metrics disabled.");
+            log::info!("Prometheus metrics explicitly disabled (OXEN_METRICS_PORT=off).");
             None
         }
         Ok(val) => {
@@ -456,11 +458,12 @@ fn init_metrics() -> Result<Option<MetricsGuard>, ServerError> {
                 .map_err(|e| ServerError::InvalidPort(val.to_string(), e))?;
             Some(port)
         }
-        Err(_) => Some(9090),
+        // Not set: opt-in only, no metrics server
+        Err(_) => None,
     };
 
     if let Some(port) = enable_metrics {
-        let guard = init_metrics_prometheus(port)?;
+        let guard = crate::metrics::init_metrics_prometheus(port)?;
         log::info!(
             "Prometheus metrics at http://0.0.0.0:{port}/metrics \
              (set OXEN_METRICS_PORT to change, OXEN_METRICS_PORT='off' to disable)"
@@ -469,6 +472,21 @@ fn init_metrics() -> Result<Option<MetricsGuard>, ServerError> {
     } else {
         Ok(None)
     }
+}
+
+/// Returns `Ok(None)` when the "metrics" feature is not enabled.
+#[cfg(not(feature = "metrics"))]
+fn init_metrics() -> Result<Option<MetricsGuard>, ServerError> {
+    if let Ok(val) = env::var("OXEN_METRICS_PORT")
+        && !val.eq_ignore_ascii_case("off")
+    {
+        log::error!(
+            "OXEN_METRICS_PORT is set but the 'metrics' feature is not enabled. \
+                 Re-compile with `--features metrics` to enable metrics collection and the \
+                 Prometheus-compatible /metrics endpoint. (Ignoring.)"
+        );
+    }
+    Ok(None)
 }
 
 #[derive(Debug, Clone)]
