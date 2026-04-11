@@ -52,8 +52,14 @@ pub async fn add_all_with_version<T: AsRef<Path>>(
 
 #[cfg(test)]
 mod tests {
+    use futures::StreamExt;
+
+    use crate::model::LocalRepository;
+    use crate::model::StagedData;
+    use crate::model::StagedEntryStatus;
     use crate::test;
 
+    use std::collections::HashSet;
     use std::path::Path;
     use std::path::PathBuf;
 
@@ -660,6 +666,318 @@ A: Oxen.ai
 
             // Should stage all 7 files now
             assert_eq!(status.staged_files.len(), 7);
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Given the relative path (possibly nested) to a file and contents it should have,
+    /// this function creates the file and stages it to the repository using `oxen add`.
+    async fn create_and_stage(repo: &LocalRepository, file_relative: &Path, content: &str) {
+        let file_full = repo.path.join(file_relative);
+        let dir = file_full.parent().expect("parent dir should exist");
+        tokio::fs::create_dir_all(dir)
+            .await
+            .unwrap_or_else(|_| panic!("could not create directory: {}", dir.display()));
+        tokio::fs::write(&file_full, content)
+            .await
+            .unwrap_or_else(|_| panic!("could not write file: {}", file_full.display()));
+        repositories::add(repo, file_relative)
+            .await
+            .unwrap_or_else(|_| panic!("could not oxen add file: {}", file_full.display()));
+    }
+
+    /// Given a relative path to a file or directory in the repository,
+    /// this function removes it from the filesystem and stages the removal using `oxen add`.
+    async fn remove_and_stage(repo: &LocalRepository, relative: &Path) {
+        let full = repo.path.join(relative);
+        if full.is_file() {
+            tokio::fs::remove_file(&full)
+                .await
+                .unwrap_or_else(|_| panic!("could not remove file: {}", full.display()));
+        } else if full.is_dir() {
+            tokio::fs::remove_dir_all(&full)
+                .await
+                .unwrap_or_else(|_| panic!("could not remove directory: {}", full.display()));
+        } else {
+            panic!("path is neither a file nor a directory: {}", full.display())
+        }
+        repositories::add(repo, relative)
+            .await
+            .unwrap_or_else(|_| panic!("could not oxen add: {}", relative.display()));
+    }
+
+    /// Commit a staged file (either added, removed, or modified) to the repository.
+    /// Use the message_prefix as 'added', 'removed', or 'modified'.
+    fn commit_staged(repo: &LocalRepository, message_prefix: &str, file_relative: &Path) {
+        repositories::commit(
+            repo,
+            &format!("{message_prefix} {}", file_relative.display()),
+        )
+        .expect("could not oxen commit");
+    }
+
+    /// Asserts that there are the expected number of staged files for addition, removal, and modification.
+    fn expect_staged(
+        status: &StagedData,
+        n_expect_add: usize,
+        n_expect_rm: usize,
+        n_expect_mod: usize,
+    ) {
+        let n_expected = n_expect_add + n_expect_mod + n_expect_rm;
+        assert!(
+            status.staged_files.len() == n_expected,
+            "Expecting there to be {n_expected} file(s), but found ({}): {:?}",
+            status.staged_files.len(),
+            status.staged_files
+        );
+
+        let count_type = |s: StagedEntryStatus| -> usize {
+            status
+                .staged_files
+                .iter()
+                .filter(|(_, entry)| entry.status == s)
+                .count()
+        };
+
+        let n_rm = count_type(StagedEntryStatus::Removed);
+        assert_eq!(
+            n_rm, n_expect_rm,
+            "Expecting {n_expect_rm} staged file(s) for removal but found ({n_rm}): {:?}",
+            status.staged_files
+        );
+
+        let n_add = count_type(StagedEntryStatus::Added);
+        assert_eq!(
+            n_add, n_expect_add,
+            "Expecting {n_expect_add} staged file(s) for addition but found ({n_add}): {:?}",
+            status.staged_files
+        );
+
+        let n_mod = count_type(StagedEntryStatus::Modified);
+        assert_eq!(
+            n_mod, n_expect_mod,
+            "Expecting {n_expect_mod} staged file(s) for modification but found ({n_mod}): {:?}",
+            status.staged_files
+        );
+    }
+
+    use async_walkdir::WalkDir;
+    /// Checks that only the expected relative paths exist from the given root.
+    /// Ignores any relative paths that start with one of the [ignore_prefixes].
+    async fn expect_filesystem(root: &Path, expected_relative: &[&Path], ignore_prefixes: &[&str]) {
+        let root = root.canonicalize().expect("could not canonicalize");
+
+        let all_from_root: HashSet<PathBuf> = {
+            let mut all_from_root = HashSet::new();
+            let mut entries = WalkDir::new(&root);
+            loop {
+                match entries.next().await {
+                    Some(Ok(entry)) => {
+                        let path = entry.path().canonicalize().expect("could not canonicalize");
+                        if let Some(relative) = ensure_relative(&root, &path) {
+                            if relative.as_os_str().is_empty() {
+                                continue;
+                            }
+                            let ok_to_add = ignore_prefixes
+                                .iter()
+                                .find(|prefix| relative.starts_with(prefix))
+                                .is_none();
+
+                            if ok_to_add {
+                                all_from_root.insert(relative.to_path_buf());
+                            }
+                        }
+                    }
+                    Some(Err(e)) => panic!("{e:?}"),
+                    None => break,
+                };
+            }
+            all_from_root
+        };
+
+        let expected_not_present = expected_relative
+            .iter()
+            .filter(|p| !root.join(p).exists())
+            .collect::<Vec<_>>();
+
+        assert!(
+            expected_not_present.is_empty(),
+            "Missing {} expected files/paths: {:?}\nActually have ({}): {:?}",
+            expected_not_present.len(),
+            expected_not_present,
+            all_from_root.len(),
+            all_from_root,
+        );
+
+        assert_eq!(
+            expected_relative.len(),
+            all_from_root.len(),
+            "Expected only {} files but found {}:\nexpected: {:?}\nactual: {:?}",
+            expected_relative.len(),
+            all_from_root.len(),
+            expected_relative,
+            all_from_root,
+        );
+    }
+
+    /// Returns `path` if it's already realtive. Otherwise it strips `root` from it
+    /// and returns that. If `path` is not relative to root, then `None` is returned.
+    fn ensure_relative<'a>(root: &Path, path: &'a Path) -> Option<&'a Path> {
+        if path.is_relative() {
+            Some(path)
+        } else {
+            path.strip_prefix(root).ok()
+        }
+    }
+
+    fn check_tree_doesnt_contain_file(repo: &LocalRepository, file: &Path) {
+        let head = repositories::commits::head_commit(repo).expect("failed to get head commit");
+
+        let fi = repositories::tree::get_file_by_path(
+            repo,
+            &head,
+            ensure_relative(&repo.path, file).unwrap_or_else(|| {
+                panic!(
+                    "non-repo ({}) relative path: {}",
+                    repo.path.display(),
+                    file.display()
+                )
+            }),
+        )
+        .unwrap_or_else(|_| panic!("failed to get file {}", file.display()));
+
+        assert!(
+            fi.is_none(),
+            "expecting nothing in {head} for {} but found: {fi:?}",
+            file.display()
+        )
+    }
+
+    fn check_tree_doesnt_contain_dir(repo: &LocalRepository, dir: &Path) {
+        let head = repositories::commits::head_commit(repo).expect("failed to get head commit");
+
+        let dir_1 = repositories::tree::get_dir_without_children(
+            repo,
+            &head,
+            ensure_relative(&repo.path, dir).unwrap_or_else(|| {
+                panic!(
+                    "non-repo ({}) relative path: {}",
+                    repo.path.display(),
+                    dir.display()
+                )
+            }),
+            None,
+        )
+        .unwrap_or_else(|_| panic!("failed to get dir {} w/o children", dir.display()));
+
+        assert!(
+            dir_1.is_none(),
+            "expecting nothing in {head} for {} but found: {dir_1:?}",
+            dir.display()
+        )
+    }
+
+    /// Test removal of a single file at the root.
+    #[tokio::test]
+    async fn test_remove_file() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let file = Path::new("file.txt");
+
+            create_and_stage(&repo, file, "hello").await;
+            let status = repositories::status(&repo).expect("oxen status failed");
+            expect_staged(&status, 1, 0, 0);
+            commit_staged(&repo, "added", file);
+
+            expect_filesystem(&repo.path, &[file], &[".oxen"]).await;
+
+            remove_and_stage(&repo, file).await;
+            let status = repositories::status(&repo).expect("oxen status failed");
+            expect_staged(&status, 0, 1, 0);
+            commit_staged(&repo, "removed", file);
+
+            let status = repositories::status(&repo).expect("oxen status failed");
+            expect_staged(&status, 0, 0, 0);
+            assert!(status.staged_dirs.is_empty());
+            expect_filesystem(&repo.path, &[], &[".oxen"]).await;
+
+            check_tree_doesnt_contain_file(&repo, file);
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Test removal of a single directory at the root containing a single file.
+    #[tokio::test]
+    async fn test_remove_dir_depth_1() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let dir = repo.path.join("1");
+            let file = dir.join("file.txt");
+
+            create_and_stage(&repo, &file, "hello world!").await;
+            let status = repositories::status(&repo).expect("oxen status failed");
+            expect_staged(&status, 1, 0, 0);
+            commit_staged(&repo, "added", &file);
+
+            expect_filesystem(&repo.path, &[&dir, &file], &[".oxen"]).await;
+
+            remove_and_stage(&repo, &dir).await;
+            let status = repositories::status(&repo).expect("oxen status failed");
+            expect_staged(&status, 0, 1, 0);
+            commit_staged(&repo, "removed dir + contents", &dir);
+
+            let status = repositories::status(&repo).expect("oxen status failed");
+            expect_staged(&status, 0, 0, 0);
+            assert!(status.staged_dirs.is_empty());
+            expect_filesystem(&repo.path, &[], &[".oxen"]).await;
+
+            // verify the merkle tree no longer contains dir "1/"
+            check_tree_doesnt_contain_dir(&repo, &dir);
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Tests removal of nested directories and their contents.
+    #[tokio::test]
+    async fn test_remove_dir_depth_3() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let dir_1 = repo.path.join("1");
+            let dir_2 = dir_1.join("2");
+            let dir_3 = dir_2.join("3");
+            let file = dir_3.join("file.txt");
+
+            create_and_stage(&repo, &file, "hello world!").await;
+            let status = repositories::status(&repo).expect("oxen status failed");
+            expect_staged(&status, 1, 0, 0);
+            commit_staged(&repo, "added", &file);
+
+            expect_filesystem(&repo.path, &[&dir_1, &dir_2, &dir_3, &file], &[".oxen"]).await;
+
+            remove_and_stage(&repo, &dir_1).await;
+            let status = repositories::status(&repo).expect("oxen status failed");
+            expect_staged(&status, 0, 1, 0);
+            commit_staged(&repo, "removed dir + contents", &dir_1);
+
+            let status = repositories::status(&repo).expect("oxen status failed");
+            expect_staged(&status, 0, 0, 0);
+            assert!(status.staged_dirs.is_empty());
+            expect_filesystem(&repo.path, &[], &[".oxen"]).await;
+
+            // verify the merkle tree no longer contains file "1/2/3/file.txt"
+            check_tree_doesnt_contain_file(&repo, &file);
+
+            // verify the merkle tree no longer contains dir "1/2/3/"
+            check_tree_doesnt_contain_dir(&repo, &dir_3);
+
+            // verify the merkle tree no longer contains dir "1/2"
+            check_tree_doesnt_contain_dir(&repo, &dir_2);
+
+            // verify the merkle tree no longer contains dir "1/"
+            check_tree_doesnt_contain_dir(&repo, &dir_1);
 
             Ok(())
         })

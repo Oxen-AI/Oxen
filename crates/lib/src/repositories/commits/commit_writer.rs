@@ -396,7 +396,7 @@ pub fn commit_dir_entries_new(
     commit_progress_bar.finish_and_clear();
 
     // Remove all the directories that are staged for removal
-    cleanup_rm_dirs(&dir_hash_db, &dir_entries)?;
+    cache_invalidate_dir_hash_db(&dir_hash_db, dir_entries.values())?;
 
     Ok(node.to_commit())
 }
@@ -508,30 +508,9 @@ pub fn commit_dir_entries(
     commit_progress_bar.finish_and_clear();
 
     // Remove all the directories that are staged for removal
-    cleanup_rm_dirs(&dir_hash_db, &dir_entries)?;
+    cache_invalidate_dir_hash_db(&dir_hash_db, dir_entries.values())?;
 
     Ok(node.to_commit())
-}
-
-fn cleanup_rm_dirs(
-    dir_hash_db: &DBWithThreadMode<SingleThreaded>,
-    dir_entries: &HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
-) -> Result<(), OxenError> {
-    for (_path, entries) in dir_entries.iter() {
-        for entry in entries.iter() {
-            if let EMerkleTreeNode::Directory(dir_node) = &entry.node.node
-                && entry.status == StagedEntryStatus::Removed
-            {
-                // dir_node.name() already contains the full relative path
-                // (e.g., "annotations/train"), so use it directly as the key.
-                let dir_path = PathBuf::from(dir_node.name());
-                log::debug!("dir path for cleanup: {dir_path:?}");
-                let key = dir_path.to_str().unwrap();
-                dir_hash_db.delete(key)?;
-            }
-        }
-    }
-    Ok(())
 }
 
 fn node_data_to_staged_node(
@@ -628,29 +607,53 @@ fn split_into_vnodes(
             // Overwrite the existing child
             // if add or modify, replace the child
             // if remove, remove the child
-            if let Ok(path) = child.node.maybe_path()
-                && path != Path::new("")
+            if let Ok(child_path) = child.node.maybe_path()
+                && child_path != Path::new("")
             {
+                // Defensive normalization: staged entries should already carry full
+                // repo-relative paths (set during rm staging), but if a leaf-only
+                // name slips through, reconstruct the full path so that HashSet
+                // lookups (which compare via maybe_path) match existing children
+                // from `node_data_to_staged_node`.
+                let needs_prefix =
+                    !directory.as_os_str().is_empty() && !child_path.starts_with(directory);
+                let child = if needs_prefix {
+                    let full_path = directory.join(&child_path);
+                    let mut prefixed = child.clone();
+                    match &mut prefixed.node.node {
+                        EMerkleTreeNode::Directory(dn) => {
+                            dn.set_name(full_path.to_str().unwrap());
+                        }
+                        EMerkleTreeNode::File(fn_) => {
+                            fn_.set_name(full_path.to_str().unwrap());
+                        }
+                        _ => {}
+                    }
+                    prefixed
+                } else {
+                    child.clone()
+                };
+
                 match child.status {
                     StagedEntryStatus::Removed => {
                         log::debug!(
-                            "removing child {:?} {:?} with {:?}",
+                            "removing child {:?} {:?} (was {:?})",
                             child.node.node.node_type(),
-                            path,
-                            child.node.maybe_path().unwrap()
+                            child.node.maybe_path().unwrap(),
+                            child_path
                         );
-                        children.remove(child);
-                        removed_children.insert(child.to_owned());
+                        children.remove(&child);
+                        removed_children.insert(child);
                     }
                     _ => {
                         log::debug!(
-                            "replacing child {:?} {:?} with {:?}",
+                            "replacing child {:?} {:?} (was {:?})",
                             child.node.node.node_type(),
-                            path,
-                            child.node.maybe_path().unwrap()
+                            child.node.maybe_path().unwrap(),
+                            child_path
                         );
                         log::debug!("replaced child {}", child.node);
-                        children.replace(child.clone());
+                        children.replace(child);
                     }
                 }
             }
@@ -811,6 +814,33 @@ fn write_commit_entries(
         &mut total_written,
     )?;
 
+    // The dir_hash_db was pre-populated from the previous commit, so
+    // removed directories still have stale entries that must be deleted;
+    // otherwise tree lookups will find the old subtree.
+    cache_invalidate_dir_hash_db(dir_hash_db, entries.iter().map(|(_, (_, removed))| removed))
+}
+
+/// Perform cache-invalidation: remove dir_hash entries for directories that were removed.
+/// The `entries` are staged files. This removes every directory that is staged for removal
+/// from the supplied `dir_hash_db`.
+fn cache_invalidate_dir_hash_db<'a>(
+    dir_hash_db: &DBWithThreadMode<SingleThreaded>,
+    entries: impl Iterator<Item = &'a Vec<StagedMerkleTreeNode>>,
+) -> Result<(), OxenError> {
+    for removed_children in entries {
+        for child in removed_children {
+            if child.status == StagedEntryStatus::Removed
+                && let EMerkleTreeNode::Directory(dir_node) = &child.node.node
+            {
+                let child_path = PathBuf::from(dir_node.name());
+                // `child_path` already contains the full relative path
+                // (e.g., "annotations/train"), so use it directly as the key
+                let path_str = child_path.to_string_lossy();
+                log::debug!("deleting removed dir hash: {path_str}");
+                str_val_db::delete(dir_hash_db, path_str)?;
+            }
+        }
+    }
     Ok(())
 }
 

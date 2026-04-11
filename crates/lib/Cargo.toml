@@ -137,6 +137,7 @@ xxhash-rust = { workspace = true }
 zip = { workspace = true }
 
 [dev-dependencies]
+async-walkdir = { workspace = true }
 criterion = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
