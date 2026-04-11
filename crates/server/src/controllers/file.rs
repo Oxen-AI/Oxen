@@ -5,7 +5,8 @@ use crate::params::{app_data, parse_resource, path_param, query_param};
 use actix_multipart::form::text::Text;
 use actix_multipart::form::{FieldReader, Limits, MultipartForm};
 use actix_multipart::{Field, MultipartError};
-use actix_web::{HttpRequest, HttpResponse, web};
+use actix_web::{FromRequest, HttpMessage, HttpRequest, HttpResponse, web};
+use futures_util::StreamExt as _;
 use futures_util::TryStreamExt as _;
 use futures_util::future::LocalBoxFuture;
 use liboxen::core::staged::get_staged_db_manager;
@@ -253,9 +254,102 @@ pub async fn get(
 )]
 pub async fn put(
     req: HttpRequest,
-    MultipartForm(form): MultipartForm<FileUploadBody>,
+    mut payload: web::Payload,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     log::debug!("file::put path {:?}", req.path());
+
+    if req.content_type().starts_with("multipart/form-data") {
+        let mut pl = payload.into_inner();
+        let form = MultipartForm::<FileUploadBody>::from_request(&req, &mut pl)
+            .await
+            .map_err(|e| OxenHttpError::BadRequest(format!("Multipart parse error: {e}").into()))?;
+        put_multipart(req, form.into_inner()).await
+    } else {
+        // Raw body PUT
+        let mut bytes = web::BytesMut::new();
+        while let Some(item) = payload.next().await {
+            bytes.extend_from_slice(&item.map_err(|_| OxenHttpError::FailedToReadRequestPayload)?);
+        }
+        put_raw(req, bytes.freeze()).await
+    }
+}
+
+async fn put_raw(
+    req: HttpRequest,
+    body: web::Bytes,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    log::debug!("file::put_raw path {:?}", req.path());
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+
+    let resource = parse_resource(&req, &repo)?;
+
+    // Resource must specify branch because we need to commit the workspace back to a branch
+    let branch = resource
+        .branch
+        .clone()
+        .ok_or_else(|| OxenError::local_branch_not_found(resource.version.to_string_lossy()))?;
+    let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
+
+    check_oxen_based_on(&req, &repo, &commit, &resource.path)?;
+
+    ensure_no_file_ancestors_in_tree(&repo, &commit, &resource.path, &resource.path)?;
+
+    // Extract commit metadata from headers
+    let name = req
+        .headers()
+        .get("oxen-commit-author")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let email = req
+        .headers()
+        .get("oxen-commit-email")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let message = req
+        .headers()
+        .get("oxen-commit-message")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    let user = create_user_from_options(name.clone(), email.clone())?;
+
+    let file = FileNew {
+        path: resource.path.clone(),
+        contents: FileContents::Binary(body.to_vec()),
+        user,
+    };
+
+    let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+
+    process_and_add_files(&repo, Some(&workspace), &[file]).await?;
+
+    // Commit workspace
+    let commit_body = NewCommitBody {
+        author: name.unwrap_or_default(),
+        email: email.unwrap_or_default(),
+        message: message.unwrap_or_else(|| {
+            format!("Auto-commit files to {}", &resource.path.to_string_lossy())
+        }),
+    };
+
+    let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
+
+    log::debug!("file::put_raw workspace commit ✅ success! commit {commit:?}");
+
+    Ok(HttpResponse::Ok().json(CommitResponse {
+        status: StatusMessage::resource_created(),
+        commit,
+    }))
+}
+
+async fn put_multipart(
+    req: HttpRequest,
+    form: FileUploadBody,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    log::debug!("file::put_multipart path {:?}", req.path());
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
@@ -280,6 +374,9 @@ pub async fn put(
         .clone()
         .ok_or_else(|| OxenError::local_branch_not_found(resource.version.to_string_lossy()))?;
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
+
+    check_oxen_based_on(&req, &repo, &commit, &resource.path)?;
+
     let node = repositories::tree::get_node_by_path(&repo, &commit, &resource.path)?;
     let upload_mode = resolve_upload_mode(
         file_parts,
@@ -335,7 +432,7 @@ pub async fn put(
 
     let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
 
-    log::debug!("file::put workspace commit ✅ success! commit {commit:?}");
+    log::debug!("file::put_multipart workspace commit ✅ success! commit {commit:?}");
 
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
@@ -384,6 +481,8 @@ pub async fn delete(
         .ok_or_else(|| OxenError::local_branch_not_found(resource.version.to_string_lossy()))?;
     let commit = resource.commit.clone().ok_or(OxenHttpError::NotFound)?;
     let path = resource.path;
+
+    check_oxen_based_on(&req, &repo, &commit, &path)?;
 
     let name = form.name();
     let email = form.email();
@@ -527,6 +626,40 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
         status: StatusMessage::resource_updated(),
         commit,
     }))
+}
+
+fn check_oxen_based_on(
+    req: &HttpRequest,
+    repo: &liboxen::model::LocalRepository,
+    commit: &Commit,
+    path: &Path,
+) -> Result<(), OxenHttpError> {
+    let claimed = match req
+        .headers()
+        .get("oxen-based-on")
+        .and_then(|v| v.to_str().ok())
+    {
+        Some(v) => v,
+        None => return Ok(()), // No concurrency check requested
+    };
+
+    let node = repositories::tree::get_node_by_path(repo, commit, path)?;
+    let node = match node {
+        Some(n) if n.is_file() => n,
+        _ => return Ok(()), // File doesn't exist, treat as new file creation
+    };
+
+    let current_id = node.latest_commit_id()?.to_string();
+    if current_id == claimed {
+        Ok(())
+    } else {
+        Err(OxenHttpError::BadRequest(
+            format!(
+                "File has been modified since claimed revision. Current: {current_id}, Claimed: {claimed}. Your changes would overwrite another change without that being from a merge"
+            )
+            .into(),
+        ))
+    }
 }
 
 // Helper: when the repository has no commits yet, accept the upload as the first commit
@@ -1347,6 +1480,320 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(err, OxenHttpError::BadRequest(_)));
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    async fn do_raw_put(
+        sync_dir: &std::path::Path,
+        namespace: &'static str,
+        repo_name: &'static str,
+        resource: &'static str,
+        content_type: &str,
+        body: Vec<u8>,
+        oxen_based_on: Option<&str>,
+    ) -> actix_web::dev::ServiceResponse {
+        let uri: String = format!("/oxen/{namespace}/{repo_name}/file/{resource}");
+        let mut req = actix_web::test::TestRequest::put()
+            .uri(&uri)
+            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+            .param("namespace", namespace)
+            .param("resource", resource)
+            .param("repo_name", repo_name)
+            .insert_header(("Content-Type", content_type.to_string()))
+            .insert_header(("oxen-commit-author", "test_user"))
+            .insert_header(("oxen-commit-email", "test@oxen.ai"));
+
+        if let Some(based_on) = oxen_based_on {
+            req = req.insert_header(("oxen-based-on", based_on.to_string()));
+        }
+
+        let req = req.set_payload(body).to_request();
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/file/{resource:.*}",
+                    web::put().to(controllers::file::put),
+                ),
+        )
+        .await;
+
+        actix_web::test::call_service(&app, req).await
+    }
+
+    async fn do_delete_with_header(
+        sync_dir: &std::path::Path,
+        namespace: &'static str,
+        repo_name: &'static str,
+        resource: &'static str,
+        oxen_based_on: Option<&str>,
+    ) -> actix_web::dev::ServiceResponse {
+        let uri: String = format!("/oxen/{namespace}/{repo_name}/file/{resource}");
+
+        let mut multipart_form_data_builder = MultiPartFormDataBuilder::new();
+        multipart_form_data_builder.with_text("name", "test_user");
+        multipart_form_data_builder.with_text("email", "test@oxen.ai");
+        multipart_form_data_builder.with_text("message", "delete file");
+        let (header, body) = multipart_form_data_builder.build();
+
+        let mut req = actix_web::test::TestRequest::delete()
+            .uri(&uri)
+            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+            .param("namespace", namespace)
+            .param("resource", resource)
+            .param("repo_name", repo_name)
+            .insert_header(header);
+
+        if let Some(based_on) = oxen_based_on {
+            req = req.insert_header(("oxen-based-on", based_on.to_string()));
+        }
+
+        let req = req.set_payload(body).to_request();
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/file/{resource:.*}",
+                    web::delete().to(controllers::file::delete),
+                ),
+        )
+        .await;
+
+        actix_web::test::call_service(&app, req).await
+    }
+
+    #[actix_web::test]
+    async fn test_put_raw_text_creates_file() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Raw-Put";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let readme_file = repo.path.join("README.md");
+        util::fs::write_to_path(&readme_file, "Initial commit")?;
+        repositories::add(&repo, &readme_file).await?;
+        let _commit = repositories::commit(&repo, "First commit")?;
+
+        let resp = do_raw_put(
+            &sync_dir,
+            namespace,
+            repo_name,
+            "main/data/new.txt",
+            "text/plain",
+            b"Hello raw world".to_vec(),
+            None,
+        )
+        .await;
+
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let body_str = std::str::from_utf8(&bytes).unwrap();
+        let resp: CommitResponse = serde_json::from_str(body_str)?;
+        assert_eq!(resp.status.status, "success");
+
+        // Read back the content via version store
+        let entry =
+            repositories::entries::get_file(&repo, &resp.commit, PathBuf::from("data/new.txt"))?
+                .unwrap();
+        let version_store = repo.version_store()?;
+        let uploaded_content = version_store.get_version(&entry.hash().to_string()).await?;
+        assert_eq!(
+            String::from_utf8(uploaded_content).unwrap(),
+            "Hello raw world"
+        );
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_put_without_oxen_based_on_succeeds() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-No-BasedOn";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let hello_file = repo.path.join("data/hello.txt");
+        util::fs::create_dir_all(hello_file.parent().unwrap())?;
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file).await?;
+        let _commit = repositories::commit(&repo, "First commit")?;
+
+        let resp = do_raw_put(
+            &sync_dir,
+            namespace,
+            repo_name,
+            "main/data/hello.txt",
+            "text/plain",
+            b"Updated without header".to_vec(),
+            None,
+        )
+        .await;
+
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let body_str = std::str::from_utf8(&bytes).unwrap();
+        let resp: CommitResponse = serde_json::from_str(body_str)?;
+        assert_eq!(resp.status.status, "success");
+
+        // Read back the content
+        let entry =
+            repositories::entries::get_file(&repo, &resp.commit, PathBuf::from("data/hello.txt"))?
+                .unwrap();
+        let version_store = repo.version_store()?;
+        let uploaded_content = version_store.get_version(&entry.hash().to_string()).await?;
+        assert_eq!(
+            String::from_utf8(uploaded_content).unwrap(),
+            "Updated without header"
+        );
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_put_with_matching_oxen_based_on_succeeds() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Match-BasedOn";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let hello_file = repo.path.join("data/hello.txt");
+        util::fs::create_dir_all(hello_file.parent().unwrap())?;
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file).await?;
+        let commit = repositories::commit(&repo, "First commit")?;
+
+        // Get the latest_commit_id for the file
+        let node =
+            repositories::tree::get_node_by_path(&repo, &commit, Path::new("data/hello.txt"))?
+                .unwrap();
+        let latest_commit_id = node.latest_commit_id()?.to_string();
+
+        let resp = do_raw_put(
+            &sync_dir,
+            namespace,
+            repo_name,
+            "main/data/hello.txt",
+            "text/plain",
+            b"Updated with matching header".to_vec(),
+            Some(&latest_commit_id),
+        )
+        .await;
+
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let body_str = std::str::from_utf8(&bytes).unwrap();
+        let resp: CommitResponse = serde_json::from_str(body_str)?;
+        assert_eq!(resp.status.status, "success");
+
+        // Read back the content
+        let entry =
+            repositories::entries::get_file(&repo, &resp.commit, PathBuf::from("data/hello.txt"))?
+                .unwrap();
+        let version_store = repo.version_store()?;
+        let uploaded_content = version_store.get_version(&entry.hash().to_string()).await?;
+        assert_eq!(
+            String::from_utf8(uploaded_content).unwrap(),
+            "Updated with matching header"
+        );
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_put_with_mismatched_oxen_based_on_fails() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Mismatch-BasedOn";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let hello_file = repo.path.join("data/hello.txt");
+        util::fs::create_dir_all(hello_file.parent().unwrap())?;
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file).await?;
+        let _commit = repositories::commit(&repo, "First commit")?;
+
+        let resp = do_raw_put(
+            &sync_dir,
+            namespace,
+            repo_name,
+            "main/data/hello.txt",
+            "text/plain",
+            b"Should fail".to_vec(),
+            Some("fake_hash"),
+        )
+        .await;
+
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_put_new_file_ignores_oxen_based_on() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-NewFile-BasedOn";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let readme_file = repo.path.join("README.md");
+        util::fs::write_to_path(&readme_file, "Initial commit")?;
+        repositories::add(&repo, &readme_file).await?;
+        let _commit = repositories::commit(&repo, "First commit")?;
+
+        let resp = do_raw_put(
+            &sync_dir,
+            namespace,
+            repo_name,
+            "main/data/brand_new.txt",
+            "text/plain",
+            b"New file content".to_vec(),
+            Some("random"),
+        )
+        .await;
+
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_delete_with_mismatched_oxen_based_on_fails() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Delete-BasedOn";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let hello_file = repo.path.join("data/hello.txt");
+        util::fs::create_dir_all(hello_file.parent().unwrap())?;
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file).await?;
+        let _commit = repositories::commit(&repo, "First commit")?;
+
+        let resp = do_delete_with_header(
+            &sync_dir,
+            namespace,
+            repo_name,
+            "main/data/hello.txt",
+            Some("wrong_id"),
+        )
+        .await;
+
+        assert!(resp.status().is_client_error());
 
         test::cleanup_sync_dir(&sync_dir)?;
         Ok(())

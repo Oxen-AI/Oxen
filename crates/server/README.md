@@ -76,8 +76,43 @@ curl -H "Authorization: Bearer $TOKEN" "http://0.0.0.0:3000/api/repos"
 
 #### Create Repository
 ```bash
-curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"name": "MyRepo"}' "http://0.0.0.0:3000api/repos"
+curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"name": "MyRepo"}' "http://0.0.0.0:3000/api/repos"
 ```
+
+#### Upload a File (Raw PUT)
+
+Upload a file directly using a raw HTTP body (no multipart form needed):
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: text/plain" \
+     -X PUT \
+     -d "Hello, World!" \
+     "http://0.0.0.0:3000/api/repos/my_namespace/MyRepo/file/main/hello.txt"
+```
+
+The existing multipart PUT is still supported. The server detects the format from the `Content-Type` header.
+
+#### Optimistic Concurrency (`oxen-based-on`)
+
+When downloading a file via GET, the response includes an `oxen-revision-id` header with the commit that last modified the file. To prevent overwriting concurrent changes, pass this value back on PUT or DELETE:
+
+```bash
+# Get the current revision
+REVISION=$(curl -sI -H "Authorization: Bearer $TOKEN" \
+  "http://0.0.0.0:3000/api/repos/my_namespace/MyRepo/file/main/hello.txt" \
+  | grep -i oxen-revision-id | awk '{print $2}' | tr -d '\r')
+
+# Update with concurrency check
+curl -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: text/plain" \
+     -H "oxen-based-on: $REVISION" \
+     -X PUT \
+     -d "Updated content" \
+     "http://0.0.0.0:3000/api/repos/my_namespace/MyRepo/file/main/hello.txt"
+```
+
+If the file has been modified since the claimed revision, the server returns `400 Bad Request`.
 
 
 ## Logging
