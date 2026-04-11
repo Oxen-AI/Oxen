@@ -84,16 +84,16 @@ pub async fn get(
     query: web::Query<WorkspaceFileQueryParams>,
 ) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     let version_store = repo.version_store()?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Err(OxenHttpError::NotFound);
     };
 
-    let path = path_param(&req, "path")?;
+    let path = path_param(&req, "path")?.to_string();
     log::debug!("got workspace file path {:?}", &path);
 
     // First, look for the file in the workspace staged_db
@@ -202,11 +202,11 @@ pub async fn get(
 )]
 pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
-    let directory = path_param(&req, "path")?;
+    let directory = path_param(&req, "path")?.to_string();
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
@@ -288,10 +288,10 @@ pub async fn add_version_files(
 ) -> Result<HttpResponse, OxenHttpError> {
     // Add file to staging
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
-    let directory = path_param(&req, "directory")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
+    let directory = path_param(&req, "directory")?.to_string();
     let update_timestamp = query.update_timestamp.unwrap_or(false);
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
@@ -350,9 +350,9 @@ pub async fn rm_files(
     payload: web::Json<Vec<PathBuf>>,
 ) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -394,9 +394,9 @@ pub async fn rm_files(
 
 pub async fn validate(req: HttpRequest, _body: String) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     let Some(_workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -432,9 +432,9 @@ pub async fn validate(req: HttpRequest, _body: String) -> Result<HttpResponse, O
 )]
 pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     let path = PathBuf::from(path_param(&req, "path")?);
 

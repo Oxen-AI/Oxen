@@ -202,6 +202,20 @@ Install `Oxen`'s pre-commit hooks locally using:
 pre-commit install
 ```
 
+### Production Release Build
+
+For deployment, build with the `production` feature flag and `--release`:
+
+```bash
+cargo build --workspace --release --features production
+```
+
+This enables:
+- **OpenTelemetry tracing** (`otel`) -- export spans to any OTLP-compatible collector (Jaeger, Tempo, Datadog, etc.). See [OpenTelemetry Tracing](crates/server/README.md#opentelemetry-tracing) for runtime configuration.
+- **FFmpeg thumbnails** (`ffmpeg`) -- generate video/image thumbnails via FFmpeg (requires FFmpeg libraries installed on the host).
+- **Performance logging** (`perf-logging`) -- additional timing instrumentation for internal operations.
+
+Without `--features production`, the default build excludes OTel dependencies and FFmpeg support, keeping the binary smaller for local development.
 
 ## Logging
 
@@ -249,6 +263,17 @@ tail -f ~/.oxen/logs/oxen-server.2026-04-06 | jq 'select(.level == "ERROR")'
 
 `oxen-server` exposes a Prometheus-compatible metrics endpoint.
 See [Prometheus Metrics](crates/server/README.md#prometheus-metrics) for details.
+
+## OpenTelemetry Tracing
+
+`oxen-server` can export tracing spans to any OTLP-compatible collector (Jaeger, Tempo, etc.).
+Requires building with the `otel` feature flag.
+See [OpenTelemetry Tracing](crates/server/README.md#opentelemetry-tracing) for details.
+
+## FmtSpan Events
+
+Span lifecycle events can be emitted as log lines on stderr for lightweight tracing.
+See [FmtSpan Events](crates/server/README.md#fmtspan-events) for details.
 
 ## Why build Oxen?
 

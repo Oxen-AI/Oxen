@@ -25,6 +25,7 @@ use crate::view::{MerkleHashesResponse, StatusMessage};
 use crate::{api, util};
 
 /// Check if a node exists in the remote repository merkle tree by hash
+#[tracing::instrument(skip_all)]
 pub async fn has_node(
     repository: &RemoteRepository,
     node_id: MerkleHash,
@@ -159,6 +160,7 @@ pub async fn download_node_with_children(
 }
 
 /// Downloads the full merkle tree from the remote repository
+#[tracing::instrument(skip_all)]
 pub async fn download_tree(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
@@ -176,6 +178,7 @@ pub async fn download_tree(
 }
 
 /// Downloads a tree from the remote repository merkle tree by hash
+#[tracing::instrument(skip_all)]
 pub async fn download_tree_from(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
@@ -256,6 +259,7 @@ pub async fn download_tree_from_path(
 }
 
 /// Download ALL the trees starting from the given commit id
+#[tracing::instrument(skip_all)]
 pub async fn download_trees_from(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
@@ -329,6 +333,7 @@ fn append_subtree_paths_and_depth_to_uri(
     uri
 }
 
+#[tracing::instrument(skip_all)]
 pub async fn download_trees_between(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,

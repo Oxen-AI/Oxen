@@ -22,9 +22,9 @@ use serde_json::{Value, json};
 pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(&app_data.path, namespace.clone(), repo_name.clone())?;
     let file_path = PathBuf::from(path_param(&req, "path")?);
 
@@ -103,15 +103,17 @@ pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
 pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(&app_data.path, namespace.clone(), repo_name.clone())?;
     let file_path = PathBuf::from(path_param(&req, "path")?);
     let column_name = path_param(&req, "column_name")
         .map_err(|_| OxenHttpError::BadRequest("Column name missing in path parameters".into()))?;
 
-    let column_to_delete: ColumnToDelete = ColumnToDelete { name: column_name };
+    let column_to_delete = ColumnToDelete {
+        name: column_name.to_string(),
+    };
 
     log::info!(
         "Delete column {namespace}/{repo_name} for file {file_path:?} on in workspace id {workspace_id}"
@@ -178,9 +180,9 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 pub async fn update(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(&app_data.path, namespace.clone(), repo_name.clone())?;
     let file_path = PathBuf::from(path_param(&req, "path")?);
     let column_name = path_param(&req, "column_name")
@@ -240,7 +242,7 @@ pub async fn update(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
             &repo,
             &workspace,
             file_path.clone(),
-            column_name.clone(),
+            column_name.to_string(),
             &metadata,
         )?;
     }
@@ -299,10 +301,10 @@ pub async fn add_column_metadata(
 ) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
-    let path = path_param(&req, "path")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
+    let path = path_param(&req, "path")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -332,15 +334,17 @@ pub async fn add_column_metadata(
 pub async fn restore(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let file_path: PathBuf = PathBuf::from(path_param(&req, "path")?);
 
     let column_name = path_param(&req, "column_name")
         .map_err(|_| OxenHttpError::BadRequest("Column name missing in path parameters".into()))?;
 
-    let column_to_restore: ColumnToRestore = ColumnToRestore { name: column_name };
+    let column_to_restore = ColumnToRestore {
+        name: column_name.to_string(),
+    };
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 

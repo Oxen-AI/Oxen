@@ -15,8 +15,8 @@ use liboxen::view::{ListSchemaResponse, StatusMessage};
 pub async fn list_or_get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     // Try to see if they are asking for a specific file
@@ -56,7 +56,7 @@ pub async fn list_or_get(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
     }
 
     // Otherwise, list all schemas
-    let revision = path_param(&req, "resource")?;
+    let revision = path_param(&req, "resource")?.to_string();
 
     let commit = repositories::revisions::get(&repo, &revision)?
         .ok_or_else(|| OxenError::RevisionNotFound(revision.as_str().into()))?;

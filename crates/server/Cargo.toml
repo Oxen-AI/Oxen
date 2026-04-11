@@ -17,6 +17,11 @@ ignored = ["astral-tokio-tar"]
 name = "oxen-server"
 path = "src/main.rs"
 
+[features]
+default = []
+otel = ["liboxen/otel", "dep:tracing-opentelemetry"]
+production = ["otel", "liboxen/production", "default"]
+
 [dependencies]
 actix-http = { workspace = true }
 actix-multipart = { workspace = true }
@@ -52,9 +57,8 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
-tracing-appender = { workspace = true }
-tracing-log = { workspace = true }
-tracing-subscriber = { workspace = true }
+tracing-actix-web = { workspace = true }
+tracing-opentelemetry = { workspace = true, optional = true }
 url = { workspace = true }
 utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }

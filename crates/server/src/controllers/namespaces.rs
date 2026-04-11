@@ -1,5 +1,5 @@
 use crate::errors::OxenHttpError;
-use crate::params::app_data;
+use crate::params::{app_data, path_param};
 
 use liboxen::namespaces;
 use liboxen::view::{ListNamespacesResponse, NamespaceResponse, NamespaceView, StatusMessage};
@@ -50,7 +50,7 @@ pub async fn index(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 )]
 pub async fn show(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace: Option<&str> = req.match_info().get("namespace");
+    let namespace: Option<&str> = path_param(&req, "namespace").ok();
 
     if let Some(namespace) = namespace {
         match namespaces::get(&app_data.path, namespace) {

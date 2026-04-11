@@ -14,6 +14,11 @@ publish = false
 name = "oxen_py" # The native extension module. Users still `import oxen` via the Python package wrapper.
 crate-type = ["cdylib"] # PyO3 needs this crate to be a cdylib so it can link against it.
 
+[features]
+default = []
+otel = ["liboxen/otel"]
+production = ["otel", "default"]
+
 [dependencies]
 liboxen = { path = "../lib" }
 log = { workspace = true }

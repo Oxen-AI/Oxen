@@ -32,6 +32,9 @@ done
 
 set -euo pipefail
 
+# we don't need oxen-server collecting metrics during tests
+export OXEN_METRICS_PORT='off'
+
 # On macOS, SIP strips DYLD_LIBRARY_PATH from processes launched by system
 # binaries (like /usr/bin/env bash), so cargo nextest can't find libpython.
 # Re-derive the path from the active Python install if needed.

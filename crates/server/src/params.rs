@@ -72,21 +72,47 @@ fn get_app_data(req: &HttpRequest) -> Result<&OxenAppData, OxenHttpError> {
         .ok_or(OxenHttpError::AppDataDoesNotExist)
 }
 
-pub fn path_param(req: &HttpRequest, param: &str) -> Result<String, OxenHttpError> {
-    Ok(req
+/// Dynamically access a path parameter by name.
+///
+/// When the `otel` feature is enabled, records the parameter as an OpenTelemetry
+/// attribute (`http.path.{param}`) on the current span. This bypasses the tracing
+/// field system and adds tags directly to the OTel span, so the values appear in
+/// OTel collectors (e.g. Jaeger) but **not** in stderr/file log events for spans.
+pub fn path_param<'a>(request: &'a HttpRequest, param: &str) -> Result<&'a str, OxenHttpError> {
+    let value = request
         .match_info()
         .get(param)
-        .ok_or_else(|| OxenHttpError::PathParamDoesNotExist(param.into()))?
-        .to_string())
+        .ok_or_else(|| OxenHttpError::PathParamDoesNotExist(param.into()))?;
+
+    #[cfg(feature = "otel")]
+    {
+        use tracing_opentelemetry::OpenTelemetrySpanExt;
+        // TODO: Replace this dynamic approach with statically typed `web::Path<T>` extractors
+        tracing::Span::current().set_attribute(format!("http.path.{param}"), value.to_string());
+    }
+
+    Ok(value)
 }
 
-pub fn path_param_to_vec(
-    req: &HttpRequest,
-    param_name: &str,
-) -> Result<Vec<String>, OxenHttpError> {
-    let param_value = path_param(req, param_name)?;
-    let values: Vec<String> = param_value.split(',').map(|s| s.to_string()).collect();
-    Ok(values)
+/// Dynamically accesses a query parameter by name.
+///
+/// Unlike path params, this returns an empty string if the query parameter is not found in the request.
+///
+/// When the `otel` feature is enabled, records the parameter as an OpenTelemetry
+/// attribute (`http.query.{param}`) on the current span. This bypasses the tracing
+/// field system and adds tags directly to the OTel span, so the values appear in
+/// OTel collectors (e.g. Jaeger) but **not** in stderr/file log events for spans.
+pub fn query_param<'a>(request: &'a HttpRequest, param: &str) -> &'a str {
+    let value = request.match_info().query(param);
+
+    #[cfg(feature = "otel")]
+    {
+        use tracing_opentelemetry::OpenTelemetrySpanExt;
+        // TODO: Replace this dynamic approach with statically typed `web::Query<T>` extractors
+        tracing::Span::current().set_attribute(format!("http.query.{param}"), value.to_string());
+    }
+
+    value
 }
 
 fn decode_resource_path(resource_path_str: &str) -> String {
@@ -99,7 +125,7 @@ pub fn parse_resource(
     req: &HttpRequest,
     repo: &LocalRepository,
 ) -> Result<ParsedResource, OxenHttpError> {
-    let resource: PathBuf = PathBuf::from(req.match_info().query("resource"));
+    let resource: PathBuf = PathBuf::from(query_param(req, "resource"));
     let resource_path_str = resource.to_string_lossy();
 
     // Decode the URL, handling both %20 and + as spaces

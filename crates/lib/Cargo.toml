@@ -27,7 +27,14 @@ path = "src/lib.rs"
 default = ["duckdb/bundled"]
 docs = ["duckdb"]
 ffmpeg = ["thumbnails"]
+otel = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:tracing-opentelemetry",
+]
 perf-logging = []
+production = ["otel", "ffmpeg", "perf-logging", "default"]
 
 [dependencies]
 approx = { workspace = true }
@@ -80,6 +87,9 @@ metrics = { workspace = true }
 minus = { workspace = true }
 mp4 = { workspace = true }
 num_cpus = { workspace = true }
+opentelemetry = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
 os_path = { workspace = true }
 par-stream = { workspace = true }
 parking_lot = { workspace = true }
@@ -116,7 +126,7 @@ tokio-util = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
 tracing-appender = { workspace = true }
-tracing-log = { workspace = true }
+tracing-opentelemetry = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true }
 url = { workspace = true }
 urlencoding = { workspace = true }

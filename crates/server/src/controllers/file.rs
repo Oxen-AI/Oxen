@@ -1,6 +1,6 @@
 use crate::errors::OxenHttpError;
 use crate::helpers::{create_user_from_options, file_stream_response, get_repo};
-use crate::params::{app_data, parse_resource, path_param};
+use crate::params::{app_data, parse_resource, path_param, query_param};
 
 use actix_multipart::form::text::Text;
 use actix_multipart::form::{FieldReader, Limits, MultipartForm};
@@ -135,8 +135,8 @@ pub async fn get(
     query: web::Query<FileQueryParams>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let version_store = repo.version_store()?;
     let resource = parse_resource(&req, &repo)?;
@@ -257,8 +257,8 @@ pub async fn put(
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     log::debug!("file::put path {:?}", req.path());
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     // If there's no head commit, handle initial upload
@@ -370,8 +370,8 @@ pub async fn delete(
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     log::debug!("file::delete path {:?}", req.path());
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     // Parse the resource (branch/commit/path)
@@ -461,8 +461,8 @@ pub struct FileMoveBody {
 pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpResponse, OxenHttpError> {
     log::debug!("file::mv path {:?}", req.path());
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
     // Parse the resource (branch/commit/path)
@@ -535,7 +535,7 @@ async fn handle_initial_put_empty_repo(
     form: FileUploadBody,
     repo: &liboxen::model::LocalRepository,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let resource: PathBuf = PathBuf::from(req.match_info().query("resource"));
+    let resource: PathBuf = PathBuf::from(query_param(req, "resource"));
 
     let mut resource = resource.components();
     let branch_name = resource

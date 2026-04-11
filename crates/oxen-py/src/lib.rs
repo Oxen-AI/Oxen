@@ -1,14 +1,13 @@
 use std::sync::{LazyLock, Mutex};
 
-use liboxen::config::RuntimeConfig;
+use liboxen::{config::RuntimeConfig, util::telemetry::TracingGuard};
 use pyo3::prelude::*;
 use tracing::level_filters::LevelFilter;
-use tracing_appender::non_blocking::WorkerGuard;
 
 /// Process-global owner of the tracing file-logging guard. Stored here so the
 /// tracing subscriber stays alive for the entire Python process instead of
 /// being dropped when `oxen_py()` returns.
-static TRACING_GUARD: LazyLock<Mutex<Option<WorkerGuard>>> = LazyLock::new(|| Mutex::new(None));
+static TRACING_GUARD: LazyLock<Mutex<Option<TracingGuard>>> = LazyLock::new(|| Mutex::new(None));
 
 pub mod auth;
 pub mod df_utils;
@@ -55,12 +54,19 @@ fn oxen_py(m: Bound<'_, PyModule>) -> PyResult<()> {
     // We use tracing (via liboxen) instead of pyo3_log to avoid GIL deadlocks.
     // The guard is stored in TRACING_GUARD so it outlives this function;
     // dropping it would tear down the tracing subscriber.
+    //
+    // We must enter the tokio runtime context first because the OTel tonic
+    // (gRPC) exporter needs a tokio reactor when building its channel.
+    // pyo3_async_runtimes::tokio::init() only stores the builder — the
+    // runtime isn't created or entered until get_runtime() is called.
     if let Ok(mut slot) = TRACING_GUARD.lock()
         && slot.is_none()
     {
+        let rt = pyo3_async_runtimes::tokio::get_runtime();
+        let _guard = rt.enter();
         match liboxen::util::telemetry::init_tracing("oxen-py", LevelFilter::OFF) {
             Ok(guard) => {
-                *slot = guard;
+                *slot = Some(guard);
             }
             Err(e) => {
                 eprintln!("[ERROR] Failed to initialize tracing for oxen-py:\n{e}");

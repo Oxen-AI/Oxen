@@ -49,8 +49,8 @@ pub async fn get_or_create(
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     let data: Result<NewWorkspace, serde_json::Error> = serde_json::from_str(&body);
@@ -159,9 +159,9 @@ pub async fn get_or_create(
 )]
 pub async fn get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -213,8 +213,8 @@ pub async fn list(
     params: web::Query<NameParam>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     log::debug!("workspaces::list got repo: {:?}", repo.path);
@@ -260,8 +260,8 @@ pub async fn list(
 )]
 pub async fn clear(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     repositories::workspaces::clear(&repo)?;
     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
@@ -285,9 +285,9 @@ pub async fn clear(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 )]
 pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -326,11 +326,11 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
 )]
 pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
-    let branch_name = path_param(&req, "branch")?;
+    let branch_name = path_param(&req, "branch")?.to_string();
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
@@ -376,11 +376,11 @@ pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpErro
 pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let workspace_id = path_param(&req, "workspace_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
-    let branch_name = path_param(&req, "branch")?;
+    let branch_name = path_param(&req, "branch")?.to_string();
 
     log::debug!(
         "workspace::commit {namespace}/{repo_name} workspace id {workspace_id} to branch {branch_name} got body: {body}"

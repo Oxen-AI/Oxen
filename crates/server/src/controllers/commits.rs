@@ -87,8 +87,8 @@ pub struct ListMissingFilesQuery {
 )]
 pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     let commits = repositories::commits::list(&repo).unwrap_or_default();
@@ -120,10 +120,10 @@ pub async fn history(
 
     let _perf_parse = perf_guard!("commits::history_parse_params");
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    let resource_param = path_param(&req, "resource")?;
+    let resource_param = path_param(&req, "resource")?.to_string();
 
     let pagination = PaginateOpts {
         page_num: query.page.unwrap_or(constants::DEFAULT_PAGE_NUM),
@@ -206,8 +206,8 @@ pub async fn list_all(
     query: web::Query<PageNumQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     let pagination = PaginateOpts {
@@ -247,8 +247,8 @@ pub async fn list_missing(
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     // Parse commit ids from a body and return the missing ids
@@ -296,8 +296,8 @@ pub async fn list_missing_files(
     query: web::Query<ListMissingFilesQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     let base_commit = match &query.base {
@@ -349,8 +349,8 @@ pub async fn mark_commits_as_synced(
     mut body: web::Payload,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(&app_data.path, namespace, repo_name)?;
 
     let mut bytes = web::BytesMut::new();
@@ -394,9 +394,9 @@ pub async fn mark_commits_as_synced(
 )]
 pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
-    let commit_id = path_param(&req, "commit_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let commit_id = path_param(&req, "commit_id")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     let commit = repositories::commits::get_by_id(&repo, &commit_id)?
         .ok_or_else(|| OxenError::RevisionNotFound(commit_id.into()))?;
@@ -425,9 +425,9 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
 )]
 pub async fn parents(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let commit_or_branch = path_param(&req, "commit_or_branch")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
+    let commit_or_branch = path_param(&req, "commit_or_branch")?.to_string();
     let repository = get_repo(&app_data.path, namespace, name)?;
     let commit = repositories::revisions::get(&repository, &commit_or_branch)?
         .ok_or_else(|| OxenError::RevisionNotFound(commit_or_branch.into()))?;
@@ -439,6 +439,7 @@ pub async fn parents(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHt
 }
 
 /// Download commits DB
+#[tracing::instrument(skip_all)]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits_db",
@@ -457,8 +458,8 @@ pub async fn download_commits_db(
     req: HttpRequest,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(&app_data.path, namespace, name)?;
 
     let buffer = compress_commits_db(&repository)?;
@@ -488,6 +489,7 @@ fn compress_commits_db(repository: &LocalRepository) -> Result<Vec<u8>, OxenErro
 }
 
 /// Download dir hashes DB
+#[tracing::instrument(skip_all)]
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/commits/{base_head}/dir_hashes_db",
@@ -508,10 +510,10 @@ pub async fn download_dir_hashes_db(
     req: HttpRequest,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
     // base_head is the base and head commit id separated by ..
-    let base_head = path_param(&req, "base_head")?;
+    let base_head = path_param(&req, "base_head")?.to_string();
     let repository = get_repo(&app_data.path, namespace, name)?;
 
     // Let user pass in base..head to download a range of commits
@@ -557,9 +559,9 @@ pub async fn download_commit_entries_db(
     req: HttpRequest,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let commit_or_branch = path_param(&req, "commit_or_branch")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
+    let commit_or_branch = path_param(&req, "commit_or_branch")?.to_string();
     let repository = get_repo(&app_data.path, namespace, name)?;
 
     let commit = repositories::revisions::get(&repository, &commit_or_branch)?
@@ -682,8 +684,8 @@ pub async fn create(
     log::debug!("Got commit data: {body}");
 
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let repo_name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(&app_data.path, namespace, repo_name)?;
 
     let new_commit: Commit = match serde_json::from_str(&body) {
@@ -744,8 +746,8 @@ pub async fn upload_chunk(
 ) -> Result<HttpResponse, OxenHttpError> {
     log::debug!("in upload_chunk controller");
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, name)?;
 
     let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
@@ -1020,8 +1022,8 @@ pub async fn upload(
 ) -> Result<HttpResponse, OxenHttpError> {
     log::debug!("in regular upload controller");
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, &namespace, &name)?;
 
     // Read bytes from body
@@ -1070,9 +1072,9 @@ pub async fn upload(
 pub async fn complete(req: HttpRequest) -> Result<HttpResponse, Error> {
     let app_data = req.app_data::<OxenAppData>().unwrap();
     // name to the repo, should be in url path so okay to unwrap
-    let namespace: &str = req.match_info().get("namespace").unwrap();
-    let repo_name: &str = req.match_info().get("repo_name").unwrap();
-    let commit_id: &str = req.match_info().get("commit_id").unwrap();
+    let namespace: &str = path_param(&req, "namespace").unwrap();
+    let repo_name: &str = path_param(&req, "repo_name").unwrap();
+    let commit_id: &str = path_param(&req, "commit_id").unwrap();
 
     match repositories::get_by_namespace_and_name(&app_data.path, namespace, repo_name) {
         Ok(Some(repo)) => {
@@ -1131,9 +1133,9 @@ pub async fn upload_tree(
     mut body: web::Payload,
 ) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
-    let client_head_id = path_param(&req, "commit_id")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
+    let client_head_id = path_param(&req, "commit_id")?.to_string();
     let repo = get_repo(&app_data.path, namespace, name)?;
     // Get head commit on sever repo
     let server_head_commit = repositories::commits::head_commit(&repo)?;
@@ -1181,8 +1183,8 @@ pub async fn upload_tree(
 )]
 pub async fn root_commit(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?;
-    let name = path_param(&req, "repo_name")?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, name)?;
 
     let root = repositories::commits::root_commit_maybe(&repo)?;
