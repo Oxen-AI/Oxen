@@ -31,6 +31,8 @@ jobs:
 
       - name: Setup Rust Toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: clippy
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
@@ -50,6 +52,9 @@ jobs:
 
       - name: Build with production features
         run: cargo build --workspace --features production
+
+      - name: Clippy (production features)
+        run: cargo clippy --workspace --all-targets --features production --no-deps -- -D warnings
 
       # ── Test 1: Log file writing (OXEN_LOG_DIR + NDJSON) ──────────────
       - name: Test log file writing
