@@ -329,31 +329,32 @@ pub async fn maybe_create_merge(
 
     log::debug!("maybe_create_merge got client head commit {incoming_commit_id:?}");
 
-    let maybe_merge_commit = repositories::merge::merge_commit_into_base_on_branch(
+    let merge_commit = match repositories::merge::merge_commit_into_base_on_branch(
         &repository,
         &incoming_commit,
         &current_commit,
         &branch,
     )
-    .await?;
+    .await
+    {
+        Ok(commit) => commit,
+        Err(OxenError::UpstreamMergeConflict(_)) => {
+            // If there are merge conflicts, we can't complete this merge and want to reset
+            // the branch to the previous remote head as if this push never happened
+            log::debug!("returning current commit {current_commit_id:?}.");
+            return Ok(HttpResponse::Ok().json(CommitResponse {
+                status: StatusMessage::resource_found(),
+                commit: current_commit,
+            }));
+        }
+        Err(e) => return Err(e.into()),
+    };
 
-    // Return what will become the new head of the repo after push is complete.
-    if let Some(merge_commit) = maybe_merge_commit {
-        log::debug!("returning merge commit {merge_commit:?}");
-        // Update branch head
-        Ok(HttpResponse::Ok().json(CommitResponse {
-            status: StatusMessage::resource_created(),
-            commit: merge_commit,
-        }))
-    } else {
-        // If there are merge conflicts, we can't complete this merge and want to reset the branch to the previous remote head
-        // as if this push never happened
-        log::debug!("returning current commit {current_commit_id:?}.");
-        Ok(HttpResponse::Ok().json(CommitResponse {
-            status: StatusMessage::resource_found(),
-            commit: current_commit,
-        }))
-    }
+    log::debug!("returning merge commit {merge_commit:?}");
+    Ok(HttpResponse::Ok().json(CommitResponse {
+        status: StatusMessage::resource_created(),
+        commit: merge_commit,
+    }))
 }
 
 /// Get all versions of a file on a branch

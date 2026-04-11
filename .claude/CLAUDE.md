@@ -115,13 +115,14 @@ oxen push origin main               # Push to remote
 - When prompted to always do something a certain way in general, add an entry to this section of the CLAUDE.md file.
 - When calling `get_staged_db_manager`, follow the doc comment on that function: drop the returned `StagedDBManager` as soon as possible (via a block scope or explicit `drop()`) to avoid holding the shared database handle longer than necessary.
 - When altering the `OxenError` enum, consider whether a hint needs to be added or updated in the `hint` method.
-- After changing any Rust code, verify that tests pass with the `bin/test-rust` script (not `cargo`). The script is documented in a comment at the top of its file.
+- Instead of using `cargo test` to test Rust code, use the `bin/test-rust` script. The script usage is documented in a comment at the top of its file.
 - Prefer using inline code over creating a new function when the function would only be called once and the function body would be less than 15 lines.
 - Preserve comments whenever possible. Comments that were written by someone other than Claude should always be preserved or updated if possible.
 - The Python project calls into the Rust project. Whenever changing the Rust code, check to see if the Python code needs to be updated.
 - After changing any Rust or Python code, verify that Rust tests pass with `bin/test-rust` and Python tests pass with `bin/test-rust -p`
 - When updating a dependency, prefer updating to the latest stable version.
 - Any new or changed Rust code that touches IO (file system, network, etc.) should be async code. Instead of std::io or std::fs, use equivalents from tokio. When an external dependency doesn't support async, use tokio's spawn_blocking functionality.
+- oxen-server operations should never touch a local checkout on disk when doing operations initiated by its API.
 
 # Testing Rules
 - Use the test helpers in `crates/lib/src/test.rs` (e.g., `run_empty_local_repo_test`) for unit tests in the lib code.

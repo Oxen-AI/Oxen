@@ -627,9 +627,9 @@ pub fn dir_entries_with_paths(
     Ok(entries)
 }
 
-// Get HashMap of all entries that aren't present in shared_hashes
+/// Get HashMap of all entries that aren't present in shared_hashes
 pub fn unique_dir_entries(
-    base_path: &PathBuf,
+    base_path: &Path,
     node: &MerkleTreeNode,
     shared_hashes: &HashSet<MerkleHash>,
 ) -> Result<HashMap<PathBuf, FileNode>, OxenError> {

@@ -456,18 +456,34 @@ pub fn list_recursive_paginated(
     Ok((results, total_count))
 }
 
+/// Mark all ancestors of `commit` as visited and return the number of
+/// newly-visited ancestors.  The commit itself is assumed to already be in the
+/// visited set (the caller inserts it), so we start from its parents.
 fn mark_ancestors_visited(
     repo: &LocalRepository,
     commit: &Commit,
     visited: &mut HashSet<String>,
-) -> Result<(), OxenError> {
-    let mut stack = vec![commit.clone()];
+) -> Result<usize, OxenError> {
+    let mut newly_visited: usize = 0;
+    let mut stack: Vec<Commit> = Vec::new();
+
+    // Seed the stack with the commit's parents (not the commit itself,
+    // which is already in `visited`).
+    for parent_id in &commit.parent_ids {
+        let parent_id: MerkleHash = parent_id.parse()?;
+        if let Some(parent) = get_by_hash(repo, &parent_id)?
+            && !visited.contains(&parent.id)
+        {
+            stack.push(parent);
+        }
+    }
 
     while let Some(current) = stack.pop() {
         if visited.contains(&current.id) {
             continue;
         }
         visited.insert(current.id.clone());
+        newly_visited += 1;
 
         for parent_id in current.parent_ids.clone() {
             let parent_id: MerkleHash = parent_id.parse()?;
@@ -479,7 +495,7 @@ fn mark_ancestors_visited(
         }
     }
 
-    Ok(())
+    Ok(newly_visited)
 }
 
 /// Wrapper to order commits by timestamp descending in a BinaryHeap (max-heap).
@@ -541,17 +557,19 @@ fn traverse_commits(
             continue;
         }
 
-        // Check cache
+        // Check cache — use 1 (this commit) + newly-visited ancestors so that
+        // shared ancestors between merge parents are not double-counted.
         if let Some(db) = config.cache_db
-            && let Some(cached_count) = get_cached_count(db, &commit.id)?
+            && let Some(_cached_count) = get_cached_count(db, &commit.id)?
         {
+            let newly_visited = mark_ancestors_visited(config.repo, &commit, config.visited)?;
             log::debug!(
-                "Found cached count for commit {}: {} commits",
+                "Cache hit for commit {}: cached={}, newly_visited={}",
                 &commit.id[..8],
-                cached_count
+                _cached_count,
+                newly_visited
             );
-            mark_ancestors_visited(config.repo, &commit, config.visited)?;
-            count += cached_count;
+            count += 1 + newly_visited;
             continue;
         }
 
