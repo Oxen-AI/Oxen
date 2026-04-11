@@ -206,20 +206,6 @@ pub fn init_tracing(app_name: &str, default: LevelFilter) -> Result<TracingGuard
         None => (None, None, None),
     };
 
-    #[cfg(not(feature = "otel"))]
-    {
-        if std::env::var("OXEN_OTEL_ENDPOINT").is_ok() {
-            eprintln!(
-                "[WARNING] OXEN_OTEL_ENDPOINT is set but otel feature is not enabled! Ignoring."
-            );
-        }
-        if std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").is_ok() {
-            eprintln!(
-                "[WARNING] OTEL_EXPORTER_OTLP_ENDPOINT is set but otel feature is not enabled! Ignoring."
-            );
-        }
-    }
-
     // .try_init() also installs the tracing-log bridge (forwarding log::* calls into tracing)
     // when the `tracing-log` feature is enabled.
 
@@ -235,6 +221,16 @@ pub fn init_tracing(app_name: &str, default: LevelFilter) -> Result<TracingGuard
     #[cfg(not(feature = "otel"))]
     {
         registry.try_init()?;
+
+        if std::env::var("OXEN_OTEL_ENDPOINT").is_ok() {
+            log::error!("OXEN_OTEL_ENDPOINT is set but otel feature is not enabled! (Ignoring)")
+        }
+
+        if std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").is_ok() {
+            log::error!(
+                "OTEL_EXPORTER_OTLP_ENDPOINT is set but otel feature is not enabled! (Ignoring)"
+            )
+        }
     }
 
     if let Some(ref log_dir) = maybe_log_dir {
