@@ -76,8 +76,41 @@ curl -H "Authorization: Bearer $TOKEN" "http://0.0.0.0:3000/api/repos"
 
 #### Create Repository
 ```bash
-curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"name": "MyRepo"}' "http://0.0.0.0:3000api/repos"
+curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"name": "MyRepo"}' "http://0.0.0.0:3000/api/repos"
 ```
+
+#### Webhooks
+
+Register a webhook to be notified when files change under a path:
+
+```bash
+# Register a webhook for changes under /data
+curl -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -X POST \
+     -d '{"path": "/data", "webhook_url": "https://example.com/hook", "purpose": "CI trigger", "contact": "admin@example.com"}' \
+     "http://0.0.0.0:3000/api/repos/my_namespace/MyRepo/webhooks/add"
+```
+
+Webhooks use hierarchical path matching -- a webhook on `/data` fires for changes to any file under `/data/...`. A webhook on `/` catches all changes.
+
+Other webhook endpoints:
+
+```bash
+# List webhooks
+curl -H "Authorization: Bearer $TOKEN" \
+     "http://0.0.0.0:3000/api/repos/my_namespace/MyRepo/webhooks"
+
+# Delete a webhook
+curl -H "Authorization: Bearer $TOKEN" -X DELETE \
+     "http://0.0.0.0:3000/api/repos/my_namespace/MyRepo/webhooks/{webhook_id}"
+
+# View/update webhook config
+curl -H "Authorization: Bearer $TOKEN" \
+     "http://0.0.0.0:3000/api/repos/my_namespace/MyRepo/webhooks/config"
+```
+
+Webhooks that fail 5 times consecutively are automatically removed.
 
 
 ## Logging

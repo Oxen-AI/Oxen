@@ -24,6 +24,7 @@ pub mod staged_dir_stats;
 pub mod staged_row_status;
 pub mod summarized_staged_dir_stats;
 pub mod user;
+pub mod webhook;
 pub mod workspace;
 
 // Namespace
@@ -76,6 +77,9 @@ pub use crate::model::diff::data_frame_diff::DataFrameDiff;
 
 pub use crate::model::data_frame::schema::Schema;
 pub use crate::model::data_frame::schema::staged_schema::StagedSchema;
+
+// Webhook
+pub use crate::model::webhook::{Webhook, WebhookAddRequest, WebhookConfig, WebhookMode};
 
 // Workspace
 pub use crate::model::workspace::Workspace;
