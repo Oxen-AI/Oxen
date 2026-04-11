@@ -164,7 +164,11 @@ jobs:
           SERVER_PID=$!
 
           sleep 3
-          # TODO: add server health check
+          health_code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/health)
+          if [ "${health_code}" != "200" ]; then
+              echo "oxen-server is unhealthy! health check failed: ${health_code}"
+              exit 1
+          fi
 
           # ── oxen client: Full push / clone / modify / push / pull workflow ──
 
