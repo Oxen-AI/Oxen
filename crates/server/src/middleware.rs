@@ -85,7 +85,7 @@ where
     }
 }
 
-/// Middleware that records HTTP request count and latency for every route.
+/// Middleware that records HTTP request count and duration for every route.
 ///
 /// Emits three (3) Prometheus metrics per request:
 ///   1. `http_requests_total{method, path, status}` — counter

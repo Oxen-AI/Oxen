@@ -215,16 +215,17 @@ creates spans at `INFO` level by default. The server defaults to
 `#[instrument]` spans are silently dropped** before the OTel layer sees
 them.
 
-To get full traces in Jaeger (or any collector), explicitly set
+**To get full traces** in Jaeger (or any collector), explicitly set
 `RUST_LOG=info`:
 
 ```bash
 OXEN_OTEL_ENDPOINT=http://localhost:4317 RUST_LOG=info oxen-server start
 ```
 
-Without `RUST_LOG=info`, the OTel exporter is active but receives no spans.
-The `TracingLogger` HTTP root span is also at `INFO` level, so it is
-similarly affected.
+**Without `RUST_LOG=info`, the OTel exporter is active but receives no spans.**
+
+**The `TracingLogger` HTTP root span is also at `INFO` level, so it is
+similarly affected.**
 
 For targeted verbosity (e.g. keep third-party crates quiet), use a
 filter directive:
