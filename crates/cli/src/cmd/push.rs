@@ -54,6 +54,13 @@ impl RunCmd for PushCmd {
                     .help("Revalidate file hashes on remote and push any missing files.")
                     .action(clap::ArgAction::SetTrue)
             )
+            .arg(
+                Arg::new("force")
+                    .long("force")
+                    .short('f')
+                    .help("Force push even if the remote branch is not a fast-forward")
+                    .action(clap::ArgAction::SetTrue)
+            )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
@@ -73,6 +80,7 @@ impl RunCmd for PushCmd {
                 (false, None)
             };
         let revalidate = args.get_flag("revalidate");
+        let force = args.get_flag("force");
 
         let repo = LocalRepository::from_current_dir()?;
         let current_branch = repositories::branches::current_branch(&repo)?;
@@ -90,6 +98,7 @@ impl RunCmd for PushCmd {
             remote: remote.to_string(),
             branch: branch_name,
             delete,
+            force,
             missing_files,
             missing_files_commit_id,
             revalidate,

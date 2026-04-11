@@ -129,9 +129,10 @@ async fn push_to_existing_branch(
 
     match repositories::commits::list_from(repo, &commit.id) {
         Ok(commits) => {
-            if commits.iter().any(|c| c.id == remote_branch.commit_id) {
-                //we're ahead
+            let is_ahead = commits.iter().any(|c| c.id == remote_branch.commit_id);
 
+            if is_ahead {
+                // Fast-forward: push only the new commits
                 let latest_remote_commit =
                     repositories::commits::get_by_id(repo, &remote_branch.commit_id)?.ok_or_else(
                         || OxenError::RevisionNotFound(remote_branch.commit_id.clone().into()),
@@ -143,10 +144,22 @@ async fn push_to_existing_branch(
 
                 push_commits(repo, remote_repo, Some(latest_remote_commit), commits, opts).await?;
                 api::client::branches::update(remote_repo, &remote_branch.name, commit).await?;
+            } else if opts.force {
+                // Force push: push the full history and update the branch pointer
+                log::info!(
+                    "Force pushing branch '{}' to {}",
+                    &remote_branch.name,
+                    commit.id
+                );
+                let latest_remote_commit = find_latest_remote_commit(repo, remote_repo).await?;
+                let history = repositories::commits::list_from(repo, &commit.id)?;
+
+                push_commits(repo, remote_repo, latest_remote_commit, history, opts).await?;
+                api::client::branches::update(remote_repo, &remote_branch.name, commit).await?;
             } else {
-                //we're behind
+                // Behind and not forcing
                 let err_str = format!(
-                    "Branch {} is behind remote commit {}.\nRun `oxen pull` to update your local branch",
+                    "Branch {} is behind remote commit {}.\nRun `oxen pull` to update your local branch, or use `oxen push --force` to force push.",
                     remote_branch.name, remote_branch.commit_id
                 );
                 return Err(OxenError::basic_str(err_str));
@@ -215,7 +228,10 @@ async fn push_missing_files(
         let commit = repositories::commits::get_by_id(repo, commit_id)?
             .ok_or_else(|| OxenError::commit_id_does_not_exist(commit_id))?;
         list_and_push_missing_files(repo, remote_repo, None, &commit).await?;
-    } else if head_commit.id == latest_remote_commit.clone().unwrap().id {
+    } else if latest_remote_commit
+        .as_ref()
+        .is_some_and(|rc| head_commit.id == rc.id)
+    {
         //both remote and local are at same commit
 
         let history = repositories::commits::list_from(repo, &head_commit.id)?;
@@ -243,6 +259,17 @@ async fn list_and_push_missing_files(
             .iter()
             .map(|e| Entry::CommitEntry(e.clone()))
             .collect::<Vec<Entry>>();
+
+    if let Some(entry) = missing_files.first() {
+        let version_store = repo.version_store()?;
+        if !version_store.version_exists(&entry.hash()).await? {
+            return Err(OxenError::CannotPushShallowClone {
+                commit_id: head_commit.id.clone(),
+                commit_message: head_commit.message.clone(),
+                help: "To repair the remote, re-run this command from a clone that has the full history.".to_string(),
+            });
+        }
+    }
 
     let total_bytes = missing_files.iter().map(|e| e.num_bytes()).sum();
 
@@ -419,12 +446,11 @@ async fn push_commits(
         if let Some(entry) = info.unique_file_hashes.first()
             && !version_store.version_exists(&entry.hash()).await?
         {
-            return Err(OxenError::basic_str(format!(
-                "Cannot push commit '{}' (\"{}\"): file data is not available locally.\n\
-                 This usually means the repository was cloned without full history.\n\
-                 Run `oxen pull --all` to fetch all data, then try again.",
-                commit.id, commit.message
-            )));
+            return Err(OxenError::CannotPushShallowClone {
+                commit_id: commit.id.clone(),
+                commit_message: commit.message.clone(),
+                help: "Run `oxen pull --all` to fetch all data, then try again.".to_string(),
+            });
         }
     }
 
