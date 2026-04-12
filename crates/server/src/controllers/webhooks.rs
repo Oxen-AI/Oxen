@@ -6,7 +6,7 @@ use crate::helpers::get_repo;
 use crate::params::{app_data, path_param};
 
 use liboxen::core::db::webhooks::WebhookDB;
-use liboxen::model::webhook::WebhookAddRequest;
+use liboxen::model::webhook::{WebhookAddRequest, WebhookResponse};
 use liboxen::repositories;
 
 pub async fn create(
@@ -20,6 +20,16 @@ pub async fn create(
 
     let webhook_req: WebhookAddRequest = serde_json::from_value(body.into_inner())?;
 
+    // Validate webhook URL scheme
+    let url_parsed = url::Url::parse(&webhook_req.webhook_url)
+        .map_err(|_| OxenHttpError::BadRequest("Invalid webhook URL".into()))?;
+    let scheme = url_parsed.scheme();
+    if scheme != "http" && scheme != "https" {
+        return Err(OxenHttpError::BadRequest(
+            "Only http and https webhook URLs are allowed".into(),
+        ));
+    }
+
     // Validate current_oxen_revision if provided
     if let Some(ref claimed_revision) = webhook_req.current_oxen_revision {
         let head_commit = repositories::commits::head_commit_maybe(&repo)?;
@@ -28,7 +38,13 @@ pub async fn create(
             .map(|c| c.id == *claimed_revision)
             .unwrap_or(false);
         if !matches {
-            return Ok(HttpResponse::BadRequest().json(serde_json::json!({"error": "no"})));
+            let actual = head_commit.map(|c| c.id).unwrap_or("none".to_string());
+            return Ok(HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "revision_mismatch",
+                "field": "current_oxen_revision",
+                "claimed": claimed_revision,
+                "actual": actual,
+            })));
         }
     }
 
@@ -45,7 +61,11 @@ pub async fn list(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     let db = WebhookDB::new(&repo.path.join(".oxen"))?;
-    let webhooks = db.list_all_webhooks()?;
+    let webhooks: Vec<WebhookResponse> = db
+        .list_all_webhooks()?
+        .into_iter()
+        .map(WebhookResponse::from)
+        .collect();
 
     Ok(HttpResponse::Ok().json(serde_json::json!({"webhooks": webhooks})))
 }

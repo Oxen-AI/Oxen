@@ -11,6 +11,30 @@ pub struct Webhook {
     pub consecutive_failures: u32,
 }
 
+/// Response type that omits the webhook_secret for list/get endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebhookResponse {
+    pub id: String,
+    pub path: String,
+    pub webhook_url: String,
+    pub purpose: String,
+    pub contact: String,
+    pub consecutive_failures: u32,
+}
+
+impl From<Webhook> for WebhookResponse {
+    fn from(w: Webhook) -> Self {
+        WebhookResponse {
+            id: w.id,
+            path: w.path,
+            webhook_url: w.webhook_url,
+            purpose: w.purpose,
+            contact: w.contact,
+            consecutive_failures: w.consecutive_failures,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct WebhookAddRequest {
     pub path: String,

@@ -44,6 +44,7 @@ impl WebhookNotifier {
 
     /// Notify all webhooks that match the given changed path.
     /// Returns the number of webhooks that were notified (not rate-limited).
+    /// Respects the repo's webhook config: skips delivery if disabled.
     pub async fn notify_path_changed(
         &self,
         repo_path: &Path,
@@ -51,13 +52,18 @@ impl WebhookNotifier {
     ) -> Result<usize, OxenError> {
         let oxen_dir = repo_path.join(".oxen");
         let db = WebhookDB::new(&oxen_dir)?;
+
+        let config = db.get_config()?;
+        if !config.enabled {
+            return Ok(0);
+        }
+
         let webhooks = db.list_webhooks_for_path(changed_path)?;
 
         let mut notified_count = 0;
 
         for webhook in &webhooks {
-            // Check rate limiting
-            if self.is_rate_limited(&webhook.id) {
+            if !self.try_acquire_rate_limit(&webhook.id) {
                 continue;
             }
 
@@ -75,7 +81,6 @@ impl WebhookNotifier {
             match result {
                 Ok(resp) if resp.status().is_success() => {
                     db.reset_failure(&webhook.id)?;
-                    self.update_rate_limit(&webhook.id);
                     notified_count += 1;
                 }
                 _ => {
@@ -88,7 +93,6 @@ impl WebhookNotifier {
                         );
                         db.remove_webhook(&webhook.id)?;
                     }
-                    self.update_rate_limit(&webhook.id);
                     notified_count += 1;
                 }
             }
@@ -97,20 +101,19 @@ impl WebhookNotifier {
         Ok(notified_count)
     }
 
-    fn is_rate_limited(&self, webhook_id: &str) -> bool {
+    /// Atomically check rate limit and reserve the slot if not limited.
+    /// Returns true if the notification should proceed.
+    fn try_acquire_rate_limit(&self, webhook_id: &str) -> bool {
         if self.rate_limit_duration.is_zero() {
+            return true;
+        }
+        let mut rate_limits = self.rate_limits.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(last_notified) = rate_limits.get(webhook_id)
+            && last_notified.elapsed() < self.rate_limit_duration
+        {
             return false;
         }
-        let rate_limits = self.rate_limits.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(last_notified) = rate_limits.get(webhook_id) {
-            last_notified.elapsed() < self.rate_limit_duration
-        } else {
-            false
-        }
-    }
-
-    fn update_rate_limit(&self, webhook_id: &str) {
-        let mut rate_limits = self.rate_limits.lock().unwrap_or_else(|e| e.into_inner());
         rate_limits.insert(webhook_id.to_string(), Instant::now());
+        true
     }
 }
