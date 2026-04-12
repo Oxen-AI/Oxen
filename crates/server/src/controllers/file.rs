@@ -308,6 +308,12 @@ async fn put_raw(
 
     let resource = parse_resource(&req, &repo)?;
 
+    if resource.path.as_os_str().is_empty() {
+        return Err(OxenHttpError::BadRequest(
+            "Invalid target path: expected a full file path for raw PUT uploads".into(),
+        ));
+    }
+
     // Resource must specify branch because we need to commit the workspace back to a branch
     let branch = resource
         .branch
@@ -367,6 +373,12 @@ async fn handle_initial_put_raw_empty_repo(
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .unwrap_or("main".to_string());
     let path: PathBuf = resource.collect();
+
+    if path.as_os_str().is_empty() {
+        return Err(OxenHttpError::BadRequest(
+            "Invalid target path: expected a full file path for raw PUT uploads".into(),
+        ));
+    }
 
     let user = create_user_from_options(name.clone(), email.clone())?;
 
@@ -1836,7 +1848,7 @@ mod tests {
         )
         .await;
 
-        assert!(resp.status().is_client_error());
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
 
         test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
