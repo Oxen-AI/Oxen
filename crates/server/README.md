@@ -86,12 +86,23 @@ Upload a file directly using a raw HTTP body (no multipart form needed):
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
      -H "Content-Type: text/plain" \
+     -H "oxen-commit-author: Ox" \
+     -H "oxen-commit-email: ox@oxen.ai" \
+     -H "oxen-commit-message: Add hello.txt" \
      -X PUT \
      -d "Hello, World!" \
      "http://0.0.0.0:3000/api/repos/my_namespace/MyRepo/file/main/hello.txt"
 ```
 
-The existing multipart PUT is still supported. The server detects the format from the `Content-Type` header.
+For raw PUTs, commit metadata is supplied via headers:
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `oxen-commit-author` | No | Commit author name (defaults to empty) |
+| `oxen-commit-email` | No | Commit author email (defaults to empty) |
+| `oxen-commit-message` | No | Commit message (defaults to "Auto-commit files to {path}") |
+
+The existing multipart PUT is still supported (where these fields are form parts instead). The server detects the format from the `Content-Type` header.
 
 #### Optimistic Concurrency (`oxen-based-on`)
 
