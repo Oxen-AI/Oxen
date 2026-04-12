@@ -307,12 +307,7 @@ async fn put_raw(
     }
 
     let resource = parse_resource(&req, &repo)?;
-
-    if resource.path.as_os_str().is_empty() {
-        return Err(OxenHttpError::BadRequest(
-            "Invalid target path: expected a full file path for raw PUT uploads".into(),
-        ));
-    }
+    let path = normalize_relative_upload_path(&resource.path, false, "uploaded file")?;
 
     // Resource must specify branch because we need to commit the workspace back to a branch
     let branch = resource
@@ -321,14 +316,14 @@ async fn put_raw(
         .ok_or_else(|| OxenError::local_branch_not_found(resource.version.to_string_lossy()))?;
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
 
-    check_oxen_based_on(&req, &repo, &commit, &resource.path)?;
+    check_oxen_based_on(&req, &repo, &commit, &path)?;
 
-    ensure_no_file_ancestors_in_tree(&repo, &commit, &resource.path, &resource.path)?;
+    ensure_no_file_ancestors_in_tree(&repo, &commit, &path, &path)?;
 
     let user = create_user_from_options(name.clone(), email.clone())?;
 
     let file = FileNew {
-        path: resource.path.clone(),
+        path: path.clone(),
         contents: FileContents::Binary(body.to_vec()),
         user,
     };
@@ -341,9 +336,8 @@ async fn put_raw(
     let commit_body = NewCommitBody {
         author: name.unwrap_or_default(),
         email: email.unwrap_or_default(),
-        message: message.unwrap_or_else(|| {
-            format!("Auto-commit files to {}", &resource.path.to_string_lossy())
-        }),
+        message: message
+            .unwrap_or_else(|| format!("Auto-commit files to {}", &path.to_string_lossy())),
     };
 
     let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
@@ -373,12 +367,7 @@ async fn handle_initial_put_raw_empty_repo(
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .unwrap_or("main".to_string());
     let path: PathBuf = resource.collect();
-
-    if path.as_os_str().is_empty() {
-        return Err(OxenHttpError::BadRequest(
-            "Invalid target path: expected a full file path for raw PUT uploads".into(),
-        ));
-    }
+    let path = normalize_relative_upload_path(&path, false, "uploaded file")?;
 
     let user = create_user_from_options(name.clone(), email.clone())?;
 
