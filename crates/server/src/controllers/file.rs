@@ -284,19 +284,6 @@ async fn put_raw(
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
-    let resource = parse_resource(&req, &repo)?;
-
-    // Resource must specify branch because we need to commit the workspace back to a branch
-    let branch = resource
-        .branch
-        .clone()
-        .ok_or_else(|| OxenError::local_branch_not_found(resource.version.to_string_lossy()))?;
-    let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
-
-    check_oxen_based_on(&req, &repo, &commit, &resource.path)?;
-
-    ensure_no_file_ancestors_in_tree(&repo, &commit, &resource.path, &resource.path)?;
-
     // Extract commit metadata from headers
     let name = req
         .headers()
@@ -313,6 +300,24 @@ async fn put_raw(
         .get("oxen-commit-message")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
+
+    // If there's no head commit, handle initial upload
+    if repositories::commits::head_commit_maybe(&repo)?.is_none() {
+        return handle_initial_put_raw_empty_repo(&req, body, &repo, name, email, message).await;
+    }
+
+    let resource = parse_resource(&req, &repo)?;
+
+    // Resource must specify branch because we need to commit the workspace back to a branch
+    let branch = resource
+        .branch
+        .clone()
+        .ok_or_else(|| OxenError::local_branch_not_found(resource.version.to_string_lossy()))?;
+    let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
+
+    check_oxen_based_on(&req, &repo, &commit, &resource.path)?;
+
+    ensure_no_file_ancestors_in_tree(&repo, &commit, &resource.path, &resource.path)?;
 
     let user = create_user_from_options(name.clone(), email.clone())?;
 
@@ -338,6 +343,44 @@ async fn put_raw(
     let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
 
     log::debug!("file::put_raw workspace commit ✅ success! commit {commit:?}");
+
+    Ok(HttpResponse::Ok().json(CommitResponse {
+        status: StatusMessage::resource_created(),
+        commit,
+    }))
+}
+
+// Helper: handle raw PUT to a repo with no commits yet
+async fn handle_initial_put_raw_empty_repo(
+    req: &HttpRequest,
+    body: web::Bytes,
+    repo: &liboxen::model::LocalRepository,
+    name: Option<String>,
+    email: Option<String>,
+    message: Option<String>,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    let resource: PathBuf = PathBuf::from(query_param(req, "resource"));
+
+    let mut resource = resource.components();
+    let branch_name = resource
+        .next()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .unwrap_or("main".to_string());
+    let path: PathBuf = resource.collect();
+
+    let user = create_user_from_options(name.clone(), email.clone())?;
+
+    let file = FileNew {
+        path: path.clone(),
+        contents: FileContents::Binary(body.to_vec()),
+        user: user.clone(),
+    };
+
+    process_and_add_files(repo, None, &[file]).await?;
+
+    let commit_message = message.unwrap_or_else(|| "Initial commit".to_string());
+    let commit = commits::commit_with_user(repo, &commit_message, &user)?;
+    branches::create(repo, &branch_name, &commit.id)?;
 
     Ok(HttpResponse::Ok().json(CommitResponse {
         status: StatusMessage::resource_created(),
