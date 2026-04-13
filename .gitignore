@@ -1,5 +1,5 @@
 # build artifacts, testing, etc.
-/target
+target/
 .DS_Store
 .oxen
 release/
