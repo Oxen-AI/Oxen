@@ -808,8 +808,7 @@ pub async fn upload_chunk(
                     .await
                     {
                         log::error!("upload_chunk unpack failed: {err:?}");
-                        return Ok(HttpResponse::InternalServerError()
-                            .json(StatusMessage::internal_server_error()));
+                        return Err(err.into());
                     }
 
                     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
