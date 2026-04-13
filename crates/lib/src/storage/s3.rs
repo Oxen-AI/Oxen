@@ -168,13 +168,13 @@ impl S3VersionStore {
                 let key_failures = errors
                     .iter()
                     .map(|e| {
-                       (
-                            e.key.as_deref().unwrap_or("?"),
-                            e.message.as_deref().unwrap_or("?")
+                        (
+                            e.key.as_deref().unwrap_or("?").into(),
+                            e.message.as_deref().unwrap_or("?").into(),
                         )
                     })
                     .collect::<Vec<_>>();
-                return Err(OxenError::DeleteFailure{key_failures});
+                return Err(OxenError::DeleteFailure(key_failures));
             }
         }
 

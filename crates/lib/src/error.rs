@@ -148,6 +148,10 @@ pub enum OxenError {
     #[error("{0}")]
     Upload(StringError),
 
+    /// An error deleting keys
+    #[error("delete_objects: some keys failed to delete: {0:?}")]
+    DeleteFailure(Vec<(String, String)>),
+
     // Entry
     /// A commit entry is not present in the repository.
     #[error("{0}")]
