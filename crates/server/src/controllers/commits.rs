@@ -938,14 +938,8 @@ fn unpack_to_file(
 
         log::debug!("Read {} file bytes from file {:?}", buffer.len(), file);
 
-        match outf.write_all(&buffer) {
-            Ok(_) => {
-                log::debug!("Unpack successful! {full_path:?}");
-            }
-            Err(err) => {
-                log::error!("Could not write all data to disk {err:?}");
-            }
-        }
+        outf.write_all(&buffer)?;
+        log::debug!("Unpack successful! {full_path:?}");
     }
     Ok(())
 }
