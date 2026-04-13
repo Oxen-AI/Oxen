@@ -475,16 +475,14 @@ pub async fn diff_files(
         let file_content_2 = tokio::fs::read_to_string(path_2).await?;
         let result = utf8_diff::diff(
             Some(file_content_1),
-            Some(path_1.as_ref().to_path_buf()),
+            Some(path_1.to_path_buf()),
             Some(file_content_2),
-            Some(path_2.as_ref().to_path_buf()),
+            Some(path_2.to_path_buf()),
         )?;
         Ok(DiffResult::Text(result))
     } else {
         Err(OxenError::invalid_file_type(format!(
-            "Compare not supported for files, found {:?} and {:?}",
-            path_1.as_ref(),
-            path_2.as_ref()
+            "Compare not supported for files, found {path_1:?} and {path_2:?}",
         )))
     }
 }

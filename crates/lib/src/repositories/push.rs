@@ -1582,7 +1582,7 @@ A: Checkout Oxen.ai
             let file_data: Vec<u8> = vec![42; AVG_CHUNK_SIZE as usize];
 
             // Write the data to the file
-            util::fs::write_data(&file_path, &file_data)?;
+            util::fs::write_data_a(&file_path, &file_data).await?;
 
             // Verify the file size is exactly AVG_CHUNK_SIZE
             let metadata = util::fs::metadata(&file_path)?;
@@ -1793,7 +1793,7 @@ A: Checkout Oxen.ai
             let file_data: Vec<u8> = vec![42; file_size];
 
             // Write the data to the file
-            util::fs::write_data(&file_path, &file_data)?;
+            util::fs::write_data_a(&file_path, &file_data).await?;
 
             // Verify the file size is exactly 100MB
             let metadata = util::fs::metadata(&file_path)?;
@@ -1892,7 +1892,7 @@ A: Checkout Oxen.ai
             let file_size = 11 * 1024 * 1024; // 11MB, above AVG_CHUNK_SIZE
             let file_path = sub_dir.join("weights.bin");
             let file_data: Vec<u8> = (0..file_size).map(|i| (i % 256) as u8).collect();
-            util::fs::write_data(&file_path, &file_data)?;
+            util::fs::write_data_a(&file_path, &file_data).await?;
 
             // Add and commit
             repositories::add(&local_repo, &local_repo.path).await?;

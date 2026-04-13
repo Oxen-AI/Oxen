@@ -12,7 +12,7 @@ use crate::error::OxenError;
 use crate::model::Workspace;
 use crate::model::data_frame::schema::Field;
 use crate::opts::{EmbeddingQueryOpts, PaginateOpts};
-use crate::{repositories, util};
+use crate::repositories;
 
 use std::path::Path;
 use std::path::PathBuf;

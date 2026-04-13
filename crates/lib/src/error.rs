@@ -674,27 +674,10 @@ impl OxenError {
         ))
     }
 
-    pub fn file_copy_error(
-        src: impl AsRef<Path>,
-        dst: impl AsRef<Path>,
-        err: impl std::fmt::Debug,
-    ) -> OxenError {
+    pub fn workspace_add_file_not_in_repo(path: impl AsRef<Path>) -> OxenError {
         OxenError::basic_str(format!(
-            "File copy error: {err:?}\nCould not copy from `{:?}` to `{:?}`",
-            src.as_ref(),
-            dst.as_ref()
-        ))
-    }
-
-    pub fn file_rename_error(
-        src: impl AsRef<Path>,
-        dst: impl AsRef<Path>,
-        err: impl std::fmt::Debug,
-    ) -> OxenError {
-        OxenError::basic_str(format!(
-            "File rename error: {err:?}\nCould not move from `{:?}` to `{:?}`",
-            src.as_ref(),
-            dst.as_ref()
+            "File is outside of the repo {:?}\n\nYou must specify a path you would like to add the file at with the -d flag.\n\n  oxen workspace add /path/to/file.png -d my-images/\n",
+            path.as_ref()
         ))
     }
 
