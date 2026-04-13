@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::operation::head_object::HeadObjectError;
-use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
+use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier};
 use aws_sdk_s3::{Client, config::Region, primitives::ByteStream};
 use bytes::Bytes;
 use futures::StreamExt;
@@ -110,6 +110,76 @@ impl S3VersionStore {
     fn chunk_key(&self, hash: &str, offset: u64) -> String {
         format!("{}/chunks/{}", self.version_dir(hash), offset)
     }
+
+    /// List all S3 object keys under a given prefix, following continuation tokens.
+    async fn list_objects_with_prefix(&self, prefix: &str) -> Result<Vec<String>, OxenError> {
+        let client = self.client().await?;
+        let mut keys = Vec::new();
+        let mut continuation_token: Option<String> = None;
+
+        loop {
+            let mut req = client.list_objects_v2().bucket(&self.bucket).prefix(prefix);
+            if let Some(token) = &continuation_token {
+                req = req.continuation_token(token);
+            }
+
+            let resp = req.send().await?;
+
+            if let Some(contents) = resp.contents {
+                for obj in contents {
+                    if let Some(key) = obj.key {
+                        keys.push(key);
+                    }
+                }
+            }
+
+            if resp.is_truncated.unwrap_or(false) {
+                continuation_token = resp.next_continuation_token;
+            } else {
+                break;
+            }
+        }
+
+        Ok(keys)
+    }
+
+    /// Delete a set of S3 objects, batching into groups of 1000 (the S3 DeleteObjects limit).
+    async fn delete_objects(&self, keys: Vec<String>) -> Result<(), OxenError> {
+        let client = self.client().await?;
+
+        for batch in keys.chunks(1000) {
+            let objects: Vec<ObjectIdentifier> = batch
+                .iter()
+                .map(|k| ObjectIdentifier::builder().key(k).build())
+                .collect::<Result<_, _>>()?;
+
+            let delete = Delete::builder().set_objects(Some(objects)).build()?;
+
+            let resp = client
+                .delete_objects()
+                .bucket(&self.bucket)
+                .delete(delete)
+                .send()
+                .await?;
+
+            if let Some(errors) = resp.errors
+                && !errors.is_empty()
+            {
+                let key_failures = errors
+                    .iter()
+                    .map(|e| {
+                        (
+                            e.key.as_deref().unwrap_or("?").into(),
+                            e.message.as_deref().unwrap_or("?").into(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                return Err(OxenError::DeleteFailure(key_failures));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -194,8 +264,7 @@ impl VersionStore for S3VersionStore {
                 .key(&key)
                 .body(ByteStream::from(buf))
                 .send()
-                .await
-                .map_err(OxenError::aws_s3_error)?;
+                .await?;
             return Ok(());
         }
 
@@ -208,8 +277,7 @@ impl VersionStore for S3VersionStore {
             .bucket(&self.bucket)
             .key(&key)
             .send()
-            .await
-            .map_err(OxenError::aws_s3_error)?;
+            .await?;
 
         let upload_id = upload
             .upload_id()
@@ -282,8 +350,7 @@ impl VersionStore for S3VersionStore {
                     .upload_id(&upload_id)
                     .multipart_upload(completed)
                     .send()
-                    .await
-                    .map_err(OxenError::aws_s3_error)?;
+                    .await?;
                 Ok(())
             }
             // Upload failed
@@ -535,8 +602,7 @@ impl VersionStore for S3VersionStore {
             .key(&key)
             .body(ByteStream::from(data))
             .send()
-            .await
-            .map_err(OxenError::aws_s3_error)?;
+            .await?;
 
         Ok(())
     }
@@ -597,11 +663,10 @@ impl VersionStore for S3VersionStore {
         }
     }
 
-    async fn delete_version(&self, _hash: &str) -> Result<(), OxenError> {
-        // TODO: Implement S3 version deletion
-        Err(OxenError::basic_str(
-            "S3VersionStore delete_version not yet implemented",
-        ))
+    async fn delete_version(&self, hash: &str) -> Result<(), OxenError> {
+        let prefix = format!("{}/", self.version_dir(hash));
+        let keys = self.list_objects_with_prefix(&prefix).await?;
+        self.delete_objects(keys).await
     }
 
     async fn list_versions(&self) -> Result<Vec<String>, OxenError> {
@@ -661,8 +726,7 @@ async fn upload_part(
         .part_number(part_num)
         .body(ByteStream::from(data))
         .send()
-        .await
-        .map_err(OxenError::aws_s3_error)?;
+        .await?;
 
     let etag = resp
         .e_tag()
@@ -945,5 +1009,68 @@ mod tests {
             .expect("body should collect")
             .into_bytes();
         assert_eq!(&body1024[..], b"chunk-1024");
+    }
+
+    #[tokio::test]
+    async fn test_delete_version_removes_data_and_chunks() {
+        let (store, _tmp, _server) = setup().await;
+        let hash = "abcdef1234567890abcdef1234567890";
+
+        // Store main data + two chunks
+        store.store_version(hash, b"main data").await.unwrap();
+        store
+            .store_version_chunk(hash, 0, Bytes::from_static(b"chunk-0"))
+            .await
+            .unwrap();
+        store
+            .store_version_chunk(hash, 1024, Bytes::from_static(b"chunk-1024"))
+            .await
+            .unwrap();
+
+        assert!(store.version_exists(hash).await.unwrap());
+
+        // Delete
+        store
+            .delete_version(hash)
+            .await
+            .expect("delete_version should succeed");
+
+        // Verify nothing remains under the version prefix
+        assert!(!store.version_exists(hash).await.unwrap());
+
+        let prefix = format!("{}/", store.version_dir(hash));
+        let remaining = store.list_objects_with_prefix(&prefix).await.unwrap();
+        assert!(
+            remaining.is_empty(),
+            "expected no objects, found: {:?}",
+            remaining
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_version_missing_is_noop() {
+        let (store, _tmp, _server) = setup().await;
+        let hash = "deadbeefdeadbeefdeadbeefdeadbeef";
+
+        // No objects exist; should not error
+        store
+            .delete_version(hash)
+            .await
+            .expect("delete of missing version should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_delete_version_isolates_by_hash() {
+        let (store, _tmp, _server) = setup().await;
+        let hash_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let hash_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+        store.store_version(hash_a, b"a data").await.unwrap();
+        store.store_version(hash_b, b"b data").await.unwrap();
+
+        store.delete_version(hash_a).await.unwrap();
+
+        assert!(!store.version_exists(hash_a).await.unwrap());
+        assert!(store.version_exists(hash_b).await.unwrap());
     }
 }
