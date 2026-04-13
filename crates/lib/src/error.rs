@@ -138,10 +138,6 @@ pub enum OxenError {
     #[error("Resource not found: {0}")]
     ParsedResourceNotFound(PathBufError),
 
-    /// A failure from common file system operations.
-    #[error("{0}")]
-    FsError(#[from] crate::util::fs::FsError),
-
     //
     // Versioning
     //
@@ -172,6 +168,13 @@ pub enum OxenError {
     /// A commit entry is not present in the repository.
     #[error("{0}")]
     CommitEntryNotFound(StringError),
+
+    //
+    // Filesystem Operations
+    //
+    /// A failure from common file system operations.
+    #[error("{0}")]
+    FilesystemError(#[from] crate::util::fs::FsError),
 
     //
     // Merkle Tree Operations
@@ -634,35 +637,10 @@ impl OxenError {
         OxenError::basic_str(format!("Could not find commit: {}", commit_id.as_ref()))
     }
 
-    pub fn file_error(path: impl AsRef<Path>, error: std::io::Error) -> OxenError {
+    pub fn local_parent_link_broken(commit_id: impl AsRef<str>) -> OxenError {
         OxenError::basic_str(format!(
-            "File does not exist: {:?} error {:?}",
-            path.as_ref(),
-            error
-        ))
-    }
-
-    pub fn file_create_error(path: impl AsRef<Path>, error: std::io::Error) -> OxenError {
-        OxenError::basic_str(format!(
-            "Could not create file: {:?} error {:?}",
-            path.as_ref(),
-            error
-        ))
-    }
-
-    pub fn file_open_error(path: impl AsRef<Path>, error: std::io::Error) -> OxenError {
-        OxenError::basic_str(format!(
-            "Could not open file: {:?} error {:?}",
-            path.as_ref(),
-            error
-        ))
-    }
-
-    pub fn file_read_error(path: impl AsRef<Path>, error: std::io::Error) -> OxenError {
-        OxenError::basic_str(format!(
-            "Could not read file: {:?} error {:?}",
-            path.as_ref(),
-            error
+            "Broken link to parent commit: {}",
+            commit_id.as_ref()
         ))
     }
 
@@ -748,10 +726,20 @@ impl OxenError {
     }
 }
 
-// Manual From impls for types that need transformation
-impl From<String> for OxenError {
-    fn from(error: String) -> Self {
-        OxenError::Basic(StringError::from(error))
+/// AWS SDK Error
+impl<E> From<SdkError<E, HttpResponse>> for OxenError
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    fn from(e: SdkError<E, HttpResponse>) -> Self {
+        OxenError::AwsError(Box::new(e))
+    }
+}
+
+/// AWS Build Error
+impl From<BuildError> for OxenError {
+    fn from(e: BuildError) -> Self {
+        OxenError::AwsError(Box::new(e))
     }
 }
 
