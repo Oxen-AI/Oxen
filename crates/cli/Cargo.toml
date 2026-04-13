@@ -21,8 +21,9 @@ path = "src/main.rs"
 
 [features]
 default = []
+metrics = ["liboxen/metrics"]
 otel = ["liboxen/otel"]
-production = ["otel", "default"]
+production = ["metrics", "otel", "default"]
 
 [dependencies]
 async-trait = { workspace = true }

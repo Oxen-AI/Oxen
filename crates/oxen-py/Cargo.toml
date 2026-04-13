@@ -16,8 +16,9 @@ crate-type = ["cdylib"] # PyO3 needs this crate to be a cdylib so it can link ag
 
 [features]
 default = []
+metrics = ["liboxen/metrics"]
 otel = ["liboxen/otel"]
-production = ["otel", "default"]
+production = ["metrics", "otel", "default"]
 
 [dependencies]
 liboxen = { path = "../lib" }

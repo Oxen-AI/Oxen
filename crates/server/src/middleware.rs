@@ -5,7 +5,7 @@ use actix_web::{
 use futures_util::future::LocalBoxFuture;
 use liboxen::request_context::REQUEST_ID;
 use std::future::{Ready, ready};
-use std::time::Instant;
+
 // Oxen request Id
 pub const OXEN_REQUEST_ID: &str = "x-oxen-request-id";
 
@@ -96,12 +96,20 @@ where
 /// `/api/repos/{namespace}/{repo_name}/branches`) to keep cardinality low.
 pub struct MetricsMiddleware;
 
+// These constants are consumed by the `counter!`/`histogram!` macros from `metrics`.
+// When the `metrics` feature is disabled, the macros expand to no-ops and the constants
+// appear unused to the compiler — but they are still required for compilation with metrics.
+#[cfg(feature = "metrics")]
 const HTTP_REQUESTS_TOTAL: &str = "http_requests_total";
+#[cfg(feature = "metrics")]
 const HTTP_ERRORS_TOTAL: &str = "http_errors_total";
+#[cfg(feature = "metrics")]
 const HTTP_REQUEST_DURATION_MS: &str = "http_request_duration_ms";
-
+#[cfg(feature = "metrics")]
 const METHOD: &str = "method";
+#[cfg(feature = "metrics")]
 const PATH: &str = "path";
+#[cfg(feature = "metrics")]
 const STATUS: &str = "status";
 
 impl<S, B> Transform<S, ServiceRequest> for MetricsMiddleware
@@ -137,49 +145,58 @@ where
 
     forward_ready!(service);
 
+    #[inline]
     fn call(&self, req: ServiceRequest) -> Self::Future {
-        let start = Instant::now();
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
+        #[cfg(feature = "metrics")]
         let method = req.method().to_string();
 
         let fut = self.service.call(req);
 
-        Box::pin(async move {
-            match fut.await {
-                Ok(res) => {
-                    let status = res.status().as_u16().to_string();
-                    let path = res
-                        .request()
-                        .match_pattern()
-                        .unwrap_or_else(|| "unmatched".to_string());
-                    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+        #[cfg(feature = "metrics")]
+        {
+            Box::pin(async move {
+                match fut.await {
+                    Ok(res) => {
+                        let status = res.status().as_u16().to_string();
+                        let path = res
+                            .request()
+                            .match_pattern()
+                            .unwrap_or_else(|| "unmatched".to_string());
+                        let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
 
-                    metrics::counter!(HTTP_REQUESTS_TOTAL, METHOD => method.clone(), PATH => path.clone(), STATUS => status.clone())
-                        .increment(1);
-                    if res.status().is_client_error() || res.status().is_server_error() {
-                        metrics::counter!(HTTP_ERRORS_TOTAL, METHOD => method.clone(), PATH => path.clone(), STATUS => status)
-                            .increment(1);
+                        metrics::counter!(HTTP_REQUESTS_TOTAL, METHOD => method.clone(), PATH => path.clone(), STATUS => status.clone()).increment(1);
+                        if res.status().is_client_error() || res.status().is_server_error() {
+                            metrics::counter!(HTTP_ERRORS_TOTAL, METHOD => method.clone(), PATH => path.clone(), STATUS => status)
+                                .increment(1);
+                        }
+                        metrics::histogram!(HTTP_REQUEST_DURATION_MS, METHOD => method, PATH => path)
+                            .record(elapsed_ms);
+
+                        Ok(res)
                     }
-                    metrics::histogram!(HTTP_REQUEST_DURATION_MS, METHOD => method, PATH => path)
-                        .record(elapsed_ms);
+                    Err(err) => {
+                        let status = "500";
+                        let path = "unmatched";
+                        let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
 
-                    Ok(res)
+                        metrics::counter!(HTTP_REQUESTS_TOTAL, METHOD => method.clone(), PATH => path, STATUS => status).increment(1);
+                        metrics::counter!(HTTP_ERRORS_TOTAL, METHOD => method.clone(), PATH => path, STATUS => status)
+                                                .increment(1);
+                        metrics::histogram!(HTTP_REQUEST_DURATION_MS, METHOD => method, PATH => path)
+                            .record(elapsed_ms);
+
+                        Err(err)
+                    }
                 }
-                Err(err) => {
-                    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
-                    let status = "500";
-                    let path = "unmatched";
+            })
+        }
 
-                    metrics::counter!(HTTP_REQUESTS_TOTAL, METHOD => method.clone(), PATH => path, STATUS => status)
-                        .increment(1);
-                    metrics::counter!(HTTP_ERRORS_TOTAL, METHOD => method.clone(), PATH => path, STATUS => status)
-                        .increment(1);
-                    metrics::histogram!(HTTP_REQUEST_DURATION_MS, METHOD => method, PATH => path)
-                        .record(elapsed_ms);
-
-                    Err(err)
-                }
-            }
-        })
+        #[cfg(not(feature = "metrics"))]
+        {
+            Box::pin(fut)
+        }
     }
 }
 

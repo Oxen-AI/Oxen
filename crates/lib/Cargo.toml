@@ -27,6 +27,7 @@ path = "src/lib.rs"
 default = ["duckdb/bundled"]
 docs = ["duckdb"]
 ffmpeg = ["thumbnails"]
+metrics = ["dep:metrics"]
 otel = [
     "dep:opentelemetry",
     "dep:opentelemetry_sdk",
@@ -34,7 +35,7 @@ otel = [
     "dep:tracing-opentelemetry",
 ]
 perf-logging = []
-production = ["otel", "ffmpeg", "perf-logging", "default"]
+production = ["metrics", "otel", "ffmpeg", "perf-logging", "default"]
 
 [dependencies]
 approx = { workspace = true }
@@ -83,7 +84,7 @@ libduckdb-sys = { workspace = true, optional = true }
 lofty = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
-metrics = { workspace = true }
+metrics = { workspace = true, optional = true }
 minus = { workspace = true }
 mp4 = { workspace = true }
 num_cpus = { workspace = true }

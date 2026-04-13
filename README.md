@@ -261,8 +261,9 @@ tail -f ~/.oxen/logs/oxen-server.2026-04-06 | jq 'select(.level == "ERROR")'
 
 ## Prometheus Metrics
 
-`oxen-server` exposes a Prometheus-compatible metrics endpoint.
-See [Prometheus Metrics](crates/server/README.md#prometheus-metrics) for details.
+`oxen-server` can expose a Prometheus-compatible metrics endpoint. Requires
+the `metrics` compile-time feature (included in `production`) and `OXEN_METRICS_PORT`
+at runtime. See [Prometheus Metrics](crates/server/README.md#prometheus-metrics) for details.
 
 ## OpenTelemetry Tracing
 

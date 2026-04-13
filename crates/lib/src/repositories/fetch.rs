@@ -18,6 +18,7 @@ pub async fn fetch_all(
     repo: &LocalRepository,
     fetch_opts: &FetchOpts,
 ) -> Result<Vec<Branch>, OxenError> {
+    #[cfg(feature = "metrics")]
     metrics::counter!("oxen_fetch_total").increment(1);
     let remote = repo
         .get_remote(&fetch_opts.remote)
@@ -88,6 +89,7 @@ pub async fn fetch_branch(
     repo: &LocalRepository,
     fetch_opts: &FetchOpts,
 ) -> Result<Branch, OxenError> {
+    #[cfg(feature = "metrics")]
     metrics::counter!("oxen_fetch_total").increment(1);
     let remote = repo
         .get_remote(&fetch_opts.remote)
