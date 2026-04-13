@@ -3,6 +3,7 @@
 //! Enumeration for all errors that can occur in the oxen library
 //!
 
+use aws_sdk_s3::error::BuildError;
 use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
 use aws_smithy_runtime_api::client::result::SdkError;
 use duckdb::arrow::error::ArrowError;
@@ -221,9 +222,9 @@ pub enum OxenError {
     // Wrappers
     //
     //
-    /// An error encountered dealing with AWS S3
-    #[error("AWS S3 error: {0}")]
-    AwsS3Error(Box<SdkError<Box<dyn std::error::Error + Send + Sync>, HttpResponse>>),
+    /// An error encountered dealing with AWS
+    #[error("AWS error: {0}")]
+    AwsError(Box<dyn std::error::Error + Send + Sync>),
 
     /// Wraps the error from std::path::strip_prefix.
     #[error("Error stripping prefix: {0}")]
@@ -468,15 +469,6 @@ impl OxenError {
     /// Make a new OxenError::FileImportError error.
     pub fn file_import_error(s: impl AsRef<str>) -> Self {
         OxenError::ImportFileError(StringError::from(s.as_ref()))
-    }
-
-    /// Make a new OxenError::AwsS3Error error.
-    pub fn aws_s3_error<E: std::error::Error + Send + Sync + 'static>(
-        e: SdkError<E, HttpResponse>,
-    ) -> Self {
-        OxenError::AwsS3Error(Box::new(e.map_service_error(|e| {
-            Box::new(e) as Box<dyn std::error::Error + Send + Sync>
-        })))
     }
 
     /// Makes a new OxenError::ResourceNotFound error.
@@ -801,5 +793,22 @@ impl OxenError {
 impl From<String> for OxenError {
     fn from(error: String) -> Self {
         OxenError::Basic(StringError::from(error))
+    }
+}
+
+/// AWS SDK Error
+impl<E> From<SdkError<E, HttpResponse>> for OxenError
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    fn from(e: SdkError<E, HttpResponse>) -> Self {
+        OxenError::AwsError(Box::new(e))
+    }
+}
+
+/// AWS Build Error
+impl From<BuildError> for OxenError {
+    fn from(e: BuildError) -> Self {
+        OxenError::AwsError(Box::new(e))
     }
 }
