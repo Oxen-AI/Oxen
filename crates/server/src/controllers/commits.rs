@@ -7,7 +7,6 @@ use liboxen::constants::VERSION_FILE_NAME;
 
 use liboxen::core::commit_sync_status;
 use liboxen::error::OxenError;
-use liboxen::error::StringError;
 use liboxen::model::{Commit, LocalRepository};
 use liboxen::opts::PaginateOpts;
 use liboxen::perf_guard;
@@ -881,10 +880,10 @@ async fn check_if_upload_complete_and_unpack(
             unpack_compressed_data(&files, repo).await?;
         } else {
             let filename = filename.ok_or_else(|| {
-                OxenError::MissingFileName(StringError::new(
+                OxenError::MissingFileName(
                     "check_if_upload_complete_and_unpack must supply filename if !compressed"
                         .into(),
-                ))
+                )
             })?;
             unpack_to_file(&files, repo, &filename)?;
         }
