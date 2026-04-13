@@ -848,7 +848,7 @@ async fn check_if_upload_complete_and_unpack(
         total_chunks
     );
 
-    if total_chunks < files.len() {
+    if files.len() < total_chunks {
         return Ok(());
     }
     files.sort();
