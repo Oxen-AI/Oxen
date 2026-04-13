@@ -1,3 +1,5 @@
+mod existing;
+
 use thiserror::Error as ThisError;
 
 #[derive(Debug, ThisError)]
