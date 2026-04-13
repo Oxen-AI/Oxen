@@ -14,9 +14,14 @@ The goal is to:
 
 ## Key Design Decisions
 
-### Make `TMerkleTreeNode` object-safe
+### `TMerkleTreeNode` is now object-safe (DONE in PR #406)
 
-Currently `TMerkleTreeNode: Serialize` which prevents `&dyn TMerkleTreeNode`. Fix this by adding a `to_msgpack_bytes()` method with a blanket impl, removing `Serialize` from the supertrait bounds. This makes all storage traits fully object-safe — no enum dispatch needed.
+`TMerkleTreeNode` no longer requires `Serialize` — it has a `to_msgpack_bytes() -> Result<Vec<u8>, rmp_serde::encode::Error>` method with a blanket impl for any `T: Serialize + MerkleTreeNodeIdType + Debug + Display`. This makes all storage traits fully object-safe — no enum dispatch needed.
+
+Bonus changes from the same PR that simplify downstream work:
+- `MerkleTreeNodeType::from_u8()` now returns `Result<_, InvalidMerkleTreeNodeType>` instead of panicking
+- `MerkleNodeDB::to_node()` returns the more specific `rmp_serde::decode::Error` instead of `OxenError`
+- New `OxenError::MerkleTreeError` variant wraps `InvalidMerkleTreeNodeType`
 
 ### Separate read and write interfaces
 
@@ -42,71 +47,27 @@ The dir_hashes RocksDB (path -> hash mapping per commit) is a different abstract
 
 ## Phase 1: Introduce Trait + File Backend
 
-### Step 1.0: Make `TMerkleTreeNode` object-safe
+### Step 1.0: ✅ DONE — Make `TMerkleTreeNode` object-safe (PR #406)
 
-**Goal**: Remove `Serialize` from `TMerkleTreeNode` supertraits and add `to_msgpack_bytes()` with a blanket impl. This makes the trait usable as `&dyn TMerkleTreeNode`.
+Merged in commit `086d3243c`. Summary of what landed:
 
-**Changes to `crates/lib/src/model/merkle_tree/node_type.rs`:**
-
-Replace:
-```rust
-pub trait TMerkleTreeNode: MerkleTreeNodeIdType + Serialize + Debug + Display {}
-```
-
-With:
-```rust
-pub trait TMerkleTreeNode: MerkleTreeNodeIdType + Debug + Display {
-    fn to_msgpack_bytes(&self) -> Vec<u8>;
-}
-```
-
-Add blanket impl:
-```rust
-impl<T: MerkleTreeNodeIdType + Serialize + Debug + Display> TMerkleTreeNode for T {
-    fn to_msgpack_bytes(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
-        self.serialize(&mut rmp_serde::Serializer::new(&mut buf)).unwrap();
-        buf
-    }
-}
-```
-
-This replaces the 5 empty `impl TMerkleTreeNode for X {}` blocks in:
-- `crates/lib/src/model/merkle_tree/node/commit_node.rs` (line 207)
-- `crates/lib/src/model/merkle_tree/node/dir_node.rs` (line 265)
-- `crates/lib/src/model/merkle_tree/node/file_node.rs` (line 266)
-- `crates/lib/src/model/merkle_tree/node/vnode.rs` (line 157)
-- `crates/lib/src/model/merkle_tree/node/file_chunk_node.rs` (line 46)
-
-Remove these 5 manual impls since the blanket impl covers them (all 5 types already satisfy `MerkleTreeNodeIdType + Serialize + Debug + Display`).
-
-**Update the 2 call sites in `MerkleNodeDB` that call `.serialize()` on `TMerkleTreeNode` types:**
-
-In `crates/lib/src/core/db/merkle_node/merkle_node_db.rs`:
-- Line 397: `node.serialize(&mut Serializer::new(&mut buf)).unwrap()` -> `let buf = node.to_msgpack_bytes()`
-- Line 430: `item.serialize(&mut Serializer::new(&mut buf)).unwrap()` -> `let buf = item.to_msgpack_bytes()`
-
-Also update the generic bounds on `write_node` (line 367) and `add_child` (line 416) — they currently require `N: TMerkleTreeNode + Serialize + ...`, which can be simplified to `N: TMerkleTreeNode` since `Serialize` is no longer a supertrait but is consumed internally by `to_msgpack_bytes()`.
-
-Note: the `Serialize` bound on `write_node` (`N: TMerkleTreeNode + Serialize + Debug + Display`) is now redundant — `TMerkleTreeNode` already requires `Debug + Display`, and serialization goes through `to_msgpack_bytes()`. Simplify to `N: TMerkleTreeNode`.
-
-**Files changed:**
-- `crates/lib/src/model/merkle_tree/node_type.rs`
-- `crates/lib/src/model/merkle_tree/node/commit_node.rs`
-- `crates/lib/src/model/merkle_tree/node/dir_node.rs`
-- `crates/lib/src/model/merkle_tree/node/file_node.rs`
-- `crates/lib/src/model/merkle_tree/node/vnode.rs`
-- `crates/lib/src/model/merkle_tree/node/file_chunk_node.rs`
-- `crates/lib/src/core/db/merkle_node/merkle_node_db.rs`
+- `TMerkleTreeNode` no longer requires `Serialize`; it now has `fn to_msgpack_bytes(&self) -> Result<Vec<u8>, rmp_serde::encode::Error>`
+- Blanket impl `impl<T: Serialize + MerkleTreeNodeIdType + Debug + Display> TMerkleTreeNode for T` covers all 5 node types (the manual `impl TMerkleTreeNode for X {}` blocks were removed)
+- Call sites in `MerkleNodeDB::write_node` and `MerkleNodeDB::add_child` switched from `.serialize(&mut Serializer::new(&mut buf))` to `.to_msgpack_bytes()?`
+- Generic bounds simplified to `N: TMerkleTreeNode` (no longer needs `+ Serialize`)
+- Bonus: `MerkleTreeNodeType::from_u8()` returns `Result<_, InvalidMerkleTreeNodeType>` instead of panicking; `MerkleNodeDB::to_node()` returns `Result<EMerkleTreeNode, rmp_serde::decode::Error>`; new `OxenError::MerkleTreeError` variant
 
 ### Step 1.1: Add `EMerkleTreeNode::from_type_and_bytes()`
 
-Extract `MerkleNodeDB::to_node()` into a method on `EMerkleTreeNode`:
+Extract `MerkleNodeDB::to_node()` (which already returns the specific serde error after PR #406) into a method on `EMerkleTreeNode`:
 
 ```rust
 // crates/lib/src/model/merkle_tree/node.rs
 impl EMerkleTreeNode {
-    pub fn from_type_and_bytes(dtype: MerkleTreeNodeType, data: &[u8]) -> Result<Self, OxenError> {
+    pub fn from_type_and_bytes(
+        dtype: MerkleTreeNodeType,
+        data: &[u8],
+    ) -> Result<Self, rmp_serde::decode::Error> {
         // exact same body as current MerkleNodeDB::to_node()
     }
 }
@@ -362,12 +323,6 @@ After Phase 2:
 
 | File | Role |
 |------|------|
-| `crates/lib/src/model/merkle_tree/node_type.rs` | `TMerkleTreeNode` trait — Step 1.0 object-safety change |
-| `crates/lib/src/model/merkle_tree/node/commit_node.rs` | Remove manual `impl TMerkleTreeNode` |
-| `crates/lib/src/model/merkle_tree/node/dir_node.rs` | Remove manual `impl TMerkleTreeNode` |
-| `crates/lib/src/model/merkle_tree/node/file_node.rs` | Remove manual `impl TMerkleTreeNode` |
-| `crates/lib/src/model/merkle_tree/node/vnode.rs` | Remove manual `impl TMerkleTreeNode` |
-| `crates/lib/src/model/merkle_tree/node/file_chunk_node.rs` | Remove manual `impl TMerkleTreeNode` |
 | `crates/lib/src/core/db/merkle_node/merkle_node_db.rs` | Current storage impl, becomes `file_backend.rs` |
 | `crates/lib/src/core/db/merkle_node.rs` | Module root, updated for new structure |
 | `crates/lib/src/model/merkle_tree/node.rs` | `EMerkleTreeNode` — gets `from_type_and_bytes()` |
@@ -382,3 +337,4 @@ After Phase 2:
 | `crates/lib/src/model/merkle_tree/node/merkle_tree_node_cache.rs` | Caching layer (unchanged) |
 | NEW `crates/lib/src/core/db/merkle_node/store.rs` | Trait definitions |
 | NEW `crates/lib/src/core/db/merkle_node/lmdb_backend.rs` | Phase 2 LMDB implementation |
+| `crates/lib/src/model/merkle_tree/node_type.rs` | `TMerkleTreeNode` (already object-safe — PR #406) |
