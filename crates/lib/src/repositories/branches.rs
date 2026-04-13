@@ -28,25 +28,6 @@ pub fn get_by_name(repo: &LocalRepository, name: &str) -> Result<Branch, OxenErr
         .ok_or_else(|| OxenError::local_branch_not_found(name))
 }
 
-/// Get branch by name or fall back the current
-pub fn get_by_name_or_current(
-    repo: &LocalRepository,
-    branch_name: Option<impl AsRef<str>>,
-) -> Result<Branch, OxenError> {
-    if let Some(branch_name) = branch_name {
-        let branch_name = branch_name.as_ref();
-        repositories::branches::get_by_name(repo, branch_name)
-    } else {
-        match repositories::branches::current_branch(repo)? {
-            Some(branch) => Ok(branch),
-            None => {
-                log::error!("get_by_name_or_current No current branch found");
-                Err(OxenError::must_be_on_valid_branch())
-            }
-        }
-    }
-}
-
 /// Get commit id from a branch by name
 pub fn get_commit_id(repo: &LocalRepository, name: &str) -> Result<Option<String>, OxenError> {
     with_ref_manager(repo, |manager| manager.get_commit_id_for_branch(name))

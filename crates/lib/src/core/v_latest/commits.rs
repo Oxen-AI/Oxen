@@ -628,11 +628,6 @@ pub fn list_unsynced_from(
     filter_unsynced(repo, all_commits)
 }
 
-pub fn list_unsynced(repo: &LocalRepository) -> Result<HashSet<Commit>, OxenError> {
-    let all_commits = list_all(repo)?;
-    filter_unsynced(repo, all_commits)
-}
-
 fn filter_unsynced(
     repo: &LocalRepository,
     commits: HashSet<Commit>,
