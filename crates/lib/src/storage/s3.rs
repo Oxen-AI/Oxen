@@ -165,20 +165,16 @@ impl S3VersionStore {
             if let Some(errors) = resp.errors
                 && !errors.is_empty()
             {
-                let msg = errors
+                let key_failures = errors
                     .iter()
                     .map(|e| {
-                        format!(
-                            "{}: {}",
+                       (
                             e.key.as_deref().unwrap_or("?"),
                             e.message.as_deref().unwrap_or("?")
                         )
                     })
-                    .collect::<Vec<_>>()
-                    .join("; ");
-                return Err(OxenError::basic_str(format!(
-                    "delete_objects: some keys failed to delete: {msg}"
-                )));
+                    .collect::<Vec<_>>();
+                return Err(OxenError::DeleteFailure{key_failures});
             }
         }
 
