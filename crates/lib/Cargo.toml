@@ -54,7 +54,6 @@ bytecount = { workspace = true }
 bytes = { workspace = true }
 bytesize = { workspace = true }
 bytevec = { workspace = true }
-chrono = { workspace = true }
 colored = { workspace = true }
 comfy-table = { workspace = true }
 deadqueue = { workspace = true }
@@ -108,7 +107,6 @@ rocksdb = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
-serde_url_params = { workspace = true }
 serde_with = { workspace = true }
 sha2 = { workspace = true }
 simdutf8 = { workspace = true }

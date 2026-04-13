@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::error::OxenError;
 use crate::model::diff::tabular_diff::{TabularDiffDupes, TabularSchemaDiff};
 use crate::model::diff::{AddRemoveModifyCounts, TabularDiff};
 use crate::model::{Commit, DiffEntry, Schema};
@@ -156,12 +155,6 @@ pub struct TabularCompareFieldBody {
     pub compare_method: Option<String>,
 }
 
-impl TabularCompareFieldBody {
-    pub fn as_string(&self) -> String {
-        self.left.clone()
-    }
-}
-
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct TabularCompareFields {
     pub keys: Vec<TabularCompareFieldBody>,
@@ -175,15 +168,6 @@ pub struct TabularCompareTargetBody {
     pub right: Option<String>,
     pub compare_method: Option<String>,
 }
-impl TabularCompareTargetBody {
-    pub fn to_string(&self) -> Result<String, OxenError> {
-        self.left
-            .clone()
-            .or_else(|| self.right.clone())
-            .ok_or_else(|| OxenError::basic_str("Both 'left' and 'right' fields are None"))
-    }
-}
-
 impl TabularCompareFields {
     pub fn from_lists_and_schema_diff(
         schema_diff: &TabularSchemaDiff,
