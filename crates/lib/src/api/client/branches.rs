@@ -189,20 +189,6 @@ pub async fn delete(
     Ok(response)
 }
 
-pub async fn lock(
-    repository: &RemoteRepository,
-    branch_name: &str,
-) -> Result<StatusMessage, OxenError> {
-    let uri = format!("/branches/{branch_name}/lock");
-    let url = api::endpoint::url_from_repo(repository, &uri)?;
-    log::debug!("Locking branch: {url}");
-    let client = client::new_for_url(&url)?;
-    let res = client.post(&url).send().await?;
-    let body = client::parse_json_body(&url, res).await?;
-    let response: StatusMessage = serde_json::from_str(&body)?;
-    Ok(response)
-}
-
 pub async fn unlock(
     repository: &RemoteRepository,
     branch_name: &str,

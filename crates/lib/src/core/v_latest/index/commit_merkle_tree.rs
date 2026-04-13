@@ -607,38 +607,6 @@ impl CommitMerkleTree {
         }
     }
 
-    pub fn dir_with_unique_children(
-        repo: &LocalRepository,
-        commit: &Commit,
-        path: impl AsRef<Path>,
-        base_hashes: &HashSet<MerkleHash>,
-        unique_hashes: &mut HashSet<MerkleHash>,
-        dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
-    ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        let node_path = path.as_ref();
-        let dir_hashes = if let Some(dir_hashes) = dir_hashes {
-            dir_hashes
-        } else {
-            &CommitMerkleTree::dir_hashes(repo, commit)?
-        };
-
-        let node_hash: Option<MerkleHash> = dir_hashes.get(node_path).cloned();
-        if let Some(node_hash) = node_hash {
-            log::debug!("Look up dir {node_path:?}");
-            // Read the node at depth 1 to get VNodes and Sub-Files/Dirs
-            // We don't count VNodes in the depth
-            CommitMerkleTree::read_node_and_collect_hashes(
-                repo,
-                &node_hash,
-                Some(base_hashes),
-                Some(unique_hashes),
-                None,
-            )
-        } else {
-            Ok(None)
-        }
-    }
-
     pub fn dir_with_children_recursive(
         repo: &LocalRepository,
         commit: &Commit,

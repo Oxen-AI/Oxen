@@ -91,44 +91,6 @@ pub async fn list_commits_for_path(
     }
 }
 
-pub async fn list_all(remote_repo: &RemoteRepository) -> Result<Vec<Commit>, OxenError> {
-    let mut all_commits: Vec<Commit> = Vec::new();
-    let mut page_num = DEFAULT_PAGE_NUM;
-    let page_size = 100;
-
-    let bar = Arc::new(ProgressBar::new_spinner());
-    bar.set_style(ProgressStyle::default_spinner());
-
-    loop {
-        let page_opts = PaginateOpts {
-            page_num,
-            page_size,
-        };
-        match list_all_commits_paginated(remote_repo, &page_opts).await {
-            Ok(paginated_commits) => {
-                if page_num == DEFAULT_PAGE_NUM {
-                    let bar = oxify_bar(bar.clone(), ProgressBarType::Counter);
-                    bar.set_length(paginated_commits.pagination.total_entries as u64);
-                }
-                let n_commits = paginated_commits.commits.len();
-                all_commits.extend(paginated_commits.commits);
-                bar.inc(n_commits as u64);
-                if page_num < paginated_commits.pagination.total_pages {
-                    page_num += 1;
-                } else {
-                    break;
-                }
-            }
-            Err(err) => {
-                return Err(err);
-            }
-        }
-    }
-    bar.finish_and_clear();
-
-    Ok(all_commits)
-}
-
 pub async fn list_missing_hashes(
     remote_repo: &RemoteRepository,
     commits: Vec<Commit>,
@@ -266,33 +228,6 @@ pub async fn list_commit_history_paginated(
     let page_num = page_opts.page_num;
     let page_size = page_opts.page_size;
     let uri = format!("/commits/history/{revision}?page={page_num}&page_size={page_size}");
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
-    let client = client::new_for_url(&url)?;
-    match client.get(&url).send().await {
-        Ok(res) => {
-            let body = client::parse_json_body(&url, res).await?;
-            let response: Result<PaginatedCommits, serde_json::Error> = serde_json::from_str(&body);
-            match response {
-                Ok(j_res) => Ok(j_res),
-                Err(err) => Err(OxenError::basic_str(format!(
-                    "list_commit_history() Could not deserialize response [{err}]\n{body}"
-                ))),
-            }
-        }
-        Err(err) => Err(OxenError::basic_str(format!(
-            "list_commit_history() Request failed: {err}"
-        ))),
-    }
-}
-
-async fn list_all_commits_paginated(
-    remote_repo: &RemoteRepository,
-    page_opts: &PaginateOpts,
-) -> Result<PaginatedCommits, OxenError> {
-    let page_num = page_opts.page_num;
-    let page_size = page_opts.page_size;
-    let uri = format!("/commits/all?page={page_num}&page_size={page_size}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let client = client::new_for_url(&url)?;
@@ -515,28 +450,6 @@ pub async fn download_dir_hashes_db_to_path(
     }
 }
 
-pub async fn get_remote_parent(
-    remote_repo: &RemoteRepository,
-    commit_id: &str,
-) -> Result<Vec<Commit>, OxenError> {
-    let uri = format!("/commits/{commit_id}/parents");
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
-    let client = client::new_for_url(&url)?;
-    if let Ok(res) = client.get(&url).send().await {
-        let body = client::parse_json_body(&url, res).await?;
-        let response: Result<ListCommitResponse, serde_json::Error> = serde_json::from_str(&body);
-        match response {
-            Ok(j_res) => Ok(j_res.commits),
-            Err(err) => Err(OxenError::basic_str(format!(
-                "get_remote_parent() Could not deserialize response [{err}]\n{body}"
-            ))),
-        }
-    } else {
-        Err(OxenError::basic_str("get_remote_parent() Request failed"))
-    }
-}
-
 pub async fn post_push_complete(
     remote_repo: &RemoteRepository,
     branch: &Branch,
@@ -568,87 +481,6 @@ pub async fn post_push_complete(
         }
     } else {
         Err(OxenError::basic_str("post_push_complete() Request failed"))
-    }
-}
-
-// Commits must be in oldest-to-newest-order
-pub async fn bulk_post_push_complete(
-    remote_repo: &RemoteRepository,
-    commits: &Vec<Commit>,
-) -> Result<(), OxenError> {
-    use serde_json::json;
-
-    let uri = "/commits/complete".to_string();
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!("bulk_post_push_complete: {url}");
-    let body = serde_json::to_string(&json!(commits)).unwrap();
-
-    let client = client::new_for_url(&url)?;
-    if let Ok(res) = client.post(&url).body(body).send().await {
-        let body = client::parse_json_body(&url, res).await?;
-        let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
-        match response {
-            Ok(_) => Ok(()),
-            Err(err) => Err(OxenError::basic_str(format!(
-                "bulk_post_push_complete() Could not deserialize response [{err}]\n{body}"
-            ))),
-        }
-    } else {
-        Err(OxenError::basic_str(
-            "bulk_post_push_complete() Request failed",
-        ))
-    }
-}
-
-pub async fn get_commits_with_unsynced_dbs(
-    remote_repo: &RemoteRepository,
-    branch: &Branch,
-) -> Result<Vec<Commit>, OxenError> {
-    let revision = branch.commit_id.clone();
-
-    let uri = format!("/commits/{revision}/db_status");
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
-    let client = client::new_for_url(&url)?;
-    if let Ok(res) = client.get(&url).send().await {
-        let body = client::parse_json_body(&url, res).await?;
-        let response: Result<ListCommitResponse, serde_json::Error> = serde_json::from_str(&body);
-        match response {
-            Ok(commit_response) => Ok(commit_response.commits),
-            Err(err) => Err(OxenError::basic_str(format!(
-                "get_commits_with_unsynced_dbs() Could not deserialize response [{err}]\n{body}"
-            ))),
-        }
-    } else {
-        Err(OxenError::basic_str(
-            "get_commits_with_unsynced_dbs() Request failed",
-        ))
-    }
-}
-
-pub async fn get_commits_with_unsynced_entries(
-    remote_repo: &RemoteRepository,
-    branch: &Branch,
-) -> Result<Vec<Commit>, OxenError> {
-    let commit_id = branch.commit_id.clone();
-
-    let uri = format!("/commits/{commit_id}/entries_status");
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
-    let client = client::new_for_url(&url)?;
-    if let Ok(res) = client.get(&url).send().await {
-        let body = client::parse_json_body(&url, res).await?;
-        let response: Result<ListCommitResponse, serde_json::Error> = serde_json::from_str(&body);
-        match response {
-            Ok(commit_response) => Ok(commit_response.commits),
-            Err(err) => Err(OxenError::basic_str(format!(
-                "get_commits_with_unsynced_entries() Could not deserialize response [{err}]\n{body}"
-            ))),
-        }
-    } else {
-        Err(OxenError::basic_str(
-            "get_commits_with_unsynced_entries() Request failed",
-        ))
     }
 }
 
