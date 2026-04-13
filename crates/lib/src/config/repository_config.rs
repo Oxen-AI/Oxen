@@ -33,21 +33,12 @@ pub struct RepositoryConfig {
 impl Default for RepositoryConfig {
     fn default() -> Self {
         RepositoryConfig {
-            vnode_size: Some(DEFAULT_VNODE_SIZE),
-            ..Self::new()
-        }
-    }
-}
-
-impl RepositoryConfig {
-    pub fn new() -> Self {
-        RepositoryConfig {
             remote_name: None,
             remotes: Vec::new(),
             subtree_paths: None,
             depth: None,
             min_version: None,
-            vnode_size: None,
+            vnode_size: Some(DEFAULT_VNODE_SIZE),
             storage: None,
             vfs: None,
             remote_mode: None,
@@ -55,7 +46,9 @@ impl RepositoryConfig {
             workspaces: None,
         }
     }
+}
 
+impl RepositoryConfig {
     pub fn from_repo(repo: &LocalRepository) -> Result<Self, OxenError> {
         let path = util::fs::config_filepath(&repo.path);
         Self::from_file(&path)

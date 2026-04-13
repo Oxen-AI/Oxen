@@ -48,36 +48,6 @@ pub fn get(path: impl AsRef<Path>) -> Result<MetadataEntry, OxenError> {
     })
 }
 
-/// Returns the metadata given a file path
-pub fn from_path(path: impl AsRef<Path>) -> Result<MetadataEntry, OxenError> {
-    let path = path.as_ref();
-    let base_name = path
-        .file_name()
-        .ok_or_else(|| OxenError::file_has_no_name(path))?;
-    let size = get_file_size(path)?;
-    let mime_type = util::fs::file_mime_type(path);
-    let data_type = util::fs::datatype_from_mimetype(path, mime_type.as_str());
-    let extension = util::fs::file_extension(path);
-    let metadata = get_file_metadata(path, &data_type)?;
-
-    // TODO: how do we get the cached dir info if the entry is a dir?
-    // TODO: Should we also be getting the real hash here? Seems like we'd have to calculate it again
-    Ok(MetadataEntry {
-        filename: base_name.to_string_lossy().to_string(),
-        hash: "".to_string(),
-        is_dir: path.is_dir(),
-        latest_commit: None,
-        resource: None,
-        size,
-        data_type,
-        mime_type,
-        extension,
-        metadata,
-        is_queryable: None,
-        children: None,
-    })
-}
-
 pub fn from_file_node(
     _repo: &LocalRepository,
     node: &FileNode,

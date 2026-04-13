@@ -1,6 +1,5 @@
 use crate::error::OxenError;
 use crate::model::metadata::generic_metadata::GenericMetadata;
-use crate::model::{ContentHashable, NewCommit};
 use crate::util;
 use sha2::{Digest, Sha256};
 use std::fs::File;
@@ -28,28 +27,6 @@ pub fn hash_str_sha256<S: AsRef<str>>(str: S) -> String {
 
 pub fn hash_buffer_128bit(buffer: &[u8]) -> u128 {
     xxh3_128(buffer)
-}
-
-pub fn compute_commit_hash<E>(commit_data: &NewCommit, entries: &[E]) -> String
-where
-    E: ContentHashable + std::fmt::Debug,
-{
-    let mut commit_hasher = xxhash_rust::xxh3::Xxh3::new();
-    log::debug!("Hashing {} entries", entries.len());
-    for entry in entries.iter() {
-        let hash = entry.content_hash();
-        // log::debug!("Entry [{}] hash {}", i, hash);
-
-        let input = hash.as_bytes();
-        commit_hasher.update(input);
-    }
-
-    log::debug!("Hashing commit data {commit_data:?}");
-    let commit_str = format!("{commit_data:?}");
-    commit_hasher.update(commit_str.as_bytes());
-
-    let val = commit_hasher.digest();
-    format!("{val:x}")
 }
 
 pub fn hash_file_contents_with_retry(path: &Path) -> Result<String, OxenError> {
@@ -206,8 +183,4 @@ fn hash_large_file_contents(path: &Path) -> Result<u128, OxenError> {
     }
 
     Ok(hasher.digest128())
-}
-
-pub fn hash_path_name(path: impl AsRef<Path>) -> String {
-    hash_str(path.as_ref().to_str().unwrap())
 }

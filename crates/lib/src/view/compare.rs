@@ -1,13 +1,11 @@
 use std::collections::HashSet;
 
 use polars::frame::DataFrame;
-use polars::prelude::SchemaExt;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::constants::DIFF_STATUS_COL;
 use crate::error::OxenError;
-use crate::model::data_frame::schema::Field;
 use crate::model::diff::tabular_diff::{TabularDiffDupes, TabularSchemaDiff};
 use crate::model::diff::{AddRemoveModifyCounts, TabularDiff};
 use crate::model::{Commit, DiffEntry, Schema};
@@ -103,23 +101,6 @@ pub struct CompareSchemaDiff {
     pub removed_cols: Vec<CompareSchemaColumn>,
 }
 
-impl CompareSchemaDiff {
-    pub fn to_tabular_schema_diff(self) -> TabularSchemaDiff {
-        TabularSchemaDiff {
-            added: self
-                .added_cols
-                .into_iter()
-                .map(|col| col.to_field())
-                .collect(),
-            removed: self
-                .removed_cols
-                .into_iter()
-                .map(|col| col.to_field())
-                .collect(),
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct CompareSummary {
     pub modifications: CompareTabularMods,
@@ -133,25 +114,10 @@ pub struct CompareTabularMods {
     pub modified_rows: usize,
 }
 
-#[derive(Serialize, Deserialize, Debug, ToSchema)]
-pub struct CompareDisplayFields {
-    pub left: Vec<String>,
-    pub right: Vec<String>,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct CompareDupes {
     pub left: u64,
     pub right: u64,
-}
-
-impl CompareDupes {
-    pub fn to_tabular_diff_dupes(&self) -> TabularDiffDupes {
-        TabularDiffDupes {
-            left: self.left,
-            right: self.right,
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
@@ -159,12 +125,6 @@ pub struct CompareSchemaColumn {
     pub name: String,
     pub key: String,
     pub dtype: String,
-}
-
-impl CompareSchemaColumn {
-    fn to_field(&self) -> Field {
-        Field::new(&self.name, &self.dtype)
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, ToSchema)]
@@ -404,79 +364,6 @@ impl CompareSummary {
                 modified_rows,
             },
             schema: Schema::from_polars(df.schema()),
-        })
-    }
-}
-
-impl CompareSchemaDiff {
-    pub fn from_dfs(df1: &DataFrame, df2: &DataFrame) -> Result<CompareSchemaDiff, OxenError> {
-        // Assuming CompareSchemaColumn and CompareSchemaDiff are defined elsewhere
-        // and OxenError is a placeholder for error handling in your application.
-
-        // Get added columns
-        let added_cols = df2
-            .schema()
-            .iter_fields()
-            .filter(|field| !df1.schema().contains(field.name()))
-            .map(|field| {
-                Ok(CompareSchemaColumn {
-                    name: field.name().to_owned().to_string(),
-                    key: format!("{}.right", field.name()),
-                    dtype: format!("{:?}", field.dtype()),
-                })
-            })
-            .collect::<Result<Vec<CompareSchemaColumn>, OxenError>>()?;
-
-        // Get removed columns
-        let removed_cols = df1
-            .schema()
-            .iter_fields()
-            .filter(|field| !df2.schema().contains(field.name()))
-            .map(|field| {
-                Ok(CompareSchemaColumn {
-                    name: field.name().to_string(),
-                    key: format!("{}.left", field.name()),
-                    dtype: format!("{:?}", field.dtype()),
-                })
-            })
-            .collect::<Result<Vec<CompareSchemaColumn>, OxenError>>()?;
-
-        Ok(CompareSchemaDiff {
-            added_cols,
-            removed_cols,
-        })
-    }
-
-    pub fn from_schemas(s1: &Schema, s2: &Schema) -> Result<CompareSchemaDiff, OxenError> {
-        let added_cols = s2
-            .fields
-            .iter()
-            .filter(|field| !s1.fields.contains(field))
-            .map(|field| {
-                Ok(CompareSchemaColumn {
-                    name: field.name.to_owned().to_string(),
-                    key: format!("{}.right", field.name),
-                    dtype: field.dtype.to_owned(),
-                })
-            })
-            .collect::<Result<Vec<CompareSchemaColumn>, OxenError>>()?;
-
-        let removed_cols = s1
-            .fields
-            .iter()
-            .filter(|field| !s2.fields.contains(field))
-            .map(|field| {
-                Ok(CompareSchemaColumn {
-                    name: field.name.to_string(),
-                    key: format!("{}.left", field.name),
-                    dtype: field.dtype.to_string(),
-                })
-            })
-            .collect::<Result<Vec<CompareSchemaColumn>, OxenError>>()?;
-
-        Ok(CompareSchemaDiff {
-            added_cols,
-            removed_cols,
         })
     }
 }

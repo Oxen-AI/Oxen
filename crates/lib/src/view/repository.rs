@@ -179,20 +179,6 @@ pub struct ListRepositoryResponse {
     example = json!({
         "status": "success",
         "status_message": "resource_found",
-        "repository_api_url": "http://localhost:3000/api/repos/ox/ImageNet-1k",
-    })
-)]
-pub struct RepositoryResolveResponse {
-    pub status: String,
-    pub status_message: String,
-    pub repository_api_url: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, ToSchema)]
-#[schema(
-    example = json!({
-        "status": "success",
-        "status_message": "resource_found",
         "repository": {
             "data_size": 1074288000,
             "data_types": [

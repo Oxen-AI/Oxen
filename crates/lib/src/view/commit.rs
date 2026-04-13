@@ -35,31 +35,6 @@ pub struct CommitResponse {
         "status_message": "resource_found",
         "commit": {
             "id": "a1b2c3d4e5f67890abcdef1234567890",
-            "parent_ids": ["f1e2d3c4b5a67890fedcba9876543210"],
-            "message": "Initial upload.",
-            "author": "ox",
-            "email": "ox@example.com",
-            "timestamp": "2025-01-01T10:00:00Z"
-        },
-    })
-)]
-pub struct UploadCommitResponse {
-    #[serde(flatten)]
-    #[schema(
-        value_type = StatusMessage,
-        example = json!({"status": "success", "status_message": "resource_created"})
-    )]
-    pub status: StatusMessage,
-    pub commit: Option<Commit>,
-}
-
-#[derive(Deserialize, Serialize, Debug, ToSchema)]
-#[schema(
-    example = json!({
-        "status": "success",
-        "status_message": "resource_found",
-        "commit": {
-            "id": "a1b2c3d4e5f67890abcdef1234567890",
             "parent_ids": [],
             "message": "Initial empty repository commit.",
             "author": "ox",

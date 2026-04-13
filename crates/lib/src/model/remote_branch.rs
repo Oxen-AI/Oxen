@@ -14,12 +14,3 @@ impl Default for RemoteBranch {
         }
     }
 }
-
-impl RemoteBranch {
-    pub fn from_branch(branch: &str) -> RemoteBranch {
-        RemoteBranch {
-            remote: String::from(constants::DEFAULT_REMOTE_NAME),
-            branch: branch.to_string(),
-        }
-    }
-}

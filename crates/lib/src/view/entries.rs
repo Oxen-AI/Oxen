@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::model::{
-    Branch, Commit, CommitEntry, EntryDataType, MerkleHash, ParsedResource, RemoteEntry,
+    Branch, Commit, CommitEntry, EntryDataType, ParsedResource,
     entry::metadata_entry::{MetadataEntry, WorkspaceMetadataEntry},
     metadata::MetadataDir,
     parsed_resource::ParsedResourceView,
@@ -10,11 +10,6 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::{Pagination, StatusMessage};
-
-#[derive(Deserialize, Serialize, Debug)]
-pub struct ListMissingFilesRequest {
-    pub file_hashes: Option<std::collections::HashSet<MerkleHash>>,
-}
 
 #[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct ListCommitEntryResponse {
@@ -30,13 +25,6 @@ pub struct EntryResponse {
     pub entry: CommitEntry,
 }
 
-#[derive(Deserialize, Serialize, Debug, ToSchema)]
-pub struct RemoteEntryResponse {
-    #[serde(flatten)]
-    pub status: StatusMessage,
-    pub entry: RemoteEntry,
-}
-
 #[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct ResourceVersion {
     pub path: String,
@@ -50,17 +38,6 @@ impl ResourceVersion {
             version: resource.version.to_string_lossy().to_string(),
         }
     }
-}
-
-#[derive(Deserialize, Serialize, Debug)]
-pub struct PaginatedEntries {
-    #[serde(flatten)]
-    pub status: StatusMessage,
-    pub entries: Vec<RemoteEntry>,
-    pub page_size: usize,
-    pub page_number: usize,
-    pub total_pages: usize,
-    pub total_entries: usize,
 }
 
 #[derive(Deserialize, Serialize, Debug, ToSchema)]
@@ -204,12 +181,6 @@ impl PaginatedDirEntriesResponse {
             entries: paginated,
         }
     }
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct BranchEntryVersion {
-    pub branch: Branch,
-    pub resource: ResourceVersion,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]

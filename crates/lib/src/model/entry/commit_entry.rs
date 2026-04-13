@@ -1,6 +1,6 @@
 use crate::constants::VERSION_FILE_NAME;
 use crate::model::merkle_tree::node::{DirNode, EMerkleTreeNode, FileNode};
-use crate::model::{Commit, ContentHashable, MerkleHash, RemoteEntry, Schema};
+use crate::model::{Commit, ContentHashable, MerkleHash, Schema};
 
 use filetime::FileTime;
 use serde::{Deserialize, Serialize};
@@ -241,17 +241,6 @@ impl CommitEntry {
             last_modified_seconds: self.last_modified_seconds,
             last_modified_nanoseconds: self.last_modified_nanoseconds,
         }
-    }
-
-    pub fn to_remote(&self) -> RemoteEntry {
-        RemoteEntry {
-            filename: self.path.to_str().unwrap_or("").to_string(),
-            hash: self.hash.to_owned(),
-        }
-    }
-
-    pub fn to_uri_encoded(&self) -> String {
-        serde_url_params::to_string(&self).unwrap()
     }
 
     pub fn has_different_modification_time(&self, time: &FileTime) -> bool {

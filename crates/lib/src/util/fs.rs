@@ -5,8 +5,6 @@
 use async_std::pin::Pin;
 use bytes::Bytes;
 use futures::StreamExt;
-use indicatif::ProgressBar;
-use indicatif::ProgressStyle;
 use jwalk::WalkDir;
 
 use simdutf8::compat::from_utf8;
@@ -75,10 +73,6 @@ pub fn oxen_config_dir() -> Result<PathBuf, OxenError> {
 
 pub fn config_filepath(repo_path: &Path) -> PathBuf {
     oxen_hidden_dir(repo_path).join(constants::REPO_CONFIG_FILENAME)
-}
-
-pub fn repo_exists(repo_path: &Path) -> bool {
-    oxen_hidden_dir(repo_path).exists()
 }
 
 pub fn commit_content_is_valid_path(repo: &LocalRepository, commit: &Commit) -> PathBuf {
@@ -324,62 +318,6 @@ pub fn read_first_byte_from_file(path: impl AsRef<Path>) -> Result<char, OxenErr
 pub fn read_lines(path: &Path) -> Result<Vec<String>, OxenError> {
     let file = File::open(path)?;
     Ok(read_lines_file(&file))
-}
-
-pub fn read_lines_paginated(path: &Path, start: usize, size: usize) -> Vec<String> {
-    let mut lines: Vec<String> = Vec::new();
-    match File::open(path) {
-        Ok(file) => {
-            let mut reader = BufReader::new(file);
-            let mut i = 0;
-            let mut line = String::from("");
-            while let Ok(len) = reader.read_line(&mut line) {
-                if i >= (start + size) || 0 == len {
-                    break;
-                }
-
-                if i >= start {
-                    lines.push(line.trim().to_string());
-                }
-                line.clear();
-                i += 1;
-            }
-        }
-        Err(_) => {
-            eprintln!("Could not open staging file {}", path.display())
-        }
-    }
-    lines
-}
-
-pub fn read_lines_paginated_ret_size(
-    path: &Path,
-    start: usize,
-    size: usize,
-) -> (Vec<String>, usize) {
-    let mut i = 0;
-    let mut lines: Vec<String> = Vec::new();
-    match File::open(path) {
-        Ok(file) => {
-            let mut reader = BufReader::new(file);
-            let mut line = String::from("");
-            while let Ok(len) = reader.read_line(&mut line) {
-                if 0 == len {
-                    break;
-                }
-
-                if i >= start && i < (start + size) {
-                    lines.push(line.trim().to_string());
-                }
-                line.clear();
-                i += 1;
-            }
-        }
-        Err(_) => {
-            eprintln!("Could not open staging file {}", path.display())
-        }
-    }
-    (lines, i)
 }
 
 pub fn list_dirs_in_dir(dir: &Path) -> Result<Vec<PathBuf>, OxenError> {
@@ -972,29 +910,6 @@ pub fn replace_file_name_keep_extension(path: &Path, new_filename: String) -> Pa
     result
 }
 
-// recursive count files with extension
-pub fn rcount_files_with_extension(dir: &Path, exts: &HashSet<String>) -> usize {
-    let mut count = 0;
-    if !dir.is_dir() {
-        return count;
-    }
-
-    for entry in WalkDir::new(dir) {
-        match entry {
-            Ok(val) => {
-                let path = val.path();
-                if contains_ext(&path, exts) {
-                    count += 1
-                }
-            }
-            Err(err) => {
-                eprintln!("recursive_files_with_extensions Could not iterate over dir... {err}")
-            }
-        }
-    }
-    count
-}
-
 pub fn recursive_files_with_extensions(dir: &Path, exts: &HashSet<String>) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = vec![];
     if !dir.is_dir() {
@@ -1017,53 +932,7 @@ pub fn recursive_files_with_extensions(dir: &Path, exts: &HashSet<String>) -> Ve
     files
 }
 
-pub fn recursive_eligible_files(dir: &Path) -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = vec![];
-    if !dir.is_dir() {
-        return files;
-    }
-
-    let mut mod_idx = 10;
-    for entry in WalkDir::new(dir) {
-        match entry {
-            Ok(val) => {
-                let path = val.path();
-                // if it's not the hidden oxen dir and is not a directory
-                // if !is_in_oxen_hidden_dir(&path) && !path.is_dir() {
-                if !path.is_dir() {
-                    files.push(path);
-
-                    if files.len().is_multiple_of(mod_idx) {
-                        log::debug!("Got {} files", files.len());
-                        mod_idx *= 2;
-                    }
-                }
-            }
-            Err(err) => {
-                eprintln!("recursive_files_with_extensions Could not iterate over dir... {err}")
-            }
-        }
-    }
-    files
-}
-
 pub fn count_files_in_dir(dir: &Path) -> usize {
-    p_count_files_in_dir_w_progress(dir, None)
-}
-
-pub fn count_files_in_dir_w_progress(dir: &Path) -> usize {
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.green} {msg}")
-            .unwrap(),
-    );
-    pb.enable_steady_tick(std::time::Duration::from_millis(100));
-    pb.set_message("🐂 Counting files...".to_string());
-    p_count_files_in_dir_w_progress(dir, Some(pb))
-}
-
-pub fn p_count_files_in_dir_w_progress(dir: &Path, pb: Option<ProgressBar>) -> usize {
     let mut count: usize = 0;
     if dir.is_dir() {
         match std::fs::read_dir(dir) {
@@ -1074,48 +943,6 @@ pub fn p_count_files_in_dir_w_progress(dir: &Path, pb: Option<ProgressBar>) -> u
                             let path = entry.path();
                             if !is_in_oxen_hidden_dir(&path) && path.is_file() {
                                 count += 1;
-                                if let Some(ref pb) = pb {
-                                    pb.set_message(format!("🐂 Found {count:?} files"));
-                                }
-                            }
-                        }
-                        Err(err) => log::warn!("error reading dir entry: {err}"),
-                    }
-                }
-            }
-            Err(err) => log::warn!("error reading dir: {err}"),
-        }
-    }
-    count
-}
-
-pub fn count_files_in_dir_with_progress(dir: impl AsRef<Path>) -> usize {
-    let dir = dir.as_ref();
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.green} {msg}")
-            .unwrap(),
-    );
-    pb.enable_steady_tick(std::time::Duration::from_millis(100));
-    pb.set_message("🐂 Counting files...".to_string());
-
-    // TODO: Can we count in parallel by parallel walking dir?
-    let mut count: usize = 0;
-    if dir.is_dir() {
-        match std::fs::read_dir(dir) {
-            Ok(entries) => {
-                for entry in entries {
-                    match entry {
-                        Ok(entry) => {
-                            let path = entry.path();
-                            if !is_in_oxen_hidden_dir(&path) && path.is_file() {
-                                count += 1;
-                                pb.set_message(format!(
-                                    "🐂 dir {:?} has {} files...",
-                                    dir.file_name(),
-                                    count
-                                ))
                             }
                         }
                         Err(err) => log::warn!("error reading dir entry: {err}"),
@@ -1513,21 +1340,6 @@ pub fn disk_usage_for_path(path: &Path) -> Result<DiskUsage, OxenError> {
         percent_used,
     })
 }
-pub fn is_any_parent_in_set(file_path: &Path, path_set: &HashSet<PathBuf>) -> bool {
-    let mut current_path = file_path.to_path_buf();
-    // Iterate through parent directories
-    log::debug!("checking if {current_path:?} is in {path_set:?}");
-    while let Some(parent) = current_path.parent() {
-        log::debug!("checking if {current_path:?} is in {path_set:?}");
-        if path_set.contains(parent) {
-            return true;
-        }
-        current_path = parent.to_path_buf()
-    }
-
-    false
-}
-
 pub fn open_file(path: impl AsRef<Path>) -> Result<File, OxenError> {
     match File::open(path.as_ref()) {
         Ok(file) => Ok(file),
@@ -1837,38 +1649,6 @@ pub fn is_modified_from_node_with_metadata(
 
 pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenError> {
     is_modified_from_node_with_metadata(path, node, util::fs::metadata(path))
-}
-
-// Only uses the metadata to check for modification
-pub fn is_modified_metadata_only(path: &Path, node: &FileNode) -> Result<bool, OxenError> {
-    // First, check if the file exists; return false if not
-    if !path.exists() {
-        log::debug!("is_modified_from_node found non-existent path {path:?}. Returning false");
-        return Ok(false);
-    }
-
-    // Second, check the length of the file
-    let meta = util::fs::metadata(path)?;
-
-    let file_size = meta.len();
-    let node_size = node.num_bytes();
-
-    if file_size != node_size {
-        return Ok(true);
-    }
-
-    // Third, check the last modified times
-    let file_last_modified = FileTime::from_last_modification_time(&meta);
-    let node_last_modified = util::fs::last_modified_time(
-        node.last_modified_seconds(),
-        node.last_modified_nanoseconds(),
-    );
-
-    if file_last_modified == node_last_modified {
-        return Ok(false);
-    }
-
-    Ok(true)
 }
 
 // Calculate a node's last modified time
