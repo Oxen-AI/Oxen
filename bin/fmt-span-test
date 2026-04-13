@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+#
+# Test 2: FmtSpan events (OXEN_FMT_SPAN=CLOSE)
+#
+# Starts oxen-server with OXEN_FMT_SPAN=CLOSE, hits the health endpoint,
+# and verifies that span close events (with timing data) appear on stderr.
+#
+# Prerequisites: cargo build --workspace --features production
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$SCRIPT_DIR/.."
+
+SERVER="$REPO_ROOT/target/debug/oxen-server"
+SERVER_PID=""
+
+cleanup() {
+    if [ -n "$SERVER_PID" ]; then
+        kill "$SERVER_PID" 2>/dev/null || true
+        wait "$SERVER_PID" 2>/dev/null || true
+    fi
+    rm -f /tmp/span-stderr.txt
+}
+trap cleanup EXIT INT TERM
+
+# Start server with span-close events on stderr (from repo root so
+# oxen-server resolves its default SYNC_DIR=./data/ correctly)
+cd "$REPO_ROOT"
+mkdir -p data/test/config
+OXEN_FMT_SPAN=CLOSE RUST_LOG=info "$SERVER" start 2>/tmp/span-stderr.txt &
+SERVER_PID=$!
+
+# Wait for server to be ready (bounded: 30 attempts, 1s apart)
+echo "Waiting for oxen-server..."
+for _i in $(seq 1 30); do
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+        echo "FAIL: oxen-server exited before becoming ready"
+        exit 1
+    fi
+    if curl -sf --max-time 2 http://localhost:3000/api/health > /dev/null 2>&1; then
+        echo "oxen-server is ready"
+        break
+    fi
+    sleep 1
+done
+if ! curl -sf --max-time 2 http://localhost:3000/api/health > /dev/null 2>&1; then
+    echo "FAIL: oxen-server did not become ready within 30s"
+    exit 1
+fi
+
+# Hit an endpoint so TracingLogger creates (and closes) a span
+curl -sf http://localhost:3000/api/health > /dev/null
+sleep 1
+
+kill "$SERVER_PID" 2>/dev/null || true
+wait "$SERVER_PID" 2>/dev/null || true
+SERVER_PID=""
+
+# Span CLOSE events include "time.busy" / "time.idle"
+if grep -q "time.busy" /tmp/span-stderr.txt; then
+    echo "PASS: FmtSpan CLOSE events detected"
+    grep "time.busy" /tmp/span-stderr.txt | head -3
+else
+    echo "FAIL: No span close events found in stderr output"
+    echo "--- stderr output ---"
+    cat /tmp/span-stderr.txt
+    exit 1
+fi

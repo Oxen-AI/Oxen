@@ -1,0 +1,330 @@
+#!/usr/bin/env bash
+#
+# Test 3: OTel telemetry (Jaeger + full push/pull workflow) + Prometheus metrics
+#
+# Starts Jaeger via Docker, launches oxen-server with OTel export and Prometheus
+# metrics enabled, runs a full push/clone/modify/push/pull workflow with both the
+# Rust CLI and oxen-python, then verifies traces in Jaeger and metrics at /metrics.
+#
+# Prerequisites:
+#   cargo build --workspace --features production
+#   docker (running)
+#   uv, maturin (for oxen-python)
+#   jq
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$SCRIPT_DIR/.."
+
+OXEN="$REPO_ROOT/target/debug/oxen"
+SERVER="$REPO_ROOT/target/debug/oxen-server"
+SERVER_PID=""
+JAEGER_NAME=""
+
+# Track which config files we modified so cleanup can restore/remove them
+MODIFIED_HOME_CONFIG=false
+HOME_CONFIG_BACKUP=""
+MODIFIED_AUTH_CONFIG=false
+AUTH_CONFIG_BACKUP=""
+MODIFIED_DATA_CONFIG=false
+DATA_CONFIG_BACKUP=""
+
+HOME_CONFIG="$HOME/.oxen/user_config.toml"
+AUTH_CONFIG="$HOME/.oxen/auth_config.toml"
+
+# Unique temp paths so concurrent runs don't collide and we never touch
+# unrelated /tmp entries. REPO_B_PARENT exists because `oxen clone`
+# rejects absolute paths, so we cd into a parent dir and clone with a
+# relative name.
+REPO_A_DIR="$(mktemp -d)"
+REPO_B_PARENT="$(mktemp -d)"
+REPO_B_DIR="$REPO_B_PARENT/repo-b"
+CI_USER_TOML="$(mktemp -u)"
+
+# Check if a user_config.toml has non-empty "name" and "email" keys
+has_valid_user_config() {
+    local file="$1"
+    [ -f "$file" ] || return 1
+    grep -qE '^name\s*=\s*".+"' "$file" && grep -qE '^email\s*=\s*".+"' "$file"
+}
+
+cleanup() {
+    if [ -n "$SERVER_PID" ]; then
+        kill "$SERVER_PID" 2>/dev/null || true
+        wait "$SERVER_PID" 2>/dev/null || true
+    fi
+    if [ -n "$JAEGER_NAME" ]; then
+        docker stop "$JAEGER_NAME" 2>/dev/null || true
+        docker rm "$JAEGER_NAME" 2>/dev/null || true
+    fi
+    # Restore/remove ~/.oxen/user_config.toml
+    if [ "$MODIFIED_HOME_CONFIG" = true ]; then
+        if [ -n "$HOME_CONFIG_BACKUP" ]; then
+            mv "$HOME_CONFIG_BACKUP" "$HOME_CONFIG"
+        else
+            rm -f "$HOME_CONFIG"
+        fi
+    fi
+    # Restore/remove ~/.oxen/auth_config.toml
+    if [ "$MODIFIED_AUTH_CONFIG" = true ]; then
+        if [ -n "$AUTH_CONFIG_BACKUP" ]; then
+            mv "$AUTH_CONFIG_BACKUP" "$AUTH_CONFIG"
+        else
+            rm -f "$AUTH_CONFIG"
+        fi
+    fi
+    # Restore/remove data/test/config/user_config.toml
+    if [ "$MODIFIED_DATA_CONFIG" = true ]; then
+        if [ -n "$DATA_CONFIG_BACKUP" ]; then
+            mv "$DATA_CONFIG_BACKUP" "$REPO_ROOT/data/test/config/user_config.toml"
+        else
+            rm -f "$REPO_ROOT/data/test/config/user_config.toml"
+        fi
+    fi
+    # Remove only the temp paths this run created.
+    rm -rf "$REPO_A_DIR" "$REPO_B_PARENT" "$CI_USER_TOML"
+}
+trap cleanup EXIT INT TERM
+
+# ── Start Jaeger all-in-one ──
+JAEGER_NAME="jaeger-$$-$(date +%s)"
+docker run -d --rm --name "$JAEGER_NAME" \
+  -p 16686:16686 \
+  -p 4317:4317 \
+  -p 4318:4318 \
+  -p 5778:5778 \
+  -p 9411:9411 \
+  cr.jaegertracing.io/jaegertracing/jaeger:2.17.0
+
+# Wait for Jaeger query API to be ready (bounded: 60 attempts, 1s apart)
+echo "Waiting for Jaeger..."
+jaeger_ready=false
+for _i in $(seq 1 60); do
+  if curl -sf --max-time 2 http://localhost:16686/api/services > /dev/null 2>&1; then
+    echo "Jaeger is ready"
+    jaeger_ready=true
+    break
+  fi
+  sleep 1
+done
+if [ "$jaeger_ready" != true ]; then
+  echo "FAIL: Jaeger did not become ready within 60s"
+  exit 1
+fi
+
+# ── Setup oxen-server ──
+cd "$REPO_ROOT"
+mkdir -p data/test/config ~/.oxen
+DATA_CONFIG="$REPO_ROOT/data/test/config/user_config.toml"
+
+# Always run add-user to register the user and obtain a token
+ADD_USER_OUTPUT=$("$SERVER" add-user \
+  --email ci@test.com --name CI --output "$CI_USER_TOML")
+
+# Token is on the 3rd line of the add-user output
+# (the toml file only contains name/email, not the token)
+TOKEN=$(echo "$ADD_USER_OUTPUT" | sed -n '3p' | tr -d '[:space:]')
+
+# Only overwrite config files if they're missing or invalid.
+# If we do overwrite, mark them for restore/removal in cleanup.
+if ! has_valid_user_config "$HOME_CONFIG"; then
+    if [ -f "$HOME_CONFIG" ]; then
+        HOME_CONFIG_BACKUP=$(mktemp)
+        cp "$HOME_CONFIG" "$HOME_CONFIG_BACKUP"
+    fi
+    cp "$CI_USER_TOML" "$HOME_CONFIG"
+    MODIFIED_HOME_CONFIG=true
+fi
+
+if ! has_valid_user_config "$DATA_CONFIG"; then
+    if [ -f "$DATA_CONFIG" ]; then
+        DATA_CONFIG_BACKUP=$(mktemp)
+        cp "$DATA_CONFIG" "$DATA_CONFIG_BACKUP"
+    fi
+    cp "$CI_USER_TOML" "$DATA_CONFIG"
+    MODIFIED_DATA_CONFIG=true
+fi
+
+# Configure CLI identity (mutates HOME_CONFIG — already backed up above
+# if we needed to modify it; skip if the existing config was valid)
+if [ "$MODIFIED_HOME_CONFIG" = true ]; then
+    "$OXEN" config --name "CI Test" --email "ci@test.com"
+fi
+
+# Configure CLI auth token (mutates AUTH_CONFIG — back up first)
+if [ -f "$AUTH_CONFIG" ]; then
+    AUTH_CONFIG_BACKUP=$(mktemp)
+    cp "$AUTH_CONFIG" "$AUTH_CONFIG_BACKUP"
+fi
+"$OXEN" config --auth localhost:3000 "$TOKEN"
+MODIFIED_AUTH_CONFIG=true
+
+# ── Start oxen-server with OTel export and Prometheus metrics ──
+OXEN_OTEL_ENDPOINT=http://localhost:4317 \
+OXEN_METRICS_PORT=9090 \
+RUST_LOG=info \
+"$SERVER" start &
+SERVER_PID=$!
+
+# Wait for server to be ready (bounded: 30 attempts, 1s apart)
+echo "Waiting for oxen-server..."
+server_ready=false
+for _i in $(seq 1 30); do
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+        echo "FAIL: oxen-server exited before becoming ready"
+        exit 1
+    fi
+    if curl -sf --max-time 2 http://localhost:3000/api/health > /dev/null 2>&1; then
+        echo "oxen-server is ready"
+        server_ready=true
+        break
+    fi
+    sleep 1
+done
+if [ "$server_ready" != true ]; then
+    echo "FAIL: oxen-server did not become ready within 30s"
+    exit 1
+fi
+
+# ── oxen client: Full push / clone / modify / push / pull workflow ──
+
+# Create remote repository (namespace "ox", name "otel-metrics-test")
+curl -sf -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -X POST -d '{"namespace":"ox","name":"otel-metrics-test"}' \
+  http://localhost:3000/api/repos
+
+# Repo A: init, commit, push (REPO_A_DIR already created by mktemp -d)
+cd "$REPO_A_DIR"
+"$OXEN" init
+"$OXEN" config --set-remote origin http://localhost:3000/ox/otel-metrics-test
+echo "hello from CI" > test-file.txt
+"$OXEN" add test-file.txt
+"$OXEN" commit -m "initial commit"
+"$OXEN" push origin main
+
+# Clone to Repo B (oxen clone rejects absolute paths, so cd into a parent
+# tmpdir and clone using the relative "repo-b" name)
+cd "$REPO_B_PARENT"
+"$OXEN" clone http://localhost:3000/ox/otel-metrics-test repo-b
+
+# Repo B: modify, commit, push
+cd "$REPO_B_DIR"
+echo "modified in repo-b" >> test-file.txt
+"$OXEN" add test-file.txt
+"$OXEN" commit -m "modify from repo-b"
+"$OXEN" push origin main
+
+# Repo A: pull (with client-side OTel too)
+cd "$REPO_A_DIR"
+OXEN_OTEL_ENDPOINT=http://localhost:4317 \
+RUST_LOG=info \
+"$OXEN" pull
+
+# ── oxen-python OTel check ──
+# Assumes oxen-python is already built with production features.
+
+# Push a new change from repo-b so repo-a has something to pull
+cd "$REPO_B_DIR"
+echo "another change for python test" >> test-file.txt
+"$OXEN" add test-file.txt
+"$OXEN" commit -m "change for python pull test"
+"$OXEN" push origin main
+
+# Pull from repo-a using Python with OTel enabled
+cd "$REPO_A_DIR"
+OXEN_OTEL_ENDPOINT=http://localhost:4317 \
+RUST_LOG=info \
+"$REPO_ROOT/oxen-python/.venv/bin/python" -c "
+import oxen
+repo = oxen.Repo('.')
+repo.pull()
+"
+
+# ── Verify traces in Jaeger ──
+
+# Wait for OTel batch exporter to flush
+sleep 10
+
+SERVICES=$(curl -sf --max-time 5 http://localhost:16686/api/services)
+echo "Jaeger services: $SERVICES"
+
+did_fail=false
+
+if ! echo "$SERVICES" | jq -e '.data | index("oxen-server")' > /dev/null 2>&1; then
+  echo "FAIL: 'oxen-server' not found in Jaeger services"
+  did_fail=true
+else
+  echo "PASS: oxen-server service registered in Jaeger"
+fi
+
+TRACES=$(curl -sf --max-time 5 "http://localhost:16686/api/traces?service=oxen-server&limit=5")
+TRACE_COUNT=$(echo "$TRACES" | jq '.data | length')
+
+if [ "$TRACE_COUNT" -gt 0 ]; then
+  echo "PASS: OTel traces exported to Jaeger ($TRACE_COUNT traces)"
+else
+  echo "FAIL: No traces found for oxen-server"
+  did_fail=true
+fi
+
+# Check for client traces too
+if echo "$SERVICES" | jq -e '.data | index("oxen")' > /dev/null 2>&1; then
+  echo "PASS: oxen client traces also found in Jaeger"
+else
+  echo "FAIL: oxen client traces not found (client OTel export may not have flushed)"
+  did_fail=true
+fi
+
+# Verify oxen-py traces in Jaeger
+if echo "$SERVICES" | jq -e '.data | index("oxen-py")' > /dev/null 2>&1; then
+  echo "PASS: oxen-py traces found in Jaeger"
+else
+  echo "FAIL: oxen-py traces not found in Jaeger"
+  did_fail=true
+fi
+
+# ── Verify Prometheus metrics ──
+
+METRICS_OUTPUT=$(curl -sf --max-time 5 http://localhost:9090/metrics 2>/dev/null || true)
+if [ -z "$METRICS_OUTPUT" ]; then
+  echo "FAIL: Could not fetch /metrics from Prometheus endpoint on port 9090"
+  did_fail=true
+else
+  echo "--- Prometheus /metrics sample ---"
+  echo "$METRICS_OUTPUT" | head -30
+
+  # Check for HTTP request counters with non-zero values
+  # Lines look like: http_requests_total{method="GET",path="...",status="200"} 5
+  HTTP_COUNTER_LINES=$(echo "$METRICS_OUTPUT" | awk '/^http_requests_total\{/ { if ($NF+0 != 0) print }' || true)
+  if [ -z "$HTTP_COUNTER_LINES" ]; then
+    echo "FAIL: No non-zero http_requests_total counters found in /metrics"
+    did_fail=true
+  else
+    COUNTER_LINE_COUNT=$(echo "$HTTP_COUNTER_LINES" | wc -l | tr -d ' ')
+    echo "PASS: Found $COUNTER_LINE_COUNT non-zero http_requests_total counter(s)"
+  fi
+
+  # Check for HTTP duration histogram data (bucket, sum, or count lines)
+  HISTOGRAM_LINES=$(echo "$METRICS_OUTPUT" | grep -E '^http_request_duration_ms_(bucket|sum|count)\{' || true)
+  if [ -z "$HISTOGRAM_LINES" ]; then
+    echo "FAIL: No http_request_duration_ms histogram data found in /metrics"
+    did_fail=true
+  else
+    HISTOGRAM_LINE_COUNT=$(echo "$HISTOGRAM_LINES" | wc -l | tr -d ' ')
+    # At least some _sum values should be > 0 (requests were served)
+    NONZERO_SUMS=$(echo "$METRICS_OUTPUT" | awk '/^http_request_duration_ms_sum\{/ { if ($NF+0 > 0) print }' || true)
+    if [ -z "$NONZERO_SUMS" ]; then
+      echo "FAIL: http_request_duration_ms histogram sums are all zero"
+      did_fail=true
+    else
+      NONZERO_SUM_COUNT=$(echo "$NONZERO_SUMS" | wc -l | tr -d ' ')
+      echo "PASS: Found $HISTOGRAM_LINE_COUNT histogram lines, $NONZERO_SUM_COUNT with non-zero duration sums"
+    fi
+  fi
+fi
+
+if [ "$did_fail" = true ]; then
+  exit 1
+fi

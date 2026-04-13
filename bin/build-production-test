@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#
+# Run all production build tests in sequence.
+#
+# Prerequisites:
+#   cargo build --workspace --features production
+#   docker (running, for otel-metrics-test)
+#   uv, maturin (for oxen-python)
+#   jq
+
+set -euo pipefail
+
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$SCRIPT_DIR/.."
+
+echo "==> Building workspace with 'production' features..."
+cargo build --workspace --features production
+
+echo "==> Building oxen-python with 'production' features..."
+cd "$REPO_ROOT/oxen-python"
+uv sync --no-install-project
+# shellcheck source=/dev/null
+source .venv/bin/activate
+maturin develop --features "oxen-py/production"
+cd "$REPO_ROOT"
+
+echo "==> Running logfile test..."
+"$SCRIPT_DIR/logfile-test"
+
+echo "==> Running fmt-span test..."
+"$SCRIPT_DIR/fmt-span-test"
+
+echo "==> Running OTel test..."
+"$SCRIPT_DIR/otel-metrics-test"
+
+echo "==> PASS: All tests passed."
