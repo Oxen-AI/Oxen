@@ -100,16 +100,8 @@ pub const FIELDS_DIR: &str = "fields";
 pub const VERSIONS_DIR: &str = "versions";
 /// chunks/ is where individual file chunks are stored
 pub const CHUNKS_DIR: &str = "chunks";
-/// objects/ stores pointers to data files and sub-tree structures for efficient commit representations
-pub const OBJECTS_DIR: &str = "objects";
 /// Storage of file node representations in objects dir
 pub const OBJECT_FILES_DIR: &str = "files";
-/// Storage of dir node representations in objects dir
-pub const OBJECT_DIRS_DIR: &str = "dirs";
-/// Storage of hash-bucketed vnode representations in objects dir
-pub const OBJECT_VNODES_DIR: &str = "vnodes";
-/// Storage of schema node representations in objects dir
-pub const OBJECT_SCHEMAS_DIR: &str = "schemas";
 /// File name for files stored in versions directory (>0.8.4). (Was commit id <= 0.8.4)
 pub const VERSION_FILE_NAME: &str = "data";
 /// File name for chunks of files stored in versions directory
@@ -124,8 +116,6 @@ pub const MODS_DIR: &str = "mods";
 pub const WORKSPACES_DIR: &str = "workspaces";
 /// workspace commit id
 pub const WORKSPACE_CONFIG: &str = "WORKSPACE_CONFIG";
-/// data.arrow
-pub const DATA_ARROW_FILE: &str = "data.arrow";
 
 /// if we have merge conflicts we write to MERGE_HEAD and ORIG_HEAD to keep track of the parents
 pub const MERGE_HEAD_FILE: &str = "MERGE_HEAD";

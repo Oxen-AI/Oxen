@@ -1,9 +1,7 @@
-pub mod custom_data_type;
 pub mod data_type;
 pub mod field;
 pub mod staged_schema;
 
-pub use custom_data_type::CustomDataType;
 pub use data_type::DataType;
 pub use field::Field;
 use utoipa::ToSchema;

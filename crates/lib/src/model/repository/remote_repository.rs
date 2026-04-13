@@ -61,13 +61,6 @@ impl RemoteRepository {
         uri.host().unwrap().to_string()
     }
 
-    /// Host of the remote repository
-    pub fn port(&self) -> String {
-        // parse it from the url
-        let uri = self.remote.url.parse::<Uri>().unwrap();
-        uri.port().unwrap().to_string()
-    }
-
     /// Scheme of the remote repository
     pub fn scheme(&self) -> String {
         // parse it from the url
