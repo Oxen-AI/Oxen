@@ -62,7 +62,6 @@ difference = { workspace = true }
 dirs = { workspace = true }
 duckdb = { workspace = true, optional = true }
 dunce = { workspace = true }
-fd-lock = { workspace = true }
 filetime = { workspace = true }
 flate2 = { workspace = true }
 fs_extra = { workspace = true }

@@ -17,10 +17,8 @@ use crate::model::{LocalRepository, RepoNew};
 use crate::repositories;
 use crate::repositories::fork::FORK_STATUS_FILENAME;
 use crate::util;
-use fd_lock::RwLock;
 use jwalk::WalkDir;
 use regex::Regex;
-use std::fs::File;
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -342,36 +340,6 @@ pub fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenError> {
     log::debug!("Deleting repo directory: {repo:?}");
     util::fs::remove_dir_all(&repo.path)?;
     Ok(repo)
-}
-
-// Creates an OS level lock on the file. The lock is immediately
-// released when the return value is dropped or process is killed.
-pub fn get_exclusive_lock(
-    lock_file: &mut fd_lock::RwLock<File>,
-) -> Result<fd_lock::RwLockWriteGuard<'_, File>, std::io::Error> {
-    lock_file.write()
-}
-
-pub fn is_locked(repo: &LocalRepository) -> bool {
-    match get_lock_file(repo) {
-        Err(_) => true,
-        Ok(mut lock_file) => lock_file.try_write().is_err(),
-    }
-}
-
-// Returns an instance of a lockfile. The lockfile is an empty file
-pub fn get_lock_file(repo: &LocalRepository) -> Result<fd_lock::RwLock<File>, std::io::Error> {
-    let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
-    let lock_file_path = hidden_dir.join(constants::REPOSITORY_LOCK_FILE);
-
-    let lock_file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(lock_file_path)?;
-
-    Ok(RwLock::new(lock_file))
 }
 
 #[cfg(test)]
