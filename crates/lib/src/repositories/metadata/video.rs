@@ -1,6 +1,7 @@
 //! Helper functions to get metadata from the video files.
 //!
 
+use crate::util::fs::FsError;
 use crate::{error::OxenError, model::metadata::MetadataVideo};
 
 use mp4::{Mp4Track, TrackType};
@@ -11,9 +12,14 @@ use std::path::Path;
 /// Detects the video metadata for the given file.
 pub fn get_metadata(path: impl AsRef<Path>) -> Result<MetadataVideo, OxenError> {
     let path = path.as_ref();
+    if !path.exists() {
+        return Err(FsError::FileNotFound(path.to_path_buf()).into());
+    } else if path.is_dir() {
+        return Err(FsError::UnexpectedDir(path.to_path_buf()).into());
+    }
     let f = match File::open(path) {
         Ok(f) => f,
-        Err(e) => return Err(OxenError::file_error(path, e)),
+        Err(e) => return Err(FsError::FileReadError(path.to_path_buf(), e).into()),
     };
 
     let size = f.metadata()?.len();

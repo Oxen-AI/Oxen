@@ -644,14 +644,6 @@ impl OxenError {
         ))
     }
 
-    pub fn file_metadata_error(path: impl AsRef<Path>, error: std::io::Error) -> OxenError {
-        OxenError::basic_str(format!(
-            "Could not get file metadata: {:?} error {:?}",
-            path.as_ref(),
-            error
-        ))
-    }
-
     pub fn workspace_add_file_not_in_repo(path: impl AsRef<Path>) -> OxenError {
         OxenError::basic_str(format!(
             "File is outside of the repo {:?}\n\nYou must specify a path you would like to add the file at with the -d flag.\n\n  oxen workspace add /path/to/file.png -d my-images/\n",

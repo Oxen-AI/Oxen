@@ -48,12 +48,31 @@ pub enum FsError {
     DirBoundsViolation,
     #[error("path bounds violation")]
     PathBoundsViolation,
+    #[error("Expected a file but found a directory: {0}")]
+    UnexpectedDir(PathBuf),
+    #[error("Expected a directory but found a file: {0}")]
+    UnexpectedFile(PathBuf),
+
+    #[error("Operation expected a non-empty file: {0}")]
+    UnexpectedEmptyFile(PathBuf),
+
+    #[error("Version file {0} is empty")]
+    UnexpectedEmptyVersionFile(String),
+
     /// A file deosn't exist.
     #[error("File does not exist: {0}")]
     FileNotFound(PathBuf),
     /// A failure occurred while reading a file.
     #[error("Could not read file: {0} error {1}")]
     FileReadError(PathBuf, std::io::Error),
+
+    #[error("Failed to read version file {0}: {1}")]
+    VersionedReadError(String, std::io::Error),
+
+    /// Metadata for the file could not be retrieved.
+    #[error("Could not get file metadata: {0} error {1}")]
+    MetadataError(PathBuf, std::io::Error),
+
     /// A failure occurred while copying from one file to another.
     /// Appropriate to use when copying directory contents too.
     #[error("File copy error: {err}\nCould not copy from `{src:?}` to `{dst:?}`")]
@@ -85,10 +104,17 @@ pub enum FsError {
     /// Cannot read the listing of a directory.
     #[error("Could not list directory contents for {0}\n{1}")]
     DirReadError(PathBuf, std::io::Error),
+    /// The directory does not exist.
+    #[error("Directory does not exist: {0}")]
+    DirNotFound(PathBuf),
     /// An operation on a file failed because the file is in use by another process.
     /// This problem arises only on Windows.
     #[error("File is in use by another process after {0} attempts: {1}\n{2}")]
     FileInUseError(u32, PathBuf, std::io::Error),
+
+    #[error("path {0:?} cannot be canonicalized due to err {1:?}")]
+    CanonicalizeError(PathBuf, std::io::Error),
+
     /// The user's $HOME (~/) directory could not be found.
     #[error("Home directory not found")]
     HomeDirNotFound,
@@ -140,7 +166,7 @@ pub async fn handle_image_resize(
         Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
         u64,
     ),
-    OxenError,
+    FsError,
 > {
     log::debug!("img_resize {img_resize:?}");
     let derived_filename = resized_filename(file_path, img_resize.width, img_resize.height);
@@ -267,7 +293,7 @@ pub async fn write_data_a(path: &Path, data: &[u8]) -> Result<(), FsError> {
 pub fn count_lines(
     path: impl AsRef<Path>,
     opts: CountLinesOpts,
-) -> Result<(usize, Option<usize>), OxenError> {
+) -> Result<(usize, Option<usize>), FsError> {
     let path = path.as_ref();
     let file = File::open(path)?;
 
@@ -312,27 +338,21 @@ pub fn count_lines(
     Ok((line_count, char_option))
 }
 
-pub fn read_first_n_bytes(path: impl AsRef<Path>, n: usize) -> Result<Vec<u8>, OxenError> {
-    let mut file = File::open(path.as_ref())?;
+pub fn read_first_n_bytes(path: impl AsRef<Path>, n: usize) -> Result<Vec<u8>, FsError> {
+    let mut file = open_file(path.as_ref())?;
     let mut buffer = vec![0; n];
     let bytes_read = file.read(&mut buffer)?;
     buffer.truncate(bytes_read);
     Ok(buffer)
 }
 
-pub fn read_first_line(path: impl AsRef<Path>) -> Result<String, OxenError> {
-    let file = File::open(path.as_ref())?;
-    read_first_line_from_file(&file)
-}
-
-pub fn read_first_line_from_file(file: &File) -> Result<String, OxenError> {
+pub fn read_first_line(path: impl AsRef<Path>) -> Result<String, FsError> {
+    let file = open_file(path.as_ref())?;
     let reader = BufReader::new(file);
     if let Some(Ok(line)) = reader.lines().next() {
         Ok(line)
     } else {
-        Err(OxenError::basic_str(format!(
-            "Could not read line from file: {file:?}"
-        )))
+        Err(FsError::UnexpectedEmptyFile(path.to_path_buf()))
     }
 }
 
@@ -344,10 +364,13 @@ pub fn read_first_byte_from_file(path: impl AsRef<Path>) -> Result<char, OxenErr
     Ok(first_char)
 }
 
-pub fn list_dirs_in_dir(dir: &Path) -> Result<Vec<PathBuf>, OxenError> {
+pub fn list_dirs_in_dir(dir: &Path) -> Result<Vec<PathBuf>, FsError> {
     let mut dirs: Vec<PathBuf> = vec![];
-    for entry in std::fs::read_dir(dir)? {
-        let path = entry?.path();
+    for entry in read_dir(dir)? {
+        let path = match entry {
+            Ok(x) => x.path(),
+            Err(e) => return Err(FsError::DirReadError(dir.to_path_buf(), e)),
+        };
         if path.is_dir() {
             dirs.push(path);
         }
@@ -458,10 +481,7 @@ pub fn copy_dir_all(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), 
             util::fs::create_dir_all(&dest)?;
         }
 
-        let dir_entries = match std::fs::read_dir(&working_path) {
-            Ok(x) => x,
-            Err(e) => return Err(FsError::DirReadError(working_path, e)),
-        };
+        let dir_entries = read_dir(&working_path)?;
 
         for failable_entry in dir_entries {
             let entry = match failable_entry {
@@ -488,6 +508,20 @@ pub fn copy_dir_all(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), 
     }
 
     Ok(())
+}
+
+/// Wrapper around std::fs::read_dir to return a FsError on failure.
+fn read_dir(path: &Path) -> Result<std::fs::ReadDir, FsError> {
+    if !path.is_file() {
+        return Err(FsError::UnexpectedFile(path.to_path_buf()));
+    }
+    if !path.is_dir() {
+        return Err(FsError::DirNotFound(path.to_path_buf()));
+    }
+    match std::fs::read_dir(path) {
+        Ok(x) => Ok(x),
+        Err(e) => Err(FsError::DirReadError(path.to_path_buf(), e)),
+    }
 }
 
 /// Wrapper around the std::fs::copy command to tell us which file failed to copy
@@ -611,17 +645,11 @@ pub fn create_dir_all(src: impl AsRef<Path>) -> Result<(), FsError> {
 /// creates a directory if they don't exist
 pub fn create_dir(src: impl AsRef<Path>) -> Result<(), FsError> {
     let src = src.as_ref();
-    if src.exists() {
-        if !src.is_dir() {
-            return Err(FsError::DirCreateError(
-                src.to_path_buf(),
-                std::io::Error::new(
-                    std::io::ErrorKind::NotADirectory,
-                    "exists but is not a directory",
-                ),
-            ));
-        }
+    if src.is_dir() {
         return Ok(());
+    }
+    if src.is_file() {
+        return Err(FsError::UnexpectedFile(src.to_path_buf()));
     }
 
     match std::fs::create_dir(src) {
@@ -673,25 +701,31 @@ pub fn remove_file(src: impl AsRef<Path>) -> Result<(), FsError> {
 }
 
 /// Wrapper around util::fs::metadata to give us a better error on failure
-pub fn metadata(path: impl AsRef<Path>) -> Result<std::fs::Metadata, OxenError> {
+pub fn metadata(path: impl AsRef<Path>) -> Result<std::fs::Metadata, FsError> {
     let path = path.as_ref();
+    if !path.exists() {
+        return Err(FsError::FileNotFound(path.to_path_buf()));
+    }
     match std::fs::metadata(path) {
         Ok(file) => Ok(file),
         Err(err) => {
             log::debug!("metadata {path:?} {err}");
-            Err(OxenError::file_metadata_error(path, err))
+            Err(FsError::MetadataError(path.to_path_buf(), err))
         }
     }
 }
 
 /// Wrapper around std::fs::File::create to give us a better error on failure
-pub fn file_create(path: impl AsRef<Path>) -> Result<std::fs::File, OxenError> {
+pub fn file_create(path: impl AsRef<Path>) -> Result<std::fs::File, FsError> {
     let path = path.as_ref();
+    if path.is_dir() {
+        return Err(FsError::UnexpectedDir(path.to_path_buf()));
+    }
     match std::fs::File::create(path) {
         Ok(file) => Ok(file),
         Err(err) => {
             log::error!("file_create {path:?} {err}");
-            Err(OxenError::file_create_error(path, err))
+            Err(FsError::FileCreateError(path.to_path_buf(), err))
         }
     }
 }
@@ -701,7 +735,7 @@ pub fn is_tabular_from_extension(data_path: impl AsRef<Path>, file_path: impl As
     let data_path = data_path.as_ref();
     let file_path = file_path.as_ref();
     if has_ext(file_path, "json")
-        && let Ok(c) = read_first_byte_from_file(data_path)
+        && let Ok(c) = read_first_n_bytes(data_path, 1).map(|b| b[0] as char)
         && "[" == c.to_string()
     {
         return true;
@@ -977,7 +1011,7 @@ pub fn recursive_files_with_extensions(dir: &Path, exts: &HashSet<String>) -> Ve
 pub fn count_files_in_dir(dir: &Path) -> usize {
     let mut count: usize = 0;
     if dir.is_dir() {
-        match std::fs::read_dir(dir) {
+        match read_dir(dir) {
             Ok(entries) => {
                 for entry in entries {
                     match entry {
@@ -1000,7 +1034,7 @@ pub fn count_files_in_dir(dir: &Path) -> usize {
 pub fn count_items_in_dir(dir: &Path) -> usize {
     let mut count: usize = 0;
     if dir.is_dir() {
-        match std::fs::read_dir(dir) {
+        match read_dir(dir) {
             Ok(entries) => {
                 for entry in entries {
                     match entry {
@@ -1075,7 +1109,7 @@ pub fn is_in_oxen_hidden_dir(path: &Path) -> bool {
     false
 }
 
-pub fn is_canonical(path: impl AsRef<Path>) -> Result<bool, OxenError> {
+pub fn is_canonical(path: impl AsRef<Path>) -> Result<bool, FsError> {
     let path = path.as_ref();
     let canon_path = canonicalize(path)?;
 
@@ -1120,7 +1154,7 @@ pub fn canonicalize(path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
 pub fn full_path_from_child_path(
     parent: impl AsRef<Path>,
     child: impl AsRef<Path>,
-) -> Result<PathBuf, OxenError> {
+) -> Result<PathBuf, FsError> {
     let parent_path = parent.as_ref();
     let child_path = child.as_ref();
 
@@ -1134,7 +1168,7 @@ pub fn full_path_from_child_path(
 fn stem_from_canonical_child_path(
     parent_path: impl AsRef<Path>,
     child_path: impl AsRef<Path>,
-) -> Result<PathBuf, OxenError> {
+) -> Result<PathBuf, FsError> {
     let parent_path = parent_path.as_ref();
     let child_path = child_path.as_ref();
 
@@ -1368,7 +1402,7 @@ pub fn remove_leading_slash(path: &Path) -> PathBuf {
     }
 }
 
-pub fn disk_usage_for_path(path: &Path) -> Result<DiskUsage, OxenError> {
+pub fn disk_usage_for_path(path: &Path) -> Result<DiskUsage, FsError> {
     log::debug!("disk_usage_for_path: {path:?}");
     let disks = sysinfo::Disks::new_with_refreshed_list();
 
@@ -1406,40 +1440,54 @@ pub fn disk_usage_for_path(path: &Path) -> Result<DiskUsage, OxenError> {
         percent_used,
     })
 }
-pub fn open_file(path: impl AsRef<Path>) -> Result<File, OxenError> {
-    match File::open(path.as_ref()) {
-        Ok(file) => Ok(file),
-        Err(err) => Err(OxenError::basic_str(format!(
-            "Failed to open file: {:?}\n{:?}",
-            path.as_ref(),
-            err
-        ))),
+pub fn is_any_parent_in_set(file_path: &Path, path_set: &HashSet<PathBuf>) -> bool {
+    let mut current_path = file_path.to_path_buf();
+    // Iterate through parent directories
+    log::debug!("checking if {current_path:?} is in {path_set:?}");
+    while let Some(parent) = current_path.parent() {
+        log::debug!("checking if {current_path:?} is in {path_set:?}");
+        if path_set.contains(parent) {
+            return true;
+        }
+        current_path = parent.to_path_buf()
+    }
+
+    false
+}
+
+/// std::fs::File::open wrapper that returns a FsError on failure.
+pub fn open_file(path: &Path) -> Result<File, FsError> {
+    if !path.is_file() {
+        return Err(FsError::FileNotFound(path.to_path_buf()));
+    }
+    match std::fs::File::open(path) {
+        Ok(x) => Ok(x),
+        Err(err) => Err(FsError::FileReadError(path.to_path_buf(), err)),
     }
 }
 
 async fn detect_image_format_from_version(
     versioned_store: Arc<dyn VersionStore>,
     hash: &str,
-) -> Result<ImageFormat, OxenError> {
-    let mut stream = versioned_store.get_version_stream(hash).await?;
+) -> Result<ImageFormat, FsError> {
+    let header = {
+        let mut stream = versioned_store.get_version_stream(hash).await?;
 
-    let mut header = Vec::with_capacity(16);
-    while header.len() < 16 {
-        if let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| {
-                OxenError::basic_str(format!("Failed to read version file {hash}: {e}"))
-            })?;
-            let to_take = 16 - header.len();
-            header.extend_from_slice(&chunk[..to_take.min(chunk.len())]);
-        } else {
-            break; // EOF
+        let mut header = Vec::with_capacity(16);
+        while header.len() < 16 {
+            if let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(|e| FsError::VersionedReadError(hash.to_string(), e))?;
+                let to_take = 16 - header.len();
+                header.extend_from_slice(&chunk[..to_take.min(chunk.len())]);
+            } else {
+                break; // EOF
+            }
         }
-    }
+        header
+    };
 
     if header.is_empty() {
-        return Err(OxenError::basic_str(format!(
-            "Version file {hash} is empty"
-        )));
+        return Err(FsError::UnexpectedEmptyVersionFile(hash.to_string()));
     }
 
     let format = image::guess_format(&header)
@@ -1458,7 +1506,7 @@ pub async fn resize_cache_image_version_store(
         Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
         u64,
     ),
-    OxenError,
+    FsError,
 > {
     let derived_filename_s = derived_filename.to_string_lossy().replace("\u{FFFD}", "");
 
@@ -1542,7 +1590,7 @@ async fn generate_video_thumbnail_version_store(
     video_hash: &str,
     derived_filename: &str,
     thumbnail: VideoThumbnail,
-) -> Result<(), OxenError> {
+) -> Result<(), FsError> {
     log::debug!(
         "generate thumbnail derived_filename {derived_filename} from video hash {video_hash}"
     );
@@ -1571,7 +1619,7 @@ async fn generate_video_thumbnail_version_store(
     let _timestamp = thumbnail.timestamp.unwrap_or(1.0);
 
     // Run blocking ffmpeg thumbnail generation on a separate thread
-    let buf = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, OxenError> {
+    let buf = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, FsError> {
         // Create thumbnailer with specified dimensions
         let thumbnailer = Thumbnailer::new(output_width, output_height);
 
@@ -1604,7 +1652,7 @@ pub async fn handle_video_thumbnail(
     version_store: Arc<dyn VersionStore>,
     file_hash: String,
     video_thumbnail: VideoThumbnail,
-) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>, OxenError> {
+) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>, FsError> {
     #[cfg(not(feature = "ffmpeg"))]
     {
         let _ = (version_store, file_hash, video_thumbnail);
@@ -1663,8 +1711,8 @@ pub fn remove_paths(src: &Path) -> Result<(), FsError> {
 pub fn is_modified_from_node_with_metadata(
     path: &Path,
     node: &FileNode,
-    metadata: Result<std::fs::Metadata, OxenError>,
-) -> Result<bool, OxenError> {
+    metadata: Result<std::fs::Metadata, FsError>,
+) -> Result<bool, FsError> {
     if !path.exists() {
         log::debug!("is_modified_from_node found non-existent path {path:?}. Returning false");
         return Ok(false);
@@ -1718,9 +1766,42 @@ pub fn is_modified_from_node_with_metadata(
     }
 }
 
-pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenError> {
+pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, FsError> {
     is_modified_from_node_with_metadata(path, node, util::fs::metadata(path))
 }
+
+// Only uses the metadata to check for modification
+pub fn is_modified_metadata_only(path: &Path, node: &FileNode) -> Result<bool, FsError> {
+    // First, check if the file exists; return false if not
+    if !path.exists() {
+        log::debug!("is_modified_from_node found non-existent path {path:?}. Returning false");
+        return Ok(false);
+    }
+
+    // Second, check the length of the file
+    let meta = util::fs::metadata(path)?;
+
+    let file_size = meta.len();
+    let node_size = node.num_bytes();
+
+    if file_size != node_size {
+        return Ok(true);
+    }
+
+    // Third, check the last modified times
+    let file_last_modified = FileTime::from_last_modification_time(&meta);
+    let node_last_modified = util::fs::last_modified_time(
+        node.last_modified_seconds(),
+        node.last_modified_nanoseconds(),
+    );
+
+    if file_last_modified == node_last_modified {
+        return Ok(false);
+    }
+
+    Ok(true)
+}
+
 
 // Calculate a node's last modified time
 
@@ -1740,7 +1821,7 @@ pub fn last_modified_time(last_modified_seconds: i64, last_modified_nanoseconds:
 /// - Cannot contain parent directory references (..)
 /// - Cannot contain empty segments
 /// - Current directory references (.) are skipped
-pub fn validate_and_normalize_path(path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
+pub fn validate_and_normalize_path(path: impl AsRef<Path>) -> Result<PathBuf, FsError> {
     let path = path.as_ref();
 
     let mut normalized = PathBuf::new();
@@ -1848,7 +1929,7 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn file_path_relative_to_dir() -> Result<(), OxenError> {
+    fn file_path_relative_to_dir() -> Result<(), FsError> {
         let file = Path::new("data")
             .join("test")
             .join("other")
@@ -1862,7 +1943,7 @@ mod tests {
     }
 
     #[test]
-    fn file_path_2_relative_to_dir() -> Result<(), OxenError> {
+    fn file_path_2_relative_to_dir() -> Result<(), FsError> {
         let file = Path::new("data")
             .join("test")
             .join("other")
@@ -1876,7 +1957,7 @@ mod tests {
     }
 
     #[test]
-    fn file_path_3_relative_to_dir() -> Result<(), OxenError> {
+    fn file_path_3_relative_to_dir() -> Result<(), FsError> {
         let file = Path::new("data")
             .join("test")
             .join("runs")
@@ -1891,7 +1972,7 @@ mod tests {
     }
 
     #[test]
-    fn full_file_path_relative_to_dir() -> Result<(), OxenError> {
+    fn full_file_path_relative_to_dir() -> Result<(), FsError> {
         let file = Path::new("data")
             .join("test")
             .join("other")
@@ -1905,7 +1986,7 @@ mod tests {
     }
 
     #[test]
-    fn dir_path_relative_to_dir() -> Result<(), OxenError> {
+    fn dir_path_relative_to_dir() -> Result<(), FsError> {
         let file = Path::new("data").join("test").join("other");
         let dir = Path::new("data").join("test");
 
@@ -1916,7 +1997,7 @@ mod tests {
     }
 
     #[test]
-    fn dir_path_relative_to_another_dir() -> Result<(), OxenError> {
+    fn dir_path_relative_to_another_dir() -> Result<(), FsError> {
         let file = Path::new("data").join("test").join("other").join("dir");
         let dir = Path::new("data").join("test");
 
@@ -1927,7 +2008,7 @@ mod tests {
     }
 
     #[test]
-    fn path_relative_to_unrelated_dir() -> Result<(), OxenError> {
+    fn path_relative_to_unrelated_dir() -> Result<(), FsError> {
         let file = Path::new("data").join("test").join("other").join("dir");
         let dir = Path::new("some").join("repo");
 
@@ -1941,7 +2022,7 @@ mod tests {
     }
 
     #[test]
-    fn detect_file_type() -> Result<(), OxenError> {
+    fn detect_file_type() -> Result<(), FsError> {
         test::run_training_data_repo_test_no_commits(|repo| {
             let python_file = "add_1.py";
             let python_with_interpreter_file = "add_2.py";
@@ -2030,7 +2111,7 @@ def add(a, b):
     }
 
     #[test]
-    fn detect_file_type_json_array() -> Result<(), OxenError> {
+    fn detect_file_type_json_array() -> Result<(), FsError> {
         test::run_empty_dir_test(|_| {
             assert_eq!(
                 EntryDataType::Tabular,
@@ -2049,7 +2130,7 @@ def add(a, b):
     }
 
     #[test]
-    fn replace_file_name_keep_extension_no_extension() -> Result<(), OxenError> {
+    fn replace_file_name_keep_extension_no_extension() -> Result<(), FsError> {
         let prior_path = Path::new("adjfkaljeklwjkljdaklfd.txt");
         let prior_path_no_extension = Path::new("bdsfadfklajfkelj");
         let prior_path_arbitrary = Path::new("jdakfljdfskl.boom");
