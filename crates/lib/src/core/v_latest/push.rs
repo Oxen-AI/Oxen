@@ -740,7 +740,7 @@ async fn bundle_and_send_small_entries(
     }
 
     // Create a client for uploading chunks
-    let client = Arc::new(api::client::builder_for_remote_repo(remote_repo)?.build()?);
+    let client = Arc::new(api::client::new_for_url_transfer(remote_repo.url())?);
 
     // Split into chunks, zip up, and post to server
     use tokio::time::sleep;

@@ -6,6 +6,7 @@ pub mod fs;
 pub mod glob;
 pub mod hasher;
 pub mod image;
+pub mod internal_types;
 pub mod logging;
 pub mod oxen_version;
 pub mod paginate;

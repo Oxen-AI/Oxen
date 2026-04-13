@@ -396,8 +396,7 @@ mod tests {
             let mut commit_ids = Vec::new();
 
             // Create 5 commits with 5 new directories
-            let total_dirs = 5;
-            for i in 0..total_dirs {
+            for i in 0..5 {
                 // Write a file
                 let dir_path = format!("dir_{i}");
                 let file_path = PathBuf::from(dir_path).join(format!("file_{i}.txt"));
@@ -429,12 +428,16 @@ mod tests {
             let results =
                 api::client::compare::dir_tree(&remote_repo, &base_commit_id, &head_commit_id)
                     .await?;
-            println!("results: {results:?}");
-            assert_eq!(results.len(), 1);
+            assert_eq!(results.len(), 1, "results: {results:?}");
             let first = results.first().unwrap();
-            assert_eq!(first.name, PathBuf::from(""));
-            assert_eq!(first.status, DiffEntryStatus::Modified);
-            assert_eq!(first.children.len(), 2);
+            assert_eq!(first.name, PathBuf::from(""), "{:?}", first.name);
+            assert_eq!(
+                first.status,
+                DiffEntryStatus::Modified,
+                "{:?}",
+                first.status
+            );
+            assert_eq!(first.children.len(), 2, "{:?}", first.children);
             Ok(remote_repo)
         })
         .await

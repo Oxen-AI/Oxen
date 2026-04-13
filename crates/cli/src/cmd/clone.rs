@@ -168,10 +168,14 @@ impl RunCmd for CloneCmd {
             is_remote,
         };
 
-        let (scheme, host) = api::client::get_scheme_and_host_from_url(&opts.url)?;
+        let (scheme, host) = {
+            let hn = api::client::hostname_from_url_str(&opts.url)?;
+            let hostname = hn.hostname();
+            (hn.scheme, hostname)
+        };
 
         // TODO: Do I need to worry about this for remote repo?
-        check_remote_version_blocking(scheme.clone(), host.clone()).await?;
+        check_remote_version_blocking(&scheme, &host).await?;
         check_remote_version(scheme, host).await?;
 
         repositories::clone(&opts).await?;
