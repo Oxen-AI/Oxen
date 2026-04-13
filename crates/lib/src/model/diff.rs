@@ -5,7 +5,6 @@ pub mod change_type;
 pub use change_type::ChangeType;
 
 pub mod data_frame_diff;
-pub mod diff_commit_entry;
 pub mod diff_entries_counts;
 pub mod diff_entry;
 pub mod diff_entry_status;
