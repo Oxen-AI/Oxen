@@ -120,8 +120,6 @@ pub const MERGE_HEAD_FILE: &str = "MERGE_HEAD";
 /// if we have merge conflicts we write to MERGE_HEAD and ORIG_HEAD to keep track of the parents
 pub const ORIG_HEAD_FILE: &str = "ORIG_HEAD";
 
-/// Key for content being valid
-pub const CONTENT_IS_VALID: &str = "CONTENT_IS_VALID";
 /// Key for if something is synced
 pub const IS_SYNCED: &str = "IS_SYNCED";
 

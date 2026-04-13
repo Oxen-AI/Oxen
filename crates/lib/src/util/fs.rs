@@ -20,14 +20,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio_stream::Stream;
 
-use crate::constants::CACHE_DIR;
 use crate::constants::CHUNKS_DIR;
-use crate::constants::CONTENT_IS_VALID;
-use crate::constants::HISTORY_DIR;
 use crate::constants::OXEN_HIDDEN_DIR;
 use crate::constants::TREE_DIR;
 use crate::error::OxenError;
-use crate::model::Commit;
 use crate::model::MerkleHash;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::metadata::metadata_image::ImgResize;
@@ -73,14 +69,6 @@ pub fn oxen_config_dir() -> Result<PathBuf, OxenError> {
 
 pub fn config_filepath(repo_path: &Path) -> PathBuf {
     oxen_hidden_dir(repo_path).join(constants::REPO_CONFIG_FILENAME)
-}
-
-pub fn commit_content_is_valid_path(repo: &LocalRepository, commit: &Commit) -> PathBuf {
-    oxen_hidden_dir(&repo.path)
-        .join(HISTORY_DIR)
-        .join(&commit.id)
-        .join(CACHE_DIR)
-        .join(CONTENT_IS_VALID)
 }
 
 pub async fn handle_image_resize(
@@ -273,16 +261,6 @@ pub fn count_lines(
     Ok((line_count, char_option))
 }
 
-pub fn read_lines_file(file: &File) -> Vec<String> {
-    let mut lines: Vec<String> = Vec::new();
-    let reader = BufReader::new(file);
-    // read all the lines of the file into a Vec<String>
-    for line in reader.lines().map_while(Result::ok) {
-        lines.push(line);
-    }
-    lines
-}
-
 pub fn read_first_n_bytes(path: impl AsRef<Path>, n: usize) -> Result<Vec<u8>, OxenError> {
     let mut file = File::open(path.as_ref())?;
     let mut buffer = vec![0; n];
@@ -313,11 +291,6 @@ pub fn read_first_byte_from_file(path: impl AsRef<Path>) -> Result<char, OxenErr
     file.read_exact(&mut buffer)?;
     let first_char = buffer[0] as char;
     Ok(first_char)
-}
-
-pub fn read_lines(path: &Path) -> Result<Vec<String>, OxenError> {
-    let file = File::open(path)?;
-    Ok(read_lines_file(&file))
 }
 
 pub fn list_dirs_in_dir(dir: &Path) -> Result<Vec<PathBuf>, OxenError> {
@@ -543,18 +516,6 @@ pub async fn copy_mkdir(src: &Path, dst: &Path) -> Result<(), OxenError> {
     }
 }
 
-/// Recursively check if a file exists within a directory
-pub fn file_exists_in_directory(directory: impl AsRef<Path>, file: impl AsRef<Path>) -> bool {
-    let mut file = file.as_ref();
-    while file.parent().is_some() {
-        if directory.as_ref() == file.parent().unwrap() {
-            return true;
-        }
-        file = file.parent().unwrap();
-    }
-    false
-}
-
 /// Wrapper around the util::fs::create_dir_all command to tell us which file it failed on
 /// creates a directory if they don't exist
 pub fn create_dir_all(src: impl AsRef<Path>) -> Result<(), OxenError> {
@@ -676,10 +637,6 @@ pub fn has_tabular_extension(file_path: impl AsRef<Path>) -> bool {
 
 pub fn is_tabular(path: &Path) -> bool {
     is_tabular_from_extension(path, path)
-}
-
-pub fn is_tabular_with_ext(path: &Path, data_path: &Path) -> bool {
-    is_tabular_from_extension(data_path, path)
 }
 
 pub fn is_image(path: &Path) -> bool {

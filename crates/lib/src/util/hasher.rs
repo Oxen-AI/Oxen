@@ -99,18 +99,6 @@ pub fn get_metadata_hash(oxen_metadata: &Option<GenericMetadata>) -> Result<u128
     Ok(hasher.digest128())
 }
 
-pub fn get_hash_and_size(path: &Path) -> Result<(u128, u64), OxenError> {
-    // If file is < 1GB, one-shot hash for speed
-    // If file is > 1GB, stream hash to avoid memory overage issues
-    let file_size = util::fs::metadata(path)?.len();
-
-    if file_size < 1_000_000_000 {
-        Ok((hash_small_file_contents(path)?, file_size))
-    } else {
-        Ok((hash_large_file_contents(path)?, file_size))
-    }
-}
-
 pub fn u128_hash_file_contents(path: &Path) -> Result<u128, OxenError> {
     // If file is < 1GB, one-shot hash for speed
     // If file is > 1GB, stream hash to avoid memory overage issues
