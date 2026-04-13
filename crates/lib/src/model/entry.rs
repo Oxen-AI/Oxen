@@ -5,7 +5,3 @@ pub mod metadata_entry;
 pub mod mod_entry;
 pub mod staged_entry;
 pub mod unsynced_commit_entry;
-
-pub trait ContentHashable {
-    fn content_hash(&self) -> String;
-}

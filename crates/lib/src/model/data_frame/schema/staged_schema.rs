@@ -1,4 +1,4 @@
-use crate::model::{ContentHashable, StagedEntryStatus};
+use crate::model::StagedEntryStatus;
 use serde::{Deserialize, Serialize};
 
 use super::Schema;
@@ -14,10 +14,4 @@ pub enum StagedSchemaStatus {
 pub struct StagedSchema {
     pub schema: Schema,
     pub status: StagedEntryStatus,
-}
-
-impl ContentHashable for StagedSchema {
-    fn content_hash(&self) -> String {
-        self.schema.hash.clone()
-    }
 }

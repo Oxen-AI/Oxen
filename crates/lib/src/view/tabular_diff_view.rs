@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::model::merkle_tree::node::FileNode;
-use crate::model::{CommitEntry, LocalRepository, Schema};
+use crate::model::{LocalRepository, Schema};
 use crate::opts::DFOpts;
 use crate::repositories;
 use crate::view::{JsonDataFrame, JsonDataFrameView};
@@ -36,18 +36,6 @@ pub struct TabularDiffViewImpl {
 }
 
 impl TabularDiffView {
-    pub async fn from_commit_entries(
-        repo: &LocalRepository,
-        base_entry: &Option<CommitEntry>,
-        head_entry: &Option<CommitEntry>,
-        df_opts: DFOpts,
-    ) -> TabularDiffView {
-        let base_df = TabularDiffWrapper::maybe_get_df_from_commit_entry(repo, base_entry).await;
-        let head_df = TabularDiffWrapper::maybe_get_df_from_commit_entry(repo, head_entry).await;
-
-        TabularDiffView::from_data_frames(base_df, head_df, df_opts).await
-    }
-
     pub async fn from_file_nodes(
         repo: &LocalRepository,
         base_entry: &Option<FileNode>,

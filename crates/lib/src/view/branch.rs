@@ -11,14 +11,6 @@ pub struct BranchResponse {
 }
 
 #[derive(Deserialize, Serialize, Debug, ToSchema)]
-pub struct BranchWithCacherStatusResponse {
-    #[serde(flatten)]
-    pub status: StatusMessage,
-    pub branch: Branch,
-    pub is_cacher_pending: bool,
-}
-
-#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct BranchNew {
     pub name: String,
 }

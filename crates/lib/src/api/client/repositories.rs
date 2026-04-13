@@ -46,14 +46,6 @@ pub async fn get_by_remote_repo(repo: &RemoteRepository) -> Result<RemoteReposit
     get_by_remote(&repo.remote).await
 }
 
-pub async fn get_by_name_and_host(
-    name: impl AsRef<str>,
-    host: impl AsRef<str>,
-    scheme: impl AsRef<str>,
-) -> Result<RemoteRepository, OxenError> {
-    get_by_name_host_and_remote(name, host, scheme, DEFAULT_REMOTE_NAME).await
-}
-
 pub async fn get_by_name_host_and_scheme(
     name: impl AsRef<str>,
     host: impl AsRef<str>,

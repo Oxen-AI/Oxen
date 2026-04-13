@@ -12,22 +12,13 @@ use crate::model::{Commit, DiffEntry, Schema};
 use crate::view::Pagination;
 use crate::view::message::{MessageLevel, OxenMessage};
 
-use super::schema::SchemaWithPath;
-use super::{JsonDataFrame, JsonDataFrameViews, StatusMessage};
+use super::StatusMessage;
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct CompareCommits {
     pub base_commit: Commit,
     pub head_commit: Commit,
     pub commits: Vec<Commit>,
-}
-
-#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
-pub struct TabularCompareSummary {
-    pub num_left_only_rows: usize,
-    pub num_right_only_rows: usize,
-    pub num_diff_rows: usize,
-    pub num_match_rows: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug, ToSchema)]
@@ -72,27 +63,6 @@ pub struct CompareTabularResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
     pub messages: Vec<OxenMessage>,
-}
-
-#[derive(Serialize, Deserialize, Debug, ToSchema)]
-pub struct CompareTabularResponseWithDF {
-    pub dfs: CompareTabular,
-    pub data: JsonDataFrameViews,
-    #[serde(flatten)]
-    pub status: StatusMessage,
-    pub messages: Vec<OxenMessage>,
-}
-
-#[derive(Debug)]
-pub struct CompareTabularWithDF {
-    pub diff_df: DataFrame,
-    pub dupes: CompareDupes,
-    pub schema_diff: Option<CompareSchemaDiff>,
-    pub summary: Option<CompareSummary>,
-    pub keys: Vec<TabularCompareFieldBody>,
-    pub targets: Vec<TabularCompareTargetBody>,
-    pub display: Vec<TabularCompareTargetBody>,
-    pub source_schemas: CompareSourceSchemas,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
@@ -145,10 +115,6 @@ pub struct CompareSourceSchemas {
 }
 
 impl CompareDupes {
-    pub fn empty() -> CompareDupes {
-        CompareDupes { left: 0, right: 0 }
-    }
-
     pub fn from_tabular_diff_dupes(diff_dupes: &TabularDiffDupes) -> CompareDupes {
         CompareDupes {
             left: diff_dupes.left,
@@ -166,19 +132,6 @@ impl CompareDupes {
             ),
         }
     }
-}
-
-#[derive(Deserialize, Serialize, Debug)]
-pub struct TabularCompare {
-    pub summary: TabularCompareSummary,
-
-    pub schema_left: Option<SchemaWithPath>,
-    pub schema_right: Option<SchemaWithPath>,
-
-    pub keys: Vec<String>,
-    pub targets: Vec<String>,
-    pub match_rows: Option<JsonDataFrame>,
-    pub diff_rows: Option<JsonDataFrame>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
@@ -365,34 +318,6 @@ impl CompareSummary {
             },
             schema: Schema::from_polars(df.schema()),
         })
-    }
-}
-
-impl CompareTabular {
-    pub fn from_with_df_and_source_schemas(
-        with_df: &CompareTabularWithDF,
-        source_schemas: CompareSourceSchemas,
-    ) -> CompareTabular {
-        CompareTabular {
-            dupes: with_df.dupes.clone(),
-            schema_diff: with_df.schema_diff.clone(),
-            summary: with_df.summary.clone(),
-            keys: Some(with_df.keys.clone()),
-            targets: Some(with_df.targets.clone()),
-            display: Some(with_df.display.clone()),
-            source_schemas,
-        }
-    }
-    pub fn from_with_df(with_df: &CompareTabularWithDF) -> CompareTabular {
-        CompareTabular {
-            dupes: with_df.dupes.clone(),
-            schema_diff: with_df.schema_diff.clone(),
-            summary: with_df.summary.clone(),
-            keys: Some(with_df.keys.clone()),
-            targets: Some(with_df.targets.clone()),
-            display: Some(with_df.display.clone()),
-            source_schemas: with_df.source_schemas.clone(),
-        }
     }
 }
 

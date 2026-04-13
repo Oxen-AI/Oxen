@@ -1,6 +1,6 @@
 use crate::constants::VERSION_FILE_NAME;
 use crate::model::merkle_tree::node::{DirNode, EMerkleTreeNode, FileNode};
-use crate::model::{Commit, ContentHashable, MerkleHash, Schema};
+use crate::model::{Commit, MerkleHash, Schema};
 
 use filetime::FileTime;
 use serde::{Deserialize, Serialize};
@@ -130,12 +130,6 @@ impl SchemaEntry {
             hash: schema.hash.clone(),
             num_bytes: schema.num_bytes(),
         }
-    }
-}
-
-impl ContentHashable for CommitEntry {
-    fn content_hash(&self) -> String {
-        self.hash.clone()
     }
 }
 
