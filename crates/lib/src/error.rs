@@ -726,6 +726,13 @@ impl OxenError {
     }
 }
 
+// Manual From impls for types that need transformation
+impl From<String> for OxenError {
+    fn from(error: String) -> Self {
+        OxenError::Basic(StringError::from(error))
+    }
+}
+
 /// AWS SDK Error
 impl<E> From<SdkError<E, HttpResponse>> for OxenError
 where
