@@ -2,11 +2,12 @@
 #
 # Build, configure, and run the Oxen test suite.
 #
-# Usage: test-rust [--ffmpeg] [--keep] [-p|--python] [extra args...]
+# Usage: test-rust [--ffmpeg] [--keep] [--skip-deps] [-p|--python] [extra args...]
 #
 #   --ffmpeg      Enable the "ffmpeg" cargo feature for build and test commands.
 #   --keep        Do not remove test data (in data/ox and data/test/runs) on cleanup — useful for
 #                 debugging failed tests.
+#   --skip-deps   Skip checking/installing prerequisites (install-prereqs).
 #   -p|--python   Run the oxen-python test suite (via pytest) instead of the Rust test suite.
 #                 Builds the native extension with maturin.
 #   All remaining arguments are forwarded to `cargo nextest run` or `pytest` (with -p).
@@ -20,11 +21,13 @@
 # Check for flags
 FEATURE_ARGS=""
 KEEP_DATA=false
+SKIP_DEPS=false
 RUN_PYTHON=false
 while true; do
     case "${1:-}" in
         --ffmpeg)        FEATURE_ARGS="-F ffmpeg"; shift ;;
         --keep)          KEEP_DATA=true; shift ;;
+        --skip-deps)     SKIP_DEPS=true; shift ;;
         -p|--python)     RUN_PYTHON=true; shift ;;
         *) break ;;
     esac
@@ -77,7 +80,11 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Ensure all prerequisites are installed
-"$SCRIPT_DIR/install-prereqs"
+if [ "$SKIP_DEPS" = false ]; then
+    "$SCRIPT_DIR/install-prereqs"
+else
+    echo "==> Skipping dependency check (--skip-deps)"
+fi
 
 # Build
 echo "==> Building oxen (cargo build $FEATURE_ARGS)..."
