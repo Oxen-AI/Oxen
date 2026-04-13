@@ -29,15 +29,6 @@ pub struct DataFrameSlice {
 }
 
 impl DataFrameSchemaSize {
-    pub fn from_df_size(data_frame_size: &DataFrameSize, schema: &Schema) -> DataFrameSchemaSize {
-        DataFrameSchemaSize {
-            schema: schema.to_owned(),
-            size: DataFrameSize {
-                height: data_frame_size.height,
-                width: data_frame_size.width,
-            },
-        }
-    }
     pub fn from_df(df: &DataFrame, schema: &Schema) -> DataFrameSchemaSize {
         DataFrameSchemaSize {
             schema: schema.to_owned(),

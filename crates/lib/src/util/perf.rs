@@ -103,22 +103,6 @@ impl PerfGuard {
     pub fn new(_name: &'static str) -> Self {
         Self {}
     }
-
-    /// Create a disabled guard (no-op)
-    pub fn disabled() -> Self {
-        #[cfg(feature = "perf-logging")]
-        {
-            Self {
-                name: "",
-                start: None,
-            }
-        }
-
-        #[cfg(not(feature = "perf-logging"))]
-        {
-            Self {}
-        }
-    }
 }
 
 #[cfg(feature = "perf-logging")]
@@ -159,33 +143,6 @@ macro_rules! perf_guard {
     };
 }
 
-/// macro to create a performance guard with an automatically generated name
-///
-/// # Example
-///
-/// ```rust
-/// use liboxen::perf_guard_auto;
-///
-/// fn my_function() {
-///     let _perf = perf_guard_auto!();
-///     // function body - will be logged as "my_function"
-/// }
-/// ```
-#[macro_export]
-macro_rules! perf_guard_auto {
-    () => {{
-        fn f() {}
-        fn type_name_of<T>(_: T) -> &'static str {
-            std::any::type_name::<T>()
-        }
-        let name = type_name_of(f)
-            .rsplit("::")
-            .find(|&part| part != "f" && part != "{{closure}}")
-            .unwrap_or("unknown");
-        $crate::util::perf::PerfGuard::new(name)
-    }};
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,12 +151,6 @@ mod tests {
     fn test_perf_guard_compiles() {
         let _guard = PerfGuard::new("test_operation");
         // Guard will be dropped here
-    }
-
-    #[test]
-    fn test_disabled_guard() {
-        let _guard = PerfGuard::disabled();
-        // Should compile and run without errors
     }
 
     #[test]

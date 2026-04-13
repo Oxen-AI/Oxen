@@ -31,11 +31,4 @@ impl OxenResponse {
             None => self.desc_or_msg(),
         }
     }
-
-    pub fn error_or_msg(&self) -> String {
-        match self.error.to_owned() {
-            Some(err) => err.title,
-            None => self.status_message.to_owned(),
-        }
-    }
 }

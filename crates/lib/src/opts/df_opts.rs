@@ -395,9 +395,6 @@ impl DFOptView {
 }
 // Eventually want to make this configurable and accept user input - deterministic for now
 impl DFOptsView {
-    pub fn empty() -> DFOptsView {
-        DFOptsView { opts: vec![] }
-    }
     pub fn from_df_opts(opts: &DFOpts) -> DFOptsView {
         let ordered_opts: Vec<DFOptView> = [
             DFOptView::from_opt("text2sql", &opts.text2sql),

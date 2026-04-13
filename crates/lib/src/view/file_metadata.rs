@@ -4,21 +4,6 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::StatusMessage;
-use super::entries::ResourceVersion;
-
-#[derive(Deserialize, Serialize, Debug, ToSchema)]
-pub struct FileMetadata {
-    pub size: u64,
-    pub data_type: String,
-    pub resource: ResourceVersion,
-}
-
-#[derive(Deserialize, Serialize, Debug, ToSchema)]
-pub struct FileMetadataResponse {
-    #[serde(flatten)]
-    pub status: StatusMessage,
-    pub meta: FileMetadata,
-}
 
 #[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct FilePathsResponse {

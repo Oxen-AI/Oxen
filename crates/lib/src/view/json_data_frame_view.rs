@@ -133,10 +133,6 @@ impl JsonDataFrameViews {
 }
 
 impl JsonDataFrameView {
-    pub fn empty() -> JsonDataFrameView {
-        JsonDataFrameView::empty_with_schema(&Schema::empty(), 0, &DFOpts::empty())
-    }
-
     pub async fn from_df_opts(
         df: DataFrame,
         og_schema: Schema,

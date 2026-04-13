@@ -1,10 +1,8 @@
 use std::collections::HashSet;
 
-use polars::frame::DataFrame;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::constants::DIFF_STATUS_COL;
 use crate::error::OxenError;
 use crate::model::diff::tabular_diff::{TabularDiffDupes, TabularSchemaDiff};
 use crate::model::diff::{AddRemoveModifyCounts, TabularDiff};
@@ -285,41 +283,6 @@ impl TabularCompareFields {
 //         }
 //     }
 // }
-
-impl CompareSummary {
-    pub fn from_diff_df(df: &DataFrame) -> Result<CompareSummary, OxenError> {
-        // TODO optimization: can this be done in one pass?
-        let added_rows = df
-            .column(DIFF_STATUS_COL)?
-            .str()?
-            .into_iter()
-            .filter(|opt| opt.as_ref().map(|s| *s == "added").unwrap_or(false))
-            .count();
-
-        let removed_rows = df
-            .column(DIFF_STATUS_COL)?
-            .str()?
-            .into_iter()
-            .filter(|opt| opt.as_ref().map(|s| *s == "removed").unwrap_or(false))
-            .count();
-
-        let modified_rows = df
-            .column(DIFF_STATUS_COL)?
-            .str()?
-            .into_iter()
-            .filter(|opt| opt.as_ref().map(|s| *s == "modified").unwrap_or(false))
-            .count();
-
-        Ok(CompareSummary {
-            modifications: CompareTabularMods {
-                added_rows,
-                removed_rows,
-                modified_rows,
-            },
-            schema: Schema::from_polars(df.schema()),
-        })
-    }
-}
 
 impl From<TabularDiff> for CompareTabular {
     fn from(diff: TabularDiff) -> Self {

@@ -464,11 +464,6 @@ impl OxenError {
         OxenError::Upload(StringError::from(s))
     }
 
-    /// Make a new OxenError::OxenUpdateRequired error.
-    pub fn oxen_update_required(s: impl AsRef<str>) -> Self {
-        OxenError::OxenUpdateRequired(StringError::from(s.as_ref()))
-    }
-
     /// Make a new OxenError::RepoNotFound error.
     pub fn repo_not_found(repo: RepoNew) -> Self {
         OxenError::RepoNotFound(Box::new(repo))
@@ -608,43 +603,12 @@ impl OxenError {
         )
     }
 
-    pub fn schema_does_not_exist_for_file(path: impl AsRef<Path>) -> OxenError {
-        OxenError::basic_str(format!(
-            "Schema does not exist for file {:?}",
-            path.as_ref()
-        ))
-    }
-
     pub fn schema_does_not_exist(path: impl AsRef<Path>) -> OxenError {
         OxenError::basic_str(format!("Schema does not exist {:?}", path.as_ref()))
     }
 
-    pub fn schema_does_not_have_field(field: impl AsRef<str>) -> OxenError {
-        OxenError::basic_str(format!("Schema does not have field {:?}", field.as_ref()))
-    }
-
-    pub fn schema_has_changed(old_schema: Schema, current_schema: Schema) -> OxenError {
-        OxenError::basic_str(format!(
-            "\nSchema has changed\n\nOld\n{old_schema}\n\nCurrent\n{current_schema}\n"
-        ))
-    }
-
-    pub fn commit_db_corrupted(commit_id: impl AsRef<str>) -> OxenError {
-        OxenError::basic_str(format!(
-            "Commit db corrupted, could not find commit: {}",
-            commit_id.as_ref()
-        ))
-    }
-
     pub fn commit_id_does_not_exist(commit_id: impl AsRef<str>) -> OxenError {
         OxenError::basic_str(format!("Could not find commit: {}", commit_id.as_ref()))
-    }
-
-    pub fn local_parent_link_broken(commit_id: impl AsRef<str>) -> OxenError {
-        OxenError::basic_str(format!(
-            "Broken link to parent commit: {}",
-            commit_id.as_ref()
-        ))
     }
 
     pub fn file_error(path: impl AsRef<Path>, error: std::io::Error) -> OxenError {
@@ -658,14 +622,6 @@ impl OxenError {
     pub fn file_create_error(path: impl AsRef<Path>, error: std::io::Error) -> OxenError {
         OxenError::basic_str(format!(
             "Could not create file: {:?} error {:?}",
-            path.as_ref(),
-            error
-        ))
-    }
-
-    pub fn dir_create_error(path: impl AsRef<Path>, error: std::io::Error) -> OxenError {
-        OxenError::basic_str(format!(
-            "Could not create directory: {:?} error {:?}",
             path.as_ref(),
             error
         ))
@@ -719,13 +675,6 @@ impl OxenError {
         ))
     }
 
-    pub fn workspace_add_file_not_in_repo(path: impl AsRef<Path>) -> OxenError {
-        OxenError::basic_str(format!(
-            "File is outside of the repo {:?}\n\nYou must specify a path you would like to add the file at with the -d flag.\n\n  oxen workspace add /path/to/file.png -d my-images/\n",
-            path.as_ref()
-        ))
-    }
-
     pub fn cannot_overwrite_files(paths: &[PathBuf]) -> OxenError {
         let paths_str = paths
             .iter()
@@ -742,10 +691,6 @@ impl OxenError {
         OxenError::basic_str(
             "Must supply valid API key. Create an account at https://oxen.ai and then set the API key with:\n\n  oxen config --auth hub.oxen.ai <API_KEY>\n",
         )
-    }
-
-    pub fn file_has_no_parent(path: impl AsRef<Path>) -> OxenError {
-        OxenError::basic_str(format!("File has no parent: {:?}", path.as_ref()))
     }
 
     pub fn file_has_no_name(path: impl AsRef<Path>) -> OxenError {
