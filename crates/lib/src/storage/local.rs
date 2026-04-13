@@ -250,7 +250,7 @@ impl VersionStore for LocalVersionStore {
         &self,
         hash: &str,
         offset: u64,
-        data: &[u8],
+        data: Bytes,
     ) -> Result<(), OxenError> {
         let chunk_dir = self.version_chunk_dir(hash, offset);
         fs::create_dir_all(&chunk_dir).await?;
@@ -258,7 +258,7 @@ impl VersionStore for LocalVersionStore {
         let chunk_path = self.version_chunk_file(hash, offset);
 
         if !chunk_path.exists() {
-            fs::write(&chunk_path, data).await?;
+            fs::write(&chunk_path, &data).await?;
         }
 
         Ok(())

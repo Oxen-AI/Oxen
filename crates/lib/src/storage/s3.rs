@@ -44,7 +44,7 @@ impl S3VersionStore {
         }
     }
 
-    pub async fn init_client(&self) -> Result<Arc<Client>, OxenError> {
+    pub async fn client(&self) -> Result<Arc<Client>, OxenError> {
         let result_ref = self
             .client
             .get_or_init(|| async {
@@ -98,21 +98,24 @@ impl S3VersionStore {
 
     /// Get the directory containing a version file
     fn version_dir(&self, hash: &str) -> String {
-        let topdir = &hash[..2];
-        let subdir = &hash[2..];
-        format!("{}/{}/{}", self.prefix, topdir, subdir)
+        format!("{}/{}", self.prefix, hash)
     }
 
     /// Get the full path for a version file
     fn generate_key(&self, hash: &str) -> String {
         format!("{}/{}", self.version_dir(hash), VERSION_FILE_NAME)
     }
+
+    /// Get the S3 key for a chunk at a specific offset
+    fn chunk_key(&self, hash: &str, offset: u64) -> String {
+        format!("{}/chunks/{}", self.version_dir(hash), offset)
+    }
 }
 
 #[async_trait]
 impl VersionStore for S3VersionStore {
     async fn init(&self) -> Result<(), OxenError> {
-        let client = self.init_client().await?;
+        let client = self.client().await?;
 
         // Check permission to write to S3
         match client.head_bucket().bucket(&self.bucket).send().await {
@@ -168,7 +171,7 @@ impl VersionStore for S3VersionStore {
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
         size: u64,
     ) -> Result<(), OxenError> {
-        let client = self.init_client().await?;
+        let client = self.client().await?;
         let key = self.generate_key(hash);
 
         const ONESHOT_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
@@ -304,7 +307,7 @@ impl VersionStore for S3VersionStore {
     }
 
     async fn store_version(&self, hash: &str, data: &[u8]) -> Result<(), OxenError> {
-        let client = self.init_client().await?;
+        let client = self.client().await?;
         log::debug!("Storing version to S3");
         let key = self.generate_key(hash);
 
@@ -327,7 +330,7 @@ impl VersionStore for S3VersionStore {
         derived_filename: &str,
         derived_data: &[u8],
     ) -> Result<(), OxenError> {
-        let client = self.init_client().await?;
+        let client = self.client().await?;
         let key = format!("{}/{}", self.version_dir(orig_hash), derived_filename);
 
         client
@@ -346,7 +349,7 @@ impl VersionStore for S3VersionStore {
     }
 
     async fn get_version_size(&self, hash: &str) -> Result<u64, OxenError> {
-        let client = self.init_client().await?;
+        let client = self.client().await?;
         let key = self.generate_key(hash);
 
         let resp = client
@@ -365,7 +368,7 @@ impl VersionStore for S3VersionStore {
     }
 
     async fn get_version(&self, hash: &str) -> Result<Vec<u8>, OxenError> {
-        let client = self.init_client().await?;
+        let client = self.client().await?;
         let key = self.generate_key(hash);
 
         let resp = client
@@ -392,7 +395,7 @@ impl VersionStore for S3VersionStore {
         orig_hash: &str,
         derived_filename: &str,
     ) -> Result<u64, OxenError> {
-        let client = self.init_client().await?;
+        let client = self.client().await?;
         let key = format!("{}/{}", self.version_dir(orig_hash), derived_filename);
 
         let resp = client
@@ -415,7 +418,7 @@ impl VersionStore for S3VersionStore {
         hash: &str,
     ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
     {
-        let client = self.init_client().await?;
+        let client = self.client().await?;
         let key = self.generate_key(hash);
 
         let resp = client
@@ -437,7 +440,7 @@ impl VersionStore for S3VersionStore {
         derived_filename: &str,
     ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
     {
-        let client = self.init_client().await?;
+        let client = self.client().await?;
         let key = format!("{}/{}", self.version_dir(orig_hash), derived_filename);
 
         let resp = client
@@ -457,7 +460,7 @@ impl VersionStore for S3VersionStore {
         orig_hash: &str,
         derived_filename: &str,
     ) -> Result<bool, OxenError> {
-        let client = self.init_client().await?;
+        let client = self.client().await?;
         let key = format!("{}/{}", self.version_dir(orig_hash), derived_filename);
 
         match client
@@ -519,14 +522,23 @@ impl VersionStore for S3VersionStore {
 
     async fn store_version_chunk(
         &self,
-        _hash: &str,
-        _offset: u64,
-        _data: &[u8],
+        hash: &str,
+        offset: u64,
+        data: Bytes,
     ) -> Result<(), OxenError> {
-        // TODO: Implement S3 version chunk storage
-        Err(OxenError::basic_str(
-            "S3VersionStore store_version_chunk not yet implemented",
-        ))
+        let client = self.client().await?;
+        let key = self.chunk_key(hash, offset);
+
+        client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(&key)
+            .body(ByteStream::from(data))
+            .send()
+            .await
+            .map_err(OxenError::aws_s3_error)?;
+
+        Ok(())
     }
 
     async fn get_version_chunk_writer(
@@ -560,7 +572,7 @@ impl VersionStore for S3VersionStore {
     }
 
     async fn version_exists(&self, hash: &str) -> Result<bool, OxenError> {
-        let client = self.init_client().await?;
+        let client = self.client().await?;
         let key = self.generate_key(hash);
 
         match client
@@ -758,7 +770,7 @@ mod tests {
         let store = S3VersionStore::new_with_client(
             Arc::new(client),
             "test-bucket".to_string(),
-            "versions".to_string(),
+            "test-namespace/test-repo".to_string(),
         );
 
         (store, tmp, server_handle)
@@ -858,5 +870,80 @@ mod tests {
 
         let contents = tokio::fs::read(&dest_path).await.unwrap();
         assert_eq!(contents, data);
+    }
+
+    #[tokio::test]
+    async fn test_store_version_chunk() {
+        let (store, _tmp, _server) = setup().await;
+        let hash = "abcdef1234567890abcdef1234567890";
+        let chunk_data = Bytes::from_static(b"hello chunk");
+
+        store
+            .store_version_chunk(hash, 0, chunk_data.clone())
+            .await
+            .expect("store_version_chunk should succeed");
+
+        // Verify by reading the object back directly from S3
+        let client = store.client().await.expect("client should succeed");
+        let resp = client
+            .get_object()
+            .bucket(&store.bucket)
+            .key(store.chunk_key(hash, 0))
+            .send()
+            .await
+            .expect("chunk object should exist");
+        let body = resp
+            .body
+            .collect()
+            .await
+            .expect("body should collect")
+            .into_bytes();
+        assert_eq!(body, chunk_data);
+    }
+
+    #[tokio::test]
+    async fn test_store_version_chunk_multiple_offsets() {
+        let (store, _tmp, _server) = setup().await;
+        let hash = "abcdef1234567890abcdef1234567890";
+
+        store
+            .store_version_chunk(hash, 0, Bytes::from_static(b"chunk-0"))
+            .await
+            .expect("store chunk at offset 0 should succeed");
+        store
+            .store_version_chunk(hash, 1024, Bytes::from_static(b"chunk-1024"))
+            .await
+            .expect("store chunk at offset 1024 should succeed");
+
+        // Verify each chunk stored independently
+        let client = store.client().await.expect("client should succeed");
+
+        let body0 = client
+            .get_object()
+            .bucket(&store.bucket)
+            .key(store.chunk_key(hash, 0))
+            .send()
+            .await
+            .expect("chunk at offset 0 should exist")
+            .body
+            .collect()
+            .await
+            .expect("body should collect")
+            .into_bytes();
+        assert_eq!(&body0[..], b"chunk-0");
+
+        let body1024 = client
+            .get_object()
+            .bucket(&store.bucket)
+            .key(store.chunk_key(hash, 1024))
+            .send()
+            .await
+            .expect("chunk at offset 1024 should exist")
+            .body
+            .collect()
+            .await
+            .expect("body should collect")
+            .into_bytes();
+        assert_eq!(&body1024[..], b"chunk-1024");
     }
 }

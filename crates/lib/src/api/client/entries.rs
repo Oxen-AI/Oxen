@@ -518,7 +518,7 @@ async fn pull_entry_chunk(
         reqwest::StatusCode::OK => {
             let bytes = response.bytes().await?;
             version_store
-                .store_version_chunk(hash, chunk_start, &bytes)
+                .store_version_chunk(hash, chunk_start, bytes)
                 .await?;
             Ok(status)
         }

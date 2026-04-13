@@ -121,7 +121,7 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         &self,
         hash: &str,
         offset: u64,
-        data: &[u8],
+        data: Bytes,
     ) -> Result<(), OxenError>;
 
     /// Store a derived file (resized image, video thumbnail, etc.) corresponding to a file version
