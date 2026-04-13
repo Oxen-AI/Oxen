@@ -2,12 +2,10 @@ use crate::api;
 use crate::api::client;
 use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::error::OxenError;
-use crate::model::file::{FileContents, FileNew};
 use crate::model::{Branch, LocalRepository, Remote, RemoteRepository, RepoNew};
 use crate::repositories;
 use crate::view::repository::RepositoryCreationResponse;
 use crate::view::{NamespaceView, RepositoryResponse, StatusMessage};
-use reqwest::multipart;
 use serde_json::json;
 use serde_json::value;
 use std::fmt;
@@ -203,67 +201,6 @@ pub async fn create(repo_new: RepoNew) -> Result<RemoteRepository, OxenError> {
             "Create repository could not connect to {url}. Make sure you have the correct server and that it is running."
         );
         Err(OxenError::basic_str(err))
-    }
-}
-
-pub async fn create_repo_with_files(
-    repo_new: RepoNew,
-    user_email: &str,
-    user_name: &str,
-    files: Vec<FileNew>,
-) -> Result<RemoteRepository, OxenError> {
-    let host = repo_new.host();
-    let scheme = repo_new.scheme();
-    let url = api::endpoint::url_from_host_and_scheme(&host, "", scheme);
-
-    let new_repo_json = json!({
-        "name": repo_new.name,
-        "namespace": repo_new.namespace
-    });
-
-    let mut form = multipart::Form::new()
-        .text("new_repo", new_repo_json.to_string())
-        .text("email", user_email.to_string())
-        .text("name", user_name.to_string());
-
-    // Add each file to the multipart form
-    for file in files {
-        let file_part = match file.contents {
-            FileContents::Text(ref text) => multipart::Part::bytes(text.clone().into_bytes())
-                .file_name(file.path.to_string_lossy().into_owned()),
-            FileContents::Binary(ref bytes) => multipart::Part::bytes(bytes.clone())
-                .file_name(file.path.to_string_lossy().into_owned()),
-        };
-        form = form.part("file", file_part);
-    }
-
-    let client = client::new_for_url_no_user_agent(&url)?;
-
-    let res = client.post(&url).multipart(form).send().await?;
-    let body = client::parse_json_body(&url, res).await?;
-    let response: Result<RepositoryCreationResponse, serde_json::Error> =
-        serde_json::from_str(&body);
-
-    match response {
-        Ok(response) => Ok(RemoteRepository::from_creation_view(
-            &response.repository,
-            &Remote {
-                url: api::endpoint::remote_url_from_namespace_name_scheme(
-                    &host,
-                    &repo_new.namespace,
-                    &repo_new.name,
-                    &repo_new.scheme(),
-                ),
-                name: String::from(DEFAULT_REMOTE_NAME),
-            },
-        )),
-        Err(err) => {
-            let err = format!(
-                "Could not create or find repository [{}]: {err}\n{body}",
-                repo_new.repo_id()
-            );
-            Err(OxenError::basic_str(err))
-        }
     }
 }
 
@@ -668,70 +605,6 @@ mod tests {
             }
 
             // cleanup
-            api::client::repositories::delete(&repository).await?;
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_create_remote_repository_with_multipart() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|local_repo| async move {
-            let namespace = constants::DEFAULT_NAMESPACE;
-            let name = local_repo.dirname();
-
-            let user = UserConfig::get()?.to_user();
-
-            let readme_file = FileNew {
-                path: PathBuf::from("README"),
-                contents: FileContents::Text(String::from("Hello world!")),
-                user: user.clone(),
-            };
-
-            let csv_file = FileNew {
-                path: PathBuf::from("data.csv"),
-                contents: FileContents::Text(String::from("id,name\n1,Sample")),
-                user: user.clone(),
-            };
-
-            let png_file = FileNew {
-                path: PathBuf::from("image.png"),
-                contents: FileContents::Binary(vec![137, 80, 78, 71, 13, 10, 26, 10]), // PNG header bytes
-                user: user.clone(),
-            };
-
-            let mut repo_new =
-                RepoNew::from_namespace_name_host(namespace, &name, test::test_host(), None);
-            repo_new.scheme = Some("http".to_string());
-
-            let repository = api::client::repositories::create_repo_with_files(
-                repo_new,
-                "ox@oxen.com",
-                "oxen",
-                vec![readme_file, csv_file, png_file],
-            )
-            .await?;
-
-            assert_eq!(repository.name, name);
-
-            // List the files in the repo
-            let readme =
-                api::client::entries::get_entry(&repository, "README", DEFAULT_BRANCH_NAME)
-                    .await?
-                    .unwrap();
-            let csv = api::client::entries::get_entry(&repository, "data.csv", DEFAULT_BRANCH_NAME)
-                .await?
-                .unwrap();
-            let png =
-                api::client::entries::get_entry(&repository, "image.png", DEFAULT_BRANCH_NAME)
-                    .await?
-                    .unwrap();
-
-            assert_eq!(readme.filename(), "README");
-            assert_eq!(csv.filename(), "data.csv");
-            assert_eq!(png.filename(), "image.png");
-
-            // // Cleanup
             api::client::repositories::delete(&repository).await?;
             Ok(())
         })
