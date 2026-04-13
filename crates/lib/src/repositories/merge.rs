@@ -1990,6 +1990,61 @@ mod tests {
         .await
     }
 
+    /// Regression test: deletion of a file in a directory that's shared between LCA and base
+    /// (i.e., the directory hash is identical in both, so `unique_dir_entries` prunes it).
+    /// The merge branch deletes a file from that shared directory.
+    #[tokio::test]
+    async fn test_merge_into_base_three_way_delete_in_shared_dir() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
+
+            // LCA: create files in a subdirectory
+            let dir = repo.path.join("data");
+            util::fs::create_dir_all(&dir)?;
+            let file_a = dir.join("a.txt");
+            let file_b = dir.join("b.txt");
+            util::fs::write_to_path(&file_a, "aaa")?;
+            util::fs::write_to_path(&file_b, "bbb")?;
+            repositories::add(&repo, &file_a).await?;
+            repositories::add(&repo, &file_b).await?;
+            repositories::commit(&repo, "LCA: adding data/a.txt and data/b.txt")?;
+
+            // Feature branch: delete data/b.txt (leaving data/a.txt untouched)
+            repositories::branches::create_checkout(&repo, "feature")?;
+            util::fs::remove_file(&file_b)?;
+            repositories::add(&repo, &file_b).await?;
+            repositories::commit(&repo, "Feature: delete data/b.txt")?;
+
+            // Main branch: add an unrelated file to force divergence (3-way merge).
+            // Crucially, do NOT touch data/ — so data/ is identical in LCA and base.
+            repositories::checkout(&repo, &base_branch_name).await?;
+            let unrelated = repo.path.join("other.txt");
+            util::fs::write_to_path(&unrelated, "x")?;
+            repositories::add(&repo, &unrelated).await?;
+            repositories::commit(&repo, "Main: add other.txt")?;
+
+            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
+            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
+
+            let merge_commit =
+                repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
+            assert_eq!(merge_commit.parent_ids.len(), 2);
+
+            // data/a.txt should still exist, data/b.txt should be deleted
+            assert!(
+                repositories::tree::get_file_by_path(&repo, &merge_commit, "data/a.txt")?.is_some(),
+                "data/a.txt should exist in merge commit"
+            );
+            assert!(
+                repositories::tree::get_file_by_path(&repo, &merge_commit, "data/b.txt")?.is_none(),
+                "data/b.txt should be deleted in merge commit"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_merge_commit_into_base_server_safe_ff_does_not_touch_working_dir()
     -> Result<(), OxenError> {
