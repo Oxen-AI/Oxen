@@ -103,9 +103,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
         }
 
         // Combine all the chunks for a version file into a single file
-        let version_path = version_store
-            .combine_version_chunks(&version_id, true)
-            .await?;
+        version_store.combine_version_chunks(&version_id).await?;
 
         // If the workspace id is provided, stage the file
         if let Some(workspace_id) = request.workspace_id {
@@ -114,8 +112,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
                     "Workspace not found: {workspace_id}"
                 ))));
             };
-            // TODO: Can we just replace workspaces::files::add with this?
-            // repositories::workspaces::files::add(&workspace, &version_path)?;
+            let version_path = version_store.get_version_path(&version_id).await?;
             let dst_path = if let Some(dst_dir) = &file.dst_dir {
                 dst_dir.join(file.file_name.clone())
             } else {
@@ -124,7 +121,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
 
             core::v_latest::workspaces::files::add_version_file(
                 &workspace,
-                &version_path,
+                &*version_path,
                 &dst_path,
                 &version_id,
                 request.update_timestamp,

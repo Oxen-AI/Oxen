@@ -310,21 +310,16 @@ impl VersionStore for LocalVersionStore {
                 chunks.push(chunk_offset);
             }
         }
+        chunks.sort();
         Ok(chunks)
     }
 
-    async fn combine_version_chunks(
-        &self,
-        hash: &str,
-        cleanup: bool,
-    ) -> Result<PathBuf, OxenError> {
+    async fn combine_version_chunks(&self, hash: &str) -> Result<(), OxenError> {
         let version_path = self.version_path(hash);
         let mut output_file = File::create(&version_path).await?;
 
-        // Get list of chunks and sort them to ensure correct order
-        let mut chunks = self.list_version_chunks(hash).await?;
+        let chunks = self.list_version_chunks(hash).await?;
         log::debug!("combine_version_chunks found {:?} chunks", chunks.len());
-        chunks.sort();
 
         // Process each chunk
         for chunk_offset in chunks {
@@ -333,15 +328,13 @@ impl VersionStore for LocalVersionStore {
             tokio::io::copy(&mut chunk_file, &mut output_file).await?;
         }
 
-        // Cleanup the chunks directory if requested
-        if cleanup {
-            let chunks_dir = self.version_chunks_dir(hash);
-            if chunks_dir.exists() {
-                fs::remove_dir_all(&chunks_dir).await?;
-            }
+        // Clean up chunks
+        let chunks_dir = self.version_chunks_dir(hash);
+        if chunks_dir.exists() {
+            fs::remove_dir_all(&chunks_dir).await?;
         }
 
-        Ok(version_path)
+        Ok(())
     }
 
     // It's left here for a quick fix. TODO: Move the business logic to versions controller.
