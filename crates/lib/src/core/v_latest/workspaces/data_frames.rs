@@ -194,9 +194,18 @@ pub async fn rename(
     let new_db_path = repositories::workspaces::data_frames::duckdb_path(workspace, new_path);
     let new_db_path_parent = new_db_path.parent().unwrap();
 
-    // Close the cached connection before copying so DuckDB flushes its WAL to
-    // disk. Without this, the copy would include a WAL file that references
-    // the original catalog name, causing replay failures when the copy is opened.
+    // Explicitly checkpoint and then close the cached connection before copying.
+    // CHECKPOINT forces DuckDB to flush its WAL into the main database file.
+    // Without this, the copy could include a WAL file that references the
+    // original catalog name, causing replay failures when the copy is opened.
+    with_df_db_manager(&og_db_path, |manager| {
+        manager.with_conn(|conn| {
+            if let Err(e) = conn.execute_batch("CHECKPOINT") {
+                log::warn!("rename: CHECKPOINT before copy failed for {og_db_path:?}: {e}");
+            }
+            Ok(())
+        })
+    })?;
     df_db::remove_df_db_from_cache(&og_db_path)?;
 
     if !new_db_path_parent.exists() {
