@@ -16,6 +16,10 @@ use crate::explore::{
 };
 use thiserror::Error;
 
+//
+//  N a m e
+//
+
 pub struct Name(String);
 
 #[derive(Debug, Error)]
@@ -41,6 +45,10 @@ impl TryFrom<PathBuf> for Name {
     }
 }
 
+//
+//  A b s o l u t e    P a t h
+//
+
 pub struct AbsolutePath(PathBuf);
 
 impl AbsolutePath {
@@ -49,7 +57,15 @@ impl AbsolutePath {
         let absolute = path.canonicalize()?;
         Ok(Self(absolute))
     }
+
+    pub fn join(&self, name: &Name) -> Self {
+        Self(self.0.join(name.0.as_str()))
+    }
 }
+
+//
+//  R e l a t i v e    P a t h
+//
 
 /// The relative path to a file or directory within a repository.
 pub struct RelativePath(Vec<String>);
@@ -78,15 +94,20 @@ impl RelativePath {
         Ok(Self(components))
     }
 
-    pub fn components(&self) -> &[String] {
-        &self.0
+    #[inline]
+    pub fn components<'a>(&'a self) -> impl Iterator<Item = &'a str> {
+        self.0.iter().map(|s| s.as_str())
     }
 
-    /// Appends `other` to this current path, creating a new relative path.
+    /// Appends the file or directory name to this current path, creating a new relative path.
     pub fn join(&self, file_or_directory: &Name) -> RelativePath {
         let mut components = self.0.clone();
         components.push(file_or_directory.0.clone());
         RelativePath(components)
+    }
+
+    pub fn builder() -> RelativePathBuilder {
+        RelativePathBuilder(RelativePath(vec![]))
     }
 }
 
