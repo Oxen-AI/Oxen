@@ -1,12 +1,10 @@
-use clap::{Parser, Subcommand};
+use clap::Subcommand;
 use std::time::Duration;
 
-use framework::FrameworkResult;
+use super::framework::FrameworkResult;
+use super::migrate;
 
-pub mod framework;
-pub mod lmdb;
-pub mod migrate;
-
+#[allow(dead_code)]
 struct TestMetrics {
     pack_time: Duration,
     unpack_time: Duration,
@@ -16,23 +14,14 @@ struct TestMetrics {
     _unpack_memory_usage_bytes: u64,
 }
 
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    #[command(subcommand)]
-    command: Commands,
-}
-
 #[derive(Subcommand, Debug)]
-enum Commands {
+pub enum Commands {
     Migrate,
     Test,
 }
 
-fn main() -> FrameworkResult<()> {
-    let args = Args::parse();
-
-    match args.command {
+pub fn run(command: Commands) -> FrameworkResult<()> {
+    match command {
         Commands::Migrate => migrate::migrate(),
         Commands::Test => migrate::test(),
     }
