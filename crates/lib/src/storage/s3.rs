@@ -111,6 +111,11 @@ impl S3VersionStore {
         format!("{}/chunks/{}", self.version_dir(hash), offset)
     }
 
+    /// Get the S3 key prefix for all chunks of a version
+    fn chunks_prefix(&self, hash: &str) -> String {
+        format!("{}/chunks/", self.version_dir(hash))
+    }
+
     /// List all S3 object keys under a given prefix, following continuation tokens.
     async fn list_objects_with_prefix(&self, prefix: &str) -> Result<Vec<String>, OxenError> {
         let client = self.client().await?;
@@ -630,11 +635,20 @@ impl VersionStore for S3VersionStore {
         ))
     }
 
-    async fn list_version_chunks(&self, _hash: &str) -> Result<Vec<u64>, OxenError> {
-        // TODO: Implement S3 version chunk listing
-        Err(OxenError::basic_str(
-            "S3VersionStore list_version_chunks not yet implemented",
-        ))
+    async fn list_version_chunks(&self, hash: &str) -> Result<Vec<u64>, OxenError> {
+        let prefix = self.chunks_prefix(hash);
+        let keys = self.list_objects_with_prefix(&prefix).await?;
+
+        let mut offsets = Vec::with_capacity(keys.len());
+        for key in &keys {
+            if let Some(offset_str) = key.strip_prefix(&prefix)
+                && let Ok(offset) = offset_str.parse::<u64>()
+            {
+                offsets.push(offset);
+            }
+        }
+
+        Ok(offsets)
     }
 
     async fn version_exists(&self, hash: &str) -> Result<bool, OxenError> {
@@ -1057,6 +1071,65 @@ mod tests {
             .delete_version(hash)
             .await
             .expect("delete of missing version should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_list_version_chunks() {
+        let (store, _tmp, _server) = setup().await;
+        let hash = "abcdef1234567890abcdef1234567890";
+
+        store
+            .store_version_chunk(hash, 0, Bytes::from_static(b"chunk-0"))
+            .await
+            .unwrap();
+        store
+            .store_version_chunk(hash, 10240, Bytes::from_static(b"chunk-10240"))
+            .await
+            .unwrap();
+        store
+            .store_version_chunk(hash, 20480, Bytes::from_static(b"chunk-20480"))
+            .await
+            .unwrap();
+
+        let mut offsets = store.list_version_chunks(hash).await.unwrap();
+        offsets.sort();
+        assert_eq!(offsets, vec![0, 10240, 20480]);
+    }
+
+    #[tokio::test]
+    async fn test_list_version_chunks_empty() {
+        let (store, _tmp, _server) = setup().await;
+        let hash = "abcdef1234567890abcdef1234567890";
+
+        let offsets = store.list_version_chunks(hash).await.unwrap();
+        assert!(offsets.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_version_chunks_isolates_by_hash() {
+        let (store, _tmp, _server) = setup().await;
+        let hash_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let hash_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+        store
+            .store_version_chunk(hash_a, 0, Bytes::from_static(b"a-chunk"))
+            .await
+            .unwrap();
+        store
+            .store_version_chunk(hash_b, 0, Bytes::from_static(b"b-chunk-0"))
+            .await
+            .unwrap();
+        store
+            .store_version_chunk(hash_b, 512, Bytes::from_static(b"b-chunk-512"))
+            .await
+            .unwrap();
+
+        let offsets_a = store.list_version_chunks(hash_a).await.unwrap();
+        assert_eq!(offsets_a, vec![0]);
+
+        let mut offsets_b = store.list_version_chunks(hash_b).await.unwrap();
+        offsets_b.sort();
+        assert_eq!(offsets_b, vec![0, 512]);
     }
 
     #[tokio::test]
