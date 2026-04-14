@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Test Suite
+  rust-test:
+    name: Rust Tests
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -73,6 +73,7 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: rust-test
           save-if: ${{ github.ref == 'refs/heads/main' }} # Only save cache on main; always restore.
           cache-all-crates: true
           cache-on-failure: true
@@ -132,6 +133,118 @@ jobs:
         run: |
           Start-Process ".\target\debug\oxen-server.exe" -ArgumentList "start"
           cargo nextest run --workspace --profile ci
+
+  python-test:
+    name: Python Tests
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-x64-8cpu-32ram-300ssd]
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            shell: bash -leo pipefail {0}
+          - os: macos-latest
+            platform: macos
+            shell: bash -leo pipefail {0}
+          - os: windows-x64-8cpu-32ram-300ssd
+            platform: windows
+            shell: powershell
+      fail-fast: false
+
+    steps:
+      - name: Free up disk space
+        if: matrix.platform == 'linux'
+        run: |
+          echo "=== Before cleanup ==="
+          df -h
+
+          # Remove unnecessary tools and files to free up space
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+
+          # Clean apt cache
+          sudo apt-get clean
+
+          echo "=== After cleanup ==="
+          df -h
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.AWS_ROLE }}
+          role-duration-seconds: 3600
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Rust Toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ${{ matrix.platform == 'windows' && '-D warnings -C link-arg=/DEBUG:NONE' || '-D warnings' }}
+          cache: false # We use Swatinem/rust-cache directly below for save-if control.
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: python-test
+          save-if: ${{ github.ref == 'refs/heads/main' }} # Only save cache on main; always restore.
+          cache-all-crates: true
+          cache-on-failure: true
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.0.0
+        with:
+          python-version: "3.11" # Test against the earliest supported Python version
+
+      - name: Install dependencies (macOS)
+        if: matrix.platform == 'macos'
+        run: |
+          brew update
+          brew install redis pkg-config
+          brew services start redis
+
+      - name: Setup test directories (Linux/macOS)
+        if: matrix.platform != 'windows'
+        run: |
+          mkdir -p data/test/runs
+          mkdir -p /tmp/oxen_sync/
+
+      - name: Setup test directories (Windows)
+        if: matrix.platform == 'windows'
+        run: |
+          mkdir .\data\test\runs
+
+      - name: Build oxen rust project
+        run: cargo build --workspace
+
+      - name: Setup oxen-server user (Linux/macOS)
+        if: matrix.platform != 'windows'
+        run: |
+          ./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
+          cp user_config.toml data/test/config/user_config.toml
+
+      - name: Setup oxen-server user (Windows)
+        if: matrix.platform == 'windows'
+        run: |
+          .\target\debug\oxen-server.exe add-user --email ox@oxen.ai --name Ox --output user_config.toml
+          copy user_config.toml data\test\config\user_config.toml
+
+      - name: Start oxen-server (Linux/macOS)
+        if: matrix.platform != 'windows'
+        run: ./target/debug/oxen-server start &
+
+      - name: Start oxen-server (Windows)
+        if: matrix.platform == 'windows'
+        run: Start-Process ".\target\debug\oxen-server.exe" -ArgumentList "start"
 
       # CLI Tests
       - name: Run CLI tests (Linux/macOS)
