@@ -1,5 +1,7 @@
 use std::ops::Deref;
 
+use std::path::PathBuf;
+
 use liboxen::{error::OxenError, model::TMerkleTreeNode};
 use thiserror::Error as ThisError;
 
@@ -19,7 +21,7 @@ enum MerkleError {
     HashDoesNotEqualContent,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Hash(u128);
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -50,7 +52,8 @@ impl From<&HexHash> for Hash {
     fn from(value: &HexHash) -> Self {
         value
             .0
-            .try_from()
+            .as_str()
+            .try_into()
             .expect("Invariant violated! A HexHash was made that bypassed safe creation!")
     }
 }
@@ -84,6 +87,64 @@ pub trait MerkleMetadataStore {
     fn insert(&self, parent: Hash, content: impl Iterator<Item = u8>) -> Option<Hash>;
 
     fn path(&self, hash: Hash) -> Option<Vec<Hash>>;
+}
+
+pub struct Name(String);
+
+#[derive(Debug, ThisError)]
+pub enum NameError {
+    #[error("No name found for path: '{0}'")]
+    PathHasNoName(PathBuf),
+    #[error("Path has non UTF-8 name: '{0}'")]
+    NonUtf8Name(PathBuf),
+}
+
+/// Gets the name of the file or directory only.
+impl TryFrom<PathBuf> for Name {
+    type Error = NameError;
+
+    fn try_from(path: PathBuf) -> Result<Self, Self::Error> {
+        match path.file_name() {
+            Some(name) => match name.to_str() {
+                Some(name) => Ok(Name(name.to_string())),
+                None => Err(NameError::NonUtf8Name(path)),
+            },
+            None => Err(NameError::PathHasNoName(path)),
+        }
+    }
+}
+
+pub enum MerkleTree {
+    Dir {
+        hash: Hash,
+        name: String,
+        children: Vec<Box<Self>>,
+    },
+    File {
+        hash: Hash,
+        name: String,
+        content: Vec<u8>,
+    },
+}
+
+impl MerkleTree {
+    pub fn hash(&self) -> Hash {
+        match self {
+            MerkleTree::Dir { hash, .. } => *hash,
+            MerkleTree::File { hash, .. } => *hash,
+        }
+    }
+}
+
+pub struct Root {
+    pub hash: Hash,
+    pub children: Vec<Box<MerkleTree>>,
+}
+
+impl Root {
+    pub fn hash(&self) -> Hash {
+        self.hash
+    }
 }
 
 pub trait MerkleTreePlatform {
