@@ -39,23 +39,6 @@ pub fn delete_remote(repo: &mut LocalRepository, name: &str) -> Result<(), OxenE
     Ok(())
 }
 
-/// # Set the workspace for a remote-mode repository
-/// Tells the CLI which workspace to upload the changes to
-pub fn set_workspace(repo: &mut LocalRepository, name: &str) -> Result<String, OxenError> {
-    repo.set_workspace(name)?;
-    repo.save()?;
-
-    Ok(name.to_string())
-}
-
-/// # Remove a workspace for a repository
-/// If you added a workspace you no longer want, can remove it by supplying the name
-pub fn delete_workspace(repo: &mut LocalRepository, name: &str) -> Result<(), OxenError> {
-    repo.delete_workspace(name)?;
-    repo.save()?;
-    Ok(())
-}
-
 /// # Set the version store location for a repository
 /// Tells the CLI where to save version files
 pub async fn set_version_store(

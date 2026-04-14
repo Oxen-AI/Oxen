@@ -14,7 +14,6 @@ use futures::{StreamExt, TryStreamExt, stream};
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 pub async fn list_diff_entries(
     repo: &LocalRepository,
@@ -719,65 +718,4 @@ fn collect_modified_entries(
         }
     }
     Ok(())
-}
-
-#[allow(dead_code)]
-fn subset_dir_diffs_to_direct_children(
-    entries: Vec<DiffEntry>,
-    dir: PathBuf,
-) -> Result<Vec<DiffEntry>, OxenError> {
-    let mut filtered_entries: Vec<DiffEntry> = vec![];
-
-    for entry in entries {
-        log::debug!(
-            "subset_dir_diffs_to_direct_children entry.filename {:?} dir {:?}",
-            entry.filename,
-            dir
-        );
-
-        let status = DiffEntryStatus::from_str(&entry.status)?;
-        let relevant_entry = match status {
-            DiffEntryStatus::Added | DiffEntryStatus::Modified => entry.head_entry.as_ref(),
-            DiffEntryStatus::Removed => entry.base_entry.as_ref(),
-        };
-
-        if let Some(meta_entry) = relevant_entry
-            && let Some(resource) = &meta_entry.resource
-        {
-            let path = PathBuf::from(&resource.path);
-            log::debug!("subset_dir_diffs_to_direct_children path {path:?} dir {dir:?}");
-            if path.parent() == Some(dir.as_path()) {
-                filtered_entries.push(entry);
-            }
-        }
-    }
-
-    Ok(filtered_entries)
-}
-
-#[allow(dead_code)]
-fn subset_file_diffs_to_direct_children(
-    entries: Vec<DiffFileNode>,
-    dir: PathBuf,
-) -> Result<Vec<DiffFileNode>, OxenError> {
-    let mut filtered_entries: Vec<DiffFileNode> = vec![];
-
-    for entry in entries {
-        let relevant_entry = match entry.status {
-            DiffEntryStatus::Added | DiffEntryStatus::Modified => entry.head_entry.as_ref(),
-            DiffEntryStatus::Removed => entry.base_entry.as_ref(),
-        };
-
-        log::debug!(
-            "subset_file_diffs_to_direct_children entry.path {:?} dir {:?}",
-            entry.path,
-            dir
-        );
-
-        if relevant_entry.is_some() && entry.path.parent() == Some(dir.as_path()) {
-            filtered_entries.push(entry);
-        }
-    }
-
-    Ok(filtered_entries)
 }

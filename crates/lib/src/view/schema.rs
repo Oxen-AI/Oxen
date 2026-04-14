@@ -26,10 +26,3 @@ pub struct ListSchemaResponse {
     pub commit: Option<Commit>,
     pub resource: Option<ResourceVersion>,
 }
-
-/* For getting schemas directly by hash - no path associated */
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SchemaResponse {
-    pub status: StatusMessage,
-    pub schema: Schema,
-}

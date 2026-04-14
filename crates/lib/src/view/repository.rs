@@ -1,7 +1,6 @@
 use super::{DataTypeCount, StatusMessage};
-use crate::model::{Commit, EntryDataType, MetadataEntry, RemoteRepository};
+use crate::model::{Commit, EntryDataType, MetadataEntry};
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 use utoipa::ToSchema;
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
@@ -179,20 +178,6 @@ pub struct ListRepositoryResponse {
     example = json!({
         "status": "success",
         "status_message": "resource_found",
-        "repository_api_url": "http://localhost:3000/api/repos/ox/ImageNet-1k",
-    })
-)]
-pub struct RepositoryResolveResponse {
-    pub status: String,
-    pub status_message: String,
-    pub repository_api_url: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, ToSchema)]
-#[schema(
-    example = json!({
-        "status": "success",
-        "status_message": "resource_found",
         "repository": {
             "data_size": 1074288000,
             "data_types": [
@@ -239,45 +224,4 @@ pub struct DataTypeView {
 pub struct RepositoryStatsView {
     pub data_size: u64,
     pub data_types: Vec<DataTypeView>,
-}
-
-impl RepositoryView {
-    pub fn from_remote(repository: RemoteRepository) -> RepositoryView {
-        RepositoryView {
-            namespace: repository.namespace.clone(),
-            name: repository.name,
-            min_version: repository.min_version,
-            is_empty: repository.is_empty,
-        }
-    }
-}
-
-impl RepositoryDataTypesView {
-    pub fn total_files(&self) -> usize {
-        self.data_types.iter().map(|dt| dt.count).sum()
-    }
-
-    pub fn data_types_str(data_type_counts: &Vec<DataTypeCount>) -> String {
-        let mut data_types_str = String::new();
-        for data_type_count in data_type_counts {
-            if data_type_count.count == 0 {
-                continue;
-            }
-            if let Ok(edt) = EntryDataType::from_str(&data_type_count.data_type) {
-                let emoji = edt.to_emoji();
-                let data = format!(
-                    "{} {} ({})\t",
-                    emoji, data_type_count.data_type, data_type_count.count
-                );
-                data_types_str.push_str(&data);
-            } else {
-                let data = format!(
-                    "{} ({})\t",
-                    data_type_count.data_type, data_type_count.count
-                );
-                data_types_str.push_str(&data);
-            }
-        }
-        data_types_str
-    }
 }

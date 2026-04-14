@@ -299,27 +299,6 @@ pub fn get_dir_with_children_recursive(
     }
 }
 
-pub fn get_dir_with_unique_children(
-    repo: &LocalRepository,
-    commit: &Commit,
-    path: impl AsRef<Path>,
-    base_hashes: &HashSet<MerkleHash>,
-    unique_hashes: &mut HashSet<MerkleHash>,
-    dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
-) -> Result<Option<MerkleTreeNode>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_19_0 => CommitMerkleTreeV0_19_0::dir_with_children(repo, commit, path),
-        _ => CommitMerkleTreeLatest::dir_with_unique_children(
-            repo,
-            commit,
-            path,
-            base_hashes,
-            unique_hashes,
-            dir_hashes,
-        ),
-    }
-}
-
 /// Helper function where you can pass in Optional depth and Optional path and get a tree
 /// If depth is None, it will default to -1 which means the entire subtree
 /// If path is None, it will default to the root
@@ -413,27 +392,6 @@ pub fn list_files_and_folders(node: &MerkleTreeNode) -> Result<Vec<MerkleTreeNod
 
     // The dir node will have vnode children
     let mut children = Vec::new();
-    for child in &node.children {
-        if let EMerkleTreeNode::VNode(_) = &child.node {
-            children.extend(child.children.iter().cloned());
-        }
-    }
-    Ok(children)
-}
-
-/// List the files and folders given a directory node in a HashSet
-pub fn list_files_and_folders_set(
-    node: &MerkleTreeNode,
-) -> Result<HashSet<MerkleTreeNode>, OxenError> {
-    if MerkleTreeNodeType::Dir != node.node.node_type() {
-        return Err(OxenError::basic_str(format!(
-            "list_files_and_folders Merkle tree node is not a directory: '{:?}'",
-            node.node.node_type()
-        )));
-    }
-
-    // The dir node will have vnode children
-    let mut children = HashSet::new();
     for child in &node.children {
         if let EMerkleTreeNode::VNode(_) = &child.node {
             children.extend(child.children.iter().cloned());

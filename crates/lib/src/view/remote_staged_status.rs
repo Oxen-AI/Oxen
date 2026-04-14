@@ -4,53 +4,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     model::{
-        Commit, LocalRepository, MetadataEntry, ModEntry, StagedData, StagedEntry,
-        StagedEntryStatus, SummarizedStagedDirStats,
+        LocalRepository, MetadataEntry, StagedData, StagedEntry, StagedEntryStatus,
+        SummarizedStagedDirStats,
     },
     util,
 };
 
-use super::{
-    JsonDataFrame, JsonDataFrameViews, PaginatedDirEntries, StatusMessage,
-    entries::{EMetadataEntry, ResourceVersion},
-    json_data_frame_view::DerivedDFResource,
-};
-
-#[derive(Deserialize, Serialize, Debug)]
-pub struct DFIsEditableResponse {
-    #[serde(flatten)]
-    pub status: StatusMessage,
-    pub is_editable: bool,
-}
-#[derive(Deserialize, Serialize, Debug)]
-pub struct DataFrameByResourceResponse {
-    #[serde(flatten)]
-    pub status: StatusMessage,
-    pub data_frame: JsonDataFrameViews,
-    pub commit: Option<Commit>,
-    pub resource: Option<ResourceVersion>,
-    pub derived_resource: Option<DerivedDFResource>,
-    pub is_editable: bool,
-}
-
-#[derive(Deserialize, Serialize, Debug)]
-pub struct StagedFileModResponse {
-    #[serde(flatten)]
-    pub status: StatusMessage,
-    pub modification: ModEntry,
-}
-
-#[derive(Deserialize, Serialize, Debug)]
-pub struct ListStagedFileModResponseRaw {
-    #[serde(flatten)]
-    pub status: StatusMessage,
-    pub data_type: String,
-    pub modifications: Vec<ModEntry>,
-    pub page_number: usize,
-    pub page_size: usize,
-    pub total_pages: usize,
-    pub total_entries: usize,
-}
+use super::{PaginatedDirEntries, StatusMessage, entries::EMetadataEntry};
 
 // TODO: Removed dirs
 #[derive(Deserialize, Serialize, Debug)]
@@ -66,20 +26,6 @@ pub struct RemoteStagedStatusResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
     pub staged: RemoteStagedStatus,
-}
-
-#[derive(Deserialize, Serialize, Debug)]
-pub struct StagedDFModifications {
-    pub added_rows: Option<JsonDataFrame>,
-    // TODO: add other types
-}
-
-#[derive(Deserialize, Serialize, Debug)]
-pub struct ListStagedFileModResponseDF {
-    #[serde(flatten)]
-    pub status: StatusMessage,
-    pub data_type: String,
-    pub modifications: StagedDFModifications,
 }
 
 impl RemoteStagedStatus {

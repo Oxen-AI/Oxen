@@ -3163,17 +3163,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fd-lock"
-version = "4.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
-dependencies = [
- "cfg-if",
- "rustix",
- "windows-sys 0.59.0",
-]
-
-[[package]]
 name = "fdeflate"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4514,7 +4503,6 @@ dependencies = [
  "bytes",
  "bytesize",
  "bytevec",
- "chrono",
  "codspeed-criterion-compat",
  "colored 2.2.0",
  "comfy-table",
@@ -4524,7 +4512,6 @@ dependencies = [
  "dirs",
  "duckdb",
  "dunce",
- "fd-lock",
  "filetime",
  "flate2",
  "fs_extra",
@@ -4574,7 +4561,6 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
- "serde_url_params",
  "serde_with",
  "serial_test",
  "sha2 0.10.9",
@@ -5449,7 +5435,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "tracing-appender",
  "uuid",
 ]
 
@@ -7762,16 +7747,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf41e0cfaf7226dca15e8197172c295a782857fcb97fad1808a166870dee75a3"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "serde_url_params"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c43307d0640738af32fe8d01e47119bc0fc8a686be470a44a586caff76dfb34"
-dependencies = [
- "serde",
- "url",
 ]
 
 [[package]]

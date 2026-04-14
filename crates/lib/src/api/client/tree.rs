@@ -134,31 +134,6 @@ pub async fn download_node(
     Ok(node)
 }
 
-/// Download a node and all its children from the remote repository merkle tree by hash
-pub async fn download_node_with_children(
-    local_repo: &LocalRepository,
-    remote_repo: &RemoteRepository,
-    node_id: &MerkleHash,
-) -> Result<MerkleTreeNode, OxenError> {
-    let node_hash_str = node_id.to_string();
-    let uri = format!("/tree/nodes/hash/{node_hash_str}/download");
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
-    log::debug!("downloading node with children {node_hash_str} from {url}");
-
-    node_download_request(local_repo, &url).await?;
-
-    log::debug!("unpacked node {node_hash_str}");
-
-    // We just downloaded, so unwrap is safe
-    // REFACTOR: Get through repositories::tree
-    let node = CommitMerkleTree::read_node(local_repo, node_id, true)?.unwrap();
-
-    log::debug!("read node {node}");
-
-    Ok(node)
-}
-
 /// Downloads the full merkle tree from the remote repository
 #[tracing::instrument(skip_all)]
 pub async fn download_tree(

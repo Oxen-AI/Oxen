@@ -1,4 +1,3 @@
-use crate::model::ContentHashable;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 use utoipa::ToSchema;
@@ -23,12 +22,6 @@ impl StagedEntry {
             hash: String::from(""),
             status,
         }
-    }
-}
-
-impl ContentHashable for StagedEntry {
-    fn content_hash(&self) -> String {
-        self.hash.clone()
     }
 }
 

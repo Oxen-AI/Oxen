@@ -1,10 +1,8 @@
 //! The structs and enums that are used to represent the data in the oxen library
 //!
 
-pub mod base_head;
 pub mod branch;
 pub mod commit;
-pub mod content_type;
 pub mod data_frame;
 pub mod diff;
 pub mod entry;
@@ -13,7 +11,6 @@ pub mod merge_conflict;
 pub mod merkle_tree;
 pub mod metadata;
 pub mod namespace;
-pub mod object_id;
 pub mod parsed_resource;
 pub mod partial_node;
 pub mod remote;
@@ -36,7 +33,6 @@ pub use crate::model::repository::repo_new::RepoNew;
 pub use crate::model::repository::repo_stats::{DataTypeStat, RepoStats};
 
 // Commit
-pub use crate::model::base_head::BaseHead;
 pub use crate::model::commit::{Commit, CommitStats, NewCommit, NewCommitBody};
 
 // Branch
@@ -44,14 +40,10 @@ pub use crate::model::branch::Branch;
 pub use crate::model::remote_branch::RemoteBranch;
 
 // Entry (TODO: These should just be nodes in the tree)
-pub use crate::model::content_type::ContentType;
 pub use crate::model::diff::diff_entry::DiffEntry;
-pub use crate::model::entry::ContentHashable;
 pub use crate::model::entry::commit_entry::CommitEntry;
 pub use crate::model::entry::entry_data_type::EntryDataType;
 pub use crate::model::entry::metadata_entry::MetadataEntry;
-pub use crate::model::entry::mod_entry::ModEntry;
-pub use crate::model::entry::remote_entry::RemoteEntry;
 pub use crate::model::entry::staged_entry::{StagedEntry, StagedEntryStatus};
 
 // Merge
@@ -62,7 +54,6 @@ pub use crate::model::data_frame::data_frame_size::DataFrameSize;
 
 pub use crate::model::user::User;
 
-pub use crate::model::object_id::ObjectID;
 pub use crate::model::parsed_resource::ParsedResource;
 
 pub use crate::model::staged_data::StagedData;

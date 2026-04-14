@@ -3,7 +3,7 @@ use super::User;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use utoipa::ToSchema;
 
 #[derive(Debug, Clone, ToSchema)]
@@ -75,22 +75,4 @@ pub struct TempFileNew {
 pub struct TempFilePathNew {
     pub path: PathBuf,
     pub temp_file_path: PathBuf,
-}
-
-impl FileNew {
-    pub fn new_text(path: impl AsRef<Path>, contents: impl AsRef<str>, user: User) -> FileNew {
-        FileNew {
-            path: path.as_ref().to_path_buf(),
-            contents: FileContents::Text(contents.as_ref().to_string()),
-            user,
-        }
-    }
-
-    pub fn new_binary(path: impl AsRef<Path>, contents: impl AsRef<[u8]>, user: User) -> FileNew {
-        FileNew {
-            path: path.as_ref().to_path_buf(),
-            contents: FileContents::Binary(contents.as_ref().to_vec()),
-            user,
-        }
-    }
 }

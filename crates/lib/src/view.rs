@@ -36,8 +36,7 @@ pub mod workspaces;
 pub use crate::view::compare::CompareEntriesResponse;
 pub use crate::view::data_type_count::DataTypeCount;
 pub use crate::view::file_metadata::{
-    ErrorFileInfo, ErrorFilesResponse, FileMetadata, FileMetadataResponse, FilePathsResponse,
-    FileWithHash,
+    ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash,
 };
 pub use crate::view::mime_type_count::MimeTypeCount;
 
@@ -50,13 +49,11 @@ pub use crate::view::json_data_frame_view::{
 pub use crate::view::namespace::{ListNamespacesResponse, NamespaceResponse, NamespaceView};
 pub use crate::view::schema::ListSchemaResponse;
 
-pub use crate::view::repository::{
-    ListRepositoryResponse, RepositoryResolveResponse, RepositoryResponse, RepositoryView,
-};
+pub use crate::view::repository::{ListRepositoryResponse, RepositoryResponse, RepositoryView};
 
 pub use crate::view::entries::{
     CommitEntryVersion, EntryResponse, PaginatedDirEntries, PaginatedDirEntriesResponse,
-    PaginatedEntries, PaginatedEntryVersions, PaginatedEntryVersionsResponse, RemoteEntryResponse,
+    PaginatedEntryVersions, PaginatedEntryVersionsResponse,
 };
 
 pub use crate::view::commit::{
@@ -77,10 +74,7 @@ pub use crate::view::pagination::Pagination;
 pub use crate::view::health::HealthResponse;
 pub use crate::view::oxen_response::OxenResponse;
 
-pub use crate::view::remote_staged_status::{
-    ListStagedFileModResponseDF, ListStagedFileModResponseRaw, RemoteStagedStatus,
-    RemoteStagedStatusResponse, StagedFileModResponse,
-};
+pub use crate::view::remote_staged_status::{RemoteStagedStatus, RemoteStagedStatusResponse};
 
 pub use crate::view::sql_parse_error::SQLParseError;
 

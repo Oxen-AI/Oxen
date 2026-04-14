@@ -4,7 +4,7 @@
 use crate::core;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::entry::commit_entry::{Entry, SchemaEntry};
+use crate::model::entry::commit_entry::Entry;
 use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::opts::{PaginateOpts, SortOpts};
 use crate::repositories;
@@ -17,7 +17,6 @@ use crate::model::{
 };
 use crate::view::PaginatedDirEntries;
 use futures::{StreamExt, TryStreamExt, stream};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Get a directory object for a commit
@@ -261,61 +260,6 @@ pub fn compute_entries_size(entries: &[CommitEntry]) -> Result<u64, OxenError> {
 pub fn compute_generic_entries_size(entries: &[Entry]) -> Result<u64, OxenError> {
     let total_size: u64 = entries.into_par_iter().map(|e| e.num_bytes()).sum();
     Ok(total_size)
-}
-
-pub fn compute_schemas_size(schemas: &[SchemaEntry]) -> Result<u64, OxenError> {
-    let total_size: u64 = schemas.into_par_iter().map(|e| e.num_bytes).sum();
-    Ok(total_size)
-}
-
-/// Given a list of entries, group them by their parent directory.
-pub fn group_commit_entries_to_parent_dirs(
-    entries: &[CommitEntry],
-) -> HashMap<PathBuf, Vec<CommitEntry>> {
-    let mut results: HashMap<PathBuf, Vec<CommitEntry>> = HashMap::new();
-
-    for entry in entries.iter() {
-        if let Some(parent) = entry.path.parent() {
-            results
-                .entry(parent.to_path_buf())
-                .or_default()
-                .push(entry.clone());
-        }
-    }
-
-    results
-}
-
-pub fn group_entries_to_parent_dirs(entries: &[Entry]) -> HashMap<PathBuf, Vec<Entry>> {
-    let mut results: HashMap<PathBuf, Vec<Entry>> = HashMap::new();
-
-    for entry in entries.iter() {
-        if let Some(parent) = entry.path().parent() {
-            results
-                .entry(parent.to_path_buf())
-                .or_default()
-                .push(entry.clone());
-        }
-    }
-
-    results
-}
-
-pub fn group_schemas_to_parent_dirs(
-    schema_entries: &[SchemaEntry],
-) -> HashMap<PathBuf, Vec<SchemaEntry>> {
-    let mut results: HashMap<PathBuf, Vec<SchemaEntry>> = HashMap::new();
-
-    for entry in schema_entries.iter() {
-        if let Some(parent) = entry.path.parent() {
-            results
-                .entry(parent.to_path_buf())
-                .or_default()
-                .push(entry.clone());
-        }
-    }
-
-    results
 }
 
 pub async fn list_missing_files_in_commit_range(

@@ -1,7 +1,7 @@
 use crate::api;
 use crate::core::versions::MinOxenVersion;
 use crate::view::RepositoryView;
-use crate::view::repository::{RepositoryCreationView, RepositoryDataTypesView};
+use crate::view::repository::RepositoryCreationView;
 use crate::{error::OxenError, model::Remote};
 use http::Uri;
 use serde::{Deserialize, Serialize};
@@ -16,19 +16,6 @@ pub struct RemoteRepository {
 }
 
 impl RemoteRepository {
-    pub fn from_data_view(
-        repository: &RepositoryDataTypesView,
-        remote: &Remote,
-    ) -> RemoteRepository {
-        RemoteRepository {
-            namespace: repository.namespace.clone(),
-            name: repository.name.clone(),
-            remote: remote.clone(),
-            min_version: repository.min_version.clone(),
-            is_empty: repository.is_empty,
-        }
-    }
-
     pub fn from_view(repository: &RepositoryView, remote: &Remote) -> RemoteRepository {
         RemoteRepository {
             namespace: repository.namespace.clone(),
@@ -72,13 +59,6 @@ impl RemoteRepository {
         // parse it from the url
         let uri = self.remote.url.parse::<Uri>().unwrap();
         uri.host().unwrap().to_string()
-    }
-
-    /// Host of the remote repository
-    pub fn port(&self) -> String {
-        // parse it from the url
-        let uri = self.remote.url.parse::<Uri>().unwrap();
-        uri.port().unwrap().to_string()
     }
 
     /// Scheme of the remote repository

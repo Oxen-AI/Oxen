@@ -49,21 +49,6 @@ pub fn remote_url_from_name_and_scheme(host: &str, name: &str, scheme: &str) -> 
     format!("{scheme}://{host}/{name}")
 }
 
-pub fn url_from_remote_url(url: &str) -> Result<String, OxenError> {
-    log::debug!("creating url_from_remote_url {url:?}");
-    match Url::parse(url) {
-        Ok(mut parsed_url) => {
-            let new_path = format!("{}{}", API_NAMESPACE, parsed_url.path());
-            parsed_url.set_path(&new_path);
-            Ok(parsed_url.to_string())
-        }
-        Err(e) => {
-            log::warn!("Invalid remote url: {url:?}\n{e:?}");
-            Err(OxenError::invalid_set_remote_url(url))
-        }
-    }
-}
-
 pub fn url_from_remote(remote: &Remote, uri: &str) -> Result<String, OxenError> {
     // log::info!("url_from_remote creating url_from_remote {remote:?} -> {uri:?}");
     match Url::parse(&remote.url) {

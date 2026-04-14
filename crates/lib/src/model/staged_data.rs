@@ -132,32 +132,12 @@ impl StagedData {
             && self.moved_files.is_empty()
     }
 
-    pub fn has_added_entries(&self) -> bool {
-        !self.staged_dirs.is_empty() || !self.staged_files.is_empty()
-    }
-
-    pub fn has_unsynced_entries(&self) -> bool {
-        !self.unsynced_dirs.is_empty() || !self.unsynced_files.is_empty()
-    }
-
     pub fn has_modified_entries(&self) -> bool {
         !self.modified_files.is_empty()
     }
 
-    pub fn has_removed_entries(&self) -> bool {
-        !self.removed_files.is_empty()
-    }
-
-    pub fn has_untracked_entries(&self) -> bool {
-        !self.untracked_dirs.is_empty() || !self.untracked_files.is_empty()
-    }
-
     pub fn has_merge_conflicts(&self) -> bool {
         !self.merge_conflicts.is_empty()
-    }
-
-    pub fn has_moved_entries(&self) -> bool {
-        !self.moved_files.is_empty()
     }
 
     /// Line by line output that we want to print
@@ -269,22 +249,6 @@ impl StagedData {
         // files.extend(self.removed_files.clone());
 
         // This is a placeholder for the unstaged files logic
-        files
-    }
-
-    pub fn files_to_stage(&self) -> Vec<PathBuf> {
-        let mut files: Vec<PathBuf> = Vec::new();
-
-        files.extend(self.untracked_dirs.iter().map(|(path, _)| path.clone()));
-        files.extend(self.untracked_files.clone());
-        files.extend(self.modified_files.clone());
-        files.extend(
-            self.moved_files
-                .iter()
-                .map(|(path, _removed_path, _hash)| path.clone()),
-        );
-        files.extend(self.removed_files.clone());
-
         files
     }
 

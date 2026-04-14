@@ -8,8 +8,6 @@ pub mod metadata_video;
 
 pub mod generic_metadata;
 
-pub mod to_duckdb_sql;
-
 pub use metadata_audio::MetadataAudio;
 pub use metadata_dir::MetadataDir;
 pub use metadata_image::MetadataImage;

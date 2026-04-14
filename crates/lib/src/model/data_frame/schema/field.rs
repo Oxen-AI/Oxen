@@ -5,8 +5,6 @@ use utoipa::ToSchema;
 
 use crate::model::data_frame::schema::DataType;
 
-use super::CustomDataType;
-
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct Field {
     pub name: String,
@@ -54,37 +52,6 @@ impl Field {
             PlSmallStr::from(self.name.to_owned()),
             DataType::from_string(&self.dtype).to_polars(),
         )
-    }
-
-    pub fn all_fields_to_string<V: AsRef<Vec<Field>>>(fields: V) -> String {
-        let names: Vec<String> = fields.as_ref().iter().map(|f| f.name.to_owned()).collect();
-
-        let combined_names = names.join(", ");
-
-        format!("[{combined_names}]")
-    }
-
-    pub fn fields_from_string(fields: &str) -> Vec<Field> {
-        let mut fields_vec: Vec<Field> = vec![];
-        for field in fields.split(',') {
-            let field = field.trim();
-            let field_parts: Vec<&str> = field.split(':').collect();
-            if field_parts.len() != 2 {
-                panic!("Invalid field: {field}");
-            }
-            let name = field_parts[0];
-            let dtype = field_parts[1];
-            if DataType::from_string(dtype) == DataType::Unknown
-                && CustomDataType::from_string(dtype) == CustomDataType::Unknown
-            {
-                panic!("Invalid dtype: {dtype}");
-            }
-
-            let field = Field::new(name, dtype);
-            fields_vec.push(field);
-        }
-
-        fields_vec
     }
 
     pub fn fields_to_string_with_limit<V: AsRef<Vec<Field>>>(fields: V) -> String {

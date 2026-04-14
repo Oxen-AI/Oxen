@@ -3,7 +3,6 @@
 
 pub mod auth_config;
 pub mod embedding_config;
-pub mod endpoint;
 pub mod repository_config;
 pub mod runtime_config;
 pub mod user_config;

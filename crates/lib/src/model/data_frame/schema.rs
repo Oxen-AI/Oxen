@@ -1,15 +1,12 @@
-pub mod custom_data_type;
 pub mod data_type;
 pub mod field;
 pub mod staged_schema;
 
-pub use custom_data_type::CustomDataType;
 pub use data_type::DataType;
 pub use field::Field;
 use utoipa::ToSchema;
 
 use crate::util::hasher;
-use itertools::Itertools;
 use polars::prelude::{SchemaExt, SchemaRef};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -72,12 +69,6 @@ impl Schema {
         }
     }
 
-    /// Checks if the provided schema matches this schema given a hash or path
-    pub fn matches_ref(&self, schema_ref: impl AsRef<str>) -> bool {
-        let schema_ref = schema_ref.as_ref();
-        self.hash == schema_ref
-    }
-
     /// Add metadata to a column
     pub fn add_column_metadata(&mut self, name: &str, metadata: &Value) {
         log::debug!("add_column_metadata {name} {metadata}");
@@ -100,53 +91,6 @@ impl Schema {
             }
         }
         self.hash = Schema::hash_fields(&self.fields);
-    }
-
-    pub fn has_all_field_names(&self, schema: &polars::prelude::Schema) -> bool {
-        log::debug!(
-            "matches_polars checking size {} == {}",
-            self.fields.len(),
-            schema.len()
-        );
-        if self.fields.len() != schema.len() {
-            // Print debug logic to help figure out why schemas don't match
-            log::debug!("====schema.len {}====", schema.len());
-            for field in schema.iter_fields() {
-                log::debug!("schema.field: {}", field.name());
-            }
-
-            log::debug!("====self.fields.len {}====", self.fields.len());
-            for field in self.fields.iter() {
-                log::debug!("self.field: {}", field.name);
-            }
-
-            return false;
-        }
-
-        let mut has_all_fields = true;
-        for field in schema.iter_fields() {
-            if !self.has_field_name(&field.name) {
-                has_all_fields = false;
-                break;
-            }
-        }
-
-        has_all_fields
-    }
-
-    pub fn has_same_field_names(&self, schema: &polars::prelude::Schema) -> bool {
-        let self_field_names: std::collections::HashSet<String> =
-            self.fields.iter().map(|f| f.name.clone()).collect();
-        let schema_field_names: std::collections::HashSet<String> =
-            schema.iter_fields().map(|f| f.name().to_string()).collect();
-
-        log::debug!("Comparing field names between self and provided schema");
-        log::debug!("self are {self_field_names:?}");
-        log::debug!("schema are {schema_field_names:?}");
-        if self_field_names != schema_field_names {
-            return false;
-        }
-        true
     }
 
     pub fn has_field(&self, field: &Field) -> bool {
@@ -186,10 +130,6 @@ impl Schema {
         let buffer_str = hash_buffers.join("");
         let buffer = buffer_str.as_bytes();
         hasher::hash_buffer(buffer)
-    }
-
-    pub fn fields_to_csv(&self) -> String {
-        self.fields.iter().map(|f| f.name.to_owned()).join(",")
     }
 
     pub fn fields_names(&self) -> Vec<String> {

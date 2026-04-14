@@ -43,10 +43,6 @@ impl RepoNew {
         format!("{}/{}", self.namespace, self.name)
     }
 
-    pub fn is_public(&self) -> bool {
-        self.is_public.unwrap_or(false)
-    }
-
     pub fn host(&self) -> String {
         self.host
             .clone()

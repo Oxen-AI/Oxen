@@ -60,19 +60,6 @@ pub fn schema<P: AsRef<Path>>(input: P, flatten: bool, opts: DFOpts) -> Result<S
     tabular::schema_to_string(input, flatten, &opts)
 }
 
-/// Add a row to a dataframe
-pub async fn add_row(path: &Path, data: &str) -> Result<(), OxenError> {
-    if util::fs::is_tabular(path) {
-        let mut opts = DFOpts::empty();
-        opts.add_row = Some(data.to_string());
-        opts.output = Some(path.to_path_buf());
-        df(path, opts).await
-    } else {
-        let err = format!("{} is not a tabular file", path.display());
-        Err(OxenError::basic_str(err))
-    }
-}
-
 /// Add a column to a dataframe
 pub async fn add_column(path: &Path, data: &str) -> Result<(), OxenError> {
     if util::fs::is_tabular(path) {
