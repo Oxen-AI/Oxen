@@ -119,31 +119,6 @@ pub trait MerkleMetadataStore {
     fn path(&self, hash: Hash) -> Option<Vec<Hash>>;
 }
 
-pub struct Name(String);
-
-#[derive(Debug, ThisError)]
-pub enum NameError {
-    #[error("No name found for path: '{0}'")]
-    PathHasNoName(PathBuf),
-    #[error("Path has non UTF-8 name: '{0}'")]
-    NonUtf8Name(PathBuf),
-}
-
-/// Gets the name of the file or directory only.
-impl TryFrom<PathBuf> for Name {
-    type Error = NameError;
-
-    fn try_from(path: PathBuf) -> Result<Self, Self::Error> {
-        match path.file_name() {
-            Some(name) => match name.to_str() {
-                Some(name) => Ok(Name(name.to_string())),
-                None => Err(NameError::NonUtf8Name(path)),
-            },
-            None => Err(NameError::PathHasNoName(path)),
-        }
-    }
-}
-
 #[derive(Debug)]
 pub enum RepositoryTree {
     Dir {
@@ -193,45 +168,6 @@ impl RepositoryTree {
                 "unsupported file type",
             ));
         }
-    }
-}
-
-pub struct AbsolutePath(PathBuf);
-
-pub struct RelativePath(Vec<String>);
-
-impl RelativePath {
-    pub fn new(repo: &Repository, path: &Path) -> Result<Self, StripPrefixError> {
-        let relative = path.strip_prefix(&repo.root)?;
-        let components = relative
-            .components()
-            .into_iter()
-            .map(|c| c.as_os_str().to_string_lossy().to_string())
-            .collect::<Vec<_>>();
-        Ok(Self(components))
-    }
-}
-
-pub trait Builder<B> {
-    fn build(self) -> B;
-}
-
-pub trait Accumulator<Ingest> {
-    fn accumulate(&mut self, x: Ingest) -> &mut Self;
-}
-
-pub struct Navigator(RelativePath);
-
-impl Accumulator<&RepositoryTree> for Navigator {
-    fn accumulate(&mut self, node: &RepositoryTree) -> &mut Self {
-        self.0.0.push(node.name().to_string());
-        self
-    }
-}
-
-impl Builder<RelativePath> for Navigator {
-    fn build(self) -> RelativePath {
-        self.0
     }
 }
 
