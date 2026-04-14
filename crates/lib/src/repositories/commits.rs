@@ -997,14 +997,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_commit_10k_files_vnode_size_10k() -> Result<(), OxenError> {
+    async fn test_commit_files_at_vnode_size_boundary() -> Result<(), OxenError> {
+        // Regression coverage: committing exactly `vnode_size` files in one directory must
+        // not interfere with path lookups for sibling files. Originally written with the
+        // production default (10k files at vnode_size=10k); rewritten to set a small
+        // vnode_size so the same boundary case runs in a fraction of the time.
+        const N: usize = 10;
         test::run_empty_local_repo_test_async(|repo| async move {
-            // Make a dir
+            let mut repo = repo;
+            repo.set_vnode_size(N as u64);
+
             let dir_path = Path::new("test_dir");
             let dir_repo_path = repo.path.join(dir_path);
             util::fs::create_dir_all(&dir_repo_path)?;
 
-            for i in 0..10000 {
+            for i in 0..N {
                 let file_path = dir_path.join(format!("file_{i}.txt"));
                 let file_repo_path = repo.path.join(&file_path);
                 util::fs::write_to_path(&file_repo_path, "test")?;
@@ -1017,7 +1024,7 @@ mod tests {
 
             repositories::add(&repo, &dir_repo_path).await?;
             repositories::add(&repo, &images_csv_repo_path).await?;
-            let commit = repositories::commit(&repo, "adding 10k files")?;
+            let commit = repositories::commit(&repo, &format!("adding {N} files"))?;
 
             repositories::tree::print_tree(&repo, &commit)?;
 
