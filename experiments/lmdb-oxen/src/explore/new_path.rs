@@ -62,6 +62,21 @@ impl AbsolutePath {
     pub fn join(&self, name: &Name) -> Self {
         Self(self.0.join(name.0.as_str()))
     }
+
+    /// Makes a new `AbsolutePath` from a `RelativePath` relative to a repository's root.
+    pub fn from(repo: &Repository, p: &RelativePath) -> Self {
+        // repo.root is already canonicalized by construction
+        let mut path = repo.root.clone();
+        for component in p.components() {
+            path = path.join(component);
+        }
+        Self(path)
+    }
+
+    /// Unwrap and return the inner value.
+    pub fn consume(self) -> PathBuf {
+        self.0
+    }
 }
 
 //
@@ -77,10 +92,15 @@ pub enum RelativePathError {
     NotRelativeToRepoRoot(#[from] StripPrefixError),
     #[error("Path contains a non-UTF-8 component: {0}")]
     NonUtf8Name(PathBuf),
+    #[error("Path is not canonical: {0}")]
+    NotCanonical(#[from] io::Error),
 }
 
 impl RelativePath {
     pub fn new(repo: &Repository, path: &Path) -> Result<Self, RelativePathError> {
+        let path = path
+            .canonicalize()
+            .map_err(RelativePathError::NotCanonical)?;
         let relative = path.strip_prefix(&repo.root)?;
         let components = {
             let mut components = Vec::new();

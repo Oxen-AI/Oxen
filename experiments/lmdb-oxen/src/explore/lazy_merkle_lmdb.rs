@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use crate::explore::new_path::RelativePath;
-use crate::explore::scratch::{Hash, Repository};
+use crate::explore::new_path::{AbsolutePath, RelativePath};
+use crate::explore::scratch::{Hash, HexHash, Repository};
 
 //
 // M e r k l e   T r e e   D a t a b a s e   S t o r e
@@ -96,11 +96,25 @@ pub struct LazyNode<DB: MerkleMetadataStore> {
 
 pub struct LazyData<DB: MerkleMetadataStore> {
     pub db: DB,
+    pub me: Hash,
 }
 
 impl<DB: MerkleMetadataStore> LazyData<DB> {
-    pub fn foo() {
-        let x: crate::explore::new_path::x::Y = 32;
+    pub async fn load(&self) -> Result<Vec<u8>, std::io::Error> {
+        let Some(rel_path) = self.db.path(self.me) else {
+            eprintln!(
+                "[ERROR] cannot determine relative path with hash: {}",
+                HexHash::from(self.me)
+            );
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "No path found for hash",
+            ));
+        };
+
+        let absolute_path = AbsolutePath::from(self.db.repository(), &rel_path).consume();
+
+        tokio::fs::read(absolute_path).await
     }
 }
 
