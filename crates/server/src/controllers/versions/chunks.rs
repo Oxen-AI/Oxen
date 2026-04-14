@@ -12,7 +12,6 @@ use liboxen::repositories;
 use liboxen::view::StatusMessage;
 use liboxen::view::versions::CompleteVersionUploadRequest;
 use serde::Deserialize;
-use tokio::io::AsyncWriteExt;
 
 #[derive(Deserialize, Debug)]
 pub struct ChunkQuery {
@@ -43,23 +42,16 @@ pub async fn upload(
 
     let version_store = repo.version_store()?;
 
-    let mut writer = version_store
-        .get_version_chunk_writer(&version_id, offset)
-        .await?;
-
-    // Write chunks in stream
-    while let Some(chunk_result) = body.next().await {
-        let chunk = chunk_result.map_err(|e| OxenHttpError::BadRequest(e.to_string().into()))?;
-        writer
-            .write_all(&chunk)
-            .await
-            .map_err(|e| OxenHttpError::BasicError(e.to_string().into()))?;
+    // Read the chunk from the payload. Chunks are <= 10MB (AVG_CHUNK_SIZE)
+    let mut chunk = web::BytesMut::new();
+    while let Some(part_result) = body.next().await {
+        let part = part_result.map_err(|e| OxenHttpError::BadRequest(e.to_string().into()))?;
+        chunk.extend_from_slice(&part);
     }
 
-    writer
-        .flush()
-        .await
-        .map_err(|e| OxenHttpError::BasicError(e.to_string().into()))?;
+    version_store
+        .store_version_chunk(&version_id, offset, chunk.freeze())
+        .await?;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
 }

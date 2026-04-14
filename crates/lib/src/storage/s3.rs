@@ -607,17 +607,6 @@ impl VersionStore for S3VersionStore {
         Ok(())
     }
 
-    async fn get_version_chunk_writer(
-        &self,
-        _hash: &str,
-        _offset: u64,
-    ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>, OxenError> {
-        // TODO: Implement S3 version chunk stream storage
-        Err(OxenError::basic_str(
-            "S3VersionStore get_version_chunk_writer not yet implemented",
-        ))
-    }
-
     async fn get_version_chunk(
         &self,
         hash: &str,

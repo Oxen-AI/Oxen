@@ -17,7 +17,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use tokio::fs::{self, File, metadata};
 use tokio::io::AsyncReadExt;
-use tokio::io::{BufReader, BufWriter};
+use tokio::io::BufReader;
 use tokio::sync::Semaphore;
 use tokio_stream::Stream;
 use tokio_util::io::ReaderStream;
@@ -262,21 +262,6 @@ impl VersionStore for LocalVersionStore {
         }
 
         Ok(())
-    }
-
-    async fn get_version_chunk_writer(
-        &self,
-        hash: &str,
-        offset: u64,
-    ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>, OxenError> {
-        let chunk_dir = self.version_chunk_dir(hash, offset);
-        fs::create_dir_all(&chunk_dir).await?;
-
-        let chunk_path = self.version_chunk_file(hash, offset);
-        let file = File::create(&chunk_path).await?;
-        let writer = BufWriter::new(file);
-
-        Ok(Box::new(writer))
     }
 
     async fn get_version_chunk(

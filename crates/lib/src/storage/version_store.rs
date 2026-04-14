@@ -7,7 +7,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::AsyncRead;
 use tokio_stream::Stream;
 
 use crate::constants;
@@ -136,17 +136,6 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         derived_filename: &str,
         derived_data: &[u8],
     ) -> Result<(), OxenError>;
-
-    /// Get a writer for a chunk of a version file
-    ///
-    /// # Arguments
-    /// * `hash` - The content hash that identifies this version
-    /// * `offset` - The starting byte position of the chunk
-    async fn get_version_chunk_writer(
-        &self,
-        hash: &str,
-        offset: u64,
-    ) -> Result<Box<dyn AsyncWrite + Send + Unpin>, OxenError>;
 
     /// Retrieve a chunk of a version file
     ///
