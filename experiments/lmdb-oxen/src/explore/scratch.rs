@@ -1,6 +1,6 @@
-use std::ops::Deref;
+use std::{ops::Deref, path::Path};
 
-use std::path::PathBuf;
+use std::path::{PathBuf, StripPrefixError};
 
 use liboxen::{error::OxenError, model::TMerkleTreeNode};
 use thiserror::Error as ThisError;
@@ -84,7 +84,7 @@ pub trait MerkleMetadataStore {
     /// If content is already a child of parent, then this does not change the Merkle tree.
     /// It always returns the hash of the child, unless the parent does not exist, in
     /// which case it will return None.
-    fn insert(&self, parent: Hash, content: impl Iterator<Item = u8>) -> Option<Hash>;
+    fn insert(&self, parent: Hash, content: &Self::Node) -> Option<Hash>;
 
     fn path(&self, hash: Hash) -> Option<Vec<Hash>>;
 }
@@ -110,6 +110,120 @@ impl TryFrom<PathBuf> for Name {
                 None => Err(NameError::NonUtf8Name(path)),
             },
             None => Err(NameError::PathHasNoName(path)),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum RepositoryTree {
+    Dir {
+        name: String,
+        children: Vec<Box<Self>>,
+    },
+    File {
+        name: String,
+        content: Vec<u8>,
+    },
+}
+
+impl RepositoryTree {
+    pub fn name(&self) -> &str {
+        match self {
+            RepositoryTree::Dir { name, .. } => name,
+            RepositoryTree::File { name, .. } => name,
+        }
+    }
+
+    pub fn from_walk(path: &Path) -> std::io::Result<Box<Self>> {
+        if path.is_dir() {
+            let name = path
+                .file_name()
+                .expect("directory does not have a name")
+                .to_string_lossy()
+                .to_string();
+            let mut children = Vec::new();
+            let dir = std::fs::read_dir(path)?;
+            for entry in dir {
+                let entry = entry?;
+                let child = Self::from_walk(&entry.path())?;
+                children.push(child);
+            }
+            Ok(Box::new(Self::Dir { name, children }))
+        } else if path.is_file() {
+            let name = path
+                .file_name()
+                .expect("file does not have a name")
+                .to_string_lossy()
+                .to_string();
+            let content = std::fs::read(path)?;
+            Ok(Box::new(Self::File { name, content }))
+        } else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "unsupported file type",
+            ));
+        }
+    }
+}
+
+pub struct AbsolutePath(PathBuf);
+
+pub struct RelativePath(Vec<String>);
+
+impl RelativePath {
+    pub fn new(repo: &Repository, path: &Path) -> Result<Self, StripPrefixError> {
+        let relative = path.strip_prefix(&repo.root)?;
+        let components = relative
+            .components()
+            .into_iter()
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        Ok(Self(components))
+    }
+}
+
+pub trait Builder<B> {
+    fn build(self) -> B;
+}
+
+pub trait Accumulator<Ingest> {
+    fn accumulate(&mut self, x: Ingest) -> &mut Self;
+}
+
+pub struct Navigator(RelativePath);
+
+impl Accumulator<&RepositoryTree> for Navigator {
+    fn accumulate(&mut self, node: &RepositoryTree) -> &mut Self {
+        self.0.0.push(node.name().to_string());
+        self
+    }
+}
+
+impl Builder<RelativePath> for Navigator {
+    fn build(self) -> RelativePath {
+        self.0
+    }
+}
+
+pub struct Repository {
+    pub root: PathBuf,
+    pub top_level: Vec<Box<RepositoryTree>>,
+}
+
+impl Repository {
+    pub fn from_walk(root: PathBuf) -> std::io::Result<Repository> {
+        let root = root.canonicalize()?;
+        match *RepositoryTree::from_walk(root.as_path())? {
+            RepositoryTree::Dir { name: _, children } => Ok(Self {
+                root,
+                top_level: children,
+            }),
+            RepositoryTree::File { name, content: _ } => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("unsupported file type: {}", name),
+                ));
+            }
         }
     }
 }
