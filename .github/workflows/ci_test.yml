@@ -74,8 +74,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           prefix-key: rust-test
-          # TODO: Commented out to test caching. Uncomment before merging.
-          #          save-if: ${{ github.ref == 'refs/heads/main' }} # Only save cache on main; always restore.
+          save-if: ${{ github.ref == 'refs/heads/main' }} # Only save cache on main; always restore.
           cache-all-crates: true
           cache-on-failure: true
 
@@ -225,8 +224,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           prefix-key: python-test
-          # TODO: Commented out to test caching. Uncomment before merging.
-          #          save-if: ${{ github.ref == 'refs/heads/main' }} # Only save cache on main; always restore.
+          save-if: ${{ github.ref == 'refs/heads/main' }} # Only save cache on main; always restore.
           cache-all-crates: true
           cache-on-failure: true
 
