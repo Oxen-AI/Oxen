@@ -61,7 +61,7 @@ dialoguer = "0.11.0"
 difference = "2.0.0"
 dirs = "5.0.1"
 dotenv = "0.15.0"
-duckdb = { package = "duckdb", version = "=1.10501.0", default-features = false, features = ["serde_json"] }
+duckdb = { package = "duckdb", version = "=1.10502.0", default-features = false, features = ["serde_json"] }
 dunce = "1.0.4"
 env_logger = "0.11.3"
 filetime = "0.2.22"
@@ -84,7 +84,7 @@ itertools = "0.13.0"
 jsonwebtoken = "9.3.0"
 jwalk = "0.8.1"
 lazy_static = "1.4.0"
-libduckdb-sys = { version = "=1.10501.0" }
+libduckdb-sys = { version = "=1.10502.0" }
 lofty = "0.22.2"
 log = "0.4.20"
 lru = "0.14.0"
