@@ -8,6 +8,7 @@ publish = false
 [workspace]
 
 [dependencies]
+async-trait = "0.1.80"
 clap = { version = "4.5.48", features = ["derive"] }
 heed = "0.22.0"
 liboxen  = { path = "../../crates/lib" }

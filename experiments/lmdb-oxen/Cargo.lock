@@ -3841,6 +3841,7 @@ dependencies = [
 name = "lmdb-oxen"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "clap",
  "heed",
  "liboxen",
