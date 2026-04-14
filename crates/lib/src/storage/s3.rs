@@ -620,14 +620,41 @@ impl VersionStore for S3VersionStore {
 
     async fn get_version_chunk(
         &self,
-        _hash: &str,
-        _offset: u64,
-        _size: u64,
+        hash: &str,
+        offset: u64,
+        size: u64,
     ) -> Result<Vec<u8>, OxenError> {
-        // TODO: Implement S3 version chunk retrieval
-        Err(OxenError::basic_str(
-            "S3VersionStore get_version_chunk not yet implemented",
-        ))
+        if size == 0 {
+            return Ok(Vec::new());
+        }
+
+        let client = self.client().await?;
+        let key = self.generate_key(hash);
+
+        // HTTP Range is inclusive on both ends: bytes=start-end means bytes [start..=end]
+        let end = offset.checked_add(size - 1).ok_or_else(|| {
+            OxenError::basic_str("get_version_chunk: offset + size overflows u64")
+        })?;
+        let range = format!("bytes={offset}-{end}");
+
+        let resp = client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(&key)
+            .range(&range)
+            .send()
+            .await?;
+
+        let bytes = resp
+            .body
+            .collect()
+            .await
+            .map_err(|e| {
+                OxenError::basic_str(format!("get_version_chunk: body collect failed: {e}"))
+            })?
+            .into_bytes();
+
+        Ok(bytes.to_vec())
     }
 
     async fn list_version_chunks(&self, _hash: &str) -> Result<Vec<u64>, OxenError> {
@@ -1072,5 +1099,49 @@ mod tests {
 
         assert!(!store.version_exists(hash_a).await.unwrap());
         assert!(store.version_exists(hash_b).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_get_version_chunk_mid_file() {
+        let (store, _tmp, _server) = setup().await;
+        let hash = "abcdef1234567890abcdef1234567890";
+        let data: Vec<u8> = (0..100u8).collect();
+        store.store_version(hash, &data).await.unwrap();
+
+        let chunk = store.get_version_chunk(hash, 10, 20).await.unwrap();
+        assert_eq!(chunk, data[10..30]);
+    }
+
+    #[tokio::test]
+    async fn test_get_version_chunk_from_start() {
+        let (store, _tmp, _server) = setup().await;
+        let hash = "abcdef1234567890abcdef1234567890";
+        let data = b"hello world!";
+        store.store_version(hash, data).await.unwrap();
+
+        let chunk = store.get_version_chunk(hash, 0, 5).await.unwrap();
+        assert_eq!(&chunk[..], b"hello");
+    }
+
+    #[tokio::test]
+    async fn test_get_version_chunk_zero_size() {
+        let (store, _tmp, _server) = setup().await;
+        let hash = "abcdef1234567890abcdef1234567890";
+        // Note: no store_version call — zero-size must not require the object to exist
+        let chunk = store.get_version_chunk(hash, 0, 0).await.unwrap();
+        assert!(chunk.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_version_chunk_past_eof_errors() {
+        let (store, _tmp, _server) = setup().await;
+        let hash = "abcdef1234567890abcdef1234567890";
+        store.store_version(hash, b"small").await.unwrap();
+
+        let result = store.get_version_chunk(hash, 1000, 10).await;
+        assert!(
+            result.is_err(),
+            "expected error for offset past EOF, got {result:?}"
+        );
     }
 }
