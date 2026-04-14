@@ -46,6 +46,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                 .service(services::transfer())
                 .service(services::tree())
                 .service(services::versions())
+                .service(services::webhooks())
                 .service(services::workspace()),
         );
 }
