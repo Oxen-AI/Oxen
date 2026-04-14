@@ -50,6 +50,7 @@ impl TryFrom<PathBuf> for Name {
 //  A b s o l u t e    P a t h
 //
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AbsolutePath(PathBuf);
 
 impl AbsolutePath {
@@ -65,17 +66,20 @@ impl AbsolutePath {
 
     /// Makes a new `AbsolutePath` from a `RelativePath` relative to a repository's root.
     pub fn from(repo: &Repository, p: &RelativePath) -> Self {
-        // repo.root is already canonicalized by construction
-        let mut path = repo.root.clone();
-        for component in p.components() {
-            path = path.join(component);
-        }
-        Self(path)
+        // `repo.root` is already canonicalized by construction
+        let mut abs_path = repo.root.0.clone();
+        // `p` is a relative path of 1 or more components
+        abs_path.extend(p.components());
+        Self(abs_path)
     }
 
     /// Unwrap and return the inner value.
     pub fn consume(self) -> PathBuf {
         self.0
+    }
+
+    pub fn as_path(&self) -> &Path {
+        self.0.as_path()
     }
 }
 
@@ -101,7 +105,7 @@ impl RelativePath {
         let path = path
             .canonicalize()
             .map_err(RelativePathError::NotCanonical)?;
-        let relative = path.strip_prefix(&repo.root)?;
+        let relative = path.strip_prefix(&repo.root.0)?;
         let components = {
             let mut components = Vec::new();
             for c in relative.components().into_iter() {

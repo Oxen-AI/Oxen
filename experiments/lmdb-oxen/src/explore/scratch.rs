@@ -7,6 +7,8 @@ use thiserror::Error as ThisError;
 
 use xxhash_rust::xxh3::{Xxh3, xxh3_128};
 
+use crate::explore::new_path::AbsolutePath;
+
 #[derive(Debug, ThisError)]
 pub enum Error {
     #[error("{0}")]
@@ -172,13 +174,13 @@ impl RepositoryTree {
 }
 
 pub struct Repository {
-    pub root: PathBuf,
+    pub root: AbsolutePath,
     pub top_level: Vec<Box<RepositoryTree>>,
 }
 
 impl Repository {
     pub fn from_walk(root: PathBuf) -> std::io::Result<Repository> {
-        let root = root.canonicalize()?;
+        let root = AbsolutePath::new(root)?;
         match *RepositoryTree::from_walk(root.as_path())? {
             RepositoryTree::Dir { name: _, children } => Ok(Self {
                 root,
@@ -229,7 +231,7 @@ impl HasHash for Box<MerkleTree> {
 }
 
 pub struct Root {
-    pub root: PathBuf,
+    pub root: AbsolutePath,
     pub hash: Hash,
     pub children: Vec<Box<MerkleTree>>,
 }

@@ -73,19 +73,17 @@ pub trait MerkleMetadataStore: Sized {
     }
 }
 
-pub struct InnerMerkle<DB: MerkleMetadataStore> {
-    hash: Hash,
-    name: String,
-    parent: Option<LazyNode<DB>>,
-}
-
 pub enum MerkleTreeL<DB: MerkleMetadataStore> {
     Dir {
-        inner: InnerMerkle<DB>,
+        hash: Hash,
+        name: String,
+        parent: Option<LazyNode<DB>>,
         children: Vec<LazyNode<DB>>,
     },
     File {
-        inner: InnerMerkle<DB>,
+        // hash is in content (LazyData)
+        name: String,
+        parent: Option<LazyNode<DB>>,
         content: LazyData<DB>,
     },
 }
@@ -105,11 +103,15 @@ impl<DB: MerkleMetadataStore> LazyNode<DB> {
         };
         node
     }
+
+    pub fn hash(&self) -> Hash {
+        self.me
+    }
 }
 
 pub struct LazyData<DB: MerkleMetadataStore> {
-    pub db: DB,
-    pub me: Hash,
+    db: DB,
+    me: Hash,
 }
 
 impl<DB: MerkleMetadataStore> LazyData<DB> {
@@ -127,36 +129,38 @@ impl<DB: MerkleMetadataStore> LazyData<DB> {
 
         tokio::fs::read(absolute_path).await
     }
+
+    pub fn hash(&self) -> Hash {
+        self.me
+    }
 }
 
 impl<DB: MerkleMetadataStore> MerkleTreeL<DB> {
     pub fn hash(&self) -> Hash {
-        let inner = match self {
-            MerkleTreeL::Dir { inner, .. } => inner,
-            MerkleTreeL::File { inner, .. } => inner,
-        };
-        inner.hash.clone()
+        match self {
+            MerkleTreeL::Dir { hash, .. } => hash.clone(),
+            MerkleTreeL::File { content, .. } => content.hash(),
+        }
     }
 
     pub fn name(&self) -> &str {
-        let inner = match self {
-            MerkleTreeL::Dir { inner, .. } => inner,
-            MerkleTreeL::File { inner, .. } => inner,
-        };
-        &inner.name
+        match self {
+            MerkleTreeL::Dir { name, .. } => name,
+            MerkleTreeL::File { name, .. } => name,
+        }
     }
 
     pub fn parent(&self) -> Option<&LazyNode<DB>> {
-        let inner = match self {
-            MerkleTreeL::Dir { inner, .. } => inner,
-            MerkleTreeL::File { inner, .. } => inner,
-        };
-        inner.parent.as_deref()
+        match self {
+            MerkleTreeL::Dir { parent, .. } => parent,
+            MerkleTreeL::File { parent, .. } => parent,
+        }
+        .as_ref()
     }
 }
 
 pub struct Root<DB: MerkleMetadataStore> {
-    pub root: PathBuf,
+    pub root: AbsolutePath,
     pub hash: Hash,
     pub children: Vec<LazyNode<DB>>,
 }
