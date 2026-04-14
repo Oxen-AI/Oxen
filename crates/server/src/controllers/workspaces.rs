@@ -129,7 +129,8 @@ pub async fn get_or_create(
         &workspace_id,
         data.name.clone(),
         true,
-    )?;
+    )
+    .await?;
 
     Ok(HttpResponse::Ok().json(WorkspaceResponseView {
         status: StatusMessage::resource_created(),

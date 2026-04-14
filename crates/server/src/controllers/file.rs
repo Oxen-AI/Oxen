@@ -316,7 +316,7 @@ pub async fn put(
         &files_array_parts,
         &user,
     )?;
-    let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+    let workspace = repositories::workspaces::create_temporary(&repo, &commit).await?;
 
     for file in &files {
         ensure_no_file_ancestors_in_tree(&repo, &commit, &file.path, &resource.path)?;
@@ -390,7 +390,7 @@ pub async fn delete(
     let message = form.message();
 
     log::debug!("file::delete creating workspace for commit: {commit}");
-    let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+    let workspace = repositories::workspaces::create_temporary(&repo, &commit).await?;
 
     // Stage the path as removed
     log::debug!("file::delete staging path {path:?}");
@@ -500,7 +500,7 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
     }
 
     log::debug!("file::mv creating workspace for commit: {commit}");
-    let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+    let workspace = repositories::workspaces::create_temporary(&repo, &commit).await?;
 
     // Stage the move
     log::debug!("file::mv moving {source_path:?} to {new_path:?}");

@@ -58,39 +58,33 @@ pub struct WorkspaceNameIndex {
     db: Arc<DB>,
 }
 
-/// Execute an operation with access to the workspace name index DB.
-/// Creates the DB directory if it doesn't exist.
-pub fn with_index<F, T>(repo: &LocalRepository, operation: F) -> Result<T, OxenError>
-where
-    F: FnOnce(&WorkspaceNameIndex) -> Result<T, OxenError>,
-{
-    let db = {
-        let dir = index_dir(repo);
+/// Returns a [`WorkspaceNameIndex`] handle for the given repository.
+///
+/// The handle holds a reference-counted DB instance cached in a global LRU cache.
+/// Drop it when you're done to avoid holding the DB open longer than necessary.
+pub fn get_index(repo: &LocalRepository) -> Result<WorkspaceNameIndex, OxenError> {
+    let dir = index_dir(repo);
 
-        let mut instances = DB_INSTANCES.lock();
-        if let Some(db) = instances.get(&dir) {
-            Ok::<Arc<DB>, OxenError>(db.clone())
-        } else {
-            if !dir.exists() {
-                util::fs::create_dir_all(&dir).map_err(|e| {
-                    OxenError::basic_str(format!(
-                        "Failed to create workspace name index directory: {e}"
-                    ))
-                })?;
-            }
+    let mut instances = DB_INSTANCES.lock();
+    if let Some(db) = instances.get(&dir) {
+        return Ok(WorkspaceNameIndex { db: db.clone() });
+    }
 
-            let opts = db::key_val::opts::default();
-            let db = DB::open(&opts, dunce::simplified(&dir)).map_err(|e| {
-                OxenError::basic_str(format!("Failed to open workspace name index database: {e}"))
-            })?;
-            let arc_db = Arc::new(db);
-            instances.put(dir, arc_db.clone());
-            Ok(arc_db)
-        }
-    }?;
+    if !dir.exists() {
+        util::fs::create_dir_all(&dir).map_err(|e| {
+            OxenError::basic_str(format!(
+                "Failed to create workspace name index directory: {e}"
+            ))
+        })?;
+    }
 
-    let index = WorkspaceNameIndex { db };
-    operation(&index)
+    let opts = db::key_val::opts::default();
+    let db = DB::open(&opts, dunce::simplified(&dir)).map_err(|e| {
+        OxenError::basic_str(format!("Failed to open workspace name index database: {e}"))
+    })?;
+    let arc_db = Arc::new(db);
+    instances.put(dir, arc_db.clone());
+    Ok(WorkspaceNameIndex { db: arc_db })
 }
 
 impl WorkspaceNameIndex {
@@ -228,15 +222,14 @@ mod tests {
     #[tokio::test]
     async fn test_workspace_name_index_put_and_get() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
-            with_index(&repo, |idx| {
-                idx.put("my-workspace", "abc-123")?;
-                let result = idx.get_id_by_name("my-workspace")?;
-                assert_eq!(result, Some("abc-123".to_string()));
+            let idx = get_index(&repo)?;
+            idx.put("my-workspace", "abc-123")?;
+            let result = idx.get_id_by_name("my-workspace")?;
+            assert_eq!(result, Some("abc-123".to_string()));
 
-                let missing = idx.get_id_by_name("nonexistent")?;
-                assert_eq!(missing, None);
-                Ok(())
-            })
+            let missing = idx.get_id_by_name("nonexistent")?;
+            assert_eq!(missing, None);
+            Ok(())
         })
         .await
     }
@@ -244,12 +237,11 @@ mod tests {
     #[tokio::test]
     async fn test_workspace_name_index_has_name() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
-            with_index(&repo, |idx| {
-                idx.put("exists", "id-1")?;
-                assert!(idx.has_name("exists"));
-                assert!(!idx.has_name("does-not-exist"));
-                Ok(())
-            })
+            let idx = get_index(&repo)?;
+            idx.put("exists", "id-1")?;
+            assert!(idx.has_name("exists"));
+            assert!(!idx.has_name("does-not-exist"));
+            Ok(())
         })
         .await
     }
@@ -257,14 +249,13 @@ mod tests {
     #[tokio::test]
     async fn test_workspace_name_index_delete() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
-            with_index(&repo, |idx| {
-                idx.put("to-delete", "id-1")?;
-                assert!(idx.has_name("to-delete"));
+            let idx = get_index(&repo)?;
+            idx.put("to-delete", "id-1")?;
+            assert!(idx.has_name("to-delete"));
 
-                idx.delete("to-delete")?;
-                assert!(!idx.has_name("to-delete"));
-                Ok(())
-            })
+            idx.delete("to-delete")?;
+            assert!(!idx.has_name("to-delete"));
+            Ok(())
         })
         .await
     }
@@ -272,15 +263,14 @@ mod tests {
     #[tokio::test]
     async fn test_workspace_name_index_clear() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
-            with_index(&repo, |idx| {
-                idx.put("ws-1", "id-1")?;
-                idx.put("ws-2", "id-2")?;
-                assert_eq!(idx.list()?.len(), 2);
+            let idx = get_index(&repo)?;
+            idx.put("ws-1", "id-1")?;
+            idx.put("ws-2", "id-2")?;
+            assert_eq!(idx.list()?.len(), 2);
 
-                idx.clear()?;
-                assert_eq!(idx.list()?.len(), 0);
-                Ok(())
-            })
+            idx.clear()?;
+            assert_eq!(idx.list()?.len(), 0);
+            Ok(())
         })
         .await
     }
@@ -288,16 +278,15 @@ mod tests {
     #[tokio::test]
     async fn test_workspace_name_index_list() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
-            with_index(&repo, |idx| {
-                idx.put("alpha", "id-a")?;
-                idx.put("beta", "id-b")?;
+            let idx = get_index(&repo)?;
+            idx.put("alpha", "id-a")?;
+            idx.put("beta", "id-b")?;
 
-                let entries = idx.list()?;
-                assert_eq!(entries.len(), 2);
-                assert!(entries.contains(&("alpha".to_string(), "id-a".to_string())));
-                assert!(entries.contains(&("beta".to_string(), "id-b".to_string())));
-                Ok(())
-            })
+            let entries = idx.list()?;
+            assert_eq!(entries.len(), 2);
+            assert!(entries.contains(&("alpha".to_string(), "id-a".to_string())));
+            assert!(entries.contains(&("beta".to_string(), "id-b".to_string())));
+            Ok(())
         })
         .await
     }
@@ -318,20 +307,20 @@ mod tests {
                 "ws-id-1",
                 Some("named-ws".to_string()),
                 true,
-            )?;
+            )
+            .await?;
             repositories::workspaces::create(&repo, &commit, "ws-id-2", true)?;
 
             // Now rebuild the index from disk in a fresh index
-            with_index(&repo, |idx| {
-                idx.rebuild_from_disk(&repo)?;
+            let idx = get_index(&repo)?;
+            idx.rebuild_from_disk(&repo)?;
 
-                // Only the named workspace should be in the index
-                let entries = idx.list()?;
-                assert_eq!(entries.len(), 1);
-                assert_eq!(idx.get_id_by_name("named-ws")?, Some("ws-id-1".to_string()));
-                assert_eq!(idx.get_id_by_name("ws-id-2")?, None);
-                Ok(())
-            })
+            // Only the named workspace should be in the index
+            let entries = idx.list()?;
+            assert_eq!(entries.len(), 1);
+            assert_eq!(idx.get_id_by_name("named-ws")?, Some("ws-id-1".to_string()));
+            assert_eq!(idx.get_id_by_name("ws-id-2")?, None);
+            Ok(())
         })
         .await
     }

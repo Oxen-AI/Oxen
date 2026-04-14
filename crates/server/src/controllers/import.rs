@@ -147,7 +147,7 @@ pub async fn import(
     }
 
     // Create temporary workspace
-    let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+    let workspace = repositories::workspaces::create_temporary(&repo, &commit).await?;
 
     log::debug!("workspace::files::import_file workspace created!");
 
@@ -265,7 +265,7 @@ pub async fn upload_zip(
     let directory = resource.path.clone();
     let commit = resource.commit.ok_or(OxenHttpError::NotFound)?;
 
-    let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+    let workspace = repositories::workspaces::create_temporary(&repo, &commit).await?;
     let workspace_path = workspace.dir();
     let (commit_message, name, email, temp_files) =
         parse_multipart_fields_for_upload_zip(payload, &workspace_path, &directory).await?;

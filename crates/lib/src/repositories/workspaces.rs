@@ -114,8 +114,8 @@ pub fn get_by_name(
 
     // Fast path: use the name index if it exists (O(1))
     if workspace_name_index::index_exists(repo) {
-        let maybe_id =
-            workspace_name_index::with_index(repo, |idx| idx.get_id_by_name(workspace_name))?;
+        let idx = workspace_name_index::get_index(repo)?;
+        let maybe_id = idx.get_id_by_name(workspace_name)?;
         if let Some(id) = maybe_id {
             let id_hash = util::hasher::hash_str_sha256(&id);
             let workspace_dir = Workspace::workspace_dir(repo, &id_hash);
@@ -127,7 +127,7 @@ pub fn get_by_name(
             log::warn!(
                 "workspace_name_index: stale entry for name '{workspace_name}' -> id '{id}', removing"
             );
-            workspace_name_index::with_index(repo, |idx| idx.delete(workspace_name))?;
+            idx.delete(workspace_name)?;
         }
         return Ok(None);
     }
@@ -150,10 +150,32 @@ pub fn create(
     workspace_id: impl AsRef<str>,
     is_editable: bool,
 ) -> Result<Workspace, OxenError> {
-    create_with_name(base_repo, commit, workspace_id, None, is_editable)
+    create_on_disk(base_repo, commit, workspace_id, None, is_editable)
 }
 
-pub fn create_with_name(
+pub async fn create_with_name(
+    base_repo: &LocalRepository,
+    commit: &Commit,
+    workspace_id: impl AsRef<str>,
+    workspace_name: Option<String>,
+    is_editable: bool,
+) -> Result<Workspace, OxenError> {
+    let workspace_id = workspace_id.as_ref();
+    let workspace = create_on_disk(base_repo, commit, workspace_id, workspace_name, is_editable)?;
+
+    // Update the name index (async: rebuild_from_disk may run on a blocking thread)
+    if let Some(ref name) = workspace.name {
+        ensure_name_index(base_repo).await?;
+        let idx = workspace_name_index::get_index(base_repo)?;
+        idx.put(name, workspace_id)?;
+    }
+
+    Ok(workspace)
+}
+
+/// Core sync workspace creation logic shared by `create` and `create_with_name`.
+/// Handles validation, directory setup, and TOML config writing — but NOT name indexing.
+fn create_on_disk(
     base_repo: &LocalRepository,
     commit: &Commit,
     workspace_id: impl AsRef<str>,
@@ -205,12 +227,6 @@ pub fn create_with_name(
     log::debug!("index::workspaces::create writing workspace config to: {workspace_config_path:?}");
     util::fs::write_to_path(&workspace_config_path, toml_string)?;
 
-    // Update the name index
-    if let Some(ref name) = workspace_name {
-        ensure_name_index(base_repo)?;
-        workspace_name_index::with_index(base_repo, |idx| idx.put(name, workspace_id))?;
-    }
-
     Ok(Workspace {
         id: workspace_id.to_owned(),
         name: workspace_name,
@@ -235,9 +251,8 @@ fn validate_create_constraints(
     if has_index && is_editable {
         if let Some(name) = workspace_name {
             // Check name doesn't collide with an existing workspace name
-            let name_taken =
-                workspace_name_index::with_index(base_repo, |idx| Ok(idx.has_name(name)))?;
-            if name_taken {
+            let idx = workspace_name_index::get_index(base_repo)?;
+            if idx.has_name(name) {
                 return Err(OxenError::basic_str(format!(
                     "A workspace with the name {name} already exists"
                 )));
@@ -268,10 +283,17 @@ fn validate_create_constraints(
 }
 
 /// Ensures the workspace name index exists, lazily creating it if needed.
-/// On first call for a repo, rebuilds the index from disk (one-time O(n)).
-fn ensure_name_index(repo: &LocalRepository) -> Result<(), OxenError> {
+/// On first call for a repo, rebuilds the index from disk (one-time O(n))
+/// on a blocking thread to avoid stalling the async runtime.
+async fn ensure_name_index(repo: &LocalRepository) -> Result<(), OxenError> {
     if !workspace_name_index::index_exists(repo) {
-        workspace_name_index::with_index(repo, |idx| idx.rebuild_from_disk(repo))?;
+        let repo = repo.clone();
+        tokio::task::spawn_blocking(move || {
+            let idx = workspace_name_index::get_index(&repo)?;
+            idx.rebuild_from_disk(&repo)
+        })
+        .await
+        .map_err(|e| OxenError::basic_str(format!("spawn_blocking join error: {e}")))??;
     }
     Ok(())
 }
@@ -305,13 +327,14 @@ impl Drop for TemporaryWorkspace {
 }
 
 /// Creates a new temporary workspace that will be deleted when the reference is dropped
-pub fn create_temporary(
+pub async fn create_temporary(
     base_repo: &LocalRepository,
     commit: &Commit,
 ) -> Result<TemporaryWorkspace, OxenError> {
     let workspace_id = Uuid::new_v4().to_string();
     let workspace_name = format!("temporary-{workspace_id}");
-    let workspace = create_with_name(base_repo, commit, workspace_id, Some(workspace_name), true)?;
+    let workspace =
+        create_with_name(base_repo, commit, workspace_id, Some(workspace_name), true).await?;
     Ok(TemporaryWorkspace { workspace })
 }
 
@@ -401,7 +424,8 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
     if let Some(ref name) = workspace.name
         && workspace_name_index::index_exists(&workspace.base_repo)
     {
-        workspace_name_index::with_index(&workspace.base_repo, |idx| idx.delete(name))?;
+        let idx = workspace_name_index::get_index(&workspace.base_repo)?;
+        idx.delete(name)?;
     }
 
     // Clean up caches before deleting the workspace
@@ -706,7 +730,7 @@ mod tests {
 
             {
                 // Create temporary workspace in new scope
-                let temp_workspace = create_temporary(&repo, &commit)?;
+                let temp_workspace = create_temporary(&repo, &commit).await?;
 
                 // Update the hello file in the temporary workspace
                 let workspace_hello_file = temp_workspace.dir().join("hello.txt");
@@ -727,7 +751,7 @@ mod tests {
 
             {
                 // Create a new temporary workspace off of the same original commit
-                let temp_workspace = create_temporary(&repo, &commit)?;
+                let temp_workspace = create_temporary(&repo, &commit).await?;
 
                 // Update the goodbye file in the temporary workspace
                 let workspace_goodbye_file = temp_workspace.dir().join("goodbye.txt");
@@ -764,7 +788,7 @@ mod tests {
 
             {
                 // Create temporary workspace in new scope
-                let temp_workspace = create_temporary(&repo, &commit)?;
+                let temp_workspace = create_temporary(&repo, &commit).await?;
 
                 // Update the hello file in the temporary workspace
                 let workspace_hello_file = temp_workspace.dir().join("greetings").join("hello.txt");
@@ -785,7 +809,7 @@ mod tests {
 
             {
                 // Create a new temporary workspace off of the same original commit
-                let temp_workspace = create_temporary(&repo, &commit)?;
+                let temp_workspace = create_temporary(&repo, &commit).await?;
 
                 // Update the hello file in the temporary workspace
                 let workspace_hello_file = temp_workspace.dir().join("greetings").join("hello.txt");
@@ -827,7 +851,7 @@ mod tests {
 
             {
                 // Create temporary workspace in new scope
-                let temp_workspace = create_temporary(&repo, &commit)?;
+                let temp_workspace = create_temporary(&repo, &commit).await?;
 
                 // Update the hello file in the temporary workspace
                 let workspace_hello_file = temp_workspace.dir().join("greetings").join("hello.txt");
@@ -848,7 +872,7 @@ mod tests {
 
             {
                 // Create a new temporary workspace off of the same original commit
-                let temp_workspace = create_temporary(&repo, &commit)?;
+                let temp_workspace = create_temporary(&repo, &commit).await?;
 
                 // Update the goodbye file in the temporary workspace
                 let workspace_goodbye_file =
@@ -886,7 +910,7 @@ mod tests {
 
             {
                 // Create temporary workspace in new scope
-                let temp_workspace = create_temporary(&repo, &commit)?;
+                let temp_workspace = create_temporary(&repo, &commit).await?;
 
                 // Verify workspace exists and contains our file
                 assert!(temp_workspace.dir().exists());
