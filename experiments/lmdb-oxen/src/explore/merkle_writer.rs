@@ -15,7 +15,7 @@ trait MerkleWriter: Sized {
 
     /// Open a write transaction for storing Merkle tree nodes.
     /// Allows multiple nodes to be queued for writing.
-    fn write_transaction<'a>(&'a self) -> Self::T;
+    fn write_transaction(&self) -> Self::T;
 
     /// Durably store a batch of Merkle tree nodes.
     fn write(&self, nodes: impl Iterator<Item = <Self::T as Transaction>::Node>) -> io::Result<()> {

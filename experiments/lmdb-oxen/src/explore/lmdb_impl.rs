@@ -17,7 +17,7 @@ impl MerkleMetadataStore for LmdbMerkleDB {
     /// This always means that either `self.node()` xor `self.commit()` will return a
     /// non-`None` value. Note that this is a mutually exclusive relationship: exactly
     /// one of `node` or `commit` is non-`None` if `exists` is `true`.
-    fn exists(&self, hash: Hash) -> bool {
+    fn exists(&self, _hash: Hash) -> bool {
         unimplemented!()
     }
 
@@ -25,7 +25,7 @@ impl MerkleMetadataStore for LmdbMerkleDB {
     ///
     /// Corresponds to a real file or directory under version control.
     /// None means there is no node with that hash.
-    fn node(&self, hash: Hash) -> Option<&MerkleTreeL<Self>> {
+    fn node(&self, _hash: Hash) -> Option<&MerkleTreeL<Self>> {
         unimplemented!()
     }
 
@@ -33,7 +33,7 @@ impl MerkleMetadataStore for LmdbMerkleDB {
     ///
     /// Corresponds to the complete state of the repository at a given commit.
     /// None means there is no commit with that hash.
-    fn commit(&self, hash: Hash) -> Option<&Root<Self>> {
+    fn commit(&self, _hash: Hash) -> Option<&Root<Self>> {
         unimplemented!()
     }
 }
