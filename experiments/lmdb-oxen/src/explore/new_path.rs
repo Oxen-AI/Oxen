@@ -12,7 +12,8 @@ use std::{
 
 use crate::explore::{
     interfaces::{Accumulator, Builder},
-    scratch::{Repository, RepositoryTree},
+    lazy_merkle_lmdb::MerkleTreeL,
+    scratch::{Hash, Repository, RepositoryTree},
 };
 use thiserror::Error;
 
@@ -108,6 +109,14 @@ impl RelativePath {
 
     pub fn builder() -> RelativePathBuilder {
         RelativePathBuilder(RelativePath(vec![]))
+    }
+
+    /// SAFETY: callers **MUST** guarenetee that each part is a single component of a real
+    ///         relative path. There **MUST NOT** be any path separators in the parts nor
+    ///         can there be any `'.'` or `'..'` components. Each component must be a valid
+    ///         file or directory name.
+    pub(crate) unsafe fn from_parts(parts: Vec<String>) -> Self {
+        Self(parts)
     }
 }
 
