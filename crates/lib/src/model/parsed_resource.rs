@@ -56,16 +56,3 @@ impl From<ParsedResource> for ParsedResourceView {
         }
     }
 }
-
-impl From<ParsedResourceView> for ParsedResource {
-    fn from(view: ParsedResourceView) -> Self {
-        Self {
-            workspace: None,
-            commit: view.commit,
-            branch: view.branch,
-            path: view.path,
-            version: view.version,
-            resource: view.resource,
-        }
-    }
-}

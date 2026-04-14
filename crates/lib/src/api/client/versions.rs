@@ -50,14 +50,6 @@ pub struct UploadResult {
     pub err_files: Vec<ErrorFileInfo>,
 }
 
-/// Check if a file exists in the remote repository by version id
-pub async fn has_version(
-    repository: &RemoteRepository,
-    version_id: MerkleHash,
-) -> Result<bool, OxenError> {
-    Ok(get(repository, version_id).await?.is_some())
-}
-
 /// Get the size of a version
 pub async fn get(
     repository: &RemoteRepository,
