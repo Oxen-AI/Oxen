@@ -5435,7 +5435,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "tracing-appender",
  "uuid",
 ]
 

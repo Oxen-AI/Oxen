@@ -12,8 +12,6 @@ use crate::helpers::{
     check_remote_version, check_remote_version_blocking, get_scheme_and_host_from_repo,
 };
 
-pub mod unlock;
-
 pub const NAME: &str = "branch";
 
 pub struct BranchCmd;
@@ -28,7 +26,6 @@ impl RunCmd for BranchCmd {
         // Setups the CLI args for the init command
         Command::new(NAME)
             .about("Manage branches in repository")
-            .subcommand(unlock::BranchUnlockCmd.args())
             .arg(Arg::new("name").help("Name of the branch"))
             .arg(
                 Arg::new("commit_id")
@@ -93,11 +90,8 @@ impl RunCmd for BranchCmd {
         let repo = LocalRepository::from_current_dir()?;
 
         // Parse Args
-        if let Some(subcommand) = args.subcommand() {
-            match subcommand {
-                (unlock::NAME, args) => unlock::BranchUnlockCmd.run(args).await,
-                (cmd, _) => Err(OxenError::unknown_subcommand("branch", cmd)),
-            }
+        if let Some((cmd, _)) = args.subcommand() {
+            Err(OxenError::unknown_subcommand("branch", cmd))
         } else if args.get_flag("all") {
             self.list_all_branches(&repo).await
         } else if let Some(remote_name) = args.get_one::<String>("remote") {
