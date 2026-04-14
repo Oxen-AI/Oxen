@@ -163,6 +163,10 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
 
     /// List all chunks for a version file
     ///
+    /// Returns the byte offsets of each chunk within the original file. When sorted,
+    /// these offsets define the order in which chunks must be concatenated to
+    /// reconstruct the complete file.
+    ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
     async fn list_version_chunks(&self, hash: &str) -> Result<Vec<u64>, OxenError>;
