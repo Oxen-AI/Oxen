@@ -77,7 +77,7 @@ trait HasMapThrow: Iterator + Sized {
         F: Fn(Self::Item) -> Result<O, E>,
         Self: Sized,
     {
-        let transformed = self.into_iter().map(move |x| f(x));
+        let transformed = self.into_iter().map(f);
         Wrapper(transformed)
     }
 }

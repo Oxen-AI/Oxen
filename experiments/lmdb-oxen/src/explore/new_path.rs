@@ -12,8 +12,7 @@ use std::{
 
 use crate::explore::{
     interfaces::{Accumulator, Builder},
-    lazy_merkle_lmdb::MerkleTreeL,
-    scratch::{Hash, Repository, RepositoryTree},
+    scratch::{Repository, RepositoryTree},
 };
 use thiserror::Error;
 
@@ -108,7 +107,7 @@ impl RelativePath {
         let relative = path.strip_prefix(&repo.root.0)?;
         let components = {
             let mut components = Vec::new();
-            for c in relative.components().into_iter() {
+            for c in relative.components() {
                 let Some(part) = c.as_os_str().to_str() else {
                     return Err(RelativePathError::NonUtf8Name(path.to_path_buf()));
                 };
@@ -120,7 +119,7 @@ impl RelativePath {
     }
 
     #[inline]
-    pub fn components<'a>(&'a self) -> impl Iterator<Item = &'a str> {
+    pub fn components(&self) -> impl Iterator<Item = &str> {
         self.0.iter().map(|s| s.as_str())
     }
 

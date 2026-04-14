@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use crate::explore::new_path::{AbsolutePath, RelativePath};
 use crate::explore::scratch::{Hash, HexHash, Repository};
 
@@ -138,7 +136,7 @@ impl<DB: MerkleMetadataStore> LazyData<DB> {
 impl<DB: MerkleMetadataStore> MerkleTreeL<DB> {
     pub fn hash(&self) -> Hash {
         match self {
-            MerkleTreeL::Dir { hash, .. } => hash.clone(),
+            MerkleTreeL::Dir { hash, .. } => *hash,
             MerkleTreeL::File { content, .. } => content.hash(),
         }
     }

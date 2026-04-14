@@ -1,11 +1,11 @@
-use std::{ops::Deref, path::Path};
+use std::path::Path;
 
-use std::path::{PathBuf, StripPrefixError};
+use std::path::PathBuf;
 
-use liboxen::{error::OxenError, model::TMerkleTreeNode};
+use liboxen::error::OxenError;
 use thiserror::Error as ThisError;
 
-use xxhash_rust::xxh3::{Xxh3, xxh3_128};
+use xxhash_rust::xxh3::xxh3_128;
 
 use crate::explore::new_path::AbsolutePath;
 
@@ -34,7 +34,7 @@ pub trait HasHash {
 
 impl HasHash for Hash {
     fn view_hash(&self) -> Hash {
-        self.clone()
+        *self
     }
 }
 
@@ -165,10 +165,7 @@ impl RepositoryTree {
             let content = std::fs::read(path)?;
             Ok(Box::new(Self::File { name, content }))
         } else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "unsupported file type",
-            ));
+            Err(std::io::Error::other("unsupported file type"))
         }
     }
 }
@@ -186,12 +183,10 @@ impl Repository {
                 root,
                 top_level: children,
             }),
-            RepositoryTree::File { name, content: _ } => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("unsupported file type: {}", name),
-                ));
-            }
+            RepositoryTree::File { name, content: _ } => Err(std::io::Error::other(format!(
+                "unsupported file type: {}",
+                name
+            ))),
         }
     }
 }
@@ -212,8 +207,8 @@ pub enum MerkleTree {
 impl MerkleTree {
     pub fn hash(&self) -> Hash {
         match self {
-            MerkleTree::Dir { hash, .. } => hash.clone(),
-            MerkleTree::File { hash, .. } => hash.clone(),
+            MerkleTree::Dir { hash, .. } => *hash,
+            MerkleTree::File { hash, .. } => *hash,
         }
     }
 }
