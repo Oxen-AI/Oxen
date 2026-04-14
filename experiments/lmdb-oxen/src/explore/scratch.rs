@@ -5,6 +5,8 @@ use std::path::{PathBuf, StripPrefixError};
 use liboxen::{error::OxenError, model::TMerkleTreeNode};
 use thiserror::Error as ThisError;
 
+use xxhash_rust::xxh3::{Xxh3, xxh3_128};
+
 #[derive(Debug, ThisError)]
 pub enum Error {
     #[error("{0}")]
@@ -23,6 +25,32 @@ enum MerkleError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Hash(u128);
+
+pub trait HasHash {
+    fn view_hash(&self) -> Hash;
+}
+
+impl HasHash for Hash {
+    fn view_hash(&self) -> Hash {
+        self.clone()
+    }
+}
+
+impl Hash {
+    /// Only way to create a new `Hash` instance is to calculate a hash value from file content.
+    pub fn new(contents: &[u8]) -> Self {
+        Hash(xxh3_128(contents))
+    }
+
+    /// Things that have Hashes can be combined into a new Hash value.
+    pub fn hash_of_hashes<'a, N: HasHash + 'a>(children: impl Iterator<Item = &'a N>) -> Hash {
+        let hashes: Vec<u8> = children
+            .map(|h| h.view_hash().0)
+            .flat_map(|h| h.to_le_bytes())
+            .collect();
+        Self::new(&hashes)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct HexHash(String);
@@ -85,6 +113,8 @@ pub trait MerkleMetadataStore {
     /// It always returns the hash of the child, unless the parent does not exist, in
     /// which case it will return None.
     fn insert(&self, parent: Hash, content: &Self::Node) -> Option<Hash>;
+
+    fn store_tree(&self, commit: Root) -> Hash;
 
     fn path(&self, hash: Hash) -> Option<Vec<Hash>>;
 }
@@ -244,20 +274,62 @@ pub enum MerkleTree {
 impl MerkleTree {
     pub fn hash(&self) -> Hash {
         match self {
-            MerkleTree::Dir { hash, .. } => *hash,
-            MerkleTree::File { hash, .. } => *hash,
+            MerkleTree::Dir { hash, .. } => hash.clone(),
+            MerkleTree::File { hash, .. } => hash.clone(),
         }
     }
 }
 
+impl HasHash for MerkleTree {
+    fn view_hash(&self) -> Hash {
+        self.hash()
+    }
+}
+
+impl HasHash for Box<MerkleTree> {
+    fn view_hash(&self) -> Hash {
+        self.hash()
+    }
+}
+
 pub struct Root {
+    pub root: PathBuf,
     pub hash: Hash,
     pub children: Vec<Box<MerkleTree>>,
 }
 
-impl Root {
-    pub fn hash(&self) -> Hash {
-        self.hash
+pub fn convert_repository_into_merkle_tree(repo: Repository) -> Root {
+    let Repository { root, top_level } = repo;
+    let children = top_level.into_iter().map(hash_convert).collect::<Vec<_>>();
+    Root {
+        root,
+        hash: Hash::hash_of_hashes(children.iter()),
+        children,
+    }
+}
+
+fn hash_convert(node: Box<RepositoryTree>) -> Box<MerkleTree> {
+    match *node {
+        RepositoryTree::Dir { name, children } => {
+            let merkle_children: Vec<Box<MerkleTree>> = {
+                let mut merkle_children = Vec::new();
+                for child in children {
+                    let merkle_child = hash_convert(child);
+                    merkle_children.push(merkle_child);
+                }
+                merkle_children
+            };
+            Box::new(MerkleTree::Dir {
+                hash: Hash::hash_of_hashes(merkle_children.iter()),
+                name,
+                children: merkle_children,
+            })
+        }
+        RepositoryTree::File { name, content } => Box::new(MerkleTree::File {
+            hash: Hash::new(&content),
+            name,
+            content,
+        }),
     }
 }
 

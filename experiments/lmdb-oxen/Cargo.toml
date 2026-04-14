@@ -12,3 +12,4 @@ clap = { version = "4.5.48", features = ["derive"] }
 heed = "0.22.0"
 liboxen  = { path = "../../crates/lib" }
 thiserror = "2.0.18"
+xxhash-rust = "0.8.15"

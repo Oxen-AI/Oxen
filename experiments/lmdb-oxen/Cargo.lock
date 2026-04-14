@@ -3845,6 +3845,7 @@ dependencies = [
  "heed",
  "liboxen",
  "thiserror 2.0.18",
+ "xxhash-rust",
 ]
 
 [[package]]
