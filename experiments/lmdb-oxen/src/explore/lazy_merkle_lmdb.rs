@@ -42,7 +42,7 @@ pub trait MerkleMetadataStore: Sized {
                 if let Some(next) = next_node {
                     reverse_path.push(next.name());
                     if let Some(parent) = next.parent() {
-                        current_hash = parent.hash();
+                        current_hash = parent.load().hash();
                     } else {
                         break;
                     }
@@ -68,7 +68,7 @@ pub trait MerkleMetadataStore: Sized {
             // SAFETY: we know that each component we've collected in `rel_path` is an actual
             //         file or directory name. We also know that this forms a relative path
             //         within the repository.
-            Some(unsafe { RelativePath::from_parts(components) })
+            Some(RelativePath::from_parts(components))
         }
     }
 }
@@ -76,7 +76,7 @@ pub trait MerkleMetadataStore: Sized {
 pub struct InnerMerkle<DB: MerkleMetadataStore> {
     hash: Hash,
     name: String,
-    parent: Option<Box<MerkleTreeL<DB>>>,
+    parent: Option<LazyNode<DB>>,
 }
 
 pub enum MerkleTreeL<DB: MerkleMetadataStore> {
@@ -91,7 +91,20 @@ pub enum MerkleTreeL<DB: MerkleMetadataStore> {
 }
 
 pub struct LazyNode<DB: MerkleMetadataStore> {
-    pub db: DB,
+    db: DB,
+    me: Hash,
+}
+
+impl<DB: MerkleMetadataStore> LazyNode<DB> {
+    pub fn load(&self) -> &MerkleTreeL<DB> {
+        let Some(node) = self.db.node(self.me) else {
+            panic!(
+                "[ERROR] merkle tree node stored incorrectly, cannot find node with hash: {}",
+                HexHash::from(self.me)
+            );
+        };
+        node
+    }
 }
 
 pub struct LazyData<DB: MerkleMetadataStore> {
@@ -100,16 +113,14 @@ pub struct LazyData<DB: MerkleMetadataStore> {
 }
 
 impl<DB: MerkleMetadataStore> LazyData<DB> {
+    /// Reconstructs the relative path to this file node's data
+    /// and reads it from storage.
     pub async fn load(&self) -> Result<Vec<u8>, std::io::Error> {
         let Some(rel_path) = self.db.path(self.me) else {
-            eprintln!(
+            panic!(
                 "[ERROR] cannot determine relative path with hash: {}",
                 HexHash::from(self.me)
             );
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "No path found for hash",
-            ));
         };
 
         let absolute_path = AbsolutePath::from(self.db.repository(), &rel_path).consume();
@@ -135,7 +146,7 @@ impl<DB: MerkleMetadataStore> MerkleTreeL<DB> {
         &inner.name
     }
 
-    pub fn parent(&self) -> Option<&MerkleTreeL<DB>> {
+    pub fn parent(&self) -> Option<&LazyNode<DB>> {
         let inner = match self {
             MerkleTreeL::Dir { inner, .. } => inner,
             MerkleTreeL::File { inner, .. } => inner,

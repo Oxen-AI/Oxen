@@ -135,7 +135,7 @@ impl RelativePath {
     ///         relative path. There **MUST NOT** be any path separators in the parts nor
     ///         can there be any `'.'` or `'..'` components. Each component must be a valid
     ///         file or directory name.
-    pub(crate) unsafe fn from_parts(parts: Vec<String>) -> Self {
+    pub(crate) fn from_parts(parts: Vec<String>) -> Self {
         Self(parts)
     }
 }
