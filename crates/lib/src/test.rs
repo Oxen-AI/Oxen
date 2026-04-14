@@ -1437,14 +1437,21 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
     Ok(())
 }
 
+/// Number of rows in the embeddings.jsonl fixture written by `create_embeddings_jsonl`.
+/// Tests that download the full table assert against this count, so they get the size
+/// from here rather than hardcoding it. Originally 10k; reduced to make the embeddings
+/// tests run faster — they exercise indexing/query/download mechanics, not large-N
+/// behavior.
+pub const EMBEDDINGS_FIXTURE_ROWS: usize = 100;
+
 fn create_embeddings_jsonl(repo_path: &Path) -> Result<(), OxenError> {
     let dir = repo_path.join("annotations").join("train");
     // Create dir
     util::fs::create_dir_all(&dir)?;
 
-    // Make a jsonl file with 10k embeddings
+    // Make a jsonl file with EMBEDDINGS_FIXTURE_ROWS embeddings
     let mut embeddings = Vec::new();
-    for i in 0..10000 {
+    for i in 0..EMBEDDINGS_FIXTURE_ROWS {
         embeddings.push(format!(r#"{{"prompt": "What is great way to version {i} images?", "response": "Checkout Oxen.ai", "embedding": [{i}.0, {i}.1, {i}.2]}}"#));
     }
 
@@ -1904,12 +1911,29 @@ pub fn populate_prompts(repo_dir: &Path) -> Result<(), OxenError> {
     Ok(())
 }
 
-pub fn populate_large_files(repo_dir: &Path) -> Result<(), OxenError> {
+pub fn populate_csv_files(repo_dir: &Path) -> Result<(), OxenError> {
+    // `large_files/test.csv` used to be a straight copy of the full 200k-row celeb_a CSV
+    // (~9.6 MB). Almost none of the tests that use this fixture actually need the size —
+    // they exercise push/pull/clone/merge-conflict mechanics or just check that the file
+    // exists after a download. Tests that genuinely need the 200k-row dataset load it
+    // directly via `test_200k_csv()` / `test_text_file_with_name("celeb_a_200k.csv")`.
+    //
+    // Write a tiny CSV with the same schema so the fixture still looks realistic without
+    // paying the I/O + network cost of pushing 9.6 MB through localhost HTTP per test.
     let large_dir = repo_dir.join("large_files");
     util::fs::create_dir_all(&large_dir)?;
     let large_file_1 = large_dir.join("test.csv");
-    let from_file = test_200k_csv();
-    util::fs::copy(from_file, large_file_1)?;
+
+    let mut csv = String::from(
+        "image_id,lefteye_x,lefteye_y,righteye_x,righteye_y,nose_x,nose_y,\
+         leftmouth_x,leftmouth_y,rightmouth_x,rightmouth_y\n",
+    );
+    for i in 1..=100 {
+        csv.push_str(&format!(
+            "{i:06}.jpg,69,109,106,113,77,142,73,152,108,154\n"
+        ));
+    }
+    write_txt_file_to_path(large_file_1, csv)?;
 
     Ok(())
 }
@@ -2123,8 +2147,7 @@ pub fn populate_dir_with_training_data(repo_dir: &Path) -> Result<(), OxenError>
     // prompts.jsonl
     populate_prompts(repo_dir)?;
 
-    // large_files/test.csv
-    populate_large_files(repo_dir)?;
+    populate_csv_files(repo_dir)?;
 
     // train/
     populate_train_dir(repo_dir)?;
@@ -2152,9 +2175,8 @@ pub fn populate_select_training_data(repo_dir: &Path, data: &str) -> Result<(), 
         populate_labels(repo_dir)?;
     }
 
-    // large_files/test.csv
     if data.contains("large_files") {
-        populate_large_files(repo_dir)?;
+        populate_csv_files(repo_dir)?;
     }
 
     // train/

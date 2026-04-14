@@ -425,11 +425,12 @@ mod tests {
                 .await?;
                 assert!(output_path.exists());
 
-                // There should be 10000 rows by 4 columns
+                // Row count matches the fixture; width is 4 (prompt, response, embedding,
+                // OXEN_ROW_ID).
                 let df = tabular::read_df(&output_path, DFOpts::empty()).await?;
                 println!("{df}");
                 assert_eq!(df.width(), 4);
-                assert_eq!(df.height(), 10000);
+                assert_eq!(df.height(), test::EMBEDDINGS_FIXTURE_ROWS);
                 Ok(())
             })
             .await?;
