@@ -10,5 +10,4 @@ pub fn main() {
     //      create a new entry in nodes table: {hash} -> serialized contents of node file
     //      create a new entry in children table: {hash} -> serialized contents of children file
     //      create a new entry in dir_hashes table: {hash} -> []each child hash
-
 }
