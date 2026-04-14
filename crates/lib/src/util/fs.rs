@@ -1010,10 +1010,15 @@ pub fn canonicalize(path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
     let path = path.as_ref();
     match dunce::canonicalize(path) {
         Ok(canon_path) => Ok(canon_path),
-        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
+        Err(e)
+            if e.kind() == std::io::ErrorKind::Unsupported
+                // On Windows, ERROR_INVALID_FUNCTION (os error 1) from ramdisk drivers maps
+                // to Uncategorized rather than Unsupported, so also check the raw code.
+                || (cfg!(windows) && e.raw_os_error() == Some(1)) =>
+        {
             // Fallback: convert to absolute path without symlink resolution. This is needed on
             // filesystems whose drivers don't implement canonicalization (e.g. Windows imdisk
-            // ramdisks return ERROR_INVALID_FUNCTION which maps to ErrorKind::Unsupported).
+            // ramdisks).
             if path.is_absolute() {
                 Ok(path.to_path_buf())
             } else {
