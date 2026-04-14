@@ -12,4 +12,5 @@ clap = { version = "4.5.48", features = ["derive"] }
 heed = "0.22.0"
 liboxen  = { path = "../../crates/lib" }
 thiserror = "2.0.18"
+tokio = { version = "1.32.0", features = ["full", "tracing"] }
 xxhash-rust = "0.8.15"
