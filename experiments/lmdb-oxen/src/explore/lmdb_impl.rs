@@ -1,6 +1,7 @@
 use heed::byteorder::LE;
 use heed::types::{Bytes, DecodeIgnore, U128};
 use heed::{Database, Env, EnvOpenOptions};
+use liboxen::util::oxen_date_format::deserialize;
 
 use crate::explore::new_path::AbsolutePath;
 use crate::explore::{
@@ -64,14 +65,25 @@ impl MerkleMetadataStore for LmdbMerkleDB {
     ///
     /// Corresponds to a real file or directory under version control.
     /// None means there is no node with that hash.
-    fn node(&self, _hash: Hash) -> Result<Option<&MerkleTreeL<Self>>, Self::Error> {
+    fn node(&self, hash: Hash) -> Result<Option<&MerkleTreeL<Self>>, Self::Error> {
         let rtxn = self.lmdb_env.read_txn()?;
         let db: Database<HashLmdb, ValueLmdb> = self
             .lmdb_env
             .open_database(&rtxn, None)?
             .expect("Invariant violated: database has not been created.");
 
-        Ok(db.get(&rtxn, &hash.into())?)
+
+        let Some(bytes) = db.get(&rtxn, &hash.into())? else {
+            return Ok(None)
+        };
+
+        use rmp_serde;
+
+        rmp_serde::from_slice
+
+        heed::Error::Decoding()
+
+        Ok()
     }
 
     /// Obtains the commit node, which is the root of the Merkle tree.

@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 use crate::explore::new_path::{AbsolutePath, RelativePath};
 use crate::explore::scratch::{Hash, HexHash, Repository};
 
@@ -44,17 +46,17 @@ pub trait MerkleMetadataStore: Sized {
                 if let Some(next) = next_node {
                     reverse_path.push(next.name());
                     if let Some(parent) = next.parent() {
-                        current_hash = parent.load().hash();
+                        current_hash = parent.load()?.hash();
                     } else {
                         break;
                     }
                 } else {
                     // In case the parent is the commit node / root => we check and
                     // treat this as the end of the path.
-                    if self.exists(current_hash) {
+                    if self.exists(current_hash)? {
                         break;
                     } else {
-                        return None;
+                        return Ok(None);
                     }
                 }
             }
@@ -64,13 +66,13 @@ pub trait MerkleMetadataStore: Sized {
         };
 
         if rel_path.is_empty() {
-            None
+            Ok(None)
         } else {
             let components = rel_path.iter().map(|s| s.to_string()).collect();
             // SAFETY: we know that each component we've collected in `rel_path` is an actual
             //         file or directory name. We also know that this forms a relative path
             //         within the repository.
-            Some(RelativePath::from_parts(components))
+            Ok(Some(RelativePath::from_parts(components)))
         }
     }
 }
@@ -91,6 +93,7 @@ pub enum MerkleTreeL<DB: MerkleMetadataStore> {
     },
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct LazyNode<DB: MerkleMetadataStore> {
     db: DB,
     me: Hash,
@@ -112,6 +115,7 @@ impl<DB: MerkleMetadataStore> LazyNode<DB> {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct LazyData<DB: MerkleMetadataStore> {
     db: DB,
     me: Hash,

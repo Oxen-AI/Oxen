@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use heed::byteorder::BE;
 use heed::types::U128;
 use liboxen::error::OxenError;
+use serde::Deserialize;
+use serde::Serialize;
 use thiserror::Error as ThisError;
 
 use xxhash_rust::xxh3::xxh3_128;
@@ -27,7 +29,7 @@ enum MerkleError {
     HashDoesNotEqualContent,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Hash(u128);
 
 /// Unwraps a hash into its unsigned 128 bit value.
