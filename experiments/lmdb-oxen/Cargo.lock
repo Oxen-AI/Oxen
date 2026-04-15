@@ -3845,6 +3845,7 @@ dependencies = [
  "clap",
  "heed",
  "liboxen",
+ "serde",
  "thiserror 2.0.18",
  "tokio",
  "xxhash-rust",
