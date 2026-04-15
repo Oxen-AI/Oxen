@@ -23,7 +23,7 @@ pub trait MerkleMetadataStore: Sized {
     ///
     /// Corresponds to a real file or directory under version control.
     /// None means there is no node with that hash.
-    fn node(&self, hash: Hash) -> Result<Option<&MerkleTreeL<Self>>, Self::Error>;
+    fn node<'a>(&'a self, hash: Hash) -> Result<Option<MerkleTreeL<'a, Self>>, Self::Error>;
 
     /// Obtains the commit node, which is the root of the Merkle tree.
     ///
@@ -78,29 +78,29 @@ pub trait MerkleMetadataStore: Sized {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub enum MerkleTreeL<DB: MerkleMetadataStore> {
+pub enum MerkleTreeL<'a, DB: MerkleMetadataStore> {
     Dir {
         hash: Hash,
         name: String,
-        parent: Option<LazyNode<DB>>,
-        children: Vec<LazyNode<DB>>,
+        parent: Option<LazyNode<'a, DB>>,
+        children: Vec<LazyNode<'a, DB>>,
     },
     File {
         // hash is in content (LazyData)
         name: String,
-        parent: Option<LazyNode<DB>>,
-        content: LazyData<DB>,
+        parent: Option<LazyNode<'a, DB>>,
+        content: LazyData<'a, DB>,
     },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct LazyNode<DB: MerkleMetadataStore> {
-    db: DB,
+pub struct LazyNode<'a, DB: MerkleMetadataStore> {
+    db: &'a DB,
     me: Hash,
 }
 
-impl<DB: MerkleMetadataStore> LazyNode<DB> {
-    pub fn load(&self) -> Result<&MerkleTreeL<DB>, DB::Error> {
+impl<'a, DB: MerkleMetadataStore> LazyNode<'a, DB> {
+    pub fn load(&self) -> Result<MerkleTreeL<'a, DB>, DB::Error> {
         let Some(node) = self.db.node(self.me)? else {
             panic!(
                 "[ERROR] merkle tree node stored incorrectly, cannot find node with hash: {}",
@@ -115,9 +115,9 @@ impl<DB: MerkleMetadataStore> LazyNode<DB> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct LazyData<DB: MerkleMetadataStore> {
-    db: DB,
+#[derive(Debug)]
+pub struct LazyData<'a, DB: MerkleMetadataStore> {
+    db: &'a DB,
     me: Hash,
 }
 
@@ -133,7 +133,7 @@ pub enum LoadError<DB: MerkleMetadataStore> {
     ReadError(std::io::Error),
 }
 
-impl<DB: MerkleMetadataStore> LazyData<DB> {
+impl<'a, DB: MerkleMetadataStore> LazyData<'a, DB> {
     /// Reconstructs the relative path to this file node's data
     /// and reads it from storage.
     pub async fn load(&self) -> Result<Vec<u8>, LoadError<DB>> {
@@ -152,7 +152,7 @@ impl<DB: MerkleMetadataStore> LazyData<DB> {
     }
 }
 
-impl<DB: MerkleMetadataStore> MerkleTreeL<DB> {
+impl<'a, DB: MerkleMetadataStore> MerkleTreeL<'a, DB> {
     pub fn hash(&self) -> Hash {
         match self {
             MerkleTreeL::Dir { hash, .. } => *hash,
@@ -176,18 +176,18 @@ impl<DB: MerkleMetadataStore> MerkleTreeL<DB> {
     }
 }
 
-pub struct Root<DB: MerkleMetadataStore> {
+pub struct Root<'a, DB: MerkleMetadataStore> {
     root: AbsolutePath,
     hash: Hash,
-    children: Vec<LazyNode<DB>>,
+    children: Vec<LazyNode<'a, DB>>,
 }
 
-impl<DB: MerkleMetadataStore> Root<DB> {
+impl<'a, DB: MerkleMetadataStore> Root<'a, DB> {
     pub fn hash(&self) -> Hash {
         self.hash
     }
 
-    pub fn children(&self) -> impl Iterator<Item = &LazyNode<DB>> {
+    pub fn children(&self) -> impl Iterator<Item = &LazyNode<'a, DB>> {
         self.children.iter()
     }
 }

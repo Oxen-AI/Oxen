@@ -72,18 +72,17 @@ impl MerkleMetadataStore for LmdbMerkleDB {
             .open_database(&rtxn, None)?
             .expect("Invariant violated: database has not been created.");
 
-
         let Some(bytes) = db.get(&rtxn, &hash.into())? else {
-            return Ok(None)
+            return Ok(None);
         };
 
-        use rmp_serde;
-
-        rmp_serde::from_slice
-
-        heed::Error::Decoding()
-
-        Ok()
+        match rmp_serde::from_slice(bytes) {
+            Ok(x) => {
+                let node: Option<MerkleTreeL<Self>> = Some(x);
+                Ok(node.as_deref())
+            }
+            Err(e) => Err(heed::Error::Decoding(e)),
+        }
     }
 
     /// Obtains the commit node, which is the root of the Merkle tree.
