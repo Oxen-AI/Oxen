@@ -1,4 +1,5 @@
 pub mod interfaces;
+pub mod lazy_merkle_lmdb_stateful;
 pub mod lazy_merkle_lmdb;
 pub mod lmdb_impl;
 pub mod merkle_writer;
