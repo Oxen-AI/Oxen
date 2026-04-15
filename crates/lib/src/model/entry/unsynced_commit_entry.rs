@@ -1,8 +1,7 @@
-use crate::model::Commit;
-use crate::model::entry::commit_entry::Entry;
+use crate::model::{Commit, CommitEntry};
 
 #[derive(Debug)]
 pub struct UnsyncedCommitEntries {
     pub commit: Commit,
-    pub entries: Vec<Entry>,
+    pub entries: Vec<CommitEntry>,
 }
