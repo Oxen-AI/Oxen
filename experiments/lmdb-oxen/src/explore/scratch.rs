@@ -2,8 +2,6 @@ use std::path::Path;
 
 use std::path::PathBuf;
 
-use heed::byteorder::BE;
-use heed::types::U128;
 use liboxen::error::OxenError;
 use serde::Deserialize;
 use serde::Serialize;

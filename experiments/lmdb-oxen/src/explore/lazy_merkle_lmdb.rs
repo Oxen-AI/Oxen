@@ -1,5 +1,4 @@
 use std::fmt;
-use std::path::PathBuf;
 
 use serde::de::{self, DeserializeSeed, EnumAccess, MapAccess, SeqAccess, VariantAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -31,7 +30,7 @@ pub trait MerkleMetadataStore: Sized {
     ///
     /// Corresponds to the complete state of the repository at a given commit.
     /// None means there is no commit with that hash.
-    fn commit(&self, hash: Hash) -> Result<Option<&Root<Self>>, Self::Error>;
+    fn commit(&self, hash: Hash) -> Result<Option<&Root<'_, Self>>, Self::Error>;
 
     /// The repository for which this trait is managing the Merkle tree.
     fn repository(&self) -> &Repository;
@@ -560,7 +559,7 @@ impl<'a, DB: MerkleMetadataStore> MerkleTreeL<'a, DB> {
         }
     }
 
-    pub fn parent(&self) -> Option<&LazyNode<DB>> {
+    pub fn parent(&self) -> Option<&LazyNode<'_, DB>> {
         match self {
             MerkleTreeL::Dir { parent, .. } => parent,
             MerkleTreeL::File { parent, .. } => parent,

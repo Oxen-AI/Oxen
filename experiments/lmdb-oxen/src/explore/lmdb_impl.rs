@@ -88,7 +88,7 @@ impl MerkleMetadataStore for LmdbMerkleDB {
     ///
     /// Corresponds to the complete state of the repository at a given commit.
     /// None means there is no commit with that hash.
-    fn commit(&self, _hash: Hash) -> Result<Option<&Root<Self>>, Self::Error> {
+    fn commit(&self, _hash: Hash) -> Result<Option<&Root<'_, Self>>, Self::Error> {
         unimplemented!()
     }
 }
