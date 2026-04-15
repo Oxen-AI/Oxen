@@ -1435,10 +1435,12 @@ mod tests {
     #[tokio::test]
     async fn test_store_version_from_reader_hash_mismatch_multipart() {
         let (mut store, _tmp, _server) = setup().await;
-        // Drop the threshold so 20MB exercises the multipart path without a 100MB+ payload.
-        store.oneshot_size = 5 * 1024 * 1024;
+        // Drop the threshold below the data size so this exercises the multipart path. Any size
+        // above the threshold works — the S3 5MB-minimum rule applies only to non-last parts,
+        // so a single-part multipart upload is fine.
+        store.oneshot_size = 512;
 
-        let data = vec![42u8; 20 * 1024 * 1024];
+        let data = vec![42u8; 1024];
         let wrong_hash = "deadbeefdeadbeefdeadbeefdeadbeef";
 
         let cursor = std::io::Cursor::new(data.clone());
