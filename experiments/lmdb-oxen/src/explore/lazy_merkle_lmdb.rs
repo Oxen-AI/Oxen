@@ -1,7 +1,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use serde::de::{self, DeserializeSeed, MapAccess, Visitor};
+use serde::de::{self, DeserializeSeed, EnumAccess, MapAccess, SeqAccess, VariantAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::explore::new_path::{AbsolutePath, RelativePath};
@@ -46,7 +46,7 @@ pub trait MerkleMetadataStore: Sized {
             loop {
                 let next_node = self.node(current_hash)?;
                 if let Some(next) = next_node {
-                    reverse_path.push(next.name());
+                    reverse_path.push(next.name().to_string());
                     if let Some(parent) = next.parent() {
                         current_hash = parent.load()?.hash();
                     } else {
@@ -94,6 +94,38 @@ pub enum MerkleTreeL<'a, DB: MerkleMetadataStore> {
     },
 }
 
+impl<DB: MerkleMetadataStore> Serialize for MerkleTreeL<'_, DB> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStructVariant;
+        match self {
+            MerkleTreeL::Dir {
+                hash,
+                name,
+                parent,
+                children,
+            } => {
+                let mut sv = serializer.serialize_struct_variant("MerkleTreeL", 0, "Dir", 4)?;
+                sv.serialize_field("hash", hash)?;
+                sv.serialize_field("name", name)?;
+                sv.serialize_field("parent", parent)?;
+                sv.serialize_field("children", children)?;
+                sv.end()
+            }
+            MerkleTreeL::File {
+                name,
+                parent,
+                content,
+            } => {
+                let mut sv = serializer.serialize_struct_variant("MerkleTreeL", 1, "File", 3)?;
+                sv.serialize_field("name", name)?;
+                sv.serialize_field("parent", parent)?;
+                sv.serialize_field("content", content)?;
+                sv.end()
+            }
+        }
+    }
+}
+
 pub struct LazyNode<'a, DB: MerkleMetadataStore> {
     db: &'a DB,
     me: Hash,
@@ -112,6 +144,15 @@ impl<'a, DB: MerkleMetadataStore> LazyNode<'a, DB> {
 
     pub fn hash(&self) -> Hash {
         self.me
+    }
+}
+
+impl<DB: MerkleMetadataStore> Serialize for LazyNode<'_, DB> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut s = serializer.serialize_struct("LazyNode", 1)?;
+        s.serialize_field("me", &self.me)?;
+        s.end()
     }
 }
 
@@ -154,6 +195,13 @@ impl<'a, 'de, DB: MerkleMetadataStore> Visitor<'de> for LazyDataVisitor<'a, DB> 
         write!(f, "LazyData with object reference")
     }
 
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        let me: Hash = seq
+            .next_element()?
+            .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+        Ok(LazyData { db: self.db, me })
+    }
+
     fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
         let mut me: Option<Hash> = None;
 
@@ -169,6 +217,300 @@ impl<'a, 'de, DB: MerkleMetadataStore> Visitor<'de> for LazyDataVisitor<'a, DB> 
         let me = me.ok_or_else(|| de::Error::missing_field("me"))?;
 
         Ok(LazyData { db: self.db, me })
+    }
+}
+
+//
+// D e s e r i a l i z a t i o n   S e e d s
+//
+
+// -- LazyNode seed --
+
+pub(crate) struct LazyNodeSeed<'a, DB: MerkleMetadataStore> {
+    db: &'a DB,
+}
+
+impl<'a, 'de, DB: MerkleMetadataStore> DeserializeSeed<'de> for LazyNodeSeed<'a, DB> {
+    type Value = LazyNode<'a, DB>;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        deserializer.deserialize_struct("LazyNode", &["me"], LazyNodeVisitor { db: self.db })
+    }
+}
+
+pub(crate) struct LazyNodeVisitor<'a, DB: MerkleMetadataStore> {
+    db: &'a DB,
+}
+
+impl<'a, 'de, DB: MerkleMetadataStore> Visitor<'de> for LazyNodeVisitor<'a, DB> {
+    type Value = LazyNode<'a, DB>;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "LazyNode with object reference")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        let me: Hash = seq
+            .next_element()?
+            .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+        Ok(LazyNode { db: self.db, me })
+    }
+
+    fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
+        let mut me: Option<Hash> = None;
+
+        while let Some(key) = map.next_key::<String>()? {
+            match key.as_str() {
+                "me" => me = Some(map.next_value()?),
+                _ => {
+                    let _ = map.next_value::<de::IgnoredAny>()?;
+                }
+            }
+        }
+
+        let me = me.ok_or_else(|| de::Error::missing_field("me"))?;
+        Ok(LazyNode { db: self.db, me })
+    }
+}
+
+// -- Option<LazyNode> seed --
+
+pub(crate) struct OptionLazyNodeSeed<'a, DB: MerkleMetadataStore> {
+    db: &'a DB,
+}
+
+impl<'a, 'de, DB: MerkleMetadataStore> DeserializeSeed<'de> for OptionLazyNodeSeed<'a, DB> {
+    type Value = Option<LazyNode<'a, DB>>;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        deserializer.deserialize_option(OptionLazyNodeVisitor { db: self.db })
+    }
+}
+
+struct OptionLazyNodeVisitor<'a, DB: MerkleMetadataStore> {
+    db: &'a DB,
+}
+
+impl<'a, 'de, DB: MerkleMetadataStore> Visitor<'de> for OptionLazyNodeVisitor<'a, DB> {
+    type Value = Option<LazyNode<'a, DB>>;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "an optional LazyNode")
+    }
+
+    fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+        Ok(None)
+    }
+
+    fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+        Ok(None)
+    }
+
+    fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        LazyNodeSeed { db: self.db }
+            .deserialize(deserializer)
+            .map(Some)
+    }
+}
+
+// -- Vec<LazyNode> seed --
+
+pub(crate) struct VecLazyNodeSeed<'a, DB: MerkleMetadataStore> {
+    db: &'a DB,
+}
+
+impl<'a, 'de, DB: MerkleMetadataStore> DeserializeSeed<'de> for VecLazyNodeSeed<'a, DB> {
+    type Value = Vec<LazyNode<'a, DB>>;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        deserializer.deserialize_seq(VecLazyNodeVisitor { db: self.db })
+    }
+}
+
+struct VecLazyNodeVisitor<'a, DB: MerkleMetadataStore> {
+    db: &'a DB,
+}
+
+impl<'a, 'de, DB: MerkleMetadataStore> Visitor<'de> for VecLazyNodeVisitor<'a, DB> {
+    type Value = Vec<LazyNode<'a, DB>>;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "a sequence of LazyNode")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        let mut nodes = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+        while let Some(node) = seq.next_element_seed(LazyNodeSeed { db: self.db })? {
+            nodes.push(node);
+        }
+        Ok(nodes)
+    }
+}
+
+// -- MerkleTreeL seed --
+
+pub(crate) struct MerkleTreeLSeed<'a, DB: MerkleMetadataStore> {
+    pub(crate) db: &'a DB,
+}
+
+impl<'a, 'de, DB: MerkleMetadataStore> DeserializeSeed<'de> for MerkleTreeLSeed<'a, DB> {
+    type Value = MerkleTreeL<'a, DB>;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        const VARIANTS: &[&str] = &["Dir", "File"];
+        deserializer.deserialize_enum(
+            "MerkleTreeL",
+            VARIANTS,
+            MerkleTreeLEnumVisitor { db: self.db },
+        )
+    }
+}
+
+struct MerkleTreeLEnumVisitor<'a, DB: MerkleMetadataStore> {
+    db: &'a DB,
+}
+
+impl<'a, 'de, DB: MerkleMetadataStore> Visitor<'de> for MerkleTreeLEnumVisitor<'a, DB> {
+    type Value = MerkleTreeL<'a, DB>;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "enum MerkleTreeL (Dir or File)")
+    }
+
+    fn visit_enum<A: EnumAccess<'de>>(self, data: A) -> Result<Self::Value, A::Error> {
+        let (variant_name, variant_access) = data.variant::<String>()?;
+        match variant_name.as_str() {
+            "Dir" => variant_access.struct_variant(
+                &["hash", "name", "parent", "children"],
+                DirVariantVisitor { db: self.db },
+            ),
+            "File" => variant_access.struct_variant(
+                &["name", "parent", "content"],
+                FileVariantVisitor { db: self.db },
+            ),
+            other => Err(de::Error::unknown_variant(other, &["Dir", "File"])),
+        }
+    }
+}
+
+struct DirVariantVisitor<'a, DB: MerkleMetadataStore> {
+    db: &'a DB,
+}
+
+impl<'a, 'de, DB: MerkleMetadataStore> Visitor<'de> for DirVariantVisitor<'a, DB> {
+    type Value = MerkleTreeL<'a, DB>;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Dir variant of MerkleTreeL")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        let hash: Hash = seq
+            .next_element()?
+            .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+        let name: String = seq
+            .next_element()?
+            .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+        let parent: Option<LazyNode<'a, DB>> = seq
+            .next_element_seed(OptionLazyNodeSeed { db: self.db })?
+            .ok_or_else(|| de::Error::invalid_length(2, &self))?;
+        let children: Vec<LazyNode<'a, DB>> = seq
+            .next_element_seed(VecLazyNodeSeed { db: self.db })?
+            .ok_or_else(|| de::Error::invalid_length(3, &self))?;
+
+        Ok(MerkleTreeL::Dir {
+            hash,
+            name,
+            parent,
+            children,
+        })
+    }
+
+    fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
+        let mut hash: Option<Hash> = None;
+        let mut name: Option<String> = None;
+        let mut parent: Option<Option<LazyNode<'a, DB>>> = None;
+        let mut children: Option<Vec<LazyNode<'a, DB>>> = None;
+
+        while let Some(key) = map.next_key::<String>()? {
+            match key.as_str() {
+                "hash" => hash = Some(map.next_value()?),
+                "name" => name = Some(map.next_value()?),
+                "parent" => {
+                    parent = Some(map.next_value_seed(OptionLazyNodeSeed { db: self.db })?);
+                }
+                "children" => {
+                    children = Some(map.next_value_seed(VecLazyNodeSeed { db: self.db })?);
+                }
+                _ => {
+                    let _ = map.next_value::<de::IgnoredAny>()?;
+                }
+            }
+        }
+
+        Ok(MerkleTreeL::Dir {
+            hash: hash.ok_or_else(|| de::Error::missing_field("hash"))?,
+            name: name.ok_or_else(|| de::Error::missing_field("name"))?,
+            parent: parent.ok_or_else(|| de::Error::missing_field("parent"))?,
+            children: children.ok_or_else(|| de::Error::missing_field("children"))?,
+        })
+    }
+}
+
+struct FileVariantVisitor<'a, DB: MerkleMetadataStore> {
+    db: &'a DB,
+}
+
+impl<'a, 'de, DB: MerkleMetadataStore> Visitor<'de> for FileVariantVisitor<'a, DB> {
+    type Value = MerkleTreeL<'a, DB>;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "File variant of MerkleTreeL")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        let name: String = seq
+            .next_element()?
+            .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+        let parent: Option<LazyNode<'a, DB>> = seq
+            .next_element_seed(OptionLazyNodeSeed { db: self.db })?
+            .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+        let content: LazyData<'a, DB> = seq
+            .next_element_seed(HasDbSeed { db: self.db })?
+            .ok_or_else(|| de::Error::invalid_length(2, &self))?;
+
+        Ok(MerkleTreeL::File {
+            name,
+            parent,
+            content,
+        })
+    }
+
+    fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
+        let mut name: Option<String> = None;
+        let mut parent: Option<Option<LazyNode<'a, DB>>> = None;
+        let mut content: Option<LazyData<'a, DB>> = None;
+
+        while let Some(key) = map.next_key::<String>()? {
+            match key.as_str() {
+                "name" => name = Some(map.next_value()?),
+                "parent" => {
+                    parent = Some(map.next_value_seed(OptionLazyNodeSeed { db: self.db })?);
+                }
+                "content" => {
+                    content = Some(map.next_value_seed(HasDbSeed { db: self.db })?);
+                }
+                _ => {
+                    let _ = map.next_value::<de::IgnoredAny>()?;
+                }
+            }
+        }
+
+        Ok(MerkleTreeL::File {
+            name: name.ok_or_else(|| de::Error::missing_field("name"))?,
+            parent: parent.ok_or_else(|| de::Error::missing_field("parent"))?,
+            content: content.ok_or_else(|| de::Error::missing_field("content"))?,
+        })
     }
 }
 

@@ -1,12 +1,11 @@
 use heed::byteorder::LE;
 use heed::types::{Bytes, DecodeIgnore, U128};
 use heed::{Database, Env, EnvOpenOptions};
-use liboxen::util::oxen_date_format::deserialize;
-use serde::{Deserialize, Serialize};
+use serde::de::DeserializeSeed;
 
 use crate::explore::new_path::AbsolutePath;
 use crate::explore::{
-    lazy_merkle_lmdb::{MerkleMetadataStore, MerkleTreeL, Root},
+    lazy_merkle_lmdb::{MerkleMetadataStore, MerkleTreeL, MerkleTreeLSeed, Root},
     scratch::{Hash, Repository},
 };
 
@@ -66,7 +65,7 @@ impl MerkleMetadataStore for LmdbMerkleDB {
     ///
     /// Corresponds to a real file or directory under version control.
     /// None means there is no node with that hash.
-    fn node(&self, hash: Hash) -> Result<Option<&MerkleTreeL<Self>>, Self::Error> {
+    fn node<'a>(&'a self, hash: Hash) -> Result<Option<MerkleTreeL<'a, Self>>, Self::Error> {
         let rtxn = self.lmdb_env.read_txn()?;
         let db: Database<HashLmdb, ValueLmdb> = self
             .lmdb_env
@@ -77,13 +76,12 @@ impl MerkleMetadataStore for LmdbMerkleDB {
             return Ok(None);
         };
 
-        match rmp_serde::from_slice(bytes) {
-            Ok(x) => {
-                let node: Option<MerkleTreeL<Self>> = Some(x);
-                Ok(node.as_deref())
-            }
-            Err(e) => Err(heed::Error::Decoding(e)),
-        }
+        let seed = MerkleTreeLSeed { db: self };
+        let mut de = rmp_serde::Deserializer::from_read_ref(bytes);
+        let node = seed
+            .deserialize(&mut de)
+            .map_err(|e| heed::Error::Decoding(Box::new(e)))?;
+        Ok(Some(node))
     }
 
     /// Obtains the commit node, which is the root of the Merkle tree.
