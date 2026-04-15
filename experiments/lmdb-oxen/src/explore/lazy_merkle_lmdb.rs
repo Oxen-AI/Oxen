@@ -1,6 +1,8 @@
+use std::fmt;
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use serde::de::{self, DeserializeSeed, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::explore::new_path::{AbsolutePath, RelativePath};
 use crate::explore::scratch::{Hash, HexHash, Repository};
@@ -77,7 +79,6 @@ pub trait MerkleMetadataStore: Sized {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
 pub enum MerkleTreeL<'a, DB: MerkleMetadataStore> {
     Dir {
         hash: Hash,
@@ -93,7 +94,6 @@ pub enum MerkleTreeL<'a, DB: MerkleMetadataStore> {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
 pub struct LazyNode<'a, DB: MerkleMetadataStore> {
     db: &'a DB,
     me: Hash,
@@ -119,6 +119,57 @@ impl<'a, DB: MerkleMetadataStore> LazyNode<'a, DB> {
 pub struct LazyData<'a, DB: MerkleMetadataStore> {
     db: &'a DB,
     me: Hash,
+}
+
+impl<DB: MerkleMetadataStore> Serialize for LazyData<'_, DB> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut s = serializer.serialize_struct("LazyData", 1)?;
+        // Serialize a placeholder — here we compute an ID from the object
+        s.serialize_field("me", &self.me)?;
+        s.end()
+    }
+}
+
+pub(crate) struct HasDbSeed<'a, DB: MerkleMetadataStore> {
+    db: &'a DB,
+}
+
+impl<'a, 'de, DB: MerkleMetadataStore> DeserializeSeed<'de> for HasDbSeed<'a, DB> {
+    type Value = LazyData<'a, DB>;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        deserializer.deserialize_struct("LazyData", &["db", "me"], LazyDataVisitor { db: self.db })
+    }
+}
+
+pub(crate) struct LazyDataVisitor<'a, DB: MerkleMetadataStore> {
+    db: &'a DB,
+}
+
+impl<'a, 'de, DB: MerkleMetadataStore> Visitor<'de> for LazyDataVisitor<'a, DB> {
+    type Value = LazyData<'a, DB>;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "LazyData with object reference")
+    }
+
+    fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
+        let mut me: Option<Hash> = None;
+
+        while let Some(key) = map.next_key::<String>()? {
+            match key.as_str() {
+                "me" => me = Some(map.next_value()?),
+                _ => {
+                    let _ = map.next_value::<de::IgnoredAny>()?;
+                }
+            }
+        }
+
+        let me = me.ok_or_else(|| de::Error::missing_field("me"))?;
+
+        Ok(LazyData { db: self.db, me })
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

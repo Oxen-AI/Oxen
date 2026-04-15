@@ -2,6 +2,7 @@ use heed::byteorder::LE;
 use heed::types::{Bytes, DecodeIgnore, U128};
 use heed::{Database, Env, EnvOpenOptions};
 use liboxen::util::oxen_date_format::deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::explore::new_path::AbsolutePath;
 use crate::explore::{
