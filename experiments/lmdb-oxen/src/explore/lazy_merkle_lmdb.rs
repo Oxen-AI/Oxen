@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::explore::new_path::{AbsolutePath, RelativePath};
 use crate::explore::scratch::{Hash, HexHash, Repository};
 
@@ -6,37 +8,39 @@ use crate::explore::scratch::{Hash, HexHash, Repository};
 //
 
 pub trait MerkleMetadataStore: Sized {
+    type Error: std::error::Error;
+
     /// If true, then there is a node in the Merkle tree that has this hash.
     ///
     /// This always means that either `self.node()` xor `self.commit()` will return a
     /// non-`None` value. Note that this is a mutually exclusive relationship: exactly
     /// one of `node` or `commit` is non-`None` if `exists` is `true`.
-    fn exists(&self, hash: Hash) -> bool;
+    fn exists(&self, hash: Hash) -> Result<bool, Self::Error>;
 
     /// Obtains a reference to the Merkle tree node for the given hash.
     ///
     /// Corresponds to a real file or directory under version control.
     /// None means there is no node with that hash.
-    fn node(&self, hash: Hash) -> Option<&MerkleTreeL<Self>>;
+    fn node(&self, hash: Hash) -> Result<Option<&MerkleTreeL<Self>>, Self::Error>;
 
     /// Obtains the commit node, which is the root of the Merkle tree.
     ///
     /// Corresponds to the complete state of the repository at a given commit.
     /// None means there is no commit with that hash.
-    fn commit(&self, hash: Hash) -> Option<&Root<Self>>;
+    fn commit(&self, hash: Hash) -> Result<Option<&Root<Self>>, Self::Error>;
 
     /// The repository for which this trait is managing the Merkle tree.
     fn repository(&self) -> &Repository;
 
     /// The repository relative path to the file or directory indicated by the given hash.
     /// None means that the hash does not appear in the Merkle tree.
-    fn path(&self, hash: Hash) -> Option<RelativePath> {
+    fn path(&self, hash: Hash) -> Result<Option<RelativePath>, Self::Error> {
         let rel_path = {
             let mut reverse_path = Vec::new();
 
             let mut current_hash = hash;
             loop {
-                let next_node = self.node(current_hash);
+                let next_node = self.node(current_hash)?;
                 if let Some(next) = next_node {
                     reverse_path.push(next.name());
                     if let Some(parent) = next.parent() {
@@ -71,6 +75,7 @@ pub trait MerkleMetadataStore: Sized {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub enum MerkleTreeL<DB: MerkleMetadataStore> {
     Dir {
         hash: Hash,
@@ -92,14 +97,14 @@ pub struct LazyNode<DB: MerkleMetadataStore> {
 }
 
 impl<DB: MerkleMetadataStore> LazyNode<DB> {
-    pub fn load(&self) -> &MerkleTreeL<DB> {
-        let Some(node) = self.db.node(self.me) else {
+    pub fn load(&self) -> Result<&MerkleTreeL<DB>, DB::Error> {
+        let Some(node) = self.db.node(self.me)? else {
             panic!(
                 "[ERROR] merkle tree node stored incorrectly, cannot find node with hash: {}",
                 HexHash::from(self.me)
             );
         };
-        node
+        Ok(node)
     }
 
     pub fn hash(&self) -> Hash {
@@ -112,20 +117,30 @@ pub struct LazyData<DB: MerkleMetadataStore> {
     me: Hash,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum LoadError<DB: MerkleMetadataStore> {
+    #[error("Error from Merkle tree data store: {0}")]
+    DBError(DB::Error),
+
+    #[error("Cannot determine relative path for hash: {0}")]
+    PathError(HexHash),
+
+    #[error("{0}")]
+    ReadError(std::io::Error),
+}
+
 impl<DB: MerkleMetadataStore> LazyData<DB> {
     /// Reconstructs the relative path to this file node's data
     /// and reads it from storage.
-    pub async fn load(&self) -> Result<Vec<u8>, std::io::Error> {
-        let Some(rel_path) = self.db.path(self.me) else {
-            panic!(
-                "[ERROR] cannot determine relative path with hash: {}",
-                HexHash::from(self.me)
-            );
+    pub async fn load(&self) -> Result<Vec<u8>, LoadError<DB>> {
+        let Some(rel_path) = self.db.path(self.me).map_err(LoadError::DBError)? else {
+            return Err(LoadError::PathError(HexHash::from(self.me)));
         };
 
-        let absolute_path = AbsolutePath::from(self.db.repository(), &rel_path).consume();
-
-        tokio::fs::read(absolute_path).await
+        let path = AbsolutePath::from(self.db.repository(), &rel_path);
+        tokio::fs::read(path.as_path())
+            .await
+            .map_err(LoadError::ReadError)
     }
 
     pub fn hash(&self) -> Hash {
@@ -158,7 +173,17 @@ impl<DB: MerkleMetadataStore> MerkleTreeL<DB> {
 }
 
 pub struct Root<DB: MerkleMetadataStore> {
-    pub root: AbsolutePath,
-    pub hash: Hash,
-    pub children: Vec<LazyNode<DB>>,
+    root: AbsolutePath,
+    hash: Hash,
+    children: Vec<LazyNode<DB>>,
+}
+
+impl<DB: MerkleMetadataStore> Root<DB> {
+    pub fn hash(&self) -> Hash {
+        self.hash
+    }
+
+    pub fn children(&self) -> impl Iterator<Item = &LazyNode<DB>> {
+        self.children.iter()
+    }
 }

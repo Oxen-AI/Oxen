@@ -72,13 +72,15 @@ impl AbsolutePath {
         Self(abs_path)
     }
 
-    /// Unwrap and return the inner value.
-    pub fn consume(self) -> PathBuf {
-        self.0
-    }
-
     pub fn as_path(&self) -> &Path {
         self.0.as_path()
+    }
+}
+
+/// Unwrap an absolute path into a canonicalized std::path::PathBuf.
+impl From<AbsolutePath> for PathBuf {
+    fn from(abs_path: AbsolutePath) -> Self {
+        abs_path.0
     }
 }
 

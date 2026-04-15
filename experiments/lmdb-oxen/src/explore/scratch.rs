@@ -2,6 +2,8 @@ use std::path::Path;
 
 use std::path::PathBuf;
 
+use heed::byteorder::BE;
+use heed::types::U128;
 use liboxen::error::OxenError;
 use thiserror::Error as ThisError;
 
@@ -27,6 +29,13 @@ enum MerkleError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Hash(u128);
+
+/// Unwraps a hash into its unsigned 128 bit value.
+impl From<Hash> for u128 {
+    fn from(value: Hash) -> Self {
+        value.0
+    }
+}
 
 pub trait HasHash {
     fn view_hash(&self) -> Hash;
