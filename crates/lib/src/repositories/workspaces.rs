@@ -817,8 +817,10 @@ mod tests {
                 .join(OXEN_HIDDEN_DIR)
                 .join(WORKSPACES_DIR)
                 .join(WORKSPACE_NAME_INDEX_DIR);
-            util::fs::remove_dir_all(&index_dir)?;
+            // Evict the cached RocksDB handle before removing the directory:
+            // on Windows the open file handles prevent `remove_dir_all`.
             workspace_name_index::remove_from_cache(&repo);
+            util::fs::remove_dir_all(&index_dir)?;
 
             let workspaces = list(&repo)?;
             assert_eq!(workspaces.len(), 1);
