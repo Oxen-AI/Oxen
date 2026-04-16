@@ -258,7 +258,12 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// * `hash` - The content hash of the version to delete
     async fn delete_version(&self, hash: &str) -> Result<(), OxenError>;
 
-    /// List all versions
+    /// List all versions.
+    ///
+    /// Results are returned as hash strings, sorted in UTF-8 byte order (equivalent to
+    /// lexicographic order for the hex-digit hashes we use). This keeps behavior
+    /// deterministic across storage backends — the local filesystem returns entries in
+    /// platform- and filesystem-dependent order, which implementations must sort.
     async fn list_versions(&self) -> Result<Vec<String>, OxenError>;
 
     /// Clean corrupted version files

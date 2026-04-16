@@ -243,6 +243,9 @@ impl VersionStore for LocalVersionStore {
             }
         }
 
+        // `read_dir` order is platform/filesystem dependent, so sort for a deterministic
+        // UTF-8 byte order result as documented on the trait.
+        versions.sort();
         Ok(versions)
     }
 
@@ -645,22 +648,19 @@ mod tests {
     #[tokio::test]
     async fn test_list_versions() {
         let (_temp_dir, store) = setup().await;
-        let hashes = vec!["abcdef1234567890", "bbcdef1234567890", "cbcdef1234567890"];
+        // Insert out of order; list_versions is documented to return sorted results.
+        let hashes = vec!["cbcdef1234567890", "abcdef1234567890", "bbcdef1234567890"];
         let data = b"test data";
 
-        // Store multiple versions
         for hash in &hashes {
             store.store_version(hash, data).await.unwrap();
         }
 
-        // List and verify
-        let mut versions = store.list_versions().await.unwrap();
-        versions.sort();
-        assert_eq!(versions.len(), hashes.len());
-
-        let mut expected = hashes.clone();
-        expected.sort();
-        assert_eq!(versions, expected);
+        let versions = store.list_versions().await.unwrap();
+        assert_eq!(
+            versions,
+            vec!["abcdef1234567890", "bbcdef1234567890", "cbcdef1234567890"]
+        );
     }
 
     #[tokio::test]

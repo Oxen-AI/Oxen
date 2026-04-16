@@ -735,10 +735,51 @@ impl VersionStore for S3VersionStore {
     }
 
     async fn list_versions(&self) -> Result<Vec<String>, OxenError> {
-        // TODO: Implement S3 version listing
-        Err(OxenError::basic_str(
-            "S3VersionStore list_versions not yet implemented",
-        ))
+        // Each version is stored at `{self.prefix}/{hash}/...`. To enumerate the hashes
+        // without reading every leaf object, ask S3 for the common prefixes under
+        // `{self.prefix}/` with `/` as the delimiter — S3 collapses all keys sharing a
+        // given `{hash}/` into one entry. Keys that sit directly under the prefix with no
+        // further slash (e.g. the init-time `_permission_check`) come back as Contents
+        // rather than CommonPrefixes, so they don't appear in the result.
+        let client = self.client().await?;
+        let base = format!("{}/", self.prefix);
+        let mut hashes = Vec::new();
+        let mut continuation_token: Option<String> = None;
+
+        loop {
+            let mut req = client
+                .list_objects_v2()
+                .bucket(&self.bucket)
+                .prefix(&base)
+                .delimiter("/");
+            if let Some(token) = &continuation_token {
+                req = req.continuation_token(token);
+            }
+
+            let resp = req.send().await?;
+
+            if let Some(common_prefixes) = resp.common_prefixes {
+                for cp in common_prefixes {
+                    if let Some(hash) = cp
+                        .prefix
+                        .as_deref()
+                        .and_then(|p| p.strip_prefix(&base))
+                        .and_then(|s| s.strip_suffix('/'))
+                    {
+                        hashes.push(hash.to_string());
+                    }
+                }
+            }
+
+            if resp.is_truncated.unwrap_or(false) {
+                continuation_token = resp.next_continuation_token;
+            } else {
+                break;
+            }
+        }
+
+        // S3 already returns keys in UTF-8 byte order, so we don't need to explicitly sort hashes.
+        Ok(hashes)
     }
 
     async fn combine_version_chunks(&self, hash: &str) -> Result<(), OxenError> {
@@ -1459,5 +1500,51 @@ mod tests {
             !store.version_exists(wrong_hash).await.unwrap(),
             "no object should exist at the mismatched hash's key"
         );
+    }
+
+    #[tokio::test]
+    async fn test_list_versions() {
+        let (store, _tmp, _server) = setup().await;
+
+        // Insert out of order; list_versions is documented to return sorted results.
+        store.store_version("cccc", b"c data").await.unwrap();
+        store.store_version("aaaa", b"a data").await.unwrap();
+        store.store_version("bbbb", b"b data").await.unwrap();
+
+        let versions = store.list_versions().await.unwrap();
+        assert_eq!(versions, vec!["aaaa", "bbbb", "cccc"]);
+    }
+
+    #[tokio::test]
+    async fn test_list_versions_empty() {
+        let (store, _tmp, _server) = setup().await;
+
+        let versions = store.list_versions().await.unwrap();
+        assert!(versions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_versions_collapses_chunks_and_derived() {
+        // A version's chunks and derived files live under the same `{prefix}/{hash}/` tree.
+        // With common-prefix listing they should collapse to a single entry per hash.
+        let (store, _tmp, _server) = setup().await;
+
+        let hash = "abcdef1234567890abcdef1234567890";
+        store.store_version(hash, b"main").await.unwrap();
+        store
+            .store_version_chunk(hash, 0, Bytes::from_static(b"chunk-0"))
+            .await
+            .unwrap();
+        store
+            .store_version_chunk(hash, 1024, Bytes::from_static(b"chunk-1024"))
+            .await
+            .unwrap();
+        store
+            .store_version_derived(hash, "thumb.jpg", b"thumbnail bytes")
+            .await
+            .unwrap();
+
+        let versions = store.list_versions().await.unwrap();
+        assert_eq!(versions, vec![hash]);
     }
 }
