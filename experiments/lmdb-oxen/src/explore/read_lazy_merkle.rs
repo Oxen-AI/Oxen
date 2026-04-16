@@ -7,7 +7,7 @@ use crate::explore::scratch::{Hash, HexHash, Repository};
 // M e r k l e   T r e e   D a t a b a s e   S t o r e
 //
 
-pub trait MerkleMetadataStore: Sized {
+pub trait ReadMerkleStore: Sized {
     type Error: std::error::Error;
 
     /// If true, then there is a node in the Merkle tree that has this hash.
@@ -134,7 +134,7 @@ pub struct LazyData(Hash);
 impl LazyData {
     /// Reconstructs the relative path to this file node's data
     /// and reads it from storage.
-    pub async fn load<DB: MerkleMetadataStore>(&self, db: &DB) -> Result<Vec<u8>, LoadError<DB>> {
+    pub async fn load<DB: ReadMerkleStore>(&self, db: &DB) -> Result<Vec<u8>, LoadError<DB>> {
         let Some(rel_path) = db.path(self.hash()).map_err(LoadError::DBError)? else {
             return Err(LoadError::PathError(HexHash::from(self.hash())));
         };
@@ -152,7 +152,7 @@ impl LazyData {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum LoadError<DB: MerkleMetadataStore> {
+pub enum LoadError<DB: ReadMerkleStore> {
     #[error("Error from Merkle tree data store: {0}")]
     DBError(DB::Error),
 

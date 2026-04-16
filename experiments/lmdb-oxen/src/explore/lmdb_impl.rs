@@ -4,7 +4,7 @@ use heed::{Database, Env, EnvOpenOptions};
 
 use crate::explore::new_path::AbsolutePath;
 use crate::explore::{
-    lazy_merkle_lmdb::{MerkleMetadataStore, MerkleTreeL, Root},
+    read_lazy_merkle::{ReadMerkleStore, MerkleTreeL, Root},
     scratch::{Hash, Repository},
 };
 
@@ -22,7 +22,7 @@ impl LmdbMerkleDB {
         repo: Repository,
         db_location: AbsolutePath,
         options: &EnvOpenOptions,
-    ) -> Result<Self, <Self as MerkleMetadataStore>::Error> {
+    ) -> Result<Self, <Self as ReadMerkleStore>::Error> {
         let lmdb_env = unsafe { options.open(db_location.as_path())? };
 
         let mut wtxn = lmdb_env.write_txn()?;
@@ -34,7 +34,7 @@ impl LmdbMerkleDB {
 
 
     /// Actually access and decode some data stored in LMDB.
-    pub(crate) fn retrieve<T>(&self, hash: Hash) -> Result<Option<T>, <Self as MerkleMetadataStore>::Error>
+    pub(crate) fn retrieve<T>(&self, hash: Hash) -> Result<Option<T>, <Self as ReadMerkleStore>::Error>
     where
         for<'de> T: serde::Deserialize<'de>,
     {
@@ -55,7 +55,7 @@ impl LmdbMerkleDB {
 
 }
 
-impl MerkleMetadataStore for LmdbMerkleDB {
+impl ReadMerkleStore for LmdbMerkleDB {
     type Error = heed::Error;
 
     fn repository(&self) -> &Repository {
