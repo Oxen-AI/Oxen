@@ -358,6 +358,9 @@ pub enum OxenError {
     // TODO: remove all uses of `Basic` and replace with specific errors.
     #[error("{0}")]
     Basic(StringError),
+
+    #[error("{0}")]
+    InternalError(StringError),
 }
 
 impl OxenError {
@@ -555,6 +558,11 @@ impl OxenError {
     /// Make a new OxenError::Basic error.
     pub fn basic_str(s: impl AsRef<str>) -> Self {
         OxenError::Basic(StringError::from(s.as_ref()))
+    }
+
+    /// Make a new OxenError::InternalError error.
+    pub fn internal_error(s: impl AsRef<str>) -> Self {
+        OxenError::InternalError(StringError::from(s.as_ref()))
     }
 
     //

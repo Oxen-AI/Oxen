@@ -498,7 +498,7 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::InternalServerError().json(error_json)
                     }
-                    OxenError::Basic(error) => {
+                    OxenError::Basic(error) | OxenError::InternalError(error) => {
                         let error_json = json!({
                             "error": {
                                 "type": MSG_INTERNAL_SERVER_ERROR,

@@ -10,7 +10,6 @@ use crate::constants::AVG_CHUNK_SIZE;
 use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
-use crate::model::entry::commit_entry::Entry;
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::{
     Branch, Commit, CommitEntry, LocalRepository, MerkleHash, MerkleTreeNodeType, RemoteRepository,
@@ -254,15 +253,11 @@ async fn list_and_push_missing_files(
     head_commit: &Commit,
 ) -> Result<(), OxenError> {
     let missing_files =
-        api::client::commits::list_missing_files(remote_repo, base_commit, &head_commit.id)
-            .await?
-            .iter()
-            .map(|e| Entry::CommitEntry(e.clone()))
-            .collect::<Vec<Entry>>();
+        api::client::commits::list_missing_files(remote_repo, base_commit, &head_commit.id).await?;
 
-    if let Some(entry) = missing_files.first() {
+    if let Some(commit_entry) = missing_files.first() {
         let version_store = repo.version_store()?;
-        if !version_store.version_exists(&entry.hash()).await? {
+        if !version_store.version_exists(&commit_entry.hash).await? {
             return Err(OxenError::CannotPushShallowClone {
                 commit_id: head_commit.id.clone(),
                 commit_message: head_commit.message.clone(),
@@ -271,7 +266,7 @@ async fn list_and_push_missing_files(
         }
     }
 
-    let total_bytes = missing_files.iter().map(|e| e.num_bytes()).sum();
+    let total_bytes = missing_files.iter().map(|e| e.num_bytes).sum();
 
     let progress = Arc::new(PushProgress::new_with_totals(
         missing_files.len() as u64,
@@ -328,7 +323,7 @@ async fn get_commit_missing_hashes(
         let mut unique_hashes = HashSet::new();
         let mut file_hashes_seen = HashSet::new();
 
-        let mut files: Vec<Entry> = Vec::new();
+        let mut files: Vec<CommitEntry> = Vec::new();
         let mut dir_nodes: HashSet<MerkleHash> = HashSet::new();
 
         for path in paths {
@@ -356,7 +351,7 @@ async fn get_commit_missing_hashes(
                     let file_hash = *node.node.hash();
                     // Only add files we haven't seen before (not in base_hashes or already collected)
                     if !base_hashes.contains(&file_hash) && file_hashes_seen.insert(file_hash) {
-                        files.push(Entry::CommitEntry(CommitEntry::from_node(&node.node)));
+                        files.push(CommitEntry::from_node(&node.node));
                     }
                 } else if !node.node.is_leaf() {
                     let hash = node.node.hash();
@@ -375,7 +370,7 @@ async fn get_commit_missing_hashes(
         dir_nodes.insert(commit.hash()?);
 
         log::debug!("push_commits dir nodes: {dir_nodes:?}");
-        let total_bytes = files.iter().map(|e| e.num_bytes()).sum();
+        let total_bytes = files.iter().map(|e| e.num_bytes).sum();
 
         let push_commit_info = PushCommitInfo {
             unique_dir_nodes: dir_nodes,
@@ -391,7 +386,7 @@ async fn get_commit_missing_hashes(
 #[derive(Debug, Clone)]
 struct PushCommitInfo {
     unique_dir_nodes: HashSet<MerkleHash>,
-    unique_file_hashes: Vec<Entry>,
+    unique_file_hashes: Vec<CommitEntry>,
     total_bytes: u64,
 }
 
@@ -443,8 +438,8 @@ async fn push_commits(
     // unique files will be present.
     let version_store = repo.version_store()?;
     for (commit, info) in &commits_with_info {
-        if let Some(entry) = info.unique_file_hashes.first()
-            && !version_store.version_exists(&entry.hash()).await?
+        if let Some(commit_entry) = info.unique_file_hashes.first()
+            && !version_store.version_exists(&commit_entry.hash).await?
         {
             return Err(OxenError::CannotPushShallowClone {
                 commit_id: commit.id.clone(),
@@ -543,7 +538,7 @@ async fn push_commits(
 pub async fn push_entries(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
-    entries: &[Entry],
+    entries: &[CommitEntry],
     commit: &Commit,
     progress: &Arc<PushProgress>,
 ) -> Result<(), OxenError> {
@@ -558,16 +553,16 @@ pub async fn push_entries(
     // since bodies will be too big. Hence we chunk and send the big ones, and bundle and send the small ones
 
     // For files smaller than AVG_CHUNK_SIZE, we are going to group them, zip them up, and transfer them
-    let smaller_entries: Vec<Entry> = entries
+    let smaller_entries: Vec<CommitEntry> = entries
         .iter()
-        .filter(|e| e.num_bytes() <= AVG_CHUNK_SIZE)
+        .filter(|e| e.num_bytes <= AVG_CHUNK_SIZE)
         .map(|e| e.to_owned())
         .collect();
 
     // For files larger than AVG_CHUNK_SIZE, we are going break them into chunks and send the chunks in parallel
-    let larger_entries: Vec<Entry> = entries
+    let larger_entries: Vec<CommitEntry> = entries
         .iter()
-        .filter(|e| e.num_bytes() > AVG_CHUNK_SIZE)
+        .filter(|e| e.num_bytes > AVG_CHUNK_SIZE)
         .map(|e| e.to_owned())
         .collect();
 
@@ -602,7 +597,7 @@ pub async fn push_entries(
 async fn chunk_and_send_large_entries(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
-    entries: Vec<Entry>,
+    entries: Vec<CommitEntry>,
     progress: &Arc<PushProgress>,
 ) -> Result<(), OxenError> {
     if entries.is_empty() {
@@ -610,7 +605,7 @@ async fn chunk_and_send_large_entries(
     }
 
     use tokio::time::sleep;
-    type PieceOfWork = (Entry, RemoteRepository);
+    type PieceOfWork = (CommitEntry, RemoteRepository);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
 
     log::debug!("Chunking and sending {} larger files", entries.len());
@@ -648,12 +643,12 @@ async fn chunk_and_send_large_entries(
                     break;
                 }
 
-                let Some((entry, remote_repo)) = queue.try_pop() else {
+                let Some((commit_entry, remote_repo)) = queue.try_pop() else {
                     // reached end of queue
                     break;
                 };
 
-                let version_path = match version_store.get_version_path(&entry.hash()).await {
+                let version_path = match version_store.get_version_path(&commit_entry.hash).await {
                     Ok(path) => path,
                     Err(e) => {
                         log::error!("Failed to get version path: {e}");
@@ -669,7 +664,7 @@ async fn chunk_and_send_large_entries(
                     None::<PathBuf>,
                     None,
                     false,
-                    Some(entry.clone()),
+                    Some(commit_entry.clone()),
                     Some(&bar),
                 )
                 .await
@@ -678,14 +673,14 @@ async fn chunk_and_send_large_entries(
                         log::debug!(
                             "worker[{}] successfully uploaded {:?}",
                             worker,
-                            entry.path()
+                            commit_entry.path
                         );
                     }
                     Err(err) => {
                         log::error!(
                             "worker[{}] failed to upload {:?}: {}",
                             worker,
-                            entry.path(),
+                            commit_entry.path,
                             err
                         );
                         should_stop.store(true, Ordering::Relaxed);
@@ -721,7 +716,7 @@ async fn chunk_and_send_large_entries(
 async fn bundle_and_send_small_entries(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
-    entries: Vec<Entry>,
+    entries: Vec<CommitEntry>,
     commit: &Commit,
     avg_chunk_size: u64,
     progress: &Arc<PushProgress>,
@@ -731,7 +726,7 @@ async fn bundle_and_send_small_entries(
     }
 
     // Compute size for this subset of entries
-    let total_size = repositories::entries::compute_generic_entries_size(&entries)?;
+    let total_size = repositories::entries::compute_entries_size(&entries)?;
     let num_chunks = ((total_size / avg_chunk_size) + 1) as usize;
 
     let mut chunk_size = entries.len() / num_chunks;
@@ -745,7 +740,7 @@ async fn bundle_and_send_small_entries(
     // Split into chunks, zip up, and post to server
     use tokio::time::sleep;
     type PieceOfWork = (
-        Vec<Entry>,
+        Vec<CommitEntry>,
         LocalRepository,
         Commit,
         RemoteRepository,
@@ -800,7 +795,7 @@ async fn bundle_and_send_small_entries(
                     break;
                 };
 
-                let chunk_size = match repositories::entries::compute_generic_entries_size(&chunk) {
+                let chunk_size = match repositories::entries::compute_entries_size(&chunk) {
                     Ok(size) => size,
                     Err(e) => {
                         log::error!("Failed to compute entries size: {e}");

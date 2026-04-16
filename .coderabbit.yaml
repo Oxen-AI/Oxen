@@ -25,3 +25,6 @@ reviews:
   auto_review:
     enabled: true
     auto_incremental_review: true
+    # Review PRs against any base branch
+    base_branches:
+      - ".*"
