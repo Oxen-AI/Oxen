@@ -1,35 +1,32 @@
-use std::io;
+use crate::explore::lazy_merkle::MerkleTreeL;
 
-use async_trait::async_trait;
-
-#[async_trait]
-trait Transaction {
-    type Node: Send + Sync + 'static;
-
-    /// Queue the node for writing in the transaction.
-    fn queue_write<'a>(&'a mut self, node: &'a Self::Node);
-
-    /// Commit the transaction, writing all queued nodes.
-    async fn commit(self) -> io::Result<()>;
-}
-
-#[async_trait]
 trait MerkleWriter: Sized {
-    type T: Transaction + Send + Sync + 'static;
+    type Session: WriteSession;
 
     /// Open a write transaction for storing Merkle tree nodes.
     /// Allows multiple nodes to be queued for writing.
-    fn write_transaction(&self) -> Self::T;
+    fn write_transaction(&self) -> Self::Session;
 
     /// Durably store a batch of Merkle tree nodes.
-    async fn write(
+    fn write<'a>(
         &self,
-        nodes: impl Iterator<Item = <Self::T as Transaction>::Node> + Send,
-    ) -> io::Result<()> {
+        nodes: impl Iterator<Item = &'a MerkleTreeL>,
+    ) -> Result<(), <Self::Session as WriteSession>::Error> {
         let mut tx = self.write_transaction();
         for node in nodes {
-            tx.queue_write(&node);
+            tx.queue_write(&node)?;
         }
-        tx.commit().await
+        tx.finish()
     }
+}
+
+
+trait WriteSession {
+    type Error: std::error::Error;
+
+    /// Queue the node for writing in the transaction.
+    fn queue_write(&mut self, node: &MerkleTreeL) -> Result<(), Self::Error>;
+
+    /// Commit the transaction, writing all queued nodes.
+    fn finish(self) -> Result<(), Self::Error>;
 }
