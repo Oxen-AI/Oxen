@@ -20,7 +20,12 @@ use tokio_util::io::StreamReader;
 
 use super::version_store::{LocalFilePath, VersionStore};
 use crate::constants::VERSION_FILE_NAME;
+use crate::util::hasher;
 use crate::view::versions::CleanCorruptedVersionsResult;
+use xxhash_rust::xxh3::Xxh3;
+
+/// AWS recommends uploading to S3 in a single PUT if filesize is <= 100 MB.
+const DEFAULT_ONESHOT_SIZE: u64 = 100 * 1024 * 1024;
 
 /// S3 implementation of version storage
 #[derive(Debug)]
@@ -28,6 +33,8 @@ pub struct S3VersionStore {
     client: OnceCell<Result<Arc<Client>, OxenError>>,
     bucket: String,
     prefix: String,
+    /// Threshold (bytes) below which we upload with a single PUT rather than a multipart upload.
+    oneshot_size: u64,
 }
 
 impl S3VersionStore {
@@ -41,6 +48,7 @@ impl S3VersionStore {
             client: OnceCell::new(),
             bucket: bucket.into(),
             prefix: prefix.into(),
+            oneshot_size: DEFAULT_ONESHOT_SIZE,
         }
     }
 
@@ -93,6 +101,7 @@ impl S3VersionStore {
             client: cell,
             bucket,
             prefix,
+            oneshot_size: DEFAULT_ONESHOT_SIZE,
         }
     }
 
@@ -240,6 +249,10 @@ impl VersionStore for S3VersionStore {
     /// single PUT request (per AWS best-practice guidelines). Larger files are uploaded via
     /// multipart upload with a dynamically chosen part size and up to 16 concurrent part uploads.
     /// If any part fails, the multipart upload is cancelled so no orphaned parts are left behind.
+    ///
+    /// Bytes are hashed (xxh3-128) as they stream from the reader and verified against the
+    /// expected `hash` parameter. A mismatch aborts the upload before it is committed to S3, so
+    /// no corrupt or misnamed object is ever visible.
     async fn store_version_from_reader(
         &self,
         hash: &str,
@@ -249,7 +262,6 @@ impl VersionStore for S3VersionStore {
         let client = self.client().await?;
         let key = self.generate_key(hash);
 
-        const ONESHOT_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
         const MIN_PART_SIZE: usize = 5 * 1024 * 1024; // 5 MB, S3 minimum
         const MAX_PART_SIZE: usize = 5 * 1024 * 1024 * 1024; // 5 GB, S3 maximum
         const MAX_PARTS: usize = 10_000; // S3 maximum parts per upload
@@ -257,12 +269,19 @@ impl VersionStore for S3VersionStore {
 
         let mut reader = tokio::io::BufReader::new(reader);
 
-        // Files up to 100 MB: single put_object
-        if size <= ONESHOT_SIZE {
+        // Files at or below the oneshot threshold: single put_object. Hash the fully-read
+        // buffer and verify before uploading so we never write corrupt or misnamed data to S3.
+        if size <= self.oneshot_size {
             let mut buf = Vec::with_capacity(size as usize);
             tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut buf)
                 .await
                 .map_err(|e| OxenError::upload(&format!("Failed to read: {e}")))?;
+            let computed = hasher::hash_buffer(&buf);
+            if computed != hash {
+                return Err(OxenError::upload(&format!(
+                    "store_version_from_reader hash mismatch: expected {hash}, computed {computed}"
+                )));
+            }
             client
                 .put_object() // AWS recommends switching to multipart uploads for > 100 MB
                 .bucket(&self.bucket)
@@ -293,9 +312,15 @@ impl VersionStore for S3VersionStore {
         // starts running immediately on the tokio runtime, so uploads proceed in the background
         // while we read the next part. FuturesUnordered holds the JoinHandles for collecting
         // results and enforcing backpressure.
+        //
+        // Bytes are fed into `hasher` synchronously before each part is moved into its upload
+        // task, so the final digest covers every byte S3 will see. We check the digest before
+        // calling complete_multipart_upload — on mismatch we fall into the Err(..) branch which
+        // aborts the multipart upload, so no object is committed.
         let mut uploads = futures::stream::FuturesUnordered::new();
         let mut completed_parts = Vec::new();
         let mut part_num = 1;
+        let mut hasher = Xxh3::new();
 
         let result: Result<(), OxenError> = async {
             loop {
@@ -305,6 +330,7 @@ impl VersionStore for S3VersionStore {
                     break;
                 }
                 buf.truncate(n);
+                hasher.update(&buf);
                 uploads.push(tokio::spawn(upload_part(
                     client.clone(),
                     self.bucket.clone(),
@@ -333,6 +359,14 @@ impl VersionStore for S3VersionStore {
                     Ok(result) => completed_parts.push(result?),
                     Err(e) => return Err(OxenError::upload(&format!("Upload task panicked: {e}"))),
                 }
+            }
+
+            // All parts uploaded successfully — verify the aggregate hash before committing.
+            let computed = format!("{:x}", hasher.digest128());
+            if computed != hash {
+                return Err(OxenError::upload(&format!(
+                    "store_version_from_reader hash mismatch: expected {hash}, computed {computed}"
+                )));
             }
             Ok(())
         }
@@ -708,6 +742,7 @@ impl VersionStore for S3VersionStore {
     }
 
     async fn combine_version_chunks(&self, hash: &str) -> Result<(), OxenError> {
+        // 1. List chunk offsets (already sorted by list_version_chunks)
         let offsets = self.list_version_chunks(hash).await?;
         if offsets.is_empty() {
             return Ok(());
@@ -717,6 +752,7 @@ impl VersionStore for S3VersionStore {
         let client = self.client().await?;
         let key = self.generate_key(hash);
 
+        // 2. Create multipart upload
         let upload = client
             .create_multipart_upload()
             .bucket(&self.bucket)
@@ -728,6 +764,7 @@ impl VersionStore for S3VersionStore {
             .ok_or_else(|| OxenError::upload("S3 multipart upload missing upload_id"))?
             .to_string();
 
+        // 3. Stream chunks and upload as multipart parts
         const MIN_PART_SIZE: usize = 5 * 1024 * 1024; // 5 MB, S3 minimum
         let mut part_buf: Vec<u8> = Vec::new();
         let mut part_num: i32 = 1;
@@ -737,6 +774,7 @@ impl VersionStore for S3VersionStore {
             for (i, offset) in offsets.iter().enumerate() {
                 let is_last_chunk = i == offsets.len() - 1;
 
+                // Download chunk from S3
                 let resp = client
                     .get_object()
                     .bucket(&self.bucket)
@@ -748,12 +786,13 @@ impl VersionStore for S3VersionStore {
                     .collect()
                     .await
                     .map_err(|e| {
-                        OxenError::internal_error(format!(
+                        OxenError::basic_str(format!(
                             "Failed to read chunk body at offset {offset}: {e}"
                         ))
                     })?
                     .into_bytes();
 
+                // Append to part buffer
                 part_buf.extend_from_slice(&chunk_bytes);
 
                 // Upload part when buffer is large enough (or on last chunk)
@@ -790,6 +829,7 @@ impl VersionStore for S3VersionStore {
         }
         .await;
 
+        // On failure, abort the multipart upload
         if let Err(e) = result {
             let _ = client
                 .abort_multipart_upload()
@@ -801,6 +841,7 @@ impl VersionStore for S3VersionStore {
             return Err(e);
         }
 
+        // 4. Complete multipart upload
         let completed = CompletedMultipartUpload::builder()
             .set_parts(Some(completed_parts))
             .build();
@@ -994,14 +1035,15 @@ mod tests {
     async fn test_store_and_get_small_version_from_reader() {
         let (store, _tmp, _server) = setup().await;
         let data = b"hello world";
+        let hash = hasher::hash_buffer(data);
 
         let cursor = std::io::Cursor::new(data.to_vec());
         store
-            .store_version_from_reader("abcdef1234567890", Box::new(cursor), data.len() as u64)
+            .store_version_from_reader(&hash, Box::new(cursor), data.len() as u64)
             .await
             .unwrap();
 
-        let retrieved = store.get_version("abcdef1234567890").await.unwrap();
+        let retrieved = store.get_version(&hash).await.unwrap();
         assert_eq!(retrieved, data);
     }
 
@@ -1011,14 +1053,15 @@ mod tests {
 
         // 20MB -- forces multipart upload (> 8MB part size)
         let data = vec![42u8; 20 * 1024 * 1024];
+        let hash = hasher::hash_buffer(&data);
 
         let cursor = std::io::Cursor::new(data.clone());
         store
-            .store_version_from_reader("bbcdef1234567890", Box::new(cursor), data.len() as u64)
+            .store_version_from_reader(&hash, Box::new(cursor), data.len() as u64)
             .await
             .unwrap();
 
-        let retrieved = store.get_version("bbcdef1234567890").await.unwrap();
+        let retrieved = store.get_version(&hash).await.unwrap();
         assert_eq!(retrieved.len(), data.len());
         assert_eq!(retrieved, data);
     }
@@ -1029,28 +1072,30 @@ mod tests {
 
         // Exactly 16MB -- two full 8MB parts, no partial last part
         let data = vec![7u8; 16 * 1024 * 1024];
+        let hash = hasher::hash_buffer(&data);
 
         let cursor = std::io::Cursor::new(data.clone());
         store
-            .store_version_from_reader("cccdef1234567890", Box::new(cursor), data.len() as u64)
+            .store_version_from_reader(&hash, Box::new(cursor), data.len() as u64)
             .await
             .unwrap();
 
-        let retrieved = store.get_version("cccdef1234567890").await.unwrap();
+        let retrieved = store.get_version(&hash).await.unwrap();
         assert_eq!(retrieved, data);
     }
 
     #[tokio::test]
     async fn test_store_version_from_reader_empty() {
         let (store, _tmp, _server) = setup().await;
+        let hash = hasher::hash_buffer(&[]);
 
         let cursor = std::io::Cursor::new(Vec::new());
         store
-            .store_version_from_reader("ddddef1234567890", Box::new(cursor), 0)
+            .store_version_from_reader(&hash, Box::new(cursor), 0)
             .await
             .unwrap();
 
-        let retrieved = store.get_version("ddddef1234567890").await.unwrap();
+        let retrieved = store.get_version(&hash).await.unwrap();
         assert!(retrieved.is_empty());
     }
 
@@ -1314,8 +1359,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_combine_version_chunks() {
-        use crate::util::hasher;
-
         let (store, _tmp, _server) = setup().await;
 
         // Pre-compute the hash of the combined data
@@ -1362,6 +1405,59 @@ mod tests {
         assert!(
             chunk_keys.is_empty(),
             "chunks should be deleted after combine, found: {chunk_keys:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_store_version_from_reader_hash_mismatch_oneshot() {
+        let (store, _tmp, _server) = setup().await;
+        let data = b"hello world";
+        // Pass a plausible-looking but incorrect hash (not the xxh3-128 of `data`).
+        let wrong_hash = "deadbeefdeadbeefdeadbeefdeadbeef";
+
+        let cursor = std::io::Cursor::new(data.to_vec());
+        let result = store
+            .store_version_from_reader(wrong_hash, Box::new(cursor), data.len() as u64)
+            .await;
+
+        assert!(
+            matches!(result, Err(OxenError::Upload(_))),
+            "expected Upload error for hash mismatch, got {result:?}"
+        );
+
+        // The oneshot path rejects before uploading, so no object should exist at the key.
+        assert!(
+            !store.version_exists(wrong_hash).await.unwrap(),
+            "no object should exist at the mismatched hash's key"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_store_version_from_reader_hash_mismatch_multipart() {
+        let (mut store, _tmp, _server) = setup().await;
+        // Drop the threshold below the data size so this exercises the multipart path. Any size
+        // above the threshold works — the S3 5MB-minimum rule applies only to non-last parts,
+        // so a single-part multipart upload is fine.
+        store.oneshot_size = 512;
+
+        let data = vec![42u8; 1024];
+        let wrong_hash = "deadbeefdeadbeefdeadbeefdeadbeef";
+
+        let cursor = std::io::Cursor::new(data.clone());
+        let result = store
+            .store_version_from_reader(wrong_hash, Box::new(cursor), data.len() as u64)
+            .await;
+
+        assert!(
+            matches!(result, Err(OxenError::Upload(_))),
+            "expected Upload error for hash mismatch, got {result:?}"
+        );
+
+        // Multipart upload should have been aborted before completion, so no object is visible
+        // at the key.
+        assert!(
+            !store.version_exists(wrong_hash).await.unwrap(),
+            "no object should exist at the mismatched hash's key"
         );
     }
 }
