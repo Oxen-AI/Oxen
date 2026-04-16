@@ -1,7 +1,4 @@
-use std::fmt;
-
-use serde::de::{self, DeserializeSeed, EnumAccess, MapAccess, SeqAccess, VariantAccess, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::explore::new_path::{AbsolutePath, RelativePath};
 use crate::explore::scratch::{Hash, HexHash, Repository};
@@ -122,27 +119,24 @@ impl MerkleTreeL {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct LazyNode {
-    me: Hash,
-}
+pub struct LazyNode(Hash);
 
 impl LazyNode {
+    #[inline(always)]
     pub fn hash(&self) -> Hash {
-        self.me
+        self.0
     }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct LazyData {
-    me: Hash,
-}
+pub struct LazyData(Hash);
 
 impl LazyData {
     /// Reconstructs the relative path to this file node's data
     /// and reads it from storage.
     pub async fn load<DB: MerkleMetadataStore>(&self, db: &DB) -> Result<Vec<u8>, LoadError<DB>> {
-        let Some(rel_path) = db.path(self.me).map_err(LoadError::DBError)? else {
-            return Err(LoadError::PathError(HexHash::from(self.me)));
+        let Some(rel_path) = db.path(self.hash()).map_err(LoadError::DBError)? else {
+            return Err(LoadError::PathError(HexHash::from(self.hash())));
         };
 
         let path = AbsolutePath::from(db.repository(), &rel_path);
@@ -151,8 +145,9 @@ impl LazyData {
             .map_err(LoadError::ReadError)
     }
 
+    #[inline(always)]
     pub fn hash(&self) -> Hash {
-        self.me
+        self.0
     }
 }
 
