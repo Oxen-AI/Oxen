@@ -8,7 +8,7 @@ use crate::explore::merkle_reader::MerkleReader;
 use crate::explore::merkle_store::MerkleStore;
 use crate::explore::merkle_writer::MerkleWriter;
 use crate::explore::new_path::AbsolutePath;
-use crate::explore::scratch::{Hash, Repository};
+use crate::explore::scratch::{Hash, HexHash, Repository};
 
 pub fn main() {
     let tmp_path: PathBuf = std::env::temp_dir().join("lmdb_oxen_explore");
@@ -33,6 +33,9 @@ pub fn main() {
         content: LazyData::new(hash),
     }];
 
+    println!("storing: {:?}", nodes);
+    println!("-----------------------------------------------------------------");
+
     merkle_store
         .write(nodes.iter())
         .expect("Failed to store nodes");
@@ -42,8 +45,13 @@ pub fn main() {
         .expect("Failed to retrieve node")
         .expect("Node not found");
 
+    println!("using hash {}, retrieved: {:?}", HexHash::from(hash), node);
+    println!("-----------------------------------------------------------------");
+
     assert_eq!(node.name(), "file.txt");
     assert_eq!(node.hash(), hash);
+
+    println!("SUCCESS!");
 }
 
 fn check(_x: &impl MerkleStore) {}
