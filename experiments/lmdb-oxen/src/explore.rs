@@ -8,3 +8,4 @@ pub mod new_main;
 pub mod new_path;
 pub mod scratch;
 pub mod lazy_merkle;
+pub mod merkle_store;

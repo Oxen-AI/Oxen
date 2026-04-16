@@ -1,7 +1,7 @@
 use std::fmt;
 
 use serde::de::{self, DeserializeSeed, EnumAccess, MapAccess, SeqAccess, VariantAccess, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserializer, Serialize};
 
 use crate::explore::new_path::{AbsolutePath, RelativePath};
 use crate::explore::scratch::{Hash, HexHash, Repository};

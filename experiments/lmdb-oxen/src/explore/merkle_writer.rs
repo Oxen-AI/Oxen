@@ -1,6 +1,6 @@
 use crate::explore::lazy_merkle::MerkleTreeL;
 
-trait MerkleWriter: Sized {
+pub trait MerkleWriter: Sized {
     type Session: WriteSession;
 
     /// Open a write transaction for storing Merkle tree nodes.
@@ -21,7 +21,7 @@ trait MerkleWriter: Sized {
 }
 
 
-trait WriteSession {
+pub trait WriteSession {
     type Error: std::error::Error;
 
     /// Queue the node for writing in the transaction.
