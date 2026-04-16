@@ -23,6 +23,7 @@ static DB_INSTANCES: LazyLock<Mutex<LruCache<PathBuf, Arc<DB>>>> =
 fn index_dir(repo: &LocalRepository) -> PathBuf {
     repo.path
         .join(OXEN_HIDDEN_DIR)
+        .join(WORKSPACES_DIR)
         .join(WORKSPACE_NAME_INDEX_DIR)
 }
 
@@ -33,7 +34,9 @@ pub fn index_exists(repo: &LocalRepository) -> bool {
 
 /// Removes this repository's workspace name index DB from the cache.
 pub fn remove_from_cache(repository_path: impl AsRef<Path>) -> Result<(), OxenError> {
-    let dir = util::fs::oxen_hidden_dir(&repository_path).join(WORKSPACE_NAME_INDEX_DIR);
+    let dir = util::fs::oxen_hidden_dir(&repository_path)
+        .join(WORKSPACES_DIR)
+        .join(WORKSPACE_NAME_INDEX_DIR);
     let mut instances = DB_INSTANCES.lock();
     let _ = instances.pop(&dir); // drop immediately
     Ok(())

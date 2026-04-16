@@ -1,5 +1,5 @@
 use crate::config::RepositoryConfig;
-use crate::constants::{OXEN_HIDDEN_DIR, REPO_CONFIG_FILENAME, WORKSPACE_NAME_INDEX_DIR};
+use crate::constants::{OXEN_HIDDEN_DIR, REPO_CONFIG_FILENAME};
 use crate::core;
 use crate::core::staged::staged_db_manager::get_staged_db_manager;
 use crate::core::versions::MinOxenVersion;
@@ -54,11 +54,9 @@ pub fn get(
         return get_by_dir(repo, workspace_dir);
     }
 
-    // Second try: treat input as a workspace name
+    // Second try: treat input as a workspace name (already returns a loaded Workspace)
     if let Some(workspace) = get_by_name(repo, workspace_id)? {
-        let id_hash = util::hasher::hash_str_sha256(&workspace.id);
-        let workspace_dir = Workspace::workspace_dir(repo, &id_hash);
-        return get_by_dir(repo, workspace_dir);
+        return Ok(Some(workspace));
     }
 
     Ok(None)
@@ -445,15 +443,8 @@ pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
         return Ok(());
     }
 
-    // Clean up the name index: evict from cache, then remove directory
+    // Evict the name index DB handle from cache before removing the directory
     workspace_name_index::remove_from_cache(&repo.path)?;
-    let index_dir = repo
-        .path
-        .join(OXEN_HIDDEN_DIR)
-        .join(WORKSPACE_NAME_INDEX_DIR);
-    if index_dir.exists() {
-        util::fs::remove_dir_all(&index_dir)?;
-    }
 
     util::fs::remove_dir_all(&workspaces_dir)?;
     Ok(())
@@ -710,7 +701,7 @@ fn build_file_status_maps_for_file(
 mod tests {
     use super::*;
     use crate::api;
-    use crate::constants::DEFAULT_BRANCH_NAME;
+    use crate::constants::{DEFAULT_BRANCH_NAME, WORKSPACE_NAME_INDEX_DIR};
     use crate::repositories;
     use crate::test;
     use crate::util;
@@ -919,16 +910,27 @@ mod tests {
                 assert_eq!(temp_workspace.commit.id, commit.id);
                 assert!(temp_workspace.is_editable);
 
-                let workspace_entries = std::fs::read_dir(&workspaces_dir)?;
-                assert_eq!(workspace_entries.count(), 1);
+                let workspace_count = std::fs::read_dir(&workspaces_dir)?
+                    .filter(|e| {
+                        e.as_ref()
+                            .map(|e| e.file_name() != WORKSPACE_NAME_INDEX_DIR)
+                            .unwrap_or(false)
+                    })
+                    .count();
+                assert_eq!(workspace_count, 1);
             } // temp_workspace goes out of scope here
 
-            // Verify workspace was cleaned up
-            let workspace_entries = std::fs::read_dir(&workspaces_dir)?;
+            // Verify workspace was cleaned up (only the name index dir should remain)
+            let workspace_count = std::fs::read_dir(&workspaces_dir)?
+                .filter(|e| {
+                    e.as_ref()
+                        .map(|e| e.file_name() != WORKSPACE_NAME_INDEX_DIR)
+                        .unwrap_or(false)
+                })
+                .count();
             assert_eq!(
-                workspace_entries.count(),
-                0,
-                "Workspace directory should be empty after cleanup"
+                workspace_count, 0,
+                "Workspace directory should have no workspace dirs after cleanup"
             );
 
             Ok(())

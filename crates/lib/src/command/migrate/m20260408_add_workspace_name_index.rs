@@ -115,6 +115,7 @@ fn revert_one_repo(repo: &LocalRepository) -> Result<(), OxenError> {
     let index_dir = repo
         .path
         .join(crate::constants::OXEN_HIDDEN_DIR)
+        .join(crate::constants::WORKSPACES_DIR)
         .join(crate::constants::WORKSPACE_NAME_INDEX_DIR);
     if index_dir.exists() {
         util::fs::remove_dir_all(&index_dir)?;
