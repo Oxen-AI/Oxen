@@ -4,7 +4,6 @@
 use crate::core;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::entry::commit_entry::Entry;
 use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::opts::{PaginateOpts, SortOpts};
 use crate::repositories;
@@ -254,11 +253,6 @@ pub fn count_for_commit(repo: &LocalRepository, commit: &Commit) -> Result<usize
 /// Given a list of entries, compute the total in bytes size of all entries.
 pub fn compute_entries_size(entries: &[CommitEntry]) -> Result<u64, OxenError> {
     let total_size: u64 = entries.into_par_iter().map(|e| e.num_bytes).sum();
-    Ok(total_size)
-}
-
-pub fn compute_generic_entries_size(entries: &[Entry]) -> Result<u64, OxenError> {
-    let total_size: u64 = entries.into_par_iter().map(|e| e.num_bytes()).sum();
     Ok(total_size)
 }
 

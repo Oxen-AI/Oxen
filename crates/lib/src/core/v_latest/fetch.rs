@@ -7,7 +7,6 @@ use crate::constants::{AVG_CHUNK_SIZE, OXEN_HIDDEN_DIR};
 use crate::core;
 use crate::core::refs::with_ref_manager;
 use crate::error::OxenError;
-use crate::model::entry::commit_entry::Entry;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
 use crate::model::{Branch, Commit, CommitEntry, MerkleHash};
 use crate::model::{LocalRepository, RemoteBranch, RemoteRepository};
@@ -141,7 +140,7 @@ pub async fn fetch_remote_branch(
         "Fetch got {} potentially missing entries",
         missing_entries.len()
     );
-    let missing_entries: Vec<Entry> = missing_entries.into_iter().collect();
+    let missing_entries: Vec<CommitEntry> = missing_entries.into_iter().collect();
     pull_progress.finish();
     let pull_progress = Arc::new(PullProgress::new_with_totals(
         missing_entries.len() as u64,
@@ -257,7 +256,7 @@ fn collect_missing_entries(
     depth: &Option<i32>,
     skip_shared_hashes: bool,
     total_bytes: &mut u64,
-) -> Result<HashSet<Entry>, OxenError> {
+) -> Result<HashSet<CommitEntry>, OxenError> {
     let mut missing_entries = HashSet::new();
 
     // When skip_shared_hashes is true (e.g. --missing-files), start with an empty set
@@ -344,7 +343,7 @@ fn collect_missing_entries(
 fn collect_missing_entries_for_subtree(
     node: &MerkleTreeNode,
     current_path: &Path,
-    missing_entries: &mut HashSet<Entry>,
+    missing_entries: &mut HashSet<CommitEntry>,
     file_hashes_seen: &mut HashSet<MerkleHash>,
     total_bytes: &mut u64,
 ) -> Result<(), OxenError> {
@@ -356,9 +355,8 @@ fn collect_missing_entries_for_subtree(
             if file_hashes_seen.insert(file_hash) {
                 let mut commit_entry = CommitEntry::from_node(&node.node);
                 commit_entry.path = current_path.join(&commit_entry.path);
-                let entry = Entry::CommitEntry(commit_entry);
-                *total_bytes += entry.num_bytes();
-                missing_entries.insert(entry);
+                *total_bytes += commit_entry.num_bytes;
+                missing_entries.insert(commit_entry);
             }
         }
         MerkleTreeNodeType::Dir => {
@@ -566,7 +564,7 @@ async fn r_download_entries(
 
     if let EMerkleTreeNode::VNode(_) = &node.node {
         // Figure out which entries need to be downloaded
-        let mut missing_entries: Vec<Entry> = vec![];
+        let mut missing_entries: Vec<CommitEntry> = vec![];
         let missing_hashes = repositories::tree::list_missing_file_hashes(repo, &node.hash).await?;
 
         for child in &node.children {
@@ -575,14 +573,14 @@ async fn r_download_entries(
                     continue;
                 }
 
-                missing_entries.push(Entry::CommitEntry(CommitEntry {
+                missing_entries.push(CommitEntry {
                     commit_id: file_node.last_commit_id().to_string(),
                     path: directory.join(file_node.name()),
                     hash: child.hash.to_string(),
                     num_bytes: file_node.num_bytes(),
                     last_modified_seconds: file_node.last_modified_seconds(),
                     last_modified_nanoseconds: file_node.last_modified_nanoseconds(),
-                }));
+                });
             }
         }
 
@@ -604,7 +602,7 @@ async fn r_download_entries(
 pub async fn pull_entries_to_versions_dir(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
-    entries: &[Entry],
+    entries: &[CommitEntry],
     progress_bar: &Arc<PullProgress>,
 ) -> Result<(), OxenError> {
     log::debug!("entries.len() {}", entries.len());
@@ -624,16 +622,16 @@ pub async fn pull_entries_to_versions_dir(
     // Hence we chunk and send the big ones, and bundle and download the small ones
 
     // For files smaller than AVG_CHUNK_SIZE, we are going to group them, zip them up, and transfer them
-    let smaller_entries: Vec<Entry> = missing_entries
+    let smaller_entries: Vec<CommitEntry> = missing_entries
         .iter()
-        .filter(|e| e.num_bytes() <= AVG_CHUNK_SIZE)
+        .filter(|e| e.num_bytes <= AVG_CHUNK_SIZE)
         .map(|e| e.to_owned())
         .collect();
 
     // For files larger than AVG_CHUNK_SIZE, we are going break them into chunks and download the chunks in parallel
-    let larger_entries: Vec<Entry> = missing_entries
+    let larger_entries: Vec<CommitEntry> = missing_entries
         .iter()
-        .filter(|e| e.num_bytes() > AVG_CHUNK_SIZE)
+        .filter(|e| e.num_bytes > AVG_CHUNK_SIZE)
         .map(|e| e.to_owned())
         .collect();
 
@@ -662,14 +660,14 @@ pub async fn pull_entries_to_versions_dir(
 async fn pull_large_entries(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
-    entries: Vec<Entry>,
+    entries: Vec<CommitEntry>,
     progress_bar: &Arc<PullProgress>,
 ) -> Result<(), OxenError> {
     if entries.is_empty() {
         return Ok(());
     }
     // Pull the large entries in parallel
-    type PieceOfWork = (LocalRepository, RemoteRepository, Entry);
+    type PieceOfWork = (LocalRepository, RemoteRepository, CommitEntry);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
 
     log::debug!("Chunking and sending {} larger files", entries.len());
@@ -696,21 +694,26 @@ async fn pull_large_entries(
         let progress_bar = Arc::clone(progress_bar);
         let handle: tokio::task::JoinHandle<Result<(), OxenError>> = tokio::spawn(async move {
             loop {
-                let Some((repo, remote_repo, entry)) = queue.try_pop() else {
+                let Some((repo, remote_repo, commit_entry)) = queue.try_pop() else {
                     // reached end of queue
                     break;
                 };
                 log::debug!("worker[{worker}] processing task...");
 
                 // Chunk and individual files
-                let remote_path = &entry.path();
+                let remote_path = &commit_entry.path;
 
                 // Download to the tmp path, then copy over to the entries dir
-                api::client::entries::pull_large_entry(&repo, &remote_repo, &remote_path, &entry)
-                    .await?;
+                api::client::entries::pull_large_entry(
+                    &repo,
+                    &remote_repo,
+                    remote_path,
+                    &commit_entry,
+                )
+                .await?;
 
                 log::debug!("Pulled large entry {remote_path:?} to versions dir");
-                progress_bar.add_bytes(entry.num_bytes());
+                progress_bar.add_bytes(commit_entry.num_bytes);
                 progress_bar.add_files(1);
             }
             Ok(())
@@ -734,14 +737,14 @@ async fn pull_large_entries(
 async fn pull_small_entries(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
-    entries: Vec<Entry>,
+    entries: Vec<CommitEntry>,
     progress_bar: &Arc<PullProgress>,
 ) -> Result<(), OxenError> {
     if entries.is_empty() {
         return Ok(());
     }
 
-    let total_size = repositories::entries::compute_generic_entries_size(&entries)?;
+    let total_size = repositories::entries::compute_entries_size(&entries)?;
 
     // Compute num chunks
     let num_chunks = ((total_size / AVG_CHUNK_SIZE) + 1) as usize;
@@ -767,7 +770,10 @@ async fn pull_small_entries(
     let chunks: Vec<PieceOfWork> = entries
         .chunks(chunk_size)
         .map(|chunk| {
-            let hashes = chunk.iter().map(|entry| entry.hash().to_string()).collect();
+            let hashes = chunk
+                .iter()
+                .map(|commit_entry| commit_entry.hash.clone())
+                .collect();
             (remote_repo.to_owned(), hashes, repo.to_owned())
         })
         .collect();
@@ -821,7 +827,7 @@ async fn pull_small_entries(
 // download entries to working dir
 pub async fn download_entries_to_working_dir(
     remote_repo: &RemoteRepository,
-    entries: &[Entry],
+    entries: &[CommitEntry],
     dst: &Path,
     progress_bar: &Arc<PullProgress>,
 ) -> Result<(), OxenError> {
@@ -845,16 +851,16 @@ pub async fn download_entries_to_working_dir(
     // Hence we chunk and send the big ones, and bundle and download the small ones
 
     // For files smaller than AVG_CHUNK_SIZE, we are going to group them, zip them up, and transfer them
-    let smaller_entries: Vec<Entry> = missing_entries
+    let smaller_entries: Vec<CommitEntry> = missing_entries
         .iter()
-        .filter(|e| e.num_bytes() <= AVG_CHUNK_SIZE)
+        .filter(|e| e.num_bytes <= AVG_CHUNK_SIZE)
         .map(|e| e.to_owned())
         .collect();
 
     // For files larger than AVG_CHUNK_SIZE, we are going break them into chunks and download the chunks in parallel
-    let larger_entries: Vec<Entry> = missing_entries
+    let larger_entries: Vec<CommitEntry> = missing_entries
         .iter()
-        .filter(|e| e.num_bytes() > AVG_CHUNK_SIZE)
+        .filter(|e| e.num_bytes > AVG_CHUNK_SIZE)
         .map(|e| e.to_owned())
         .collect();
 
@@ -885,7 +891,7 @@ pub async fn download_entries_to_working_dir(
 
 async fn download_large_entries(
     remote_repo: &RemoteRepository,
-    entries: Vec<Entry>,
+    entries: Vec<CommitEntry>,
     dst: impl AsRef<Path>,
     progress_bar: &Arc<PullProgress>,
 ) -> Result<(), OxenError> {
@@ -893,7 +899,7 @@ async fn download_large_entries(
         return Ok(());
     }
     // Pull the large entries in parallel
-    type PieceOfWork = (RemoteRepository, Entry, PathBuf, PathBuf);
+    type PieceOfWork = (RemoteRepository, CommitEntry, PathBuf, PathBuf);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
 
     log::debug!("Chunking and sending {} larger files", entries.len());
@@ -930,26 +936,26 @@ async fn download_large_entries(
         let progress_bar = Arc::clone(progress_bar);
         let handle: tokio::task::JoinHandle<Result<(), OxenError>> = tokio::spawn(async move {
             loop {
-                let Some((remote_repo, entry, _dst, download_path)) = queue.try_pop() else {
+                let Some((remote_repo, commit_entry, _dst, download_path)) = queue.try_pop() else {
                     // reached end of queue
                     break;
                 };
                 log::debug!("worker[{worker}] processing task...");
 
                 // Chunk and individual files
-                let remote_path = &entry.path();
+                let remote_path = &commit_entry.path;
 
                 // Download to the tmp path, then copy over to the entries dir
                 api::client::entries::download_large_entry(
                     &remote_repo,
-                    &remote_path,
+                    remote_path,
                     &download_path,
-                    &entry.commit_id(),
-                    entry.num_bytes(),
+                    &commit_entry.commit_id,
+                    commit_entry.num_bytes,
                 )
                 .await?;
 
-                progress_bar.add_bytes(entry.num_bytes());
+                progress_bar.add_bytes(commit_entry.num_bytes);
                 progress_bar.add_files(1);
             }
             Ok(())
@@ -972,7 +978,7 @@ async fn download_large_entries(
 
 async fn download_small_entries(
     remote_repo: &RemoteRepository,
-    entries: Vec<Entry>,
+    entries: Vec<CommitEntry>,
     dst: impl AsRef<Path>,
     progress_bar: &Arc<PullProgress>,
 ) -> Result<(), OxenError> {
@@ -980,7 +986,7 @@ async fn download_small_entries(
         return Ok(());
     }
 
-    let total_size = repositories::entries::compute_generic_entries_size(&entries)?;
+    let total_size = repositories::entries::compute_entries_size(&entries)?;
 
     // Compute num chunks
     let num_chunks = ((total_size / AVG_CHUNK_SIZE) + 1) as usize;
@@ -1004,7 +1010,7 @@ async fn download_small_entries(
         .map(|chunk| {
             let mut content_ids: Vec<(String, PathBuf)> = vec![];
             for e in chunk {
-                content_ids.push((e.hash(), e.path().to_owned()));
+                content_ids.push((e.hash.clone(), e.path.clone()));
             }
             (remote_repo.to_owned(), content_ids, dst.as_ref().to_owned())
         })
@@ -1056,12 +1062,12 @@ async fn download_small_entries(
     Ok(())
 }
 
-fn get_missing_entries_for_download(entries: &[Entry], dst: &Path) -> Vec<Entry> {
-    let mut missing_entries: Vec<Entry> = vec![];
-    for entry in entries {
-        let working_path = dst.join(entry.path());
+fn get_missing_entries_for_download(entries: &[CommitEntry], dst: &Path) -> Vec<CommitEntry> {
+    let mut missing_entries: Vec<CommitEntry> = vec![];
+    for commit_entry in entries {
+        let working_path = dst.join(&commit_entry.path);
         if !working_path.exists() {
-            missing_entries.push(entry.to_owned())
+            missing_entries.push(commit_entry.to_owned())
         }
     }
     missing_entries
@@ -1069,23 +1075,23 @@ fn get_missing_entries_for_download(entries: &[Entry], dst: &Path) -> Vec<Entry>
 
 async fn get_missing_entries_for_pull(
     version_store: &Arc<dyn VersionStore>,
-    entries: &[Entry],
-) -> Result<Vec<Entry>, OxenError> {
-    let mut missing_entries: Vec<Entry> = vec![];
+    entries: &[CommitEntry],
+) -> Result<Vec<CommitEntry>, OxenError> {
+    let mut missing_entries: Vec<CommitEntry> = vec![];
     // TODO: parallelize for S3
-    for entry in entries {
-        if !version_store.version_exists(&entry.hash()).await? {
-            missing_entries.push(entry.to_owned())
+    for commit_entry in entries {
+        if !version_store.version_exists(&commit_entry.hash).await? {
+            missing_entries.push(commit_entry.to_owned())
         }
     }
 
     Ok(missing_entries)
 }
 
-fn working_dir_paths_from_large_entries(entries: &[Entry], dst: &Path) -> Vec<PathBuf> {
+fn working_dir_paths_from_large_entries(entries: &[CommitEntry], dst: &Path) -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = vec![];
-    for entry in entries.iter() {
-        let working_path = dst.join(entry.path());
+    for commit_entry in entries.iter() {
+        let working_path = dst.join(&commit_entry.path);
         paths.push(working_path);
     }
     paths

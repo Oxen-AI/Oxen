@@ -3,8 +3,7 @@ use crate::api::client;
 use crate::api::client::internal_types::LocalOrBase;
 use crate::constants::{AVG_CHUNK_SIZE, max_retries};
 use crate::error::OxenError;
-use crate::model::entry::commit_entry::Entry;
-use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
+use crate::model::{CommitEntry, LocalRepository, MerkleHash, RemoteRepository};
 use crate::util::{self, concurrency, hasher};
 use crate::view::versions::{
     CleanCorruptedVersionsResponse, CompleteVersionUploadRequest, CompletedFileUpload,
@@ -103,13 +102,13 @@ pub async fn parallel_large_file_upload(
     dst_dir: Option<impl AsRef<Path>>, // dst_dir is provided for workspace add workflow
     workspace_id: Option<String>,
     update_timestamp: bool,
-    entry: Option<Entry>,                 // entry is provided for push workflow
+    commit_entry: Option<CommitEntry>, // entry is provided for push workflow
     progress: Option<&Arc<PushProgress>>, // for push workflow
 ) -> Result<MultipartLargeFileUpload, OxenError> {
     log::debug!("multipart_large_file_upload path: {:?}", file_path.as_ref());
 
     let mut upload =
-        create_multipart_large_file_upload(remote_repo, file_path, dst_dir, entry).await?;
+        create_multipart_large_file_upload(remote_repo, file_path, dst_dir, commit_entry).await?;
 
     log::debug!("multipart_large_file_upload upload: {:?}", upload.hash);
 
@@ -143,13 +142,13 @@ async fn create_multipart_large_file_upload(
     remote_repo: &RemoteRepository,
     file_path: impl AsRef<Path>,
     dst_dir: Option<impl AsRef<Path>>,
-    entry: Option<Entry>,
+    commit_entry: Option<CommitEntry>,
 ) -> Result<MultipartLargeFileUpload, OxenError> {
     let file_path = file_path.as_ref();
     let dst_dir = dst_dir.as_ref();
 
-    let (file_size, hash) = match entry {
-        Some(entry) => (entry.num_bytes(), entry.hash()),
+    let (file_size, hash) = match commit_entry {
+        Some(commit_entry) => (commit_entry.num_bytes, commit_entry.hash.clone()),
         None => {
             // Figure out how many parts we need to upload
             let Ok(metadata) = file_path.metadata() else {
@@ -482,7 +481,7 @@ async fn complete_multipart_large_file_upload(
 pub async fn multipart_batch_upload_with_retry(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
-    chunk: &Vec<Entry>,
+    chunk: &[CommitEntry],
     client: &reqwest::Client,
 ) -> Result<(), OxenError> {
     let mut files_to_retry: Vec<ErrorFileInfo> = vec![];
@@ -514,7 +513,7 @@ pub async fn multipart_batch_upload_with_retry(
 pub async fn multipart_batch_upload(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
-    chunk: &Vec<Entry>,
+    chunk: &[CommitEntry],
     client: &reqwest::Client,
     files_to_retry: Vec<ErrorFileInfo>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
@@ -529,32 +528,32 @@ pub async fn multipart_batch_upload(
         files_to_retry.iter().map(|f| f.hash.clone()).collect()
     };
 
-    for entry in chunk {
-        let file_hash = entry.hash();
+    for commit_entry in chunk {
+        let file_hash = &commit_entry.hash;
 
         // if it's not the first try and the file is not in the retry list, skip
-        if !files_to_retry.is_empty() && !retry_hashes.contains(&file_hash) {
+        if !files_to_retry.is_empty() && !retry_hashes.contains(file_hash) {
             continue;
         }
 
-        let data = version_store.get_version(&file_hash).await?;
+        let data = version_store.get_version(file_hash).await?;
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         std::io::copy(&mut data.as_slice(), &mut encoder)?;
         let compressed_bytes = match encoder.finish() {
             Ok(bytes) => bytes,
             Err(e) => {
-                log::error!("Failed to finish gzip for file {}: {}", &file_hash, e);
+                log::error!("Failed to finish gzip for file {}: {}", file_hash, e);
                 err_files.push(ErrorFileInfo {
                     hash: file_hash.clone(),
                     path: None,
-                    error: format!("Failed to finish gzip for file {}: {}", &file_hash, e),
+                    error: format!("Failed to finish gzip for file {}: {}", file_hash, e),
                 });
                 continue;
             }
         };
 
         let file_part = reqwest::multipart::Part::bytes(compressed_bytes)
-            .file_name(entry.hash().to_string())
+            .file_name(commit_entry.hash.clone())
             .mime_str("application/gzip")?;
         form = form.part("file[]", file_part);
     }
