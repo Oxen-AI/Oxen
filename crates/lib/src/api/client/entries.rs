@@ -2,9 +2,8 @@ use crate::api::client;
 use crate::config::UserConfig;
 use crate::constants::{AVG_CHUNK_SIZE, DEFAULT_BRANCH_NAME};
 use crate::error::OxenError;
-use crate::model::entry::commit_entry::Entry;
 use crate::model::{
-    EntryDataType, LocalRepository, MetadataEntry, NewCommitBody, RemoteRepository,
+    CommitEntry, EntryDataType, LocalRepository, MetadataEntry, NewCommitBody, RemoteRepository,
 };
 use crate::opts::UploadOpts;
 use crate::repositories;
@@ -329,14 +328,14 @@ pub async fn pull_large_entry(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     remote_path: impl AsRef<Path>,
-    entry: &Entry,
+    commit_entry: &CommitEntry,
 ) -> Result<(), OxenError> {
     // Read chunks
     let chunk_size = AVG_CHUNK_SIZE;
-    let total_size = entry.num_bytes();
+    let total_size = commit_entry.num_bytes;
     let num_chunks = total_size.div_ceil(chunk_size) as usize;
-    let hash = entry.hash();
-    let revision = entry.commit_id();
+    let hash = commit_entry.hash.clone();
+    let revision = commit_entry.commit_id.clone();
     let version_store = repo.version_store()?;
 
     let remote_path = remote_path.as_ref();

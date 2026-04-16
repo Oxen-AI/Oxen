@@ -4,7 +4,6 @@ use crate::model::CommitEntry;
 use crate::model::LocalRepository;
 use crate::model::MetadataEntry;
 use crate::model::RemoteRepository;
-use crate::model::entry::commit_entry::Entry;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::{api, repositories};
@@ -118,18 +117,18 @@ async fn r_download_entries(
     }
 
     if let EMerkleTreeNode::VNode(_) = &node.node {
-        let mut entries: Vec<Entry> = vec![];
+        let mut entries: Vec<CommitEntry> = vec![];
 
         for child in &node.children {
             if let EMerkleTreeNode::File(file_node) = &child.node {
-                entries.push(Entry::CommitEntry(CommitEntry {
+                entries.push(CommitEntry {
                     commit_id: file_node.last_commit_id().to_string(),
                     path: directory.join(file_node.name()),
                     hash: child.hash.to_string(),
                     num_bytes: file_node.num_bytes(),
                     last_modified_seconds: file_node.last_modified_seconds(),
                     last_modified_nanoseconds: file_node.last_modified_nanoseconds(),
-                }));
+                });
             }
         }
 

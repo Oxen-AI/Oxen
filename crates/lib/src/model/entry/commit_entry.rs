@@ -1,80 +1,11 @@
-use crate::constants::VERSION_FILE_NAME;
+use crate::model::Commit;
 use crate::model::merkle_tree::node::{DirNode, EMerkleTreeNode, FileNode};
-use crate::model::{Commit, MerkleHash};
 
-use filetime::FileTime;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use utoipa::ToSchema;
-
-#[derive(Clone, Debug)]
-pub enum Entry {
-    CommitEntry(CommitEntry),
-}
-
-impl Hash for Entry {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        match self {
-            Entry::CommitEntry(entry) => entry.hash.hash(state),
-        }
-    }
-}
-
-impl PartialEq for Entry {
-    fn eq(&self, other: &Entry) -> bool {
-        self.hash() == other.hash()
-    }
-}
-
-impl Eq for Entry {}
-
-impl Entry {
-    pub fn commit_id(&self) -> String {
-        match self {
-            Entry::CommitEntry(entry) => entry.commit_id.clone(),
-        }
-    }
-
-    pub fn path(&self) -> PathBuf {
-        match self {
-            Entry::CommitEntry(entry) => entry.path.clone(),
-        }
-    }
-
-    pub fn hash(&self) -> String {
-        match self {
-            Entry::CommitEntry(entry) => entry.hash.clone(),
-        }
-    }
-
-    pub fn num_bytes(&self) -> u64 {
-        match self {
-            Entry::CommitEntry(entry) => entry.num_bytes,
-        }
-    }
-    pub fn extension(&self) -> String {
-        match self {
-            Entry::CommitEntry(entry) => entry.extension(),
-        }
-    }
-}
-
-// get a From for entry
-impl From<CommitEntry> for Entry {
-    fn from(entry: CommitEntry) -> Self {
-        Entry::CommitEntry(entry)
-    }
-}
-
-impl From<Entry> for CommitEntry {
-    fn from(entry: Entry) -> Self {
-        match entry {
-            Entry::CommitEntry(entry) => entry,
-        }
-    }
-}
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct CommitPath {
@@ -82,6 +13,11 @@ pub struct CommitPath {
     pub path: PathBuf,
 }
 
+/// Represents a file or directory entry at a specific commit.
+///
+/// `Hash` and `Eq` are based on the content hash field, so `HashSet<CommitEntry>`
+/// deduplicates by file content. This is used during fetch and push to avoid
+/// transferring the same content twice.
 #[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct CommitEntry {
     pub commit_id: String,
@@ -100,44 +36,21 @@ pub struct CompareEntry {
     pub path: PathBuf,
 }
 
-// Hash on the path field so we can quickly look up
 impl PartialEq for CommitEntry {
     fn eq(&self, other: &CommitEntry) -> bool {
-        self.hash == other.hash && self.path == other.path
+        self.hash == other.hash
     }
 }
 
 impl Eq for CommitEntry {}
+
 impl Hash for CommitEntry {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.path.hash(state);
+        self.hash.hash(state);
     }
 }
 
 impl CommitEntry {
-    // For HashSet search purposes
-    pub fn from_path<T: AsRef<Path>>(path: T) -> CommitEntry {
-        CommitEntry {
-            commit_id: String::from(""),
-            path: path.as_ref().to_path_buf(),
-            hash: String::from(""),
-            num_bytes: 0,
-            last_modified_seconds: 0,
-            last_modified_nanoseconds: 0,
-        }
-    }
-
-    pub fn from_merkle_hash(hash: &MerkleHash) -> CommitEntry {
-        CommitEntry {
-            commit_id: String::from(""),
-            path: PathBuf::from(""), //Should we do this?
-            hash: hash.to_string(),
-            num_bytes: 0,
-            last_modified_seconds: 0,
-            last_modified_nanoseconds: 0,
-        }
-    }
-
     pub fn from_node(node: &EMerkleTreeNode) -> CommitEntry {
         match node {
             EMerkleTreeNode::Directory(dir_node) => CommitEntry::from_dir_node(dir_node),
@@ -166,26 +79,5 @@ impl CommitEntry {
             last_modified_seconds: dir_node.last_modified_seconds(),
             last_modified_nanoseconds: dir_node.last_modified_nanoseconds(),
         }
-    }
-
-    pub fn filename(&self) -> PathBuf {
-        if self.extension() == "" {
-            PathBuf::from(VERSION_FILE_NAME)
-        } else {
-            PathBuf::from(format!("{}.{}", VERSION_FILE_NAME, self.extension()))
-        }
-    }
-
-    pub fn extension(&self) -> String {
-        if let Some(ext) = self.path.extension() {
-            String::from(ext.to_str().unwrap_or(""))
-        } else {
-            String::from("")
-        }
-    }
-
-    pub fn has_different_modification_time(&self, time: &FileTime) -> bool {
-        self.last_modified_nanoseconds != time.nanoseconds()
-            || self.last_modified_seconds != time.unix_seconds()
     }
 }
