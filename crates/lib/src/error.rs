@@ -115,6 +115,9 @@ pub enum OxenError {
     #[error("Workspace is behind: {0}")]
     WorkspaceBehind(Box<Workspace>),
 
+    #[error("{0}")]
+    WorkspaceNameIndex(#[from] crate::core::workspaces::workspace_name_index::WsError),
+
     //
     // Resources (paths, uris, etc.)
     //

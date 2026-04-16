@@ -1,6 +1,6 @@
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::str;
+use std::str::{self, Utf8Error};
 use std::sync::{Arc, LazyLock};
 
 use lru::LruCache;
@@ -20,6 +20,33 @@ const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 static DB_INSTANCES: LazyLock<Mutex<LruCache<PathBuf, Arc<DB>>>> =
     LazyLock::new(|| Mutex::new(LruCache::new(DB_CACHE_SIZE)));
 
+#[derive(Debug, thiserror::Error)]
+pub enum WsError {
+    #[error("Error looking up workspace name '{0}': {1}")]
+    LookupErr(String, rocksdb::Error),
+
+    #[error("Key {0} mapped to non-UTF-8 value. Error: {1}")]
+    NonUtf8Key(String, Utf8Error),
+
+    #[error("Failed to create workspace name index directory: {0}")]
+    CreateDirErr(Box<OxenError>),
+
+    #[error("Failed to open workspace name index database: {0}")]
+    OpenError(rocksdb::Error),
+
+    #[error("Failed to put key {0} in workspace name index. Error: {1}")]
+    PutError(String, rocksdb::Error),
+
+    #[error("Failed to delete key {0} from workspace name index. Error: {1}")]
+    DeleteError(String, rocksdb::Error),
+
+    #[error("Error iterating workspace name index: {0}")]
+    IterationError(rocksdb::Error),
+
+    #[error("Error listing workspace directories: {0}")]
+    ListWsErr(Box<OxenError>),
+}
+
 fn index_dir(repo: &LocalRepository) -> PathBuf {
     repo.path
         .join(OXEN_HIDDEN_DIR)
@@ -33,28 +60,29 @@ pub fn index_exists(repo: &LocalRepository) -> bool {
 }
 
 /// Removes this repository's workspace name index DB from the cache.
-pub fn remove_from_cache(repository_path: impl AsRef<Path>) -> Result<(), OxenError> {
-    let dir = util::fs::oxen_hidden_dir(&repository_path)
-        .join(WORKSPACES_DIR)
-        .join(WORKSPACE_NAME_INDEX_DIR);
+pub fn remove_from_cache(repo: &LocalRepository) {
+    let dir = index_dir(repo);
     let mut instances = DB_INSTANCES.lock();
     let _ = instances.pop(&dir); // drop immediately
-    Ok(())
 }
 
 /// Removes from cache including children paths (useful for test cleanup).
-pub fn remove_from_cache_with_children(repository_path: impl AsRef<Path>) -> Result<(), OxenError> {
-    let mut dbs_to_remove: Vec<PathBuf> = vec![];
+pub fn remove_from_cache_with_children(repository_path: &Path) {
     let mut instances = DB_INSTANCES.lock();
-    for (key, _) in instances.iter() {
-        if key.starts_with(&repository_path) {
-            dbs_to_remove.push(key.clone());
-        }
-    }
+
+    let dbs_to_remove = instances
+        .iter()
+        .filter_map(|(key, _)| {
+            if key.starts_with(repository_path) {
+                Some(key.clone())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
     for db_path in dbs_to_remove {
         let _ = instances.pop(&db_path); // drop immediately
     }
-    Ok(())
 }
 
 pub struct WorkspaceNameIndex {
@@ -65,7 +93,7 @@ pub struct WorkspaceNameIndex {
 ///
 /// The handle holds a reference-counted DB instance cached in a global LRU cache.
 /// Drop it when you're done to avoid holding the DB open longer than necessary.
-pub fn get_index(repo: &LocalRepository) -> Result<WorkspaceNameIndex, OxenError> {
+pub fn get_index(repo: &LocalRepository) -> Result<WorkspaceNameIndex, WsError> {
     let dir = index_dir(repo);
 
     let mut instances = DB_INSTANCES.lock();
@@ -74,17 +102,11 @@ pub fn get_index(repo: &LocalRepository) -> Result<WorkspaceNameIndex, OxenError
     }
 
     if !dir.exists() {
-        util::fs::create_dir_all(&dir).map_err(|e| {
-            OxenError::basic_str(format!(
-                "Failed to create workspace name index directory: {e}"
-            ))
-        })?;
+        util::fs::create_dir_all(&dir).map_err(|e| WsError::CreateDirErr(Box::new(e)))?;
     }
 
     let opts = db::key_val::opts::default();
-    let db = DB::open(&opts, dunce::simplified(&dir)).map_err(|e| {
-        OxenError::basic_str(format!("Failed to open workspace name index database: {e}"))
-    })?;
+    let db = DB::open(&opts, dunce::simplified(&dir)).map_err(WsError::OpenError)?;
     let arc_db = Arc::new(db);
     instances.put(dir, arc_db.clone());
     Ok(WorkspaceNameIndex { db: arc_db })
@@ -92,13 +114,13 @@ pub fn get_index(repo: &LocalRepository) -> Result<WorkspaceNameIndex, OxenError
 
 impl WorkspaceNameIndex {
     /// Get workspace ID by name. O(1).
-    pub fn get_id_by_name(&self, name: &str) -> Result<Option<String>, OxenError> {
+    pub fn get_id_by_name(&self, name: &str) -> Result<Option<String>, WsError> {
         match self.db.get(name.as_bytes()) {
-            Ok(Some(value)) => Ok(Some(String::from(str::from_utf8(&value)?))),
-            Ok(None) => Ok(None),
-            Err(err) => Err(OxenError::basic_str(format!(
-                "Error looking up workspace name '{name}': {err}"
+            Ok(Some(value)) => Ok(Some(String::from(
+                str::from_utf8(&value).map_err(|e| WsError::NonUtf8Key(name.to_string(), e))?,
             ))),
+            Ok(None) => Ok(None),
+            Err(err) => Err(WsError::LookupErr(name.to_string(), err)),
         }
     }
 
@@ -115,29 +137,33 @@ impl WorkspaceNameIndex {
     }
 
     /// Insert a name -> workspace_id mapping.
-    pub fn put(&self, name: &str, workspace_id: &str) -> Result<(), OxenError> {
-        self.db.put(name.as_bytes(), workspace_id.as_bytes())?;
+    pub fn put(&self, name: &str, workspace_id: &str) -> Result<(), WsError> {
+        self.db
+            .put(name.as_bytes(), workspace_id.as_bytes())
+            .map_err(|e| WsError::PutError(name.to_string(), e))?;
         Ok(())
     }
 
     /// Remove a name from the index.
-    pub fn delete(&self, name: &str) -> Result<(), OxenError> {
-        self.db.delete(name.as_bytes())?;
+    pub fn delete(&self, name: &str) -> Result<(), WsError> {
+        self.db
+            .delete(name.as_bytes())
+            .map_err(|e| WsError::DeleteError(name.to_string(), e))?;
         Ok(())
     }
 
     /// Remove all entries from the index.
-    pub fn clear(&self) -> Result<(), OxenError> {
+    pub fn clear(&self) -> Result<(), WsError> {
         let iter = self.db.iterator(IteratorMode::Start);
         for item in iter {
             match item {
                 Ok((key, _)) => {
-                    self.db.delete(key)?;
+                    self.db.delete(&key).map_err(|e| {
+                        WsError::PutError(String::from_utf8_lossy(&key).to_string(), e)
+                    })?;
                 }
                 Err(err) => {
-                    return Err(OxenError::basic_str(format!(
-                        "Error iterating workspace name index: {err}"
-                    )));
+                    return Err(WsError::IterationError(err));
                 }
             }
         }
@@ -145,7 +171,7 @@ impl WorkspaceNameIndex {
     }
 
     /// List all (name, workspace_id) entries. Primarily for debugging/testing.
-    pub fn list(&self) -> Result<Vec<(String, String)>, OxenError> {
+    pub fn list(&self) -> Result<Vec<(String, String)>, WsError> {
         let iter = self.db.iterator(IteratorMode::Start);
         let mut results = Vec::new();
         for item in iter {
@@ -155,13 +181,13 @@ impl WorkspaceNameIndex {
                         results.push((name.to_string(), id.to_string()));
                     }
                     _ => {
-                        log::error!("Could not decode workspace name index entry");
+                        log::error!(
+                            "Could not decode workspace name index entry into valid UTF-8 strings."
+                        );
                     }
                 },
                 Err(err) => {
-                    return Err(OxenError::basic_str(format!(
-                        "Error iterating workspace name index: {err}"
-                    )));
+                    return Err(WsError::IterationError(err));
                 }
             }
         }
@@ -170,7 +196,7 @@ impl WorkspaceNameIndex {
 
     /// Rebuild the index from existing workspace configs on disk.
     /// Clears all existing entries first, then scans `.oxen/workspaces/` directories.
-    pub fn rebuild_from_disk(&self, repo: &LocalRepository) -> Result<(), OxenError> {
+    pub fn rebuild_from_disk(&self, repo: &LocalRepository) -> Result<(), WsError> {
         self.clear()?;
 
         let workspaces_dir = repo.path.join(OXEN_HIDDEN_DIR).join(WORKSPACES_DIR);
@@ -178,9 +204,8 @@ impl WorkspaceNameIndex {
             return Ok(());
         }
 
-        let workspace_dirs = util::fs::list_dirs_in_dir(&workspaces_dir).map_err(|e| {
-            OxenError::basic_str(format!("Error listing workspace directories: {e}"))
-        })?;
+        let workspace_dirs = util::fs::list_dirs_in_dir(&workspaces_dir)
+            .map_err(|e| WsError::ListWsErr(Box::new(e)))?;
 
         for workspace_dir in workspace_dirs {
             let config_path = workspace_dir
@@ -193,7 +218,9 @@ impl WorkspaceNameIndex {
             let config_contents = match util::fs::read_from_path(&config_path) {
                 Ok(contents) => contents,
                 Err(e) => {
-                    log::warn!("Could not read workspace config at {config_path:?}: {e}");
+                    log::warn!(
+                        "[Skip workspace in index] Could not read workspace config at {config_path:?}: {e}"
+                    );
                     continue;
                 }
             };
@@ -201,7 +228,9 @@ impl WorkspaceNameIndex {
             let config: WorkspaceConfig = match toml::from_str(&config_contents) {
                 Ok(config) => config,
                 Err(e) => {
-                    log::warn!("Could not parse workspace config at {config_path:?}: {e}");
+                    log::warn!(
+                        "[Skip workspace in index] Could not parse workspace config at {config_path:?}: {e}"
+                    );
                     continue;
                 }
             };
