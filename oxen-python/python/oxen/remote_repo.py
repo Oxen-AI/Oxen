@@ -545,11 +545,17 @@ class RemoteRepo:
         """
         return self._repo.list_branches()
 
-    def list_workspaces(self):
+    def list_workspaces(self, page_num: int = 1, page_size: int = 100):
         """
-        List all workspaces for a remote repo
+        List a page of workspaces for a remote repo.
+
+        Args:
+            page_num: `int`
+                Page number to fetch. Defaults to 1.
+            page_size: `int`
+                Number of workspaces per page. Defaults to 100.
         """
-        return self._repo.list_workspaces()
+        return self._repo.list_workspaces(page_num, page_size)
 
     def get_branch(self, branch: str):
         """

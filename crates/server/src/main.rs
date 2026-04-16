@@ -130,6 +130,7 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
         crate::controllers::workspaces::list,
         crate::controllers::workspaces::clear,
         crate::controllers::workspaces::delete,
+        crate::controllers::workspaces::update_metadata,
         crate::controllers::workspaces::mergeability,
         crate::controllers::workspaces::commit,
         // Workspaces - changes

@@ -118,10 +118,20 @@ impl PyRemoteRepo {
         self.commit_id = Some(commit_id);
     }
 
-    fn list_workspaces(&self) -> Result<Vec<PyWorkspaceResponse>, PyOxenError> {
-        let workspaces = pyo3_async_runtimes::tokio::get_runtime()
-            .block_on(async { api::client::workspaces::list(&self.repo).await })?;
-        Ok(workspaces
+    #[pyo3(signature = (page_num=liboxen::constants::DEFAULT_PAGE_NUM, page_size=liboxen::constants::DEFAULT_PAGE_SIZE))]
+    fn list_workspaces(
+        &self,
+        page_num: usize,
+        page_size: usize,
+    ) -> Result<Vec<PyWorkspaceResponse>, PyOxenError> {
+        let page_opts = PaginateOpts {
+            page_num,
+            page_size,
+        };
+        let paginated = pyo3_async_runtimes::tokio::get_runtime()
+            .block_on(async { api::client::workspaces::list(&self.repo, &page_opts).await })?;
+        Ok(paginated
+            .entries
             .iter()
             .map(|w| PyWorkspaceResponse {
                 id: w.id.clone(),

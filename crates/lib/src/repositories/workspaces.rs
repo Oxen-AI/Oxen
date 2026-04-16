@@ -75,9 +75,7 @@ pub fn get_by_dir(
         return Ok(None);
     }
 
-    let config_contents = util::fs::read_from_path(&config_path)?;
-    let config: WorkspaceConfig = toml::from_str(&config_contents)
-        .map_err(|e| OxenError::basic_str(format!("Failed to parse workspace config: {e}")))?;
+    let config = read_workspace_config(&config_path)?;
 
     let Some(commit) = repositories::commits::get_by_id(repo, &config.workspace_commit_id)? else {
         return Err(OxenError::basic_str(format!(
@@ -97,6 +95,7 @@ pub fn get_by_dir(
     Ok(Some(Workspace {
         id: config.workspace_id.unwrap_or(workspace_id.to_owned()),
         name: config.workspace_name,
+        metadata: config.metadata,
         base_repo: repo.clone(),
         workspace_repo: LocalRepository::new(workspace_dir, storage_opts)?,
         commit,
@@ -115,9 +114,7 @@ pub fn get_by_name(
         let idx = workspace_name_index::get_index(repo)?;
         let maybe_id = idx.get_id_by_name(workspace_name)?;
         if let Some(id) = maybe_id {
-            let id_hash = util::hasher::hash_str_sha256(&id);
-            let workspace_dir = Workspace::workspace_dir(repo, &id_hash);
-            let result = get_by_dir(repo, &workspace_dir)?;
+            let result = get_by_name_index_value(repo, &id)?;
             if result.is_some() {
                 return Ok(result);
             }
@@ -127,18 +124,10 @@ pub fn get_by_name(
             );
             idx.delete(workspace_name)?;
         }
-        return Ok(None);
+        return get_by_name_via_scan(repo, workspace_name);
     }
 
-    // Slow path: iterate all workspaces (O(n)), used when index hasn't been created yet
-    for workspace in iter_workspaces(repo)? {
-        if let Some(workspace) = workspace?
-            && workspace.name.as_deref() == Some(workspace_name)
-        {
-            return Ok(Some(workspace));
-        }
-    }
-    Ok(None)
+    get_by_name_via_scan(repo, workspace_name)
 }
 
 /// Creates a new workspace and saves it to the filesystem
@@ -209,6 +198,7 @@ fn create_on_disk(
         is_editable,
         workspace_name: workspace_name.clone(),
         workspace_id: Some(workspace_id.to_string()),
+        metadata: None,
     };
 
     let toml_string = match toml::to_string(&workspace_config) {
@@ -228,6 +218,7 @@ fn create_on_disk(
     Ok(Workspace {
         id: workspace_id.to_owned(),
         name: workspace_name,
+        metadata: None,
         base_repo: base_repo.clone(),
         workspace_repo,
         commit: commit.clone(),
@@ -381,13 +372,78 @@ fn iter_workspaces(
 }
 
 pub fn list(repo: &LocalRepository) -> Result<Vec<Workspace>, OxenError> {
+    let idx = workspace_name_index::get_index(repo).ok();
     let mut workspaces = Vec::new();
+    let mut num_backfilled = 0;
     for workspace in iter_workspaces(repo)? {
         if let Some(workspace) = workspace? {
+            if let (Some(idx), Some(name)) = (&idx, workspace.name.as_deref())
+                && sync_workspace_name_index_entry(idx, name, &workspace.id)?
+            {
+                log::debug!(
+                    "workspace::list backfilled workspace name index entry '{}' -> '{}'",
+                    name,
+                    workspace.id
+                );
+                num_backfilled += 1;
+            }
             workspaces.push(workspace);
         }
     }
+
+    if num_backfilled > 0 {
+        log::debug!(
+            "workspace::list finished backfilling workspace name index with {} named workspaces",
+            num_backfilled
+        );
+    }
+
     Ok(workspaces)
+}
+
+fn get_by_name_index_value(
+    repo: &LocalRepository,
+    index_value: &str,
+) -> Result<Option<Workspace>, OxenError> {
+    let workspace_dir = Workspace::workspace_dir(repo, &util::hasher::hash_str_sha256(index_value));
+    if let Some(workspace) = get_by_dir(repo, &workspace_dir)? {
+        return Ok(Some(workspace));
+    }
+
+    // Legacy backfills may store the on-disk workspace directory name directly.
+    let workspace_dir = Workspace::workspace_dir(repo, index_value);
+    get_by_dir(repo, &workspace_dir)
+}
+
+fn get_by_name_via_scan(
+    repo: &LocalRepository,
+    workspace_name: &str,
+) -> Result<Option<Workspace>, OxenError> {
+    for workspace in iter_workspaces(repo)? {
+        if let Some(workspace) = workspace?
+            && workspace.name.as_deref() == Some(workspace_name)
+        {
+            if let Ok(idx) = workspace_name_index::get_index(repo) {
+                idx.put(workspace_name, &workspace.id)?;
+            }
+            return Ok(Some(workspace));
+        }
+    }
+    Ok(None)
+}
+
+fn sync_workspace_name_index_entry(
+    idx: &workspace_name_index::WorkspaceNameIndex,
+    workspace_name: &str,
+    workspace_id: &str,
+) -> Result<bool, OxenError> {
+    let existing = idx.get_id_by_name(workspace_name)?;
+    if existing.as_deref() == Some(workspace_id) {
+        return Ok(false);
+    }
+
+    idx.put(workspace_name, workspace_id)?;
+    Ok(true)
 }
 
 pub fn get_non_editable_by_commit_id(
@@ -454,17 +510,7 @@ pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
 
 pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), OxenError> {
     let config_path = workspace.config_path();
-
-    if !config_path.exists() {
-        log::error!("Workspace config not found: {config_path:?}");
-        return Err(OxenError::WorkspaceNotFound(workspace.id.as_str().into()));
-    }
-
-    let config_contents = util::fs::read_from_path(&config_path)?;
-    let mut config: WorkspaceConfig = toml::from_str(&config_contents).map_err(|e| {
-        log::error!("Failed to parse workspace config: {config_path:?}, err: {e}");
-        OxenError::basic_str(format!("Failed to parse workspace config: {e}"))
-    })?;
+    let mut config = read_workspace_config(&config_path)?;
 
     log::debug!(
         "Updating workspace {} commit from {} to {}",
@@ -474,13 +520,48 @@ pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), O
     );
     config.workspace_commit_id = new_commit_id.to_string();
 
-    let toml_string = toml::to_string(&config).map_err(|e| {
+    write_workspace_config(&config_path, &config)?;
+
+    Ok(())
+}
+
+pub fn update_metadata(
+    workspace: &Workspace,
+    metadata: Option<serde_json::Value>,
+) -> Result<(), OxenError> {
+    let config_path = workspace.config_path();
+    let mut config = read_workspace_config(&config_path)?;
+
+    log::debug!("Updating workspace {} metadata", workspace.id);
+    config.metadata = metadata;
+
+    write_workspace_config(&config_path, &config)?;
+
+    Ok(())
+}
+
+fn read_workspace_config(config_path: &Path) -> Result<WorkspaceConfig, OxenError> {
+    if !config_path.exists() {
+        log::error!("Workspace config not found: {config_path:?}");
+        return Err(OxenError::basic_str(format!(
+            "Workspace config not found: {config_path:?}"
+        )));
+    }
+
+    let config_contents = util::fs::read_from_path(config_path)?;
+    toml::from_str(&config_contents).map_err(|e| {
+        log::error!("Failed to parse workspace config: {config_path:?}, err: {e}");
+        OxenError::basic_str(format!("Failed to parse workspace config: {e}"))
+    })
+}
+
+fn write_workspace_config(config_path: &Path, config: &WorkspaceConfig) -> Result<(), OxenError> {
+    let toml_string = toml::to_string(config).map_err(|e| {
         log::error!("Failed to serialize workspace config to TOML: {config_path:?}, err: {e}");
         OxenError::basic_str(format!("Failed to serialize workspace config to TOML: {e}"))
     })?;
 
-    util::fs::write_to_path(&config_path, toml_string)?;
-
+    util::fs::write_to_path(config_path, toml_string)?;
     Ok(())
 }
 
@@ -703,10 +784,207 @@ fn build_file_status_maps_for_file(
 mod tests {
     use super::*;
     use crate::api;
-    use crate::constants::{DEFAULT_BRANCH_NAME, WORKSPACE_NAME_INDEX_DIR};
+    use crate::constants::{
+        DEFAULT_BRANCH_NAME, OXEN_HIDDEN_DIR, WORKSPACE_CONFIG, WORKSPACE_NAME_INDEX_DIR,
+        WORKSPACES_DIR,
+    };
     use crate::repositories;
     use crate::test;
     use crate::util;
+
+    #[tokio::test]
+    async fn test_list_populates_workspace_name_index() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "hello")?;
+            repositories::add(&repo, &hello_file).await?;
+            let commit = repositories::commit(&repo, "init")?;
+
+            create_with_name(
+                &repo,
+                &commit,
+                "ws-id-1",
+                Some("named-ws".to_string()),
+                true,
+            )
+            .await?;
+
+            let index_dir = repo
+                .path
+                .join(OXEN_HIDDEN_DIR)
+                .join(WORKSPACES_DIR)
+                .join(WORKSPACE_NAME_INDEX_DIR);
+            util::fs::remove_dir_all(&index_dir)?;
+            workspace_name_index::remove_from_cache(&repo);
+
+            let workspaces = list(&repo)?;
+            assert_eq!(workspaces.len(), 1);
+
+            let idx = workspace_name_index::get_index(&repo)?;
+            assert_eq!(idx.get_id_by_name("named-ws")?, Some("ws-id-1".to_string()));
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_get_by_name_falls_back_when_index_misses() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "hello")?;
+            repositories::add(&repo, &hello_file).await?;
+            let commit = repositories::commit(&repo, "init")?;
+
+            create_with_name(
+                &repo,
+                &commit,
+                "ws-id-1",
+                Some("named-ws".to_string()),
+                true,
+            )
+            .await?;
+
+            let idx = workspace_name_index::get_index(&repo)?;
+            idx.delete("named-ws")?;
+
+            let workspace = get_by_name(&repo, "named-ws")?.expect("workspace should be found");
+            assert_eq!(workspace.name.as_deref(), Some("named-ws"));
+            assert_eq!(workspace.id, "ws-id-1");
+            assert_eq!(idx.get_id_by_name("named-ws")?, Some("ws-id-1".to_string()));
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_duplicate_name_validation_survives_incomplete_index() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "hello")?;
+            repositories::add(&repo, &hello_file).await?;
+            let commit = repositories::commit(&repo, "init")?;
+
+            let workspace = create_with_name(
+                &repo,
+                &commit,
+                "ws-id-1",
+                Some("named-ws".to_string()),
+                true,
+            )
+            .await?;
+
+            let idx = workspace_name_index::get_index(&repo)?;
+            idx.delete("named-ws")?;
+
+            let result = create_with_name(
+                &repo,
+                &commit,
+                "ws-id-2",
+                Some("named-ws".to_string()),
+                true,
+            )
+            .await;
+            assert!(result.is_err());
+
+            delete(&workspace)?;
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_list_backfills_legacy_named_workspace_lookup() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "hello")?;
+            repositories::add(&repo, &hello_file).await?;
+            let commit = repositories::commit(&repo, "init")?;
+
+            let workspace = create_with_name(
+                &repo,
+                &commit,
+                "ws-id-1",
+                Some("legacy-ws".to_string()),
+                true,
+            )
+            .await?;
+
+            let config_path = workspace.dir().join(OXEN_HIDDEN_DIR).join(WORKSPACE_CONFIG);
+            let config_contents = util::fs::read_from_path(&config_path)?;
+            let mut config: WorkspaceConfig = toml::from_str(&config_contents)
+                .map_err(|err| OxenError::basic_str(format!("failed to parse config: {err}")))?;
+            config.workspace_id = None;
+            let config_contents = toml::to_string(&config).map_err(|err| {
+                OxenError::basic_str(format!("failed to serialize config: {err}"))
+            })?;
+            util::fs::write_to_path(&config_path, config_contents)?;
+
+            let idx = workspace_name_index::get_index(&repo)?;
+            idx.clear()?;
+
+            let workspaces = list(&repo)?;
+            assert_eq!(workspaces.len(), 1);
+            assert_eq!(
+                idx.get_id_by_name("legacy-ws")?,
+                Some(
+                    workspace
+                        .dir()
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_string()
+                )
+            );
+
+            let fetched = get_by_name(&repo, "legacy-ws")?.expect("workspace should be found");
+            assert_eq!(fetched.name.as_deref(), Some("legacy-ws"));
+
+            delete(&workspace)?;
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_update_workspace_metadata_persists_and_clears() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "hello")?;
+            repositories::add(&repo, &hello_file).await?;
+            let commit = repositories::commit(&repo, "init")?;
+
+            let workspace = create_with_name(
+                &repo,
+                &commit,
+                "ws-id-1",
+                Some("named-ws".to_string()),
+                true,
+            )
+            .await?;
+
+            let metadata = serde_json::json!({
+                "label": "experiment-a",
+                "priority": 3,
+                "tags": ["one", "two"]
+            });
+            update_metadata(&workspace, Some(metadata.clone()))?;
+
+            let fetched = get(&repo, "ws-id-1")?.expect("workspace should be found");
+            assert_eq!(fetched.metadata, Some(metadata));
+
+            update_metadata(&workspace, None)?;
+
+            let fetched = get(&repo, "ws-id-1")?.expect("workspace should be found");
+            assert_eq!(fetched.metadata, None);
+
+            Ok(())
+        })
+        .await
+    }
 
     #[tokio::test]
     async fn test_can_commit_different_files_workspaces_without_merge_conflicts()

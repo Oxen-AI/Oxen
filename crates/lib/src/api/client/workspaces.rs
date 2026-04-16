@@ -11,23 +11,19 @@ use crate::api;
 use crate::api::client;
 use crate::error::OxenError;
 use crate::model::RemoteRepository;
-use crate::view::workspaces::{ListWorkspaceResponseView, WorkspaceResponseWithStatus};
+use crate::opts::PaginateOpts;
+use crate::view::workspaces::{
+    ListWorkspaceResponseView, PaginatedWorkspaces, UpdateWorkspaceMetadataRequest,
+    WorkspaceResponseWithStatus,
+};
 use crate::view::workspaces::{NewWorkspace, WorkspaceResponse};
 use crate::view::{StatusMessage, WorkspaceResponseView};
 
-pub async fn list(remote_repo: &RemoteRepository) -> Result<Vec<WorkspaceResponse>, OxenError> {
-    let url = api::endpoint::url_from_repo(remote_repo, "/workspaces")?;
-    let client = client::new_for_url(&url)?;
-    let res = client.get(&url).send().await?;
-    let body = client::parse_json_body(&url, res).await?;
-    let response: Result<ListWorkspaceResponseView, serde_json::Error> =
-        serde_json::from_str(&body);
-    match response {
-        Ok(val) => Ok(val.workspaces),
-        Err(err) => Err(OxenError::basic_str(format!(
-            "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
-        ))),
-    }
+pub async fn list(
+    remote_repo: &RemoteRepository,
+    page_opts: &PaginateOpts,
+) -> Result<PaginatedWorkspaces, OxenError> {
+    list_with_params(remote_repo, Some(page_opts), None).await
 }
 
 pub async fn get(
@@ -53,25 +49,44 @@ pub async fn get_by_name(
     name: impl AsRef<str>,
 ) -> Result<Option<WorkspaceResponse>, OxenError> {
     let name = name.as_ref();
-    let url = api::endpoint::url_from_repo(remote_repo, &format!("/workspaces?name={name}"))?;
+    let response = list_with_params(remote_repo, None, Some(name)).await?;
+    match response.entries.len() {
+        1 => Ok(Some(response.entries[0].clone())),
+        0 => Ok(None),
+        len => Err(OxenError::basic_str(format!(
+            "expected 1 workspace, got {len}"
+        ))),
+    }
+}
+
+async fn list_with_params(
+    remote_repo: &RemoteRepository,
+    page_opts: Option<&PaginateOpts>,
+    name: Option<&str>,
+) -> Result<PaginatedWorkspaces, OxenError> {
+    let mut query_params = Vec::new();
+    if let Some(page_opts) = page_opts {
+        query_params.push(format!("page={}", page_opts.page_num));
+        query_params.push(format!("page_size={}", page_opts.page_size));
+    }
+    if let Some(name) = name {
+        query_params.push(format!("name={name}"));
+    }
+
+    let mut uri = "/workspaces".to_string();
+    if !query_params.is_empty() {
+        uri.push('?');
+        uri.push_str(&query_params.join("&"));
+    }
+
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     let client = client::new_for_url(&url)?;
     let res = client.get(&url).send().await?;
     let body = client::parse_json_body(&url, res).await?;
     let response: Result<ListWorkspaceResponseView, serde_json::Error> =
         serde_json::from_str(&body);
     match response {
-        Ok(val) => {
-            if val.workspaces.len() == 1 {
-                Ok(Some(val.workspaces[0].clone()))
-            } else if val.workspaces.is_empty() {
-                Ok(None)
-            } else {
-                Err(OxenError::basic_str(format!(
-                    "expected 1 workspace, got {}",
-                    val.workspaces.len()
-                )))
-            }
-        }
+        Ok(val) => Ok(val.workspaces),
         Err(err) => Err(OxenError::basic_str(format!(
             "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
@@ -136,9 +151,32 @@ pub async fn create_with_path(
         Ok(val) => Ok(WorkspaceResponseWithStatus {
             id: val.workspace.id,
             name: val.workspace.name,
+            metadata: val.workspace.metadata,
             commit: val.workspace.commit,
             status: val.status.status_message,
         }),
+        Err(err) => Err(OxenError::basic_str(format!(
+            "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
+        ))),
+    }
+}
+
+pub async fn update_metadata(
+    remote_repo: &RemoteRepository,
+    workspace_id: impl AsRef<str>,
+    metadata: serde_json::Value,
+) -> Result<WorkspaceResponse, OxenError> {
+    let workspace_id = workspace_id.as_ref();
+    let url =
+        api::endpoint::url_from_repo(remote_repo, &format!("/workspaces/{workspace_id}/metadata"))?;
+    let client = client::new_for_url(&url)?;
+    let body = UpdateWorkspaceMetadataRequest { metadata };
+    let res = client.put(&url).json(&body).send().await?;
+
+    let body = client::parse_json_body(&url, res).await?;
+    let response: Result<WorkspaceResponseView, serde_json::Error> = serde_json::from_str(&body);
+    match response {
+        Ok(val) => Ok(val.workspace),
         Err(err) => Err(OxenError::basic_str(format!(
             "error parsing response from {url}\n\nErr {err:?} \n\n{body}"
         ))),
@@ -324,8 +362,15 @@ mod tests {
             clear(&remote_repo).await?;
 
             // Check they are gone
-            let workspaces = list(&remote_repo).await?;
-            assert_eq!(workspaces.len(), 0);
+            let workspaces = list(
+                &remote_repo,
+                &PaginateOpts {
+                    page_num: constants::DEFAULT_PAGE_NUM,
+                    page_size: constants::DEFAULT_PAGE_SIZE,
+                },
+            )
+            .await?;
+            assert_eq!(workspaces.entries.len(), 0);
 
             Ok(remote_repo)
         })
@@ -339,8 +384,44 @@ mod tests {
             create(&remote_repo, branch_name, "test_workspace_id").await?;
             create(&remote_repo, branch_name, "test_workspace_id2").await?;
 
-            let workspaces = list(&remote_repo).await?;
-            assert_eq!(workspaces.len(), 2);
+            let workspaces = list(
+                &remote_repo,
+                &PaginateOpts {
+                    page_num: constants::DEFAULT_PAGE_NUM,
+                    page_size: constants::DEFAULT_PAGE_SIZE,
+                },
+            )
+            .await?;
+            assert_eq!(workspaces.entries.len(), 2);
+            assert_eq!(workspaces.pagination.total_entries, 2);
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_list_workspaces_paginated() -> Result<(), OxenError> {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+            let branch_name = "main";
+            create(&remote_repo, branch_name, "test_workspace_id_1").await?;
+            create(&remote_repo, branch_name, "test_workspace_id_2").await?;
+            create(&remote_repo, branch_name, "test_workspace_id_3").await?;
+
+            let workspaces = list(
+                &remote_repo,
+                &PaginateOpts {
+                    page_num: 2,
+                    page_size: 2,
+                },
+            )
+            .await?;
+
+            assert_eq!(workspaces.entries.len(), 1);
+            assert_eq!(workspaces.pagination.page_number, 2);
+            assert_eq!(workspaces.pagination.page_size, 2);
+            assert_eq!(workspaces.pagination.total_entries, 3);
+            assert_eq!(workspaces.pagination.total_pages, 2);
 
             Ok(remote_repo)
         })
@@ -350,8 +431,71 @@ mod tests {
     #[tokio::test]
     async fn test_list_empty_workspaces() -> Result<(), OxenError> {
         test::run_empty_remote_repo_test(|_local_repo, remote_repo| async move {
-            let workspaces = list(&remote_repo).await?;
-            assert_eq!(workspaces.len(), 0);
+            let workspaces = list(
+                &remote_repo,
+                &PaginateOpts {
+                    page_num: constants::DEFAULT_PAGE_NUM,
+                    page_size: constants::DEFAULT_PAGE_SIZE,
+                },
+            )
+            .await?;
+            assert_eq!(workspaces.entries.len(), 0);
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_update_workspace_metadata() -> Result<(), OxenError> {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+            let branch_name = "main";
+            let workspace_id = "test_workspace_id";
+            create(&remote_repo, branch_name, workspace_id).await?;
+
+            let metadata = serde_json::json!({
+                "label": "experiment-a",
+                "priority": 3,
+                "tags": ["one", "two"]
+            });
+
+            let workspace = update_metadata(&remote_repo, workspace_id, metadata.clone()).await?;
+            assert_eq!(workspace.metadata, Some(metadata.clone()));
+
+            let fetched = get(&remote_repo, workspace_id)
+                .await?
+                .expect("workspace should exist");
+            assert_eq!(fetched.metadata, Some(metadata));
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_clear_workspace_metadata() -> Result<(), OxenError> {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+            let branch_name = "main";
+            let workspace_id = "test_workspace_id";
+            create(&remote_repo, branch_name, workspace_id).await?;
+
+            update_metadata(
+                &remote_repo,
+                workspace_id,
+                serde_json::json!({
+                    "label": "experiment-a"
+                }),
+            )
+            .await?;
+
+            let workspace =
+                update_metadata(&remote_repo, workspace_id, serde_json::Value::Null).await?;
+            assert_eq!(workspace.metadata, None);
+
+            let fetched = get(&remote_repo, workspace_id)
+                .await?
+                .expect("workspace should exist");
+            assert_eq!(fetched.metadata, None);
 
             Ok(remote_repo)
         })
