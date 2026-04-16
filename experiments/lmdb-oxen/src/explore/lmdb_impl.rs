@@ -92,7 +92,13 @@ impl MerkleReader for LmdbMerkleDB {
     /// Corresponds to a real file or directory under version control.
     /// None means there is no node with that hash.
     fn node(&self, hash: Hash) -> Result<Option<MerkleTreeL>, Self::Error> {
-        self.retrieve(hash)
+        match self.retrieve(hash) {
+            Err(heed::Error::Decoding(err)) => {
+                eprintln!("[ERROR] {hash} is not a merkle node, it is a commit (error: {err})");
+                Ok(None)
+            }
+            other => other,
+        }
     }
 
     /// Obtains the commit node, which is the root of the Merkle tree.
@@ -100,7 +106,13 @@ impl MerkleReader for LmdbMerkleDB {
     /// Corresponds to the complete state of the repository at a given commit.
     /// None means there is no commit with that hash.
     fn commit(&self, hash: Hash) -> Result<Option<Root>, Self::Error> {
-        self.retrieve(hash)
+        match self.retrieve(hash) {
+            Err(heed::Error::Decoding(err)) => {
+                eprintln!("[ERROR] {hash} is not a commit, it is a merkle node (error: {err})");
+                Ok(None)
+            }
+            other => other,
+        }
     }
 }
 
@@ -108,6 +120,7 @@ impl MerkleWriter for LmdbMerkleDB {
     type Error = heed::Error;
     type Session<'a> = LmdbWriteSession<'a>;
 
+    /// Opens a write transaction in the "unamed" LMDB database.
     fn write_session<'a>(&'a self) -> Result<Self::Session<'a>, Self::Error> {
         let mut wtxn = self.lmdb_env.write_txn()?;
         let db: Database<U128<LE>, Bytes> = self.lmdb_env.create_database(&mut wtxn, None)?;
@@ -121,7 +134,11 @@ pub struct LmdbWriteSession<'a> {
 }
 
 impl<'a> LmdbWriteSession<'a> {
-    pub(crate) fn put<T: HasHash + Serialize>(&mut self, node: &T) -> Result<(), <Self as WriteSession<'a>>::Error> {
+    /// Serializes the node and puts it into the database with its hash as the key.
+    pub(crate) fn put<T: HasHash + Serialize>(
+        &mut self,
+        node: &T,
+    ) -> Result<(), <Self as WriteSession<'a>>::Error> {
         let data = {
             let mut buf = Vec::new();
 
@@ -137,10 +154,15 @@ impl<'a> LmdbWriteSession<'a> {
 impl<'a> WriteSession<'a> for LmdbWriteSession<'a> {
     type Error = heed::Error;
 
-    fn queue_write(&mut self, node: &MerkleTreeL) -> Result<(), Self::Error> {
+    fn queue_node(&mut self, node: &MerkleTreeL) -> Result<(), Self::Error> {
         self.put(node)
     }
 
+    fn queue_commit(&mut self, commit: &Root) -> Result<(), Self::Error> {
+        self.put(commit)
+    }
+
+    /// Commits the active write transaction.
     fn finish(self) -> Result<(), Self::Error> {
         self.wtxn.commit()
     }

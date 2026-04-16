@@ -10,7 +10,7 @@ pub enum MerkleStoreError<R: MerkleReader> {
     #[error("Parent commit {0} does not exist.")]
     ParentCommitNotFound(Hash),
     #[error("{0}")]
-    StoreError(R::Error)
+    StoreError(R::Error),
 }
 
 /// A complete Merkle tree store supports reading and writing with a shared error type.
@@ -27,7 +27,6 @@ pub trait MerkleStore: MerkleReader + MerkleWriter<Error = <Self as MerkleReader
         self.write(updates.iter())?;
 
         let commit = Root::new(self.repository(), children);
-
     }
 }
 
