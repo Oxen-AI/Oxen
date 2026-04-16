@@ -10,7 +10,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 use log;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use tokio::fs::{File, create_dir_all};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -663,6 +663,7 @@ impl VersionStore for S3VersionStore {
                 offsets.push(offset);
             }
         }
+        offsets.sort();
 
         Ok(offsets)
     }
@@ -706,15 +707,121 @@ impl VersionStore for S3VersionStore {
         ))
     }
 
-    async fn combine_version_chunks(
-        &self,
-        _hash: &str,
-        _cleanup: bool,
-    ) -> Result<PathBuf, OxenError> {
-        // TODO: Implement S3 version chunk combination
-        Err(OxenError::basic_str(
-            "S3VersionStore combine_version_chunks not yet implemented",
-        ))
+    async fn combine_version_chunks(&self, hash: &str) -> Result<(), OxenError> {
+        let offsets = self.list_version_chunks(hash).await?;
+        if offsets.is_empty() {
+            return Ok(());
+        }
+        log::debug!("combine_version_chunks found {} chunks", offsets.len());
+
+        let client = self.client().await?;
+        let key = self.generate_key(hash);
+
+        let upload = client
+            .create_multipart_upload()
+            .bucket(&self.bucket)
+            .key(&key)
+            .send()
+            .await?;
+        let upload_id = upload
+            .upload_id()
+            .ok_or_else(|| OxenError::upload("S3 multipart upload missing upload_id"))?
+            .to_string();
+
+        const MIN_PART_SIZE: usize = 5 * 1024 * 1024; // 5 MB, S3 minimum
+        let mut part_buf: Vec<u8> = Vec::new();
+        let mut part_num: i32 = 1;
+        let mut completed_parts: Vec<CompletedPart> = Vec::new();
+
+        let result: Result<(), OxenError> = async {
+            for (i, offset) in offsets.iter().enumerate() {
+                let is_last_chunk = i == offsets.len() - 1;
+
+                let resp = client
+                    .get_object()
+                    .bucket(&self.bucket)
+                    .key(self.chunk_key(hash, *offset))
+                    .send()
+                    .await?;
+                let chunk_bytes = resp
+                    .body
+                    .collect()
+                    .await
+                    .map_err(|e| {
+                        OxenError::internal_error(format!(
+                            "Failed to read chunk body at offset {offset}: {e}"
+                        ))
+                    })?
+                    .into_bytes();
+
+                part_buf.extend_from_slice(&chunk_bytes);
+
+                // Upload part when buffer is large enough (or on last chunk)
+                while part_buf.len() >= MIN_PART_SIZE || (is_last_chunk && !part_buf.is_empty()) {
+                    let drain_len = if part_buf.len() >= MIN_PART_SIZE && !is_last_chunk {
+                        MIN_PART_SIZE
+                    } else if is_last_chunk && part_buf.len() <= MIN_PART_SIZE {
+                        // Last flush — drain everything
+                        part_buf.len()
+                    } else {
+                        MIN_PART_SIZE
+                    };
+
+                    let part_data: Vec<u8> = part_buf.drain(..drain_len).collect();
+                    let part = upload_part(
+                        client.clone(),
+                        self.bucket.clone(),
+                        key.clone(),
+                        upload_id.clone(),
+                        part_num,
+                        part_data,
+                    )
+                    .await?;
+                    completed_parts.push(part);
+                    part_num += 1;
+
+                    // If this is the last chunk and buffer is empty, stop
+                    if is_last_chunk && part_buf.is_empty() {
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        }
+        .await;
+
+        if let Err(e) = result {
+            let _ = client
+                .abort_multipart_upload()
+                .bucket(&self.bucket)
+                .key(&key)
+                .upload_id(&upload_id)
+                .send()
+                .await;
+            return Err(e);
+        }
+
+        let completed = CompletedMultipartUpload::builder()
+            .set_parts(Some(completed_parts))
+            .build();
+        client
+            .complete_multipart_upload()
+            .bucket(&self.bucket)
+            .key(&key)
+            .upload_id(&upload_id)
+            .multipart_upload(completed)
+            .send()
+            .await?;
+
+        // 5. Delete chunk objects
+        let chunk_keys = self
+            .list_objects_with_prefix(&self.chunks_prefix(hash))
+            .await?;
+        if !chunk_keys.is_empty() {
+            self.delete_objects(chunk_keys).await?;
+        }
+
+        Ok(())
     }
 
     async fn clean_corrupted_versions(
@@ -1107,8 +1214,7 @@ mod tests {
             .await
             .unwrap();
 
-        let mut offsets = store.list_version_chunks(hash).await.unwrap();
-        offsets.sort();
+        let offsets = store.list_version_chunks(hash).await.unwrap();
         assert_eq!(offsets, vec![0, 10240, 20480]);
     }
 
@@ -1143,8 +1249,7 @@ mod tests {
         let offsets_a = store.list_version_chunks(hash_a).await.unwrap();
         assert_eq!(offsets_a, vec![0]);
 
-        let mut offsets_b = store.list_version_chunks(hash_b).await.unwrap();
-        offsets_b.sort();
+        let offsets_b = store.list_version_chunks(hash_b).await.unwrap();
         assert_eq!(offsets_b, vec![0, 512]);
     }
 
@@ -1204,6 +1309,59 @@ mod tests {
         assert!(
             result.is_err(),
             "expected error for offset past EOF, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_combine_version_chunks() {
+        use crate::util::hasher;
+
+        let (store, _tmp, _server) = setup().await;
+
+        // Pre-compute the hash of the combined data
+        let combined = b"chunk-0chunk-10240chunk-20480";
+        let hash = hasher::hash_buffer(combined);
+
+        // Store three chunks
+        store
+            .store_version_chunk(&hash, 0, Bytes::from_static(b"chunk-0"))
+            .await
+            .expect("store chunk 0");
+        store
+            .store_version_chunk(&hash, 10240, Bytes::from_static(b"chunk-10240"))
+            .await
+            .expect("store chunk 10240");
+        store
+            .store_version_chunk(&hash, 20480, Bytes::from_static(b"chunk-20480"))
+            .await
+            .expect("store chunk 20480");
+
+        // Combine
+        store
+            .combine_version_chunks(&hash)
+            .await
+            .expect("combine_version_chunks should succeed");
+
+        // Verify VERSION object has the correct content
+        let client = store.client().await.expect("client");
+        let resp = client
+            .get_object()
+            .bucket(&store.bucket)
+            .key(store.generate_key(&hash))
+            .send()
+            .await
+            .expect("VERSION object should exist");
+        let body = resp.body.collect().await.expect("body").into_bytes();
+        assert_eq!(&body[..], combined);
+
+        // Verify chunk objects were deleted
+        let chunk_keys = store
+            .list_objects_with_prefix(&store.chunks_prefix(&hash))
+            .await
+            .expect("list chunks");
+        assert!(
+            chunk_keys.is_empty(),
+            "chunks should be deleted after combine, found: {chunk_keys:?}"
         );
     }
 }

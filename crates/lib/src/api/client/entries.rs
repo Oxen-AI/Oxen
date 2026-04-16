@@ -425,7 +425,7 @@ pub async fn pull_large_entry(
     }
 
     // Once all downloaded, recombine file and delete temp dir
-    version_store.combine_version_chunks(&hash, true).await?;
+    version_store.combine_version_chunks(&hash).await?;
 
     Ok(())
 }

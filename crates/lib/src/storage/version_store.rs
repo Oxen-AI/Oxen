@@ -150,24 +150,21 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         size: u64,
     ) -> Result<Vec<u8>, OxenError>;
 
-    /// List all chunks for a version file
+    /// List all chunks for a version file.
     ///
-    /// Returns the byte offsets of each chunk within the original file. When sorted,
-    /// these offsets define the order in which chunks must be concatenated to
-    /// reconstruct the complete file.
+    /// Returns the byte offsets of each chunk within the original file, sorted in
+    /// ascending order. Concatenating chunks in this order reconstructs the
+    /// complete file.
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
     async fn list_version_chunks(&self, hash: &str) -> Result<Vec<u64>, OxenError>;
 
-    /// Combine all the chunks for a version file into a single file
+    /// Combine all the chunks for a version file into a single file, then delete the chunks.
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
-    /// * `cleanup` - Whether to delete the chunks after combining. If false, the chunks will be left in place.
-    ///   May be helpful for debugging or chunk-level deduplication.
-    async fn combine_version_chunks(&self, hash: &str, cleanup: bool)
-    -> Result<PathBuf, OxenError>;
+    async fn combine_version_chunks(&self, hash: &str) -> Result<(), OxenError>;
 
     /// Get metadata of a version file
     ///
