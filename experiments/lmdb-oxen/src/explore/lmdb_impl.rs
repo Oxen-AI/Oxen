@@ -105,23 +105,34 @@ impl MerkleWriter for LmdbMerkleDB {
     fn write_session<'a>(
         &self,
     ) -> Result<Self::Session<'a>, <Self::Session<'a> as WriteSession<'a>>::Error> {
-        let wtxn: heed::RwTxn<'a> = self.lmdb_env.write_txn()?;
-        Ok(LmdbWriteSession { wtxn })
+        let mut wtxn: heed::RwTxn<'a> = self.lmdb_env.write_txn()?;
+        let db: Database<U128<LE>, Bytes> = self.lmdb_env.create_database(&mut wtxn, None)?;
+        Ok(LmdbWriteSession { wtxn, db })
     }
 }
 
 pub struct LmdbWriteSession<'a> {
     wtxn: heed::RwTxn<'a>,
+    db: Database<U128<LE>, Bytes>,
 }
 
 impl<'a> WriteSession<'a> for LmdbWriteSession<'a> {
     type Error = heed::Error;
 
     fn queue_write(&'a mut self, node: &MerkleTreeL) -> Result<(), Self::Error> {
-        unimplemented!("{node:?}")
+        let data = {
+            let mut buf = Vec::new();
+
+            use serde::Serialize;
+            node.serialize(&mut rmp_serde::Serializer::new(&mut buf))
+                .map_err(|e| heed::Error::Encoding(Box::new(e)))?;
+
+            buf
+        };
+        self.db.put(&mut self.wtxn, &node.hash().into(), &data)
     }
 
     fn finish(self) -> Result<(), Self::Error> {
-        unimplemented!()
+        self.wtxn.commit()
     }
 }
