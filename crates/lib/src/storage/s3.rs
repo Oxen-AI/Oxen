@@ -708,7 +708,6 @@ impl VersionStore for S3VersionStore {
     }
 
     async fn combine_version_chunks(&self, hash: &str) -> Result<(), OxenError> {
-        // 1. List chunk offsets (already sorted by list_version_chunks)
         let offsets = self.list_version_chunks(hash).await?;
         if offsets.is_empty() {
             return Ok(());
@@ -718,7 +717,6 @@ impl VersionStore for S3VersionStore {
         let client = self.client().await?;
         let key = self.generate_key(hash);
 
-        // 2. Create multipart upload
         let upload = client
             .create_multipart_upload()
             .bucket(&self.bucket)
@@ -730,7 +728,6 @@ impl VersionStore for S3VersionStore {
             .ok_or_else(|| OxenError::upload("S3 multipart upload missing upload_id"))?
             .to_string();
 
-        // 3. Stream chunks and upload as multipart parts
         const MIN_PART_SIZE: usize = 5 * 1024 * 1024; // 5 MB, S3 minimum
         let mut part_buf: Vec<u8> = Vec::new();
         let mut part_num: i32 = 1;
@@ -740,7 +737,6 @@ impl VersionStore for S3VersionStore {
             for (i, offset) in offsets.iter().enumerate() {
                 let is_last_chunk = i == offsets.len() - 1;
 
-                // Download chunk from S3
                 let resp = client
                     .get_object()
                     .bucket(&self.bucket)
@@ -758,7 +754,6 @@ impl VersionStore for S3VersionStore {
                     })?
                     .into_bytes();
 
-                // Append to part buffer
                 part_buf.extend_from_slice(&chunk_bytes);
 
                 // Upload part when buffer is large enough (or on last chunk)
@@ -795,7 +790,6 @@ impl VersionStore for S3VersionStore {
         }
         .await;
 
-        // On failure, abort the multipart upload
         if let Err(e) = result {
             let _ = client
                 .abort_multipart_upload()
@@ -807,7 +801,6 @@ impl VersionStore for S3VersionStore {
             return Err(e);
         }
 
-        // 4. Complete multipart upload
         let completed = CompletedMultipartUpload::builder()
             .set_parts(Some(completed_parts))
             .build();
