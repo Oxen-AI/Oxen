@@ -27,7 +27,7 @@ pub trait MerkleMetadataStore: Sized {
     ///
     /// Corresponds to the complete state of the repository at a given commit.
     /// None means there is no commit with that hash.
-    fn commit(&self, hash: Hash) -> Result<Option<&Root>, Self::Error>;
+    fn commit(&self, hash: Hash) -> Result<Option<Root>, Self::Error>;
 
     /// The repository for which this trait is managing the Merkle tree.
     fn repository(&self) -> &Repository;

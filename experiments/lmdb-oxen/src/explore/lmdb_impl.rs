@@ -1,11 +1,10 @@
 use heed::byteorder::LE;
 use heed::types::{Bytes, DecodeIgnore, U128};
 use heed::{Database, Env, EnvOpenOptions};
-use serde::de::DeserializeSeed;
 
 use crate::explore::new_path::AbsolutePath;
 use crate::explore::{
-    lazy_merkle_lmdb::{MerkleMetadataStore, MerkleTreeL, MerkleTreeLSeed, Root},
+    lazy_merkle_lmdb::{MerkleMetadataStore, MerkleTreeL, Root},
     scratch::{Hash, Repository},
 };
 
@@ -32,6 +31,28 @@ impl LmdbMerkleDB {
 
         Ok(Self { repo, lmdb_env })
     }
+
+
+    /// Actually access and decode some data stored in LMDB.
+    pub(crate) fn retrieve<T>(&self, hash: Hash) -> Result<Option<T>, <Self as MerkleMetadataStore>::Error>
+    where
+        for<'de> T: serde::Deserialize<'de>,
+    {
+        let rtxn = self.lmdb_env.read_txn()?;
+        let db: Database<HashLmdb, ValueLmdb> = self
+            .lmdb_env
+            .open_database(&rtxn, None)?
+            .expect("Invariant violated: database has not been created.");
+
+        let Some(bytes) = db.get(&rtxn, &hash.into())? else {
+            return Ok(None);
+        };
+
+        let payload = rmp_serde::from_slice(&bytes)
+            .map_err(|e| heed::Error::Decoding(Box::new(e)))?;
+        Ok(Some(payload))
+    }
+
 }
 
 impl MerkleMetadataStore for LmdbMerkleDB {
@@ -65,30 +86,16 @@ impl MerkleMetadataStore for LmdbMerkleDB {
     ///
     /// Corresponds to a real file or directory under version control.
     /// None means there is no node with that hash.
-    fn node<'a>(&'a self, hash: Hash) -> Result<Option<MerkleTreeL<'a, Self>>, Self::Error> {
-        let rtxn = self.lmdb_env.read_txn()?;
-        let db: Database<HashLmdb, ValueLmdb> = self
-            .lmdb_env
-            .open_database(&rtxn, None)?
-            .expect("Invariant violated: database has not been created.");
-
-        let Some(bytes) = db.get(&rtxn, &hash.into())? else {
-            return Ok(None);
-        };
-
-        let seed = MerkleTreeLSeed { db: self };
-        let mut de = rmp_serde::Deserializer::from_read_ref(bytes);
-        let node = seed
-            .deserialize(&mut de)
-            .map_err(|e| heed::Error::Decoding(Box::new(e)))?;
-        Ok(Some(node))
+    fn node(&self, hash: Hash) -> Result<Option<MerkleTreeL>, Self::Error> {
+        self.retrieve(hash)
     }
+
 
     /// Obtains the commit node, which is the root of the Merkle tree.
     ///
     /// Corresponds to the complete state of the repository at a given commit.
     /// None means there is no commit with that hash.
-    fn commit(&self, _hash: Hash) -> Result<Option<&Root<'_, Self>>, Self::Error> {
-        unimplemented!()
+    fn commit(&self, hash: Hash) -> Result<Option<Root>, Self::Error> {
+        self.retrieve(hash)
     }
 }
