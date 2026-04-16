@@ -64,7 +64,7 @@ pub fn run_on_all_repos(path: &Path) -> Result<(), OxenError> {
         // Show the canonical namespace path
         log::debug!(
             "This is the namespace path we're walking: {:?}",
-            namespace_path.canonicalize()?
+            util::fs::canonicalize(&namespace_path)?
         );
         let repos = repositories::list_repos_in_namespace(&namespace_path);
         for repo in repos {
@@ -73,7 +73,7 @@ pub fn run_on_all_repos(path: &Path) -> Result<(), OxenError> {
                 Err(err) => {
                     log::error!(
                         "Could not migrate version files for repo {:?}\nErr: {}",
-                        repo.path.canonicalize(),
+                        util::fs::canonicalize(&repo.path),
                         err
                     )
                 }

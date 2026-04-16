@@ -366,14 +366,14 @@ async fn node_download_request(
 
         // Unpack the tar in a temp dir
         log::debug!("node_download_request unpacking to {temp_path:?}");
-        archive.unpack(&temp_path).await?;
+        util::fs::unpack_async_tar_archive(archive, temp_path).await?;
         log::debug!("Succesfully unpacked tar to temp dir");
 
         // Copy to the repo
         util::fs::copy_dir_all(&temp_dir, &full_unpacked_path)?;
     } else {
         // Else, unpack directly to the repo
-        archive.unpack(&full_unpacked_path).await?;
+        util::fs::unpack_async_tar_archive(archive, &full_unpacked_path).await?;
     }
 
     Ok(())

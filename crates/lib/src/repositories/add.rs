@@ -767,7 +767,7 @@ A: Oxen.ai
     /// Checks that only the expected relative paths exist from the given root.
     /// Ignores any relative paths that start with one of the [ignore_prefixes].
     async fn expect_filesystem(root: &Path, expected_relative: &[&Path], ignore_prefixes: &[&str]) {
-        let root = root.canonicalize().expect("could not canonicalize");
+        let root = util::fs::canonicalize(root).expect("could not canonicalize root");
 
         let all_from_root: HashSet<PathBuf> = {
             let mut all_from_root = HashSet::new();
@@ -775,7 +775,8 @@ A: Oxen.ai
             loop {
                 match entries.next().await {
                     Some(Ok(entry)) => {
-                        let path = entry.path().canonicalize().expect("could not canonicalize");
+                        let path = util::fs::canonicalize(entry.path())
+                            .expect("could not canonicalize entry");
                         if let Some(relative) = ensure_relative(&root, &path) {
                             if relative.as_os_str().is_empty() {
                                 continue;

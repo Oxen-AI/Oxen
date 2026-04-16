@@ -95,6 +95,34 @@ jobs:
         with:
           tool: nextest@0.9.114
 
+      # Ramdisk for test data
+      - name: Setup ramdisk (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          RAMDISK_PATH=$(mktemp -d /dev/shm/oxen_test_XXXXXX)
+          echo "OXEN_TEST_RUN_DIR=$RAMDISK_PATH/test" >> "$GITHUB_ENV"
+          echo "SYNC_DIR=$RAMDISK_PATH/sync" >> "$GITHUB_ENV"
+          mkdir -p "$RAMDISK_PATH/test" "$RAMDISK_PATH/sync"
+
+      - name: Setup ramdisk (macOS)
+        if: matrix.platform == 'macos'
+        run: |
+          RAMDISK_DEV=$(hdiutil attach -nomount ram://8388608 | xargs)  # 4 GB
+          diskutil eraseDisk APFS OxenTest "$RAMDISK_DEV"
+          echo "OXEN_TEST_RUN_DIR=/Volumes/OxenTest/test" >> "$GITHUB_ENV"
+          echo "SYNC_DIR=/Volumes/OxenTest/sync" >> "$GITHUB_ENV"
+          mkdir -p /Volumes/OxenTest/test /Volumes/OxenTest/sync
+
+      - name: Setup ramdisk (Windows)
+        if: matrix.platform == 'windows'
+        run: |
+          choco install imdisk -y
+          imdisk -a -s 16G -m R: -p "/fs:ntfs /q /y"
+          echo "OXEN_TEST_RUN_DIR=R:\test" >> $env:GITHUB_ENV
+          echo "SYNC_DIR=R:\sync" >> $env:GITHUB_ENV
+          mkdir R:\test
+          mkdir R:\sync
+
       # Oxen Rust Tests
       - name: Setup test directories (Linux/macOS)
         if: matrix.platform != 'windows'

@@ -1,6 +1,7 @@
-use flate2::read::GzDecoder;
-use std::{fs::File, path::Path};
-use tar::Archive;
+use async_compression::futures::bufread::GzipDecoder;
+use async_tar::Archive;
+use std::path::Path;
+use tokio_util::compat::TokioAsyncReadCompatExt;
 
 use crate::constants::DEFAULT_BRANCH_NAME;
 use crate::repositories;
@@ -25,11 +26,12 @@ pub async fn load(
         dest_path.to_path_buf()
     };
 
-    let file = File::open(src_path)?;
-    let tar = GzDecoder::new(file);
+    let file = tokio::fs::File::open(src_path).await?;
+    let reader = futures::io::BufReader::new(file.compat());
+    let decoder = GzipDecoder::new(reader);
+    let archive = Archive::new(decoder);
     println!("🐂 Decompressing oxen repo into {dest_path:?}");
-    let mut archive = Archive::new(tar);
-    archive.unpack(&dest_path)?;
+    util::fs::unpack_async_tar_archive(archive, &dest_path).await?;
 
     // Server repos - done unpacking
     if no_working_dir {

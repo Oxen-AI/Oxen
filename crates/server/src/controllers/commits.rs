@@ -1236,8 +1236,38 @@ async fn unpack_entry_tarball_async(
                 .store_version_from_reader(&hash, Box::new(file), entry_size)
                 .await?;
         } else {
-            // For non-version files, unpack to hidden dir
-            file.unpack_in(&hidden_dir)
+            // We manually construct the path and check for traversal instead of using unpack_in(),
+            // because unpack_in() calls canonicalize() internally, which fails on Windows ramdisks
+            // (imdisk).
+            let entry_type = file.header().entry_type();
+            if !entry_type.is_file() && !entry_type.is_dir() {
+                return Err(OxenError::basic_str(format!(
+                    "Unsupported archive entry type for {}: only regular files and \
+                     directories are allowed",
+                    path.display()
+                )));
+            }
+            let mut dest = hidden_dir.clone();
+            for component in path.components() {
+                match component {
+                    std::path::Component::Normal(part) => dest.push(part),
+                    std::path::Component::ParentDir => {
+                        return Err(OxenError::basic_str(format!(
+                            "Path traversal detected in archive entry: {}",
+                            path.display()
+                        )));
+                    }
+                    _ => continue,
+                }
+            }
+            // Skip empty paths (e.g. entries that were only "." or "/")
+            if dest == hidden_dir {
+                continue;
+            }
+            if let Some(parent) = dest.parent() {
+                util::fs::create_dir_all(parent)?;
+            }
+            file.unpack(&dest)
                 .await
                 .map_err(|e| OxenError::basic_str(format!("Failed to unpack file: {e}")))?;
         }

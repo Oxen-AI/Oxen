@@ -2080,7 +2080,7 @@ mod tests {
             assert_eq!(workspace.id, workspace_id);
 
             // Get the absolute path to the file
-            let path = test::test_img_file().canonicalize()?;
+            let path = crate::util::fs::canonicalize(test::test_img_file())?;
             let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_id,

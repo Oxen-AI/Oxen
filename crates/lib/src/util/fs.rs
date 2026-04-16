@@ -1003,14 +1003,30 @@ pub fn is_canonical(path: impl AsRef<Path>) -> Result<bool, OxenError> {
     Ok(false)
 }
 
-// Return canonicalized path if possible, otherwise return original
+// Return canonicalized path if possible. Falls back to converting to an absolute path without
+// symlink resolution, which is needed on filesystems that don't support canonicalization (e.g.
+// Windows imdisk ramdisks).
 pub fn canonicalize(path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
     let path = path.as_ref();
-    //log::debug!("Path to canonicalize: {path:?}");
     match dunce::canonicalize(path) {
         Ok(canon_path) => Ok(canon_path),
-        Err(err) => Err(OxenError::basic_str(format!(
-            "path {path:?} cannot be canonicalized due to err {err:?}"
+        Err(e)
+            if e.kind() == std::io::ErrorKind::Unsupported
+                // On Windows, ERROR_INVALID_FUNCTION (os error 1) from ramdisk drivers maps
+                // to Uncategorized rather than Unsupported, so also check the raw code.
+                || (cfg!(windows) && e.raw_os_error() == Some(1)) =>
+        {
+            // Fallback: convert to absolute path without symlink resolution. This is needed on
+            // filesystems whose drivers don't implement canonicalization (e.g. Windows imdisk
+            // ramdisks).
+            if path.is_absolute() {
+                Ok(path.to_path_buf())
+            } else {
+                Ok(std::path::absolute(path)?)
+            }
+        }
+        Err(e) => Err(OxenError::basic_str(format!(
+            "path {path:?} cannot be canonicalized: {e}"
         ))),
     }
 }
@@ -1662,6 +1678,66 @@ pub fn validate_and_normalize_path(path: impl AsRef<Path>) -> Result<PathBuf, Ox
     }
 
     Ok(normalized)
+}
+
+/// Unpack an async-tar archive to a destination directory without calling `canonicalize`. This is
+/// needed because `archive.unpack()` and `entry.unpack_in()` internally call
+/// `std::fs::canonicalize`, which fails on filesystems that don't support it (e.g. Windows imdisk
+/// ramdisks). Path traversal is checked by rejecting parent components.
+pub async fn unpack_async_tar_archive<R: futures_util::AsyncRead + Unpin>(
+    archive: async_tar::Archive<R>,
+    dst: &Path,
+) -> Result<(), crate::error::OxenError> {
+    create_dir_all(dst)?;
+
+    let mut entries = archive.entries()?;
+    while let Some(entry) = entries.next().await {
+        let mut file = entry?;
+        let path = file.path()?.to_path_buf();
+
+        let entry_type = file.header().entry_type();
+        if !entry_type.is_file() && !entry_type.is_dir() {
+            return Err(crate::error::OxenError::internal_error(format!(
+                "Unsupported archive entry type for {}: only regular files and directories \
+                 are allowed",
+                path.display()
+            )));
+        }
+
+        let mut file_dst = dst.to_path_buf();
+        for part in path.components() {
+            match part {
+                Component::Normal(part) => file_dst.push(part),
+                Component::ParentDir => {
+                    return Err(crate::error::OxenError::internal_error(format!(
+                        "Path traversal detected in archive entry: {}",
+                        path.display()
+                    )));
+                }
+                _ => continue,
+            }
+        }
+
+        // Skip empty paths (e.g. entries that were only "." or "/")
+        if file_dst == dst {
+            continue;
+        }
+
+        if entry_type.is_dir() {
+            create_dir_all(&file_dst)?;
+        } else {
+            if let Some(parent) = file_dst.parent() {
+                create_dir_all(parent)?;
+            }
+            file.unpack(&file_dst).await.map_err(|e| {
+                crate::error::OxenError::basic_str(format!(
+                    "Failed to unpack {}: {e}",
+                    file_dst.display()
+                ))
+            })?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

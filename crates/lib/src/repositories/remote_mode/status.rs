@@ -321,7 +321,7 @@ mod tests {
                 assert!(cloned_repo.is_remote_mode());
 
                 let repo_path = cloned_repo.path.clone();
-                log::debug!("Cloned repo path: {:?}", cloned_repo.path.canonicalize());
+                log::debug!("Cloned repo path: {:?}", util::fs::canonicalize(&cloned_repo.path));
                 let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
 
