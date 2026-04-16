@@ -1022,7 +1022,7 @@ pub fn canonicalize(path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
             if path.is_absolute() {
                 Ok(path.to_path_buf())
             } else {
-                Ok(std::env::current_dir()?.join(path))
+                Ok(std::path::absolute(path)?)
             }
         }
         Err(e) => Err(OxenError::basic_str(format!(
