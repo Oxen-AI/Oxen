@@ -18,7 +18,7 @@ pub trait MerkleWriter: Sized {
     ) -> Result<(), <Self::Session<'_> as WriteSession<'_>>::Error> {
         let mut tx = self.write_session()?;
         for node in nodes {
-            tx.queue_write(&node)?;
+            tx.queue_write(node)?;
         }
         tx.finish()?;
         Ok(())

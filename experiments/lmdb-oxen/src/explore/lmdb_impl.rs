@@ -50,7 +50,7 @@ impl LmdbMerkleDB {
         };
 
         let payload =
-            rmp_serde::from_slice(&bytes).map_err(|e| heed::Error::Decoding(Box::new(e)))?;
+            rmp_serde::from_slice(bytes).map_err(|e| heed::Error::Decoding(Box::new(e)))?;
         Ok(Some(payload))
     }
 }
