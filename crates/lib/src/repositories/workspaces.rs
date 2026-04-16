@@ -543,9 +543,9 @@ pub fn update_metadata(
 fn read_workspace_config(config_path: &Path) -> Result<WorkspaceConfig, OxenError> {
     if !config_path.exists() {
         log::error!("Workspace config not found: {config_path:?}");
-        return Err(OxenError::basic_str(format!(
-            "Workspace config not found: {config_path:?}"
-        )));
+        return Err(OxenError::WorkspaceNotFound(
+            format!("{config_path:?}").into(),
+        ));
     }
 
     let config_contents = util::fs::read_from_path(config_path)?;
