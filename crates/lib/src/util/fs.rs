@@ -1697,7 +1697,7 @@ pub async fn unpack_async_tar_archive<R: futures_util::AsyncRead + Unpin>(
 
         let entry_type = file.header().entry_type();
         if !entry_type.is_file() && !entry_type.is_dir() {
-            return Err(crate::error::OxenError::basic_str(format!(
+            return Err(crate::error::OxenError::internal_error(format!(
                 "Unsupported archive entry type for {}: only regular files and directories \
                  are allowed",
                 path.display()
@@ -1709,7 +1709,7 @@ pub async fn unpack_async_tar_archive<R: futures_util::AsyncRead + Unpin>(
             match part {
                 Component::Normal(part) => file_dst.push(part),
                 Component::ParentDir => {
-                    return Err(crate::error::OxenError::basic_str(format!(
+                    return Err(crate::error::OxenError::internal_error(format!(
                         "Path traversal detected in archive entry: {}",
                         path.display()
                     )));
