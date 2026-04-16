@@ -9,7 +9,7 @@ use thiserror::Error as ThisError;
 
 use xxhash_rust::xxh3::xxh3_128;
 
-use crate::explore::new_path::AbsolutePath;
+use crate::explore::paths::AbsolutePath;
 
 #[derive(Debug, ThisError)]
 pub enum Error {

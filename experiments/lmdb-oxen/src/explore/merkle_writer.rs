@@ -1,5 +1,6 @@
 use crate::explore::lazy_merkle::MerkleTreeL;
 
+/// Trait for writing Merkle tree data to a durable store.
 pub trait MerkleWriter: Sized {
     type Error: std::error::Error;
     type Session<'a>: WriteSession<'a, Error = Self::Error>
@@ -21,6 +22,9 @@ pub trait MerkleWriter: Sized {
     }
 }
 
+/// The [MerkleWriter] creates a session in which multiple nodes _can_ be queued for writing.
+/// Implementations can take advantage of, but are not required to, batch writes for efficiency.
+/// The [finish] method ends the session and ensures all writes are presisted.
 pub trait WriteSession<'a> {
     type Error: std::error::Error;
 

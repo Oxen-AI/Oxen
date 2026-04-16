@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+use crate::explore::hash::{Hash, HexHash};
 use crate::explore::merkle_reader::MerkleReader;
-use crate::explore::new_path::AbsolutePath;
-use crate::explore::scratch::{Hash, HexHash};
+use crate::explore::paths::AbsolutePath;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum MerkleTreeL {

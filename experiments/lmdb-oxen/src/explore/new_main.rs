@@ -1,28 +1,28 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use heed::EnvOpenOptions;
 
+use crate::explore::hash::{Hash, HexHash};
 use crate::explore::lazy_merkle::{LazyData, MerkleTreeL};
 use crate::explore::lmdb_impl::LmdbMerkleDB;
 use crate::explore::merkle_reader::MerkleReader;
 use crate::explore::merkle_store::MerkleStore;
 use crate::explore::merkle_writer::MerkleWriter;
-use crate::explore::new_path::AbsolutePath;
-use crate::explore::scratch::{Hash, HexHash, Repository};
+use crate::explore::paths::AbsolutePath;
 
 pub fn main() {
-    let tmp_path: PathBuf = std::env::temp_dir().join("lmdb_oxen_explore");
-    std::fs::create_dir_all(&tmp_path).expect("failed to create temp dir");
+    let repository_root = {
+        let tmp_path: PathBuf = std::env::temp_dir().join("lmdb_oxen_explore");
+        std::fs::create_dir_all(&tmp_path).expect("failed to create temp dir");
+        AbsolutePath::new(tmp_path).expect("tmp_path is not absolute")
+    };
 
-    let repo = Repository::from_walk(tmp_path.clone()).expect("failed to create Repository");
-
-    let db_path = tmp_path.join("lmdb_data");
-    std::fs::create_dir_all(&db_path).expect("failed to create db directory");
-    let db_location = AbsolutePath::new(db_path).expect("failed to create AbsolutePath");
+    let db_location = repository_root.join(&Path::new("lmdb_data").try_into().unwrap());
+    std::fs::create_dir_all(db_location.as_path()).expect("failed to create db directory");
 
     let options = EnvOpenOptions::new();
-    let merkle_store =
-        LmdbMerkleDB::new(repo, db_location, &options).expect("failed to create LmdbMerkleDB");
+    let merkle_store = LmdbMerkleDB::new(&repository_root, &db_location, &options)
+        .expect("failed to create LmdbMerkleDB");
     check(&merkle_store);
 
     let hash = Hash::new(&[1, 2, 3, 4, 5]);

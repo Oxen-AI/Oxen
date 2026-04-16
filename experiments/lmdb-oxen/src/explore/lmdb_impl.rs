@@ -2,12 +2,12 @@ use heed::byteorder::LE;
 use heed::types::{Bytes, DecodeIgnore, U128};
 use heed::{Database, Env, EnvOpenOptions};
 
+use crate::explore::hash::Hash;
 use crate::explore::merkle_writer::{MerkleWriter, WriteSession};
-use crate::explore::new_path::AbsolutePath;
+use crate::explore::paths::AbsolutePath;
 use crate::explore::{
     lazy_merkle::{MerkleTreeL, Root},
     merkle_reader::MerkleReader,
-    scratch::{Hash, Repository},
 };
 
 /// MUST USE LITTLE ENDIAN (LE) BECAUSE THIS MATCHES RUST'S LAYOUT
@@ -15,14 +15,14 @@ type HashLmdb = U128<LE>;
 type ValueLmdb = Bytes;
 
 pub struct LmdbMerkleDB {
-    repo: Repository,
+    repo_root: AbsolutePath,
     lmdb_env: Env,
 }
 
 impl LmdbMerkleDB {
     pub fn new(
-        repo: Repository,
-        db_location: AbsolutePath,
+        repo_root: &AbsolutePath,
+        db_location: &AbsolutePath,
         options: &EnvOpenOptions,
     ) -> Result<Self, <Self as MerkleReader>::Error> {
         let lmdb_env = unsafe { options.open(db_location.as_path())? };
@@ -31,7 +31,10 @@ impl LmdbMerkleDB {
         lmdb_env.create_database::<HashLmdb, ValueLmdb>(&mut wtxn, None)?;
         wtxn.commit()?;
 
-        Ok(Self { repo, lmdb_env })
+        Ok(Self {
+            repo_root: repo_root.clone(),
+            lmdb_env,
+        })
     }
 
     /// Actually access and decode some data stored in LMDB.
@@ -58,8 +61,8 @@ impl LmdbMerkleDB {
 impl MerkleReader for LmdbMerkleDB {
     type Error = heed::Error;
 
-    fn repository(&self) -> &Repository {
-        &self.repo
+    fn repository(&self) -> &AbsolutePath {
+        &self.repo_root
     }
 
     /// If true, then there is a node in the Merkle tree that has this hash.

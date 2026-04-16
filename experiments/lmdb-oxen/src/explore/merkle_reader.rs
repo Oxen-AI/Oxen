@@ -1,11 +1,8 @@
+use crate::explore::hash::Hash;
 use crate::explore::lazy_merkle::{MerkleTreeL, Root};
-use crate::explore::new_path::RelativePath;
-use crate::explore::scratch::{Hash, Repository};
+use crate::explore::paths::{AbsolutePath, RelativePath};
 
-//
-// M e r k l e   T r e e   D a t a b a s e   S t o r e
-//
-
+/// Trait for reading Merkle tree data from a durable store.
 pub trait MerkleReader: Sized {
     type Error: std::error::Error;
 
@@ -29,7 +26,7 @@ pub trait MerkleReader: Sized {
     fn commit(&self, hash: Hash) -> Result<Option<Root>, Self::Error>;
 
     /// The repository for which this trait is managing the Merkle tree.
-    fn repository(&self) -> &Repository;
+    fn repository(&self) -> &AbsolutePath;
 
     /// The repository relative path to the file or directory indicated by the given hash.
     /// None means that the hash does not appear in the Merkle tree.
