@@ -100,11 +100,10 @@ impl MerkleReader for LmdbMerkleDB {
 }
 
 impl MerkleWriter for LmdbMerkleDB {
+    type Error = heed::Error;
     type Session<'a> = LmdbWriteSession<'a>;
 
-    fn write_session<'a>(
-        &'a self,
-    ) -> Result<Self::Session<'a>, <Self::Session<'a> as WriteSession<'a>>::Error> {
+    fn write_session<'a>(&'a self) -> Result<Self::Session<'a>, Self::Error> {
         let mut wtxn = self.lmdb_env.write_txn()?;
         let db: Database<U128<LE>, Bytes> = self.lmdb_env.create_database(&mut wtxn, None)?;
         Ok(LmdbWriteSession { wtxn, db })

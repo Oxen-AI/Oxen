@@ -46,4 +46,4 @@ pub fn main() {
     assert_eq!(node.hash(), hash);
 }
 
-fn check(x: &impl MerkleStore) {}
+fn check(_x: &impl MerkleStore) {}
