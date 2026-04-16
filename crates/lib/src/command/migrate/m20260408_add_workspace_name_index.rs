@@ -111,14 +111,10 @@ fn revert_all_repos(path: &Path) -> Result<(), OxenError> {
 }
 
 fn revert_one_repo(repo: &LocalRepository) -> Result<(), OxenError> {
+    let index_dir = workspace_name_index::index_dir(repo);
     workspace_name_index::remove_from_cache(&repo.path)?;
-    let index_dir = repo
-        .path
-        .join(crate::constants::OXEN_HIDDEN_DIR)
-        .join(crate::constants::WORKSPACES_DIR)
-        .join(crate::constants::WORKSPACE_NAME_INDEX_DIR);
     if index_dir.exists() {
-        util::fs::remove_dir_all(&index_dir)?;
+        util::fs::remove_dir_all(index_dir)?;
     }
     Ok(())
 }

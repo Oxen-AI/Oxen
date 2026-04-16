@@ -20,7 +20,7 @@ const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 static DB_INSTANCES: LazyLock<Mutex<LruCache<PathBuf, Arc<DB>>>> =
     LazyLock::new(|| Mutex::new(LruCache::new(DB_CACHE_SIZE)));
 
-fn index_dir(repo: &LocalRepository) -> PathBuf {
+pub fn index_dir(repo: &LocalRepository) -> PathBuf {
     repo.path
         .join(OXEN_HIDDEN_DIR)
         .join(WORKSPACES_DIR)
@@ -103,14 +103,13 @@ impl WorkspaceNameIndex {
     }
 
     /// Check if a name exists in the index. O(1).
-    pub fn has_name(&self, name: &str) -> bool {
+    pub fn has_name(&self, name: &str) -> Result<bool, OxenError> {
         match self.db.get_pinned(name.as_bytes()) {
-            Ok(Some(_)) => true,
-            Ok(None) => false,
-            Err(err) => {
-                log::error!("Error checking workspace name index for '{name}': {err}");
-                false
-            }
+            Ok(Some(_)) => Ok(true),
+            Ok(None) => Ok(false),
+            Err(err) => Err(OxenError::basic_str(format!(
+                "Error checking workspace name index for '{name}': {err}"
+            ))),
         }
     }
 
@@ -144,7 +143,8 @@ impl WorkspaceNameIndex {
         Ok(())
     }
 
-    /// List all (name, workspace_id) entries. Primarily for debugging/testing.
+    /// List all (name, workspace_id) entries for debugging/testing.
+    #[cfg(test)]
     pub fn list(&self) -> Result<Vec<(String, String)>, OxenError> {
         let iter = self.db.iterator(IteratorMode::Start);
         let mut results = Vec::new();
@@ -242,8 +242,8 @@ mod tests {
         test::run_empty_local_repo_test_async(|repo| async move {
             let idx = get_index(&repo)?;
             idx.put("exists", "id-1")?;
-            assert!(idx.has_name("exists"));
-            assert!(!idx.has_name("does-not-exist"));
+            assert!(idx.has_name("exists")?);
+            assert!(!idx.has_name("does-not-exist")?);
             Ok(())
         })
         .await
@@ -254,10 +254,10 @@ mod tests {
         test::run_empty_local_repo_test_async(|repo| async move {
             let idx = get_index(&repo)?;
             idx.put("to-delete", "id-1")?;
-            assert!(idx.has_name("to-delete"));
+            assert!(idx.has_name("to-delete")?);
 
             idx.delete("to-delete")?;
-            assert!(!idx.has_name("to-delete"));
+            assert!(!idx.has_name("to-delete")?);
             Ok(())
         })
         .await

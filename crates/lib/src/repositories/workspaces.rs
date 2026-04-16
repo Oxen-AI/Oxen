@@ -250,7 +250,7 @@ fn validate_create_constraints(
         if let Some(name) = workspace_name {
             // Check name doesn't collide with an existing workspace name
             let idx = workspace_name_index::get_index(base_repo)?;
-            if idx.has_name(name) {
+            if idx.has_name(name)? {
                 return Err(OxenError::basic_str(format!(
                     "A workspace with the name {name} already exists"
                 )));
@@ -422,8 +422,14 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
     if let Some(ref name) = workspace.name
         && workspace_name_index::index_exists(&workspace.base_repo)
     {
-        let idx = workspace_name_index::get_index(&workspace.base_repo)?;
-        idx.delete(name)?;
+        match workspace_name_index::get_index(&workspace.base_repo) {
+            Ok(idx) => {
+                if let Err(e) = idx.delete(name) {
+                    log::error!("workspace::delete error removing workspace index: {e:?}");
+                }
+            }
+            Err(e) => log::error!("workspace::delete error finding workspace index: {e:?}"),
+        }
     }
 
     // Clean up caches before deleting the workspace
