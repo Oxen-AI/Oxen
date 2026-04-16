@@ -14,12 +14,14 @@ use crate::explore::{
     interfaces::{Accumulator, Builder},
     scratch::{Repository, RepositoryTree},
 };
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 //
 //  N a m e
 //
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Name(String);
 
 #[derive(Debug, Error)]
@@ -49,7 +51,7 @@ impl TryFrom<PathBuf> for Name {
 //  A b s o l u t e    P a t h
 //
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct AbsolutePath(PathBuf);
 
 impl AbsolutePath {
@@ -89,6 +91,7 @@ impl From<AbsolutePath> for PathBuf {
 //
 
 /// The relative path to a file or directory within a repository.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct RelativePath(Vec<String>);
 
 #[derive(Debug, Error)]
@@ -145,6 +148,7 @@ impl RelativePath {
     }
 }
 
+#[derive(Debug)]
 pub struct RelativePathBuilder(RelativePath);
 
 impl Accumulator<&RepositoryTree> for RelativePathBuilder {
