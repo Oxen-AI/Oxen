@@ -2,9 +2,13 @@ use std::path::PathBuf;
 
 use heed::EnvOpenOptions;
 
+use crate::explore::lazy_merkle::{LazyData, MerkleTreeL};
 use crate::explore::lmdb_impl::LmdbMerkleDB;
+use crate::explore::merkle_reader::MerkleReader;
+use crate::explore::merkle_store::MerkleStore;
+use crate::explore::merkle_writer::MerkleWriter;
 use crate::explore::new_path::AbsolutePath;
-use crate::explore::scratch::Repository;
+use crate::explore::scratch::{Hash, Repository};
 
 pub fn main() {
     let tmp_path: PathBuf = std::env::temp_dir().join("lmdb_oxen_explore");
@@ -17,6 +21,29 @@ pub fn main() {
     let db_location = AbsolutePath::new(db_path).expect("failed to create AbsolutePath");
 
     let options = EnvOpenOptions::new();
-    let _db =
+    let merkle_store =
         LmdbMerkleDB::new(repo, db_location, &options).expect("failed to create LmdbMerkleDB");
+    check(&merkle_store);
+
+    let hash = Hash::new(&[1, 2, 3, 4, 5]);
+
+    let nodes = [MerkleTreeL::File {
+        name: "file.txt".into(),
+        parent: None,
+        content: LazyData::new(hash),
+    }];
+
+    merkle_store
+        .write(nodes.iter())
+        .expect("Failed to store nodes");
+
+    let node = merkle_store
+        .node(hash)
+        .expect("Failed to retrieve node")
+        .expect("Node not found");
+
+    assert_eq!(node.name(), "file.txt");
+    assert_eq!(node.hash(), hash);
 }
+
+fn check(x: &impl MerkleStore) {}

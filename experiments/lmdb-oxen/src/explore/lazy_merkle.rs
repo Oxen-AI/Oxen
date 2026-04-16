@@ -49,6 +49,11 @@ pub struct LazyNode(Hash);
 
 impl LazyNode {
     #[inline(always)]
+    pub(crate) fn new(hash: Hash) -> Self {
+        Self(hash)
+    }
+
+    #[inline(always)]
     pub fn hash(&self) -> Hash {
         self.0
     }
@@ -58,6 +63,11 @@ impl LazyNode {
 pub struct LazyData(Hash);
 
 impl LazyData {
+    #[inline(always)]
+    pub(crate) fn new(hash: Hash) -> Self {
+        Self(hash)
+    }
+
     /// Reconstructs the relative path to this file node's data
     /// and reads it from storage.
     pub async fn load<DB: MerkleReader>(&self, db: &DB) -> Result<Vec<u8>, LoadError<DB>> {
