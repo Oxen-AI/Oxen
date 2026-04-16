@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use heed::EnvOpenOptions;
 
 use crate::explore::hash::{Hash, HexHash};
-use crate::explore::lazy_merkle::{LazyData, MerkleTreeL};
+use crate::explore::lazy_merkle::{LazyData, LazyNode, MerkleTreeL, Root};
 use crate::explore::lmdb_impl::LmdbMerkleDB;
 use crate::explore::merkle_reader::MerkleReader;
 use crate::explore::merkle_store::MerkleStore;
@@ -25,15 +25,41 @@ pub fn main() {
         .expect("failed to create LmdbMerkleDB");
     check(&merkle_store);
 
-    let hash = Hash::new(&[1, 2, 3, 4, 5]);
+    fn content_hash(content: &str) -> (&str, Hash) {
+        (content, Hash::new(content.as_bytes()))
+    }
 
-    let nodes = [MerkleTreeL::File {
-        name: "file.txt".into(),
-        parent: None,
-        content: LazyData::new(hash),
-    }];
+    let (content_l1, hash_l1) = content_hash("Hello world! How are you today?");
+    let (content_l2, hash_l2) =
+        content_hash("I am doing wonderful! Thank you for asking -- how are you today?");
 
-    println!("storing: {:?}", nodes);
+    let dir_hash = Hash::hash_of_hashes([hash_l2].iter());
+
+    let commit = Root::new(
+        &repository_root,
+        &[LazyNode::new(hash_l1), LazyNode::new(dir_hash)],
+    );
+
+    let nodes = [
+        MerkleTreeL::File {
+            name: "level_1.txt".into(),
+            parent: Some(LazyNode::new(commit.hash())),
+            content: LazyData::new(hash_l1),
+        },
+        MerkleTreeL::Dir {
+            hash: dir_hash,
+            name: "a_dir".into(),
+            parent: Some(LazyNode::new(commit.hash())),
+            children: vec![LazyNode::new(hash_l2)],
+        },
+        MerkleTreeL::File {
+            name: "level_2.txt".into(),
+            parent: Some(LazyNode::new(dir_hash)),
+            content: LazyData::new(hash_l2),
+        },
+    ];
+
+    println!("storing {} nodes:\n{:?}", nodes.len(), nodes);
     println!("-----------------------------------------------------------------");
 
     merkle_store

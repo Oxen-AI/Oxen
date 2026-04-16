@@ -38,11 +38,11 @@ impl From<Hash> for u128 {
 }
 
 pub trait HasHash {
-    fn view_hash(&self) -> Hash;
+    fn hash(&self) -> Hash;
 }
 
 impl HasHash for Hash {
-    fn view_hash(&self) -> Hash {
+    fn hash(&self) -> Hash {
         *self
     }
 }
@@ -56,7 +56,7 @@ impl Hash {
     /// Things that have Hashes can be combined into a new Hash value.
     pub fn hash_of_hashes<'a, N: HasHash + 'a>(children: impl Iterator<Item = &'a N>) -> Hash {
         let hashes: Vec<u8> = children
-            .map(|h| h.view_hash().0)
+            .map(|h| h.hash().0)
             .flat_map(|h| h.to_le_bytes())
             .collect();
         Self::new(&hashes)
@@ -223,13 +223,13 @@ impl MerkleTree {
 }
 
 impl HasHash for MerkleTree {
-    fn view_hash(&self) -> Hash {
+    fn hash(&self) -> Hash {
         self.hash()
     }
 }
 
 impl HasHash for Box<MerkleTree> {
-    fn view_hash(&self) -> Hash {
+    fn hash(&self) -> Hash {
         self.hash()
     }
 }

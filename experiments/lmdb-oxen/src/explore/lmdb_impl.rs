@@ -2,7 +2,9 @@ use heed::byteorder::LE;
 use heed::types::{Bytes, DecodeIgnore, U128};
 use heed::{Database, Env, EnvOpenOptions};
 
-use crate::explore::hash::Hash;
+use serde::Serialize;
+
+use crate::explore::hash::{HasHash, Hash};
 use crate::explore::merkle_writer::{MerkleWriter, WriteSession};
 use crate::explore::paths::AbsolutePath;
 use crate::explore::{
@@ -118,20 +120,25 @@ pub struct LmdbWriteSession<'a> {
     db: Database<U128<LE>, Bytes>,
 }
 
-impl<'a> WriteSession<'a> for LmdbWriteSession<'a> {
-    type Error = heed::Error;
-
-    fn queue_write(&mut self, node: &MerkleTreeL) -> Result<(), Self::Error> {
+impl<'a> LmdbWriteSession<'a> {
+    pub(crate) fn put<T: HasHash + Serialize>(&mut self, node: &T) -> Result<(), <Self as WriteSession<'a>>::Error> {
         let data = {
             let mut buf = Vec::new();
 
-            use serde::Serialize;
             node.serialize(&mut rmp_serde::Serializer::new(&mut buf))
                 .map_err(|e| heed::Error::Encoding(Box::new(e)))?;
 
             buf
         };
         self.db.put(&mut self.wtxn, &node.hash().into(), &data)
+    }
+}
+
+impl<'a> WriteSession<'a> for LmdbWriteSession<'a> {
+    type Error = heed::Error;
+
+    fn queue_write(&mut self, node: &MerkleTreeL) -> Result<(), Self::Error> {
+        self.put(node)
     }
 
     fn finish(self) -> Result<(), Self::Error> {

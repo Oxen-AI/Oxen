@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::explore::hash::{Hash, HexHash};
 use crate::explore::merkle_reader::MerkleReader;
 use crate::explore::paths::AbsolutePath;
+use crate::explore::scratch::HasHash;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum MerkleTreeL {
@@ -21,13 +22,6 @@ pub enum MerkleTreeL {
 }
 
 impl MerkleTreeL {
-    pub fn hash(&self) -> Hash {
-        match self {
-            MerkleTreeL::Dir { hash, .. } => *hash,
-            MerkleTreeL::File { content, .. } => content.hash(),
-        }
-    }
-
     pub fn name(&self) -> &str {
         match self {
             MerkleTreeL::Dir { name, .. } => name,
@@ -44,6 +38,16 @@ impl MerkleTreeL {
     }
 }
 
+impl HasHash for MerkleTreeL {
+    #[inline]
+    fn hash(&self) -> Hash {
+        match self {
+            MerkleTreeL::Dir { hash, .. } => *hash,
+            MerkleTreeL::File { content, .. } => content.hash(),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct LazyNode(Hash);
 
@@ -52,9 +56,11 @@ impl LazyNode {
     pub(crate) fn new(hash: Hash) -> Self {
         Self(hash)
     }
+}
 
+impl HasHash for LazyNode {
     #[inline(always)]
-    pub fn hash(&self) -> Hash {
+    fn hash(&self) -> Hash {
         self.0
     }
 }
@@ -80,9 +86,11 @@ impl LazyData {
             .await
             .map_err(LoadError::ReadError)
     }
+}
 
+impl HasHash for LazyData {
     #[inline(always)]
-    pub fn hash(&self) -> Hash {
+    fn hash(&self) -> Hash {
         self.0
     }
 }
@@ -107,11 +115,23 @@ pub struct Root {
 }
 
 impl Root {
-    pub fn hash(&self) -> Hash {
-        self.hash
+    /// Computes the hash of the children on creation.
+    pub fn new(root: &AbsolutePath, children: &[LazyNode]) -> Self {
+        Self {
+            root: root.clone(),
+            hash: Hash::hash_of_hashes(children.iter()),
+            children: children.to_vec(),
+        }
     }
 
     pub fn children(&self) -> impl Iterator<Item = &LazyNode> {
         self.children.iter()
+    }
+}
+
+impl HasHash for Root {
+    #[inline(always)]
+    fn hash(&self) -> Hash {
+        self.hash
     }
 }

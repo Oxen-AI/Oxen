@@ -40,9 +40,6 @@ pub trait MerkleReader: Sized {
                 if let Some(next) = next_node {
                     reverse_path.push(next.name().to_string());
                     if let Some(parent) = next.parent() {
-                        // if let Some(parent_node_loaded) = self.node(parent.hash())? {
-                        //     current_hash = parent_node_loaded.hash();
-                        // }
                         current_hash = parent.hash()
                     } else {
                         break;
