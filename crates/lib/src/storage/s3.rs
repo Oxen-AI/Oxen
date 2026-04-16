@@ -748,7 +748,7 @@ impl VersionStore for S3VersionStore {
                     .collect()
                     .await
                     .map_err(|e| {
-                        OxenError::basic_str(format!(
+                        OxenError::internal_error(format!(
                             "Failed to read chunk body at offset {offset}: {e}"
                         ))
                     })?
