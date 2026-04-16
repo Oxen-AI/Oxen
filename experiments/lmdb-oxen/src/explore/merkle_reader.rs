@@ -1,5 +1,5 @@
 use crate::explore::lazy_merkle::{MerkleTreeL, Root};
-use crate::explore::new_path::{RelativePath};
+use crate::explore::new_path::RelativePath;
 use crate::explore::scratch::{Hash, Repository};
 
 //

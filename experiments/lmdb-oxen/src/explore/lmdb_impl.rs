@@ -2,6 +2,7 @@ use heed::byteorder::LE;
 use heed::types::{Bytes, DecodeIgnore, U128};
 use heed::{Database, Env, EnvOpenOptions};
 
+use crate::explore::merkle_writer::{MerkleWriter, WriteSession};
 use crate::explore::new_path::AbsolutePath;
 use crate::explore::{
     lazy_merkle::{MerkleTreeL, Root},
@@ -33,7 +34,6 @@ impl LmdbMerkleDB {
         Ok(Self { repo, lmdb_env })
     }
 
-
     /// Actually access and decode some data stored in LMDB.
     pub(crate) fn retrieve<T>(&self, hash: Hash) -> Result<Option<T>, <Self as MerkleReader>::Error>
     where
@@ -49,11 +49,10 @@ impl LmdbMerkleDB {
             return Ok(None);
         };
 
-        let payload = rmp_serde::from_slice(&bytes)
-            .map_err(|e| heed::Error::Decoding(Box::new(e)))?;
+        let payload =
+            rmp_serde::from_slice(&bytes).map_err(|e| heed::Error::Decoding(Box::new(e)))?;
         Ok(Some(payload))
     }
-
 }
 
 impl MerkleReader for LmdbMerkleDB {
@@ -91,12 +90,38 @@ impl MerkleReader for LmdbMerkleDB {
         self.retrieve(hash)
     }
 
-
     /// Obtains the commit node, which is the root of the Merkle tree.
     ///
     /// Corresponds to the complete state of the repository at a given commit.
     /// None means there is no commit with that hash.
     fn commit(&self, hash: Hash) -> Result<Option<Root>, Self::Error> {
         self.retrieve(hash)
+    }
+}
+
+impl MerkleWriter for LmdbMerkleDB {
+    type Session<'a> = LmdbWriteSession<'a>;
+
+    fn write_session<'a>(
+        &self,
+    ) -> Result<Self::Session<'a>, <Self::Session<'a> as WriteSession<'a>>::Error> {
+        let wtxn: heed::RwTxn<'a> = self.lmdb_env.write_txn()?;
+        Ok(LmdbWriteSession { wtxn })
+    }
+}
+
+pub struct LmdbWriteSession<'a> {
+    wtxn: heed::RwTxn<'a>,
+}
+
+impl<'a> WriteSession<'a> for LmdbWriteSession<'a> {
+    type Error = heed::Error;
+
+    fn queue_write(&'a mut self, node: &MerkleTreeL) -> Result<(), Self::Error> {
+        unimplemented!("{node:?}")
+    }
+
+    fn finish(self) -> Result<(), Self::Error> {
+        unimplemented!()
     }
 }

@@ -4,7 +4,6 @@ use crate::explore::merkle_reader::MerkleReader;
 use crate::explore::new_path::AbsolutePath;
 use crate::explore::scratch::{Hash, HexHash};
 
-
 #[derive(Debug, Serialize, Deserialize)]
 pub enum MerkleTreeL {
     Dir {

@@ -17,5 +17,6 @@ pub fn main() {
     let db_location = AbsolutePath::new(db_path).expect("failed to create AbsolutePath");
 
     let options = EnvOpenOptions::new();
-    let _db = LmdbMerkleDB::new(repo, db_location, &options).expect("failed to create LmdbMerkleDB");
+    let _db =
+        LmdbMerkleDB::new(repo, db_location, &options).expect("failed to create LmdbMerkleDB");
 }

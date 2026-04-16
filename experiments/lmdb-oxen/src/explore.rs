@@ -1,11 +1,11 @@
 pub mod interfaces;
-pub mod merkle_reader;
+pub mod lazy_merkle;
 pub mod lazy_merkle_lmdb_stateful;
 pub mod lmdb_impl;
+pub mod merkle_reader;
+pub mod merkle_store;
 pub mod merkle_writer;
 pub mod migration_explore;
 pub mod new_main;
 pub mod new_path;
 pub mod scratch;
-pub mod lazy_merkle;
-pub mod merkle_store;
