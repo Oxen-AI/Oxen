@@ -103,9 +103,9 @@ impl MerkleWriter for LmdbMerkleDB {
     type Session<'a> = LmdbWriteSession<'a>;
 
     fn write_session<'a>(
-        &self,
+        &'a self,
     ) -> Result<Self::Session<'a>, <Self::Session<'a> as WriteSession<'a>>::Error> {
-        let mut wtxn: heed::RwTxn<'a> = self.lmdb_env.write_txn()?;
+        let mut wtxn = self.lmdb_env.write_txn()?;
         let db: Database<U128<LE>, Bytes> = self.lmdb_env.create_database(&mut wtxn, None)?;
         Ok(LmdbWriteSession { wtxn, db })
     }
@@ -119,7 +119,7 @@ pub struct LmdbWriteSession<'a> {
 impl<'a> WriteSession<'a> for LmdbWriteSession<'a> {
     type Error = heed::Error;
 
-    fn queue_write(&'a mut self, node: &MerkleTreeL) -> Result<(), Self::Error> {
+    fn queue_write(&mut self, node: &MerkleTreeL) -> Result<(), Self::Error> {
         let data = {
             let mut buf = Vec::new();
 

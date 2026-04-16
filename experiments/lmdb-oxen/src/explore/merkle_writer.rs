@@ -1,12 +1,14 @@
 use crate::explore::lazy_merkle::MerkleTreeL;
 
 pub trait MerkleWriter: Sized {
-    type Session<'a>: WriteSession<'a>;
+    type Session<'a>: WriteSession<'a>
+    where
+        Self: 'a;
 
     /// Open a write transaction for storing Merkle tree nodes.
     /// Allows multiple nodes to be queued for writing.
     fn write_session<'a>(
-        &self,
+        &'a self,
     ) -> Result<Self::Session<'a>, <Self::Session<'a> as WriteSession<'a>>::Error>;
 
     /// Durably store a batch of Merkle tree nodes.
@@ -27,7 +29,7 @@ pub trait WriteSession<'a> {
     type Error: std::error::Error;
 
     /// Queue the node for writing in the transaction.
-    fn queue_write(&'a mut self, node: &MerkleTreeL) -> Result<(), Self::Error>;
+    fn queue_write(&mut self, node: &MerkleTreeL) -> Result<(), Self::Error>;
 
     /// Commit the transaction, writing all queued nodes.
     fn finish(self) -> Result<(), Self::Error>;
