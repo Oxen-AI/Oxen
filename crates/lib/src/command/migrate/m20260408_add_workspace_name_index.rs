@@ -62,7 +62,7 @@ fn run_on_all_repos(path: &Path) -> Result<(), OxenError> {
                 Err(err) => {
                     log::error!(
                         "Could not create workspace name index for repo {:?}\nErr: {}",
-                        repo.path.canonicalize(),
+                        util::fs::canonicalize(repo.path),
                         err
                     );
                 }
