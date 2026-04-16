@@ -178,9 +178,7 @@ fn create_on_disk(
 
     if oxen_dir.exists() {
         log::debug!("index::workspaces::create already have oxen repo directory {oxen_dir:?}");
-        return Err(OxenError::basic_str(format!(
-            "Workspace {workspace_id} already exists"
-        )));
+        return Err(OxenError::workspace_already_exists(workspace_id));
     }
 
     // Validate name uniqueness and non-editable constraints
@@ -242,13 +240,20 @@ fn validate_create_constraints(
             // Check name doesn't collide with an existing workspace name
             let idx = workspace_name_index::get_index(base_repo)?;
             if idx.has_name(name)? {
-                return Err(OxenError::WorkspaceAlreadyExists(name.to_string()));
+                return Err(OxenError::workspace_already_exists(name));
             }
             // Check name doesn't collide with an existing workspace ID
             let name_as_id_hash = util::hasher::hash_str_sha256(name);
             let name_as_id_dir = Workspace::workspace_dir(base_repo, &name_as_id_hash);
             if Workspace::config_path_from_dir(&name_as_id_dir).exists() {
-                return Err(OxenError::WorkspaceAlreadyExists(name.to_string()));
+                return Err(OxenError::workspace_already_exists(name));
+            }
+            // Defensive scan: if the index is incomplete (e.g. a stale entry was
+            // deleted but the workspace still exists on disk), fall back to a
+            // scan so duplicate-name detection remains correct. The scan also
+            // backfills the missing index entry.
+            if get_by_name_via_scan(base_repo, name)?.is_some() {
+                return Err(OxenError::workspace_already_exists(name));
             }
         }
         return Ok(());
@@ -338,9 +343,7 @@ fn check_existing_workspace_name(
     workspace_name: &str,
 ) -> Result<(), OxenError> {
     if workspace.name == Some(workspace_name.to_string()) || *workspace_name == workspace.id {
-        return Err(OxenError::WorkspaceAlreadyExists(
-            workspace_name.to_string(),
-        ));
+        return Err(OxenError::workspace_already_exists(workspace_name));
     }
     Ok(())
 }

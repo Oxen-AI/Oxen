@@ -321,6 +321,19 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::NotFound().json(error_json)
                     }
+                    OxenError::WorkspaceAlreadyExists(identifier) => {
+                        log::debug!("Workspace already exists: {identifier}");
+                        let error_json = json!({
+                            "error": {
+                                "type": MSG_RESOURCE_ALREADY_EXISTS,
+                                "title": "Workspace already exists",
+                                "detail": format!("A workspace with the identifier '{}' already exists", identifier)
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_RESOURCE_ALREADY_EXISTS,
+                        });
+                        HttpResponse::Conflict().json(error_json)
+                    }
                     OxenError::RemoteRepoNotFound(remote) => {
                         log::debug!("Remote repo not found: {remote}");
                         HttpResponse::NotFound().json(StatusMessageDescription::not_found(format!(
