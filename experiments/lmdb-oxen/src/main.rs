@@ -19,16 +19,21 @@ enum Command {
         command: existing::old_main::Commands,
     },
     /// Run the explore implementation
-    Explore,
+    Explore {
+        #[command(subcommand)]
+        command: explore::new_main::Commands,
+    },
 }
 
-fn main() -> existing::framework::FrameworkResult<()> {
+#[tokio::main]
+async fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Command::Existing { command } => existing::old_main::run(command),
-        Command::Explore => {
-            explore::new_main::run();
-            Ok(())
+        Command::Existing { command } => {
+            existing::old_main::run(command);
+        }
+        Command::Explore { command } => {
+            explore::new_main::run(command).await;
         }
     }
 }

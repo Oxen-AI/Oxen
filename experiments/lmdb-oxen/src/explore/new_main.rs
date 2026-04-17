@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use heed::EnvOpenOptions;
+use tokio::runtime::Handle;
 
 use crate::explore::hash::{HasHash, Hash, HexHash};
 use crate::explore::lazy_merkle::{HasName, MerkleTreeB, MerkleTreeL, UncomittedRoot};
@@ -9,16 +10,31 @@ use crate::explore::merkle_reader::MerkleReader;
 use crate::explore::merkle_store::MerkleStore;
 use crate::explore::paths::AbsolutePath;
 
-struct DeleteOnDrop<'a>(&'a AbsolutePath);
+use clap::Subcommand;
+use std::time::Duration;
 
-impl<'a> Drop for DeleteOnDrop<'a> {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(self.0.as_path());
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    Demo,
+    Bench,
+}
+
+pub async fn run(command: Commands) {
+    match command {
+        Commands::Demo => {
+            demo().await;
+        }
+        Commands::Bench => {
+            bench();
+        }
     }
 }
 
-#[tokio::main]
-pub async fn run() {
+fn bench() {
+    unimplemented!("CLAUDE TODO")
+}
+
+async fn demo() {
     let repository_root = {
         let tmp_path: PathBuf =
             std::env::temp_dir().join(format!("lmdb_oxen_explore_{}", rand::random::<u16>()));
@@ -159,3 +175,11 @@ pub async fn run() {
 }
 
 const fn check(_x: &impl MerkleStore) {}
+
+struct DeleteOnDrop<'a>(&'a AbsolutePath);
+
+impl<'a> Drop for DeleteOnDrop<'a> {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(self.0.as_path());
+    }
+}
