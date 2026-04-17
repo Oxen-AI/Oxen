@@ -9,13 +9,23 @@ use crate::explore::merkle_reader::MerkleReader;
 use crate::explore::merkle_store::MerkleStore;
 use crate::explore::paths::AbsolutePath;
 
+struct DeleteOnDrop<'a>(&'a AbsolutePath);
+
+impl<'a> Drop for DeleteOnDrop<'a> {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(self.0.as_path());
+    }
+}
+
 #[tokio::main]
 pub async fn run() {
     let repository_root = {
-        let tmp_path: PathBuf = std::env::temp_dir().join("lmdb_oxen_explore");
+        let tmp_path: PathBuf =
+            std::env::temp_dir().join(format!("lmdb_oxen_explore_{}", rand::random::<u16>()));
         std::fs::create_dir_all(&tmp_path).expect("failed to create temp dir");
         AbsolutePath::new(tmp_path).expect("tmp_path is not absolute")
     };
+    let _r = DeleteOnDrop(&repository_root);
 
     let db_location = repository_root.join(&Path::new("lmdb_data").try_into().unwrap());
     std::fs::create_dir_all(db_location.as_path()).expect("failed to create db directory");
@@ -91,7 +101,7 @@ pub async fn run() {
     }
 
     let hash_names = [
-        (hash_l1, "file.txt", Some(content_l1)),
+        (hash_l1, "level_1.txt", Some(content_l1)),
         (dir_hash, "a_dir", None),
         (hash_l2, "level_2.txt", Some(content_l2)),
     ];
