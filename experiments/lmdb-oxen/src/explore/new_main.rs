@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use heed::EnvOpenOptions;
 
-use crate::explore::bench::{self, BenchArgs};
+use crate::explore::bench::{self, BenchCommands};
 use crate::explore::hash::{HasHash, Hash, HexHash};
 use crate::explore::lazy_merkle::{HasName, MerkleTreeB, MerkleTreeL, UncomittedRoot};
 use crate::explore::lmdb_impl::LmdbMerkleDB;
@@ -15,7 +15,10 @@ use clap::Subcommand;
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     Demo,
-    Bench(BenchArgs),
+    Bench {
+        #[command(subcommand)]
+        command: BenchCommands,
+    },
 }
 
 pub async fn run(command: Commands) {
@@ -23,8 +26,8 @@ pub async fn run(command: Commands) {
         Commands::Demo => {
             demo().await;
         }
-        Commands::Bench(args) => {
-            bench::run(args).await;
+        Commands::Bench { command } => {
+            bench::run(command).await;
         }
     }
 }
