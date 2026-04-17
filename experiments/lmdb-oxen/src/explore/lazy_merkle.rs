@@ -127,7 +127,7 @@ impl Root {
         Self {
             repository,
             hash: Hash::hash_of_hashes(children.iter()),
-            children: children,
+            children,
             parent,
         }
     }
@@ -155,7 +155,7 @@ pub enum MerkleTreeB {
     Dir {
         hash: Hash,
         name: Name,
-        children: Vec<Box<Self>>,
+        children: Vec<Self>,
     },
     File {
         hash: Hash,

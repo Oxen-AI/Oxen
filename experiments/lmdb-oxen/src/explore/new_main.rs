@@ -9,7 +9,7 @@ use crate::explore::merkle_reader::MerkleReader;
 use crate::explore::merkle_store::MerkleStore;
 use crate::explore::paths::AbsolutePath;
 
-pub fn main() {
+pub fn run() {
     let repository_root = {
         let tmp_path: PathBuf = std::env::temp_dir().join("lmdb_oxen_explore");
         std::fs::create_dir_all(&tmp_path).expect("failed to create temp dir");
@@ -45,10 +45,10 @@ pub fn main() {
             MerkleTreeB::Dir {
                 hash: dir_hash,
                 name: Path::new("a_dir").try_into().unwrap(),
-                children: vec![Box::new(MerkleTreeB::File {
+                children: vec![MerkleTreeB::File {
                     hash: hash_l2,
                     name: Path::new("level_2.txt").try_into().unwrap(),
-                })],
+                }],
             },
         ],
     };
@@ -61,7 +61,7 @@ pub fn main() {
     println!("-----------------------------------------------------------------");
 
     let commit = merkle_store
-        .commit_changes(to_be_comitted)
+        .commit_tree(to_be_comitted)
         .expect("Failed to store nodes!");
 
     let retrieved_commit = merkle_store

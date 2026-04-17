@@ -26,7 +26,7 @@ fn main() -> existing::framework::FrameworkResult<()> {
     match cli.command {
         Command::Existing { command } => existing::old_main::run(command),
         Command::Explore => {
-            explore::new_main::main();
+            explore::new_main::run();
             Ok(())
         }
     }

@@ -17,6 +17,7 @@ type HashLmdb = U128<LE>;
 type ValueLmdb = Bytes;
 
 pub struct LmdbMerkleDB {
+    #[allow(dead_code)]
     repo_root: AbsolutePath,
     lmdb_env: Env,
 }

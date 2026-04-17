@@ -7,5 +7,5 @@ pub mod merkle_writer;
 pub mod migration_explore;
 pub mod new_main;
 pub mod paths;
-// #[allow(dead_code)]
-// pub mod scratch;
+#[allow(dead_code)]
+mod scratch;

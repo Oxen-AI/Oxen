@@ -9,10 +9,7 @@ use crate::explore::{
 pub trait MerkleStore: MerkleReader + MerkleWriter<Error = <Self as MerkleReader>::Error> {
     /// Use the reader + writer to commit a repository's changes to the underlying store.
     /// Produces the commit hash on a successful write.
-    fn commit_changes<'a>(
-        &self,
-        updates: UncomittedRoot,
-    ) -> Result<Root, <Self as MerkleReader>::Error> {
+    fn commit_tree(&self, updates: UncomittedRoot) -> Result<Root, <Self as MerkleReader>::Error> {
         let UncomittedRoot {
             parent,
             repository,
@@ -40,7 +37,7 @@ pub trait MerkleStore: MerkleReader + MerkleWriter<Error = <Self as MerkleReader
 }
 
 // Recursively writes an entire Merkle tree from the given node to all of its leaves.
-// This is the helper function that `MerkleStore::commit_changes` uses to write an
+// This is the helper function that [`MerkleStore::commit_tree`] uses to write an
 // entire commit tree to the store.
 fn write_tree<'a, 'writing, M: MerkleStore>(
     store: &M,
@@ -74,7 +71,7 @@ fn write_tree<'a, 'writing, M: MerkleStore>(
                 write_session.queue_node(&lazy_node)?;
 
                 for c in children {
-                    write_tree(store, write_session, hash, *c)?;
+                    write_tree(store, write_session, hash, c)?;
                 }
             }
             MerkleTreeB::File { hash, name } => {
