@@ -82,7 +82,8 @@ fn run_on_one_repo(repo: &LocalRepository) -> Result<(), OxenError> {
     log::info!("Creating workspace name index for repo: {:?}", repo.path);
 
     let idx = workspace_name_index::get_index(repo)?;
-    idx.rebuild_from_disk(repo)
+    idx.rebuild_from_disk(repo)?;
+    Ok(())
 }
 
 fn revert_all_repos(path: &Path) -> Result<(), OxenError> {
@@ -112,7 +113,7 @@ fn revert_all_repos(path: &Path) -> Result<(), OxenError> {
 
 fn revert_one_repo(repo: &LocalRepository) -> Result<(), OxenError> {
     let index_dir = workspace_name_index::index_dir(repo);
-    workspace_name_index::remove_from_cache(&repo.path)?;
+    workspace_name_index::remove_from_cache(repo);
     if index_dir.exists() {
         util::fs::remove_dir_all(index_dir)?;
     }

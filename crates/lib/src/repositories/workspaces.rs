@@ -450,7 +450,7 @@ pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
     }
 
     // Evict the name index DB handle from cache before removing the directory
-    workspace_name_index::remove_from_cache(&repo.path)?;
+    workspace_name_index::remove_from_cache(repo);
 
     util::fs::remove_dir_all(&workspaces_dir)?;
     Ok(())

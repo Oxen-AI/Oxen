@@ -28,7 +28,7 @@ pub fn cleanup_sync_dir(sync_dir: &Path) -> Result<(), OxenError> {
     refs::ref_manager::remove_from_cache_with_children(sync_dir)?;
     df_db::remove_df_db_from_cache_with_children(sync_dir)?;
     dir_hashes_db::remove_from_cache_with_children(sync_dir)?;
-    workspace_name_index::remove_from_cache_with_children(sync_dir)?;
+    workspace_name_index::remove_from_cache_with_children(sync_dir);
     std::fs::remove_dir_all(sync_dir)?;
     Ok(())
 }
