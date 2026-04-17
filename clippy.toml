@@ -1,0 +1,7 @@
+# Per-lint configuration for clippy. Applies workspace-wide.
+# See https://doc.rust-lang.org/clippy/lint_configuration.html
+
+disallowed-methods = [
+    { path = "std::fs::canonicalize", reason = "Use `liboxen::util::fs::canonicalize` — it falls back to `std::path::absolute` on filesystems that don't support canonicalization (e.g. Windows imdisk ramdisks used in the test suite)." },
+    { path = "std::path::Path::canonicalize", reason = "Use `liboxen::util::fs::canonicalize` — it falls back to `std::path::absolute` on filesystems that don't support canonicalization (e.g. Windows imdisk ramdisks used in the test suite)." },
+]
