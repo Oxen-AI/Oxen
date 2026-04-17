@@ -56,6 +56,10 @@ pub async fn run() {
 
     let dir_hash = Hash::hash_of_hashes([hash_l2].iter());
 
+    println!("{} -> level_1.txt -> {}", HexHash::new(hash_l1), content_l1);
+    println!("{} -> a_dir", HexHash::new(dir_hash));
+    println!("{} -> level_2.txt -> {}", HexHash::new(hash_l2), content_l2);
+
     let to_be_comitted = UncomittedRoot {
         parent: None,
         repository: repository_root.clone(),
@@ -75,8 +79,7 @@ pub async fn run() {
         ],
     };
 
-    println!("storing:\n");
-    println!("--------");
+    println!("storing:");
     for c in to_be_comitted.children.iter() {
         println!("{:?}", c);
     }
@@ -85,6 +88,9 @@ pub async fn run() {
     let commit = merkle_store
         .commit_tree(to_be_comitted)
         .expect("Failed to store nodes!");
+
+    println!("commit: {}", HexHash::new(commit.hash()));
+    println!("------------------------------");
 
     let retrieved_commit = merkle_store
         .commit(commit.hash())
