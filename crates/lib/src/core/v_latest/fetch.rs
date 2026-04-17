@@ -935,11 +935,7 @@ async fn download_large_entries(
         let queue = queue.clone();
         let progress_bar = Arc::clone(progress_bar);
         let handle: tokio::task::JoinHandle<Result<(), OxenError>> = tokio::spawn(async move {
-            loop {
-                let Some((remote_repo, commit_entry, _dst, download_path)) = queue.try_pop() else {
-                    // reached end of queue
-                    break;
-                };
+            while let Some((remote_repo, commit_entry, _dst, download_path)) = queue.try_pop() {
                 log::debug!("worker[{worker}] processing task...");
 
                 // Chunk and individual files
@@ -1027,11 +1023,7 @@ async fn download_small_entries(
         let queue = queue.clone();
         let progress_bar = Arc::clone(progress_bar);
         let handle: tokio::task::JoinHandle<Result<(), OxenError>> = tokio::spawn(async move {
-            loop {
-                let Some((remote_repo, chunk, path)) = queue.try_pop() else {
-                    // reached end of queue
-                    break;
-                };
+            while let Some((remote_repo, chunk, path)) = queue.try_pop() {
                 log::debug!("worker[{worker}] processing task...");
 
                 let download_size = api::client::entries::download_data_from_version_paths(

@@ -494,16 +494,10 @@ fn p_dir_entries(
                     depth,
                 )?;
             }
-            EMerkleTreeNode::File(child_file) => {
-                if current_directory == search_directory {
-                    let metadata = file_node_to_metadata_entry(
-                        repo,
-                        child_file,
-                        parsed_resource,
-                        found_commits,
-                    )?;
-                    entries.push(metadata.unwrap());
-                }
+            EMerkleTreeNode::File(child_file) if current_directory == search_directory => {
+                let metadata =
+                    file_node_to_metadata_entry(repo, child_file, parsed_resource, found_commits)?;
+                entries.push(metadata.unwrap());
             }
             _ => {}
         }
