@@ -163,17 +163,23 @@ pub enum MerkleTreeB {
     },
 }
 
-impl From<MerkleTreeB> for LazyNode {
-    fn from(tree: MerkleTreeB) -> Self {
-        LazyNode::new(tree.hash())
-    }
-}
+macro_rules! impl_into_lazy_node {
+    ($type:path) => {
+        impl From<$type> for LazyNode {
+            fn from(tree: $type) -> Self {
+                Self::new(tree.hash())
+            }
+        }
 
-impl From<Box<MerkleTreeB>> for LazyNode {
-    fn from(tree: Box<MerkleTreeB>) -> Self {
-        LazyNode::new(tree.hash())
-    }
+        impl<'a> From<&'a $type> for LazyNode {
+            fn from(tree: &'a $type) -> Self {
+                Self::new(tree.hash())
+            }
+        }
+    };
 }
+impl_into_lazy_node!(MerkleTreeB);
+impl_into_lazy_node!(Box<MerkleTreeB>);
 
 impl HasHash for MerkleTreeB {
     #[inline(always)]

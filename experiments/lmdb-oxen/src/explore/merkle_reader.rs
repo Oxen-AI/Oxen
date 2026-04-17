@@ -1,5 +1,5 @@
-use crate::explore::hash::Hash;
-use crate::explore::lazy_merkle::{MerkleTreeL, Root};
+use crate::explore::hash::{HasHash, Hash};
+use crate::explore::lazy_merkle::{HasName, MerkleTreeL, Root};
 use crate::explore::paths::{AbsolutePath, RelativePath};
 
 /// Trait for reading Merkle tree data from a durable store.
@@ -38,7 +38,7 @@ pub trait MerkleReader: Sized {
             loop {
                 let next_node = self.node(current_hash)?;
                 if let Some(next) = next_node {
-                    reverse_path.push(next.name().to_string());
+                    reverse_path.push(next.name().clone());
                     if let Some(parent) = next.parent() {
                         current_hash = parent.hash()
                     } else {
@@ -62,11 +62,10 @@ pub trait MerkleReader: Sized {
         if rel_path.is_empty() {
             Ok(None)
         } else {
-            let components = rel_path.iter().map(|s| s.to_string()).collect();
             // SAFETY: we know that each component we've collected in `rel_path` is an actual
             //         file or directory name. We also know that this forms a relative path
             //         within the repository.
-            Ok(Some(RelativePath::from_parts(components)))
+            Ok(Some(RelativePath::from_parts(rel_path)))
         }
     }
 }

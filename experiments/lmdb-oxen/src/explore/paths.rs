@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// The name of a file or directory. Exactly one component and no path separators are allowed.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Name(String);
 
 impl Name {
@@ -68,7 +68,7 @@ impl AbsolutePath {
         // `repo.root` is already canonicalized by construction
         let mut abs_path = repo_root.0.clone();
         // `p` is a relative path of 1 or more components
-        abs_path.extend(p.components());
+        abs_path.extend(p.components().map(|c| c.0.as_str()));
         Self(abs_path)
     }
 

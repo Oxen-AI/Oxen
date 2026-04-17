@@ -4,7 +4,7 @@ use heed::{Database, Env, EnvOpenOptions};
 
 use serde::Serialize;
 
-use crate::explore::hash::{HasHash, Hash};
+use crate::explore::hash::{HasHash, Hash, HexHash};
 use crate::explore::merkle_writer::{MerkleWriter, WriteSession};
 use crate::explore::paths::AbsolutePath;
 use crate::explore::{
@@ -94,7 +94,10 @@ impl MerkleReader for LmdbMerkleDB {
     fn node(&self, hash: Hash) -> Result<Option<MerkleTreeL>, Self::Error> {
         match self.retrieve(hash) {
             Err(heed::Error::Decoding(err)) => {
-                eprintln!("[ERROR] {hash} is not a merkle node, it is a commit (error: {err})");
+                eprintln!(
+                    "[ERROR] {} is not a merkle node, it is a commit (error: {err})",
+                    HexHash::from(hash)
+                );
                 Ok(None)
             }
             other => other,
@@ -108,7 +111,10 @@ impl MerkleReader for LmdbMerkleDB {
     fn commit(&self, hash: Hash) -> Result<Option<Root>, Self::Error> {
         match self.retrieve(hash) {
             Err(heed::Error::Decoding(err)) => {
-                eprintln!("[ERROR] {hash} is not a commit, it is a merkle node (error: {err})");
+                eprintln!(
+                    "[ERROR] {} is not a commit, it is a merkle node (error: {err})",
+                    HexHash::from(hash)
+                );
                 Ok(None)
             }
             other => other,

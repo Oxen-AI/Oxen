@@ -64,7 +64,7 @@ fn write_tree<'a, M: MerkleStore>(
                 name,
                 children,
             } => {
-                let lazy_children = children.iter().map(|n| n.into()).to_vec();
+                let lazy_children = children.iter().map(|n| n.into()).collect();
                 let lazy_node = MerkleTreeL::Dir {
                     hash,
                     name,
