@@ -11,9 +11,6 @@ use colored::Colorize;
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use liboxen::command::migrate::AddChildCountsToNodesMigration;
-use liboxen::command::migrate::AddWorkspaceNameIndexMigration;
-
 pub fn get_scheme_and_host_or_default() -> Result<(String, String), OxenError> {
     let config = AuthConfig::get_or_create()?;
     let mut default_host = (
@@ -85,16 +82,7 @@ pub async fn check_remote_version_blocking(
 }
 
 pub fn migrations() -> HashMap<String, Box<dyn Migrate>> {
-    let mut map: HashMap<String, Box<dyn Migrate>> = HashMap::new();
-    map.insert(
-        AddChildCountsToNodesMigration.name().to_string(),
-        Box::new(AddChildCountsToNodesMigration),
-    );
-    map.insert(
-        AddWorkspaceNameIndexMigration.name().to_string(),
-        Box::new(AddWorkspaceNameIndexMigration),
-    );
-    map
+    liboxen::command::migrate::all_migrations()
 }
 
 pub fn check_repo_migration_needed(repo: &LocalRepository) -> Result<(), OxenError> {
