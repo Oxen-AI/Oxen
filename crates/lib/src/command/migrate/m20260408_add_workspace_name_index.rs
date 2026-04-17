@@ -100,7 +100,7 @@ fn revert_all_repos(path: &Path) -> Result<(), OxenError> {
                 Err(err) => {
                     log::error!(
                         "Could not revert workspace name index for repo {:?}\nErr: {}",
-                        repo.path.canonicalize(),
+                        util::fs::canonicalize(repo.path),
                         err
                     );
                 }
