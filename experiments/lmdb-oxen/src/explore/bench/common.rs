@@ -15,9 +15,9 @@ use crate::explore::paths::{AbsolutePath, Name};
 
 pub const NODE_COUNT_MIN: usize = 1_000;
 
-// Probability a new node is a directory rather than a file.
-// Tuned to keep trees neither degenerate-linear nor shallow-and-wide.
-const DIR_PROB: f64 = 0.35;
+// Floor on the depth-tapered `dir_prob`; without it, deep levels can
+// collapse to file-only and subtree expansion dies too fast.
+const DIR_PROB_FLOOR: f64 = 0.05;
 
 // LMDB map size. heed's default (~10 MiB) overflows for 100k nodes.
 const LMDB_MAP_SIZE_BYTES: usize = 2 * 1024 * 1024 * 1024;
@@ -41,7 +41,9 @@ pub struct TreeGenArgs {
     pub avg_size: usize,
 
     /// Maximum directory nesting depth. Root's direct children live at depth 1.
-    #[arg(long, default_value_t = 64)]
+    /// Default picked to roughly match the natural depth at `--avg-size 10000`
+    /// with the default branching; raise it for depth-diverse workloads.
+    #[arg(long, default_value_t = 10)]
     pub max_depth: usize,
 
     /// Maximum random file content size in bytes. Files draw uniformly from 1..=this.
@@ -51,6 +53,17 @@ pub struct TreeGenArgs {
     /// Maximum children per directory. Actual count is uniform in 1..=this.
     #[arg(long, default_value_t = 32)]
     pub max_children_per_dir: usize,
+
+    /// Base probability a new child slot becomes a directory. The effective
+    /// probability tapers linearly from this value at depth 1 down to
+    /// `DIR_PROB_FLOOR` at `--target-depth`.
+    #[arg(long, default_value_t = 0.35)]
+    pub dir_prob: f64,
+
+    /// Depth at which `dir_prob` reaches its floor. If unset, defaults to
+    /// `--max-depth`. Set lower to make dirs concentrate at shallow levels.
+    #[arg(long)]
+    pub target_depth: Option<usize>,
 }
 
 pub fn validate(mut args: TreeGenArgs) -> TreeGenArgs {
@@ -59,7 +72,20 @@ pub fn validate(mut args: TreeGenArgs) -> TreeGenArgs {
     args.max_depth = args.max_depth.max(1);
     args.max_children_per_dir = args.max_children_per_dir.max(1);
     args.max_file_bytes = args.max_file_bytes.max(1);
+    args.dir_prob = args.dir_prob.clamp(0.0, 1.0);
+    if let Some(td) = args.target_depth {
+        args.target_depth = Some(td.max(1));
+    }
     args
+}
+
+/// Linearly tapered dir-probability: at `depth = 1` returns ~`base`, at
+/// `target_depth` drops to `DIR_PROB_FLOOR`, and never falls below the floor.
+fn effective_dir_prob(depth: usize, base: f64, target_depth: usize) -> f64 {
+    let t = target_depth.max(1) as f64;
+    let d = depth as f64;
+    let factor = (1.0 - d / t).max(0.0);
+    (base * factor).clamp(DIR_PROB_FLOOR, 1.0)
 }
 
 pub struct GenStats {
@@ -73,13 +99,15 @@ pub struct GenStats {
 }
 
 struct GenState {
-    remaining: usize,
     next_id: u64,
     stats: GenStats,
 }
 
 /// Generate a random Merkle tree of approximately `target_count` nodes.
-/// `target_count` is clamped to `[NODE_COUNT_MIN, args.max_node_count]`.
+/// `target_count` is clamped to `[NODE_COUNT_MIN, args.max_node_count]` before
+/// generation. The actual tree may be *smaller* than `target_count`: the
+/// per-child budget split (option 3) discards surplus budget when a slot
+/// becomes a file, trading exact size for more balanced depth coverage.
 /// Caller owns the RNG so benches that need multiple trees can reuse state.
 pub fn generate(
     rng: &mut StdRng,
@@ -88,7 +116,6 @@ pub fn generate(
 ) -> (Vec<MerkleTreeB>, GenStats) {
     let target = target_count.clamp(NODE_COUNT_MIN, args.max_node_count);
     let mut state = GenState {
-        remaining: target,
         next_id: 0,
         stats: GenStats {
             files: 0,
@@ -98,45 +125,87 @@ pub fn generate(
             node_catalog: Vec::with_capacity(target),
         },
     };
+    let target_depth = args.target_depth.unwrap_or(args.max_depth);
+
+    // Per-child budget split naturally underfills (files drop surplus,
+    // recursive dirs underfill their inner budget). Retry at the root
+    // level, appending more root-level subtrees, until we've reached the
+    // target or hit a pass cap. Each retry goes through the same
+    // balanced generator, so depth spread is preserved.
+    const MAX_OUTER_PASSES: usize = 64;
     let mut root_children = Vec::new();
-    while state.remaining > 0 {
-        let batch = build_dir_contents(rng, 1, &mut state, args);
+    let mut remaining = target;
+    let mut pass = 0;
+    while remaining > 0 && pass < MAX_OUTER_PASSES {
+        let before = state.stats.files + state.stats.dirs;
+        let batch = build_dir_contents(rng, 1, &mut state, args, target_depth, remaining);
         if batch.is_empty() {
             break;
         }
+        let produced = (state.stats.files + state.stats.dirs) - before;
+        if produced == 0 {
+            break;
+        }
+        remaining = remaining.saturating_sub(produced);
         root_children.extend(batch);
+        pass += 1;
     }
     (root_children, state.stats)
 }
 
+/// Build the contents of a directory that is allowed to produce up to
+/// `subtree_budget` nodes (files + subdirs, including self's children).
+///
+/// Splits the budget across the chosen number of children so no single child
+/// can monopolize it — this replaces the prior DFS-greedy allocation and is
+/// what spreads nodes across depths. Surplus budget from a file-child (or a
+/// dir-child whose recursion underfilled) rolls over to the next sibling so
+/// the total node count stays close to `subtree_budget` despite the split.
 fn build_dir_contents(
     rng: &mut StdRng,
     depth: usize,
     state: &mut GenState,
     args: &TreeGenArgs,
+    target_depth: usize,
+    subtree_budget: usize,
 ) -> Vec<MerkleTreeB> {
-    if state.remaining == 0 {
+    if subtree_budget == 0 {
         return Vec::new();
     }
-    let cap = args.max_children_per_dir.min(state.remaining);
+    let cap = args.max_children_per_dir.min(subtree_budget);
     let n = rng.random_range(1..=cap);
+    let per_child = subtree_budget / n;
+    let remainder = subtree_budget % n;
+
+    let dp = effective_dir_prob(depth, args.dir_prob, target_depth);
+
     let mut out = Vec::with_capacity(n);
-    for _ in 0..n {
-        if state.remaining == 0 {
-            break;
+    let mut rollover: usize = 0;
+    for i in 0..n {
+        let base_budget = per_child + if i < remainder { 1 } else { 0 };
+        let my_budget = base_budget + rollover;
+        rollover = 0;
+        if my_budget == 0 {
+            continue;
         }
-        state.remaining -= 1;
+
         let id = state.next_id;
         state.next_id += 1;
-
         state.stats.max_depth = state.stats.max_depth.max(depth);
 
-        // A directory needs budget for at least one child of its own.
-        let can_be_dir = depth < args.max_depth && state.remaining > 0;
-        let is_dir = can_be_dir && rng.random_bool(DIR_PROB);
+        // Count what this child actually ends up producing so we can roll
+        // unused budget to the next sibling (files consume 1; dirs may
+        // underfill their inner budget).
+        let produced_before = state.stats.files + state.stats.dirs;
+
+        // A directory uses 1 slot for itself plus at least 1 for a child.
+        let children_budget = my_budget - 1;
+        let can_be_dir = depth < args.max_depth && children_budget > 0;
+        let is_dir = can_be_dir && rng.random_bool(dp);
 
         if is_dir {
-            let kids = build_dir_contents(rng, depth + 1, state, args);
+            let kids =
+                build_dir_contents(rng, depth + 1, state, args, target_depth, children_budget);
             let name: Name = Path::new(&format!("d_{id}"))
                 .try_into()
                 .expect("generated dir name is a valid Name");
@@ -166,6 +235,11 @@ fn build_dir_contents(
             state.stats.total_file_bytes += data.len();
             state.stats.node_catalog.push((hash, depth));
             out.push(MerkleTreeB::File { hash, name });
+        }
+
+        let produced = (state.stats.files + state.stats.dirs) - produced_before;
+        if my_budget > produced {
+            rollover = my_budget - produced;
         }
     }
     out
