@@ -7,8 +7,8 @@ use rand::distr::weighted::WeightedIndex;
 use rand::rngs::StdRng;
 
 use crate::explore::bench::common::{
-    self, DurStats, LmdbSetup, ReadOp, TreeGenArgs, print_path_by_depth, print_path_depth_log_fit,
-    run_read_op, sample_target_count,
+    self, DurStats, LmdbSetup, ReadOp, TreeGenArgs, fit_linear_ols, print_path_by_depth,
+    print_path_depth_log_fit, run_read_op, sample_target_count,
 };
 use crate::explore::hash::{HasHash, Hash, HexHash};
 use crate::explore::lazy_merkle::UncomittedRoot;
@@ -197,10 +197,12 @@ pub async fn run(args: MixedArgs) {
     let mut all_node_durs: Vec<Duration> = Vec::new();
     let mut all_path_samples: Vec<(usize, Duration)> = Vec::new();
     let mut all_commit_durs: Vec<Duration> = Vec::new();
-    let mut write_durs: Vec<Duration> = Vec::new();
+    // (nodes_written, elapsed) per timed write commit. Keeps node count
+    // per commit so we can report size vs. time and fit elapsed = f(nodes).
+    let mut write_records: Vec<(usize, Duration)> = Vec::new();
 
     println!();
-    println!("iter |        reads |                    write");
+    println!("iter |         reads |          write |  nodes | nodes/sec");
     for i in 0..total_iters {
         // Read phase (timed)
         let t_read = Instant::now();
@@ -219,7 +221,7 @@ pub async fn run(args: MixedArgs) {
 
         // Write phase (timed), skipped on the last iteration.
         // Each write samples a target node count from N(avg_size, size_stddev).
-        let write_msg = if i < args.write_phases {
+        let (write_col, nodes_col, throughput_col) = if i < args.write_phases {
             let target = sample_target_count(
                 &mut rng,
                 tree_args.avg_size as f64,
@@ -244,13 +246,25 @@ pub async fn run(args: MixedArgs) {
             let elapsed = t_write.elapsed();
             catalog.extend(st.node_catalog);
             commits.push(c.hash());
-            write_durs.push(elapsed);
-            format!("{elapsed:?} ({written_nodes} nodes)")
+            write_records.push((written_nodes, elapsed));
+            let nps = written_nodes as f64 / elapsed.as_secs_f64();
+            (
+                format!("{elapsed:?}"),
+                format!("{written_nodes}"),
+                format!("{nps:.0}"),
+            )
         } else {
-            "-".to_string()
+            ("-".to_string(), "-".to_string(), "-".to_string())
         };
 
-        println!("{:>4} | {:>12?} | {:>24}", i + 1, read_elapsed, write_msg,);
+        println!(
+            "{:>4} | {:>13?} | {:>14} | {:>6} | {:>9}",
+            i + 1,
+            read_elapsed,
+            write_col,
+            nodes_col,
+            throughput_col,
+        );
     }
 
     // --- Aggregate reporting ---
@@ -274,9 +288,93 @@ pub async fn run(args: MixedArgs) {
         print_path_depth_log_fit(&all_path_samples);
     }
 
-    if !write_durs.is_empty() {
-        println!();
-        println!("aggregate over {} timed write commits:", write_durs.len());
-        DurStats::from_durations(&mut write_durs).print("commit_tree");
+    if !write_records.is_empty() {
+        print_write_aggregate(&write_records);
+    }
+}
+
+/// Expanded write-side reporting: totals, per-commit latency / size / per-commit
+/// throughput distributions, and a linear fit of `elapsed = alpha + beta * nodes`
+/// so you can separate fixed commit overhead from marginal per-node cost.
+fn print_write_aggregate(records: &[(usize, Duration)]) {
+    let n = records.len();
+    let total_nodes: usize = records.iter().map(|(k, _)| *k).sum();
+    let total_elapsed: Duration = records.iter().map(|(_, d)| *d).sum();
+    let agg_throughput = if total_elapsed.as_secs_f64() > 0.0 {
+        total_nodes as f64 / total_elapsed.as_secs_f64()
+    } else {
+        f64::NAN
+    };
+
+    println!();
+    println!("write aggregate ({} timed commits):", n);
+    println!("  total nodes written:   {total_nodes}");
+    println!("  total write time:      {total_elapsed:?}");
+    println!("  aggregate throughput:  {agg_throughput:.0} nodes/sec");
+
+    // Per-commit latency distribution.
+    let mut elapsed_only: Vec<Duration> = records.iter().map(|(_, d)| *d).collect();
+    DurStats::from_durations(&mut elapsed_only).print("commit_tree");
+
+    // Per-commit size distribution (min / mean / p50 / max).
+    let mut sizes: Vec<usize> = records.iter().map(|(k, _)| *k).collect();
+    sizes.sort_unstable();
+    let size_min = *sizes.first().expect("records non-empty");
+    let size_max = *sizes.last().expect("records non-empty");
+    let size_mean = total_nodes as f64 / n as f64;
+    let size_p50 = sizes[n / 2];
+    println!(
+        "  commit size (nodes):   min={size_min:>6}  mean={size_mean:>7.0}  p50={size_p50:>6}  max={size_max:>6}"
+    );
+
+    // Per-commit throughput distribution. Note: this is distinct from the
+    // aggregate throughput above — small commits have worse amortized
+    // throughput (fixed overhead dominates), so `mean(per-commit)` ≠
+    // `total / total_time`.
+    let mut per_commit_thru: Vec<f64> = records
+        .iter()
+        .map(|(k, d)| *k as f64 / d.as_secs_f64())
+        .collect();
+    per_commit_thru.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let thru_min = per_commit_thru.first().copied().unwrap_or(0.0);
+    let thru_max = per_commit_thru.last().copied().unwrap_or(0.0);
+    let thru_mean = per_commit_thru.iter().sum::<f64>() / n as f64;
+    let thru_p50 = per_commit_thru[n / 2];
+    println!(
+        "  per-commit nodes/sec:  min={thru_min:>7.0}  mean={thru_mean:>7.0}  p50={thru_p50:>7.0}  max={thru_max:>7.0}"
+    );
+
+    // Linear fit of elapsed(ns) vs nodes: alpha = fixed overhead per commit,
+    // beta = marginal cost per node. Needs at least 2 commits with distinct
+    // sizes — skip otherwise. With small stddev or few commits the fit can
+    // be noisy; R² tells you whether to trust the decomposition.
+    let points: Vec<(f64, f64)> = records
+        .iter()
+        .map(|(k, d)| (*k as f64, d.as_nanos() as f64))
+        .collect();
+    match fit_linear_ols(&points) {
+        None => {
+            println!("  linear fit:            skipped (need ≥2 commits with distinct sizes)");
+        }
+        Some((beta, alpha, r_squared)) => {
+            let alpha_dur = if alpha.is_finite() && alpha >= 0.0 {
+                format!("{:?}", Duration::from_nanos(alpha.round() as u64))
+            } else {
+                format!("{alpha:.0}ns")
+            };
+            let beta_dur = if beta.is_finite() && beta >= 0.0 {
+                format!("{:?}/node", Duration::from_nanos(beta.round() as u64))
+            } else {
+                format!("{beta:.0}ns/node")
+            };
+            let beta_nps = if beta > 0.0 { 1e9 / beta } else { f64::NAN };
+            println!();
+            println!("write linear fit: elapsed = alpha + beta * nodes");
+            println!("  alpha (fixed per-commit overhead): {alpha:>12.0} ns  ({alpha_dur})");
+            println!(
+                "  beta  (per-node marginal cost):    {beta:>12.0} ns  ({beta_dur}; ~{beta_nps:.0} nodes/sec asymptotic)"
+            );
+            println!("  R²:                                {r_squared:>12.4}");
+        }
     }
 }

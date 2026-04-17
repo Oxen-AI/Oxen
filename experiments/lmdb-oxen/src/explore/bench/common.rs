@@ -457,6 +457,41 @@ pub fn print_path_depth_log_fit(samples: &[(usize, Duration)]) {
     }
 }
 
+/// Fit `y = slope * x + intercept` via ordinary least squares.
+/// Returns `(slope, intercept, r_squared)` or `None` when the fit is
+/// degenerate (fewer than 2 points, or all `x` values identical).
+pub fn fit_linear_ols(points: &[(f64, f64)]) -> Option<(f64, f64, f64)> {
+    if points.len() < 2 {
+        return None;
+    }
+    let n = points.len() as f64;
+    let sum_x: f64 = points.iter().map(|p| p.0).sum();
+    let sum_y: f64 = points.iter().map(|p| p.1).sum();
+    let sum_xy: f64 = points.iter().map(|p| p.0 * p.1).sum();
+    let sum_xx: f64 = points.iter().map(|p| p.0 * p.0).sum();
+    let denom = n * sum_xx - sum_x * sum_x;
+    if denom.abs() < f64::EPSILON {
+        return None;
+    }
+    let slope = (n * sum_xy - sum_x * sum_y) / denom;
+    let intercept = (sum_y - slope * sum_x) / n;
+    let mean_y = sum_y / n;
+    let ss_tot: f64 = points.iter().map(|p| (p.1 - mean_y).powi(2)).sum();
+    let ss_res: f64 = points
+        .iter()
+        .map(|p| {
+            let pred = slope * p.0 + intercept;
+            (p.1 - pred).powi(2)
+        })
+        .sum();
+    let r_squared = if ss_tot > f64::EPSILON {
+        1.0 - ss_res / ss_tot
+    } else {
+        f64::NAN
+    };
+    Some((slope, intercept, r_squared))
+}
+
 fn goodness_label(r_squared: f64) -> &'static str {
     if !r_squared.is_finite() {
         "undefined"
