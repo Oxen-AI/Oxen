@@ -83,14 +83,14 @@ impl LazyData {
     /// Reconstructs the relative path to this file node's data
     /// and reads it from storage.
     pub async fn load<DB: MerkleReader>(&self, db: &DB) -> Result<Vec<u8>, LoadError<DB>> {
-        let Some(rel_path) = db.path(self.hash()).map_err(LoadError::DBError)? else {
-            return Err(LoadError::PathError(HexHash::from(self.hash())));
+        let Some(rel_path) = db.path(self.hash()).map_err(LoadError::Store)? else {
+            return Err(LoadError::Path(HexHash::from(self.hash())));
         };
 
         let path = AbsolutePath::from(db.repository(), &rel_path);
         tokio::fs::read(path.as_path())
             .await
-            .map_err(LoadError::ReadError)
+            .map_err(LoadError::Read)
     }
 }
 
@@ -104,13 +104,13 @@ impl HasHash for LazyData {
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError<DB: MerkleReader> {
     #[error("Error from Merkle tree data store: {0}")]
-    DBError(DB::Error),
+    Store(DB::Error),
 
     #[error("Cannot determine relative path for hash: {0}")]
-    PathError(HexHash),
+    Path(HexHash),
 
     #[error("{0}")]
-    ReadError(std::io::Error),
+    Read(std::io::Error),
 }
 
 #[derive(Debug, Serialize, Deserialize)]

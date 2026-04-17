@@ -104,7 +104,7 @@ impl std::fmt::Display for HexHash {
     }
 }
 
-trait Node {
+pub trait Node {
     fn hash(&self) -> Hash;
     fn name(&self) -> &str;
 }
@@ -230,7 +230,7 @@ impl HasHash for MerkleTree {
 
 impl HasHash for Box<MerkleTree> {
     fn hash(&self) -> Hash {
-        self.hash()
+        (**self).hash()
     }
 }
 

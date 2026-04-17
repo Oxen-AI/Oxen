@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
 use heed::EnvOpenOptions;
-use serde::de::Expected;
 
 use crate::explore::hash::{HasHash, Hash, HexHash};
 use crate::explore::lazy_merkle::{HasName, MerkleTreeB, MerkleTreeL, UncomittedRoot};
@@ -9,7 +8,6 @@ use crate::explore::lmdb_impl::LmdbMerkleDB;
 use crate::explore::merkle_reader::MerkleReader;
 use crate::explore::merkle_store::MerkleStore;
 use crate::explore::paths::AbsolutePath;
-use crate::explore::scratch::MerkleTree;
 
 #[tokio::main]
 pub async fn run() {
@@ -84,6 +82,13 @@ pub async fn run() {
         .expect("Commit not found");
 
     assert_eq!(commit.hash(), retrieved_commit.hash());
+    assert_eq!(
+        commit.children().count(),
+        retrieved_commit.children().count()
+    );
+    for (c, r) in commit.children().zip(retrieved_commit.children()) {
+        assert_eq!(c.hash(), r.hash());
+    }
 
     let hash_names = [
         (hash_l1, "file.txt", Some(content_l1)),
@@ -112,17 +117,23 @@ pub async fn run() {
                     )
                     .expect("Stored non UTF-8 data"),
                 );
-            },
+            }
 
-            (None, MerkleTreeL::Dir { .. }) => { /* expected */ },
+            (None, MerkleTreeL::Dir { .. }) => { /* expected */ }
 
             (Some(expected), MerkleTreeL::Dir { name, hash, .. }) => {
-                panic!("Expecting a file ({expected}) but got a directory: {name} ({})", HexHash::new(hash))
-            },
+                panic!(
+                    "Expecting a file ({expected}) but got a directory: {name} ({})",
+                    HexHash::new(hash)
+                )
+            }
 
             (None, MerkleTreeL::File { name, content, .. }) => {
-                panic!("Expecting a directory but got a file: {name} ({})", HexHash::new(content.hash()))
-            },
+                panic!(
+                    "Expecting a directory but got a file: {name} ({})",
+                    HexHash::new(content.hash())
+                )
+            }
         }
     }
 
@@ -131,4 +142,4 @@ pub async fn run() {
     println!("SUCCESS!");
 }
 
-fn check(_x: &impl MerkleStore) {}
+const fn check(_x: &impl MerkleStore) {}

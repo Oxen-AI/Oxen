@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 
+#[allow(dead_code)]
 mod existing;
 mod explore;
 
