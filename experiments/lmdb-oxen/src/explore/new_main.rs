@@ -1,15 +1,18 @@
 use std::path::{Path, PathBuf};
 
 use heed::EnvOpenOptions;
+use serde::de::Expected;
 
 use crate::explore::hash::{HasHash, Hash, HexHash};
-use crate::explore::lazy_merkle::{HasName, MerkleTreeB, UncomittedRoot};
+use crate::explore::lazy_merkle::{HasName, MerkleTreeB, MerkleTreeL, UncomittedRoot};
 use crate::explore::lmdb_impl::LmdbMerkleDB;
 use crate::explore::merkle_reader::MerkleReader;
 use crate::explore::merkle_store::MerkleStore;
 use crate::explore::paths::AbsolutePath;
+use crate::explore::scratch::MerkleTree;
 
-pub fn run() {
+#[tokio::main]
+pub async fn run() {
     let repository_root = {
         let tmp_path: PathBuf = std::env::temp_dir().join("lmdb_oxen_explore");
         std::fs::create_dir_all(&tmp_path).expect("failed to create temp dir");
@@ -28,9 +31,20 @@ pub fn run() {
         (content, Hash::new(content.as_bytes()))
     }
 
-    let (_, hash_l1) = content_hash("Hello world! How are you today?");
-    let (_, hash_l2) =
+    // ./level_1.txt
+    let (content_l1, hash_l1) = content_hash("Hello world! How are you today?");
+    let path_l1 = repository_root.join(&Path::new("level_1.txt").try_into().unwrap());
+    std::fs::write(path_l1.as_path(), content_l1).expect("failed to write level_1.txt");
+
+    // ./a_dir
+    let path_a_dir = repository_root.join(&Path::new("a_dir").try_into().unwrap());
+    std::fs::create_dir(path_a_dir.as_path()).expect("failed to create a_dir");
+
+    // ./a_dir/level_2.txt
+    let (content_l2, hash_l2) =
         content_hash("I am doing wonderful! Thank you for asking -- how are you today?");
+    let path_l2 = path_a_dir.join(&Path::new("level_2.txt").try_into().unwrap());
+    std::fs::write(path_l2.as_path(), content_l2).expect("failed to write level_2.txt");
 
     let dir_hash = Hash::hash_of_hashes([hash_l2].iter());
 
@@ -72,11 +86,11 @@ pub fn run() {
     assert_eq!(commit.hash(), retrieved_commit.hash());
 
     let hash_names = [
-        (hash_l1, "file.txt"),
-        (dir_hash, "a_dir"),
-        (hash_l2, "level_2.txt"),
+        (hash_l1, "file.txt", Some(content_l1)),
+        (dir_hash, "a_dir", None),
+        (hash_l2, "level_2.txt", Some(content_l2)),
     ];
-    for (hash, name) in hash_names {
+    for (hash, name, content) in hash_names {
         let retrieved = merkle_store
             .node(hash)
             .expect("Failed to retrieve node")
@@ -85,6 +99,31 @@ pub fn run() {
         println!("for hash {} retrieved: {:?}", HexHash::new(hash), retrieved);
         assert_eq!(hash, retrieved.hash());
         assert_eq!(name, retrieved.name().as_str());
+
+        match (content, retrieved) {
+            (Some(expected), MerkleTreeL::File { content, .. }) => {
+                assert_eq!(
+                    expected.to_string(),
+                    String::from_utf8(
+                        content
+                            .load(&merkle_store)
+                            .await
+                            .expect("Failed to load content")
+                    )
+                    .expect("Stored non UTF-8 data"),
+                );
+            },
+
+            (None, MerkleTreeL::Dir { .. }) => { /* expected */ },
+
+            (Some(expected), MerkleTreeL::Dir { name, hash, .. }) => {
+                panic!("Expecting a file ({expected}) but got a directory: {name} ({})", HexHash::new(hash))
+            },
+
+            (None, MerkleTreeL::File { name, content, .. }) => {
+                panic!("Expecting a directory but got a file: {name} ({})", HexHash::new(content.hash()))
+            },
+        }
     }
 
     println!("-----------------------------------------------------------------");

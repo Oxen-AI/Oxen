@@ -22,6 +22,15 @@ pub struct LmdbMerkleDB {
     lmdb_env: Env,
 }
 
+impl std::fmt::Debug for LmdbMerkleDB {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LmdbMerkleDB")
+            .field("repo_root", &self.repo_root)
+            .field("lmdb_env", &self.lmdb_env.info())
+            .finish()
+    }
+}
+
 impl LmdbMerkleDB {
     pub fn new(
         repo_root: &AbsolutePath,
