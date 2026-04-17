@@ -77,13 +77,16 @@ impl RepositoryTree {
                 .expect("directory does not have a name")
                 .to_string_lossy()
                 .to_string();
-            let mut children = Vec::new();
-            let dir = std::fs::read_dir(path)?;
-            for entry in dir {
-                let entry = entry?;
-                let child = Self::from_walk(&entry.path())?;
-                children.push(child);
-            }
+            let children = {
+                let mut children = Vec::new();
+                let mut entries = std::fs::read_dir(path)?.collect::<Result<Vec<_>, _>>()?;
+                entries.sort_by_key(|e| e.file_name());
+                for entry in entries {
+                    let child = Self::from_walk(&entry.path())?;
+                    children.push(child);
+                }
+                children
+            };
             Ok(Box::new(Self::Dir { name, children }))
         } else if path.is_file() {
             let name = path
