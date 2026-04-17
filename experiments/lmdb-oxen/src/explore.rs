@@ -1,3 +1,4 @@
+pub mod bench;
 pub mod hash;
 pub mod lazy_merkle;
 pub mod lmdb_impl;

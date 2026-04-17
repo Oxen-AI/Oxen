@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use heed::EnvOpenOptions;
-use tokio::runtime::Handle;
 
+use crate::explore::bench::{self, BenchArgs};
 use crate::explore::hash::{HasHash, Hash, HexHash};
 use crate::explore::lazy_merkle::{HasName, MerkleTreeB, MerkleTreeL, UncomittedRoot};
 use crate::explore::lmdb_impl::LmdbMerkleDB;
@@ -11,12 +11,11 @@ use crate::explore::merkle_store::MerkleStore;
 use crate::explore::paths::AbsolutePath;
 
 use clap::Subcommand;
-use std::time::Duration;
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     Demo,
-    Bench,
+    Bench(BenchArgs),
 }
 
 pub async fn run(command: Commands) {
@@ -24,14 +23,10 @@ pub async fn run(command: Commands) {
         Commands::Demo => {
             demo().await;
         }
-        Commands::Bench => {
-            bench();
+        Commands::Bench(args) => {
+            bench::run(args).await;
         }
     }
-}
-
-fn bench() {
-    unimplemented!("CLAUDE TODO")
 }
 
 async fn demo() {
