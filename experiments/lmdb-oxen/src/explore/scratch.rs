@@ -3,12 +3,10 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use liboxen::error::OxenError;
-use serde::Deserialize;
-use serde::Serialize;
 use thiserror::Error as ThisError;
 
-use xxhash_rust::xxh3::xxh3_128;
-
+use crate::explore::hash::HasHash;
+use crate::explore::hash::Hash;
 use crate::explore::paths::AbsolutePath;
 
 #[derive(Debug, ThisError)]
@@ -26,84 +24,6 @@ enum MerkleError {
     HashDoesNotExist,
     HashDoesNotEqualContent,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Hash(u128);
-
-/// Unwraps a hash into its unsigned 128 bit value.
-impl From<Hash> for u128 {
-    fn from(value: Hash) -> Self {
-        value.0
-    }
-}
-
-pub trait HasHash {
-    fn hash(&self) -> Hash;
-}
-
-impl HasHash for Hash {
-    fn hash(&self) -> Hash {
-        *self
-    }
-}
-
-impl Hash {
-    /// Only way to create a new `Hash` instance is to calculate a hash value from file content.
-    pub fn new(contents: &[u8]) -> Self {
-        Hash(xxh3_128(contents))
-    }
-
-    /// Things that have Hashes can be combined into a new Hash value.
-    pub fn hash_of_hashes<'a, N: HasHash + 'a>(children: impl Iterator<Item = &'a N>) -> Hash {
-        let hashes: Vec<u8> = children
-            .map(|h| h.hash().0)
-            .flat_map(|h| h.to_le_bytes())
-            .collect();
-        Self::new(&hashes)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct HexHash(String);
-
-#[derive(Debug, ThisError)]
-#[error("{0} is not a valid hex-encoded u128 value")]
-pub struct NotAValidHexHash<'a>(&'a str);
-
-impl<'a> TryFrom<&'a str> for Hash {
-    type Error = NotAValidHexHash<'a>;
-
-    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
-        let hash = u128::from_str_radix(value, 16).map_err(|_| NotAValidHexHash(value))?;
-        Ok(Hash(hash))
-    }
-}
-
-/// Only valid way to create a hex-encoded hash value is from an existing `Hash` instance.
-impl From<Hash> for HexHash {
-    fn from(value: Hash) -> Self {
-        HexHash(format!("{:032x}", value.0))
-    }
-}
-
-/// Safe conversion since we can only create a `HexHash` from a `Hash`.
-impl From<&HexHash> for Hash {
-    fn from(value: &HexHash) -> Self {
-        value
-            .0
-            .as_str()
-            .try_into()
-            .expect("Invariant violated! A HexHash was made that bypassed safe creation!")
-    }
-}
-
-/// Writes as a hex-encoded string.
-impl std::fmt::Display for HexHash {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
 pub trait Node {
     fn hash(&self) -> Hash;
     fn name(&self) -> &str;
