@@ -42,9 +42,9 @@ pub trait MerkleStore: MerkleReader + MerkleWriter<Error = <Self as MerkleReader
 // Recursively writes an entire Merkle tree from the given node to all of its leaves.
 // This is the helper function that `MerkleStore::commit_changes` uses to write an
 // entire commit tree to the store.
-fn write_tree<'a, M: MerkleStore>(
+fn write_tree<'a, 'writing, M: MerkleStore>(
     store: &M,
-    write_session: &'a mut <M as MerkleWriter>::Session<'a>,
+    write_session: &'a mut <M as MerkleWriter>::Session<'writing>,
     parent: Hash,
     node: MerkleTreeB,
 ) -> Result<(), <M as MerkleReader>::Error> {
