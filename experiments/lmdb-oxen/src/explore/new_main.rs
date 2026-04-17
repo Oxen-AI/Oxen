@@ -2,12 +2,11 @@ use std::path::{Path, PathBuf};
 
 use heed::EnvOpenOptions;
 
-use crate::explore::hash::{Hash, HexHash};
-use crate::explore::lazy_merkle::{LazyData, LazyNode, MerkleTreeL, Root};
+use crate::explore::hash::{HasHash, Hash, HexHash};
+use crate::explore::lazy_merkle::{HasName, MerkleTreeB, UncomittedRoot};
 use crate::explore::lmdb_impl::LmdbMerkleDB;
 use crate::explore::merkle_reader::MerkleReader;
 use crate::explore::merkle_store::MerkleStore;
-use crate::explore::merkle_writer::MerkleWriter;
 use crate::explore::paths::AbsolutePath;
 
 pub fn main() {
@@ -29,53 +28,66 @@ pub fn main() {
         (content, Hash::new(content.as_bytes()))
     }
 
-    let (content_l1, hash_l1) = content_hash("Hello world! How are you today?");
-    let (content_l2, hash_l2) =
+    let (_, hash_l1) = content_hash("Hello world! How are you today?");
+    let (_, hash_l2) =
         content_hash("I am doing wonderful! Thank you for asking -- how are you today?");
 
     let dir_hash = Hash::hash_of_hashes([hash_l2].iter());
 
-    let commit = Root::new(
-        &repository_root,
-        &[LazyNode::new(hash_l1), LazyNode::new(dir_hash)],
-    );
+    let to_be_comitted = UncomittedRoot {
+        parent: None,
+        repository: repository_root.clone(),
+        children: vec![
+            MerkleTreeB::File {
+                hash: hash_l1,
+                name: Path::new("level_1.txt").try_into().unwrap(),
+            },
+            MerkleTreeB::Dir {
+                hash: dir_hash,
+                name: Path::new("a_dir").try_into().unwrap(),
+                children: vec![Box::new(MerkleTreeB::File {
+                    hash: hash_l2,
+                    name: Path::new("level_2.txt").try_into().unwrap(),
+                })],
+            },
+        ],
+    };
 
-    let nodes = [
-        MerkleTreeL::File {
-            name: "level_1.txt".into(),
-            parent: Some(LazyNode::new(commit.hash())),
-            content: LazyData::new(hash_l1),
-        },
-        MerkleTreeL::Dir {
-            hash: dir_hash,
-            name: "a_dir".into(),
-            parent: Some(LazyNode::new(commit.hash())),
-            children: vec![LazyNode::new(hash_l2)],
-        },
-        MerkleTreeL::File {
-            name: "level_2.txt".into(),
-            parent: Some(LazyNode::new(dir_hash)),
-            content: LazyData::new(hash_l2),
-        },
+    println!("storing:\n");
+    println!("--------");
+    for c in to_be_comitted.children.iter() {
+        println!("{:?}", c);
+    }
+    println!("-----------------------------------------------------------------");
+
+    let commit = merkle_store
+        .commit_changes(to_be_comitted)
+        .expect("Failed to store nodes!");
+
+    let retrieved_commit = merkle_store
+        .commit(commit.hash())
+        .expect("Failed to retrieve commit")
+        .expect("Commit not found");
+
+    assert_eq!(commit.hash(), retrieved_commit.hash());
+
+    let hash_names = [
+        (hash_l1, "file.txt"),
+        (dir_hash, "a_dir"),
+        (hash_l2, "level_2.txt"),
     ];
+    for (hash, name) in hash_names {
+        let retrieved = merkle_store
+            .node(hash)
+            .expect("Failed to retrieve node")
+            .expect("Node not found");
 
-    println!("storing {} nodes:\n{:?}", nodes.len(), nodes);
+        println!("for hash {} retrieved: {:?}", HexHash::new(hash), retrieved);
+        assert_eq!(hash, retrieved.hash());
+        assert_eq!(name, retrieved.name().as_str());
+    }
+
     println!("-----------------------------------------------------------------");
-
-    merkle_store
-        .write(nodes.iter())
-        .expect("Failed to store nodes");
-
-    let node = merkle_store
-        .node(hash)
-        .expect("Failed to retrieve node")
-        .expect("Node not found");
-
-    println!("using hash {}, retrieved: {:?}", HexHash::from(hash), node);
-    println!("-----------------------------------------------------------------");
-
-    assert_eq!(node.name(), "file.txt");
-    assert_eq!(node.hash(), hash);
 
     println!("SUCCESS!");
 }

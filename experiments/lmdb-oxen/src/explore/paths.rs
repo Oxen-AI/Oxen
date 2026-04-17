@@ -17,6 +17,13 @@ use thiserror::Error;
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Name(String);
 
+impl Name {
+    #[inline(always)]
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum NameError {
     #[error("No name found for path: '{0}'")]
@@ -82,7 +89,7 @@ impl From<AbsolutePath> for PathBuf {
 /// Always starts with "./" and has one or more components.
 /// Intended for use within an oxen repository.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct RelativePath(Vec<String>);
+pub struct RelativePath(Vec<Name>);
 
 #[derive(Debug, Error)]
 pub enum RelativePathError {
@@ -108,7 +115,7 @@ impl RelativePath {
                 let Some(part) = c.as_os_str().to_str() else {
                     return Err(RelativePathError::NonUtf8Name(path.to_path_buf()));
                 };
-                components.push(part.to_string());
+                components.push(Name(part.to_string()));
             }
             components
         };
@@ -116,22 +123,24 @@ impl RelativePath {
     }
 
     #[inline]
-    pub fn components(&self) -> impl Iterator<Item = &str> {
-        self.0.iter().map(|s| s.as_str())
+    pub fn components(&self) -> impl Iterator<Item = &Name> {
+        self.0.iter()
     }
 
     /// Appends the file or directory name to this current path, creating a new relative path.
     pub fn join(&self, file_or_directory: &Name) -> RelativePath {
         let mut components = self.0.clone();
-        components.push(file_or_directory.0.clone());
+        components.push(file_or_directory.clone());
         RelativePath(components)
     }
 
+    /// Make a relative path from a sequence of component names.
+    ///
     /// SAFETY: callers **MUST** guarenetee that each part is a single component of a real
     ///         relative path. There **MUST NOT** be any path separators in the parts nor
     ///         can there be any `'.'` or `'..'` components. Each component must be a valid
     ///         file or directory name.
-    pub(crate) fn from_parts(parts: Vec<String>) -> Self {
+    pub(crate) fn from_parts(parts: Vec<Name>) -> Self {
         Self(parts)
     }
 }

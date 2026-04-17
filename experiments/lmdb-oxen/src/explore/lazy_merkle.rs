@@ -1,34 +1,30 @@
 use serde::{Deserialize, Serialize};
 
-use crate::explore::hash::{Hash, HexHash};
+use crate::explore::hash::{HasHash, Hash, HexHash};
 use crate::explore::merkle_reader::MerkleReader;
-use crate::explore::paths::AbsolutePath;
-use crate::explore::scratch::HasHash;
+use crate::explore::paths::{AbsolutePath, Name};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum MerkleTreeL {
     Dir {
         hash: Hash,
-        name: String,
+        name: Name,
         parent: Option<LazyNode>,
         children: Vec<LazyNode>,
     },
     File {
         // hash is in content (LazyData)
-        name: String,
+        name: Name,
         parent: Option<LazyNode>,
         content: LazyData,
     },
 }
 
-impl MerkleTreeL {
-    pub fn name(&self) -> &str {
-        match self {
-            MerkleTreeL::Dir { name, .. } => name,
-            MerkleTreeL::File { name, .. } => name,
-        }
-    }
+pub trait HasName {
+    fn name(&self) -> &Name;
+}
 
+impl MerkleTreeL {
     pub fn parent(&self) -> Option<&LazyNode> {
         match self {
             MerkleTreeL::Dir { parent, .. } => parent,
@@ -44,6 +40,16 @@ impl HasHash for MerkleTreeL {
         match self {
             MerkleTreeL::Dir { hash, .. } => *hash,
             MerkleTreeL::File { content, .. } => content.hash(),
+        }
+    }
+}
+
+impl HasName for MerkleTreeL {
+    #[inline(always)]
+    fn name(&self) -> &Name {
+        match self {
+            MerkleTreeL::Dir { name, .. } => name,
+            MerkleTreeL::File { name, .. } => name,
         }
     }
 }
@@ -109,18 +115,20 @@ pub enum LoadError<DB: MerkleReader> {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Root {
-    root: AbsolutePath,
+    repository: AbsolutePath,
     hash: Hash,
     children: Vec<LazyNode>,
+    parent: Option<Hash>,
 }
 
 impl Root {
     /// Computes the hash of the children on creation.
-    pub fn new(root: &AbsolutePath, children: &[LazyNode]) -> Self {
+    pub fn new(repository: AbsolutePath, children: Vec<LazyNode>, parent: Option<Hash>) -> Self {
         Self {
-            root: root.clone(),
+            repository,
             hash: Hash::hash_of_hashes(children.iter()),
-            children: children.to_vec(),
+            children: children,
+            parent,
         }
     }
 
@@ -133,5 +141,56 @@ impl HasHash for Root {
     #[inline(always)]
     fn hash(&self) -> Hash {
         self.hash
+    }
+}
+
+pub struct UncomittedRoot {
+    pub parent: Option<Hash>,
+    pub repository: AbsolutePath,
+    pub children: Vec<MerkleTreeB>,
+}
+
+#[derive(Debug)]
+pub enum MerkleTreeB {
+    Dir {
+        hash: Hash,
+        name: Name,
+        children: Vec<Box<Self>>,
+    },
+    File {
+        hash: Hash,
+        name: Name,
+    },
+}
+
+impl From<MerkleTreeB> for LazyNode {
+    fn from(tree: MerkleTreeB) -> Self {
+        LazyNode::new(tree.hash())
+    }
+}
+
+impl From<Box<MerkleTreeB>> for LazyNode {
+    fn from(tree: Box<MerkleTreeB>) -> Self {
+        LazyNode::new(tree.hash())
+    }
+}
+
+impl HasHash for MerkleTreeB {
+    #[inline(always)]
+    fn hash(&self) -> Hash {
+        match self {
+            MerkleTreeB::Dir { hash, .. } => *hash,
+            MerkleTreeB::File { hash, .. } => *hash,
+        }
+    }
+}
+
+impl HasName for MerkleTreeB {
+    #[inline(always)]
+    fn name(&self) -> &Name {
+        match self {
+            MerkleTreeB::Dir { name, .. } => name,
+            MerkleTreeB::File { name, .. } => name,
+        }
     }
 }

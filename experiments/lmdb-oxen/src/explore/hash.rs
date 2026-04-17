@@ -59,6 +59,12 @@ impl Hash {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct HexHash(String);
 
+impl HexHash {
+    pub fn new(value: Hash) -> Self {
+        Self(format!("{:032x}", value.0))
+    }
+}
+
 #[derive(Debug, ThisError)]
 #[error("{0} is not a valid hex-encoded u128 value")]
 pub struct NotAValidHexHash<'a>(&'a str);
@@ -76,7 +82,7 @@ impl<'a> TryFrom<&'a str> for Hash {
 /// Only valid way to create a hex-encoded hash value is from an existing `Hash` instance.
 impl From<Hash> for HexHash {
     fn from(value: Hash) -> Self {
-        HexHash(format!("{:032x}", value.0))
+        HexHash::new(value)
     }
 }
 
