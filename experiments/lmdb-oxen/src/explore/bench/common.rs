@@ -14,7 +14,6 @@ use crate::explore::merkle_reader::MerkleReader;
 use crate::explore::paths::{AbsolutePath, Name};
 
 pub const NODE_COUNT_MIN: usize = 1_000;
-pub const NODE_COUNT_MAX: usize = 100_000;
 
 // Probability a new node is a directory rather than a file.
 // Tuned to keep trees neither degenerate-linear nor shallow-and-wide.
@@ -27,9 +26,15 @@ const MIN_SAMPLES_PER_BUCKET: usize = 10;
 
 #[derive(Args, Debug, Clone)]
 pub struct TreeGenArgs {
-    /// Target total node count (files + directories). Clamped to [1_000, 100_000].
+    /// Hard upper bound on the size of any generated tree.
+    #[arg(long, default_value_t = 100_000)]
+    pub max_node_count: usize,
+
+    /// Baseline tree size. Used as the exact size for `bench write` / `bench read`,
+    /// the initial and pre-seed commits in `bench mixed`, and as the mean of the
+    /// normal distribution that mixed's write phases sample from.
     #[arg(long, default_value_t = 10_000)]
-    pub node_count: usize,
+    pub avg_size: usize,
 
     /// Maximum directory nesting depth. Root's direct children live at depth 1.
     #[arg(long, default_value_t = 64)]
@@ -45,7 +50,8 @@ pub struct TreeGenArgs {
 }
 
 pub fn validate(mut args: TreeGenArgs) -> TreeGenArgs {
-    args.node_count = args.node_count.clamp(NODE_COUNT_MIN, NODE_COUNT_MAX);
+    args.max_node_count = args.max_node_count.max(NODE_COUNT_MIN);
+    args.avg_size = args.avg_size.clamp(NODE_COUNT_MIN, args.max_node_count);
     args.max_depth = args.max_depth.max(1);
     args.max_children_per_dir = args.max_children_per_dir.max(1);
     args.max_file_bytes = args.max_file_bytes.max(1);
@@ -68,18 +74,24 @@ struct GenState {
     stats: GenStats,
 }
 
-/// Generate a random Merkle tree of approximately `args.node_count` nodes.
+/// Generate a random Merkle tree of approximately `target_count` nodes.
+/// `target_count` is clamped to `[NODE_COUNT_MIN, args.max_node_count]`.
 /// Caller owns the RNG so benches that need multiple trees can reuse state.
-pub fn generate(rng: &mut StdRng, args: &TreeGenArgs) -> (Vec<MerkleTreeB>, GenStats) {
+pub fn generate(
+    rng: &mut StdRng,
+    args: &TreeGenArgs,
+    target_count: usize,
+) -> (Vec<MerkleTreeB>, GenStats) {
+    let target = target_count.clamp(NODE_COUNT_MIN, args.max_node_count);
     let mut state = GenState {
-        remaining: args.node_count,
+        remaining: target,
         next_id: 0,
         stats: GenStats {
             files: 0,
             dirs: 0,
             total_file_bytes: 0,
             max_depth: 0,
-            node_catalog: Vec::with_capacity(args.node_count),
+            node_catalog: Vec::with_capacity(target),
         },
     };
     let mut root_children = Vec::new();
@@ -322,4 +334,35 @@ pub fn run_read_op(
 fn pick<T: Copy>(slice: &[T], rng: &mut StdRng) -> T {
     let i = rng.random_range(0..slice.len());
     slice[i]
+}
+
+/// Sample from `N(mean, std_dev)` using the Box-Muller transform.
+/// Kept local so the experiment crate avoids pulling in `rand_distr`.
+pub fn sample_normal(rng: &mut StdRng, mean: f64, std_dev: f64) -> f64 {
+    let mut u1: f64 = rng.random();
+    // `u1 == 0` makes `ln` diverge; rerolling is cheap and correct.
+    while u1 <= 0.0 {
+        u1 = rng.random();
+    }
+    let u2: f64 = rng.random();
+    let z0 = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
+    mean + std_dev * z0
+}
+
+/// Draw one `N(mean, std_dev)` sample and clamp/round to a valid node count
+/// in `[NODE_COUNT_MIN, max_node_count]`.
+pub fn sample_target_count(
+    rng: &mut StdRng,
+    mean: f64,
+    std_dev: f64,
+    max_node_count: usize,
+) -> usize {
+    let raw = sample_normal(rng, mean, std_dev).round();
+    if !raw.is_finite() {
+        return mean
+            .round()
+            .clamp(NODE_COUNT_MIN as f64, max_node_count as f64) as usize;
+    }
+    let rounded = raw as i64;
+    rounded.clamp(NODE_COUNT_MIN as i64, max_node_count as i64) as usize
 }

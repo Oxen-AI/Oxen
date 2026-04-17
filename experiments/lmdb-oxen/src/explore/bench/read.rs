@@ -33,8 +33,9 @@ pub struct ReadArgs {
 pub async fn run(args: ReadArgs) {
     let tree_args = common::validate(args.tree);
     println!(
-        "bench read config: node_count={}, max_depth={}, max_file_bytes={}, max_children_per_dir={}, read_count={}, warmup_count={}, seed={}",
-        tree_args.node_count,
+        "bench read config: max_node_count={}, avg_size={}, max_depth={}, max_file_bytes={}, max_children_per_dir={}, read_count={}, warmup_count={}, seed={}",
+        tree_args.max_node_count,
+        tree_args.avg_size,
         tree_args.max_depth,
         tree_args.max_file_bytes,
         tree_args.max_children_per_dir,
@@ -48,7 +49,7 @@ pub async fn run(args: ReadArgs) {
     let mut rng = StdRng::seed_from_u64(args.seed);
 
     let t_gen = Instant::now();
-    let (root_children, stats) = common::generate(&mut rng, &tree_args);
+    let (root_children, stats) = common::generate(&mut rng, &tree_args, tree_args.avg_size);
     let gen_elapsed = t_gen.elapsed();
     let total_nodes = stats.files + stats.dirs;
     println!(

@@ -8,6 +8,7 @@ use rand::rngs::StdRng;
 
 use crate::explore::bench::common::{
     self, DurStats, LmdbSetup, ReadOp, TreeGenArgs, print_path_by_depth, run_read_op,
+    sample_target_count,
 };
 use crate::explore::hash::{HasHash, Hash, HexHash};
 use crate::explore::lazy_merkle::UncomittedRoot;
@@ -35,6 +36,13 @@ pub struct MixedArgs {
     /// Read op weight percentages as `path,node,commit` (must sum to 100).
     #[arg(long, default_value = "35,60,5")]
     pub read_op_weights: String,
+
+    /// Standard deviation of the normal distribution used to sample each
+    /// write-phase tree's node count. Mean is `--avg-size`. If omitted,
+    /// defaults to `avg_size / 4` at runtime. Samples are clamped to
+    /// `[NODE_COUNT_MIN, --max-node-count]`.
+    #[arg(long)]
+    pub size_stddev: Option<f64>,
 
     /// Whether each new commit parents on the previous commit (default: true).
     /// Use `--chain-commits false` to disable.
@@ -90,10 +98,16 @@ fn parse_weights(s: &str) -> OpWeights {
 pub async fn run(args: MixedArgs) {
     let tree_args = common::validate(args.tree);
     let weights = parse_weights(&args.read_op_weights);
+    let size_stddev = args
+        .size_stddev
+        .unwrap_or(tree_args.avg_size as f64 / 4.0)
+        .max(0.0);
 
     println!(
-        "bench mixed config: node_count={}, max_depth={}, max_file_bytes={}, max_children_per_dir={}, seed_commits={}, write_phases={}, reads_per_phase={}, weights=(path={},node={},commit={}), chain_commits={}, warmup_count={}, seed={}",
-        tree_args.node_count,
+        "bench mixed config: max_node_count={}, avg_size={}, size_stddev={:.1}, max_depth={}, max_file_bytes={}, max_children_per_dir={}, seed_commits={}, write_phases={}, reads_per_phase={}, weights=(path={},node={},commit={}), chain_commits={}, warmup_count={}, seed={}",
+        tree_args.max_node_count,
+        tree_args.avg_size,
+        size_stddev,
         tree_args.max_depth,
         tree_args.max_file_bytes,
         tree_args.max_children_per_dir,
@@ -112,7 +126,7 @@ pub async fn run(args: MixedArgs) {
     let mut rng = StdRng::seed_from_u64(args.seed);
 
     // --- Initial tree + commit ---
-    let (root_children, stats) = common::generate(&mut rng, &tree_args);
+    let (root_children, stats) = common::generate(&mut rng, &tree_args, tree_args.avg_size);
     let initial_nodes = stats.files + stats.dirs;
     let mut catalog: Vec<(Hash, usize)> = stats.node_catalog;
     let t_init = Instant::now();
@@ -135,9 +149,11 @@ pub async fn run(args: MixedArgs) {
     );
 
     // --- Pre-seed phase (untimed) ---
+    // Pre-seed trees use the fixed avg_size; only timed write phases sample the
+    // normal distribution for their node count.
     if args.seed_commits > 0 {
         for _ in 0..args.seed_commits {
-            let (children, st) = common::generate(&mut rng, &tree_args);
+            let (children, st) = common::generate(&mut rng, &tree_args, tree_args.avg_size);
             catalog.extend(st.node_catalog);
             let parent = if args.chain_commits {
                 commits.last().copied()
@@ -184,7 +200,7 @@ pub async fn run(args: MixedArgs) {
     let mut write_durs: Vec<Duration> = Vec::new();
 
     println!();
-    println!("iter |        reads |        write");
+    println!("iter |        reads |                    write");
     for i in 0..total_iters {
         // Read phase (timed)
         let t_read = Instant::now();
@@ -201,9 +217,17 @@ pub async fn run(args: MixedArgs) {
         }
         let read_elapsed = t_read.elapsed();
 
-        // Write phase (timed), skipped on the last iteration
+        // Write phase (timed), skipped on the last iteration.
+        // Each write samples a target node count from N(avg_size, size_stddev).
         let write_msg = if i < args.write_phases {
-            let (children, st) = common::generate(&mut rng, &tree_args);
+            let target = sample_target_count(
+                &mut rng,
+                tree_args.avg_size as f64,
+                size_stddev,
+                tree_args.max_node_count,
+            );
+            let (children, st) = common::generate(&mut rng, &tree_args, target);
+            let written_nodes = st.files + st.dirs;
             let parent = if args.chain_commits {
                 commits.last().copied()
             } else {
@@ -221,12 +245,12 @@ pub async fn run(args: MixedArgs) {
             catalog.extend(st.node_catalog);
             commits.push(c.hash());
             write_durs.push(elapsed);
-            format!("{elapsed:?}")
+            format!("{elapsed:?} ({written_nodes} nodes)")
         } else {
             "-".to_string()
         };
 
-        println!("{:>4} | {:>12?} | {:>12}", i + 1, read_elapsed, write_msg,);
+        println!("{:>4} | {:>12?} | {:>24}", i + 1, read_elapsed, write_msg,);
     }
 
     // --- Aggregate reporting ---
