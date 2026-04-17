@@ -115,6 +115,13 @@ pub enum OxenError {
     #[error("Workspace is behind: {0}")]
     WorkspaceBehind(Box<Workspace>),
 
+    /// A workspace with this name already exists.
+    #[error("A workspace with the name '{0}' already exists")]
+    WorkspaceAlreadyExists(String),
+
+    #[error("{0}")]
+    WorkspaceNameIndex(#[from] crate::core::workspaces::workspace_name_index::WsError),
+
     //
     // Resources (paths, uris, etc.)
     //

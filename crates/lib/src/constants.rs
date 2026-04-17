@@ -114,6 +114,8 @@ pub const MODS_DIR: &str = "mods";
 pub const WORKSPACES_DIR: &str = "workspaces";
 /// workspace commit id
 pub const WORKSPACE_CONFIG: &str = "WORKSPACE_CONFIG";
+/// workspace_name_index/ is a RocksDB mapping workspace names to workspace IDs for O(1) lookup
+pub const WORKSPACE_NAME_INDEX_DIR: &str = "workspace_name_index";
 
 /// if we have merge conflicts we write to MERGE_HEAD and ORIG_HEAD to keep track of the parents
 pub const MERGE_HEAD_FILE: &str = "MERGE_HEAD";

@@ -268,7 +268,7 @@ mod tests {
             repositories::add(&repo, &file).await?;
             let commit = repositories::commit(&repo, "Add hello.txt")?;
 
-            let workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+            let workspace = repositories::workspaces::create_temporary(&repo, &commit).await?;
 
             let cases = [
                 ("http://127.0.0.1/secret", "loopback address"),

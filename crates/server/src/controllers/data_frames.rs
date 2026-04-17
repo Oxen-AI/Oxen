@@ -230,7 +230,7 @@ pub async fn from_directory(
     let commit_message = data.commit_message.unwrap_or("".to_string());
     let user_email = data.user_email.unwrap_or("".to_string());
     let recursive = data.recursive.unwrap_or(false);
-    let temp_workspace = repositories::workspaces::create_temporary(&repo, &commit)?;
+    let temp_workspace = repositories::workspaces::create_temporary(&repo, &commit).await?;
     let user_name = data.user_name.unwrap_or("".to_string());
     let new_commit = NewCommitBody {
         author: user_name,

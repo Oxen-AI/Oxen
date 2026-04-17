@@ -1662,6 +1662,7 @@ pub fn maybe_cleanup_repo(repo_dir: &Path) -> Result<(), OxenError> {
     core::refs::ref_manager::remove_from_cache_with_children(repo_dir)?;
     core::db::data_frames::df_db::remove_df_db_from_cache_with_children(repo_dir)?;
     core::db::dir_hashes::dir_hashes_db::remove_from_cache_with_children(repo_dir)?;
+    core::workspaces::workspace_name_index::remove_from_cache_with_children(repo_dir);
 
     if should_cleanup() {
         log::debug!("maybe_cleanup_repo: cleaning up repo: {repo_dir:?}");
