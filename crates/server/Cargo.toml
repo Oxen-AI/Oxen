@@ -34,7 +34,7 @@ async_zip = { workspace = true }
 bytesize = { workspace = true }
 clap = { workspace = true }
 derive_more = { workspace = true }
-dotenv = { workspace = true }
+dotenvy = { workspace = true }
 dunce = { workspace = true }
 flate2 = { workspace = true }
 futures-util = { workspace = true }
