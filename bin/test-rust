@@ -2,14 +2,15 @@
 #
 # Build, configure, and run the Oxen test suite.
 #
-# Usage: test-rust [--ffmpeg] [--keep] [--skip-deps] [-p|--python] [extra args...]
+# Usage: test-rust [--ffmpeg] [--keep] [--install-deps] [-p|--python] [extra args...]
 #
-#   --ffmpeg      Enable the "ffmpeg" cargo feature for build and test commands.
-#   --keep        Do not remove test data (in data/ox and data/test/runs) on cleanup — useful for
-#                 debugging failed tests.
-#   --skip-deps   Skip checking/installing prerequisites (install-prereqs).
-#   -p|--python   Run the oxen-python test suite (via pytest) instead of the Rust test suite.
-#                 Builds the native extension with maturin.
+#   --ffmpeg        Enable the "ffmpeg" cargo feature for build and test commands.
+#   --keep          Do not remove test data (in data/ox and data/test/runs) on cleanup — useful for
+#                   debugging failed tests.
+#   --install-deps  Check and install prerequisites (install-prereqs) before running tests.
+#                   By default, prereqs are not checked.
+#   -p|--python     Run the oxen-python test suite (via pytest) instead of the Rust test suite.
+#                   Builds the native extension with maturin.
 #   All remaining arguments are forwarded to `cargo nextest run` or `pytest` (with -p).
 #
 # Examples:
@@ -21,13 +22,13 @@
 # Check for flags
 FEATURE_ARGS=""
 KEEP_DATA=false
-SKIP_DEPS=false
+INSTALL_DEPS=false
 RUN_PYTHON=false
 while true; do
     case "${1:-}" in
         --ffmpeg)        FEATURE_ARGS="-F ffmpeg"; shift ;;
         --keep)          KEEP_DATA=true; shift ;;
-        --skip-deps)     SKIP_DEPS=true; shift ;;
+        --install-deps)  INSTALL_DEPS=true; shift ;;
         -p|--python)     RUN_PYTHON=true; shift ;;
         *) break ;;
     esac
@@ -116,11 +117,9 @@ if ! setup_ramdisk; then
     echo "==> Ramdisk setup failed, using regular filesystem."
 fi
 
-# Ensure all prerequisites are installed
-if [ "$SKIP_DEPS" = false ]; then
+# Ensure all prerequisites are installed (opt-in via --install-deps)
+if [ "$INSTALL_DEPS" = true ]; then
     "$SCRIPT_DIR/install-prereqs"
-else
-    echo "==> Skipping dependency check (--skip-deps)"
 fi
 
 # Build
