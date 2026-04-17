@@ -251,17 +251,13 @@ fn validate_create_constraints(
             // Check name doesn't collide with an existing workspace name
             let idx = workspace_name_index::get_index(base_repo)?;
             if idx.has_name(name)? {
-                return Err(OxenError::basic_str(format!(
-                    "A workspace with the name {name} already exists"
-                )));
+                return Err(OxenError::WorkspaceAlreadyExists(name.to_string()));
             }
             // Check name doesn't collide with an existing workspace ID
             let name_as_id_hash = util::hasher::hash_str_sha256(name);
             let name_as_id_dir = Workspace::workspace_dir(base_repo, &name_as_id_hash);
             if Workspace::config_path_from_dir(&name_as_id_dir).exists() {
-                return Err(OxenError::basic_str(format!(
-                    "A workspace with the name {name} already exists"
-                )));
+                return Err(OxenError::WorkspaceAlreadyExists(name.to_string()));
             }
         }
         return Ok(());
@@ -351,9 +347,9 @@ fn check_existing_workspace_name(
     workspace_name: &str,
 ) -> Result<(), OxenError> {
     if workspace.name == Some(workspace_name.to_string()) || *workspace_name == workspace.id {
-        return Err(OxenError::basic_str(format!(
-            "A workspace with the name {workspace_name} already exists"
-        )));
+        return Err(OxenError::WorkspaceAlreadyExists(
+            workspace_name.to_string(),
+        ));
     }
     Ok(())
 }
