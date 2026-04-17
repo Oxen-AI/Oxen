@@ -7,8 +7,8 @@ use rand::distr::weighted::WeightedIndex;
 use rand::rngs::StdRng;
 
 use crate::explore::bench::common::{
-    self, DurStats, LmdbSetup, ReadOp, TreeGenArgs, print_path_by_depth, run_read_op,
-    sample_target_count,
+    self, DurStats, LmdbSetup, ReadOp, TreeGenArgs, print_path_by_depth, print_path_depth_log_fit,
+    run_read_op, sample_target_count,
 };
 use crate::explore::hash::{HasHash, Hash, HexHash};
 use crate::explore::lazy_merkle::UncomittedRoot;
@@ -271,6 +271,7 @@ pub async fn run(args: MixedArgs) {
     if !all_path_samples.is_empty() {
         println!();
         print_path_by_depth(&all_path_samples);
+        print_path_depth_log_fit(&all_path_samples);
     }
 
     if !write_durs.is_empty() {

@@ -5,7 +5,8 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 
 use crate::explore::bench::common::{
-    self, DurStats, LmdbSetup, ReadOp, TreeGenArgs, print_path_by_depth, run_read_op,
+    self, DurStats, LmdbSetup, ReadOp, TreeGenArgs, print_path_by_depth, print_path_depth_log_fit,
+    run_read_op,
 };
 use crate::explore::hash::{HasHash, HexHash};
 use crate::explore::lazy_merkle::UncomittedRoot;
@@ -116,4 +117,5 @@ pub async fn run(args: ReadArgs) {
     DurStats::from_durations(&mut path_only_durs).print("path()");
     println!();
     print_path_by_depth(&path_samples);
+    print_path_depth_log_fit(&path_samples);
 }

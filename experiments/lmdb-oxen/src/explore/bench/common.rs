@@ -24,6 +24,10 @@ const LMDB_MAP_SIZE_BYTES: usize = 2 * 1024 * 1024 * 1024;
 
 const MIN_SAMPLES_PER_BUCKET: usize = 10;
 
+// Fewer than this many distinct depth buckets and a log-fit is degenerate
+// (two points will trivially have R² = 1 regardless of shape).
+const MIN_BUCKETS_FOR_LOG_FIT: usize = 3;
+
 #[derive(Args, Debug, Clone)]
 pub struct TreeGenArgs {
     /// Hard upper bound on the size of any generated tree.
@@ -279,6 +283,119 @@ pub fn print_path_by_depth(samples: &[(usize, Duration)]) {
             "  {:>5} | {:>5} | {:>11?} | {:>11?} | {:>11?}",
             depth, s.count, s.mean, s.p50, s.p95
         );
+    }
+}
+
+/// Fit `mean_time_ns = a * ln(depth) + b` via ordinary least squares on
+/// per-depth mean durations. Reports coefficients, R² (coefficient of
+/// determination), and the model prediction alongside observed means so the
+/// reader can judge residuals by eye.
+///
+/// Only buckets with `>= MIN_SAMPLES_PER_BUCKET` samples are used — matches
+/// what `print_path_by_depth` prints, so the fit is over the same visible data.
+pub fn print_path_depth_log_fit(samples: &[(usize, Duration)]) {
+    let mut by_depth: BTreeMap<usize, Vec<Duration>> = BTreeMap::new();
+    for &(d, dur) in samples {
+        by_depth.entry(d).or_default().push(dur);
+    }
+
+    // (ln_depth, mean_time_ns, depth)
+    let mut points: Vec<(f64, f64, usize)> = Vec::new();
+    for (&depth, ds) in &by_depth {
+        if ds.len() < MIN_SAMPLES_PER_BUCKET || depth == 0 {
+            continue;
+        }
+        let mean_ns: f64 = ds.iter().map(|d| d.as_nanos() as f64).sum::<f64>() / ds.len() as f64;
+        points.push(((depth as f64).ln(), mean_ns, depth));
+    }
+
+    if points.len() < MIN_BUCKETS_FOR_LOG_FIT {
+        println!(
+            "path() log-fit: skipped — only {} depth bucket(s) with >= {} samples (need >= {})",
+            points.len(),
+            MIN_SAMPLES_PER_BUCKET,
+            MIN_BUCKETS_FOR_LOG_FIT,
+        );
+        return;
+    }
+
+    // Simple OLS on (x = ln(depth), y = mean_ns): y = a*x + b
+    let n = points.len() as f64;
+    let sum_x: f64 = points.iter().map(|p| p.0).sum();
+    let sum_y: f64 = points.iter().map(|p| p.1).sum();
+    let sum_xy: f64 = points.iter().map(|p| p.0 * p.1).sum();
+    let sum_xx: f64 = points.iter().map(|p| p.0 * p.0).sum();
+
+    let denom = n * sum_xx - sum_x * sum_x;
+    if denom.abs() < f64::EPSILON {
+        println!("path() log-fit: skipped — degenerate x values (all ln(depth) identical)");
+        return;
+    }
+    let slope = (n * sum_xy - sum_x * sum_y) / denom;
+    let intercept = (sum_y - slope * sum_x) / n;
+
+    let mean_y = sum_y / n;
+    let ss_tot: f64 = points.iter().map(|p| (p.1 - mean_y).powi(2)).sum();
+    let ss_res: f64 = points
+        .iter()
+        .map(|p| {
+            let pred = slope * p.0 + intercept;
+            (p.1 - pred).powi(2)
+        })
+        .sum();
+    let r_squared = if ss_tot > f64::EPSILON {
+        1.0 - ss_res / ss_tot
+    } else {
+        f64::NAN
+    };
+
+    println!();
+    println!("path() log-fit: mean_time_ns = a * ln(depth) + b");
+    println!("  a (slope):     {slope:>14.2}");
+    println!("  b (intercept): {intercept:>14.2}");
+    println!(
+        "  R²:            {:>14.4}  ({})",
+        r_squared,
+        goodness_label(r_squared),
+    );
+    println!(
+        "  buckets used:  {} (depths {}..={}, >= {} samples each)",
+        points.len(),
+        points.first().map(|p| p.2).unwrap_or(0),
+        points.last().map(|p| p.2).unwrap_or(0),
+        MIN_SAMPLES_PER_BUCKET,
+    );
+    println!();
+    println!("  depth |    observed mean |   model prediction |      residual");
+    for (ln_d, obs_ns, depth) in &points {
+        let pred_ns = slope * ln_d + intercept;
+        let obs = Duration::from_nanos(obs_ns.round().max(0.0) as u64);
+        let pred_str = if pred_ns.is_finite() && pred_ns >= 0.0 {
+            format!("{:?}", Duration::from_nanos(pred_ns.round() as u64))
+        } else {
+            format!("{pred_ns:.0} ns (invalid)")
+        };
+        let residual_ns = obs_ns - pred_ns;
+        println!(
+            "  {:>5} | {:>16?} | {:>18} | {:>+10.0} ns",
+            depth, obs, pred_str, residual_ns,
+        );
+    }
+}
+
+fn goodness_label(r_squared: f64) -> &'static str {
+    if !r_squared.is_finite() {
+        "undefined"
+    } else if r_squared > 0.95 {
+        "excellent"
+    } else if r_squared > 0.80 {
+        "good"
+    } else if r_squared > 0.50 {
+        "moderate"
+    } else if r_squared > 0.0 {
+        "poor"
+    } else {
+        "worse than mean-only baseline"
     }
 }
 
