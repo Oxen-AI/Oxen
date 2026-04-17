@@ -1,5 +1,5 @@
-use dotenv::dotenv;
-use dotenv::from_filename;
+use dotenvy::dotenv;
+use dotenvy::from_filename;
 use liboxen::config::UserConfig;
 use liboxen::constants::OXEN_VERSION;
 use liboxen::error::OxenError;

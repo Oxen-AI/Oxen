@@ -60,7 +60,7 @@ derive_more = { version = "1.0.0", features = ["full"] }
 dialoguer = "0.11.0"
 difference = "2.0.0"
 dirs = "5.0.1"
-dotenv = "0.15.0"
+dotenvy = "0.15.7"
 duckdb = { package = "duckdb", version = "=1.10502.0", default-features = false, features = ["serde_json"] }
 dunce = "1.0.4"
 env_logger = "0.11.3"
