@@ -36,3 +36,6 @@ bindgen = { version = "0.71.1", default-features = false, features = ["runtime"]
 cc = { version = "1.0", features = ["parallel"] }
 glob = { workspace = true }
 pkg-config = { version = "0.3", optional = true }
+
+[lints]
+workspace = true

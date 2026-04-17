@@ -144,6 +144,9 @@ s3s = { workspace = true }
 s3s-fs = { workspace = true }
 serial_test = { workspace = true }
 
+[lints]
+workspace = true
+
 [[bench]]
 name = "add"
 harness = false
