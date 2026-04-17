@@ -288,7 +288,7 @@ pub fn row_from_str_and_schema(
 
     let mut vec: Vec<Column> = Vec::new();
 
-    for ((name, dtype), value) in schema.iter_names_and_dtypes().zip(values.into_iter()) {
+    for ((name, dtype), value) in schema.iter_names_and_dtypes().zip(values) {
         let typed_val = val_from_str_and_dtype(value, dtype);
         match Series::from_any_values_and_dtype(name.clone(), &[typed_val], dtype, false) {
             Ok(series) => {

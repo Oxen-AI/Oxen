@@ -46,8 +46,8 @@ pub async fn download_zip(req: HttpRequest) -> Result<HttpResponse, OxenHttpErro
     let files = dir_node.list_files()?;
 
     let total_bytes: u64 = files
-        .iter()
-        .filter_map(|(_, node)| {
+        .values()
+        .filter_map(|node| {
             if let EMerkleTreeNode::File(file_node) = &node.node {
                 Some(file_node.num_bytes())
             } else {

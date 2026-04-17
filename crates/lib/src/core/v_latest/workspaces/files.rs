@@ -743,8 +743,7 @@ pub fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenError>
         let compressed_size = zip_file.compressed_size();
 
         // Check individual file compression ratio
-        if compressed_size > 0 {
-            let compression_ratio = uncompressed_size / compressed_size;
+        if let Some(compression_ratio) = uncompressed_size.checked_div(compressed_size) {
             if compression_ratio > MAX_COMPRESSION_RATIO {
                 return Err(OxenError::basic_str(format!(
                     "Suspicious zip compression ratio: {compression_ratio} detected"

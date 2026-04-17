@@ -102,7 +102,7 @@ pub fn list_entry_versions_for_commit(
     let mut branch_commits = repositories::commits::list_from(repo, commit_id)?;
 
     // Sort on timestamp oldest to newest
-    branch_commits.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+    branch_commits.sort_by_key(|a| a.timestamp);
 
     let mut result: Vec<(Commit, CommitEntry)> = Vec::new();
     let mut seen_hashes: HashSet<String> = HashSet::new();

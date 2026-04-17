@@ -444,13 +444,12 @@ impl MerkleTreeNode {
         old_hashes: &HashSet<MerkleHash>,
     ) -> Result<(), OxenError> {
         match &self.node {
-            EMerkleTreeNode::Directory(_) | EMerkleTreeNode::VNode(_) => {
+            EMerkleTreeNode::Directory(_) | EMerkleTreeNode::VNode(_)
                 // If the dir is in old_hashes, no need to search further
-                if old_hashes.contains(&self.hash) {
+                if old_hashes.contains(&self.hash) => {
                     new_hashes.insert(self.hash);
                     return Ok(());
                 }
-            }
             _ => {}
         };
 

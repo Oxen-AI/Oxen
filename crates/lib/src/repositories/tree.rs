@@ -813,13 +813,11 @@ fn r_list_files_by_type(
     let traversed_path = traversed_path.as_ref();
     for child in &node.children {
         match &child.node {
-            EMerkleTreeNode::File(file_node) => {
-                if file_node.data_type() == data_type {
-                    let mut file_node = file_node.to_owned();
-                    let full_path = traversed_path.join(file_node.name());
-                    file_node.set_name(&full_path.to_string_lossy());
-                    file_nodes.insert(file_node);
-                }
+            EMerkleTreeNode::File(file_node) if file_node.data_type() == data_type => {
+                let mut file_node = file_node.to_owned();
+                let full_path = traversed_path.join(file_node.name());
+                file_node.set_name(&full_path.to_string_lossy());
+                file_nodes.insert(file_node);
             }
             EMerkleTreeNode::Directory(dir_node) => {
                 let full_path = traversed_path.join(dir_node.name());
