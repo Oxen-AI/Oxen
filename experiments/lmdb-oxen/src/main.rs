@@ -30,7 +30,7 @@ async fn main() {
     let cli = Cli::parse();
     match cli.command {
         Command::Existing { command } => {
-            existing::old_main::run(command);
+            existing::old_main::run(command).unwrap();
         }
         Command::Explore { command } => {
             explore::new_main::run(command).await;
