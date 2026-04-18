@@ -1,22 +1,33 @@
 use serde::{Deserialize, Serialize};
 
-use crate::explore::hash::{HasHash, Hash, HexHash};
+use crate::explore::hash::{ContentHash, HasContentHash, HasLocationHash, HexHash, LocationHash};
 use crate::explore::merkle_reader::MerkleReader;
 use crate::explore::paths::{AbsolutePath, Name};
 
+/// Lazy (i.e. stored-and-reloaded) view of a Merkle tree node. Each record
+/// represents **one occurrence** of a file or directory at a specific
+/// position in some tree. The LMDB key for the record is its
+/// [`LocationHash`] (not stored inside — it's the key, known by the caller
+/// that fetched it).
 #[derive(Debug, Serialize, Deserialize)]
 pub enum MerkleTreeL {
     Dir {
-        hash: Hash,
+        /// Hash of this directory's content — `hash_of_hashes` over its
+        /// children's content hashes. Deduplicable across occurrences.
+        content_hash: ContentHash,
         name: Name,
+        /// `None` means the parent is the commit root.
+        /// This means that _this_ directory is at the root of the repository.
         parent: Option<LazyNode>,
+        /// Child records, identified by their own location hashes.
         children: Vec<LazyNode>,
     },
     File {
-        // hash is in content (LazyData)
+        /// Hash of this file's bytes.
+        content_hash: ContentHash,
         name: Name,
+        /// This means that _this_ file is at the root of the repository.
         parent: Option<LazyNode>,
-        content: LazyData,
     },
 }
 
@@ -34,12 +45,12 @@ impl MerkleTreeL {
     }
 }
 
-impl HasHash for MerkleTreeL {
+impl HasContentHash for MerkleTreeL {
     #[inline]
-    fn hash(&self) -> Hash {
+    fn content_hash(&self) -> ContentHash {
         match self {
-            MerkleTreeL::Dir { hash, .. } => *hash,
-            MerkleTreeL::File { content, .. } => content.hash(),
+            MerkleTreeL::Dir { content_hash, .. } => *content_hash,
+            MerkleTreeL::File { content_hash, .. } => *content_hash,
         }
     }
 }
@@ -54,51 +65,53 @@ impl HasName for MerkleTreeL {
     }
 }
 
+/// Intrinsic content of a tree node, stored in the dedup-friendly
+/// `contents` table keyed by [`ContentHash`]. Unlike `MerkleTreeL`, this
+/// has no name / parent / child-location info — just the content itself.
+#[derive(Debug, Serialize, Deserialize)]
+pub enum NodeContent {
+    /// Children's **content** hashes, in the order that `hash_of_hashes`
+    /// was computed over.
+    Dir { children: Vec<ContentHash> },
+    /// Lightweight file metadata. File bytes live on disk; this is enough
+    /// to describe the content at a glance.
+    File { size: u64 },
+}
+
+/// Serializable handle pointing to a stored `MerkleTreeL` node, by its
+/// [`LocationHash`]. Guaranteed-by-type to be a *location*, not a content.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct LazyNode(Hash);
+pub struct LazyNode(LocationHash);
 
 impl LazyNode {
     #[inline(always)]
-    pub(crate) fn new(hash: Hash) -> Self {
-        Self(hash)
+    pub(crate) fn new(location: LocationHash) -> Self {
+        Self(location)
     }
 }
 
-impl HasHash for LazyNode {
+impl HasLocationHash for LazyNode {
     #[inline(always)]
-    fn hash(&self) -> Hash {
+    fn location_hash(&self) -> LocationHash {
         self.0
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct LazyData(Hash);
-
-impl LazyData {
-    #[inline(always)]
-    pub(crate) fn new(hash: Hash) -> Self {
-        Self(hash)
-    }
-
-    /// Reconstructs the relative path to this file node's data
-    /// and reads it from storage.
-    pub async fn load<DB: MerkleReader>(&self, db: &DB) -> Result<Vec<u8>, LoadError<DB>> {
-        let Some(rel_path) = db.path(self.hash()).map_err(LoadError::Store)? else {
-            return Err(LoadError::Path(HexHash::from(self.hash())));
-        };
-
-        let path = AbsolutePath::from(db.repository(), &rel_path);
-        tokio::fs::read(path.as_path())
-            .await
-            .map_err(LoadError::Read)
-    }
-}
-
-impl HasHash for LazyData {
-    #[inline(always)]
-    fn hash(&self) -> Hash {
-        self.0
-    }
+/// Load a file's bytes from disk, given its storage handle in `db`.
+///
+/// Walks the parent chain of `file_location` via `db.path(...)` to
+/// reconstruct the file's repo-relative path, then reads the file.
+pub async fn load_file_bytes<DB: MerkleReader>(
+    db: &DB,
+    file_location: LocationHash,
+) -> Result<Vec<u8>, LoadError<DB>> {
+    let Some(rel_path) = db.path(file_location).map_err(LoadError::Store)? else {
+        return Err(LoadError::Path(HexHash::from(file_location)));
+    };
+    let path = AbsolutePath::from(db.repository(), &rel_path);
+    tokio::fs::read(path.as_path())
+        .await
+        .map_err(LoadError::Read)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -106,28 +119,41 @@ pub enum LoadError<DB: MerkleReader> {
     #[error("Error from Merkle tree data store: {0}")]
     Store(DB::Error),
 
-    #[error("Cannot determine relative path for hash: {0}")]
+    #[error("Cannot determine relative path for location: {0}")]
     Path(HexHash),
 
     #[error("{0}")]
     Read(std::io::Error),
 }
 
+/// A committed root (a single repository version).
+///
+/// The commit's identity is its [`ContentHash`] (derived from the children's
+/// content hashes via `hash_of_hashes`). Children are referenced by their
+/// [`LocationHash`] so each direct child of the commit has a well-defined
+/// position even if its content hash is shared with a node elsewhere.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Root {
     repository: AbsolutePath,
-    hash: Hash,
+    hash: ContentHash,
     children: Vec<LazyNode>,
-    parent: Option<Hash>,
+    parent: Option<ContentHash>,
 }
 
 impl Root {
-    /// Computes the hash of the children on creation.
-    pub fn new(repository: AbsolutePath, children: Vec<LazyNode>, parent: Option<Hash>) -> Self {
+    /// Compute the commit hash from the children's content hashes, then pair
+    /// with a pre-built list of children locations. Caller computes the
+    /// locations with access to the commit hash they drive.
+    pub fn new(
+        repository: AbsolutePath,
+        child_content_hashes: &[ContentHash],
+        children_locations: Vec<LazyNode>,
+        parent: Option<ContentHash>,
+    ) -> Self {
         Self {
             repository,
-            hash: Hash::hash_of_hashes(children.iter()),
-            children,
+            hash: ContentHash::hash_of_hashes(child_content_hashes.iter()),
+            children: children_locations,
             parent,
         }
     }
@@ -135,58 +161,52 @@ impl Root {
     pub fn children(&self) -> impl Iterator<Item = &LazyNode> {
         self.children.iter()
     }
+
+    #[allow(dead_code)] // Public accessor intended for future callers; not consumed yet.
+    pub fn repository(&self) -> &AbsolutePath {
+        &self.repository
+    }
+
+    #[allow(dead_code)] // Parent-commit accessor intended for future callers; not consumed yet.
+    pub fn parent(&self) -> Option<ContentHash> {
+        self.parent
+    }
 }
 
-impl HasHash for Root {
+impl HasContentHash for Root {
     #[inline(always)]
-    fn hash(&self) -> Hash {
+    fn content_hash(&self) -> ContentHash {
         self.hash
     }
 }
 
 pub struct UncomittedRoot {
-    pub parent: Option<Hash>,
+    pub parent: Option<ContentHash>,
     pub repository: AbsolutePath,
     pub children: Vec<MerkleTreeB>,
 }
 
+/// In-memory tree ("before-committed") used during generation. Each node
+/// carries only its content hash; location hashes are derived at write time.
 #[derive(Debug)]
 pub enum MerkleTreeB {
     Dir {
-        hash: Hash,
+        content_hash: ContentHash,
         name: Name,
         children: Vec<Self>,
     },
     File {
-        hash: Hash,
+        content_hash: ContentHash,
         name: Name,
     },
 }
 
-macro_rules! impl_into_lazy_node {
-    ($type:path) => {
-        impl From<$type> for LazyNode {
-            fn from(tree: $type) -> Self {
-                Self::new(tree.hash())
-            }
-        }
-
-        impl<'a> From<&'a $type> for LazyNode {
-            fn from(tree: &'a $type) -> Self {
-                Self::new(tree.hash())
-            }
-        }
-    };
-}
-impl_into_lazy_node!(MerkleTreeB);
-impl_into_lazy_node!(Box<MerkleTreeB>);
-
-impl HasHash for MerkleTreeB {
+impl HasContentHash for MerkleTreeB {
     #[inline(always)]
-    fn hash(&self) -> Hash {
+    fn content_hash(&self) -> ContentHash {
         match self {
-            MerkleTreeB::Dir { hash, .. } => *hash,
-            MerkleTreeB::File { hash, .. } => *hash,
+            MerkleTreeB::Dir { content_hash, .. } => *content_hash,
+            MerkleTreeB::File { content_hash, .. } => *content_hash,
         }
     }
 }

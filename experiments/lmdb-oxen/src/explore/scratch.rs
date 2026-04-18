@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use liboxen::error::OxenError;
 use thiserror::Error as ThisError;
 
-use crate::explore::hash::HasHash;
-use crate::explore::hash::Hash;
+use crate::explore::hash::ContentHash as Hash;
+use crate::explore::hash::HasContentHash as HasHash;
 use crate::explore::paths::AbsolutePath;
 
 #[derive(Debug, ThisError)]
@@ -146,13 +146,13 @@ impl MerkleTree {
 }
 
 impl HasHash for MerkleTree {
-    fn hash(&self) -> Hash {
+    fn content_hash(&self) -> Hash {
         self.hash()
     }
 }
 
 impl HasHash for Box<MerkleTree> {
-    fn hash(&self) -> Hash {
+    fn content_hash(&self) -> Hash {
         (**self).hash()
     }
 }

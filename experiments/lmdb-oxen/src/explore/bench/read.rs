@@ -8,7 +8,7 @@ use crate::explore::bench::common::{
     self, DurStats, LmdbSetup, ReadOp, TreeGenArgs, print_path_by_depth, print_path_depth_log_fit,
     run_read_op,
 };
-use crate::explore::hash::{HasHash, HexHash};
+use crate::explore::hash::{HasContentHash, HexHash};
 use crate::explore::lazy_merkle::UncomittedRoot;
 use crate::explore::merkle_reader::MerkleReader;
 use crate::explore::merkle_store::MerkleStore;
@@ -71,12 +71,12 @@ pub async fn run(args: ReadArgs) {
     let commit_elapsed = t_commit.elapsed();
     println!(
         "commit: {} (in {:?})",
-        HexHash::new(commit.hash()),
+        HexHash::from(commit.content_hash()),
         commit_elapsed
     );
 
     let catalog = stats.node_catalog;
-    let commits = vec![commit.hash()];
+    let commits = vec![commit.content_hash()];
 
     // Warmup: interleave all three ops, discard timings.
     if args.warmup_count > 0 {

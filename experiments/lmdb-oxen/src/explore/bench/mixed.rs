@@ -10,7 +10,7 @@ use crate::explore::bench::common::{
     self, DurStats, LmdbSetup, ReadOp, TreeGenArgs, fit_linear_ols, print_path_by_depth,
     print_path_depth_log_fit, run_read_op, sample_target_count,
 };
-use crate::explore::hash::{HasHash, Hash, HexHash};
+use crate::explore::hash::{ContentHash, HasContentHash, HexHash, LocationHash};
 use crate::explore::lazy_merkle::UncomittedRoot;
 use crate::explore::merkle_reader::MerkleReader;
 use crate::explore::merkle_store::MerkleStore;
@@ -128,7 +128,7 @@ pub async fn run(args: MixedArgs) {
     // --- Initial tree + commit ---
     let (root_children, stats) = common::generate(&mut rng, &tree_args, tree_args.avg_size);
     let initial_nodes = stats.files + stats.dirs;
-    let mut catalog: Vec<(Hash, usize)> = stats.node_catalog;
+    let mut catalog: Vec<(LocationHash, usize)> = stats.node_catalog;
     let t_init = Instant::now();
     let initial_commit = store
         .commit_tree(UncomittedRoot {
@@ -138,13 +138,13 @@ pub async fn run(args: MixedArgs) {
         })
         .expect("failed to commit initial tree");
     let init_elapsed = t_init.elapsed();
-    let mut commits: Vec<Hash> = vec![initial_commit.hash()];
+    let mut commits: Vec<ContentHash> = vec![initial_commit.content_hash()];
     println!(
         "initial tree: {} nodes ({} files, {} dirs), commit {} in {:?}",
         initial_nodes,
         stats.files,
         stats.dirs,
-        HexHash::new(initial_commit.hash()),
+        HexHash::from(initial_commit.content_hash()),
         init_elapsed,
     );
 
@@ -167,7 +167,7 @@ pub async fn run(args: MixedArgs) {
                     children,
                 })
                 .expect("failed to commit pre-seed tree");
-            commits.push(c.hash());
+            commits.push(c.content_hash());
         }
         println!(
             "pre-seed: committed {} additional trees (untimed). catalog={} entries, commits={}",
@@ -245,7 +245,7 @@ pub async fn run(args: MixedArgs) {
                 .expect("failed to commit mid-bench tree");
             let elapsed = t_write.elapsed();
             catalog.extend(st.node_catalog);
-            commits.push(c.hash());
+            commits.push(c.content_hash());
             write_records.push((written_nodes, elapsed));
             let nps = written_nodes as f64 / elapsed.as_secs_f64();
             (

@@ -2,24 +2,27 @@ use heed::byteorder::LE;
 use heed::types::{Bytes, DecodeIgnore, U128};
 use heed::{Database, Env, EnvOpenOptions};
 
-use serde::Serialize;
-
-use crate::explore::hash::{HasHash, Hash};
+use crate::explore::hash::{ContentHash, HasContentHash, LocationHash};
+use crate::explore::lazy_merkle::{MerkleTreeL, NodeContent, Root};
+use crate::explore::merkle_reader::MerkleReader;
 use crate::explore::merkle_writer::{MerkleWriter, WriteSession};
 use crate::explore::paths::AbsolutePath;
-use crate::explore::{
-    lazy_merkle::{MerkleTreeL, Root},
-    merkle_reader::MerkleReader,
-};
 
-/// MUST USE LITTLE ENDIAN (LE) BECAUSE THIS MATCHES RUST'S LAYOUT
-type HashLmdb = U128<LE>;
+/// MUST USE LITTLE ENDIAN (LE) so the byte layout matches
+/// `ContentHash::as_bytes` / `LocationHash::as_bytes`.
+type KeyLmdb = U128<LE>;
 type ValueLmdb = Bytes;
 
+const DB_LOCATIONS: &str = "locations";
+const DB_CONTENTS: &str = "contents";
+const DB_COMMITS: &str = "commits";
+
 pub struct LmdbMerkleDB {
-    #[allow(dead_code)]
     repo_root: AbsolutePath,
     lmdb_env: Env,
+    locations: Database<KeyLmdb, ValueLmdb>,
+    contents: Database<KeyLmdb, ValueLmdb>,
+    commits: Database<KeyLmdb, ValueLmdb>,
 }
 
 impl std::fmt::Debug for LmdbMerkleDB {
@@ -35,38 +38,68 @@ impl LmdbMerkleDB {
     pub fn new(
         repo_root: &AbsolutePath,
         db_location: &AbsolutePath,
-        options: &EnvOpenOptions,
+        options: EnvOpenOptions,
     ) -> Result<Self, <Self as MerkleReader>::Error> {
+        // Three named DBs: locations / contents / commits.
+        let options = {
+            let mut options = options;
+            options.max_dbs(3);
+            options
+        };
+
         let lmdb_env = unsafe { options.open(db_location.as_path())? };
 
         let mut wtxn = lmdb_env.write_txn()?;
-        lmdb_env.create_database::<HashLmdb, ValueLmdb>(&mut wtxn, None)?;
+        let locations =
+            lmdb_env.create_database::<KeyLmdb, ValueLmdb>(&mut wtxn, Some(DB_LOCATIONS))?;
+        let contents =
+            lmdb_env.create_database::<KeyLmdb, ValueLmdb>(&mut wtxn, Some(DB_CONTENTS))?;
+        let commits =
+            lmdb_env.create_database::<KeyLmdb, ValueLmdb>(&mut wtxn, Some(DB_COMMITS))?;
         wtxn.commit()?;
 
         Ok(Self {
             repo_root: repo_root.clone(),
             lmdb_env,
+            locations,
+            contents,
+            commits,
         })
     }
 
-    /// Actually access and decode some data stored in LMDB.
-    pub(crate) fn retrieve<T>(&self, hash: Hash) -> Result<Option<T>, <Self as MerkleReader>::Error>
+    /// Retrieve the value and decode it into a struct of type `T`.
+    /// Error if decoding fails. None if no key exists.
+    #[inline(always)]
+    fn retrieve_from<T>(
+        &self,
+        db: Database<KeyLmdb, ValueLmdb>,
+        key: u128,
+    ) -> Result<Option<T>, heed::Error>
     where
         for<'de> T: serde::Deserialize<'de>,
     {
         let rtxn = self.lmdb_env.read_txn()?;
-        let db: Database<HashLmdb, ValueLmdb> = self
-            .lmdb_env
-            .open_database(&rtxn, None)?
-            .expect("Invariant violated: database has not been created.");
-
-        let Some(bytes) = db.get(&rtxn, &hash.into())? else {
+        let Some(bytes) = db.get(&rtxn, &key)? else {
             return Ok(None);
         };
-
         let payload =
             rmp_serde::from_slice(bytes).map_err(|e| heed::Error::Decoding(Box::new(e)))?;
         Ok(Some(payload))
+    }
+
+    /// True if the given key exists in the database. False otherwise.
+    /// Does no decoding or other handling of the stored value.
+    #[inline(always)]
+    fn key_present(
+        &self,
+        db: Database<KeyLmdb, ValueLmdb>,
+        key: u128,
+    ) -> Result<bool, heed::Error> {
+        let rtxn = self.lmdb_env.read_txn()?;
+        Ok(db
+            .remap_data_type::<DecodeIgnore>()
+            .get(&rtxn, &key)?
+            .is_some())
     }
 }
 
@@ -77,46 +110,28 @@ impl MerkleReader for LmdbMerkleDB {
         &self.repo_root
     }
 
-    /// If true, then there is a node in the Merkle tree that has this hash.
-    ///
-    /// This always means that either `self.node()` xor `self.commit()` will return a
-    /// non-`None` value. Note that this is a mutually exclusive relationship: exactly
-    /// one of `node` or `commit` is non-`None` if `exists` is `true`.
-    fn exists(&self, hash: Hash) -> Result<bool, Self::Error> {
-        let rtxn = self.lmdb_env.read_txn()?;
-        let db: Database<HashLmdb, ValueLmdb> = self
-            .lmdb_env
-            .open_database(&rtxn, None)?
-            .expect("Invariant violated: database has not been created.");
-
-        Ok(db
-            // We only care about whether or not this key exists.
-            // This remap data type ignores the value.
-            .remap_data_type::<DecodeIgnore>()
-            .get(&rtxn, &hash.into())?
-            .is_some())
+    fn location_exists(&self, location: LocationHash) -> Result<bool, Self::Error> {
+        self.key_present(self.locations, location.into())
     }
 
-    /// Obtains a reference to the Merkle tree node for the given hash.
-    ///
-    /// Corresponds to a real file or directory under version control.
-    /// None means there is no node with that hash.
-    fn node(&self, hash: Hash) -> Result<Option<MerkleTreeL>, Self::Error> {
-        match self.retrieve(hash) {
-            Err(heed::Error::Decoding(_)) => Ok(None),
-            other => other,
-        }
+    fn content_exists(&self, content: ContentHash) -> Result<bool, Self::Error> {
+        self.key_present(self.contents, content.into())
     }
 
-    /// Obtains the commit node, which is the root of the Merkle tree.
-    ///
-    /// Corresponds to the complete state of the repository at a given commit.
-    /// None means there is no commit with that hash.
-    fn commit(&self, hash: Hash) -> Result<Option<Root>, Self::Error> {
-        match self.retrieve(hash) {
-            Err(heed::Error::Decoding(_)) => Ok(None),
-            other => other,
-        }
+    fn commit_exists(&self, commit: ContentHash) -> Result<bool, Self::Error> {
+        self.key_present(self.commits, commit.into())
+    }
+
+    fn node(&self, location: LocationHash) -> Result<Option<MerkleTreeL>, Self::Error> {
+        self.retrieve_from(self.locations, location.into())
+    }
+
+    fn content(&self, content: ContentHash) -> Result<Option<NodeContent>, Self::Error> {
+        self.retrieve_from(self.contents, content.into())
+    }
+
+    fn commit(&self, commit: ContentHash) -> Result<Option<Root>, Self::Error> {
+        self.retrieve_from(self.commits, commit.into())
     }
 }
 
@@ -124,49 +139,61 @@ impl MerkleWriter for LmdbMerkleDB {
     type Error = heed::Error;
     type Session<'a> = LmdbWriteSession<'a>;
 
-    /// Opens a write transaction in the "unamed" LMDB database.
-    fn write_session<'a>(&'a self) -> Result<Self::Session<'a>, Self::Error> {
-        let mut wtxn = self.lmdb_env.write_txn()?;
-        let db: Database<U128<LE>, Bytes> = self.lmdb_env.create_database(&mut wtxn, None)?;
-        Ok(LmdbWriteSession { wtxn, db })
+    fn write_session(&self) -> Result<Self::Session<'_>, Self::Error> {
+        let wtxn = self.lmdb_env.write_txn()?;
+        Ok(LmdbWriteSession {
+            wtxn,
+            locations: self.locations,
+            contents: self.contents,
+            commits: self.commits,
+        })
     }
 }
 
 pub struct LmdbWriteSession<'a> {
     wtxn: heed::RwTxn<'a>,
-    db: Database<U128<LE>, Bytes>,
+    locations: Database<KeyLmdb, ValueLmdb>,
+    contents: Database<KeyLmdb, ValueLmdb>,
+    commits: Database<KeyLmdb, ValueLmdb>,
 }
 
 impl<'a> LmdbWriteSession<'a> {
-    /// Serializes the node and puts it into the database with its hash as the key.
-    pub(crate) fn put<T: HasHash + Serialize>(
+    /// Serialize the value and put it into the database with the given key.
+    /// Is an error if serialization fails (heed::Error::Encoding).
+    #[inline(always)]
+    fn put_serialized<T: serde::Serialize>(
         &mut self,
-        node: &T,
-    ) -> Result<(), <Self as WriteSession<'a>>::Error> {
-        let data = {
-            let mut buf = Vec::new();
-
-            node.serialize(&mut rmp_serde::Serializer::new(&mut buf))
-                .map_err(|e| heed::Error::Encoding(Box::new(e)))?;
-
-            buf
-        };
-        self.db.put(&mut self.wtxn, &node.hash().into(), &data)
+        db: Database<KeyLmdb, ValueLmdb>,
+        key: u128,
+        value: &T,
+    ) -> Result<(), heed::Error> {
+        let mut buf = Vec::new();
+        value
+            .serialize(&mut rmp_serde::Serializer::new(&mut buf))
+            .map_err(|e| heed::Error::Encoding(Box::new(e)))?;
+        db.put(&mut self.wtxn, &key, &buf)
     }
 }
 
 impl<'a> WriteSession<'a> for LmdbWriteSession<'a> {
     type Error = heed::Error;
 
-    fn queue_node(&mut self, node: &MerkleTreeL) -> Result<(), Self::Error> {
-        self.put(node)
+    fn queue_location(&mut self, key: LocationHash, node: &MerkleTreeL) -> Result<(), Self::Error> {
+        self.put_serialized(self.locations, key.into(), node)
+    }
+
+    fn queue_content(
+        &mut self,
+        key: ContentHash,
+        content: &NodeContent,
+    ) -> Result<(), Self::Error> {
+        self.put_serialized(self.contents, key.into(), content)
     }
 
     fn queue_commit(&mut self, commit: &Root) -> Result<(), Self::Error> {
-        self.put(commit)
+        self.put_serialized(self.commits, commit.content_hash().into(), commit)
     }
 
-    /// Commits the active write transaction.
     fn finish(self) -> Result<(), Self::Error> {
         self.wtxn.commit()
     }

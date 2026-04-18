@@ -5,7 +5,7 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 
 use crate::explore::bench::common::{self, LmdbSetup, TreeGenArgs};
-use crate::explore::hash::{HasHash, HexHash};
+use crate::explore::hash::{HasContentHash, HexHash};
 use crate::explore::lazy_merkle::UncomittedRoot;
 use crate::explore::merkle_reader::MerkleReader;
 use crate::explore::merkle_store::MerkleStore;
@@ -60,7 +60,7 @@ pub async fn run(args: WriteArgs) {
     let commit_elapsed = t_commit.elapsed();
 
     let throughput = total_nodes as f64 / commit_elapsed.as_secs_f64();
-    println!("commit hash: {}", HexHash::new(commit.hash()));
+    println!("commit hash: {}", HexHash::from(commit.content_hash()));
     println!("commit_tree: {commit_elapsed:?}");
     println!("throughput:  {throughput:.0} nodes/sec");
 }

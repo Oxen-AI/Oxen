@@ -1,105 +1,164 @@
 use serde::Deserialize;
 use serde::Serialize;
-use thiserror::Error as ThisError;
 
 use xxhash_rust::xxh3::xxh3_128;
 
-/// A 128-bit unsigned integer hash value that uniquely identifies some piece of data.
+use crate::explore::paths::Name;
+
+/// A 128-bit hash that identifies a piece of content by its bytes.
+///
+/// Two ways to construct one:
+/// - [`ContentHash::new`] hashes a byte slice directly (the content itself).
+/// - [`ContentHash::hash_of_hashes`] folds an iterator of child content
+///   hashes — used for directory content hashes and commit hashes.
+///
+/// A `ContentHash` can **never** be turned into a [`LocationHash`]: they're
+/// different types in the type system with no `From`/`Into` between them.
+/// Use the right one at the right place or it won't compile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Hash(u128);
+pub struct ContentHash(u128);
 
-/// Unwraps a hash into its unsigned 128 bit value.
-impl From<Hash> for u128 {
-    fn from(value: Hash) -> Self {
-        value.0
-    }
-}
-
-/// Indicates that a type has some sort of content and has an associated computed hash value
-/// identifying that content.
-pub trait HasHash {
-    fn hash(&self) -> Hash;
-}
-
-impl HasHash for Hash {
-    fn hash(&self) -> Hash {
-        *self
-    }
-}
-
-impl Hash {
-    /// Only way to create a new `Hash` instance is to calculate a hash value from some content.
+impl ContentHash {
+    /// Hash a byte slice (a file's contents, or any other bytes that represent
+    /// "content"). The only way to make a `ContentHash` from raw data.
     #[inline(always)]
     pub fn new(contents: &[u8]) -> Self {
-        Hash(xxh3_128(contents))
+        Self(xxh3_128(contents))
     }
 
-    /// Compute the hash of the concatonation of several hashes.
-    ///
-    /// The order of the children is important. Changing order changes the resulting hash value,
-    /// even for identical children.
+    /// Hash-of-hashes over children's content hashes. Order matters.
+    /// Used for dir content hashes and commit hashes.
     #[inline(always)]
-    pub fn hash_of_hashes<'a, N: HasHash + 'a>(children: impl Iterator<Item = &'a N>) -> Hash {
-        let hashes: Vec<u8> = children.flat_map(|h| h.hash().as_bytes()).collect();
+    pub fn hash_of_hashes<'a, N: HasContentHash + 'a>(
+        children: impl Iterator<Item = &'a N>,
+    ) -> ContentHash {
+        let hashes: Vec<u8> = children.flat_map(|h| h.content_hash().as_bytes()).collect();
         Self::new(&hashes)
     }
 
-    /// The platform-independent byte layout of a [Hash] value.
-    ///
-    /// The byte layout of a hash value needs to be consistent across architectures.
-    /// On the common architectures we use, it's little endian, so it will be a/close to a
-    /// no-op in the majority of cases.
+    /// Little-endian bytes of the underlying 128-bit value. Platform-
+    /// independent layout used when a `ContentHash` participates in another
+    /// hash computation.
     #[inline(always)]
     pub(crate) fn as_bytes(&self) -> [u8; 16] {
         self.0.to_le_bytes()
     }
 }
 
-/// A hex-encoded value of a 128-bit unsigned integer hash value.
+/// LMDB key coercion. Heed's `U128<LE>` key type needs a `u128`.
+impl From<ContentHash> for u128 {
+    fn from(value: ContentHash) -> Self {
+        value.0
+    }
+}
+
+/// A 128-bit hash that identifies a specific **position** in a tree, i.e. a
+/// particular occurrence of a file or directory under a particular parent
+/// with a particular name.
+///
+/// The only way to construct one is [`LocationHash::new`]. No other public
+/// constructor; in particular, **not** from raw bytes, **not** from a bare
+/// `u128`, and **not** from a [`ContentHash`]. A commit's root-level
+/// children are constructed with `parent = None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct LocationHash(u128);
+
+impl LocationHash {
+    /// Deterministic location hash for a node at `(content, parent, name)`.
+    ///
+    /// Same `(content, parent, name)` across different commits produces the
+    /// same location hash — desirable: same logical path in two commits is
+    /// one stored record. Different parents or names produce different
+    /// location hashes even when the content is identical, which is how
+    /// duplicate-content nodes at distinct paths keep distinct identities.
+    ///
+    /// `parent = None` is used for nodes directly under a commit's root.
+    /// Their stored record's `parent` is also `None`, which is what the
+    /// `path()` walker uses to terminate.
+    pub fn new(content: &ContentHash, parent: Option<&LocationHash>, name: &Name) -> Self {
+        let name_bytes = name.as_str().as_bytes();
+        let mut buf = Vec::with_capacity(16 + 16 + name_bytes.len());
+        buf.extend_from_slice(&content.as_bytes());
+        match parent {
+            Some(p) => buf.extend_from_slice(&p.as_bytes()),
+            None => buf.extend_from_slice(&[0u8; 16]),
+        }
+        buf.extend_from_slice(name_bytes);
+        Self(xxh3_128(&buf))
+    }
+
+    /// Little-endian bytes of the underlying 128-bit value.
+    #[inline(always)]
+    pub(crate) fn as_bytes(&self) -> [u8; 16] {
+        self.0.to_le_bytes()
+    }
+}
+
+/// LMDB key coercion.
+impl From<LocationHash> for u128 {
+    fn from(value: LocationHash) -> Self {
+        value.0
+    }
+}
+
+/// A type that carries (or is) a [`ContentHash`].
+pub trait HasContentHash {
+    fn content_hash(&self) -> ContentHash;
+}
+
+impl HasContentHash for ContentHash {
+    #[inline(always)]
+    fn content_hash(&self) -> ContentHash {
+        *self
+    }
+}
+
+/// A type that carries (or is) a [`LocationHash`].
+pub trait HasLocationHash {
+    fn location_hash(&self) -> LocationHash;
+}
+
+impl HasLocationHash for LocationHash {
+    #[inline(always)]
+    fn location_hash(&self) -> LocationHash {
+        *self
+    }
+}
+
+/// A hex-encoded hash value, used for display. Carries no type distinction
+/// between content and location — once you're rendering hex you've left the
+/// type system's jurisdiction. If the caller cares which kind of hash the
+/// hex came from, they should label it in surrounding context.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct HexHash(String);
 
 impl HexHash {
-    pub fn new(value: Hash) -> Self {
-        Self(format!("{:032x}", value.0))
+    fn from_u128(value: u128) -> Self {
+        Self(format!("{value:032x}"))
     }
 }
 
-#[derive(Debug, ThisError)]
-#[error("{0} is not a valid hex-encoded u128 value")]
-pub struct NotAValidHexHash<'a>(&'a str);
-
-/// Convert a hex-encoded value into a [Hash] instance.
-impl<'a> TryFrom<&'a str> for Hash {
-    type Error = NotAValidHexHash<'a>;
-
-    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
-        let hash = u128::from_str_radix(value, 16).map_err(|_| NotAValidHexHash(value))?;
-        Ok(Hash(hash))
-    }
-}
-
-/// Only valid way to create a hex-encoded hash value is from an existing `Hash` instance.
-impl From<Hash> for HexHash {
-    fn from(value: Hash) -> Self {
-        HexHash::new(value)
-    }
-}
-
-/// Safe conversion since we can only create a `HexHash` from a `Hash`.
-impl From<&HexHash> for Hash {
-    fn from(value: &HexHash) -> Self {
-        value
-            .0
-            .as_str()
-            .try_into()
-            .expect("Invariant violated! A HexHash was made that bypassed safe creation!")
-    }
-}
-
-/// Writes as a hex-encoded string.
 impl std::fmt::Display for HexHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
 }
+
+macro_rules! impl_into_hexhash {
+    ($type:ty) => {
+        impl From<$type> for HexHash {
+            fn from(value: $type) -> Self {
+                HexHash::from_u128(value.0)
+            }
+        }
+
+        impl From<&$type> for HexHash {
+            fn from(value: &$type) -> Self {
+                HexHash::from_u128(value.0)
+            }
+        }
+    };
+}
+
+impl_into_hexhash!(ContentHash);
+impl_into_hexhash!(LocationHash);

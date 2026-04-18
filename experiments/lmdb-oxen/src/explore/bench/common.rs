@@ -7,7 +7,7 @@ use heed::EnvOpenOptions;
 use rand::rngs::StdRng;
 use rand::{Rng, RngExt};
 
-use crate::explore::hash::Hash;
+use crate::explore::hash::{ContentHash, HasContentHash, LocationHash};
 use crate::explore::lazy_merkle::MerkleTreeB;
 use crate::explore::lmdb_impl::LmdbMerkleDB;
 use crate::explore::merkle_reader::MerkleReader;
@@ -93,9 +93,10 @@ pub struct GenStats {
     pub dirs: usize,
     pub total_file_bytes: usize,
     pub max_depth: usize,
-    /// (hash, depth) for every generated node, in generation order.
-    /// Depth 1 = root's direct child.
-    pub node_catalog: Vec<(Hash, usize)>,
+    /// (location_hash, depth) for every generated node, in generation order.
+    /// Depth 1 = root's direct child. Populated by the post-walk at the end
+    /// of [`generate`] once all content hashes are known.
+    pub node_catalog: Vec<(LocationHash, usize)>,
 }
 
 struct GenState {
@@ -150,7 +151,39 @@ pub fn generate(
         root_children.extend(batch);
         pass += 1;
     }
+
+    // Populate `node_catalog` with location hashes now that every content
+    // hash is known. Root-level nodes have `parent = None`; children use
+    // their parent's LocationHash.
+    state
+        .stats
+        .node_catalog
+        .reserve(state.stats.files + state.stats.dirs);
+    for root in &root_children {
+        walk_and_catalog_locations(root, None, 1, &mut state.stats.node_catalog);
+    }
+
     (root_children, state.stats)
+}
+
+fn walk_and_catalog_locations(
+    node: &MerkleTreeB,
+    parent: Option<LocationHash>,
+    depth: usize,
+    out: &mut Vec<(LocationHash, usize)>,
+) {
+    let ch = node.content_hash();
+    let name = match node {
+        MerkleTreeB::Dir { name, .. } => name,
+        MerkleTreeB::File { name, .. } => name,
+    };
+    let loc = LocationHash::new(&ch, parent.as_ref(), name);
+    out.push((loc, depth));
+    if let MerkleTreeB::Dir { children, .. } = node {
+        for c in children {
+            walk_and_catalog_locations(c, Some(loc), depth + 1, out);
+        }
+    }
 }
 
 /// Build the contents of a directory that is allowed to produce up to
@@ -209,32 +242,29 @@ fn build_dir_contents(
             let name: Name = Path::new(&format!("d_{id}"))
                 .try_into()
                 .expect("generated dir name is a valid Name");
-            let hash = Hash::hash_of_hashes(kids.iter());
+            let content_hash = ContentHash::hash_of_hashes(kids.iter());
             state.stats.dirs += 1;
-            state.stats.node_catalog.push((hash, depth));
             out.push(MerkleTreeB::Dir {
-                hash,
+                content_hash,
                 name,
                 children: kids,
             });
         } else {
+            // Random bytes keyed only by the RNG state. Two files with
+            // colliding content are fine now: the typed `LocationHash`
+            // scheme stores them as distinct location records while the
+            // single content record is deduped across occurrences.
             let size = rng.random_range(1..=args.max_file_bytes);
-            // Prepend 8 id bytes so each file's content (and therefore its hash)
-            // is unique within this tree.
-            let mut data = Vec::with_capacity(size + 8);
-            data.extend_from_slice(&id.to_le_bytes());
-            let tail_start = data.len();
-            data.resize(tail_start + size, 0);
-            rng.fill_bytes(&mut data[tail_start..]);
-            let hash = Hash::new(&data);
+            let mut data = vec![0u8; size];
+            rng.fill_bytes(&mut data);
+            let content_hash = ContentHash::new(&data);
 
             let name: Name = Path::new(&format!("f_{id}.bin"))
                 .try_into()
                 .expect("generated file name is a valid Name");
             state.stats.files += 1;
             state.stats.total_file_bytes += data.len();
-            state.stats.node_catalog.push((hash, depth));
-            out.push(MerkleTreeB::File { hash, name });
+            out.push(MerkleTreeB::File { content_hash, name });
         }
 
         let produced = (state.stats.files + state.stats.dirs) - produced_before;
@@ -262,13 +292,12 @@ pub fn setup() -> LmdbSetup {
     let db_location = repo_root.join(&Path::new("lmdb_data").try_into().unwrap());
     std::fs::create_dir_all(db_location.as_path()).expect("failed to create db directory");
 
-    let options = {
-        let mut o = EnvOpenOptions::new();
-        o.map_size(LMDB_MAP_SIZE_BYTES);
-        o
-    };
-    let store = LmdbMerkleDB::new(&repo_root, &db_location, &options)
-        .expect("failed to create LmdbMerkleDB");
+    let store = LmdbMerkleDB::new(&repo_root, &db_location, {
+        let mut options = EnvOpenOptions::new();
+        options.map_size(LMDB_MAP_SIZE_BYTES);
+        options
+    })
+    .expect("failed to create LmdbMerkleDB");
     LmdbSetup {
         store,
         _cleanup: DeleteOnDrop(repo_root),
@@ -519,34 +548,34 @@ pub enum ReadOp {
 /// `Some` only for `Path` ops (used for per-depth bucketing).
 pub fn run_read_op(
     store: &LmdbMerkleDB,
-    catalog: &[(Hash, usize)],
-    commits: &[Hash],
+    catalog: &[(LocationHash, usize)],
+    commits: &[ContentHash],
     op: ReadOp,
     rng: &mut StdRng,
 ) -> (Duration, Option<usize>) {
     match op {
         ReadOp::Node => {
-            let (hash, _depth) = pick(catalog, rng);
+            let (loc, _depth) = pick(catalog, rng);
             let t = Instant::now();
-            let result = store.node(hash).expect("node() failed");
+            let result = store.node(loc).expect("node() failed");
             let elapsed = t.elapsed();
-            assert!(result.is_some(), "sampled node hash should resolve");
+            assert!(result.is_some(), "sampled node location should resolve");
             (elapsed, None)
         }
         ReadOp::Commit => {
-            let hash = pick(commits, rng);
+            let commit = pick(commits, rng);
             let t = Instant::now();
-            let result = store.commit(hash).expect("commit() failed");
+            let result = store.commit(commit).expect("commit() failed");
             let elapsed = t.elapsed();
             assert!(result.is_some(), "sampled commit hash should resolve");
             (elapsed, None)
         }
         ReadOp::Path => {
-            let (hash, depth) = pick(catalog, rng);
+            let (loc, depth) = pick(catalog, rng);
             let t = Instant::now();
-            let result = store.path(hash).expect("path() failed");
+            let result = store.path(loc).expect("path() failed");
             let elapsed = t.elapsed();
-            let rel = result.expect("sampled hash should resolve to a path");
+            let rel = result.expect("sampled location should resolve to a path");
             let got_depth = rel.components().count();
             assert_eq!(
                 got_depth, depth,
