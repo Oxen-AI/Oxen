@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 use crate::constants::{OXEN_HIDDEN_DIR, WORKSPACE_CONFIG, WORKSPACES_DIR};
@@ -14,12 +15,15 @@ pub struct WorkspaceConfig {
     pub is_editable: bool,
     pub workspace_name: Option<String>,
     pub workspace_id: Option<String>,
+    pub metadata: Option<Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct Workspace {
     pub id: String,
     pub name: Option<String>,
+    #[schema(value_type = Object, nullable = true)]
+    pub metadata: Option<Value>,
     // Workspaces have a base repository that they are created in .oxen/
     pub base_repo: LocalRepository,
     // And a sub repository that is just to make changes in
@@ -72,6 +76,7 @@ impl From<Workspace> for WorkspaceView {
         Self {
             name: workspace.name,
             id: workspace.id,
+            metadata: workspace.metadata,
             commit: workspace.commit,
         }
     }
@@ -81,5 +86,7 @@ impl From<Workspace> for WorkspaceView {
 pub struct WorkspaceView {
     pub name: Option<String>,
     pub id: String,
+    #[schema(value_type = Object, nullable = true)]
+    pub metadata: Option<Value>,
     pub commit: Commit,
 }

@@ -1,13 +1,18 @@
 use crate::errors::{OxenHttpError, WorkspaceBranch};
 use crate::helpers::get_repo;
-use crate::params::{NameParam, app_data, path_param};
+use crate::params::{WorkspaceListQuery, app_data, path_param};
 
+use liboxen::constants;
 use liboxen::constants::INITIAL_COMMIT_MSG;
 use liboxen::error::OxenError;
 use liboxen::model::{NewCommitBody, User};
 use liboxen::repositories;
+use liboxen::util::paginate;
 use liboxen::view::merge::MergeableResponse;
-use liboxen::view::workspaces::{ListWorkspaceResponseView, NewWorkspace, WorkspaceResponse};
+use liboxen::view::workspaces::{
+    ListWorkspaceResponseView, NewWorkspace, PaginatedWorkspaces, UpdateWorkspaceMetadataRequest,
+    WorkspaceResponse,
+};
 use liboxen::view::{
     CommitResponse, StatusMessage, StatusMessageDescription, WorkspaceResponseView,
 };
@@ -115,6 +120,7 @@ pub async fn get_or_create(
             workspace: WorkspaceResponse {
                 id: workspace_id,
                 name: workspace.name.clone(),
+                metadata: workspace.metadata.clone(),
                 commit: workspace.commit.into(),
             },
         }));
@@ -137,6 +143,7 @@ pub async fn get_or_create(
         workspace: WorkspaceResponse {
             id: workspace_id,
             name: data.name.clone(),
+            metadata: None,
             commit: commit.into(),
         },
     }))
@@ -175,6 +182,7 @@ pub async fn get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpEr
         workspace: WorkspaceResponse {
             id: workspace.id,
             name: workspace.name,
+            metadata: workspace.metadata,
             commit: workspace.commit.into(),
         },
     }))
@@ -202,7 +210,7 @@ pub async fn create(
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-        NameParam // Query parameter for optional name filtering
+        WorkspaceListQuery
     ),
     responses(
         (status = 200, description = "List of workspaces", body = ListWorkspaceResponseView),
@@ -211,7 +219,7 @@ pub async fn create(
 )]
 pub async fn list(
     req: HttpRequest,
-    params: web::Query<NameParam>,
+    query: web::Query<WorkspaceListQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
@@ -219,13 +227,16 @@ pub async fn list(
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
     log::debug!("workspaces::list got repo: {:?}", repo.path);
+    let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
+    let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
 
     // When filtering by name, use the indexed O(1) lookup instead of loading all workspaces
-    let workspace_views: Vec<WorkspaceResponse> = if let Some(name) = &params.name {
+    let workspace_views: Vec<WorkspaceResponse> = if let Some(name) = &query.name {
         match repositories::workspaces::get_by_name(&repo, name)? {
             Some(workspace) => vec![WorkspaceResponse {
                 id: workspace.id,
                 name: workspace.name,
+                metadata: workspace.metadata,
                 commit: workspace.commit.into(),
             }],
             None => vec![],
@@ -236,14 +247,19 @@ pub async fn list(
             .map(|workspace| WorkspaceResponse {
                 id: workspace.id,
                 name: workspace.name,
+                metadata: workspace.metadata,
                 commit: workspace.commit.into(),
             })
             .collect()
     };
+    let (entries, pagination) = paginate(workspace_views, page, page_size);
 
     Ok(HttpResponse::Ok().json(ListWorkspaceResponseView {
-        status: StatusMessage::resource_created(),
-        workspaces: workspace_views,
+        status: StatusMessage::resource_found(),
+        workspaces: PaginatedWorkspaces {
+            entries,
+            pagination,
+        },
     }))
 }
 
@@ -306,7 +322,73 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
         workspace: WorkspaceResponse {
             id: workspace_id,
             name: workspace.name,
+            metadata: workspace.metadata,
             commit: workspace.commit.into(),
+        },
+    }))
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/metadata",
+    description = "Replace the workspace metadata JSON blob.",
+    tag = "Workspaces",
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "ID of the workspace", example = "b3f27f05-0955-4076-805f-39575853b27b"),
+    ),
+    request_body(
+        content = UpdateWorkspaceMetadataRequest,
+        description = "Arbitrary JSON metadata to store on the workspace. Use `null` to clear it.",
+        example = json!({"metadata": {"label": "experiment-a", "priority": 3}})
+    ),
+    responses(
+        (status = 200, description = "Workspace metadata updated", body = WorkspaceResponseView),
+        (status = 400, description = "Invalid request body"),
+        (status = 404, description = "Workspace not found")
+    )
+)]
+pub async fn update_metadata(
+    req: HttpRequest,
+    body: String,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
+
+    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+        return Ok(HttpResponse::NotFound()
+            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+    };
+
+    let request: UpdateWorkspaceMetadataRequest = match serde_json::from_str(&body) {
+        Ok(request) => request,
+        Err(err) => {
+            log::error!("Unable to parse workspace metadata body. Err: {err}\n{body}");
+            return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
+        }
+    };
+
+    let metadata = if request.metadata.is_null() {
+        None
+    } else {
+        Some(request.metadata)
+    };
+    repositories::workspaces::update_metadata(&workspace, metadata)?;
+
+    let updated_workspace = repositories::workspaces::get(&repo, &workspace_id)?
+        .ok_or_else(|| OxenError::basic_str("workspace disappeared after metadata update"))?;
+
+    Ok(HttpResponse::Ok().json(WorkspaceResponseView {
+        status: StatusMessage::resource_updated(),
+        workspace: WorkspaceResponse {
+            id: updated_workspace.id,
+            name: updated_workspace.name,
+            metadata: updated_workspace.metadata,
+            commit: updated_workspace.commit.into(),
         },
     }))
 }

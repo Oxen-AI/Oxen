@@ -2,6 +2,8 @@ use async_trait::async_trait;
 use clap::{ArgMatches, Command};
 
 use liboxen::api;
+use liboxen::constants;
+use liboxen::opts::PaginateOpts;
 use liboxen::{error::OxenError, model::LocalRepository};
 
 use crate::cmd::RunCmd;
@@ -15,13 +17,29 @@ impl RunCmd for WorkspaceListCmd {
     }
 
     fn args(&self) -> Command {
-        Command::new(NAME).about("Lists all workspaces").arg(
-            clap::Arg::new("remote")
-                .short('r')
-                .long("remote")
-                .help("Remote repository name")
-                .required(false),
-        )
+        Command::new(NAME)
+            .about("Lists workspaces")
+            .arg(
+                clap::Arg::new("remote")
+                    .short('r')
+                    .long("remote")
+                    .help("Remote repository name")
+                    .required(false),
+            )
+            .arg(
+                clap::Arg::new("page")
+                    .long("page")
+                    .help("Page number to fetch")
+                    .value_parser(clap::value_parser!(usize))
+                    .required(false),
+            )
+            .arg(
+                clap::Arg::new("page-size")
+                    .long("page-size")
+                    .help("Number of workspaces per page")
+                    .value_parser(clap::value_parser!(usize))
+                    .required(false),
+            )
     }
 
     async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
@@ -37,14 +55,25 @@ impl RunCmd for WorkspaceListCmd {
             None => api::client::repositories::get_default_remote(&repository).await?,
         };
 
-        let workspaces = api::client::workspaces::list(&remote_repo).await?;
-        if workspaces.is_empty() {
+        let page_opts = PaginateOpts {
+            page_num: args
+                .get_one::<usize>("page")
+                .copied()
+                .unwrap_or(constants::DEFAULT_PAGE_NUM),
+            page_size: args
+                .get_one::<usize>("page-size")
+                .copied()
+                .unwrap_or(constants::DEFAULT_PAGE_SIZE),
+        };
+
+        let paginated = api::client::workspaces::list(&remote_repo, &page_opts).await?;
+        if paginated.entries.is_empty() {
             println!("No workspaces found");
             return Ok(());
         }
 
         println!("id\tname\tcommit_id\tcommit_message");
-        for workspace in workspaces {
+        for workspace in paginated.entries {
             println!(
                 "{}\t{}\t{}\t{}",
                 workspace.id,
@@ -53,6 +82,12 @@ impl RunCmd for WorkspaceListCmd {
                 workspace.commit.message
             );
         }
+        println!(
+            "\nPage {} of {} ({} total)",
+            paginated.pagination.page_number,
+            paginated.pagination.total_pages,
+            paginated.pagination.total_entries,
+        );
         Ok(())
     }
 }

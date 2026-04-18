@@ -15,6 +15,10 @@ pub fn workspace() -> Scope {
         .service(
             web::scope("/{workspace_id}")
                 .route("", web::get().to(controllers::workspaces::get))
+                .route(
+                    "/metadata",
+                    web::put().to(controllers::workspaces::update_metadata),
+                )
                 .route("", web::delete().to(controllers::workspaces::delete))
                 .route(
                     "/changes",

@@ -25,6 +25,9 @@ pub mod page_num_query;
 pub use page_num_query::PageNumQuery;
 pub use page_num_query::PageNumVersionQuery;
 
+pub mod workspace_list_query;
+pub use workspace_list_query::WorkspaceListQuery;
+
 pub mod df_opts_query;
 pub use df_opts_query::DFOptsQuery;
 

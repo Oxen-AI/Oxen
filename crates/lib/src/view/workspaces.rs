@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use time::OffsetDateTime;
 use utoipa::ToSchema;
 
-use super::StatusMessage;
+use super::{Pagination, StatusMessage};
 use crate::model::Commit;
 
 #[derive(Deserialize, Serialize, Debug, ToSchema)]
@@ -43,6 +44,8 @@ impl From<WorkspaceCommit> for Commit {
 pub struct WorkspaceResponse {
     pub id: String,
     pub name: Option<String>,
+    #[schema(value_type = Object, nullable = true)]
+    pub metadata: Option<Value>,
     pub commit: WorkspaceCommit,
 }
 
@@ -50,6 +53,7 @@ pub struct WorkspaceResponse {
 pub struct WorkspaceResponseWithStatus {
     pub id: String,
     pub name: Option<String>,
+    pub metadata: Option<Value>,
     pub commit: WorkspaceCommit,
     pub status: String,
 }
@@ -62,10 +66,16 @@ pub struct WorkspaceResponseView {
 }
 
 #[derive(Deserialize, Serialize, Debug, ToSchema)]
+pub struct PaginatedWorkspaces {
+    pub entries: Vec<WorkspaceResponse>,
+    pub pagination: Pagination,
+}
+
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct ListWorkspaceResponseView {
     #[serde(flatten)]
     pub status: StatusMessage,
-    pub workspaces: Vec<WorkspaceResponse>,
+    pub workspaces: PaginatedWorkspaces,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -77,4 +87,10 @@ pub struct ValidateUploadFeasibilityRequest {
 pub struct RenameRequest {
     #[schema(example = "path/to/new_file.txt")]
     pub new_path: String,
+}
+
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
+pub struct UpdateWorkspaceMetadataRequest {
+    #[schema(value_type = Object, nullable = true)]
+    pub metadata: Value,
 }

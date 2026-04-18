@@ -107,6 +107,10 @@ pub enum OxenError {
     #[error("Workspace not found: {0}")]
     WorkspaceNotFound(StringError),
 
+    /// A workspace with the given id or name already exists.
+    #[error("A workspace with the identifier '{0}' already exists")]
+    WorkspaceAlreadyExists(StringError),
+
     /// No queryable workspace was found.
     #[error("No queryable workspace found")]
     QueryableWorkspaceNotFound,
@@ -114,10 +118,6 @@ pub enum OxenError {
     /// The workspace is behind the remote repository and cannot be automatically updated.
     #[error("Workspace is behind: {0}")]
     WorkspaceBehind(Box<Workspace>),
-
-    /// A workspace with this name already exists.
-    #[error("A workspace with the name '{0}' already exists")]
-    WorkspaceAlreadyExists(String),
 
     #[error("{0}")]
     WorkspaceNameIndex(#[from] crate::core::workspaces::workspace_name_index::WsError),
@@ -487,6 +487,11 @@ impl OxenError {
     /// Makes a new OxenError::ResourceNotFound error.
     pub fn resource_not_found(value: impl AsRef<str>) -> Self {
         OxenError::ResourceNotFound(StringError::from(value.as_ref()))
+    }
+
+    /// Makes a new OxenError::WorkspaceAlreadyExists error.
+    pub fn workspace_already_exists(identifier: impl AsRef<str>) -> Self {
+        OxenError::WorkspaceAlreadyExists(StringError::from(identifier.as_ref()))
     }
 
     /// Make a new OxenError::PathDoesNotExist error.
