@@ -1,0 +1,204 @@
+use std::path::Path;
+
+use std::path::PathBuf;
+
+use liboxen::error::OxenError;
+use thiserror::Error as ThisError;
+
+use crate::explore::hash::ContentHash as Hash;
+use crate::explore::hash::HasContentHash as HasHash;
+use crate::explore::paths::AbsolutePath;
+
+#[derive(Debug, ThisError)]
+pub enum Error {
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("{0}")]
+    Oxen(#[from] OxenError),
+}
+
+// ==== DESIGN ====
+
+enum MerkleError {
+    HashDoesNotExist,
+    HashDoesNotEqualContent,
+}
+pub trait Node {
+    fn hash(&self) -> Hash;
+    fn name(&self) -> &str;
+}
+
+pub trait MerkleMetadataStore {
+    type Node;
+
+    /// If true, then there is a node in the Merkle tree that has this hash.
+    fn exists(&self, hash: Hash) -> bool;
+
+    /// Obtains a reference to the Merkle tree node for the given hash.
+    /// None means there is no node with that hash.
+    fn node(&self, hash: Hash) -> Option<&Self::Node>;
+
+    /// Ensures that `content` is a child of `parent`.
+    /// If content is already a child of parent, then this does not change the Merkle tree.
+    /// It always returns the hash of the child, unless the parent does not exist, in
+    /// which case it will return None.
+    fn insert(&self, parent: Hash, content: &Self::Node) -> Option<Hash>;
+
+    fn store_tree(&self, commit: Root) -> Hash;
+
+    fn path(&self, hash: Hash) -> Option<Vec<Hash>>;
+}
+
+#[derive(Debug)]
+pub enum RepositoryTree {
+    Dir {
+        name: String,
+        children: Vec<Box<Self>>,
+    },
+    File {
+        name: String,
+        content: Vec<u8>,
+    },
+}
+
+impl RepositoryTree {
+    pub fn name(&self) -> &str {
+        match self {
+            RepositoryTree::Dir { name, .. } => name,
+            RepositoryTree::File { name, .. } => name,
+        }
+    }
+
+    pub fn from_walk(path: &Path) -> std::io::Result<Box<Self>> {
+        if path.is_dir() {
+            let name = path
+                .file_name()
+                .expect("directory does not have a name")
+                .to_string_lossy()
+                .to_string();
+            let children = {
+                let mut children = Vec::new();
+                let mut entries = std::fs::read_dir(path)?.collect::<Result<Vec<_>, _>>()?;
+                entries.sort_by_key(|e| e.file_name());
+                for entry in entries {
+                    let child = Self::from_walk(&entry.path())?;
+                    children.push(child);
+                }
+                children
+            };
+            Ok(Box::new(Self::Dir { name, children }))
+        } else if path.is_file() {
+            let name = path
+                .file_name()
+                .expect("file does not have a name")
+                .to_string_lossy()
+                .to_string();
+            let content = std::fs::read(path)?;
+            Ok(Box::new(Self::File { name, content }))
+        } else {
+            Err(std::io::Error::other("unsupported file type"))
+        }
+    }
+}
+
+pub struct Repository {
+    pub root: AbsolutePath,
+    pub top_level: Vec<Box<RepositoryTree>>,
+}
+
+impl Repository {
+    pub fn from_walk(root: PathBuf) -> std::io::Result<Repository> {
+        let root = AbsolutePath::new(root)?;
+        match *RepositoryTree::from_walk(root.as_path())? {
+            RepositoryTree::Dir { name: _, children } => Ok(Self {
+                root,
+                top_level: children,
+            }),
+            RepositoryTree::File { name, content: _ } => Err(std::io::Error::other(format!(
+                "unsupported file type: {}",
+                name
+            ))),
+        }
+    }
+}
+
+pub enum MerkleTree {
+    Dir {
+        hash: Hash,
+        name: String,
+        children: Vec<Box<Self>>,
+    },
+    File {
+        hash: Hash,
+        name: String,
+        content: Vec<u8>,
+    },
+}
+
+impl MerkleTree {
+    pub fn hash(&self) -> Hash {
+        match self {
+            MerkleTree::Dir { hash, .. } => *hash,
+            MerkleTree::File { hash, .. } => *hash,
+        }
+    }
+}
+
+impl HasHash for MerkleTree {
+    fn content_hash(&self) -> Hash {
+        self.hash()
+    }
+}
+
+impl HasHash for Box<MerkleTree> {
+    fn content_hash(&self) -> Hash {
+        (**self).hash()
+    }
+}
+
+pub struct Root {
+    pub root: AbsolutePath,
+    pub hash: Hash,
+    pub children: Vec<Box<MerkleTree>>,
+}
+
+pub fn convert_repository_into_merkle_tree(repo: Repository) -> Root {
+    let Repository { root, top_level } = repo;
+    let children = top_level.into_iter().map(hash_convert).collect::<Vec<_>>();
+    Root {
+        root,
+        hash: Hash::hash_of_hashes(children.iter()),
+        children,
+    }
+}
+
+fn hash_convert(node: Box<RepositoryTree>) -> Box<MerkleTree> {
+    match *node {
+        RepositoryTree::Dir { name, children } => {
+            let merkle_children: Vec<Box<MerkleTree>> = {
+                let mut merkle_children = Vec::new();
+                for child in children {
+                    let merkle_child = hash_convert(child);
+                    merkle_children.push(merkle_child);
+                }
+                merkle_children
+            };
+            Box::new(MerkleTree::Dir {
+                hash: Hash::hash_of_hashes(merkle_children.iter()),
+                name,
+                children: merkle_children,
+            })
+        }
+        RepositoryTree::File { name, content } => Box::new(MerkleTree::File {
+            hash: Hash::new(&content),
+            name,
+            content,
+        }),
+    }
+}
+
+pub trait MerkleTreePlatform {
+    type N: Node;
+    type S: MerkleMetadataStore<Node = Self::N>;
+}

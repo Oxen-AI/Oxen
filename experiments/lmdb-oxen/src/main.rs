@@ -1,45 +1,39 @@
 use clap::{Parser, Subcommand};
-use std::{fs, string};
-use std::path::PathBuf;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use framework::{FrameworkError, FrameworkResult};
-
-pub mod framework;
-pub mod migrate;
-pub mod lmdb;
-
-struct TestMetrics {
-    pack_time: Duration,
-    unpack_time: Duration,
-    _pack_cpu_usage: f32,
-    _pack_memory_usage_bytes: u64,
-    _unpack_cpu_usage: f32,
-    _unpack_memory_usage_bytes: u64,
-}
+#[allow(dead_code)]
+mod existing;
+mod explore;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
-struct Args {
+struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Command,
 }
 
 #[derive(Subcommand, Debug)]
-enum Commands {
-    Migrate,
-    Test,
+enum Command {
+    /// Run the existing LMDB implementation
+    Existing {
+        #[command(subcommand)]
+        command: existing::old_main::Commands,
+    },
+    /// Run the explore implementation
+    Explore {
+        #[command(subcommand)]
+        command: explore::new_main::Commands,
+    },
 }
 
-fn main() -> FrameworkResult<()> {
-    let args = Args::parse();
-
-    match args.command {
-        Commands::Migrate => {
-            migrate::migrate()
+#[tokio::main]
+async fn main() {
+    let cli = Cli::parse();
+    match cli.command {
+        Command::Existing { command } => {
+            existing::old_main::run(command).unwrap();
         }
-        Commands::Test => {
-            migrate::test()
+        Command::Explore { command } => {
+            explore::new_main::run(command).await;
         }
     }
 }
