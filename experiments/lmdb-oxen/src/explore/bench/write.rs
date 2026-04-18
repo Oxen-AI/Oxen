@@ -23,16 +23,17 @@ pub struct WriteArgs {
 pub async fn run(args: WriteArgs) {
     let tree_args = common::validate(args.tree);
     println!(
-        "bench write config: max_node_count={}, avg_size={}, max_depth={}, max_file_bytes={}, max_children_per_dir={}, seed={}",
+        "bench write config: max_node_count={}, avg_size={}, max_depth={}, max_file_bytes={}, max_children_per_dir={}, lmdb_map_gib={}, seed={}",
         tree_args.max_node_count,
         tree_args.avg_size,
         tree_args.max_depth,
         tree_args.max_file_bytes,
         tree_args.max_children_per_dir,
+        tree_args.lmdb_map_gib,
         args.seed,
     );
 
-    let LmdbSetup { store, _cleanup } = common::setup();
+    let LmdbSetup { store, _cleanup } = common::setup(&tree_args);
 
     let mut rng = StdRng::seed_from_u64(args.seed);
 

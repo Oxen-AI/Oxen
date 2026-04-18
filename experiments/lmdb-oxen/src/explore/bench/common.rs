@@ -19,8 +19,16 @@ pub const NODE_COUNT_MIN: usize = 1_000;
 // collapse to file-only and subtree expansion dies too fast.
 const DIR_PROB_FLOOR: f64 = 0.05;
 
-// LMDB map size. heed's default (~10 MiB) overflows for 100k nodes.
-const LMDB_MAP_SIZE_BYTES: usize = 2 * 1024 * 1024 * 1024;
+/// Default LMDB map size in GiB. On 64-bit systems this is a virtual-address
+/// reservation; the on-disk file is sparse and grows with actual writes.
+/// Picked large enough to absorb bench configurations that chain many
+/// commits with large trees — `commits × max_node_count × ~400 B` fits
+/// comfortably here.
+pub const DEFAULT_LMDB_MAP_GIB: u64 = 32;
+
+/// Minimum LMDB map size in GiB. Heed's default (~10 MiB) overflows even
+/// for the default bench, so we refuse anything below 1 GiB.
+pub const MIN_LMDB_MAP_GIB: u64 = 1;
 
 const MIN_SAMPLES_PER_BUCKET: usize = 10;
 
@@ -64,6 +72,14 @@ pub struct TreeGenArgs {
     /// `--max-depth`. Set lower to make dirs concentrate at shallow levels.
     #[arg(long)]
     pub target_depth: Option<usize>,
+
+    /// LMDB map size in GiB. On 64-bit systems this is a virtual-address
+    /// reservation — the on-disk file is sparse and grows with actual
+    /// writes, so being generous here is effectively free. Bump this if
+    /// you hit `Mdb(MapFull)`; a safe estimate is
+    /// `commits × max_node_count × 400 B × 4` (payload × COW headroom).
+    #[arg(long, default_value_t = DEFAULT_LMDB_MAP_GIB)]
+    pub lmdb_map_gib: u64,
 }
 
 pub fn validate(mut args: TreeGenArgs) -> TreeGenArgs {
@@ -76,6 +92,7 @@ pub fn validate(mut args: TreeGenArgs) -> TreeGenArgs {
     if let Some(td) = args.target_depth {
         args.target_depth = Some(td.max(1));
     }
+    args.lmdb_map_gib = args.lmdb_map_gib.max(MIN_LMDB_MAP_GIB);
     args
 }
 
@@ -282,7 +299,7 @@ pub struct LmdbSetup {
     pub _cleanup: DeleteOnDrop,
 }
 
-pub fn setup() -> LmdbSetup {
+pub fn setup(tree_args: &TreeGenArgs) -> LmdbSetup {
     let repo_root = {
         let tmp_path: PathBuf =
             std::env::temp_dir().join(format!("lmdb_oxen_bench_{}", rand::random::<u16>()));
@@ -292,9 +309,10 @@ pub fn setup() -> LmdbSetup {
     let db_location = repo_root.join(&Path::new("lmdb_data").try_into().unwrap());
     std::fs::create_dir_all(db_location.as_path()).expect("failed to create db directory");
 
+    let map_size_bytes = (tree_args.lmdb_map_gib as usize).saturating_mul(1024 * 1024 * 1024);
     let store = LmdbMerkleDB::new(&repo_root, &db_location, {
         let mut options = EnvOpenOptions::new();
-        options.map_size(LMDB_MAP_SIZE_BYTES);
+        options.map_size(map_size_bytes);
         options
     })
     .expect("failed to create LmdbMerkleDB");

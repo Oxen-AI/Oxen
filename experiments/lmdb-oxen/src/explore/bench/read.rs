@@ -34,18 +34,19 @@ pub struct ReadArgs {
 pub async fn run(args: ReadArgs) {
     let tree_args = common::validate(args.tree);
     println!(
-        "bench read config: max_node_count={}, avg_size={}, max_depth={}, max_file_bytes={}, max_children_per_dir={}, read_count={}, warmup_count={}, seed={}",
+        "bench read config: max_node_count={}, avg_size={}, max_depth={}, max_file_bytes={}, max_children_per_dir={}, lmdb_map_gib={}, read_count={}, warmup_count={}, seed={}",
         tree_args.max_node_count,
         tree_args.avg_size,
         tree_args.max_depth,
         tree_args.max_file_bytes,
         tree_args.max_children_per_dir,
+        tree_args.lmdb_map_gib,
         args.read_count,
         args.warmup_count,
         args.seed,
     );
 
-    let LmdbSetup { store, _cleanup } = common::setup();
+    let LmdbSetup { store, _cleanup } = common::setup(&tree_args);
 
     let mut rng = StdRng::seed_from_u64(args.seed);
 

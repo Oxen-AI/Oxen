@@ -104,13 +104,14 @@ pub async fn run(args: MixedArgs) {
         .max(0.0);
 
     println!(
-        "bench mixed config: max_node_count={}, avg_size={}, size_stddev={:.1}, max_depth={}, max_file_bytes={}, max_children_per_dir={}, seed_commits={}, write_phases={}, reads_per_phase={}, weights=(path={},node={},commit={}), chain_commits={}, warmup_count={}, seed={}",
+        "bench mixed config: max_node_count={}, avg_size={}, size_stddev={:.1}, max_depth={}, max_file_bytes={}, max_children_per_dir={}, lmdb_map_gib={}, seed_commits={}, write_phases={}, reads_per_phase={}, weights=(path={},node={},commit={}), chain_commits={}, warmup_count={}, seed={}",
         tree_args.max_node_count,
         tree_args.avg_size,
         size_stddev,
         tree_args.max_depth,
         tree_args.max_file_bytes,
         tree_args.max_children_per_dir,
+        tree_args.lmdb_map_gib,
         args.seed_commits,
         args.write_phases,
         args.reads_per_phase,
@@ -122,7 +123,7 @@ pub async fn run(args: MixedArgs) {
         args.seed,
     );
 
-    let LmdbSetup { store, _cleanup } = common::setup();
+    let LmdbSetup { store, _cleanup } = common::setup(&tree_args);
     let mut rng = StdRng::seed_from_u64(args.seed);
 
     // --- Initial tree + commit ---

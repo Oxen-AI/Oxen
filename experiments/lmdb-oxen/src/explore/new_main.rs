@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use heed::EnvOpenOptions;
 
-use crate::explore::bench::{self, BenchCommands};
+use crate::explore::bench::{self, BenchCommands, common::DEFAULT_LMDB_MAP_GIB};
 use crate::explore::hash::{ContentHash, HasContentHash, HasLocationHash, HexHash, LocationHash};
 use crate::explore::lazy_merkle::{
     HasName, MerkleTreeB, MerkleTreeL, NodeContent, UncomittedRoot, load_file_bytes,
@@ -46,8 +46,12 @@ async fn demo() {
     let db_location = repository_root.join(&Path::new("lmdb_data").try_into().unwrap());
     std::fs::create_dir_all(db_location.as_path()).expect("failed to create db directory");
 
-    let merkle_store = LmdbMerkleDB::new(&repository_root, &db_location, EnvOpenOptions::new())
-        .expect("failed to create LmdbMerkleDB");
+    let merkle_store = LmdbMerkleDB::new(&repository_root, &db_location, {
+        let mut options = EnvOpenOptions::new();
+        options.map_size((DEFAULT_LMDB_MAP_GIB as usize) * 1024 * 1024 * 1024);
+        options
+    })
+    .expect("failed to create LmdbMerkleDB");
     check(&merkle_store); // compile time check that LmdbMerkleDB implements MerkleReader + MerkleWriter correctly
 
     fn content_hash(content: &str) -> (&str, ContentHash) {
