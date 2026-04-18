@@ -71,14 +71,14 @@ impl LmdbMerkleDB {
     /// Error if decoding fails. None if no key exists.
     #[inline(always)]
     fn retrieve_from<T>(
-        &self,
-        db: Database<KeyLmdb, ValueLmdb>,
+        lmdb_env: &Env,
+        db: &Database<KeyLmdb, ValueLmdb>,
         key: u128,
     ) -> Result<Option<T>, heed::Error>
     where
         for<'de> T: serde::Deserialize<'de>,
     {
-        let rtxn = self.lmdb_env.read_txn()?;
+        let rtxn = lmdb_env.read_txn()?;
         let Some(bytes) = db.get(&rtxn, &key)? else {
             return Ok(None);
         };
@@ -91,11 +91,11 @@ impl LmdbMerkleDB {
     /// Does no decoding or other handling of the stored value.
     #[inline(always)]
     fn key_present(
-        &self,
-        db: Database<KeyLmdb, ValueLmdb>,
+        lmdb_env: &Env,
+        db: &Database<KeyLmdb, ValueLmdb>,
         key: u128,
     ) -> Result<bool, heed::Error> {
-        let rtxn = self.lmdb_env.read_txn()?;
+        let rtxn = lmdb_env.read_txn()?;
         Ok(db
             .remap_data_type::<DecodeIgnore>()
             .get(&rtxn, &key)?
@@ -111,27 +111,27 @@ impl MerkleReader for LmdbMerkleDB {
     }
 
     fn location_exists(&self, location: LocationHash) -> Result<bool, Self::Error> {
-        self.key_present(self.locations, location.into())
+        Self::key_present(&self.lmdb_env, &self.locations, location.into())
     }
 
     fn content_exists(&self, content: ContentHash) -> Result<bool, Self::Error> {
-        self.key_present(self.contents, content.into())
+        Self::key_present(&self.lmdb_env, &self.contents, content.into())
     }
 
     fn commit_exists(&self, commit: ContentHash) -> Result<bool, Self::Error> {
-        self.key_present(self.commits, commit.into())
+        Self::key_present(&self.lmdb_env, &self.commits, commit.into())
     }
 
     fn node(&self, location: LocationHash) -> Result<Option<MerkleTreeL>, Self::Error> {
-        self.retrieve_from(self.locations, location.into())
+        Self::retrieve_from(&self.lmdb_env, &self.locations, location.into())
     }
 
     fn content(&self, content: ContentHash) -> Result<Option<NodeContent>, Self::Error> {
-        self.retrieve_from(self.contents, content.into())
+        Self::retrieve_from(&self.lmdb_env, &self.contents, content.into())
     }
 
     fn commit(&self, commit: ContentHash) -> Result<Option<Root>, Self::Error> {
-        self.retrieve_from(self.commits, commit.into())
+        Self::retrieve_from(&self.lmdb_env, &self.commits, commit.into())
     }
 }
 
@@ -143,18 +143,18 @@ impl MerkleWriter for LmdbMerkleDB {
         let wtxn = self.lmdb_env.write_txn()?;
         Ok(LmdbWriteSession {
             wtxn,
-            locations: self.locations,
-            contents: self.contents,
-            commits: self.commits,
+            locations: &self.locations,
+            contents: &self.contents,
+            commits: &self.commits,
         })
     }
 }
 
 pub struct LmdbWriteSession<'a> {
     wtxn: heed::RwTxn<'a>,
-    locations: Database<KeyLmdb, ValueLmdb>,
-    contents: Database<KeyLmdb, ValueLmdb>,
-    commits: Database<KeyLmdb, ValueLmdb>,
+    locations: &'a Database<KeyLmdb, ValueLmdb>,
+    contents: &'a Database<KeyLmdb, ValueLmdb>,
+    commits: &'a Database<KeyLmdb, ValueLmdb>,
 }
 
 impl<'a> LmdbWriteSession<'a> {
@@ -162,8 +162,8 @@ impl<'a> LmdbWriteSession<'a> {
     /// Is an error if serialization fails (heed::Error::Encoding).
     #[inline(always)]
     fn put_serialized<T: serde::Serialize>(
-        &mut self,
-        db: Database<KeyLmdb, ValueLmdb>,
+        wtxn: &mut heed::RwTxn<'a>,
+        db: &Database<KeyLmdb, ValueLmdb>,
         key: u128,
         value: &T,
     ) -> Result<(), heed::Error> {
@@ -171,7 +171,7 @@ impl<'a> LmdbWriteSession<'a> {
         value
             .serialize(&mut rmp_serde::Serializer::new(&mut buf))
             .map_err(|e| heed::Error::Encoding(Box::new(e)))?;
-        db.put(&mut self.wtxn, &key, &buf)
+        db.put(wtxn, &key, &buf)
     }
 }
 
@@ -179,7 +179,7 @@ impl<'a> WriteSession<'a> for LmdbWriteSession<'a> {
     type Error = heed::Error;
 
     fn queue_location(&mut self, key: LocationHash, node: &MerkleTreeL) -> Result<(), Self::Error> {
-        self.put_serialized(self.locations, key.into(), node)
+        Self::put_serialized(&mut self.wtxn, self.locations, key.into(), node)
     }
 
     fn queue_content(
@@ -187,11 +187,16 @@ impl<'a> WriteSession<'a> for LmdbWriteSession<'a> {
         key: ContentHash,
         content: &NodeContent,
     ) -> Result<(), Self::Error> {
-        self.put_serialized(self.contents, key.into(), content)
+        Self::put_serialized(&mut self.wtxn, self.contents, key.into(), content)
     }
 
     fn queue_commit(&mut self, commit: &Root) -> Result<(), Self::Error> {
-        self.put_serialized(self.commits, commit.content_hash().into(), commit)
+        Self::put_serialized(
+            &mut self.wtxn,
+            self.commits,
+            commit.content_hash().into(),
+            commit,
+        )
     }
 
     fn finish(self) -> Result<(), Self::Error> {
