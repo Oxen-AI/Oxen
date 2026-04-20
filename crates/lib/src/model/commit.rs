@@ -7,7 +7,6 @@ use utoipa::ToSchema;
 use super::MerkleHash;
 use crate::config::UserConfig;
 use crate::error::OxenError;
-use crate::view::workspaces::WorkspaceCommit;
 
 /// NewCommitBody is used to parse the json into a Commit from the API
 #[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
@@ -49,18 +48,6 @@ pub struct Commit {
     pub email: String,
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
-}
-
-impl From<Commit> for WorkspaceCommit {
-    fn from(val: Commit) -> Self {
-        WorkspaceCommit {
-            id: val.id,
-            message: val.message,
-            author: val.author,
-            email: val.email,
-            timestamp: val.timestamp,
-        }
-    }
 }
 
 impl fmt::Display for Commit {

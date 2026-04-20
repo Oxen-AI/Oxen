@@ -115,7 +115,7 @@ pub async fn get_or_create(
             workspace: WorkspaceResponse {
                 id: workspace_id,
                 name: workspace.name.clone(),
-                commit: workspace.commit.into(),
+                commit: workspace.commit,
             },
         }));
     }
@@ -137,7 +137,7 @@ pub async fn get_or_create(
         workspace: WorkspaceResponse {
             id: workspace_id,
             name: data.name.clone(),
-            commit: commit.into(),
+            commit,
         },
     }))
 }
@@ -175,7 +175,7 @@ pub async fn get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpEr
         workspace: WorkspaceResponse {
             id: workspace.id,
             name: workspace.name,
-            commit: workspace.commit.into(),
+            commit: workspace.commit,
         },
     }))
 }
@@ -226,7 +226,7 @@ pub async fn list(
             Some(workspace) => vec![WorkspaceResponse {
                 id: workspace.id,
                 name: workspace.name,
-                commit: workspace.commit.into(),
+                commit: workspace.commit,
             }],
             None => vec![],
         }
@@ -236,7 +236,7 @@ pub async fn list(
             .map(|workspace| WorkspaceResponse {
                 id: workspace.id,
                 name: workspace.name,
-                commit: workspace.commit.into(),
+                commit: workspace.commit,
             })
             .collect()
     };
@@ -306,7 +306,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
         workspace: WorkspaceResponse {
             id: workspace_id,
             name: workspace.name,
-            commit: workspace.commit.into(),
+            commit: workspace.commit,
         },
     }))
 }

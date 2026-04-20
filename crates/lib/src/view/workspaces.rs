@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
 use utoipa::ToSchema;
 
 use super::StatusMessage;
@@ -14,43 +13,19 @@ pub struct NewWorkspace {
     pub name: Option<String>,
     pub force: Option<bool>,
 }
-// HACK to get this to work with our hub where we don't keep parent_ids 🤦‍♂️
-// TODO: it should just be a Commit object
-#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
-pub struct WorkspaceCommit {
-    pub id: String,
-    pub message: String,
-    pub author: String,
-    pub email: String,
-    #[serde(with = "time::serde::rfc3339")]
-    pub timestamp: OffsetDateTime,
-}
-
-impl From<WorkspaceCommit> for Commit {
-    fn from(val: WorkspaceCommit) -> Self {
-        Commit {
-            id: val.id,
-            message: val.message,
-            author: val.author,
-            email: val.email,
-            timestamp: val.timestamp,
-            parent_ids: vec![],
-        }
-    }
-}
 
 #[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct WorkspaceResponse {
     pub id: String,
     pub name: Option<String>,
-    pub commit: WorkspaceCommit,
+    pub commit: Commit,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct WorkspaceResponseWithStatus {
     pub id: String,
     pub name: Option<String>,
-    pub commit: WorkspaceCommit,
+    pub commit: Commit,
     pub status: String,
 }
 
