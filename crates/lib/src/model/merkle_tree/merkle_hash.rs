@@ -15,14 +15,17 @@ use crate::error::OxenError;
 pub struct MerkleHash(u128);
 
 impl MerkleHash {
+    #[inline(always)]
     pub fn new(hash: u128) -> Self {
         Self(hash)
     }
 
+    #[inline(always)]
     pub fn to_le_bytes(&self) -> [u8; 16] {
         self.0.to_le_bytes()
     }
 
+    #[inline(always)]
     pub fn to_u128(&self) -> u128 {
         self.0
     }
