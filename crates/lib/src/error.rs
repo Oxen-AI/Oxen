@@ -13,6 +13,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use tokio::task::JoinError;
 
+use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
 use crate::model::ParsedResource;
 use crate::model::RepoNew;
 use crate::model::Schema;
@@ -175,6 +176,9 @@ pub enum OxenError {
     /// u8 marker for its node type.
     #[error("{0}")]
     MerkleTreeError(#[from] InvalidMerkleTreeNodeType),
+
+    #[error("{0}")]
+    MerkleDbError(#[from] MerkleDbError),
 
     //
     // Schema (dataframes)
