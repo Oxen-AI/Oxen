@@ -42,6 +42,7 @@ impl MerkleHash {
     }
 }
 
+/// Parses a hexadecimal string into a `MerkleHash`.
 impl FromStr for MerkleHash {
     type Err = OxenError;
 
@@ -51,6 +52,7 @@ impl FromStr for MerkleHash {
     }
 }
 
+/// Parses a hexadecimal string into a `MerkleHash`.
 impl TryFrom<String> for MerkleHash {
     type Error = OxenError;
 
@@ -59,6 +61,7 @@ impl TryFrom<String> for MerkleHash {
     }
 }
 
+/// Writes the hash value in hexadecimal format.
 impl fmt::Display for MerkleHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:x}", self.0)
@@ -88,3 +91,32 @@ serde_with::serde_conv!(
     |hash: &MerkleHash| hash.to_string(),
     |s: String| MerkleHash::try_from(s)
 );
+
+/// A hexadecimal representation of a `MerkleHash`. Can only be created from a `MerkleHash`.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct HexHash(String);
+
+impl HexHash {
+    #[inline(always)]
+    pub fn new(hash: &MerkleHash) -> Self {
+        Self(format!("{hash}"))
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Converts a `MerkleHash` into a `HexHash`.
+impl From<MerkleHash> for HexHash {
+    fn from(value: MerkleHash) -> Self {
+        Self::new(&value)
+    }
+}
+
+/// Convert a reference to a `MerkleHash` into a `HexHash`.
+impl<'a> From<&'a MerkleHash> for HexHash {
+    fn from(value: &'a MerkleHash) -> Self {
+        Self::new(value)
+    }
+}
