@@ -81,6 +81,17 @@ cargo clippy --workspace --no-deps -- -D warnings  # Lint code
 pre-commit run --all-files                         # Run pre-commit hooks (runs format and lint)
 ```
 
+### Benchmarks
+The `liboxen::test` helper module is gated behind the `test-utils` feature so it isn't compiled
+into release builds. Benches that consume it (`download`, `fetch`, `push`, `workspace_add`)
+declare `required-features = ["test-utils"]` and are skipped unless the feature is enabled:
+```bash
+cargo bench --features liboxen/test-utils           # Run all benches
+cargo bench --features liboxen/test-utils --bench push
+```
+Downstream crates (`oxen-cli`, `oxen-server`) enable `test-utils` via dev-dependencies, so their
+own tests can call `liboxen::test::*` as before.
+
 ### Server Development
 ```bash
 ulimit -n 10240                     # Increase file handles before running the server

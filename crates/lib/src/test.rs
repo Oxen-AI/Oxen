@@ -36,15 +36,7 @@ use tracing::level_filters::LevelFilter;
 
 pub const DEFAULT_TEST_HOST: &str = "localhost:3000";
 
-pub static REPO_ROOT: LazyLock<PathBuf> = LazyLock::new(|| {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .unwrap()
-        .to_path_buf()
-});
-
-pub static TEST_DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| REPO_ROOT.join("data"));
+pub use crate::test_paths::{REPO_ROOT, TEST_DATA_DIR};
 
 pub fn test_run_dir() -> PathBuf {
     match std::env::var("OXEN_TEST_RUN_DIR") {

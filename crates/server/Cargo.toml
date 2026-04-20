@@ -67,6 +67,7 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 actix-multipart-test = { workspace = true }
+liboxen = { path = "../lib", features = ["test-utils"] }
 
 [lints]
 workspace = true
