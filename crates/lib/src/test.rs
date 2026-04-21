@@ -36,7 +36,15 @@ use tracing::level_filters::LevelFilter;
 
 pub const DEFAULT_TEST_HOST: &str = "localhost:3000";
 
-pub use crate::test_paths::{REPO_ROOT, TEST_DATA_DIR};
+pub static REPO_ROOT: LazyLock<PathBuf> = LazyLock::new(|| {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .unwrap()
+        .to_path_buf()
+});
+
+pub static TEST_DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| REPO_ROOT.join("data"));
 
 pub fn test_run_dir() -> PathBuf {
     match std::env::var("OXEN_TEST_RUN_DIR") {
@@ -92,9 +100,9 @@ pub fn init_test_env() {
                 *logging_setup = true;
             }
 
-            unsafe {
-                std::env::set_var("TEST", "true");
-            }
+            // Point config getters at the in-repo test fixtures (data/test/config/) rather than
+            // the developer's real ~/.config/oxen. First writer wins; subsequent calls are no-ops.
+            util::fs::set_oxen_config_dir(REPO_ROOT.join("data").join("test").join("config"));
         }
         Err(e) => {
             panic!("Failed to acquire environment lock to initialize test environment: {e}");

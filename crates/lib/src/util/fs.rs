@@ -18,6 +18,7 @@ use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use tokio_stream::Stream;
 
 use crate::constants::CHUNKS_DIR;
@@ -55,8 +56,20 @@ pub fn oxen_tmp_dir() -> Result<PathBuf, OxenError> {
     }
 }
 
+static CONFIG_DIR_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
+
+/// Set the directory oxen reads and writes its top-level config files from and to. First writer
+/// wins — intended to be called once at process startup by the binaries (via --config-dir) or by
+/// test setup. Takes precedence over OXEN_CONFIG_DIR and the default ~/.config/oxen/ location.
+pub fn set_oxen_config_dir(path: PathBuf) {
+    let _ = CONFIG_DIR_OVERRIDE.set(path);
+}
+
 pub fn oxen_config_dir() -> Result<PathBuf, OxenError> {
-    // Override the home dir with the OXEN_CONFIG_DIR env var if it is set
+    if let Some(dir) = CONFIG_DIR_OVERRIDE.get() {
+        return Ok(dir.clone());
+    }
+
     if let Ok(config_dir) = std::env::var("OXEN_CONFIG_DIR") {
         return Ok(PathBuf::from(config_dir));
     }
