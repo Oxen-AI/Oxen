@@ -11,9 +11,7 @@ use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
 use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
-use crate::opts::StorageOpts;
 use crate::repositories;
-use crate::storage::version_store::create_version_store;
 
 /// Statistics about the prune operation
 #[derive(Debug, Clone)]
@@ -280,8 +278,7 @@ async fn prune_versions(
     stats: &mut PruneStats,
     dry_run: bool,
 ) -> Result<(), OxenError> {
-    let storage_opts = StorageOpts::from_path(&repo.path, true);
-    let version_store = create_version_store(&repo.path, &storage_opts)?;
+    let version_store = repo.version_store()?;
 
     let all_versions = version_store.list_versions().await?;
     stats.versions_scanned = all_versions.len();
