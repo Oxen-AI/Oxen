@@ -1802,7 +1802,6 @@ pub fn is_modified_metadata_only(path: &Path, node: &FileNode) -> Result<bool, F
     Ok(true)
 }
 
-
 // Calculate a node's last modified time
 
 pub fn last_modified_time(last_modified_seconds: i64, last_modified_nanoseconds: u32) -> FileTime {

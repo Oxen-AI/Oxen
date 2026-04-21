@@ -54,7 +54,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::constants;
-use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::model::MerkleHash;
 use crate::model::merkle_tree::node_type::InvalidMerkleTreeNodeType;
@@ -64,6 +63,7 @@ use crate::model::merkle_tree::node::{
     CommitNode, DirNode, EMerkleTreeNode, FileChunkNode, FileNode, MerkleTreeNode,
     MerkleTreeNodeType, TMerkleTreeNode, VNode,
 };
+use crate::util::fs::FsError;
 
 const NODE_FILE: &str = "node";
 const CHILDREN_FILE: &str = "children";
@@ -102,19 +102,9 @@ pub enum MerkleDbError {
     #[error("{0}")]
     TypeMismatch(#[from] InvalidMerkleTreeNodeType),
     #[error("Failed to create directory: {0}")]
-    DirCreate(Box<OxenError>), // TODO: replace with FsError from upcoming refactoring PR
+    DirCreate(FsError),
     #[error("Failed to open file: {0}")]
-    Open(Box<OxenError>), // TODO: replace with FsError from upcoming refactoring PR
-}
-
-impl MerkleDbError {
-    fn dir_create(err: OxenError) -> Self {
-        Self::DirCreate(Box::new(err))
-    }
-
-    fn open(err: OxenError) -> Self {
-        Self::Open(Box::new(err))
-    }
+    Open(FsError),
 }
 
 pub struct MerkleNodeLookup {
@@ -297,7 +287,7 @@ impl MerkleNodeDB {
     ) -> Result<Self, MerkleDbError> {
         let path = node_db_path(repo, &node.hash());
         if !path.exists() {
-            util::fs::create_dir_all(&path).map_err(MerkleDbError::dir_create)?;
+            util::fs::create_dir_all(&path).map_err(MerkleDbError::DirCreate)?;
         }
         log::debug!("open_read_write merkle node db at {}", path.display());
         let mut db = Self::open(path, false)?;
@@ -310,7 +300,7 @@ impl MerkleNodeDB {
 
         // mkdir if not exists
         if !path.exists() {
-            util::fs::create_dir_all(path).map_err(MerkleDbError::dir_create)?;
+            util::fs::create_dir_all(path).map_err(MerkleDbError::DirCreate)?;
         }
 
         let node_path = path.join(NODE_FILE);
@@ -326,8 +316,8 @@ impl MerkleNodeDB {
             Option<File>,
             Option<File>,
         ) = if read_only {
-            let mut node_file = util::fs::open_file(node_path).map_err(MerkleDbError::open)?;
-            let children_file = util::fs::open_file(children_path).map_err(MerkleDbError::open)?;
+            let mut node_file = util::fs::open_file(&node_path).map_err(MerkleDbError::Open)?;
+            let children_file = util::fs::open_file(&children_path).map_err(MerkleDbError::Open)?;
             // log::debug!("Opened merkle node db read_only at {}", path.display());
             (
                 Some(MerkleNodeLookup::load(&mut node_file)?),
