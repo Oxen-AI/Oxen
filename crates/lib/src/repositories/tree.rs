@@ -10,7 +10,7 @@ use tar::Archive;
 use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
 use crate::core::commit_sync_status;
 use crate::core::db::merkle_node::MerkleNodeDB;
-use crate::core::db::merkle_node::merkle_node_db::{node_db_path, node_db_prefix};
+use crate::core::db::merkle_node::merkle_node_db::node_db_path;
 use crate::core::node_sync_status;
 use crate::core::v_latest::index::CommitMerkleTree as CommitMerkleTreeLatest;
 use crate::core::v_latest::index::CommitMerkleTree;
@@ -896,7 +896,7 @@ pub fn compress_nodes(
         // This will be the subdir within the tarball
         // so when we untar it, all the subdirs will be extracted to
         // tree/nodes/...
-        let dir_prefix = node_db_prefix(hash);
+        let dir_prefix = hash.to_hex_hash().node_db_prefix();
         let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR).join(dir_prefix);
 
         let node_dir = node_db_path(repository, hash);
@@ -918,7 +918,7 @@ pub fn compress_node(
     // This will be the subdir within the tarball
     // so when we untar it, all the subdirs will be extracted to
     // tree/nodes/...
-    let dir_prefix = node_db_prefix(hash);
+    let dir_prefix = hash.to_hex_hash().node_db_prefix();
     let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR).join(dir_prefix);
 
     // zip up the node directory
@@ -956,7 +956,7 @@ pub fn compress_commits(
         // This will be the subdir within the tarball
         // so when we untar it, all the subdirs will be extracted to
         // tree/nodes/...
-        let dir_prefix = node_db_prefix(&hash);
+        let dir_prefix = hash.to_hex_hash().node_db_prefix();
         let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR).join(dir_prefix);
 
         let node_dir = node_db_path(repository, &hash);

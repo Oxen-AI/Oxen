@@ -117,9 +117,13 @@ This repository contains the Python library that wraps the core Rust codebase. W
 
 Code bases to contribute to:
 
-* 🦀 [Core Rust Library](https://github.com/Oxen-AI/Oxen/tree/main/crates/lib)
+* 🦀 [Rust Library & Binaries](https://github.com/Oxen-AI/Oxen/tree/main/crates/)
 * 🐍 [Python Interface](https://github.com/Oxen-AI/Oxen/tree/main/oxen-python)
 * 📚 [Documentation](https://github.com/Oxen-AI/docs)
+
+See the [CONTRIBUTING.md](./CONTRIBUTING.md) document for guidelines on external contributions.
+
+All contributors are required to follow the [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md). The tl;dr is be nice and respectful during all engagements :)
 
 If you are building anything with Oxen.ai or have any questions we would love to hear from you in our [discord](https://discord.gg/s3tBEn7Ptg).
 

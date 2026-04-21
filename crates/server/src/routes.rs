@@ -37,6 +37,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                 .service(services::import())
                 .service(services::merge())
                 .service(services::meta())
+                .service(services::migrations())
                 .service(services::prune())
                 .service(services::revisions())
                 .service(services::size())
