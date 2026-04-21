@@ -57,7 +57,6 @@ use crate::constants;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::model::MerkleHash;
-use crate::model::merkle_tree::merkle_hash::HexHash;
 use crate::model::merkle_tree::node_type::InvalidMerkleTreeNodeType;
 use crate::util;
 
@@ -69,21 +68,9 @@ use crate::model::merkle_tree::node::{
 const NODE_FILE: &str = "node";
 const CHILDREN_FILE: &str = "children";
 
-/// Produces a relative path for the 2-level directory structure used to store Merkle nodes.
-/// The first directory name is the first 3 characters of the hex-encoded hash. The second
-/// is the remaining characters.
-pub fn node_db_prefix(hash: &MerkleHash) -> PathBuf {
-    let as_hex = HexHash::new(hash);
-    let hash_str = as_hex.as_str();
-    const DIR_PREFIX_LEN: usize = 3;
-    let dir_prefix = &hash_str[0..DIR_PREFIX_LEN];
-    let dir_suffix = &hash_str[DIR_PREFIX_LEN..];
-    Path::new(dir_prefix).join(dir_suffix)
-}
-
 /// An absolute path to the directory for the Merkle node's `node` and `children` files.
 pub fn node_db_path(repo: &LocalRepository, hash: &MerkleHash) -> PathBuf {
-    let dir_prefix = node_db_prefix(hash);
+    let dir_prefix = hash.to_hex_hash().node_db_prefix();
     repo.path
         .join(constants::OXEN_HIDDEN_DIR)
         .join(constants::TREE_DIR)

@@ -11,7 +11,6 @@ use tempfile::TempDir;
 
 use crate::api::client;
 use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
-use crate::core::db::merkle_node::merkle_node_db::node_db_prefix;
 use crate::core::progress::push_progress::PushProgress;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
@@ -72,7 +71,7 @@ pub async fn create_nodes(
         .join(NODES_DIR);
 
     for (i, node_hash) in nodes.iter().enumerate() {
-        let dir_prefix = node_db_prefix(node_hash);
+        let dir_prefix = node_hash.to_hex_hash().node_db_prefix();
         let node_dir = node_path.join(&dir_prefix);
         // log::debug!(
         //     "create_nodes appending objects dir {:?} to tar at path {:?}",
