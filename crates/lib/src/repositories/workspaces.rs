@@ -75,7 +75,7 @@ pub fn get_by_dir(
         return Ok(None);
     }
 
-    let config_contents = util::fs::read_from_path(&config_path)?;
+    let config_contents = std::fs::read_to_string(&config_path)?;
     let config: WorkspaceConfig = toml::from_str(&config_contents)
         .map_err(|e| OxenError::basic_str(format!("Failed to parse workspace config: {e}")))?;
 
@@ -460,7 +460,7 @@ pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), O
         return Err(OxenError::WorkspaceNotFound(workspace.id.as_str().into()));
     }
 
-    let config_contents = util::fs::read_from_path(&config_path)?;
+    let config_contents = std::fs::read_to_string(&config_path)?;
     let mut config: WorkspaceConfig = toml::from_str(&config_contents).map_err(|e| {
         log::error!("Failed to parse workspace config: {config_path:?}, err: {e}");
         OxenError::basic_str(format!("Failed to parse workspace config: {e}"))

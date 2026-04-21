@@ -170,6 +170,13 @@ pub enum OxenError {
     CommitEntryNotFound(StringError),
 
     //
+    // Filesystem Operations
+    //
+    /// A failure from common file system operations.
+    #[error("{0}")]
+    FilesystemError(#[from] crate::util::fs::FsError),
+
+    //
     // Merkle Tree Operations
     //
     /// A failure during serialization or deserialization of a merkle tree node: it has an unknown
@@ -630,67 +637,17 @@ impl OxenError {
         OxenError::basic_str(format!("Could not find commit: {}", commit_id.as_ref()))
     }
 
-    pub fn file_error(path: impl AsRef<Path>, error: std::io::Error) -> OxenError {
+    pub fn local_parent_link_broken(commit_id: impl AsRef<str>) -> OxenError {
         OxenError::basic_str(format!(
-            "File does not exist: {:?} error {:?}",
-            path.as_ref(),
-            error
+            "Broken link to parent commit: {}",
+            commit_id.as_ref()
         ))
     }
 
-    pub fn file_create_error(path: impl AsRef<Path>, error: std::io::Error) -> OxenError {
+    pub fn workspace_add_file_not_in_repo(path: impl AsRef<Path>) -> OxenError {
         OxenError::basic_str(format!(
-            "Could not create file: {:?} error {:?}",
-            path.as_ref(),
-            error
-        ))
-    }
-
-    pub fn file_open_error(path: impl AsRef<Path>, error: std::io::Error) -> OxenError {
-        OxenError::basic_str(format!(
-            "Could not open file: {:?} error {:?}",
-            path.as_ref(),
-            error
-        ))
-    }
-
-    pub fn file_read_error(path: impl AsRef<Path>, error: std::io::Error) -> OxenError {
-        OxenError::basic_str(format!(
-            "Could not read file: {:?} error {:?}",
-            path.as_ref(),
-            error
-        ))
-    }
-
-    pub fn file_metadata_error(path: impl AsRef<Path>, error: std::io::Error) -> OxenError {
-        OxenError::basic_str(format!(
-            "Could not get file metadata: {:?} error {:?}",
-            path.as_ref(),
-            error
-        ))
-    }
-
-    pub fn file_copy_error(
-        src: impl AsRef<Path>,
-        dst: impl AsRef<Path>,
-        err: impl std::fmt::Debug,
-    ) -> OxenError {
-        OxenError::basic_str(format!(
-            "File copy error: {err:?}\nCould not copy from `{:?}` to `{:?}`",
-            src.as_ref(),
-            dst.as_ref()
-        ))
-    }
-
-    pub fn file_rename_error(
-        src: impl AsRef<Path>,
-        dst: impl AsRef<Path>,
-        err: impl std::fmt::Debug,
-    ) -> OxenError {
-        OxenError::basic_str(format!(
-            "File rename error: {err:?}\nCould not move from `{:?}` to `{:?}`",
-            src.as_ref(),
-            dst.as_ref()
+            "File is outside of the repo {:?}\n\nYou must specify a path you would like to add the file at with the -d flag.\n\n  oxen workspace add /path/to/file.png -d my-images/\n",
+            path.as_ref()
         ))
     }
 
@@ -765,6 +722,23 @@ impl OxenError {
 impl From<String> for OxenError {
     fn from(error: String) -> Self {
         OxenError::Basic(StringError::from(error))
+    }
+}
+
+/// AWS SDK Error
+impl<E> From<SdkError<E, HttpResponse>> for OxenError
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    fn from(e: SdkError<E, HttpResponse>) -> Self {
+        OxenError::AwsError(Box::new(e))
+    }
+}
+
+/// AWS Build Error
+impl From<BuildError> for OxenError {
+    fn from(e: BuildError) -> Self {
+        OxenError::AwsError(Box::new(e))
     }
 }
 

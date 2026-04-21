@@ -5424,6 +5424,7 @@ dependencies = [
  "pyo3-async-runtimes",
  "pyo3-polars",
  "serde_json",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "uuid",

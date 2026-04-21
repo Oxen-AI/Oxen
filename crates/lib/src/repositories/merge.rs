@@ -428,7 +428,7 @@ mod tests {
             repositories::checkout(&repo, &og_branch.name).await?;
 
             // Make sure world file exists in it's original form
-            let contents = util::fs::read_from_path(&world_file)?;
+            let contents = tokio::fs::read_to_string(&world_file).await?;
             assert_eq!(contents, og_contents);
 
             repositories::merge::merge(&repo, branch_name)
@@ -437,7 +437,7 @@ mod tests {
 
             // Now that we've merged in, world file should be new content
             assert!(world_file.exists(), "World file should exist after merge");
-            let contents = util::fs::read_from_path(&world_file)?;
+            let contents = tokio::fs::read_to_string(&world_file).await?;
             assert_eq!(contents, new_contents);
 
             Ok(())
@@ -767,7 +767,7 @@ mod tests {
             let bbox_file = repo.path.join(&bbox_filename);
             let bbox_file =
                 test::append_line_txt_file(bbox_file, "train/cat_3.jpg,cat,41.0,31.5,410,427")?;
-            let their_branch_contents = util::fs::read_from_path(&bbox_file)?;
+            let their_branch_contents = tokio::fs::read_to_string(&bbox_file).await?;
 
             repositories::add(&repo, &bbox_file).await?;
             repositories::commit(&repo, "Adding new annotation as an Ox on a branch.")?;
@@ -794,7 +794,7 @@ mod tests {
             // Run repositories::checkout::checkout_theirs() and make sure their changes get kept
             repositories::checkout::checkout_theirs(&repo, &bbox_filename).await?;
 
-            let file_contents = util::fs::read_from_path(&bbox_file)?;
+            let file_contents = tokio::fs::read_to_string(&bbox_file).await?;
             assert_eq!(file_contents, their_branch_contents);
             Ok(())
         })
@@ -1166,7 +1166,7 @@ mod tests {
             );
 
             // Verify the merged file has the updated content from branch B
-            let content = util::fs::read_from_path(&a_path)?;
+            let content = tokio::fs::read_to_string(&a_path).await?;
             assert_eq!(content, "version = 2");
 
             // Verify the other files are still intact

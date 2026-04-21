@@ -35,7 +35,7 @@ pub mod schemas;
 
 pub fn is_behind(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool, OxenError> {
     let commit_path = previous_commit_ref_path(workspace, path);
-    let commit_id = util::fs::read_from_path(commit_path)?;
+    let commit_id = std::fs::read_to_string(commit_path)?;
     Ok(commit_id != workspace.commit.id)
 }
 

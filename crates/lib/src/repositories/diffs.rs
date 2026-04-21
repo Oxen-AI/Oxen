@@ -464,29 +464,25 @@ pub async fn diff_files(
     targets: Vec<String>,
     display: Vec<String>,
 ) -> Result<DiffResult, OxenError> {
-    log::debug!(
-        "Compare command called with: {:?} and {:?}",
-        path_1.as_ref(),
-        path_2.as_ref()
-    );
-    if is_files_tabular(&path_1, &path_2) {
+    let path_1 = path_1.as_ref();
+    let path_2 = path_2.as_ref();
+    log::debug!("Compare command called with: {path_1:?} and {path_2:?}");
+    if is_files_tabular(path_1, path_2) {
         let result = tabular(path_1, path_2, keys, targets, display).await?;
         Ok(DiffResult::Tabular(result))
-    } else if is_files_utf8(&path_1, &path_2) {
-        let file_content_1 = util::fs::read_file(Some(&path_1))?;
-        let file_content_2 = util::fs::read_file(Some(&path_2))?;
+    } else if is_files_utf8(path_1, path_2) {
+        let file_content_1 = tokio::fs::read_to_string(path_1).await?;
+        let file_content_2 = tokio::fs::read_to_string(path_2).await?;
         let result = utf8_diff::diff(
             Some(file_content_1),
-            Some(path_1.as_ref().to_path_buf()),
+            Some(path_1.to_path_buf()),
             Some(file_content_2),
-            Some(path_2.as_ref().to_path_buf()),
+            Some(path_2.to_path_buf()),
         )?;
         Ok(DiffResult::Text(result))
     } else {
         Err(OxenError::invalid_file_type(format!(
-            "Compare not supported for files, found {:?} and {:?}",
-            path_1.as_ref(),
-            path_2.as_ref()
+            "Compare not supported for files, found {path_1:?} and {path_2:?}",
         )))
     }
 }
@@ -775,12 +771,13 @@ pub async fn diff_text_file_and_node(
         None
     };
 
-    let file_path_content = util::fs::read_file(Some(&file_path))?;
+    let file_path = file_path.as_ref();
+    let file_path_content = tokio::fs::read_to_string(file_path).await?;
     let result = utf8_diff::diff(
         file_node_content,
-        Some(file_path.as_ref().to_path_buf()), // The display path for the file node is the same as the locally-changed file
+        Some(file_path.to_path_buf()), // The display path for the file node is the same as the locally-changed file
         Some(file_path_content),
-        Some(file_path.as_ref().to_path_buf()),
+        Some(file_path.to_path_buf()),
     )?;
     Ok(DiffResult::Text(result))
 }

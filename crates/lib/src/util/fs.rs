@@ -7,10 +7,13 @@ use bytes::Bytes;
 use futures::StreamExt;
 use jwalk::WalkDir;
 
+use thiserror::Error;
+
 use simdutf8::compat::from_utf8;
 use std::collections::HashSet;
+use std::ffi::OsStr;
+use std::ffi::OsString;
 use std::fs::File;
-use std::fs::OpenOptions;
 use std::io::BufReader;
 use std::io::Cursor;
 use std::io::prelude::*;
@@ -18,6 +21,7 @@ use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 use tokio_stream::Stream;
 
 use crate::constants::CHUNKS_DIR;
@@ -38,12 +42,93 @@ use image::{ImageFormat, ImageReader};
 #[cfg(feature = "ffmpeg")]
 use thumbnails::Thumbnailer;
 
+#[derive(Debug, Error)]
+pub enum FsError {
+    #[error("dir bounds violation")]
+    DirBoundsViolation,
+    #[error("path bounds violation")]
+    PathBoundsViolation,
+    #[error("Expected a file but found a directory: {0}")]
+    UnexpectedDir(PathBuf),
+    #[error("Expected a directory but found a file: {0}")]
+    UnexpectedFile(PathBuf),
+
+    #[error("Operation expected a non-empty file: {0}")]
+    UnexpectedEmptyFile(PathBuf),
+
+    #[error("Version file {0} is empty")]
+    UnexpectedEmptyVersionFile(String),
+
+    /// A file deosn't exist.
+    #[error("File does not exist: {0}")]
+    FileNotFound(PathBuf),
+    /// A failure occurred while reading a file.
+    #[error("Could not read file: {0} error {1}")]
+    FileReadError(PathBuf, std::io::Error),
+
+    #[error("Failed to read version file {0}: {1}")]
+    VersionedReadError(String, std::io::Error),
+
+    /// Metadata for the file could not be retrieved.
+    #[error("Could not get file metadata: {0} error {1}")]
+    MetadataError(PathBuf, std::io::Error),
+
+    /// A failure occurred while copying from one file to another.
+    /// Appropriate to use when copying directory contents too.
+    #[error("File copy error: {err}\nCould not copy from `{src:?}` to `{dst:?}`")]
+    CopyError {
+        src: PathBuf,
+        dst: PathBuf,
+        err: std::io::Error,
+    },
+    /// A failure occurred while renaming a file.
+    /// Appropriate to use when renaming a directory too.
+    #[error("File rename error: {err}\nCould not rename `{src:?}` to `{dst:?}`")]
+    RenameError {
+        src: PathBuf,
+        dst: PathBuf,
+        err: std::io::Error,
+    },
+    /// In attempting to write a file, the file could not be created.
+    #[error("Could not create file to write {0}\n{1}")]
+    FileCreateError(PathBuf, std::io::Error),
+    /// In attempting to write a file, after creating the file, the file could not be written to.
+    #[error("Could not write file {0}\n{1}")]
+    FileWriteError(PathBuf, std::io::Error),
+    /// Could not remove a file or a directory.
+    #[error("Could not remove {0}\n{1}")]
+    RemoveError(PathBuf, std::io::Error),
+    /// An attempt was made to create a directory but it failed.
+    #[error("Failed to create directory {0}\n{1}")]
+    DirCreateError(PathBuf, std::io::Error),
+    /// Cannot read the listing of a directory.
+    #[error("Could not list directory contents for {0}\n{1}")]
+    DirReadError(PathBuf, std::io::Error),
+    /// The directory does not exist.
+    #[error("Directory does not exist: {0}")]
+    DirNotFound(PathBuf),
+    /// An operation on a file failed because the file is in use by another process.
+    /// This problem arises only on Windows.
+    #[error("File is in use by another process after {0} attempts: {1}\n{2}")]
+    FileInUseError(u32, PathBuf, std::io::Error),
+
+    #[error("path {0:?} cannot be canonicalized due to err {1:?}")]
+    CanonicalizeError(PathBuf, std::io::Error),
+
+    /// The user's $HOME (~/) directory could not be found.
+    #[error("Home directory not found")]
+    HomeDirNotFound,
+    /// The user's default cache directory could not be found. (And they didn't set OXEN_TMP_DIR).
+    #[error("Cache directory not found")]
+    CacheDirNotFound,
+}
+
 // Deprecated
 pub fn oxen_hidden_dir(repo_path: impl AsRef<Path>) -> PathBuf {
     PathBuf::from(repo_path.as_ref()).join(Path::new(constants::OXEN_HIDDEN_DIR))
 }
 
-pub fn oxen_tmp_dir() -> Result<PathBuf, OxenError> {
+pub fn oxen_tmp_dir() -> Result<PathBuf, FsError> {
     // Override the cache dir with the OXEN_TMP_DIR env var if it is set
     if let Ok(tmp_dir) = std::env::var("OXEN_TMP_DIR") {
         return Ok(PathBuf::from(tmp_dir));
@@ -51,11 +136,11 @@ pub fn oxen_tmp_dir() -> Result<PathBuf, OxenError> {
 
     match dirs::cache_dir() {
         Some(cache_dir) => Ok(cache_dir.join(constants::OXEN)),
-        None => Err(OxenError::cache_dir_not_found()),
+        None => Err(FsError::CacheDirNotFound),
     }
 }
 
-pub fn oxen_config_dir() -> Result<PathBuf, OxenError> {
+pub fn oxen_config_dir() -> Result<PathBuf, FsError> {
     // Override the home dir with the OXEN_CONFIG_DIR env var if it is set
     if let Ok(config_dir) = std::env::var("OXEN_CONFIG_DIR") {
         return Ok(PathBuf::from(config_dir));
@@ -63,7 +148,7 @@ pub fn oxen_config_dir() -> Result<PathBuf, OxenError> {
 
     match dirs::home_dir() {
         Some(home_dir) => Ok(home_dir.join(constants::CONFIG_DIR).join(constants::OXEN)),
-        None => Err(OxenError::home_dir_not_found()),
+        None => Err(FsError::HomeDirNotFound),
     }
 }
 
@@ -81,7 +166,7 @@ pub async fn handle_image_resize(
         Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
         u64,
     ),
-    OxenError,
+    FsError,
 > {
     log::debug!("img_resize {img_resize:?}");
     let derived_filename = resized_filename(file_path, img_resize.width, img_resize.height);
@@ -89,39 +174,54 @@ pub async fn handle_image_resize(
     let stream =
         resize_cache_image_version_store(version_store, &file_hash, &derived_filename, img_resize)
             .await?;
-    log::debug!("Got the resized image! {derived_filename}");
+    log::debug!("Got the resized image! {derived_filename:?}");
 
     Ok(stream)
 }
 
-pub fn resized_filename(img_path: &Path, width: Option<u32>, height: Option<u32>) -> String {
-    let extension = img_path.extension().unwrap().to_str().unwrap();
-    let width = width.map(|w| w.to_string());
-    let height = height.map(|w| w.to_string());
-    format!(
-        "{}x{}.{}",
-        width.unwrap_or("".to_string()),
-        height.unwrap_or("".to_string()),
-        extension
-    )
+/// Constructs '{width}x{height}.{extension}' as an OS-friendly string using the image path's extension.
+/// Uses an empty string if the width or height is None or if the image path doesn't have an extension.
+pub fn resized_filename(img_path: &Path, width: Option<u32>, height: Option<u32>) -> OsString {
+    // {width}x{height}.{extension}
+    let mut s = OsString::new();
+    push_or(&mut s, width.map(|w| w.to_string()), "");
+    s.push("x");
+    push_or(&mut s, height.map(|h| h.to_string()), "");
+    s.push(".");
+    s.push(extension_from_path(img_path));
+    s
 }
 
+/// Pushes the value into the OsString if Some, otherwise pushes the default value.
+fn push_or<A: AsRef<OsStr>, B: AsRef<OsStr>>(s: &mut OsString, value: Option<A>, default: B) {
+    match value {
+        Some(v) => s.push(v),
+        None => s.push(default),
+    }
+}
+
+/// Returns a reference to the path's extension or an empty string if there is none.
+pub fn extension_from_path(path: &Path) -> &OsStr {
+    path.extension().unwrap_or_else(|| OsStr::new(""))
+}
+
+// Creats a filename for a video thumbnail with the given width, height, and timestamp in the name.
+// Formatted as: `"thumbnail_{width_str}x{height_str}_{timestamp_str}.{extension}"`
 pub fn video_thumbnail_filename(
     width: Option<u32>,
     height: Option<u32>,
     timestamp: Option<f64>,
-) -> String {
-    let extension = "jpg";
-    let (width_str, height_str) = match (width, height) {
-        (Some(w), Some(h)) => (w.to_string(), h.to_string()),
-        (Some(w), None) => (w.to_string(), "auto".to_string()),
-        (None, Some(h)) => ("auto".to_string(), h.to_string()),
-        (None, None) => ("320".to_string(), "240".to_string()),
-    };
-    let timestamp_str = timestamp
-        .map(|t| format!("t{t:.1}"))
-        .unwrap_or_else(|| "t1.0".to_string());
-    format!("thumbnail_{width_str}x{height_str}_{timestamp_str}.{extension}")
+) -> OsString {
+    // "thumbnail_{width_str}x{height_str}_{timestamp_str}.{extension}"
+    let mut s = OsString::new();
+    s.push("thumbnail_");
+    push_or(&mut s, width.map(|w| w.to_string()), "auto");
+    s.push("x");
+    push_or(&mut s, height.map(|h| h.to_string()), "auto");
+    s.push("_");
+    push_or(&mut s, timestamp.map(|t| format!("t{t:.1}")), "t1.0");
+    s.push(".jpg"); // extension is hardcoded as "jpg"
+    s
 }
 
 pub fn chunk_path(repo: &LocalRepository, hash: impl AsRef<str>) -> PathBuf {
@@ -132,38 +232,33 @@ pub fn chunk_path(repo: &LocalRepository, hash: impl AsRef<str>) -> PathBuf {
         .join("data")
 }
 
-pub fn extension_from_path(path: &Path) -> String {
-    if let Some(ext) = path.extension() {
-        String::from(ext.to_str().unwrap_or(""))
-    } else {
-        String::from("")
-    }
-}
-
-pub fn read_bytes_from_path(path: impl AsRef<Path>) -> Result<Vec<u8>, OxenError> {
-    let path = path.as_ref();
-    Ok(std::fs::read(path)?)
-}
-
-pub fn read_file(path: Option<impl AsRef<Path>>) -> Result<String, OxenError> {
-    match path {
-        Some(path) => read_from_path(path),
-        None => Ok(String::new()),
-    }
-}
-
-pub fn read_from_path(path: impl AsRef<Path>) -> Result<String, OxenError> {
+/// Wrapper for [`std::fs::read_to_string`] that logs error and returns it as an [`FsError::FileReadError`].
+pub fn read_string(path: impl AsRef<Path>) -> Result<String, FsError> {
     let path = path.as_ref();
     match std::fs::read_to_string(path) {
         Ok(contents) => Ok(contents),
-        Err(err) => {
-            log::warn!("Could not read file {}: {err}", path.display());
-            Err(OxenError::file_read_error(path, err))
+        Err(e_source) => {
+            let err = FsError::FileReadError(path.to_path_buf(), e_source);
+            log::warn!("{}", err);
+            Err(err)
         }
     }
 }
 
-pub fn write_to_path(path: impl AsRef<Path>, value: impl AsRef<str>) -> Result<(), OxenError> {
+/// Wrapper for [`tokio::fs::read_to_string`] that logs error and returns it as an [`FsError::FileReadError`].
+pub async fn read_string_a(path: impl AsRef<Path>) -> Result<String, FsError> {
+    let path = path.as_ref();
+    match tokio::fs::read_to_string(path).await {
+        Ok(contents) => Ok(contents),
+        Err(e_source) => {
+            let err = FsError::FileReadError(path.to_path_buf(), e_source);
+            log::warn!("{}", err);
+            Err(err)
+        }
+    }
+}
+
+pub fn write_to_path(path: impl AsRef<Path>, value: impl AsRef<str>) -> Result<(), FsError> {
     let path = path.as_ref();
     let value = value.as_ref();
 
@@ -172,51 +267,33 @@ pub fn write_to_path(path: impl AsRef<Path>, value: impl AsRef<str>) -> Result<(
         create_dir_all(parent)?;
     }
 
-    match File::create(path) {
-        Ok(mut file) => match file.write(value.as_bytes()) {
+    write_data_s(path, value.as_bytes())
+}
+
+pub fn write_data_s(path: &Path, data: &[u8]) -> Result<(), FsError> {
+    match std::fs::File::create(path) {
+        Ok(mut file) => match file.write_all(data) {
             Ok(_) => Ok(()),
-            Err(err) => Err(OxenError::basic_str(format!(
-                "Could not write file {path:?}\n{err}"
-            ))),
+            Err(err) => Err(FsError::FileWriteError(path.to_path_buf(), err)),
         },
-        Err(err) => Err(OxenError::basic_str(format!(
-            "Could not create file to write {path:?}\n{err}"
-        ))),
+        Err(err) => Err(FsError::FileCreateError(path.to_path_buf(), err)),
     }
 }
 
-pub fn write_data(path: &Path, data: &[u8]) -> Result<(), OxenError> {
-    match File::create(path) {
-        Ok(mut file) => match file.write(data) {
+pub async fn write_data_a(path: &Path, data: &[u8]) -> Result<(), FsError> {
+    match tokio::fs::File::create(path).await {
+        Ok(mut file) => match file.write_all(data).await {
             Ok(_) => Ok(()),
-            Err(err) => Err(OxenError::basic_str(format!(
-                "Could not write file {path:?}\n{err}"
-            ))),
+            Err(err) => Err(FsError::FileWriteError(path.to_path_buf(), err)),
         },
-        Err(err) => Err(OxenError::basic_str(format!(
-            "Could not create file to write {path:?}\n{err}"
-        ))),
-    }
-}
-
-pub fn append_to_file(path: &Path, value: &str) -> Result<(), OxenError> {
-    match OpenOptions::new().append(true).open(path) {
-        Ok(mut file) => match file.write(value.as_bytes()) {
-            Ok(_) => Ok(()),
-            Err(err) => Err(OxenError::basic_str(format!(
-                "Could not append to file {path:?}\n{err}"
-            ))),
-        },
-        Err(err) => Err(OxenError::basic_str(format!(
-            "Could not open file to append {path:?}\n{err}"
-        ))),
+        Err(err) => Err(FsError::FileCreateError(path.to_path_buf(), err)),
     }
 }
 
 pub fn count_lines(
     path: impl AsRef<Path>,
     opts: CountLinesOpts,
-) -> Result<(usize, Option<usize>), OxenError> {
+) -> Result<(usize, Option<usize>), FsError> {
     let path = path.as_ref();
     let file = File::open(path)?;
 
@@ -261,27 +338,21 @@ pub fn count_lines(
     Ok((line_count, char_option))
 }
 
-pub fn read_first_n_bytes(path: impl AsRef<Path>, n: usize) -> Result<Vec<u8>, OxenError> {
-    let mut file = File::open(path.as_ref())?;
+pub fn read_first_n_bytes(path: impl AsRef<Path>, n: usize) -> Result<Vec<u8>, FsError> {
+    let mut file = open_file(path.as_ref())?;
     let mut buffer = vec![0; n];
     let bytes_read = file.read(&mut buffer)?;
     buffer.truncate(bytes_read);
     Ok(buffer)
 }
 
-pub fn read_first_line(path: impl AsRef<Path>) -> Result<String, OxenError> {
-    let file = File::open(path.as_ref())?;
-    read_first_line_from_file(&file)
-}
-
-pub fn read_first_line_from_file(file: &File) -> Result<String, OxenError> {
+pub fn read_first_line(path: impl AsRef<Path>) -> Result<String, FsError> {
+    let file = open_file(path.as_ref())?;
     let reader = BufReader::new(file);
     if let Some(Ok(line)) = reader.lines().next() {
         Ok(line)
     } else {
-        Err(OxenError::basic_str(format!(
-            "Could not read line from file: {file:?}"
-        )))
+        Err(FsError::UnexpectedEmptyFile(path.to_path_buf()))
     }
 }
 
@@ -293,10 +364,13 @@ pub fn read_first_byte_from_file(path: impl AsRef<Path>) -> Result<char, OxenErr
     Ok(first_char)
 }
 
-pub fn list_dirs_in_dir(dir: &Path) -> Result<Vec<PathBuf>, OxenError> {
+pub fn list_dirs_in_dir(dir: &Path) -> Result<Vec<PathBuf>, FsError> {
     let mut dirs: Vec<PathBuf> = vec![];
-    for entry in std::fs::read_dir(dir)? {
-        let path = entry?.path();
+    for entry in read_dir(dir)? {
+        let path = match entry {
+            Ok(x) => x.path(),
+            Err(e) => return Err(FsError::DirReadError(dir.to_path_buf(), e)),
+        };
         if path.is_dir() {
             dirs.push(path);
         }
@@ -377,7 +451,8 @@ pub fn get_repo_root_from_current_dir() -> Option<PathBuf> {
     get_repo_root(&path)
 }
 
-pub fn copy_dir_all(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), OxenError> {
+// TODO: this should be
+pub fn copy_dir_all(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), FsError> {
     // There is not a recursive copy in the standard library, so we implement it here
     let from = from.as_ref();
     let to = to.as_ref();
@@ -406,20 +481,26 @@ pub fn copy_dir_all(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), 
             util::fs::create_dir_all(&dest)?;
         }
 
-        for entry in std::fs::read_dir(working_path)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
+        let dir_entries = read_dir(&working_path)?;
+
+        for failable_entry in dir_entries {
+            let entry = match failable_entry {
+                Ok(x) => x,
+                Err(e) => return Err(FsError::DirReadError(working_path, e)),
+            };
+            let src = entry.path();
+            if src.is_dir() {
+                stack.push(src);
             } else {
-                match path.file_name() {
+                match src.file_name() {
                     Some(filename) => {
-                        let dest_path = dest.join(filename);
-                        // log::debug!("copy_dir_all   copy: {:?} -> {:?}", &path, &dest_path);
-                        std::fs::copy(&path, &dest_path)?;
+                        let dst = dest.join(filename);
+                        if let Err(err) = std::fs::copy(&src, &dst) {
+                            return Err(FsError::CopyError { src, dst, err });
+                        }
                     }
                     None => {
-                        log::error!("copy_dir_all could not get file_name: {path:?}");
+                        log::error!("copy_dir_all could not get file_name: {src:?}");
                     }
                 }
             }
@@ -429,32 +510,50 @@ pub fn copy_dir_all(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<(), 
     Ok(())
 }
 
+/// Wrapper around std::fs::read_dir to return a FsError on failure.
+fn read_dir(path: &Path) -> Result<std::fs::ReadDir, FsError> {
+    if !path.is_file() {
+        return Err(FsError::UnexpectedFile(path.to_path_buf()));
+    }
+    if !path.is_dir() {
+        return Err(FsError::DirNotFound(path.to_path_buf()));
+    }
+    match std::fs::read_dir(path) {
+        Ok(x) => Ok(x),
+        Err(e) => Err(FsError::DirReadError(path.to_path_buf(), e)),
+    }
+}
+
 /// Wrapper around the std::fs::copy command to tell us which file failed to copy
-pub fn copy(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), OxenError> {
+pub fn copy(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), FsError> {
     let src = src.as_ref();
+    if !src.exists() {
+        return Err(FsError::FileNotFound(src.to_path_buf()));
+    }
+
     let dst = dst.as_ref();
     let max_retries = 3;
-    let mut attempt = 0;
 
+    let mut attempt = 0;
     while attempt < max_retries {
         match std::fs::copy(src, dst) {
             Ok(_) => return Ok(()),
             Err(err) => {
                 if err.raw_os_error() == Some(32) {
                     attempt += 1;
-                    if attempt == max_retries {
-                        return Err(OxenError::basic_str(format!(
-                            "File is in use by another process after {max_retries} attempts: {src:?}"
-                        )));
+                    if attempt >= max_retries {
+                        return Err(FsError::FileInUseError(max_retries, dst.to_path_buf(), err));
                     }
                     // Exponential backoff: 100ms, 200ms, 400ms
                     let sleep_duration = std::time::Duration::from_millis(100 * 2_u64.pow(attempt));
                     std::thread::sleep(sleep_duration);
                     continue;
-                } else if !src.exists() {
-                    return Err(OxenError::file_error(src, err));
                 } else {
-                    return Err(OxenError::file_copy_error(src, dst, err));
+                    return Err(FsError::CopyError {
+                        src: src.to_path_buf(),
+                        dst: dst.to_path_buf(),
+                        err,
+                    });
                 }
             }
         }
@@ -465,8 +564,12 @@ pub fn copy(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), OxenErro
 }
 
 /// Wrapper around the std::fs::rename command to tell us which file failed to copy
-pub fn rename(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), OxenError> {
+pub fn rename(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), FsError> {
     let src = src.as_ref();
+    if !src.exists() {
+        return Err(FsError::FileNotFound(src.to_path_buf()));
+    }
+
     let dst = dst.as_ref();
 
     // Platform-specific behavior
@@ -488,125 +591,141 @@ pub fn rename(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), OxenEr
     } else {
         match std::fs::rename(src, dst) {
             Ok(_) => Ok(()),
-            Err(err) => {
-                if !src.exists() {
-                    Err(OxenError::file_error(src, err))
-                } else {
-                    Err(OxenError::file_rename_error(src, dst, err))
-                }
-            }
+            Err(err) => Err(FsError::RenameError {
+                src: src.to_path_buf(),
+                dst: dst.to_path_buf(),
+                err,
+            }),
         }
     }
 }
 
 /// Wrapper around the tokio::fs::copy which makes the parent directory of the dst if it doesn't exist
-pub async fn copy_mkdir(src: &Path, dst: &Path) -> Result<(), OxenError> {
-    if let Some(parent) = dst.parent() {
-        tokio::fs::create_dir_all(parent).await?;
+pub async fn copy_mkdir(src: &Path, dst: &Path) -> Result<(), FsError> {
+    if !src.exists() {
+        return Err(FsError::FileNotFound(src.to_path_buf()));
     }
+
+    if let Some(parent) = dst.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| FsError::DirCreateError(parent.to_path_buf(), e))?;
+    }
+
     match tokio::fs::copy(src, dst).await {
         Ok(_) => Ok(()),
-        Err(err) => {
-            if !src.exists() {
-                Err(OxenError::file_error(src, err))
-            } else {
-                Err(OxenError::file_copy_error(src, dst, err))
-            }
-        }
+        Err(err) => Err(FsError::CopyError {
+            src: src.to_path_buf(),
+            dst: dst.to_path_buf(),
+            err,
+        }),
     }
 }
 
 /// Wrapper around the util::fs::create_dir_all command to tell us which file it failed on
 /// creates a directory if they don't exist
-pub fn create_dir_all(src: impl AsRef<Path>) -> Result<(), OxenError> {
-    if src.as_ref().exists() {
+pub fn create_dir_all(src: impl AsRef<Path>) -> Result<(), FsError> {
+    let src = src.as_ref();
+
+    if src.exists() {
         return Ok(());
     }
 
-    let src = src.as_ref();
     match std::fs::create_dir_all(src) {
         Ok(_) => Ok(()),
-        Err(err) => {
-            log::error!("create_dir_all {src:?} {err}");
-            Err(OxenError::file_error(src, err))
+        Err(e_source) => {
+            let err = FsError::DirCreateError(src.to_path_buf(), e_source);
+            log::error!("{err}");
+            Err(err)
         }
     }
 }
 
 /// Wrapper around the util::fs::create_dir command to tell us which file it failed on
 /// creates a directory if they don't exist
-pub fn create_dir(src: impl AsRef<Path>) -> Result<(), OxenError> {
-    if src.as_ref().exists() {
+pub fn create_dir(src: impl AsRef<Path>) -> Result<(), FsError> {
+    let src = src.as_ref();
+    if src.is_dir() {
         return Ok(());
     }
+    if src.is_file() {
+        return Err(FsError::UnexpectedFile(src.to_path_buf()));
+    }
 
-    let src = src.as_ref();
     match std::fs::create_dir(src) {
         Ok(_) => Ok(()),
         Err(err) => {
             log::error!("create_dir {src:?} {err}");
-            Err(OxenError::file_error(src, err))
+            Err(FsError::DirCreateError(src.to_path_buf(), err))
         }
     }
 }
 
 /// Wrapper around the util::fs::remove_dir_all command to tell us which file it failed on
-pub fn remove_dir_all(src: impl AsRef<Path>) -> Result<(), OxenError> {
+pub fn remove_dir_all(src: impl AsRef<Path>) -> Result<(), FsError> {
     let src = src.as_ref();
     match std::fs::remove_dir_all(src) {
         Ok(_) => Ok(()),
         Err(err) => {
             log::error!("remove_dir_all {src:?} {err}");
-            Err(OxenError::file_error(src, err))
+            Err(FsError::RemoveError(src.to_path_buf(), err))
         }
     }
 }
 
 /// Wrapper around the std::fs::write command to tell us which file it failed on
-pub fn write(src: impl AsRef<Path>, data: impl AsRef<[u8]>) -> Result<(), OxenError> {
+pub fn write(src: impl AsRef<Path>, data: impl AsRef<[u8]>) -> Result<(), FsError> {
     let src = src.as_ref();
     match std::fs::write(src, data) {
         Ok(_) => Ok(()),
-        Err(err) => {
-            log::error!("write {src:?} {err}");
-            Err(OxenError::file_error(src, err))
+        Err(e_source) => {
+            let error = FsError::FileWriteError(src.to_path_buf(), e_source);
+            log::error!("{error}");
+            Err(error)
         }
     }
 }
 
 /// Wrapper around the std::fs::remove_file command to tell us which file it failed on
-pub fn remove_file(src: impl AsRef<Path>) -> Result<(), OxenError> {
+pub fn remove_file(src: impl AsRef<Path>) -> Result<(), FsError> {
     let src = src.as_ref();
     log::debug!("Removing file: {}", src.display());
     match std::fs::remove_file(src) {
         Ok(_) => Ok(()),
-        Err(err) => {
-            log::error!("remove_file {src:?} {err}");
-            Err(OxenError::file_error(src, err))
+        Err(e_source) => {
+            let error = FsError::RemoveError(src.to_path_buf(), e_source);
+            log::error!("{error}");
+            Err(error)
         }
     }
 }
 
 /// Wrapper around util::fs::metadata to give us a better error on failure
-pub fn metadata(path: impl AsRef<Path>) -> Result<std::fs::Metadata, OxenError> {
+pub fn metadata(path: impl AsRef<Path>) -> Result<std::fs::Metadata, FsError> {
     let path = path.as_ref();
+    if !path.exists() {
+        return Err(FsError::FileNotFound(path.to_path_buf()));
+    }
     match std::fs::metadata(path) {
         Ok(file) => Ok(file),
         Err(err) => {
             log::debug!("metadata {path:?} {err}");
-            Err(OxenError::file_metadata_error(path, err))
+            Err(FsError::MetadataError(path.to_path_buf(), err))
         }
     }
 }
 
 /// Wrapper around std::fs::File::create to give us a better error on failure
-pub fn file_create(path: impl AsRef<Path>) -> Result<std::fs::File, OxenError> {
+pub fn file_create(path: impl AsRef<Path>) -> Result<std::fs::File, FsError> {
     let path = path.as_ref();
+    if path.is_dir() {
+        return Err(FsError::UnexpectedDir(path.to_path_buf()));
+    }
     match std::fs::File::create(path) {
         Ok(file) => Ok(file),
         Err(err) => {
             log::error!("file_create {path:?} {err}");
-            Err(OxenError::file_create_error(path, err))
+            Err(FsError::FileCreateError(path.to_path_buf(), err))
         }
     }
 }
@@ -616,7 +735,7 @@ pub fn is_tabular_from_extension(data_path: impl AsRef<Path>, file_path: impl As
     let data_path = data_path.as_ref();
     let file_path = file_path.as_ref();
     if has_ext(file_path, "json")
-        && let Ok(c) = read_first_byte_from_file(data_path)
+        && let Ok(c) = read_first_n_bytes(data_path, 1).map(|b| b[0] as char)
         && "[" == c.to_string()
     {
         return true;
@@ -892,7 +1011,7 @@ pub fn recursive_files_with_extensions(dir: &Path, exts: &HashSet<String>) -> Ve
 pub fn count_files_in_dir(dir: &Path) -> usize {
     let mut count: usize = 0;
     if dir.is_dir() {
-        match std::fs::read_dir(dir) {
+        match read_dir(dir) {
             Ok(entries) => {
                 for entry in entries {
                     match entry {
@@ -915,7 +1034,7 @@ pub fn count_files_in_dir(dir: &Path) -> usize {
 pub fn count_items_in_dir(dir: &Path) -> usize {
     let mut count: usize = 0;
     if dir.is_dir() {
-        match std::fs::read_dir(dir) {
+        match read_dir(dir) {
             Ok(entries) => {
                 for entry in entries {
                     match entry {
@@ -990,7 +1109,7 @@ pub fn is_in_oxen_hidden_dir(path: &Path) -> bool {
     false
 }
 
-pub fn is_canonical(path: impl AsRef<Path>) -> Result<bool, OxenError> {
+pub fn is_canonical(path: impl AsRef<Path>) -> Result<bool, FsError> {
     let path = path.as_ref();
     let canon_path = canonicalize(path)?;
 
@@ -1035,7 +1154,7 @@ pub fn canonicalize(path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
 pub fn full_path_from_child_path(
     parent: impl AsRef<Path>,
     child: impl AsRef<Path>,
-) -> Result<PathBuf, OxenError> {
+) -> Result<PathBuf, FsError> {
     let parent_path = parent.as_ref();
     let child_path = child.as_ref();
 
@@ -1049,7 +1168,7 @@ pub fn full_path_from_child_path(
 fn stem_from_canonical_child_path(
     parent_path: impl AsRef<Path>,
     child_path: impl AsRef<Path>,
-) -> Result<PathBuf, OxenError> {
+) -> Result<PathBuf, FsError> {
     let parent_path = parent_path.as_ref();
     let child_path = child_path.as_ref();
 
@@ -1074,7 +1193,7 @@ fn stem_from_canonical_child_path(
 pub fn path_relative_to_dir(
     path: impl AsRef<Path>,
     dir: impl AsRef<Path>,
-) -> Result<PathBuf, OxenError> {
+) -> Result<PathBuf, FsError> {
     let path = path.as_ref();
     let dir = dir.as_ref();
 
@@ -1114,27 +1233,35 @@ pub fn path_relative_to_dir(
     let mut start_index = 0;
 
     for _ in 0..(path_components.len()) {
-        let path_component = path_iter.next().expect("Path bounds violated");
+        let Some(path_component) = path_iter.next() else {
+            return Err(FsError::PathBoundsViolation);
+        };
         let path_str = path_component.as_os_str();
         let dir_str = dir_component.as_os_str();
 
         if path_str == dir_str {
             matches += 1;
             if matches == dir_components.len() {
-                let mut result = PathBuf::new();
-                let path_slice = &path_components[(start_index + 1)..];
+                let result = {
+                    let mut result = PathBuf::new();
+                    let path_slice = &path_components[(start_index + 1)..];
 
-                // Adjust for special paths like '.', '..', etc
-                for component in path_slice.iter() {
-                    if matches!(component, Component::Normal(_)) {
-                        result.push::<&Path>(component.as_ref());
+                    // Adjust for special paths like '.', '..', etc
+                    for component in path_slice.iter() {
+                        if matches!(component, Component::Normal(_)) {
+                            result.push::<&Path>(component.as_ref());
+                        }
                     }
-                }
+                    result
+                };
                 // log::debug!("result: {result:?}");
                 return Ok(result);
             }
             start_index += 1;
-            dir_component = dir_iter.next().expect("Dir bounds violated");
+            dir_component = match dir_iter.next() {
+                Some(updated) => updated,
+                None => return Err(FsError::DirBoundsViolation),
+            };
             continue;
         }
 
@@ -1275,7 +1402,7 @@ pub fn remove_leading_slash(path: &Path) -> PathBuf {
     }
 }
 
-pub fn disk_usage_for_path(path: &Path) -> Result<DiskUsage, OxenError> {
+pub fn disk_usage_for_path(path: &Path) -> Result<DiskUsage, FsError> {
     log::debug!("disk_usage_for_path: {path:?}");
     let disks = sysinfo::Disks::new_with_refreshed_list();
 
@@ -1313,40 +1440,54 @@ pub fn disk_usage_for_path(path: &Path) -> Result<DiskUsage, OxenError> {
         percent_used,
     })
 }
-pub fn open_file(path: impl AsRef<Path>) -> Result<File, OxenError> {
-    match File::open(path.as_ref()) {
-        Ok(file) => Ok(file),
-        Err(err) => Err(OxenError::basic_str(format!(
-            "Failed to open file: {:?}\n{:?}",
-            path.as_ref(),
-            err
-        ))),
+pub fn is_any_parent_in_set(file_path: &Path, path_set: &HashSet<PathBuf>) -> bool {
+    let mut current_path = file_path.to_path_buf();
+    // Iterate through parent directories
+    log::debug!("checking if {current_path:?} is in {path_set:?}");
+    while let Some(parent) = current_path.parent() {
+        log::debug!("checking if {current_path:?} is in {path_set:?}");
+        if path_set.contains(parent) {
+            return true;
+        }
+        current_path = parent.to_path_buf()
+    }
+
+    false
+}
+
+/// std::fs::File::open wrapper that returns a FsError on failure.
+pub fn open_file(path: &Path) -> Result<File, FsError> {
+    if !path.is_file() {
+        return Err(FsError::FileNotFound(path.to_path_buf()));
+    }
+    match std::fs::File::open(path) {
+        Ok(x) => Ok(x),
+        Err(err) => Err(FsError::FileReadError(path.to_path_buf(), err)),
     }
 }
 
 async fn detect_image_format_from_version(
     versioned_store: Arc<dyn VersionStore>,
     hash: &str,
-) -> Result<ImageFormat, OxenError> {
-    let mut stream = versioned_store.get_version_stream(hash).await?;
+) -> Result<ImageFormat, FsError> {
+    let header = {
+        let mut stream = versioned_store.get_version_stream(hash).await?;
 
-    let mut header = Vec::with_capacity(16);
-    while header.len() < 16 {
-        if let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| {
-                OxenError::basic_str(format!("Failed to read version file {hash}: {e}"))
-            })?;
-            let to_take = 16 - header.len();
-            header.extend_from_slice(&chunk[..to_take.min(chunk.len())]);
-        } else {
-            break; // EOF
+        let mut header = Vec::with_capacity(16);
+        while header.len() < 16 {
+            if let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(|e| FsError::VersionedReadError(hash.to_string(), e))?;
+                let to_take = 16 - header.len();
+                header.extend_from_slice(&chunk[..to_take.min(chunk.len())]);
+            } else {
+                break; // EOF
+            }
         }
-    }
+        header
+    };
 
     if header.is_empty() {
-        return Err(OxenError::basic_str(format!(
-            "Version file {hash} is empty"
-        )));
+        return Err(FsError::UnexpectedEmptyVersionFile(hash.to_string()));
     }
 
     let format = image::guess_format(&header)
@@ -1358,30 +1499,32 @@ async fn detect_image_format_from_version(
 pub async fn resize_cache_image_version_store(
     version_store: Arc<dyn VersionStore>,
     img_hash: &str,
-    derived_filename: &str,
+    derived_filename: &OsStr,
     resize: ImgResize,
 ) -> Result<
     (
         Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
         u64,
     ),
-    OxenError,
+    FsError,
 > {
+    let derived_filename_s = derived_filename.to_string_lossy().replace("\u{FFFD}", "");
+
     if version_store
-        .derived_version_exists(img_hash, derived_filename)
+        .derived_version_exists(img_hash, &derived_filename_s)
         .await?
     {
-        log::debug!("In the resize cache! {derived_filename}");
+        log::debug!("In the resize cache! {derived_filename_s}");
         let content_length = version_store
-            .get_version_derived_size(img_hash, derived_filename)
+            .get_version_derived_size(img_hash, &derived_filename_s)
             .await?;
         let stream = version_store
-            .get_version_derived_stream(img_hash, derived_filename)
+            .get_version_derived_stream(img_hash, &derived_filename_s)
             .await?;
         return Ok((stream.boxed(), content_length));
     }
 
-    log::debug!("create resized image {derived_filename} from hash {img_hash}");
+    log::debug!("create resized image {derived_filename_s} from hash {img_hash}");
     let image_format = detect_image_format_from_version(Arc::clone(&version_store), img_hash).await;
     let image_data = version_store.get_version(img_hash).await?;
 
@@ -1423,10 +1566,13 @@ pub async fn resize_cache_image_version_store(
     };
 
     let image_format = ImageFormat::from_path(derived_filename)?;
-    let mut buf = Vec::new();
-    resized_img.write_to(&mut Cursor::new(&mut buf), image_format)?;
+    let buf = {
+        let mut buf = Vec::new();
+        resized_img.write_to(&mut Cursor::new(&mut buf), image_format)?;
+        buf
+    };
     version_store
-        .store_version_derived(img_hash, derived_filename, &buf)
+        .store_version_derived(img_hash, &derived_filename_s, &buf)
         .await?;
     let content_length = buf.len() as u64;
 
@@ -1444,7 +1590,7 @@ async fn generate_video_thumbnail_version_store(
     video_hash: &str,
     derived_filename: &str,
     thumbnail: VideoThumbnail,
-) -> Result<(), OxenError> {
+) -> Result<(), FsError> {
     log::debug!(
         "generate thumbnail derived_filename {derived_filename} from video hash {video_hash}"
     );
@@ -1473,7 +1619,7 @@ async fn generate_video_thumbnail_version_store(
     let _timestamp = thumbnail.timestamp.unwrap_or(1.0);
 
     // Run blocking ffmpeg thumbnail generation on a separate thread
-    let buf = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, OxenError> {
+    let buf = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, FsError> {
         // Create thumbnailer with specified dimensions
         let thumbnailer = Thumbnailer::new(output_width, output_height);
 
@@ -1506,7 +1652,7 @@ pub async fn handle_video_thumbnail(
     version_store: Arc<dyn VersionStore>,
     file_hash: String,
     video_thumbnail: VideoThumbnail,
-) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>, OxenError> {
+) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>, FsError> {
     #[cfg(not(feature = "ffmpeg"))]
     {
         let _ = (version_store, file_hash, video_thumbnail);
@@ -1552,7 +1698,7 @@ pub fn is_glob_path(path: impl AsRef<Path>) -> bool {
         .any(|c| path.as_ref().to_str().unwrap_or_default().contains(*c))
 }
 
-pub fn remove_paths(src: &Path) -> Result<(), OxenError> {
+pub fn remove_paths(src: &Path) -> Result<(), FsError> {
     if src.is_dir() {
         log::debug!("Calling remove_dir_all: {src:?}");
         remove_dir_all(src)
@@ -1565,8 +1711,8 @@ pub fn remove_paths(src: &Path) -> Result<(), OxenError> {
 pub fn is_modified_from_node_with_metadata(
     path: &Path,
     node: &FileNode,
-    metadata: Result<std::fs::Metadata, OxenError>,
-) -> Result<bool, OxenError> {
+    metadata: Result<std::fs::Metadata, FsError>,
+) -> Result<bool, FsError> {
     if !path.exists() {
         log::debug!("is_modified_from_node found non-existent path {path:?}. Returning false");
         return Ok(false);
@@ -1620,8 +1766,40 @@ pub fn is_modified_from_node_with_metadata(
     }
 }
 
-pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenError> {
+pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, FsError> {
     is_modified_from_node_with_metadata(path, node, util::fs::metadata(path))
+}
+
+// Only uses the metadata to check for modification
+pub fn is_modified_metadata_only(path: &Path, node: &FileNode) -> Result<bool, FsError> {
+    // First, check if the file exists; return false if not
+    if !path.exists() {
+        log::debug!("is_modified_from_node found non-existent path {path:?}. Returning false");
+        return Ok(false);
+    }
+
+    // Second, check the length of the file
+    let meta = util::fs::metadata(path)?;
+
+    let file_size = meta.len();
+    let node_size = node.num_bytes();
+
+    if file_size != node_size {
+        return Ok(true);
+    }
+
+    // Third, check the last modified times
+    let file_last_modified = FileTime::from_last_modification_time(&meta);
+    let node_last_modified = util::fs::last_modified_time(
+        node.last_modified_seconds(),
+        node.last_modified_nanoseconds(),
+    );
+
+    if file_last_modified == node_last_modified {
+        return Ok(false);
+    }
+
+    Ok(true)
 }
 
 // Calculate a node's last modified time
@@ -1642,7 +1820,7 @@ pub fn last_modified_time(last_modified_seconds: i64, last_modified_nanoseconds:
 /// - Cannot contain parent directory references (..)
 /// - Cannot contain empty segments
 /// - Current directory references (.) are skipped
-pub fn validate_and_normalize_path(path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
+pub fn validate_and_normalize_path(path: impl AsRef<Path>) -> Result<PathBuf, FsError> {
     let path = path.as_ref();
 
     let mut normalized = PathBuf::new();
@@ -1750,7 +1928,7 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn file_path_relative_to_dir() -> Result<(), OxenError> {
+    fn file_path_relative_to_dir() -> Result<(), FsError> {
         let file = Path::new("data")
             .join("test")
             .join("other")
@@ -1764,7 +1942,7 @@ mod tests {
     }
 
     #[test]
-    fn file_path_2_relative_to_dir() -> Result<(), OxenError> {
+    fn file_path_2_relative_to_dir() -> Result<(), FsError> {
         let file = Path::new("data")
             .join("test")
             .join("other")
@@ -1778,7 +1956,7 @@ mod tests {
     }
 
     #[test]
-    fn file_path_3_relative_to_dir() -> Result<(), OxenError> {
+    fn file_path_3_relative_to_dir() -> Result<(), FsError> {
         let file = Path::new("data")
             .join("test")
             .join("runs")
@@ -1793,7 +1971,7 @@ mod tests {
     }
 
     #[test]
-    fn full_file_path_relative_to_dir() -> Result<(), OxenError> {
+    fn full_file_path_relative_to_dir() -> Result<(), FsError> {
         let file = Path::new("data")
             .join("test")
             .join("other")
@@ -1807,7 +1985,7 @@ mod tests {
     }
 
     #[test]
-    fn dir_path_relative_to_dir() -> Result<(), OxenError> {
+    fn dir_path_relative_to_dir() -> Result<(), FsError> {
         let file = Path::new("data").join("test").join("other");
         let dir = Path::new("data").join("test");
 
@@ -1818,7 +1996,7 @@ mod tests {
     }
 
     #[test]
-    fn dir_path_relative_to_another_dir() -> Result<(), OxenError> {
+    fn dir_path_relative_to_another_dir() -> Result<(), FsError> {
         let file = Path::new("data").join("test").join("other").join("dir");
         let dir = Path::new("data").join("test");
 
@@ -1829,7 +2007,7 @@ mod tests {
     }
 
     #[test]
-    fn path_relative_to_unrelated_dir() -> Result<(), OxenError> {
+    fn path_relative_to_unrelated_dir() -> Result<(), FsError> {
         let file = Path::new("data").join("test").join("other").join("dir");
         let dir = Path::new("some").join("repo");
 
@@ -1843,7 +2021,7 @@ mod tests {
     }
 
     #[test]
-    fn detect_file_type() -> Result<(), OxenError> {
+    fn detect_file_type() -> Result<(), FsError> {
         test::run_training_data_repo_test_no_commits(|repo| {
             let python_file = "add_1.py";
             let python_with_interpreter_file = "add_2.py";
@@ -1932,7 +2110,7 @@ def add(a, b):
     }
 
     #[test]
-    fn detect_file_type_json_array() -> Result<(), OxenError> {
+    fn detect_file_type_json_array() -> Result<(), FsError> {
         test::run_empty_dir_test(|_| {
             assert_eq!(
                 EntryDataType::Tabular,
@@ -1951,7 +2129,7 @@ def add(a, b):
     }
 
     #[test]
-    fn replace_file_name_keep_extension_no_extension() -> Result<(), OxenError> {
+    fn replace_file_name_keep_extension_no_extension() -> Result<(), FsError> {
         let prior_path = Path::new("adjfkaljeklwjkljdaklfd.txt");
         let prior_path_no_extension = Path::new("bdsfadfklajfkelj");
         let prior_path_arbitrary = Path::new("jdakfljdfskl.boom");

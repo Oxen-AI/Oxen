@@ -152,7 +152,7 @@ impl RefManager {
 
     pub fn read_head_ref(&self) -> Result<Option<String>, OxenError> {
         if self.head_file.exists() {
-            Ok(Some(util::fs::read_from_path(&self.head_file)?))
+            Ok(Some(std::fs::read_to_string(&self.head_file)?))
         } else {
             Ok(None)
         }

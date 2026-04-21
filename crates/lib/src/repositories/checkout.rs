@@ -475,7 +475,10 @@ mod tests {
             assert!(result.is_err());
 
             // Assert that the hello file on main is not overwritten
-            assert_eq!(util::fs::read_from_path(&hello_file)?, "Hello from main");
+            assert_eq!(
+                tokio::fs::read_to_string(&hello_file).await?,
+                "Hello from main"
+            );
 
             Ok(())
         })
@@ -532,7 +535,7 @@ mod tests {
             repositories::merge::merge(&repo, branch_name).await?;
 
             // Assert that the new file on main is not overwritten
-            assert_eq!(util::fs::read_from_path(&new_file)?, "New file");
+            assert_eq!(tokio::fs::read_to_string(&new_file).await?, "New file");
 
             Ok(())
         })
@@ -626,7 +629,7 @@ mod tests {
             repositories::commit(&repo, "Changed file to world")?;
 
             // It should say World at this point
-            assert_eq!(util::fs::read_from_path(&hello_file)?, "World");
+            assert_eq!(tokio::fs::read_to_string(&hello_file).await?, "World");
 
             // Go back to the main branch
             repositories::checkout(&repo, orig_branch.name).await?;
@@ -636,7 +639,7 @@ mod tests {
             assert!(hello_file.exists());
 
             // It should be reverted back to Hello
-            assert_eq!(util::fs::read_from_path(&hello_file)?, "Hello");
+            assert_eq!(tokio::fs::read_to_string(&hello_file).await?, "Hello");
 
             Ok(())
         })
@@ -652,10 +655,11 @@ mod tests {
             repositories::commit(&repo, "Adding one shot")?;
 
             // Get the original branch name
-            let orig_branch = repositories::branches::current_branch(&repo)?.unwrap();
+            let orig_branch = repositories::branches::current_branch(&repo)?
+                .expect("No current branch for repository");
 
             // Get OG file contents
-            let og_content = util::fs::read_from_path(&one_shot_path)?;
+            let og_content = tokio::fs::read_to_string(&one_shot_path).await?;
 
             let branch_name = "feature/change-the-shot";
             repositories::branches::create_checkout(&repo, branch_name)?;
@@ -672,12 +676,12 @@ mod tests {
 
             // checkout OG and make sure it reverts
             repositories::checkout(&repo, orig_branch.name).await?;
-            let updated_content = util::fs::read_from_path(&one_shot_path)?;
+            let updated_content = tokio::fs::read_to_string(&one_shot_path).await?;
             assert_eq!(og_content, updated_content);
 
             // checkout branch again and make sure it reverts
             repositories::checkout(&repo, branch_name).await?;
-            let updated_content = util::fs::read_from_path(&one_shot_path)?;
+            let updated_content = tokio::fs::read_to_string(&one_shot_path).await?;
             assert_eq!(file_contents, updated_content);
 
             Ok(())
@@ -695,10 +699,11 @@ mod tests {
             repositories::commit(&repo, "Adding one shot")?;
 
             // Get the original branch name
-            let orig_branch = repositories::branches::current_branch(&repo)?.unwrap();
+            let orig_branch = repositories::branches::current_branch(&repo)?
+                .expect("No current branch for repository");
 
             // Get OG file contents
-            let og_content = util::fs::read_from_path(&one_shot_path)?;
+            let og_content = tokio::fs::read_to_string(&one_shot_path).await?;
 
             let branch_name = "feature/modify-data";
             repositories::branches::create_checkout(&repo, branch_name)?;
@@ -719,12 +724,12 @@ mod tests {
 
             // checkout OG and make sure it reverts
             repositories::checkout(&repo, orig_branch.name).await?;
-            let updated_content = util::fs::read_from_path(&one_shot_path)?;
+            let updated_content = tokio::fs::read_to_string(&one_shot_path).await?;
             assert_eq!(og_content, updated_content);
 
             // checkout branch again and make sure it reverts
             repositories::checkout(&repo, branch_name).await?;
-            let updated_content = util::fs::read_from_path(&one_shot_path)?;
+            let updated_content = tokio::fs::read_to_string(&one_shot_path).await?;
             assert_eq!(file_contents, updated_content);
 
             Ok(())

@@ -119,7 +119,7 @@ mod tests {
                 RestoreOpts::from_path_ref(hello_filename, first_mod_commit.id),
             )
             .await?;
-            let content = util::fs::read_from_path(&hello_file)?;
+            let content = tokio::fs::read_to_string(&hello_file).await?;
             assert!(hello_file.exists());
             assert_eq!(content, first_modification);
 
@@ -184,14 +184,14 @@ mod tests {
             let bbox_file = annotations_dir.join("train").join("bounding_box.csv");
             let bbox_path = repo.path.join(bbox_file);
 
-            let og_bbox_contents = util::fs::read_from_path(&bbox_path)?;
+            let og_bbox_contents = tokio::fs::read_to_string(&bbox_path).await?;
 
             util::fs::remove_file(&bbox_path)?;
 
             // Modify another file
             let readme_file = annotations_dir.join("README.md");
             let readme_path = repo.path.join(readme_file);
-            let og_readme_contents = util::fs::read_from_path(&readme_path)?;
+            let og_readme_contents = tokio::fs::read_to_string(&readme_path).await?;
 
             let readme_path = test::append_line_txt_file(readme_path, "Adding s'more")?;
 
@@ -203,11 +203,11 @@ mod tests {
             .await?;
 
             // Make sure the removed file is restored
-            let restored_contents = util::fs::read_from_path(&bbox_path)?;
+            let restored_contents = tokio::fs::read_to_string(&bbox_path).await?;
             assert_eq!(og_bbox_contents, restored_contents);
 
             // Make sure the modified file is restored
-            let restored_contents = util::fs::read_from_path(readme_path)?;
+            let restored_contents = tokio::fs::read_to_string(readme_path).await?;
             assert_eq!(og_readme_contents, restored_contents);
 
             Ok(())
@@ -226,7 +226,7 @@ mod tests {
                 .join("bounding_box.csv");
             let bbox_path = repo.path.join(&bbox_file);
 
-            let og_contents = util::fs::read_from_path(&bbox_path)?;
+            let og_contents = tokio::fs::read_to_string(&bbox_path).await?;
             util::fs::remove_file(&bbox_path)?;
 
             println!("restoring {bbox_file:?}");
@@ -236,7 +236,7 @@ mod tests {
                 RestoreOpts::from_path_ref(bbox_file, last_commit.id.clone()),
             )
             .await?;
-            let restored_contents = util::fs::read_from_path(&bbox_path)?;
+            let restored_contents = tokio::fs::read_to_string(&bbox_path).await?;
             assert_eq!(og_contents, restored_contents);
 
             Ok(())
@@ -255,7 +255,7 @@ mod tests {
                 .join("bounding_box.csv");
             let bbox_path = repo.path.join(&bbox_file);
 
-            let og_contents = util::fs::read_from_path(&bbox_path)?;
+            let og_contents = tokio::fs::read_to_string(&bbox_path).await?;
 
             let mut opts = DFOpts::empty();
             opts.add_row = Some("{\"file\": \"train/dog_99.jpg\", \"label\": \"dog\", \"min_x\": 101.5, \"min_y\": 32.0, \"width\": 385, \"height\": 330}".to_string());
@@ -266,7 +266,7 @@ mod tests {
                 &repo,
                 RestoreOpts::from_path_ref(bbox_file, last_commit.id.clone()),
             ).await?;
-            let restored_contents = util::fs::read_from_path(&bbox_path)?;
+            let restored_contents = tokio::fs::read_to_string(&bbox_path).await?;
             assert_eq!(og_contents, restored_contents);
 
             let status = repositories::status(&repo)?;
@@ -288,7 +288,7 @@ mod tests {
                 .join("annotations.txt");
             let bbox_path = repo.path.join(&bbox_file);
 
-            let og_contents = util::fs::read_from_path(&bbox_path)?;
+            let og_contents = tokio::fs::read_to_string(&bbox_path).await?;
             let new_contents = format!("{og_contents}\nnew 0");
             util::fs::write_to_path(&bbox_path, new_contents)?;
 
@@ -297,7 +297,7 @@ mod tests {
                 RestoreOpts::from_path_ref(bbox_file, last_commit.id.clone()),
             )
             .await?;
-            let restored_contents = util::fs::read_from_path(&bbox_path)?;
+            let restored_contents = tokio::fs::read_to_string(&bbox_path).await?;
             assert_eq!(og_contents, restored_contents);
 
             let status = repositories::status(&repo)?;
@@ -349,7 +349,7 @@ mod tests {
             let new_line = "new_data,123,456,789";
             append_line_txt_file(&ann_path, new_line)?;
             let orig_df = tabular::read_df(&ann_path, DFOpts::empty()).await?;
-            let og_contents = util::fs::read_from_path(&ann_path)?;
+            let og_contents = tokio::fs::read_to_string(&ann_path).await?;
 
             // Commit
             repositories::add(&repo, &ann_path).await?;
@@ -367,7 +367,7 @@ mod tests {
             assert_eq!(restored_df.height(), orig_df.height());
             assert_eq!(restored_df.width(), orig_df.width());
 
-            let restored_contents = util::fs::read_from_path(&ann_path)?;
+            let restored_contents = tokio::fs::read_to_string(&ann_path).await?;
             assert_eq!(og_contents, restored_contents);
 
             Ok(())
@@ -388,7 +388,7 @@ mod tests {
 
             let orig_df = tabular::read_df(&ann_path, DFOpts::empty()).await?;
 
-            let og_contents = util::fs::read_from_path(&ann_path)?;
+            let og_contents = tokio::fs::read_to_string(&ann_path).await?;
 
             // Commit
             repositories::add(&repo, &ann_path).await?;
@@ -408,7 +408,7 @@ mod tests {
             assert_eq!(restored_df.height(), orig_df.height());
             assert_eq!(restored_df.width(), orig_df.width());
 
-            let restored_contents = util::fs::read_from_path(&ann_path)?;
+            let restored_contents = tokio::fs::read_to_string(&ann_path).await?;
             assert_eq!(og_contents, restored_contents);
 
             Ok(())

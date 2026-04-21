@@ -415,7 +415,8 @@ pub fn r_collect_removed_paths(
 ) -> Result<(), OxenError> {
     let repo_path = repo.path.clone();
     if dir_path.is_dir() {
-        let glob_path = util::fs::path_relative_to_dir(dir_path, &repo_path)?.join("*");
+        let relative_dir = util::fs::path_relative_to_dir(dir_path, &repo_path)?;
+        let glob_path = relative_dir.join("*");
 
         // Snapshot before search so we only recurse into newly found paths,
         // avoiding infinite recursion from re-visiting ancestors.

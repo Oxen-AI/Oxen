@@ -248,7 +248,7 @@ mod tests {
                 download(&remote_repo, file_path, &local_path, revision).await?;
 
                 assert!(local_path.exists());
-                assert_eq!(util::fs::read_from_path(&local_path)?, file_contents);
+                assert_eq!(tokio::fs::read_to_string(&local_path).await?, file_contents);
 
                 Ok(())
             })

@@ -55,7 +55,7 @@ impl RepositoryConfig {
     }
 
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, OxenError> {
-        let contents = util::fs::read_from_path(&path)?;
+        let contents = std::fs::read_to_string(path)?;
         let remote_config: RepositoryConfig = toml::from_str(&contents)?;
         Ok(remote_config)
     }

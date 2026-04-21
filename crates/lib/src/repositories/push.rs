@@ -117,8 +117,8 @@ mod tests {
                 .await?;
 
             // Make sure the file is the same
-            let readme_1_contents = util::fs::read_from_path(&download_path)?;
-            let readme_2_contents = util::fs::read_from_path(&readme_path)?;
+            let readme_1_contents = tokio::fs::read_to_string(&download_path).await?;
+            let readme_2_contents = tokio::fs::read_to_string(&readme_path).await?;
             assert_eq!(readme_1_contents, readme_2_contents);
 
             api::client::repositories::delete(&remote_repo).await?;
@@ -1582,7 +1582,7 @@ A: Checkout Oxen.ai
             let file_data: Vec<u8> = vec![42; AVG_CHUNK_SIZE as usize];
 
             // Write the data to the file
-            util::fs::write_data(&file_path, &file_data)?;
+            util::fs::write_data_a(&file_path, &file_data).await?;
 
             // Verify the file size is exactly AVG_CHUNK_SIZE
             let metadata = util::fs::metadata(&file_path)?;
@@ -1631,7 +1631,7 @@ A: Checkout Oxen.ai
                 );
 
                 // Verify the file contents match the original data
-                let downloaded_data = util::fs::read_bytes_from_path(&download_path)?;
+                let downloaded_data = tokio::fs::read(&download_path).await?;
                 assert_eq!(
                     downloaded_data, file_data,
                     "Downloaded file contents should match the original data"
@@ -1793,7 +1793,7 @@ A: Checkout Oxen.ai
             let file_data: Vec<u8> = vec![42; file_size];
 
             // Write the data to the file
-            util::fs::write_data(&file_path, &file_data)?;
+            util::fs::write_data_a(&file_path, &file_data).await?;
 
             // Verify the file size is exactly 100MB
             let metadata = util::fs::metadata(&file_path)?;
@@ -1855,7 +1855,7 @@ A: Checkout Oxen.ai
 
                 // Verify the file contents match the original data
                 println!("Verifying file contents match...");
-                let cloned_data = util::fs::read_bytes_from_path(&cloned_file_path)?;
+                let cloned_data = tokio::fs::read(&cloned_file_path).await?;
                 assert_eq!(
                     cloned_data.len(),
                     file_data_clone.len(),
@@ -1892,7 +1892,7 @@ A: Checkout Oxen.ai
             let file_size = 11 * 1024 * 1024; // 11MB, above AVG_CHUNK_SIZE
             let file_path = sub_dir.join("weights.bin");
             let file_data: Vec<u8> = (0..file_size).map(|i| (i % 256) as u8).collect();
-            util::fs::write_data(&file_path, &file_data)?;
+            util::fs::write_data_a(&file_path, &file_data).await?;
 
             // Add and commit
             repositories::add(&local_repo, &local_repo.path).await?;
@@ -1939,7 +1939,7 @@ A: Checkout Oxen.ai
                     "Cloned file size should match original"
                 );
 
-                let cloned_data = util::fs::read_bytes_from_path(&cloned_file)?;
+                let cloned_data = tokio::fs::read(&cloned_file).await?;
                 assert_eq!(
                     cloned_data, file_data_clone,
                     "Cloned file contents should match the original data"

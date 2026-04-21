@@ -12,7 +12,7 @@ use crate::error::OxenError;
 use crate::model::Workspace;
 use crate::model::data_frame::schema::Field;
 use crate::opts::{EmbeddingQueryOpts, PaginateOpts};
-use crate::{repositories, util};
+use crate::repositories;
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -28,7 +28,7 @@ fn embedding_config(
     path: impl AsRef<Path>,
 ) -> Result<EmbeddingConfig, OxenError> {
     let embedding_config = embedding_config_path(workspace, path);
-    let config_data = util::fs::read_from_path(&embedding_config)?;
+    let config_data = std::fs::read_to_string(&embedding_config)?;
     Ok(toml::from_str(&config_data)?)
 }
 
@@ -41,7 +41,7 @@ fn write_embedding_size_to_config(
     let embedding_config = embedding_config_path(workspace, path);
 
     // Try to read existing config, create new one if it doesn't exist
-    let config_data = util::fs::read_from_path(&embedding_config).unwrap_or_default();
+    let config_data = std::fs::read_to_string(&embedding_config).unwrap_or_default();
     let mut config: EmbeddingConfig = if config_data.is_empty() {
         EmbeddingConfig::default()
     } else {
@@ -70,7 +70,7 @@ fn update_embedding_status(
     status: EmbeddingStatus,
 ) -> Result<(), OxenError> {
     let embedding_config = embedding_config_path(workspace, path);
-    let config_data = util::fs::read_from_path(&embedding_config)?;
+    let config_data = std::fs::read_to_string(&embedding_config)?;
     let mut config: EmbeddingConfig = toml::from_str(&config_data)?;
     config.columns.get_mut(column_name.as_ref()).unwrap().status = status;
     let config_str = toml::to_string(&config)?;

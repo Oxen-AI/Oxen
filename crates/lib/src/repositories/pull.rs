@@ -125,7 +125,7 @@ mod tests {
                 // Make sure we have the party ppl file from the next commit
                 let cloned_party_ppl_path = cloned_repo.path.join(party_ppl_filename);
                 assert!(cloned_party_ppl_path.exists());
-                let cloned_contents = util::fs::read_from_path(&cloned_party_ppl_path)?;
+                let cloned_contents = tokio::fs::read_to_string(&cloned_party_ppl_path).await?;
                 assert_eq!(cloned_contents, party_ppl_contents);
 
                 // Make sure that pull updates local HEAD to be correct
@@ -161,7 +161,7 @@ mod tests {
 
                 let pulled_send_it_back_path = repo.path.join(send_it_back_filename);
                 assert!(pulled_send_it_back_path.exists());
-                let pulled_contents = util::fs::read_from_path(&pulled_send_it_back_path)?;
+                let pulled_contents = tokio::fs::read_to_string(&pulled_send_it_back_path).await?;
                 assert_eq!(pulled_contents, send_it_back_contents);
 
                 // Modify the party ppl contents
@@ -173,7 +173,7 @@ mod tests {
 
                 // Pull the modifications
                 repositories::pull(&cloned_repo).await?;
-                let pulled_contents = util::fs::read_from_path(&cloned_party_ppl_path)?;
+                let pulled_contents = tokio::fs::read_to_string(&cloned_party_ppl_path).await?;
                 assert_eq!(pulled_contents, party_ppl_contents);
 
                 println!("----BEFORE-----");
@@ -251,7 +251,7 @@ mod tests {
                 repositories::pull(&repo).await?;
 
                 // Make sure content changed
-                let pulled_content = util::fs::read_from_path(&filepath)?;
+                let pulled_content = tokio::fs::read_to_string(&filepath).await?;
                 assert_eq!(pulled_content, changed_content);
 
                 // Delete the file in the og filepath
@@ -500,7 +500,7 @@ mod tests {
                     repositories::clone_url(&remote_repo.remote.url, &new_repo_dir).await?;
 
                 let filepath = cloned_repo.path.join(filename);
-                let content = util::fs::read_from_path(&filepath)?;
+                let content = tokio::fs::read_to_string(&filepath).await?;
                 assert_eq!(og_content, content);
 
                 api::client::repositories::delete(&remote_repo).await?;
@@ -1281,7 +1281,7 @@ mod tests {
             let filename = "annotations/train/bounding_box.csv";
             let file_path = repo.path.join(filename);
             let og_df = tabular::read_df(&file_path, DFOpts::empty()).await?;
-            let og_contents = util::fs::read_from_path(&file_path)?;
+            let og_contents = tokio::fs::read_to_string(&file_path).await?;
 
             repositories::add(&repo, &file_path).await?;
             repositories::commit(&repo, "Adding bounding box file")?;
@@ -1304,7 +1304,7 @@ mod tests {
                 let file_path = cloned_repo.path.join(filename);
 
                 let cloned_df = tabular::read_df(&file_path, DFOpts::empty()).await?;
-                let cloned_contents = util::fs::read_from_path(&file_path)?;
+                let cloned_contents = tokio::fs::read_to_string(&file_path).await?;
                 assert_eq!(og_df.height(), cloned_df.height());
                 assert_eq!(og_df.width(), cloned_df.width());
                 assert_eq!(cloned_contents, og_contents);
@@ -1338,7 +1338,7 @@ mod tests {
                 .join("train.tsv");
             let file_path = repo.path.join(filename);
             let og_df = tabular::read_df(&file_path, DFOpts::empty()).await?;
-            let og_sentiment_contents = util::fs::read_from_path(&file_path)?;
+            let og_sentiment_contents = tokio::fs::read_to_string(&file_path).await?;
 
             let commit = repositories::commits::head_commit(&repo)?;
             let schemas = repositories::data_frames::schemas::list(&repo, &commit)?;
@@ -1366,7 +1366,7 @@ mod tests {
                     .join("train.tsv");
                 let file_path = cloned_repo.path.join(&filename);
                 let cloned_df = tabular::read_df(&file_path, DFOpts::empty()).await?;
-                let cloned_contents = util::fs::read_from_path(&file_path)?;
+                let cloned_contents = tokio::fs::read_to_string(&file_path).await?;
                 assert_eq!(og_df.height(), cloned_df.height());
                 assert_eq!(og_df.width(), cloned_df.width());
                 assert_eq!(cloned_contents, og_sentiment_contents);
@@ -1610,7 +1610,7 @@ mod tests {
                 assert!(result.is_err());
 
                 // Make sure that the local changes are not overwritten
-                let content = util::fs::read_from_path(&new_file_path)?;
+                let content = tokio::fs::read_to_string(&new_file_path).await?;
                 assert_eq!(content, "hello from user a file");
 
                 // Pull again
@@ -1679,7 +1679,7 @@ mod tests {
                 assert!(result.is_err());
 
                 // Make sure that the local changes are not overwritten
-                let content = util::fs::read_from_path(&modified_file_path)?;
+                let content = tokio::fs::read_to_string(&modified_file_path).await?;
                 assert_eq!(content, "# User A README");
 
                 Ok(())
@@ -1742,7 +1742,7 @@ mod tests {
                 assert!(result.is_err());
 
                 // Make sure that the local changes are not overwritten
-                let content = util::fs::read_from_path(&modified_file_path)?;
+                let content = tokio::fs::read_to_string(&modified_file_path).await?;
                 assert_eq!(content, "# User A README");
 
                 // Pull again
@@ -1752,7 +1752,7 @@ mod tests {
                 assert!(result.is_err());
 
                 // Make sure that the local changes are not overwritten
-                let content = util::fs::read_from_path(&modified_file_path)?;
+                let content = tokio::fs::read_to_string(&modified_file_path).await?;
                 assert_eq!(content, "# User A README");
 
                 Ok(())
@@ -1813,7 +1813,7 @@ mod tests {
                 assert!(result.is_err());
 
                 // Make sure that the local changes are not overwritten
-                let content = util::fs::read_from_path(&modified_file_path)?;
+                let content = tokio::fs::read_to_string(&modified_file_path).await?;
                 assert_eq!(content, "# User A README");
 
                 // Pull again
@@ -1821,7 +1821,7 @@ mod tests {
                 assert!(result.is_err());
 
                 // Make sure that the local changes are still not overwritten
-                let content = util::fs::read_from_path(&modified_file_path)?;
+                let content = tokio::fs::read_to_string(&modified_file_path).await?;
                 assert_eq!(content, "# User A README");
 
                 Ok(())
@@ -1882,7 +1882,7 @@ mod tests {
                 assert!(result.is_err());
 
                 // Make sure that the local changes are not overwritten
-                let content = util::fs::read_from_path(&modified_file_path)?;
+                let content = tokio::fs::read_to_string(&modified_file_path).await?;
                 assert_eq!(content, "# User A README");
 
                 // Pull again
@@ -1892,7 +1892,7 @@ mod tests {
                 assert!(result.is_err());
 
                 // Make sure that the local changes are not overwritten
-                let content = util::fs::read_from_path(&modified_file_path)?;
+                let content = tokio::fs::read_to_string(&modified_file_path).await?;
                 assert_eq!(content, "# User A README");
 
                 Ok(())
