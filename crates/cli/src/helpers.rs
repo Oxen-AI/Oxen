@@ -11,6 +11,10 @@ use colored::Colorize;
 use std::collections::HashMap;
 use std::str::FromStr;
 
+use liboxen::command::migrate::AddChildCountsToNodesMigration;
+use liboxen::command::migrate::AddWorkspaceNameIndexMigration;
+use liboxen::command::migrate::ZeroPadHashDirsMigration;
+
 pub fn get_scheme_and_host_or_default() -> Result<(String, String), OxenError> {
     let config = AuthConfig::get_or_create()?;
     let mut default_host = (
