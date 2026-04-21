@@ -883,13 +883,6 @@ fn r_create_dir_node(
         //     vnode.entries.len()
         // );
 
-        // Maybe because we don't need to overwrite vnode dbs that already exist,
-        // but still need to recurse and create the children
-        // let mut maybe_vnode_db = MerkleNodeDB::open_read_write_if_not_exists(
-        //     repo,
-        //     &vnode_obj,
-        //     maybe_dir_db.as_ref().map(|db| db.node_id),
-        // )?;
         let mut vnode_db = MerkleNodeDB::open_read_write(
             repo,
             &vnode_obj,
@@ -918,14 +911,6 @@ fn r_create_dir_node(
                             &dir_node,
                             Some(vnode.id),
                         )?);
-                        // } else {
-                        //     // Otherwise, check if the dir is new before opening a new db
-                        //     MerkleNodeDB::open_read_write_if_not_exists(
-                        //         repo,
-                        //         &dir_node,
-                        //         Some(vnode.id),
-                        //     )?
-                        // };
 
                         r_create_dir_node(
                             repo,
