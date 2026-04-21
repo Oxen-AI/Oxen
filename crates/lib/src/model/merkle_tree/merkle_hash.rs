@@ -125,9 +125,9 @@ impl HexHash {
     pub fn node_db_prefix(&self) -> PathBuf {
         let hash_str = &self.0;
         const DIR_PREFIX_LEN: usize = 3;
-        let dir_prefix = &hash_str[0..DIR_PREFIX_LEN];
-        let dir_suffix = &hash_str[DIR_PREFIX_LEN..];
-        Path::new(dir_prefix).join(dir_suffix)
+        let dir_prefix = hash_str.chars().take(DIR_PREFIX_LEN).collect::<String>();
+        let dir_suffix = hash_str.chars().skip(DIR_PREFIX_LEN).collect::<String>();
+        Path::new(&dir_prefix).join(&dir_suffix)
     }
 }
 
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn test_hex_hash_conversions_and_node_db_prefix() {
-        for _ in [0..1000] {
+        for _ in 0..1000 {
             let random_value: u128 = rand::random();
             let hash = MerkleHash::new(random_value);
 
