@@ -65,7 +65,7 @@ impl AuthConfig {
                 #[cfg(not(test))]
                 log::warn!("TEST env var set but not in test mode");
 
-                crate::test::REPO_ROOT
+                crate::test_paths::REPO_ROOT
                     .join("data")
                     .join("test")
                     .join("config")

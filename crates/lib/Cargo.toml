@@ -36,6 +36,10 @@ otel = [
 ]
 perf-logging = []
 production = ["metrics", "otel", "ffmpeg", "perf-logging", "default"]
+# Enables `liboxen::test`. Automatically on during `cargo test` (via `cfg(test)`); downstream crates
+# must enable this feature explicitly via dev-dependencies to use `liboxen::test::*` in their own
+# integration tests. Benches that consume `liboxen::test` declare `required-features = ["test-utils"]`.
+test-utils = []
 
 [dependencies]
 approx = { workspace = true }
@@ -154,15 +158,19 @@ harness = false
 [[bench]]
 name = "download"
 harness = false
+required-features = ["test-utils"]
 
 [[bench]]
 name = "fetch"
 harness = false
+required-features = ["test-utils"]
 
 [[bench]]
 name = "push"
 harness = false
+required-features = ["test-utils"]
 
 [[bench]]
 name = "workspace_add"
 harness = false
+required-features = ["test-utils"]
