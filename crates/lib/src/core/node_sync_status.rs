@@ -1,5 +1,4 @@
 use crate::constants;
-use crate::core::db::merkle_node::merkle_node_db::node_db_prefix;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::model::MerkleHash;
@@ -45,7 +44,7 @@ pub fn mark_node_as_synced(
 }
 
 fn node_is_synced_file_path(repo: &LocalRepository, node_hash: &MerkleHash) -> PathBuf {
-    let dir_prefix = node_db_prefix(node_hash);
+    let dir_prefix = node_hash.to_hex_hash().node_db_prefix();
     repo.path
         .join(constants::OXEN_HIDDEN_DIR)
         .join(constants::TREE_DIR)

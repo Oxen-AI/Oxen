@@ -80,7 +80,7 @@ impl MerkleTreeNode {
             log::warn!("no child node db: {hash:?}");
             return Ok(Vec::new());
         };
-        node_db.map()
+        Ok(node_db.map()?)
     }
 
     /// Check if the node is a leaf node (i.e. it has no children)

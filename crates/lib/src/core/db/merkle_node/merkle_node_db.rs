@@ -57,6 +57,7 @@ use crate::constants;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::model::MerkleHash;
+use crate::model::merkle_tree::node_type::InvalidMerkleTreeNodeType;
 use crate::util;
 
 use crate::model::merkle_tree::node::{
@@ -67,21 +68,53 @@ use crate::model::merkle_tree::node::{
 const NODE_FILE: &str = "node";
 const CHILDREN_FILE: &str = "children";
 
-pub fn node_db_prefix(hash: &MerkleHash) -> PathBuf {
-    let hash_str = hash.to_string();
-    let dir_prefix_len = 3;
-    let dir_prefix = hash_str.chars().take(dir_prefix_len).collect::<String>();
-    let dir_suffix = hash_str.chars().skip(dir_prefix_len).collect::<String>();
-    Path::new(&dir_prefix).join(&dir_suffix)
-}
-
+/// An absolute path to the directory for the Merkle node's `node` and `children` files.
 pub fn node_db_path(repo: &LocalRepository, hash: &MerkleHash) -> PathBuf {
-    let dir_prefix = node_db_prefix(hash);
+    let dir_prefix = hash.to_hex_hash().node_db_prefix();
     repo.path
         .join(constants::OXEN_HIDDEN_DIR)
         .join(constants::TREE_DIR)
         .join(constants::NODES_DIR)
         .join(dir_prefix)
+}
+
+/// Errors that the Merkle node database can encounter when reading and writing nodes.
+#[derive(Debug, thiserror::Error)]
+pub enum MerkleDbError {
+    // Errors encountered in the operation of the custom file format based Merkle tree store.
+    #[error("Must call open before closing")]
+    CloseBeforeOpen,
+    #[error("Cannot write to read-only db")]
+    ReadOnly,
+    #[error("Cannot write size after writing data")]
+    IllegalOperationWriteSizeFirst,
+    #[error("Must call open before writing")]
+    WriteBeforeOpen,
+    #[error("Must call open before reading")]
+    ReadBeforeOpen,
+    // wrappers
+    #[error("Error writing to a node or children file: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Cannot encode a Merkle node: {0}")]
+    Encode(#[from] rmp_serde::encode::Error),
+    #[error("Cannot decode a Merkle node: {0}")]
+    Decode(#[from] rmp_serde::decode::Error),
+    #[error("{0}")]
+    TypeMismatch(#[from] InvalidMerkleTreeNodeType),
+    #[error("Failed to create directory: {0}")]
+    DirCreate(Box<OxenError>), // TODO: replace with FsError from upcoming refactoring PR
+    #[error("Failed to open file: {0}")]
+    Open(Box<OxenError>), // TODO: replace with FsError from upcoming refactoring PR
+}
+
+impl MerkleDbError {
+    fn dir_create(err: OxenError) -> Self {
+        Self::DirCreate(Box::new(err))
+    }
+
+    fn open(err: OxenError) -> Self {
+        Self::Open(Box::new(err))
+    }
 }
 
 pub struct MerkleNodeLookup {
@@ -94,7 +127,7 @@ pub struct MerkleNodeLookup {
 }
 
 impl MerkleNodeLookup {
-    pub fn load(node_table_file: &mut File) -> Result<Self, OxenError> {
+    pub fn load(node_table_file: &mut File) -> Result<Self, MerkleDbError> {
         // log::debug!("MerkleNodeLookup.load() {:?}", node_table_file);
         // Read the whole node into memory
         let mut file_data = Vec::new();
@@ -218,7 +251,7 @@ impl MerkleNodeDB {
         self.data.to_owned()
     }
 
-    pub fn node(&self) -> Result<EMerkleTreeNode, OxenError> {
+    pub fn node(&self) -> Result<EMerkleTreeNode, MerkleDbError> {
         let node = Self::to_node(self.dtype, &self.data())?;
         Ok(node)
     }
@@ -249,7 +282,10 @@ impl MerkleNodeDB {
         db_path.join(NODE_FILE).exists() && db_path.join(CHILDREN_FILE).exists()
     }
 
-    pub fn open_read_only(repo: &LocalRepository, hash: &MerkleHash) -> Result<Self, OxenError> {
+    pub fn open_read_only(
+        repo: &LocalRepository,
+        hash: &MerkleHash,
+    ) -> Result<Self, MerkleDbError> {
         let path = node_db_path(repo, hash);
         Self::open(path, true)
     }
@@ -258,10 +294,10 @@ impl MerkleNodeDB {
         repo: &LocalRepository,
         node: &N,
         parent_id: Option<MerkleHash>,
-    ) -> Result<Self, OxenError> {
+    ) -> Result<Self, MerkleDbError> {
         let path = node_db_path(repo, &node.hash());
         if !path.exists() {
-            util::fs::create_dir_all(&path)?;
+            util::fs::create_dir_all(&path).map_err(MerkleDbError::dir_create)?;
         }
         log::debug!("open_read_write merkle node db at {}", path.display());
         let mut db = Self::open(path, false)?;
@@ -269,12 +305,12 @@ impl MerkleNodeDB {
         Ok(db)
     }
 
-    pub fn open(path: impl AsRef<Path>, read_only: bool) -> Result<Self, OxenError> {
+    pub fn open(path: impl AsRef<Path>, read_only: bool) -> Result<Self, MerkleDbError> {
         let path = path.as_ref();
 
         // mkdir if not exists
         if !path.exists() {
-            util::fs::create_dir_all(path)?;
+            util::fs::create_dir_all(path).map_err(MerkleDbError::dir_create)?;
         }
 
         let node_path = path.join(NODE_FILE);
@@ -290,8 +326,8 @@ impl MerkleNodeDB {
             Option<File>,
             Option<File>,
         ) = if read_only {
-            let mut node_file = util::fs::open_file(node_path)?;
-            let children_file = util::fs::open_file(children_path)?;
+            let mut node_file = util::fs::open_file(node_path).map_err(MerkleDbError::open)?;
+            let children_file = util::fs::open_file(children_path).map_err(MerkleDbError::open)?;
             // log::debug!("Opened merkle node db read_only at {}", path.display());
             (
                 Some(MerkleNodeLookup::load(&mut node_file)?),
@@ -326,19 +362,21 @@ impl MerkleNodeDB {
         })
     }
 
-    pub fn close(&mut self) -> Result<(), OxenError> {
+    /// Closes the open node and children file handles.
+    /// WARNING: Sets the internal node_file, children_file, and lookup to None.
+    pub fn close(&mut self) -> Result<(), MerkleDbError> {
         if let Some(node_file) = &mut self.node_file {
             node_file.flush()?;
             node_file.sync_data()?;
         } else {
-            return Err(OxenError::basic_str("Must call open before closing"));
+            return Err(MerkleDbError::CloseBeforeOpen);
         }
 
         if let Some(children_file) = &mut self.children_file {
             children_file.flush()?;
             children_file.sync_data()?;
         } else {
-            return Err(OxenError::basic_str("Must call open before closing"));
+            return Err(MerkleDbError::CloseBeforeOpen);
         }
 
         self.node_file = None;
@@ -348,21 +386,22 @@ impl MerkleNodeDB {
     }
 
     /// Write the base node info.
+    /// WARNING: Sets the internal dtype, node_id, parent_id of `self` to the values from `node`.
     fn write_node<N: TMerkleTreeNode>(
         &mut self,
         node: &N,
         parent_id: Option<MerkleHash>,
-    ) -> Result<(), OxenError> {
+    ) -> Result<(), MerkleDbError> {
         if self.read_only {
-            return Err(OxenError::basic_str("Cannot write to read-only db"));
+            return Err(MerkleDbError::ReadOnly);
         }
 
         if self.data_offset > 0 {
-            return Err(OxenError::basic_str("Cannot write size after writing data"));
+            return Err(MerkleDbError::IllegalOperationWriteSizeFirst);
         }
 
         let Some(node_file) = self.node_file.as_mut() else {
-            return Err(OxenError::basic_str("Must call open before writing"));
+            return Err(MerkleDbError::WriteBeforeOpen);
         };
         // log::debug!("write_node node: {}", node);
 
@@ -396,16 +435,16 @@ impl MerkleNodeDB {
         Ok(())
     }
 
-    pub fn add_child<N: TMerkleTreeNode>(&mut self, item: &N) -> Result<(), OxenError> {
+    pub fn add_child<N: TMerkleTreeNode>(&mut self, item: &N) -> Result<(), MerkleDbError> {
         if self.read_only {
-            return Err(OxenError::basic_str("Cannot write to read-only db"));
+            return Err(MerkleDbError::ReadOnly);
         }
 
         let Some(node_file) = self.node_file.as_mut() else {
-            return Err(OxenError::basic_str("Must call open() before writing"));
+            return Err(MerkleDbError::WriteBeforeOpen);
         };
         let Some(children_file) = self.children_file.as_mut() else {
-            return Err(OxenError::basic_str("Must call open() before writing"));
+            return Err(MerkleDbError::WriteBeforeOpen);
         };
 
         let buf = item.to_msgpack_bytes()?;
@@ -436,11 +475,11 @@ impl MerkleNodeDB {
         D: TMerkleTreeNode + de::DeserializeOwned,
     {
         let Some(lookup) = self.lookup.as_ref() else {
-            return Err(OxenError::basic_str("Must call open before reading"));
+            return Err(MerkleError::ReadBeforeOpen);
         };
 
         let Some(mut children_file) = self.children_file.as_ref() else {
-            return Err(OxenError::basic_str("Must call open before writing"));
+            return Err(MerkleError::WriteBeforeOpen);
         };
 
         // Find the offset and length of the data
@@ -469,13 +508,13 @@ impl MerkleNodeDB {
     }
     */
 
-    pub fn map(&mut self) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, OxenError> {
+    pub fn map(&mut self) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, MerkleDbError> {
         // log::debug!("Loading merkle node db map");
         let Some(lookup) = self.lookup.as_ref() else {
-            return Err(OxenError::basic_str("Must call open before reading"));
+            return Err(MerkleDbError::ReadBeforeOpen);
         };
         let Some(children_file) = self.children_file.as_mut() else {
-            return Err(OxenError::basic_str("Must call open before writing"));
+            return Err(MerkleDbError::WriteBeforeOpen);
         };
 
         // Parse the node parent id

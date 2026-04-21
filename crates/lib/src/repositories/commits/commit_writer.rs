@@ -893,7 +893,7 @@ fn r_create_dir_node(
             match &entry.node.node {
                 EMerkleTreeNode::Directory(node) => {
                     // If the dir has updates, we need a new dir db
-                    let dir_path = entry.node.maybe_path().unwrap();
+                    let dir_path = entry.node.maybe_path()?;
                     // log::debug!("Processing dir node {:?}", dir_path);
                     let dir_node = if entries.contains_key(&dir_path) {
                         let dir_node =
