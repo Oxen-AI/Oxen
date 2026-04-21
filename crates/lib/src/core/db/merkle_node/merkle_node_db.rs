@@ -254,23 +254,6 @@ impl MerkleNodeDB {
         Self::open(path, true)
     }
 
-    pub fn open_read_write_if_not_exists<N: TMerkleTreeNode>(
-        repo: &LocalRepository,
-        node: &N,
-        parent_id: Option<MerkleHash>,
-    ) -> Result<Option<Self>, OxenError> {
-        if Self::exists(repo, &node.hash()) {
-            let db_path = node_db_path(repo, &node.hash());
-            log::debug!(
-                "open_read_write_if_not_exists skipping existing merkle node db at {}",
-                db_path.display()
-            );
-            Ok(None)
-        } else {
-            Ok(Some(Self::open_read_write(repo, node, parent_id)?))
-        }
-    }
-
     pub fn open_read_write<N: TMerkleTreeNode>(
         repo: &LocalRepository,
         node: &N,
