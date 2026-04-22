@@ -1,5 +1,4 @@
 use crate::core;
-use crate::core::db::merkle_node::MerkleNodeStoreSession;
 use crate::error::OxenError;
 use crate::model::entry::metadata_entry::WorkspaceMetadataEntry;
 use crate::model::merkle_tree::merkle_writer::{
@@ -557,10 +556,9 @@ pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Res
     Ok(())
 }
 
-// TODO: W: WriteSession ... session: &W
 #[allow(clippy::type_complexity)]
-fn traverse_and_update_sizes_and_counts<'a, 'repo>(
-    session: &'a MerkleNodeStoreSession<'a, 'repo>,
+fn traverse_and_update_sizes_and_counts<'a, S: MerkleWriteSession<'a>>(
+    session: &'a S,
     node: &mut MerkleTreeNode,
     num_bytes: &mut u64,
 ) -> Result<(HashMap<String, u64>, HashMap<String, u64>), OxenError> {
@@ -579,9 +577,11 @@ fn traverse_and_update_sizes_and_counts<'a, 'repo>(
                 &mut local_sizes,
                 num_bytes,
             )?;
-            let mut dir_ns = session.create_node(commit_node, node.parent_id)?;
+            let mut dir_ns = session
+                .create_node(commit_node, node.parent_id)
+                .map_err(Into::into)?;
             add_children_to_session(&mut dir_ns, &node.children)?;
-            dir_ns.finish()?;
+            dir_ns.finish().map_err(Into::into)?;
         }
         EMerkleTreeNode::VNode(vnode) => {
             log::debug!("Traversing vnode {vnode:?}");
@@ -592,9 +592,11 @@ fn traverse_and_update_sizes_and_counts<'a, 'repo>(
                 &mut local_sizes,
                 num_bytes,
             )?;
-            let mut dir_ns = session.create_node(vnode, node.parent_id)?;
+            let mut dir_ns = session
+                .create_node(vnode, node.parent_id)
+                .map_err(Into::into)?;
             add_children_to_session(&mut dir_ns, &node.children)?;
-            dir_ns.finish()?;
+            dir_ns.finish().map_err(Into::into)?;
         }
         EMerkleTreeNode::Directory(dir_node) => {
             log::debug!("No need to aggregate dir {}", dir_node.name());
@@ -607,9 +609,11 @@ fn traverse_and_update_sizes_and_counts<'a, 'repo>(
             )?;
             dir_node.set_data_type_counts(local_counts.clone());
             dir_node.set_data_type_sizes(local_sizes.clone());
-            let mut dir_ns = session.create_node(dir_node, node.parent_id)?;
+            let mut dir_ns = session
+                .create_node(dir_node, node.parent_id)
+                .map_err(Into::into)?;
             add_children_to_session(&mut dir_ns, &node.children)?;
-            dir_ns.finish()?;
+            dir_ns.finish().map_err(Into::into)?;
         }
         EMerkleTreeNode::File(file_node) => {
             log::debug!(
@@ -636,9 +640,8 @@ fn traverse_and_update_sizes_and_counts<'a, 'repo>(
     Ok((local_counts, local_sizes))
 }
 
-// TODO: W: WriteSession ... session: &W
-fn process_children<'a, 'repo>(
-    session: &'a MerkleNodeStoreSession<'a, 'repo>,
+fn process_children<'a, S: MerkleWriteSession<'a>>(
+    session: &'a S,
     children: &mut [MerkleTreeNode],
     local_counts: &mut HashMap<String, u64>,
     local_sizes: &mut HashMap<String, u64>,

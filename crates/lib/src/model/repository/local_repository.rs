@@ -5,7 +5,6 @@ use crate::core::db::merkle_node::FileBackend;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
-use crate::model::merkle_tree::MerkleStore;
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
 use crate::opts::StorageOpts;
 use crate::storage::{StorageConfig, VersionStore, create_version_store};
@@ -96,10 +95,16 @@ impl LocalRepository {
     }
 
     /// Obtain the Merkle tree store for this repository.
-    // NOTE: Today this always returns the file-based backend. When we introduce the LMDB Merkle
-    // tree store, this will require repositories to save identifying information about which
-    // physical store they use for their Merkle tree.
-    pub fn merkle_store(&self) -> impl MerkleStore {
+    ///
+    /// The returned backend's `Error` associated type is `MerkleDbError` (the
+    /// file backend's native error). The `Into<OxenError>` bound on every
+    /// merkle-store trait's `Error` lets callers convert via
+    /// `.map_err(Into::into)?` without any caller-side `where` clauses.
+    ///
+    /// Today this always returns the file-based backend. When the LMDB
+    /// backend lands, this method will be updated to dispatch based on an
+    /// on-disk identifier; callers won't need to change.
+    pub fn merkle_store(&self) -> FileBackend<'_> {
         FileBackend::new(self)
     }
 

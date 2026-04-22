@@ -166,7 +166,7 @@ impl NodeWriteSession for FileNodeSession {
     /// Flushes the open `node` and `children` file handles, closes them, then calls `fsync` on them.
     /// Is idempotent and calls [`MerkleNodeDb::close`] internally when required.
     fn finish(mut self) -> Result<(), MerkleDbError> {
-        (&mut self).idempotent_finish()
+        self.idempotent_finish()
     }
 }
 

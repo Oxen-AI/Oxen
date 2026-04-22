@@ -9,7 +9,6 @@ use tar::Archive;
 
 use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
 use crate::core::commit_sync_status;
-use crate::core::db::merkle_node::MerkleNodeStoreSession;
 use crate::core::db::merkle_node::merkle_node_db::node_db_path;
 use crate::core::node_sync_status;
 use crate::core::v_latest::index::CommitMerkleTree as CommitMerkleTreeLatest;
@@ -1027,6 +1026,7 @@ pub fn unpack_nodes(
 }
 
 /// Write a node to disk
+// TODO: this should just accept `&CommitNode`
 pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), OxenError> {
     let EMerkleTreeNode::Commit(commit_node) = &node.node else {
         return Err(OxenError::basic_str("Expected commit node"));
@@ -1044,34 +1044,37 @@ pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), O
 /// Recursively writes the node and all its children to disk. To write a full tree, the node
 /// (`node_impl`) **MUST** be the root of the tree -- i.e. a `Commit` node.
 ///
-/// [1] https://github.com/rust-lang/rust/issues/20041)
-fn p_write_tree<'a, 'repo, N: TMerkleTreeNode>(
-    session: &'a MerkleNodeStoreSession<'a, 'repo>,
+// [1] https://github.com/rust-lang/rust/issues/20041
+// TODO: this should just accept `MerkleTreeNode` since the `node_impl` always comes from this
+fn p_write_tree<'a, N: TMerkleTreeNode, S: MerkleWriteSession<'a>>(
+    session: &'a S,
     node: &MerkleTreeNode,
     node_impl: &N,
 ) -> Result<(), OxenError> {
     let parent_id = node.parent_id;
 
-    let mut ns = session.create_node(node_impl, parent_id)?;
+    let mut ns = session
+        .create_node(node_impl, parent_id)
+        .map_err(Into::into)?;
     for child in &node.children {
         match &child.node {
             EMerkleTreeNode::VNode(vnode) => {
-                ns.add_child(vnode)?;
+                ns.add_child(vnode).map_err(Into::into)?;
                 p_write_tree(session, child, vnode)?;
             }
             EMerkleTreeNode::Directory(dir_node) => {
-                ns.add_child(dir_node)?;
+                ns.add_child(dir_node).map_err(Into::into)?;
                 p_write_tree(session, child, dir_node)?;
             }
             EMerkleTreeNode::File(file_node) => {
-                ns.add_child(file_node)?;
+                ns.add_child(file_node).map_err(Into::into)?;
             }
             node => {
                 panic!("p_write_tree Unexpected node type: {node:?}");
             }
         }
     }
-    ns.finish()?;
+    ns.finish().map_err(Into::into)?;
     Ok(())
 }
 

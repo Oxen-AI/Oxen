@@ -17,7 +17,6 @@ use crate::constants::ORIG_HEAD_FILE;
 use crate::constants::{HEAD_FILE, STAGED_DIR};
 use crate::core::db;
 use crate::core::db::key_val::str_val_db;
-use crate::core::db::merkle_node::{MerkleNodeStoreNodeSession, MerkleNodeStoreSession};
 use crate::core::refs::with_ref_manager;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_latest::status;
@@ -801,11 +800,11 @@ pub fn compute_commit_id(new_commit: &NewCommit) -> Result<MerkleHash, OxenError
 }
 
 #[allow(clippy::too_many_arguments)]
-fn write_commit_entries<'a, 'repo>(
-    repo: &'repo LocalRepository,
+fn write_commit_entries<'a, S: MerkleWriteSession<'a>>(
+    repo: &LocalRepository,
     commit_id: MerkleHash,
-    session: &'a MerkleNodeStoreSession<'a, 'repo>,
-    commit_ns: &mut MerkleNodeStoreNodeSession<'a, 'repo>,
+    session: &'a S,
+    commit_ns: &mut S::NodeSession<'a>,
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
@@ -814,7 +813,7 @@ fn write_commit_entries<'a, 'repo>(
     let mut total_written = 0;
     let root_path = PathBuf::from("");
     let dir_node = compute_dir_node(repo, commit_id, entries, dir_hashes, &root_path)?;
-    commit_ns.add_child(&dir_node)?;
+    commit_ns.add_child(&dir_node).map_err(Into::into)?;
     total_written += 1;
 
     str_val_db::put(
@@ -822,7 +821,9 @@ fn write_commit_entries<'a, 'repo>(
         root_path.to_str().unwrap(),
         &dir_node.hash().to_string(),
     )?;
-    let mut dir_ns = session.create_node(&dir_node, Some(commit_id))?;
+    let mut dir_ns = session
+        .create_node(&dir_node, Some(commit_id))
+        .map_err(Into::into)?;
     r_create_dir_node(
         repo,
         session,
@@ -834,7 +835,7 @@ fn write_commit_entries<'a, 'repo>(
         root_path,
         &mut total_written,
     )?;
-    dir_ns.finish()?;
+    dir_ns.finish().map_err(Into::into)?;
 
     // The dir_hash_db was pre-populated from the previous commit, so
     // removed directories still have stale entries that must be deleted;
@@ -867,11 +868,11 @@ fn cache_invalidate_dir_hash_db<'a>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn r_create_dir_node<'a, 'repo>(
-    repo: &'repo LocalRepository,
-    session: &'a MerkleNodeStoreSession<'a, 'repo>,
+fn r_create_dir_node<'a, S: MerkleWriteSession<'a>>(
+    repo: &LocalRepository,
+    session: &'a S,
     commit_id: MerkleHash,
-    mut maybe_parent_ns: Option<&mut MerkleNodeStoreNodeSession<'a, 'repo>>,
+    mut maybe_parent_ns: Option<&mut S::NodeSession<'a>>,
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
@@ -898,11 +899,13 @@ fn r_create_dir_node<'a, 'repo>(
         // Capture the parent's hash before we reborrow `maybe_parent_ns` mutably.
         let parent_id_for_vnode = maybe_parent_ns.as_deref().map(|ns| *ns.node_id());
         if let Some(parent_ns) = maybe_parent_ns.as_deref_mut() {
-            parent_ns.add_child(&vnode_obj)?;
+            parent_ns.add_child(&vnode_obj).map_err(Into::into)?;
             *total_written += 1;
         }
 
-        let mut vnode_ns = session.create_node(&vnode_obj, parent_id_for_vnode)?;
+        let mut vnode_ns = session
+            .create_node(&vnode_obj, parent_id_for_vnode)
+            .map_err(Into::into)?;
         for entry in vnode.entries.iter() {
             match &entry.node.node {
                 EMerkleTreeNode::Directory(node) => {
@@ -912,10 +915,12 @@ fn r_create_dir_node<'a, 'repo>(
                         let dir_node =
                             compute_dir_node(repo, commit_id, entries, dir_hashes, &dir_path)?;
 
-                        vnode_ns.add_child(&dir_node)?;
+                        vnode_ns.add_child(&dir_node).map_err(Into::into)?;
                         *total_written += 1;
 
-                        let mut child_ns = session.create_node(&dir_node, Some(vnode.id))?;
+                        let mut child_ns = session
+                            .create_node(&dir_node, Some(vnode.id))
+                            .map_err(Into::into)?;
                         r_create_dir_node(
                             repo,
                             session,
@@ -927,7 +932,7 @@ fn r_create_dir_node<'a, 'repo>(
                             &dir_path,
                             total_written,
                         )?;
-                        child_ns.finish()?;
+                        child_ns.finish().map_err(Into::into)?;
                         dir_node
                     } else {
                         // Look up the old dir node and reference it
@@ -937,7 +942,7 @@ fn r_create_dir_node<'a, 'repo>(
                             continue;
                         };
                         let dir_node = old_dir_node.dir()?;
-                        vnode_ns.add_child(&dir_node)?;
+                        vnode_ns.add_child(&dir_node).map_err(Into::into)?;
                         *total_written += 1;
                         dir_node
                     };
@@ -964,7 +969,7 @@ fn r_create_dir_node<'a, 'repo>(
                     file_node.set_last_commit_id(&last_commit_id);
                     file_node.set_name(file_name);
 
-                    vnode_ns.add_child(&file_node)?;
+                    vnode_ns.add_child(&file_node).map_err(Into::into)?;
                     *total_written += 1;
                 }
                 _ => {
@@ -975,7 +980,7 @@ fn r_create_dir_node<'a, 'repo>(
                 }
             }
         }
-        vnode_ns.finish()?;
+        vnode_ns.finish().map_err(Into::into)?;
     }
 
     log::debug!("Finished processing dir {path:?} total written {total_written} entries");
