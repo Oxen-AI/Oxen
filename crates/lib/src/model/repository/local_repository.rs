@@ -95,11 +95,10 @@ impl LocalRepository {
         }
     }
 
-    /// Obtain the merkle node store for this repository.
-    ///
-    /// Today this always returns the file-based backend; Phase 2 will detect
-    /// on-disk format and optionally dispatch to an LMDB backend. Construction
-    /// is O(1), so callers are free to call this per operation.
+    /// Obtain the Merkle tree store for this repository.
+    // NOTE: Today this always returns the file-based backend. When we introduce the LMDB Merkle
+    // tree store, this will require repositories to save identifying information about which
+    // physical store they use for their Merkle tree.
     pub fn merkle_store(&self) -> impl MerkleStore {
         FileBackend::new(self)
     }
