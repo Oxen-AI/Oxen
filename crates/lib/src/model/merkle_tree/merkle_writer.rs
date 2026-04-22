@@ -1,21 +1,29 @@
+use crate::error::OxenError;
 use crate::model::{MerkleHash, TMerkleTreeNode};
 
 /// Interface for writing to a Merkle tree store.
-///
-/// The trait stays backend-agnostic in its `Error` type. The canonical way to
-/// obtain a `MerkleWriter` — [`LocalRepository::merkle_store`] — returns a
-/// type whose `Error` is pinned to [`crate::error::OxenError`] via an adapter
-/// wrapper, so callers need no `where` clauses and can use `?` directly.
-pub trait MerkleWriter: Send + Sync {
+pub trait MerkleWriter: Send + Sync
+where
+    OxenError: From<Self::Error>,
+{
     /// The error type for the Merkle tree's underlying storage layer.
+    ///
+    /// Backends may use whichever error type is natural for their storage
+    /// (e.g. [`MerkleDbError`] for the [`FileBackend`]). The [`Into<OxenError>`]
+    /// bound lets callers that return [`Result<_, OxenError>`] use `?` directly.
     type Error: std::error::Error;
+
+    /// The write session that manages writing multiple nodes to the store.
+    type Session<'a>: MerkleWriteSession<'a, Error = Self::Error>
+    where
+        Self: 'a;
 
     /// Create a new write session to write many changed Merkle tree nodes to the store.
     ///
     /// To ensure that changes are persisted, callers must call [`MerkleWriteSession::finish`] on the returned session.
     /// Correct use of the returned session is to create a [`NodeWriteSession`] for each node to be
     /// written, and then call [`NodeWriteSession::finish`] on that session when complete with the node.
-    fn begin(&self) -> Result<impl MerkleWriteSession<Error = Self::Error>, Self::Error>;
+    fn begin(&self) -> Result<Self::Session<'_>, Self::Error>;
 }
 
 /// A write session for writing multiple nodes to the Merkle tree store.
@@ -33,9 +41,18 @@ pub trait MerkleWriter: Send + Sync {
 /// are called. The invariant is that [`finish`] must be called to **ensure** that writes are
 /// persisted. An implementation may choose to e.g. have a transaction mechanism to roll-back
 /// changes on `Err`. However, implementations are not required to support this.
-pub trait MerkleWriteSession {
+pub trait MerkleWriteSession<'a>
+where
+    OxenError: From<Self::Error>,
+{
     /// The error type for the Merkle tree's underlying storage layer.
+    /// Must be convertible into an [`OxenError`].
     type Error: std::error::Error;
+
+    /// The write session that manages writing a single node's information to the store.
+    type NodeSession<'b>: NodeWriteSession<Error = Self::Error>
+    where
+        Self: 'b;
 
     /// Begin the process of writing the node to the Merkle tree store.
     ///
@@ -45,11 +62,11 @@ pub trait MerkleWriteSession {
     ///
     /// Note that any written nodes are not required to be persisted to the store until
     /// _this_ write session's [`finish`] is called.
-    fn create_node<N: TMerkleTreeNode>(
-        &self,
+    fn create_node<'b, N: TMerkleTreeNode>(
+        &'b self,
         node: &N,
         parent_id: Option<MerkleHash>,
-    ) -> Result<impl NodeWriteSession<Error = Self::Error>, Self::Error>;
+    ) -> Result<Self::NodeSession<'b>, Self::Error>;
 
     /// Ensure that all content from all finished node write sessions have been written to the
     /// Merkle tree store. It is invalid to call `finish` if there are any active node write
@@ -62,8 +79,12 @@ pub trait MerkleWriteSession {
 /// Implementations may buffer the `node` and `children` information in memory or choose to write
 /// the data to the store eagerly. However, if [`finish`] is called and returns `Ok`, then the
 /// guarantee is that all node and child information must be persisted to the store.
-pub trait NodeWriteSession {
+pub trait NodeWriteSession
+where
+    OxenError: From<Self::Error>,
+{
     /// The error type for the Merkle tree's underlying storage layer.
+    /// Must be convertible into an [`OxenError`].
     type Error: std::error::Error;
 
     /// The hash of the node being written in this session.

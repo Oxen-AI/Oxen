@@ -9,6 +9,7 @@ use tar::Archive;
 
 use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
 use crate::core::commit_sync_status;
+use crate::core::db::merkle_node::MerkleNodeStoreSession;
 use crate::core::db::merkle_node::merkle_node_db::node_db_path;
 use crate::core::node_sync_status;
 use crate::core::v_latest::index::CommitMerkleTree as CommitMerkleTreeLatest;
@@ -1026,7 +1027,6 @@ pub fn unpack_nodes(
 }
 
 /// Write a node to disk
-// TODO: why does this not accept a `&CommitNode` instead? It will `Err` otherwise.
 pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), OxenError> {
     let EMerkleTreeNode::Commit(commit_node) = &node.node else {
         return Err(OxenError::basic_str("Expected commit node"));
@@ -1044,10 +1044,9 @@ pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), O
 /// Recursively writes the node and all its children to disk. To write a full tree, the node
 /// (`node_impl`) **MUST** be the root of the tree -- i.e. a `Commit` node.
 ///
-// [1] https://github.com/rust-lang/rust/issues/20041
-// TODO: this should just accept `MerkleTreeNode` since the `node_impl` always comes from this
-fn p_write_tree<N: TMerkleTreeNode, S: MerkleWriteSession<Error = OxenError>>(
-    session: &S,
+/// [1] https://github.com/rust-lang/rust/issues/20041)
+fn p_write_tree<'a, 'repo, N: TMerkleTreeNode>(
+    session: &'a MerkleNodeStoreSession<'a, 'repo>,
     node: &MerkleTreeNode,
     node_impl: &N,
 ) -> Result<(), OxenError> {

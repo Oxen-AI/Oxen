@@ -1,4 +1,5 @@
 use crate::core;
+use crate::core::db::merkle_node::MerkleNodeStoreSession;
 use crate::error::OxenError;
 use crate::model::entry::metadata_entry::WorkspaceMetadataEntry;
 use crate::model::merkle_tree::merkle_writer::{
@@ -556,9 +557,10 @@ pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Res
     Ok(())
 }
 
+// TODO: W: WriteSession ... session: &W
 #[allow(clippy::type_complexity)]
-fn traverse_and_update_sizes_and_counts<S: MerkleWriteSession<Error = OxenError>>(
-    session: &S,
+fn traverse_and_update_sizes_and_counts<'a, 'repo>(
+    session: &'a MerkleNodeStoreSession<'a, 'repo>,
     node: &mut MerkleTreeNode,
     num_bytes: &mut u64,
 ) -> Result<(HashMap<String, u64>, HashMap<String, u64>), OxenError> {
@@ -634,8 +636,9 @@ fn traverse_and_update_sizes_and_counts<S: MerkleWriteSession<Error = OxenError>
     Ok((local_counts, local_sizes))
 }
 
-fn process_children<S: MerkleWriteSession<Error = OxenError>>(
-    session: &S,
+// TODO: W: WriteSession ... session: &W
+fn process_children<'a, 'repo>(
+    session: &'a MerkleNodeStoreSession<'a, 'repo>,
     children: &mut [MerkleTreeNode],
     local_counts: &mut HashMap<String, u64>,
     local_sizes: &mut HashMap<String, u64>,
@@ -654,23 +657,23 @@ fn process_children<S: MerkleWriteSession<Error = OxenError>>(
     Ok(())
 }
 
-fn add_children_to_session<S: NodeWriteSession<Error = OxenError>>(
+fn add_children_to_session<S: NodeWriteSession>(
     ns: &mut S,
     children: &[MerkleTreeNode],
 ) -> Result<(), OxenError> {
     for child in children {
         match &child.node {
             EMerkleTreeNode::Commit(commit_node) => {
-                ns.add_child(commit_node)?;
+                ns.add_child(commit_node).map_err(Into::into)?;
             }
             EMerkleTreeNode::Directory(dir_node) => {
-                ns.add_child(dir_node)?;
+                ns.add_child(dir_node).map_err(Into::into)?;
             }
             EMerkleTreeNode::File(file_node) => {
-                ns.add_child(file_node)?;
+                ns.add_child(file_node).map_err(Into::into)?;
             }
             EMerkleTreeNode::VNode(vnode) => {
-                ns.add_child(vnode)?;
+                ns.add_child(vnode).map_err(Into::into)?;
             }
             _ => {
                 return Err(OxenError::basic_str("Unsupported node type"));
