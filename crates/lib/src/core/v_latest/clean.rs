@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
+use async_walkdir::WalkDir;
 use futures::{StreamExt, TryStreamExt, stream};
 
 use crate::constants::OXEN_HIDDEN_DIR;
@@ -57,32 +58,48 @@ pub async fn clean(repo: &LocalRepository, opts: &CleanOpts) -> Result<CleanResu
         .collect();
     dirs.sort();
 
-    // Calculate total bytes of files and directories to be cleaned
-    let mut total_bytes = 0u64;
-    for f in &files {
-        if let Ok(meta) = util::fs::metadata(repo.path.join(f)) {
-            total_bytes = total_bytes.saturating_add(meta.len());
-        }
-    }
+    // Calculate total bytes of files and directories to be cleaned. Top-level files are
+    // stat'd in parallel. Directory walks are processed one dir at a time, but within
+    // each walk the per-entry file_type + metadata lookups run concurrently — so we cap
+    // peak in-flight IO at ~32 per stage instead of multiplying across nested layers.
+    const STAT_CONCURRENCY: usize = 32;
+    let file_bytes: u64 = stream::iter(files.clone())
+        .map(|f| async move {
+            tokio::fs::metadata(repo.path.join(&f))
+                .await
+                .map(|m| m.len())
+                .unwrap_or(0)
+        })
+        .buffer_unordered(STAT_CONCURRENCY)
+        .fold(0u64, |acc, b| async move { acc.saturating_add(b) })
+        .await;
+
+    let mut dir_bytes: u64 = 0;
     for d in &dirs {
-        let abs = repo.path.join(d);
-        for entry in jwalk::WalkDir::new(&abs).into_iter().filter_map(|e| e.ok()) {
-            if entry.file_type().is_file()
-                && let Ok(meta) = entry.metadata()
-            {
-                total_bytes = total_bytes.saturating_add(meta.len());
-            }
-        }
+        let walk_total: u64 = WalkDir::new(repo.path.join(d))
+            .map(|res| async move {
+                let entry = res.ok()?;
+                let meta = entry.metadata().await.ok()?;
+                meta.is_file().then_some(meta.len())
+            })
+            .buffer_unordered(STAT_CONCURRENCY)
+            .filter_map(|x| async move { x })
+            .fold(0u64, |acc, b| async move { acc.saturating_add(b) })
+            .await;
+        dir_bytes = dir_bytes.saturating_add(walk_total);
     }
 
+    let total_bytes = file_bytes.saturating_add(dir_bytes);
+
     // Clean up files and directories
+    const DELETE_CONCURRENCY: usize = 10;
     if opts.force {
         stream::iter(files.clone())
             .map(|f| async move {
                 println!("Removing {}", f.display());
                 tokio::fs::remove_file(repo.path.join(&f)).await
             })
-            .buffer_unordered(10)
+            .buffer_unordered(DELETE_CONCURRENCY)
             .try_collect::<Vec<()>>()
             .await?;
         stream::iter(dirs.clone())
@@ -90,7 +107,7 @@ pub async fn clean(repo: &LocalRepository, opts: &CleanOpts) -> Result<CleanResu
                 println!("Removing {}/", d.display());
                 tokio::fs::remove_dir_all(repo.path.join(&d)).await
             })
-            .buffer_unordered(10)
+            .buffer_unordered(DELETE_CONCURRENCY)
             .try_collect::<Vec<()>>()
             .await?;
     } else {

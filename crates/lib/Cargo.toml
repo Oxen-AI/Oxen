@@ -50,6 +50,7 @@ async-std = { workspace = true }
 async-tar = { workspace = true }
 async-tempfile = { workspace = true }
 async-trait = { workspace = true }
+async-walkdir = { workspace = true }
 aws-config = { workspace = true }
 aws-sdk-s3 = { workspace = true }
 aws-smithy-runtime-api = { workspace = true }
@@ -139,7 +140,6 @@ xxhash-rust = { workspace = true }
 zip = { workspace = true }
 
 [dev-dependencies]
-async-walkdir = { workspace = true }
 criterion = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
