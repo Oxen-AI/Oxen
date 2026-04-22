@@ -36,9 +36,16 @@ pub async fn clean(repo: &LocalRepository, opts: &CleanOpts) -> Result<CleanResu
         .map(|p| util::fs::path_relative_to_dir(p, &repo.path))
         .collect::<Result<Vec<PathBuf>, _>>()?;
 
-    // Trust `status` to filter `.oxenignore` and `.oxen/` — see core::v_latest::status. The
-    // explicit `.oxen/` guard below is defense-in-depth in case that ever regresses.
-    let status = repositories::status::status_from_opts(repo, &StagedDataOpts::default())?;
+    // Scope status to the requested subtrees so we don't walk everything just to discard
+    // most of it. Trust `status` to filter `.oxenignore` and `.oxen/` — see
+    // core::v_latest::status. The explicit `.oxen/` guard below is defense-in-depth in case
+    // that ever regresses.
+    let status_opts = if opts.paths.is_empty() {
+        StagedDataOpts::default()
+    } else {
+        StagedDataOpts::from_paths(&opts.paths)
+    };
+    let status = repositories::status::status_from_opts(repo, &status_opts)?;
 
     let mut files: Vec<PathBuf> = status
         .untracked_files
