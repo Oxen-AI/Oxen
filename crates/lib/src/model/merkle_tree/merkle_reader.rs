@@ -1,3 +1,4 @@
+use crate::error::OxenError;
 use crate::model::{
     MerkleHash, MerkleTreeNodeType,
     merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode},
@@ -6,7 +7,11 @@ use crate::model::{
 /// Interface for read-only access to Merkle tree nodes.
 pub trait MerkleReader: Send + Sync {
     /// The error type for the Merkle tree's underlying storage layer.
-    type Error: std::error::Error;
+    ///
+    /// Backends may use whichever error type is natural for their storage
+    /// (e.g. `MerkleDbError` for the file backend). The `Into<OxenError>`
+    /// bound lets callers that return `Result<_, OxenError>` use `?` directly.
+    type Error: std::error::Error + Into<OxenError>;
 
     /// True if there is some node with the given hash. False otherwise.
     /// An error is returned if there is some other failure in the Merkle tree's underlying storage layer.
@@ -27,11 +32,11 @@ pub trait MerkleReader: Send + Sync {
 
 /// Metadata returned when reading a single node.
 pub struct MerkleNodeRecord {
-    pub(crate) hash: MerkleHash,
-    pub(crate) dtype: MerkleTreeNodeType,
-    pub(crate) parent_id: Option<MerkleHash>,
-    pub(crate) node: EMerkleTreeNode,
-    pub(crate) num_children: u64,
+    hash: MerkleHash,
+    dtype: MerkleTreeNodeType,
+    parent_id: Option<MerkleHash>,
+    node: EMerkleTreeNode,
+    num_children: u64,
 }
 
 impl MerkleNodeRecord {
@@ -69,5 +74,11 @@ impl MerkleNodeRecord {
 
     pub fn num_children(&self) -> u64 {
         self.num_children
+    }
+
+    /// Consume this record and return its `EMerkleTreeNode`, avoiding a clone
+    /// for callers that only need the owned node value.
+    pub fn into_node(self) -> EMerkleTreeNode {
+        self.node
     }
 }

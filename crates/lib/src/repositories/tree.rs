@@ -9,7 +9,7 @@ use tar::Archive;
 
 use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
 use crate::core::commit_sync_status;
-use crate::core::db::merkle_node::MerkleNodeDB;
+use crate::core::db::merkle_node::MerkleNodeStoreSession;
 use crate::core::db::merkle_node::merkle_node_db::node_db_path;
 use crate::core::node_sync_status;
 use crate::core::v_latest::index::CommitMerkleTree as CommitMerkleTreeLatest;
@@ -17,6 +17,9 @@ use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_old::v0_19_0::index::CommitMerkleTree as CommitMerkleTreeV0_19_0;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
+use crate::model::merkle_tree::merkle_writer::{
+    MerkleWriteSession, MerkleWriter, NodeWriteSession,
+};
 use crate::model::merkle_tree::node::{
     CommitNode, DirNodeWithPath, EMerkleTreeNode, FileNode, FileNodeWithDir, MerkleTreeNode,
 };
@@ -1029,7 +1032,10 @@ pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), O
         return Err(OxenError::basic_str("Expected commit node"));
     };
     let commit_node = CommitNode::new(repo, commit_node.get_opts())?;
-    p_write_tree(repo, node, &commit_node)?;
+    let store = repo.merkle_store();
+    let session = store.begin()?;
+    p_write_tree(&session, node, &commit_node)?;
+    session.finish()?;
     Ok(())
 }
 
@@ -1039,33 +1045,33 @@ pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), O
 /// (`node_impl`) **MUST** be the root of the tree -- i.e. a `Commit` node.
 ///
 /// [1] https://github.com/rust-lang/rust/issues/20041)
-fn p_write_tree<N: TMerkleTreeNode>(
-    repo: &LocalRepository,
+fn p_write_tree<'a, 'repo, N: TMerkleTreeNode>(
+    session: &'a MerkleNodeStoreSession<'a, 'repo>,
     node: &MerkleTreeNode,
     node_impl: &N,
 ) -> Result<(), OxenError> {
     let parent_id = node.parent_id;
 
-    let mut db = MerkleNodeDB::open_read_write(repo, node_impl, parent_id)?;
+    let mut ns = session.create_node(node_impl, parent_id)?;
     for child in &node.children {
         match &child.node {
             EMerkleTreeNode::VNode(vnode) => {
-                db.add_child(vnode)?;
-                p_write_tree(repo, child, vnode)?;
+                ns.add_child(vnode)?;
+                p_write_tree(session, child, vnode)?;
             }
             EMerkleTreeNode::Directory(dir_node) => {
-                db.add_child(dir_node)?;
-                p_write_tree(repo, child, dir_node)?;
+                ns.add_child(dir_node)?;
+                p_write_tree(session, child, dir_node)?;
             }
             EMerkleTreeNode::File(file_node) => {
-                db.add_child(file_node)?;
+                ns.add_child(file_node)?;
             }
             node => {
                 panic!("p_write_tree Unexpected node type: {node:?}");
             }
         }
     }
-    db.close()?;
+    ns.finish()?;
     Ok(())
 }
 

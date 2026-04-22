@@ -1,6 +1,7 @@
 use crate::config::RepositoryConfig;
 use crate::constants::SHALLOW_FLAG;
 use crate::constants::{self, DEFAULT_VNODE_SIZE, MIN_OXEN_VERSION};
+use crate::core::db::merkle_node::{FileBackend, MerkleNodeStore};
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
@@ -91,6 +92,15 @@ impl LocalRepository {
             Some(store) => Ok(Arc::clone(store)),
             None => Err(OxenError::basic_str("Version store not initialized")),
         }
+    }
+
+    /// Obtain the merkle node store for this repository.
+    ///
+    /// Today this always returns the file-based backend; Phase 2 will detect
+    /// on-disk format and optionally dispatch to an LMDB backend. Construction
+    /// is O(1), so callers are free to call this per operation.
+    pub fn merkle_store(&self) -> MerkleNodeStore<'_> {
+        MerkleNodeStore::File(FileBackend::new(self))
     }
 
     pub fn init_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
