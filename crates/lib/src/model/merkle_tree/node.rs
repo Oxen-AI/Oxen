@@ -73,8 +73,7 @@ impl EMerkleTreeNode {
         )
     }
 
-    /// Deserialize a merkle tree node from its on-disk type marker and
-    /// msgpack-encoded body. Shared by every storage backend.
+    /// Deserialize a Merkle tree node from its on-disk type marker and msgpack-encoded body.
     pub fn from_type_and_bytes(
         dtype: MerkleTreeNodeType,
         data: &[u8],

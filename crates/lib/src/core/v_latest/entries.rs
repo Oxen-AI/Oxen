@@ -557,6 +557,7 @@ pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Res
     Ok(())
 }
 
+// TODO: W: WriteSession ... session: &W
 #[allow(clippy::type_complexity)]
 fn traverse_and_update_sizes_and_counts<'a, 'repo>(
     session: &'a MerkleNodeStoreSession<'a, 'repo>,
@@ -635,6 +636,7 @@ fn traverse_and_update_sizes_and_counts<'a, 'repo>(
     Ok((local_counts, local_sizes))
 }
 
+// TODO: W: WriteSession ... session: &W
 fn process_children<'a, 'repo>(
     session: &'a MerkleNodeStoreSession<'a, 'repo>,
     children: &mut [MerkleTreeNode],
