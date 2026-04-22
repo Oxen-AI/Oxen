@@ -228,6 +228,11 @@ pub fn should_restore_partial_node(
             // If modified times are different, check hashes
             let hash = MerkleHash::new(util::hasher::u128_hash_file_contents(&working_path)?);
 
+            // File already matches the merge target — no-op.
+            if hash == *file_node.hash() {
+                return Ok(true);
+            }
+
             let base_node_hash = base_node.hash;
             if hash != base_node_hash {
                 return Ok(false);
@@ -298,7 +303,10 @@ pub fn should_restore_file(
             };
 
             let node_combined_hash = file_node.combined_hash();
-            if file_combined_hash != *node_combined_hash {
+            // File already matches the merge target — no-op. Lets an interrupted
+            // pull resume when the prior pull had time to fully rewrite the file
+            // before being killed.
+            if file_combined_hash == *node_combined_hash {
                 return Ok(true);
             }
 

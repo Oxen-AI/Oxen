@@ -2151,4 +2151,53 @@ mod tests {
         })
         .await
     }
+
+    // Simulates an `oxen pull` that was killed mid-restore after it had already
+    // rewritten a tracked file to the merge target's content but before HEAD
+    // was advanced. On resume the file differs from HEAD (commit A) yet matches
+    // the merge target (commit B), and must be treated as a successful no-op
+    // rather than flagged as "cannot_overwrite".
+    #[tokio::test]
+    async fn test_merge_resumes_after_partial_fast_forward() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Commit A on main: world.txt = "World"
+            let world_file = repo.path.join("world.txt");
+            util::fs::write_to_path(&world_file, "World")?;
+            repositories::add(&repo, &world_file).await?;
+            repositories::commit(&repo, "Adding world file")?;
+
+            // Commit B on feature: modify world.txt
+            let branch_name = "update-world";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+            util::fs::write_to_path(&world_file, "World2")?;
+            repositories::add(&repo, &world_file).await?;
+            let target_commit = repositories::commit(&repo, "Updating world")?;
+            let merge_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // Back on main: checkout restores world.txt to commit A's content.
+            repositories::checkout(&repo, &og_branch.name).await?;
+            assert_eq!(util::fs::read_from_path(&world_file)?, "World");
+
+            // Simulate an interrupted fast-forward merge: the previous pull
+            // rewrote world.txt to the target's content on disk but crashed
+            // before advancing HEAD. HEAD still points to commit A.
+            util::fs::write_to_path(&world_file, "World2")?;
+
+            // The resumed merge must not fail with `cannot_overwrite_files`:
+            // world.txt differs from HEAD (= commit A) but already matches the
+            // merge target, so restoring is a safe no-op.
+            let commit = repositories::merge::merge(&repo, &merge_branch.name)
+                .await?
+                .expect("resumed fast-forward merge should produce a commit");
+
+            assert_eq!(commit.id, target_commit.id);
+            let head_commit = repositories::commits::head_commit(&repo)?;
+            assert_eq!(head_commit.id, target_commit.id);
+            assert_eq!(util::fs::read_from_path(&world_file)?, "World2");
+            Ok(())
+        })
+        .await
+    }
 }
