@@ -28,7 +28,7 @@ def test_clean_default_is_dry_run(tmp_path):
 
     assert result.applied is False
     assert os.path.exists(untracked), "dry-run must not delete anything"
-    assert "scratch.txt" in {os.path.basename(p) for p in result.files}
+    assert any(filter(lambda p: os.path.basename(p) == "scratch.txt", result.files))
 
 
 def test_clean_force_removes_untracked_file(tmp_path):
