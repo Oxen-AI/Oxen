@@ -58,6 +58,7 @@ async fn async_main() -> ExitCode {
         Box::new(cmd::AddCmd),
         Box::new(cmd::BranchCmd),
         Box::new(cmd::CheckoutCmd),
+        Box::new(cmd::CleanCmd),
         Box::new(cmd::CloneCmd),
         Box::new(cmd::CommitCmd),
         Box::new(cmd::ConfigCmd),

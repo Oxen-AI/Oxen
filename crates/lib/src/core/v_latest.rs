@@ -3,6 +3,7 @@
 
 pub mod add;
 pub mod branches;
+pub mod clean;
 pub mod clone;
 pub mod commits;
 pub mod data_frames;

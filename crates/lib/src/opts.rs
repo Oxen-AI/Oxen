@@ -2,6 +2,7 @@
 //!
 
 pub mod add_opts;
+pub mod clean_opts;
 pub mod clone_opts;
 pub mod count_lines_opts;
 pub mod df_opts;
@@ -23,6 +24,7 @@ pub mod storage_opts;
 pub mod upload_opts;
 
 pub use crate::opts::add_opts::AddOpts;
+pub use crate::opts::clean_opts::CleanOpts;
 pub use crate::opts::clone_opts::CloneOpts;
 pub use crate::opts::count_lines_opts::CountLinesOpts;
 pub use crate::opts::df_opts::DFOpts;
