@@ -2,13 +2,16 @@ use crate::error::OxenError;
 use crate::model::{MerkleHash, TMerkleTreeNode};
 
 /// Interface for writing to a Merkle tree store.
-pub trait MerkleWriter: Send + Sync {
+pub trait MerkleWriter: Send + Sync
+where
+    OxenError: From<Self::Error>,
+{
     /// The error type for the Merkle tree's underlying storage layer.
     ///
     /// Backends may use whichever error type is natural for their storage
-    /// (e.g. `MerkleDbError` for the file backend). The `Into<OxenError>`
-    /// bound lets callers that return `Result<_, OxenError>` use `?` directly.
-    type Error: std::error::Error + Into<OxenError>;
+    /// (e.g. [`MerkleDbError`] for the [`FileBackend`]). The [`Into<OxenError>`]
+    /// bound lets callers that return [`Result<_, OxenError>`] use `?` directly.
+    type Error: std::error::Error;
 
     /// The write session that manages writing multiple nodes to the store.
     type Session<'a>: MerkleWriteSession<'a, Error = Self::Error>
@@ -38,9 +41,13 @@ pub trait MerkleWriter: Send + Sync {
 /// are called. The invariant is that [`finish`] must be called to **ensure** that writes are
 /// persisted. An implementation may choose to e.g. have a transaction mechanism to roll-back
 /// changes on `Err`. However, implementations are not required to support this.
-pub trait MerkleWriteSession<'a> {
+pub trait MerkleWriteSession<'a>
+where
+    OxenError: From<Self::Error>,
+{
     /// The error type for the Merkle tree's underlying storage layer.
-    type Error: std::error::Error + Into<OxenError>;
+    /// Must be convertible into an [`OxenError`].
+    type Error: std::error::Error;
 
     /// The write session that manages writing a single node's information to the store.
     type NodeSession<'b>: NodeWriteSession<Error = Self::Error>
@@ -72,9 +79,13 @@ pub trait MerkleWriteSession<'a> {
 /// Implementations may buffer the `node` and `children` information in memory or choose to write
 /// the data to the store eagerly. However, if [`finish`] is called and returns `Ok`, then the
 /// guarantee is that all node and child information must be persisted to the store.
-pub trait NodeWriteSession {
+pub trait NodeWriteSession
+where
+    OxenError: From<Self::Error>,
+{
     /// The error type for the Merkle tree's underlying storage layer.
-    type Error: std::error::Error + Into<OxenError>;
+    /// Must be convertible into an [`OxenError`].
+    type Error: std::error::Error;
 
     /// The hash of the node being written in this session.
     fn node_id(&self) -> &MerkleHash;
