@@ -5,6 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
+use futures::{StreamExt, TryStreamExt, stream};
+
 use crate::constants::OXEN_HIDDEN_DIR;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
@@ -75,14 +77,22 @@ pub async fn clean(repo: &LocalRepository, opts: &CleanOpts) -> Result<CleanResu
 
     // Clean up files and directories
     if opts.force {
-        for f in &files {
-            println!("Removing {}", f.display());
-            util::fs::remove_file(repo.path.join(f))?;
-        }
-        for d in &dirs {
-            println!("Removing {}/", d.display());
-            util::fs::remove_dir_all(repo.path.join(d))?;
-        }
+        stream::iter(files.clone())
+            .map(|f| async move {
+                println!("Removing {}", f.display());
+                tokio::fs::remove_file(repo.path.join(&f)).await
+            })
+            .buffer_unordered(10)
+            .try_collect::<Vec<()>>()
+            .await?;
+        stream::iter(dirs.clone())
+            .map(|d| async move {
+                println!("Removing {}/", d.display());
+                tokio::fs::remove_dir_all(repo.path.join(&d)).await
+            })
+            .buffer_unordered(10)
+            .try_collect::<Vec<()>>()
+            .await?;
     } else {
         for f in &files {
             println!("Would remove {}", f.display());
