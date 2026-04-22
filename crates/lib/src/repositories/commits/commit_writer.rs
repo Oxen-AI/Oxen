@@ -17,7 +17,6 @@ use crate::constants::ORIG_HEAD_FILE;
 use crate::constants::{HEAD_FILE, STAGED_DIR};
 use crate::core::db;
 use crate::core::db::key_val::str_val_db;
-use crate::core::db::merkle_node::{MerkleNodeStoreNodeSession, MerkleNodeStoreSession};
 use crate::core::refs::with_ref_manager;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_latest::status;
@@ -392,19 +391,19 @@ pub fn commit_dir_entries_new(
 
     let store = repo.merkle_store();
     let session = store.begin()?;
-    let mut commit_ns = session.create_node(&node, parent_id)?;
-
-    write_commit_entries(
-        repo,
-        commit_id,
-        &session,
-        &mut commit_ns,
-        &dir_hash_db,
-        &dir_hashes,
-        &vnode_entries,
-    )?;
-
-    commit_ns.finish()?;
+    {
+        let mut commit_ns = session.create_node(&node, parent_id)?;
+        write_commit_entries(
+            repo,
+            commit_id,
+            &session,
+            &mut commit_ns,
+            &dir_hash_db,
+            &dir_hashes,
+            &vnode_entries,
+        )?;
+        commit_ns.finish()?;
+    }
     session.finish()?;
     commit_progress_bar.finish_and_clear();
 
@@ -511,17 +510,19 @@ pub fn commit_dir_entries(
 
     let store = repo.merkle_store();
     let session = store.begin()?;
-    let mut commit_ns = session.create_node(&node, None)?;
-    write_commit_entries(
-        repo,
-        commit_id,
-        &session,
-        &mut commit_ns,
-        &dir_hash_db,
-        &dir_hashes,
-        &vnode_entries,
-    )?;
-    commit_ns.finish()?;
+    {
+        let mut commit_ns = session.create_node(&node, None)?;
+        write_commit_entries(
+            repo,
+            commit_id,
+            &session,
+            &mut commit_ns,
+            &dir_hash_db,
+            &dir_hashes,
+            &vnode_entries,
+        )?;
+        commit_ns.finish()?;
+    }
     session.finish()?;
     commit_progress_bar.finish_and_clear();
 
@@ -801,11 +802,14 @@ pub fn compute_commit_id(new_commit: &NewCommit) -> Result<MerkleHash, OxenError
 }
 
 #[allow(clippy::too_many_arguments)]
-fn write_commit_entries<'a, 'repo>(
-    repo: &'repo LocalRepository,
+fn write_commit_entries<
+    S: MerkleWriteSession<Error = OxenError>,
+    NS: NodeWriteSession<Error = OxenError>,
+>(
+    repo: &LocalRepository,
     commit_id: MerkleHash,
-    session: &'a MerkleNodeStoreSession<'a, 'repo>,
-    commit_ns: &mut MerkleNodeStoreNodeSession<'a, 'repo>,
+    session: &S,
+    commit_ns: &mut NS,
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
@@ -867,11 +871,14 @@ fn cache_invalidate_dir_hash_db<'a>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn r_create_dir_node<'a, 'repo>(
-    repo: &'repo LocalRepository,
-    session: &'a MerkleNodeStoreSession<'a, 'repo>,
+fn r_create_dir_node<
+    S: MerkleWriteSession<Error = OxenError>,
+    NS: NodeWriteSession<Error = OxenError>,
+>(
+    repo: &LocalRepository,
+    session: &S,
     commit_id: MerkleHash,
-    mut maybe_parent_ns: Option<&mut MerkleNodeStoreNodeSession<'a, 'repo>>,
+    mut maybe_parent_ns: Option<&mut NS>,
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,

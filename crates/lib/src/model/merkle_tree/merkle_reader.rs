@@ -1,19 +1,16 @@
-use crate::error::OxenError;
 use crate::model::{
     MerkleHash, MerkleTreeNodeType,
     merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode},
 };
 
 /// Interface for read-only access to Merkle tree nodes.
-pub trait MerkleReader: Send + Sync
-where
-    OxenError: From<Self::Error>,
-{
+///
+/// The trait stays backend-agnostic in its `Error` type. The canonical way to
+/// obtain a `MerkleReader` — [`LocalRepository::merkle_store`] — returns a
+/// type whose `Error` is pinned to [`OxenError`] via an adapter wrapper, so
+/// callers need no `where` clauses and can use `?` directly.
+pub trait MerkleReader: Send + Sync {
     /// The error type for the Merkle tree's underlying storage layer.
-    ///
-    /// Backends may use whichever error type is natural for their storage
-    /// (e.g. `MerkleDbError` for the file backend). The `Into<OxenError>`
-    /// bound lets callers that return `Result<_, OxenError>` use `?` directly.
     type Error: std::error::Error;
 
     /// True if there is some node with the given hash. False otherwise.
