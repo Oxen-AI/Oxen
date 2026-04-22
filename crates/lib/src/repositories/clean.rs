@@ -15,7 +15,7 @@
 //!   `oxen status` already classifies partially-tracked directories differently.
 
 use crate::core;
-use crate::core::v_latest::clean::CleanResult;
+pub use crate::core::v_latest::clean::CleanResult;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::LocalRepository;

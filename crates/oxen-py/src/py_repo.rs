@@ -4,7 +4,7 @@
 use liboxen::error::OxenError;
 use liboxen::model::Branch;
 use liboxen::model::LocalRepository;
-use liboxen::opts::{CloneOpts, PushOpts, RmOpts, StorageOpts};
+use liboxen::opts::{CleanOpts, CloneOpts, PushOpts, RmOpts, StorageOpts};
 use pyo3::prelude::*;
 
 use liboxen::api;
@@ -17,6 +17,7 @@ use std::path::PathBuf;
 
 use crate::error::PyOxenError;
 use crate::py_branch::PyBranch;
+use crate::py_clean_result::PyCleanResult;
 use crate::py_commit::PyCommit;
 // use crate::py_diff::PyDiff;
 use crate::py_staged_data::PyStagedData;
@@ -123,6 +124,27 @@ impl PyRepo {
         repositories::rm(&repo, &rm_opts)?;
 
         Ok(())
+    }
+
+    /// Remove untracked files and directories from the working tree.
+    ///
+    /// Without `force=True` this is a dry-run — the returned `PyCleanResult` lists
+    /// what *would* be removed but nothing is deleted. Pass `force=True` to actually
+    /// delete. Matches the shipped `oxen clean` CLI semantics.
+    #[pyo3(signature = (paths = None, force = false))]
+    pub fn clean(
+        &self,
+        paths: Option<Vec<PathBuf>>,
+        force: bool,
+    ) -> Result<PyCleanResult, PyOxenError> {
+        let repo = LocalRepository::from_dir(&self.path)?;
+        let opts = CleanOpts {
+            paths: paths.unwrap_or_default(),
+            force,
+        };
+        let result = pyo3_async_runtimes::tokio::get_runtime()
+            .block_on(async { repositories::clean::clean(&repo, &opts).await })?;
+        Ok(PyCleanResult::from(result))
     }
 
     pub fn status(&self) -> Result<PyStagedData, PyOxenError> {
