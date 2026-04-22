@@ -153,6 +153,30 @@ class Repo:
         """
         self._repo.rm(path, recursive, staged)
 
+    def clean(self, paths=None, force=False):
+        """
+        Remove untracked files and directories from the working tree.
+
+        Without `force=True` this is a dry-run — the returned object lists what
+        *would* be removed but nothing is deleted. Pass `force=True` to actually
+        delete.
+
+        Matches the `oxen clean` CLI: tracked files, `.oxen/`, and
+        `.oxenignore`-matched files are never touched.
+
+        Args:
+            paths: `list[str] | None`
+                Optional list of paths to scope the cleanup. `None` (the default)
+                means the whole working tree.
+            force: `bool`
+                Actually remove. Without this the call is a dry-run. Default: False
+
+        Returns:
+            A `CleanResult` with `.files`, `.dirs`, `.total_bytes`, and `.applied`
+            attributes.
+        """
+        return self._repo.clean(paths, force)
+
     def status(self):
         """
         Check the status of the repo. Returns a StagedData object.

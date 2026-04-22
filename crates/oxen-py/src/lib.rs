@@ -14,6 +14,7 @@ pub mod df_utils;
 pub mod diff;
 pub mod error;
 pub mod py_branch;
+pub mod py_clean_result;
 pub mod py_commit;
 pub mod py_dataset;
 pub mod py_diff;
@@ -79,6 +80,7 @@ fn oxen_py(m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<diff::py_text_diff::PyLineDiff>()?;
     m.add_class::<diff::py_text_diff::PyTextDiff>()?;
     m.add_class::<py_branch::PyBranch>()?;
+    m.add_class::<py_clean_result::PyCleanResult>()?;
     m.add_class::<py_commit::PyCommit>()?;
     m.add_class::<py_dataset::PyDataset>()?;
     m.add_class::<py_diff::PyDiff>()?;
