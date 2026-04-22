@@ -25,6 +25,7 @@ use std::sync::LazyLock;
 pub mod add;
 pub mod branches;
 pub mod checkout;
+pub mod clean;
 pub mod clone;
 pub mod commits;
 pub mod data_frames;

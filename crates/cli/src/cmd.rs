@@ -12,6 +12,9 @@ pub use branch::BranchCmd;
 pub mod checkout;
 pub use checkout::CheckoutCmd;
 
+pub mod clean;
+pub use clean::CleanCmd;
+
 pub mod clone;
 pub use clone::CloneCmd;
 

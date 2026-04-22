@@ -293,7 +293,9 @@ if [ -z "$METRICS_OUTPUT" ]; then
   did_fail=true
 else
   echo "--- Prometheus /metrics sample ---"
-  echo "$METRICS_OUTPUT" | head -30
+  # Use a here-string so `head` closing after 30 lines doesn't SIGPIPE `echo` and
+  # trip `set -euo pipefail`, which was killing this test on long metrics output.
+  head -30 <<< "$METRICS_OUTPUT"
 
   # Check for HTTP request counters with non-zero values
   # Lines look like: http_requests_total{method="GET",path="...",status="200"} 5

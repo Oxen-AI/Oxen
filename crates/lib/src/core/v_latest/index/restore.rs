@@ -1,6 +1,4 @@
 use rocksdb::{DBWithThreadMode, SingleThreaded, WriteBatch};
-use std::collections::HashSet;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::constants::STAGED_DIR;
@@ -186,19 +184,7 @@ async fn restore_dir(
     let bar =
         util::progress_bar::oxen_progress_bar_with_msg(file_nodes_with_paths.len() as u64, &msg);
 
-    let mut existing_files = HashSet::new();
-    if let Ok(entries) = fs::read_dir(path) {
-        existing_files.extend(
-            entries
-                .filter_map(Result::ok)
-                .filter(|e| e.path().is_file())
-                .map(|e| e.path()),
-        );
-    }
-
     for (file_node, file_path) in file_nodes_with_paths.iter() {
-        existing_files.remove(file_path);
-
         match restore_file(repo, file_node, file_path, version_store).await {
             Ok(_) => log::debug!("restore::restore_dir: entry restored successfully"),
             Err(e) => {
@@ -206,10 +192,6 @@ async fn restore_dir(
             }
         }
         bar.inc(1);
-    }
-
-    for file_to_remove in existing_files {
-        fs::remove_file(file_to_remove)?;
     }
 
     bar.finish_and_clear();

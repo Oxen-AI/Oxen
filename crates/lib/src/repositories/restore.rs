@@ -216,6 +216,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_restore_directory_preserves_untracked_files() -> Result<(), OxenError> {
+        // `oxen restore <dir>` must not delete untracked files that happen to live
+        // inside the restored directory. It only overwrites tracked files.
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            let history = repositories::commits::list(&repo)?;
+            let last_commit = history.first().unwrap();
+
+            let annotations_dir = Path::new("annotations");
+            let annotations_path = repo.path.join(annotations_dir);
+
+            let untracked_top_level = annotations_path.join("scratch.txt");
+            util::fs::write_to_path(&untracked_top_level, "top-level scratch")?;
+
+            let untracked_subdir = annotations_path.join("scratch_dir");
+            util::fs::create_dir_all(&untracked_subdir)?;
+            let untracked_in_subdir = untracked_subdir.join("nested.txt");
+            util::fs::write_to_path(&untracked_in_subdir, "nested scratch")?;
+
+            repositories::restore::restore(
+                &repo,
+                RestoreOpts::from_path_ref(annotations_dir, last_commit.id.clone()),
+            )
+            .await?;
+
+            assert!(
+                untracked_top_level.exists(),
+                "top-level untracked file must survive `oxen restore <dir>`"
+            );
+            assert!(
+                untracked_in_subdir.exists(),
+                "untracked file inside an untracked subdir must survive `oxen restore <dir>`"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_restore_removed_tabular_data() -> Result<(), OxenError> {
         test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let history = repositories::commits::list(&repo)?;
