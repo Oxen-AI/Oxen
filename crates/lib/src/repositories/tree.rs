@@ -1070,6 +1070,7 @@ fn p_write_tree<'a, N: TMerkleTreeNode, S: MerkleWriteSession<'a>>(
                 ns.add_child(file_node).map_err(Into::into)?;
             }
             node => {
+                // TODO: change this to `return Err(OxenError::DisallowedNodeWrite(node.clone()));`
                 panic!("p_write_tree Unexpected node type: {node:?}");
             }
         }

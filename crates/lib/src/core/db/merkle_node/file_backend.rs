@@ -99,9 +99,7 @@ impl<'a, 'repo: 'a> MerkleWriteSession<'a> for FileWriteSession<'repo> {
         node: &N,
         parent_id: Option<MerkleHash>,
     ) -> Result<FileNodeSession, MerkleDbError> {
-        Ok(FileNodeSession::new(MerkleNodeDB::open_read_write(
-            self.repo, node, parent_id,
-        )?))
+        Ok(FileNodeSession::new(self.repo, node, parent_id)?)
     }
 
     /// A no-op -- the node write session from [`create_node`] eagerly writes its files.
@@ -122,12 +120,16 @@ pub struct FileNodeSession {
 }
 
 impl FileNodeSession {
-    /// The [`MerkleNodeDb`] **MUST** be opened in read-write mode.
-    fn new(db: MerkleNodeDB) -> Self {
-        Self {
-            db,
+    /// Opens a new [`MerkleNodeDB`] in read-write mode.
+    fn new<N: TMerkleTreeNode>(
+        repo: &LocalRepository,
+        node: &N,
+        parent_id: Option<MerkleHash>,
+    ) -> Result<Self, MerkleDbError> {
+        Ok(Self {
+            db: MerkleNodeDB::open_read_write(repo, node, parent_id)?,
             finished: false,
-        }
+        })
     }
 
     /// The `finish` implementation, but using `&mut self` so that it can be used in `Drop`.

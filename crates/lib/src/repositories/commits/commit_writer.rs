@@ -907,6 +907,7 @@ fn r_create_dir_node<'a, S: MerkleWriteSession<'a>>(
             .create_node(&vnode_obj, parent_id_for_vnode)
             .map_err(Into::into)?;
         for entry in vnode.entries.iter() {
+            log::trace!("Processing entry {} in vnode {}", entry.node, vnode.id);
             match &entry.node.node {
                 EMerkleTreeNode::Directory(node) => {
                     // If the dir has updates, we need a new dir db
@@ -933,12 +934,17 @@ fn r_create_dir_node<'a, S: MerkleWriteSession<'a>>(
                             total_written,
                         )?;
                         child_ns.finish().map_err(Into::into)?;
+
                         dir_node
                     } else {
                         // Look up the old dir node and reference it
                         let Some(old_dir_node) =
                             CommitMerkleTree::read_node(repo, node.hash(), false)?
                         else {
+                            log::trace!(
+                                "r_create_dir_node could not read old dir node {:?}",
+                                node.hash(),
+                            );
                             continue;
                         };
                         let dir_node = old_dir_node.dir()?;
