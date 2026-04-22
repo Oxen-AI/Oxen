@@ -135,17 +135,6 @@ oxen push origin main               # Push to remote
 - When updating a dependency, prefer updating to the latest stable version.
 - Any new or changed Rust code that touches IO (file system, network, etc.) should be async code. Instead of std::io or std::fs, use equivalents from tokio. When an external dependency doesn't support async, use tokio's spawn_blocking functionality.
 - oxen-server operations should never touch a local checkout on disk when doing operations initiated by its API.
-- Update `CHANGELOG.md` for every change, adding entries under the in-progress (topmost) version
-  section. Rules for what to write:
-    - **User-facing changes** (new features, bug fixes, behavior changes, CLI/API changes):
-      describe each one concisely as its own bullet.
-    - **Non-user-facing changes** (refactors, CI tweaks, internal cleanup, test-only changes,
-      dependency bumps with no behavioral impact): do not list individually. Instead, roll them
-      up into one or two bullets that vaguely describe the theme, e.g. "various CI updates" or
-      "internal code cleanup".
-    - **Breaking changes**: call out under a dedicated `## Breaking changes` section within the
-      version. Explain what broke, who is affected, and what migration (if any) is required —
-      more depth than a regular entry.
 
 # Testing Rules
 - Use the test helpers in `crates/lib/src/test.rs` (e.g., `run_empty_local_repo_test`) for unit tests in the lib code.
