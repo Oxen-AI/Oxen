@@ -944,21 +944,11 @@ fn r_create_dir_node(
                         dir_node
                     };
 
-                    // Write the dir hash to the dir_hashes db or delete it if it has children
-                    // log::debug!(
-                    //     "dir entry has {} children {:?} ",
-                    //     entry.node.children.len(),
-                    //     dir_path
-                    // );
-                    // if entry.node.children.is_empty() {
-                    //     str_val_db::delete(dir_hash_db, dir_path.to_str().unwrap())?;
-                    // } else {
                     str_val_db::put(
                         dir_hash_db,
                         dir_path.to_str().unwrap(),
                         &dir_node.hash().to_string(),
                     )?;
-                    // }
                 }
                 EMerkleTreeNode::File(file_node) => {
                     let mut file_node = file_node.clone();
