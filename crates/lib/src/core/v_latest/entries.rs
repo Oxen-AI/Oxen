@@ -565,7 +565,10 @@ fn traverse_and_update_sizes_and_counts<'a, S: MerkleWriteSession<'a>>(
     session: &'a S,
     node: &mut MerkleTreeNode,
     num_bytes: &mut u64,
-) -> Result<(HashMap<String, u64>, HashMap<String, u64>), OxenError> {
+) -> Result<(HashMap<String, u64>, HashMap<String, u64>), OxenError>
+where
+    OxenError: From<S::Error>,
+{
     let mut local_counts: HashMap<String, u64> = HashMap::new();
     let mut local_sizes: HashMap<String, u64> = HashMap::new();
 
@@ -645,7 +648,10 @@ fn process_children<'a, S: MerkleWriteSession<'a>>(
     local_counts: &mut HashMap<String, u64>,
     local_sizes: &mut HashMap<String, u64>,
     num_bytes: &mut u64,
-) -> Result<(), OxenError> {
+) -> Result<(), OxenError>
+where
+    OxenError: From<S::Error>,
+{
     for child in children.iter_mut() {
         let (child_counts, child_sizes) =
             traverse_and_update_sizes_and_counts(session, child, num_bytes)?;
@@ -662,7 +668,10 @@ fn process_children<'a, S: MerkleWriteSession<'a>>(
 fn add_children_to_session<S: NodeWriteSession>(
     ns: &mut S,
     children: &[MerkleTreeNode],
-) -> Result<(), OxenError> {
+) -> Result<(), OxenError>
+where
+    OxenError: From<S::Error>,
+{
     for child in children {
         match &child.node {
             EMerkleTreeNode::Commit(commit_node) => {

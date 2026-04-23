@@ -99,7 +99,7 @@ impl<'a, 'repo: 'a> MerkleWriteSession<'a> for FileWriteSession<'repo> {
         node: &N,
         parent_id: Option<MerkleHash>,
     ) -> Result<FileNodeSession, MerkleDbError> {
-        Ok(FileNodeSession::new(self.repo, node, parent_id)?)
+        FileNodeSession::new(self.repo, node, parent_id)
     }
 
     /// A no-op -- the node write session from [`create_node`] eagerly writes its files.
@@ -203,11 +203,11 @@ mod tests {
             let store = repo.merkle_store();
             assert!(
                 store
-                    .exists(&commit_hash)
+                    .exists(commit_hash)
                     .expect("commit to exist after being written")
             );
             let children = store
-                .get_children(&commit_hash)
+                .get_children(commit_hash)
                 .expect("children to exist after being written");
             assert_eq!(children.len(), 1, "expected the single dir child");
             Ok(())

@@ -23,9 +23,7 @@
 
 use std::marker::PhantomData;
 
-use crate::core::db::merkle_node::file_backend::{
-    FileBackend, FileNodeSession, FileWriteSession,
-};
+use crate::core::db::merkle_node::file_backend::{FileBackend, FileNodeSession, FileWriteSession};
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::model::merkle_tree::merkle_reader::{MerkleNodeRecord, MerkleReader};
@@ -68,6 +66,10 @@ pub enum MerkleNodeStoreSession<'a, 'repo> {
 ///
 /// See [`MerkleNodeStoreSession`] for the rationale on the `_Lifetime`
 /// placeholder variant.
+///
+/// The `File` variant is large today (the phantom variant is zero-sized);
+/// that imbalance goes away once the LMDB variant lands.
+#[allow(clippy::large_enum_variant)]
 pub enum MerkleNodeStoreNodeSession<'a, 'repo> {
     File(FileNodeSession),
     #[doc(hidden)]

@@ -1050,7 +1050,10 @@ fn p_write_tree<'a, N: TMerkleTreeNode, S: MerkleWriteSession<'a>>(
     session: &'a S,
     node: &MerkleTreeNode,
     node_impl: &N,
-) -> Result<(), OxenError> {
+) -> Result<(), OxenError>
+where
+    OxenError: From<S::Error>,
+{
     let parent_id = node.parent_id;
 
     let mut ns = session.create_node(node_impl, parent_id)?;

@@ -181,7 +181,10 @@ fn rewrite_nodes<'a, OldS: MerkleWriteSession<'a>, NewS: MerkleWriteSession<'a>>
     new_session: &'a NewS,
     node: &MerkleTreeNode,
     current_dir: &Path,
-) -> Result<(), OxenError> {
+) -> Result<(), OxenError>
+where
+    OxenError: From<OldS::Error> + From<NewS::Error>,
+{
     for child in node.children.iter() {
         match &child.node {
             EMerkleTreeNode::Directory(dir) => {

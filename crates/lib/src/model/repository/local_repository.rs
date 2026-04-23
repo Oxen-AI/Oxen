@@ -1,7 +1,7 @@
 use crate::config::RepositoryConfig;
 use crate::constants::SHALLOW_FLAG;
 use crate::constants::{self, DEFAULT_VNODE_SIZE, MIN_OXEN_VERSION};
-use crate::core::db::merkle_node::FileBackend;
+use crate::core::db::merkle_node::MerkleNodeStore;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
@@ -96,21 +96,17 @@ impl LocalRepository {
 
     /// Obtain the Merkle tree store for this repository.
     ///
-    /// Returns the concrete file-based backend for now. The backend's `Error`
-    /// associated type is `MerkleDbError`; the `Into<OxenError>` bound on
-    /// every merkle-store trait's `Error` lets generic callers convert via
-    /// `?` without any caller-side `where` clauses.
-    ///
-    /// The return type stays concrete (not `impl MerkleStore`) because the
-    /// write-session GATs combined with an opaque `impl` return cause
-    /// Rust's drop-check to conservatively extend borrows across
-    /// `session.finish()` moves — `let session = store.begin()?; ... &session
-    /// used ...; session.finish()?;` fails to compile on generic returns.
-    /// A concrete backend type lets dropck see the inner session has no
-    /// outbound references. Phase 2 will switch to a dispatch enum that also
-    /// has this property.
-    pub fn merkle_store(&self) -> FileBackend<'_> {
-        FileBackend::new(self)
+    /// Returns the concrete [`MerkleNodeStore`] dispatch enum. The trait
+    /// surface still drives the API (callers pass the return as any
+    /// `MerkleReader` / `MerkleWriter`), but the type stays named rather than
+    /// `impl MerkleStore<Error = OxenError> + '_`: an opaque return combined
+    /// with the session GATs forces dropck to extend borrows across
+    /// `session.finish()` moves (the `<impl ... as MerkleWriter>::Session<'_>`
+    /// destructor is unknown to the compiler, so it assumes it touches the
+    /// store). A named enum lets dropck see inside the session and accept
+    /// the move.
+    pub fn merkle_store(&self) -> MerkleNodeStore<'_> {
+        MerkleNodeStore::file(self)
     }
 
     pub fn init_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
