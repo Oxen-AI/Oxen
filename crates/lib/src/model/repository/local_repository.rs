@@ -53,6 +53,76 @@ pub struct LocalRepositoryWithEntries {
     pub entries: Option<Vec<MetadataEntry>>,
 }
 
+
+struct Foo;
+impl crate::model::merkle_tree::MerkleReader for Foo {
+    type Error = crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
+
+
+    fn exists(&self, hash: &crate::model::merkle_tree::MerkleHash) -> Result<bool, Self::Error> {
+        todo!()
+    }
+
+    fn get_node(&self, hash: &crate::model::merkle_tree::MerkleHash) -> Result<Option<crate::model::merkle_tree::merkle_reader::MerkleNodeRecord>, Self::Error> {
+        todo!()
+    }
+
+    fn get_children(
+        &self,
+        hash: &crate::model::merkle_tree::MerkleHash,
+    ) -> Result<Vec<(crate::model::merkle_tree::MerkleHash, crate::model::merkle_tree::node::MerkleTreeNode)>, Self::Error> {
+        todo!()
+    }
+}
+
+impl crate::model::merkle_tree::MerkleWriter for Foo {
+    type Error = crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
+    type Session<'a> = A;
+
+    fn begin(&self) -> Result<Self::Session<'_>, Self::Error> {
+        todo!()
+    }
+}
+
+struct A;
+impl crate::model::merkle_tree::merkle_writer::MerkleWriteSession for A {
+    type Error = crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
+    type NodeSession<'b> = B;
+
+    fn create_node<'b, N: crate::model::merkle_tree::TMerkleTreeNode>(
+        &'b self,
+        node: &N,
+        parent_id: Option<crate::model::merkle_tree::MerkleHash>,
+    ) -> Result<Self::NodeSession<'b>, Self::Error> {
+        todo!()
+    }
+
+    fn finish(self) -> Result<(), Self::Error> {
+        todo!()
+    }
+}
+
+struct B;
+impl crate::model::merkle_tree::merkle_writer::NodeWriteSession for B {
+    type Error = crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
+
+    /// The hash of the node being written in this session.
+    fn node_id(&self) -> &crate::model::merkle_tree::MerkleHash {
+        todo!()
+    }
+
+    /// Add a child to the current node.
+    fn add_child<N: crate::model::merkle_tree::TMerkleTreeNode>(&mut self, child: &N) -> Result<(), Self::Error> {
+        todo!()
+    }
+
+    /// Ensure the node and its children have been written to the Merkle tree store. Consumes
+    /// the node session; releases the borrow on the parent [`MerkleWriteSession`].
+    fn finish(self) -> Result<(), Self::Error> {
+        todo!()
+    }
+}
+
 impl LocalRepository {
     /// Create a LocalRepository from a directory
     pub fn from_dir(path: impl AsRef<Path>) -> Result<Self, OxenError> {
@@ -109,7 +179,11 @@ impl LocalRepository {
     //     MerkleNodeStore::file(self)
     // }
     pub fn merkle_store(&self) -> impl MerkleStore {
-        FileBackend::new(self)
+        if rand::random() > 0.5 {
+            FileBackend::new(self)
+        } else {
+            Foo{}
+        }
     }
 
     pub fn init_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
