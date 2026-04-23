@@ -121,6 +121,10 @@ pub const WORKSPACE_NAME_INDEX_DIR: &str = "workspace_name_index";
 pub const MERGE_HEAD_FILE: &str = "MERGE_HEAD";
 /// if we have merge conflicts we write to MERGE_HEAD and ORIG_HEAD to keep track of the parents
 pub const ORIG_HEAD_FILE: &str = "ORIG_HEAD";
+/// Written at the start of a client-side merge and removed after HEAD advances.
+/// Contents are the target commit id. Presence means a merge was interrupted
+/// mid-mutation and a retry targeting the same commit should force-restore.
+pub const MERGE_IN_PROGRESS_FILE: &str = "MERGE_IN_PROGRESS";
 
 /// Key for if something is synced
 pub const IS_SYNCED: &str = "IS_SYNCED";

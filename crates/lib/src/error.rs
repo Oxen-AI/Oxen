@@ -72,6 +72,11 @@ pub enum OxenError {
     #[error("{0}")]
     UpstreamMergeConflict(StringError),
 
+    /// A prior client-side merge was interrupted before HEAD advanced, and a new merge targets a
+    /// different commit than the in-progress one.
+    #[error("Merge in progress targeting commit {expected}, but new merge targets {found}.")]
+    MergeInProgressMismatch { expected: String, found: String },
+
     /// A remote with the given name was not found.
     #[error(
         "No remote named '{0}' is set. You can set a remote by running:\n\noxen config --set-remote '{0}' <url>\n"
@@ -405,6 +410,9 @@ impl OxenError {
             | ResourceNotFound(_)
             | ParsedResourceNotFound(_)
             | CommitEntryNotFound(_) => "Check the path and current branch with `oxen status`.",
+            MergeInProgressMismatch { .. } => {
+                "Run `oxen merge --abort` to abandon the in-progress merge, or retry the original target."
+            }
             HTTP(req_err) => {
                 if req_err.is_connect() || req_err.is_timeout() {
                     "Check your internet connection and that the remote host is reachable."

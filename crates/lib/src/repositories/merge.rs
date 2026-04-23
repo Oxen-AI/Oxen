@@ -243,6 +243,7 @@ mod tests {
     use crate::core::df::tabular;
     use crate::core::merge::node_merge_conflict_reader::NodeMergeConflictReader;
 
+    use crate::core::v_latest::merge_marker;
     use crate::error::OxenError;
     use crate::model::{Commit, LocalRepository};
     use crate::opts::DFOpts;
@@ -2196,6 +2197,130 @@ mod tests {
             let head_commit = repositories::commits::head_commit(&repo)?;
             assert_eq!(head_commit.id, target_commit.id);
             assert_eq!(util::fs::read_from_path(&world_file)?, "World2");
+            Ok(())
+        })
+        .await
+    }
+
+    // Helper: build a feature branch with a single file-modification commit, return
+    // (branch_name, target_commit_id) back on main.
+    async fn make_feature_branch_with_modification(
+        repo: &LocalRepository,
+        file_name: &str,
+        base_contents: &str,
+        merge_contents: &str,
+        branch: &str,
+    ) -> Result<(String, Commit, Commit), OxenError> {
+        let og_branch = repositories::branches::current_branch(repo)?.unwrap();
+        let path = repo.path.join(file_name);
+        util::fs::write_to_path(&path, base_contents)?;
+        repositories::add(repo, &path).await?;
+        let base_commit = repositories::commit(repo, "base commit")?;
+
+        repositories::branches::create_checkout(repo, branch)?;
+        util::fs::write_to_path(&path, merge_contents)?;
+        repositories::add(repo, &path).await?;
+        let target_commit = repositories::commit(repo, "target commit")?;
+
+        repositories::checkout(repo, &og_branch.name).await?;
+        Ok((og_branch.name, base_commit, target_commit))
+    }
+
+    // A truncated file (content matches neither base nor target) must still resume
+    // cleanly when the MERGE_IN_PROGRESS marker names the same target commit: is_resume
+    // bypasses the conflict check and force-restores the file from the version store.
+    #[tokio::test]
+    async fn test_merge_resume_truncated_fast_forward() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let (_main, _base, target) = make_feature_branch_with_modification(
+                &repo,
+                "world.txt",
+                "World",
+                "World2",
+                "update-world",
+            )
+            .await?;
+
+            let world_file = repo.path.join("world.txt");
+            assert_eq!(util::fs::read_from_path(&world_file)?, "World");
+
+            // Simulate an interrupted merge that truncated the file mid-write:
+            // content matches neither base ("World") nor target ("World2").
+            util::fs::write_to_path(&world_file, "partial")?;
+            merge_marker::write(&repo, &target.id).await?;
+
+            let commit = repositories::merge::merge(&repo, "update-world")
+                .await?
+                .expect("resumed merge should produce a commit");
+            assert_eq!(commit.id, target.id);
+            assert_eq!(util::fs::read_from_path(&world_file)?, "World2");
+            assert!(
+                !merge_marker::exists(&repo).await?,
+                "marker must be cleared after a successful resume"
+            );
+            Ok(())
+        })
+        .await
+    }
+
+    // If the marker names a different target than the current merge, abort with
+    // MergeInProgressMismatch without touching the marker or the working tree.
+    #[tokio::test]
+    async fn test_merge_aborts_on_marker_mismatch() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let (_main, _base, _target) = make_feature_branch_with_modification(
+                &repo,
+                "world.txt",
+                "World",
+                "World2",
+                "update-world",
+            )
+            .await?;
+
+            // A stale marker points at an unrelated commit id (e.g. from a previous
+            // merge against a different branch).
+            let stale = "deadbeefdeadbeefdeadbeefdeadbeef";
+            merge_marker::write(&repo, stale).await?;
+
+            let err = repositories::merge::merge(&repo, "update-world")
+                .await
+                .expect_err("mismatched marker must abort the new merge");
+            match err {
+                OxenError::MergeInProgressMismatch { ref expected, .. } => {
+                    assert_eq!(expected, stale);
+                }
+                other => panic!("expected MergeInProgressMismatch, got {other:?}"),
+            }
+
+            // Marker is untouched so the user can run `oxen merge --abort`.
+            let current = merge_marker::read(&repo).await?;
+            assert_eq!(current.as_deref(), Some(stale));
+            Ok(())
+        })
+        .await
+    }
+
+    // A normal successful merge never leaves MERGE_IN_PROGRESS behind.
+    #[tokio::test]
+    async fn test_merge_clears_marker_on_success() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let (_main, _base, _target) = make_feature_branch_with_modification(
+                &repo,
+                "world.txt",
+                "World",
+                "World2",
+                "update-world",
+            )
+            .await?;
+
+            assert!(!merge_marker::exists(&repo).await?);
+            repositories::merge::merge(&repo, "update-world")
+                .await?
+                .unwrap();
+            assert!(
+                !merge_marker::exists(&repo).await?,
+                "marker must be absent after a clean merge"
+            );
             Ok(())
         })
         .await
