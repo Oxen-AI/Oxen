@@ -13,7 +13,7 @@ pub trait MerkleWriter: Send + Sync {
     type Error: std::error::Error + IntoOxenError;
 
     /// The write session that manages writing multiple nodes to the store.
-    type Session<'a>: MerkleWriteSession<'a, Error = Self::Error>
+    type Session<'a>: MerkleWriteSession<Error = Self::Error>
     where
         Self: 'a;
 
@@ -40,7 +40,7 @@ pub trait MerkleWriter: Send + Sync {
 /// are called. The invariant is that [`finish`] must be called to **ensure** that writes are
 /// persisted. An implementation may choose to e.g. have a transaction mechanism to roll-back
 /// changes on `Err`. However, implementations are not required to support this.
-pub trait MerkleWriteSession<'a> {
+pub trait MerkleWriteSession {
     /// The error type for the Merkle tree's underlying storage layer.
     /// Must be convertible into an [`OxenError`].
     type Error: std::error::Error + IntoOxenError;
@@ -65,8 +65,9 @@ pub trait MerkleWriteSession<'a> {
     ) -> Result<Self::NodeSession<'b>, Self::Error>;
 
     /// Ensure that all content from all finished node write sessions have been written to the
-    /// Merkle tree store. It is invalid to call `finish` if there are any active node write
-    /// sessions that have not yet been finished.
+    /// Merkle tree store. Consumes the session: any active [`NodeWriteSession`]s borrowing from
+    /// this one must already have been finished (and thus dropped) before this is called — the
+    /// borrow checker enforces that invariant.
     fn finish(self) -> Result<(), Self::Error>;
 }
 
@@ -86,6 +87,7 @@ pub trait NodeWriteSession {
     /// Add a child to the current node.
     fn add_child<N: TMerkleTreeNode>(&mut self, child: &N) -> Result<(), Self::Error>;
 
-    /// Ensure the node and its children have been written to the Merkle tree store.
+    /// Ensure the node and its children have been written to the Merkle tree store. Consumes
+    /// the node session; releases the borrow on the parent [`MerkleWriteSession`].
     fn finish(self) -> Result<(), Self::Error>;
 }

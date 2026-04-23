@@ -108,7 +108,7 @@ impl LocalRepository {
     // pub fn merkle_store(&self) -> MerkleNodeStore<'_> {
     //     MerkleNodeStore::file(self)
     // }
-    pub fn merkle_store(&self) -> FileBackend<'_> {
+    pub fn merkle_store(&self) -> impl MerkleStore {
         FileBackend::new(self)
     }
 

@@ -561,14 +561,11 @@ pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Res
 }
 
 #[allow(clippy::type_complexity)]
-fn traverse_and_update_sizes_and_counts<'a, S: MerkleWriteSession<'a>>(
-    session: &'a S,
+fn traverse_and_update_sizes_and_counts<S: MerkleWriteSession>(
+    session: &S,
     node: &mut MerkleTreeNode,
     num_bytes: &mut u64,
-) -> Result<(HashMap<String, u64>, HashMap<String, u64>), OxenError>
-where
-    OxenError: From<S::Error>,
-{
+) -> Result<(HashMap<String, u64>, HashMap<String, u64>), OxenError> {
     let mut local_counts: HashMap<String, u64> = HashMap::new();
     let mut local_sizes: HashMap<String, u64> = HashMap::new();
 
@@ -642,16 +639,13 @@ where
     Ok((local_counts, local_sizes))
 }
 
-fn process_children<'a, S: MerkleWriteSession<'a>>(
-    session: &'a S,
+fn process_children<S: MerkleWriteSession>(
+    session: &S,
     children: &mut [MerkleTreeNode],
     local_counts: &mut HashMap<String, u64>,
     local_sizes: &mut HashMap<String, u64>,
     num_bytes: &mut u64,
-) -> Result<(), OxenError>
-where
-    OxenError: From<S::Error>,
-{
+) -> Result<(), OxenError> {
     for child in children.iter_mut() {
         let (child_counts, child_sizes) =
             traverse_and_update_sizes_and_counts(session, child, num_bytes)?;
@@ -668,10 +662,7 @@ where
 fn add_children_to_session<S: NodeWriteSession>(
     ns: &mut S,
     children: &[MerkleTreeNode],
-) -> Result<(), OxenError>
-where
-    OxenError: From<S::Error>,
-{
+) -> Result<(), OxenError> {
     for child in children {
         match &child.node {
             EMerkleTreeNode::Commit(commit_node) => {

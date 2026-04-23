@@ -174,17 +174,14 @@ fn run_on_commit(repository: &LocalRepository, commit: &Commit) -> Result<(), Ox
 // Forgive me if you are reading this for reference, we don't have great writers for the
 // merkle tree yet - so there is a lot of duplicate logic with `commit_writer.rs`
 #[allow(clippy::too_many_arguments)]
-fn rewrite_nodes<'a, OldS: MerkleWriteSession<'a>, NewS: MerkleWriteSession<'a>>(
+fn rewrite_nodes<OldS: MerkleWriteSession, NewS: MerkleWriteSession>(
     old_repo: &LocalRepository,
     new_repo: &LocalRepository,
-    old_session: &'a OldS,
-    new_session: &'a NewS,
+    old_session: &OldS,
+    new_session: &NewS,
     node: &MerkleTreeNode,
     current_dir: &Path,
-) -> Result<(), OxenError>
-where
-    OxenError: From<OldS::Error> + From<NewS::Error>,
-{
+) -> Result<(), OxenError> {
     for child in node.children.iter() {
         match &child.node {
             EMerkleTreeNode::Directory(dir) => {

@@ -87,7 +87,7 @@ pub struct FileWriteSession<'repo> {
 }
 
 /// Merkle write session implementation that the [`FileBackend`] uses.
-impl<'a, 'repo: 'a> MerkleWriteSession<'a> for FileWriteSession<'repo> {
+impl<'repo> MerkleWriteSession for FileWriteSession<'repo> {
     type Error = MerkleDbError;
     #[rustfmt::skip]
     type NodeSession<'b> = FileNodeSession where Self: 'b;
@@ -166,7 +166,8 @@ impl NodeWriteSession for FileNodeSession {
     }
 
     /// Flushes the open `node` and `children` file handles, closes them, then calls `fsync` on them.
-    /// Is idempotent and calls [`MerkleNodeDb::close`] internally when required.
+    /// Consumes the session; [`Drop`] becomes a no-op after this returns `Ok` because the
+    /// `finished` sentinel guards `idempotent_finish`.
     fn finish(mut self) -> Result<(), MerkleDbError> {
         self.idempotent_finish()
     }

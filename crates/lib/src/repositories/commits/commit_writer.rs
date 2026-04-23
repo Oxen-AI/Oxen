@@ -800,7 +800,7 @@ pub fn compute_commit_id(new_commit: &NewCommit) -> Result<MerkleHash, OxenError
 }
 
 #[allow(clippy::too_many_arguments)]
-fn write_commit_entries<'a, S: MerkleWriteSession<'a>>(
+fn write_commit_entries<'a, S: MerkleWriteSession>(
     repo: &LocalRepository,
     commit_id: MerkleHash,
     session: &'a S,
@@ -808,10 +808,7 @@ fn write_commit_entries<'a, S: MerkleWriteSession<'a>>(
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
-) -> Result<(), OxenError>
-where
-    OxenError: From<S::Error>,
-{
+) -> Result<(), OxenError> {
     // Write the root dir, then recurse into the vnodes and subdirectories
     let mut total_written = 0;
     let root_path = PathBuf::from("");
@@ -869,7 +866,7 @@ fn cache_invalidate_dir_hash_db<'a>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn r_create_dir_node<'a, S: MerkleWriteSession<'a>>(
+fn r_create_dir_node<'a, S: MerkleWriteSession>(
     repo: &LocalRepository,
     session: &'a S,
     commit_id: MerkleHash,
@@ -879,10 +876,7 @@ fn r_create_dir_node<'a, S: MerkleWriteSession<'a>>(
     entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
     path: impl AsRef<Path>,
     total_written: &mut u64,
-) -> Result<(), OxenError>
-where
-    OxenError: From<S::Error>,
-{
+) -> Result<(), OxenError> {
     let path = path.as_ref().to_path_buf();
 
     let keys = entries.keys();

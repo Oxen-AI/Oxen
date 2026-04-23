@@ -1046,14 +1046,11 @@ pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), O
 ///
 // [1] https://github.com/rust-lang/rust/issues/20041
 // TODO: this should just accept `MerkleTreeNode` since the `node_impl` always comes from this
-fn p_write_tree<'a, N: TMerkleTreeNode, S: MerkleWriteSession<'a>>(
-    session: &'a S,
+fn p_write_tree<N: TMerkleTreeNode, S: MerkleWriteSession>(
+    session: &S,
     node: &MerkleTreeNode,
     node_impl: &N,
-) -> Result<(), OxenError>
-where
-    OxenError: From<S::Error>,
-{
+) -> Result<(), OxenError> {
     let parent_id = node.parent_id;
 
     let mut ns = session.create_node(node_impl, parent_id)?;
