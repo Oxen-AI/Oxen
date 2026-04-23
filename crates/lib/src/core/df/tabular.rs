@@ -857,6 +857,14 @@ fn struct_array_to_json(
     }
 }
 
+fn polars_time_unit_to_duckdb(tu: TimeUnit) -> duckdb::types::TimeUnit {
+    match tu {
+        TimeUnit::Nanoseconds => duckdb::types::TimeUnit::Nanosecond,
+        TimeUnit::Microseconds => duckdb::types::TimeUnit::Microsecond,
+        TimeUnit::Milliseconds => duckdb::types::TimeUnit::Millisecond,
+    }
+}
+
 pub fn value_to_tosql(value: AnyValue) -> Box<dyn ToSql> {
     match value {
         AnyValue::String(s) => Box::new(s.to_string()),
@@ -867,6 +875,14 @@ pub fn value_to_tosql(value: AnyValue) -> Box<dyn ToSql> {
         AnyValue::Float64(f) => Box::new(f),
         AnyValue::Boolean(b) => Box::new(b),
         AnyValue::Null => Box::new(None::<i32>),
+        AnyValue::Datetime(val, tu, _tz) => Box::new(duckdb::types::Value::Timestamp(
+            polars_time_unit_to_duckdb(tu),
+            val,
+        )),
+        AnyValue::DatetimeOwned(val, tu, _tz) => Box::new(duckdb::types::Value::Timestamp(
+            polars_time_unit_to_duckdb(tu),
+            val,
+        )),
         AnyValue::List(l) => {
             let json_array = match l.dtype() {
                 polars::prelude::DataType::Int64 => {
