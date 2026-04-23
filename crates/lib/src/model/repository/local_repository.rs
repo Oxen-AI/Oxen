@@ -1,7 +1,7 @@
 use crate::config::RepositoryConfig;
 use crate::constants::SHALLOW_FLAG;
 use crate::constants::{self, DEFAULT_VNODE_SIZE, MIN_OXEN_VERSION};
-use crate::core::db::merkle_node::MerkleNodeStore;
+use crate::core::db::merkle_node::FileBackend;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
@@ -105,8 +105,11 @@ impl LocalRepository {
     /// destructor is unknown to the compiler, so it assumes it touches the
     /// store). A named enum lets dropck see inside the session and accept
     /// the move.
-    pub fn merkle_store(&self) -> MerkleNodeStore<'_> {
-        MerkleNodeStore::file(self)
+    // pub fn merkle_store(&self) -> MerkleNodeStore<'_> {
+    //     MerkleNodeStore::file(self)
+    // }
+    pub fn merkle_store(&self) -> FileBackend<'_> {
+        FileBackend::new(self)
     }
 
     pub fn init_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {

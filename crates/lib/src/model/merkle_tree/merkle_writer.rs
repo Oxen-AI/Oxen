@@ -1,4 +1,4 @@
-use crate::error::OxenError;
+use crate::error::IntoOxenError;
 use crate::model::{MerkleHash, TMerkleTreeNode};
 
 /// Interface for writing to a Merkle tree store.
@@ -10,7 +10,7 @@ pub trait MerkleWriter: Send + Sync {
     /// bound on the associated type propagates as an implied bound at every
     /// use site, so generic callers can convert errors via
     /// `?` with no additional `where` clauses.
-    type Error: std::error::Error + Into<OxenError>;
+    type Error: std::error::Error + IntoOxenError;
 
     /// The write session that manages writing multiple nodes to the store.
     type Session<'a>: MerkleWriteSession<'a, Error = Self::Error>
@@ -43,7 +43,7 @@ pub trait MerkleWriter: Send + Sync {
 pub trait MerkleWriteSession<'a> {
     /// The error type for the Merkle tree's underlying storage layer.
     /// Must be convertible into an [`OxenError`].
-    type Error: std::error::Error + Into<OxenError>;
+    type Error: std::error::Error + IntoOxenError;
 
     /// The write session that manages writing a single node's information to the store.
     type NodeSession<'b>: NodeWriteSession<Error = Self::Error>
@@ -78,7 +78,7 @@ pub trait MerkleWriteSession<'a> {
 pub trait NodeWriteSession {
     /// The error type for the Merkle tree's underlying storage layer.
     /// Must be convertible into an [`OxenError`].
-    type Error: std::error::Error + Into<OxenError>;
+    type Error: std::error::Error + IntoOxenError;
 
     /// The hash of the node being written in this session.
     fn node_id(&self) -> &MerkleHash;

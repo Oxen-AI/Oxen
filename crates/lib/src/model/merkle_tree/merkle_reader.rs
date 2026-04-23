@@ -1,4 +1,4 @@
-use crate::error::OxenError;
+use crate::error::IntoOxenError;
 use crate::model::{
     MerkleHash, MerkleTreeNodeType,
     merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode},
@@ -11,7 +11,7 @@ pub trait MerkleReader: Send + Sync {
     /// Backends may use whichever error type is natural for their storage
     /// (e.g. `MerkleDbError` for the file backend). The `Into<OxenError>`
     /// bound lets callers that return `Result<_, OxenError>` use `?` directly.
-    type Error: std::error::Error + Into<OxenError>;
+    type Error: std::error::Error + IntoOxenError;
 
     /// True if there is some node with the given hash. False otherwise.
     /// An error is returned if there is some other failure in the Merkle tree's underlying storage layer.
