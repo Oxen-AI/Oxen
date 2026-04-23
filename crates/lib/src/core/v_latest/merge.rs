@@ -6,6 +6,7 @@ use crate::core::merge::{db_path, node_merge_conflict_writer};
 use crate::core::refs::with_ref_manager;
 use crate::core::v_latest::add;
 use crate::core::v_latest::commits::{get_commit_or_head, list_between};
+use crate::core::v_latest::merge_marker;
 use crate::error::OxenError;
 use crate::model::StagedEntryStatus;
 use crate::model::merge_conflict::NodeMergeConflict;
@@ -43,6 +44,28 @@ impl MergeResult {
             entries_to_restore: vec![],
             cannot_overwrite_entries: vec![],
         }
+    }
+}
+
+/// Whether a merge is attached to a local working tree.
+#[derive(Debug, Clone, Copy)]
+pub enum LocalCheckout {
+    /// Server-side merge: operates on tree data only and does not touch the working tree.
+    Absent,
+    /// Client-side merge: restores files on disk and advances HEAD, bracketed by MERGE_IN_PROGRESS.
+    ///
+    /// `is_resume` is true when a prior attempt at this target was interrupted; the restore path
+    /// then force-restores instead of conflict-checking.
+    Present { is_resume: bool },
+}
+
+impl LocalCheckout {
+    pub fn writes_to_disk(self) -> bool {
+        matches!(self, Self::Present { .. })
+    }
+
+    pub fn is_resume(self) -> bool {
+        matches!(self, Self::Present { is_resume: true })
     }
 }
 
@@ -104,7 +127,8 @@ pub async fn can_merge_commits(
     }
 
     let mut _hashes = HashSet::new();
-    let analysis = find_merge_conflicts(repo, &merge_commits, false, &mut _hashes).await?;
+    let analysis =
+        find_merge_conflicts(repo, &merge_commits, LocalCheckout::Absent, &mut _hashes).await?;
     Ok(analysis.conflicts.is_empty())
 }
 
@@ -174,7 +198,8 @@ pub async fn list_conflicts_between_commits(
         merge: merge_commit.clone(),
     };
     let mut _hashes = HashSet::new();
-    let analysis = find_merge_conflicts(repo, &merge_commits, false, &mut _hashes).await?;
+    let analysis =
+        find_merge_conflicts(repo, &merge_commits, LocalCheckout::Absent, &mut _hashes).await?;
     Ok(analysis
         .conflicts
         .iter()
@@ -245,7 +270,13 @@ async fn server_three_way_merge(
 
     // 1. Find conflicts and collect merge entries in a single tree traversal
     let mut shared_hashes = HashSet::new();
-    let analysis = find_merge_conflicts(repo, merge_commits, false, &mut shared_hashes).await?;
+    let analysis = find_merge_conflicts(
+        repo,
+        merge_commits,
+        LocalCheckout::Absent,
+        &mut shared_hashes,
+    )
+    .await?;
 
     if !analysis.conflicts.is_empty() {
         return Err(OxenError::UpstreamMergeConflict(
@@ -339,7 +370,7 @@ pub async fn merge(
         base: base_commit,
         merge: merge_commit,
     };
-    merge_commits(repo, &commits, true).await
+    merge_commits(repo, &commits, LocalCheckout::Present { is_resume: false }).await
 }
 
 /// Server-safe merge of two commits. Does not touch the working directory or
@@ -364,7 +395,7 @@ pub async fn merge_commit_into_base_server_safe(
         merge: merge_commit.to_owned(),
     };
 
-    merge_commits(repo, &commits, false).await
+    merge_commits(repo, &commits, LocalCheckout::Absent).await
 }
 
 /// Client-side merge of two commits. Updates files on disk and advances HEAD.
@@ -387,7 +418,7 @@ pub async fn merge_commit_into_base(
         merge: merge_commit.to_owned(),
     };
 
-    merge_commits(repo, &commits, true).await
+    merge_commits(repo, &commits, LocalCheckout::Present { is_resume: false }).await
 }
 
 /// Server-side merge: merge a commit into a base commit on a specific branch.
@@ -501,7 +532,7 @@ async fn fast_forward_merge(
     repo: &LocalRepository,
     base_commit: &Commit,
     merge_commit: &Commit,
-    update_working_dir: bool,
+    checkout: LocalCheckout,
 ) -> Result<Option<Commit>, OxenError> {
     log::debug!("FF merge!");
 
@@ -510,10 +541,12 @@ async fn fast_forward_merge(
         return Ok(None);
     }
 
-    if !update_working_dir {
+    if !checkout.writes_to_disk() {
         // Server-side: no checkout to update, just return the merge commit.
         return Ok(Some(merge_commit.clone()));
     }
+
+    let is_resume = checkout.is_resume();
 
     // Collect all dir and vnode hashes while loading the merge tree
     // This is done to identify shared dirs/vnodes between the merge and base trees while loading the base tree
@@ -559,6 +592,7 @@ async fn fast_forward_merge(
         &mut partial_nodes,
         &mut shared_hashes,
         &mut seen_files,
+        is_resume,
     )?;
 
     if !merge_tree_results.cannot_overwrite_entries.is_empty() {
@@ -576,11 +610,18 @@ async fn fast_forward_merge(
         &mut base_tree_results,
         &mut shared_hashes,
         &mut seen_files,
+        is_resume,
     )?;
 
     // If there are no conflicts, restore the entries
     // Grouping the processing of merge_tree_results and base_tree_results like this ensures no files are modified if the merge doesn't complete
     if base_tree_results.cannot_overwrite_entries.is_empty() {
+        // All conflict checks have passed; the next lines mutate the working
+        // tree. Write the resume marker *now* so a SIGTERM mid-restore is
+        // recoverable, but no marker is left behind when the merge errors out
+        // earlier for an unrelated reason.
+        merge_marker::write(repo, &merge_commit.id).await?;
+
         let version_store = repo.version_store()?;
         for entry in merge_tree_results.entries_to_restore.iter() {
             restore::restore_file(repo, &entry.file_node, &entry.path, &version_store).await?;
@@ -600,9 +641,13 @@ async fn fast_forward_merge(
     // Move the HEAD forward to this commit
     with_ref_manager(repo, |manager| manager.set_head_commit_id(&merge_commit.id))?;
 
+    // Mutation complete; the marker is no longer load-bearing.
+    merge_marker::clear(repo).await?;
+
     Ok(Some(merge_commit.clone()))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn r_ff_merge_commit(
     repo: &LocalRepository,
     merge_node: &MerkleTreeNode,
@@ -611,6 +656,7 @@ fn r_ff_merge_commit(
     base_files: &mut HashMap<PathBuf, PartialNode>,
     shared_hashes: &mut HashSet<MerkleHash>,
     seen_files: &mut HashSet<PathBuf>,
+    is_resume: bool,
 ) -> Result<(), OxenError> {
     let path = path.as_ref();
     match &merge_node.node {
@@ -626,7 +672,15 @@ fn r_ff_merge_commit(
             // To properly handle moved files, the partial nodes are associated with their path in the base tree
             // I.e., if a file has been moved in the merge tree, this code will find that it shouldn't be restored
 
-            if base_files.contains_key(&file_path) {
+            if is_resume {
+                // Resuming an interrupted merge targeting this same commit:
+                // trust the target and force-restore every file the merge
+                // wants, regardless of working-tree state.
+                results.entries_to_restore.push(FileToRestore {
+                    file_node: merge_file_node.clone(),
+                    path: file_path.clone(),
+                });
+            } else if base_files.contains_key(&file_path) {
                 // if found, use to determine whether the file should be restored
                 let base_file_node = &base_files[&file_path];
 
@@ -692,6 +746,7 @@ fn r_ff_merge_commit(
                     base_files,
                     shared_hashes,
                     seen_files,
+                    is_resume,
                 )?;
             }
         }
@@ -706,6 +761,7 @@ fn r_ff_merge_commit(
                 base_files,
                 shared_hashes,
                 seen_files,
+                is_resume,
             )?;
         }
         _ => {
@@ -725,6 +781,7 @@ fn r_ff_base_dir(
     results: &mut MergeResult,
     shared_hashes: &mut HashSet<MerkleHash>,
     merge_files: &mut HashSet<PathBuf>,
+    is_resume: bool,
 ) -> Result<(), OxenError> {
     let path = path.as_ref();
     match &base_node.node {
@@ -735,7 +792,9 @@ fn r_ff_base_dir(
                 // Here, we don't need partial node representation, as we're only concerned with restoring files that aren't in the merge tree
                 let path = repo.path.join(file_path.clone());
                 if path.exists() {
-                    if restore::should_restore_file(repo, None, base_file_node, &file_path)? {
+                    if is_resume
+                        || restore::should_restore_file(repo, None, base_file_node, &file_path)?
+                    {
                         results.entries_to_restore.push(FileToRestore {
                             file_node: base_file_node.clone(),
                             path: path.clone(),
@@ -770,13 +829,29 @@ fn r_ff_base_dir(
 
             for child in base_children.iter() {
                 //log::debug!("r_ff_base_dir child_path {}", child);
-                r_ff_base_dir(repo, child, &dir_path, results, shared_hashes, merge_files)?;
+                r_ff_base_dir(
+                    repo,
+                    child,
+                    &dir_path,
+                    results,
+                    shared_hashes,
+                    merge_files,
+                    is_resume,
+                )?;
             }
         }
         EMerkleTreeNode::Commit(_) => {
             // If we get a commit node, we need to skip to the root directory
             let root_dir = repositories::tree::get_root_dir(base_node)?;
-            r_ff_base_dir(repo, root_dir, path, results, shared_hashes, merge_files)?;
+            r_ff_base_dir(
+                repo,
+                root_dir,
+                path,
+                results,
+                shared_hashes,
+                merge_files,
+                is_resume,
+            )?;
         }
         _ => {
             log::debug!("r_ff_base_dir unknown node type");
@@ -787,16 +862,16 @@ fn r_ff_base_dir(
 
 /// Perform a merge between commits.
 ///
-/// When `update_working_dir` is `true` (client-side), working-directory files
+/// With `LocalCheckout::Present { .. }` (client-side), working-directory files
 /// are checked, restored/removed, and HEAD is advanced.
 ///
-/// When `update_working_dir` is `false` (server-side), no working-directory or
-/// HEAD operations are performed.  For three-way merges the server-safe
+/// With `LocalCheckout::Absent` (server-side), no working-directory or HEAD
+/// operations are performed. For three-way merges the server-safe
 /// `server_three_way_merge` path is used instead.
 async fn merge_commits(
     repo: &LocalRepository,
     merge_commits: &MergeCommits,
-    update_working_dir: bool,
+    checkout: LocalCheckout,
 ) -> Result<Option<Commit>, OxenError> {
     // User output
     println!(
@@ -817,15 +892,37 @@ async fn merge_commits(
         merge_commits.merge.message,
     );
 
+    // Inspect the resume marker. If a prior mutation was interrupted for this
+    // same target, we'll force-restore merge-target files; if it named a
+    // different target, abort. The marker itself is written/cleared inside the
+    // restore loops (fast_forward_merge / find_merge_conflicts) so that a
+    // merge which errors out cleanly on the conflict check never leaves a
+    // stale marker behind.
+    let checkout = if checkout.writes_to_disk() {
+        match merge_marker::read(repo).await? {
+            Some(existing) if existing != merge_commits.merge.id => {
+                return Err(OxenError::MergeInProgressMismatch {
+                    expected: existing,
+                    found: merge_commits.merge.id.clone(),
+                });
+            }
+            Some(_) => {
+                log::info!(
+                    "Resuming interrupted merge for target commit {}",
+                    merge_commits.merge.id
+                );
+                LocalCheckout::Present { is_resume: true }
+            }
+            None => LocalCheckout::Present { is_resume: false },
+        }
+    } else {
+        LocalCheckout::Absent
+    };
+
     // Check which type of merge we need to do
     if merge_commits.is_fast_forward_merge() {
-        let commit = fast_forward_merge(
-            repo,
-            &merge_commits.base,
-            &merge_commits.merge,
-            update_working_dir,
-        )
-        .await?;
+        let commit =
+            fast_forward_merge(repo, &merge_commits.base, &merge_commits.merge, checkout).await?;
         Ok(commit)
     } else {
         log::debug!(
@@ -834,14 +931,15 @@ async fn merge_commits(
             merge_commits.merge.id
         );
 
-        if !update_working_dir {
+        if !checkout.writes_to_disk() {
             // Server-safe: use the server three-way merge path which operates
             // only on tree data and never touches the working directory.
             return server_three_way_merge(repo, merge_commits).await.map(Some);
         }
 
         let mut shared_hashes = HashSet::new();
-        let analysis = find_merge_conflicts(repo, merge_commits, true, &mut shared_hashes).await?;
+        let analysis =
+            find_merge_conflicts(repo, merge_commits, checkout, &mut shared_hashes).await?;
 
         if !analysis.conflicts.is_empty() {
             println!(
@@ -953,10 +1051,12 @@ pub fn lowest_common_ancestor_from_commits(
 pub async fn find_merge_conflicts(
     repo: &LocalRepository,
     merge_commits: &MergeCommits,
-    write_to_disk: bool,
+    checkout: LocalCheckout,
     shared_hashes: &mut HashSet<MerkleHash>,
 ) -> Result<MergeConflictAnalysis, OxenError> {
     log::debug!("finding merge conflicts");
+    let write_to_disk = checkout.writes_to_disk();
+    let is_resume = checkout.is_resume();
     /*
     https://en.wikipedia.org/wiki/Merge_(version_control)#Three-way_merge
 
@@ -1069,12 +1169,14 @@ pub async fn find_merge_conflicts(
                     // Changed only on merge branch — include in merge result
                     entries.push((entry_path.clone(), merge_file_node.clone(), Modified));
                     if write_to_disk {
-                        if restore::should_restore_file(
-                            repo,
-                            Some(base_file_node.clone()),
-                            merge_file_node,
-                            entry_path,
-                        )? {
+                        if is_resume
+                            || restore::should_restore_file(
+                                repo,
+                                Some(base_file_node.clone()),
+                                merge_file_node,
+                                entry_path,
+                            )?
+                        {
                             entries_to_restore.push(FileToRestore {
                                 file_node: merge_file_node.clone(),
                                 path: entry_path.clone(),
@@ -1128,12 +1230,14 @@ pub async fn find_merge_conflicts(
                         shared_hashes.remove(&dir_node.hash);
                     }
 
-                    if restore::should_restore_file(
-                        repo,
-                        base_file_node,
-                        merge_file_node,
-                        entry_path,
-                    )? {
+                    if is_resume
+                        || restore::should_restore_file(
+                            repo,
+                            base_file_node,
+                            merge_file_node,
+                            entry_path,
+                        )?
+                    {
                         entries_to_restore.push(FileToRestore {
                             file_node: merge_file_node.clone(),
                             path: entry_path.clone(),
@@ -1157,7 +1261,9 @@ pub async fn find_merge_conflicts(
                 // Truly new file on merge branch
                 entries.push((entry_path.clone(), merge_file_node.clone(), Added));
                 if write_to_disk {
-                    if restore::should_restore_file(repo, None, merge_file_node, entry_path)? {
+                    if is_resume
+                        || restore::should_restore_file(repo, None, merge_file_node, entry_path)?
+                    {
                         entries_to_restore.push(FileToRestore {
                             file_node: merge_file_node.clone(),
                             path: entry_path.to_path_buf(),
@@ -1201,6 +1307,14 @@ pub async fn find_merge_conflicts(
 
     // If there are no conflicts, restore the entries
     if cannot_overwrite_entries.is_empty() {
+        // Working-tree mutation starts here. Bracket it with the resume marker
+        // so a SIGTERM mid-restore can be recovered by a subsequent merge
+        // against the same target. Only when write_to_disk=true — the
+        // server-safe paths leave the working tree untouched.
+        if write_to_disk {
+            merge_marker::write(repo, &merge_commits.merge.id).await?;
+        }
+
         let version_store = repo.version_store()?;
         for entry in entries_to_restore.iter() {
             restore::restore_file(repo, &entry.file_node, &entry.path, &version_store).await?;
@@ -1232,6 +1346,10 @@ pub async fn find_merge_conflicts(
                     )?;
                 }
             }
+        }
+
+        if write_to_disk {
+            merge_marker::clear(repo).await?;
         }
     } else {
         // If there are conflicts, return an error without restoring anything

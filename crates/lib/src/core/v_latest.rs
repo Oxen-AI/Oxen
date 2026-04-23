@@ -14,6 +14,7 @@ pub mod fetch;
 pub mod index;
 pub mod init;
 pub mod merge;
+pub mod merge_marker;
 pub mod metadata;
 pub mod model;
 pub mod prune;
