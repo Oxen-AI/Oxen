@@ -6,6 +6,7 @@
 use std::path::Path;
 
 use crate::core::df::tabular;
+use crate::core::v_latest::branches::OnConflict;
 use crate::error::OxenError;
 use crate::model::{Branch, LocalRepository};
 use crate::opts::{DFOpts, RestoreOpts};
@@ -49,8 +50,13 @@ pub async fn checkout(
             .ok_or_else(|| OxenError::RevisionNotFound(value.into()))?;
 
         let previous_head_commit = repositories::commits::head_commit_maybe(repo)?;
-        repositories::branches::checkout_commit_from_commit(repo, &commit, &previous_head_commit)
-            .await?;
+        repositories::branches::checkout_commit_from_commit(
+            repo,
+            &commit,
+            &previous_head_commit,
+            OnConflict::Abort,
+        )
+        .await?;
         repositories::branches::update(repo, value, &commit.id)?;
         repositories::branches::set_head(repo, value)?;
 

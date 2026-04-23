@@ -4,6 +4,7 @@ use std::path::Path;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
 use crate::constants::DEFAULT_BRANCH_NAME;
+use crate::core::v_latest::branches::OnConflict;
 use crate::repositories;
 use crate::util;
 use crate::{error::OxenError, model::LocalRepository};
@@ -46,7 +47,8 @@ pub async fn load(
     let branch = repositories::branches::get_by_name(&repo, DEFAULT_BRANCH_NAME)?;
     let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?
         .ok_or_else(|| OxenError::commit_id_does_not_exist(&branch.commit_id))?;
-    repositories::branches::set_working_repo_to_commit(&repo, &commit, &None).await?;
+    repositories::branches::set_working_repo_to_commit(&repo, &commit, &None, OnConflict::Abort)
+        .await?;
 
     println!("{done_msg}");
     Ok(())

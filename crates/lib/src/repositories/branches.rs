@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::core::refs::with_ref_manager;
+use crate::core::v_latest::branches::OnConflict;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::{Branch, Commit, CommitEntry, LocalRepository};
@@ -197,15 +198,19 @@ pub async fn checkout_subtrees_to_commit(
     }
 }
 
-/// Checkout a commit
+/// Checkout a commit. `on_conflict` decides whether to abort or overwrite when the working tree
+/// has diverged from both the source and target commits (see [`OnConflict`]).
 pub async fn checkout_commit_from_commit(
     repo: &LocalRepository,
     commit: &Commit,
     from_commit: &Option<Commit>,
+    on_conflict: OnConflict,
 ) -> Result<(), OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::branches::checkout_commit(repo, commit, from_commit).await,
+        _ => {
+            core::v_latest::branches::checkout_commit(repo, commit, from_commit, on_conflict).await
+        }
     }
 }
 
@@ -279,12 +284,21 @@ pub async fn set_working_repo_to_commit(
     repo: &LocalRepository,
     commit: &Commit,
     from_commit: &Option<Commit>,
+    on_conflict: OnConflict,
 ) -> Result<(), OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => {
             panic!("set_working_repo_to_commit not implemented for oxen v0.10.0")
         }
-        _ => core::v_latest::branches::set_working_repo_to_commit(repo, commit, from_commit).await,
+        _ => {
+            core::v_latest::branches::set_working_repo_to_commit(
+                repo,
+                commit,
+                from_commit,
+                on_conflict,
+            )
+            .await
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use clap::{Command, arg};
+use clap::{Arg, Command, arg};
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 
@@ -20,16 +20,20 @@ impl RunCmd for MergeCmd {
     fn args(&self) -> Command {
         Command::new(NAME)
             .about("Merges a branch into the current checked out branch.")
-            .arg_required_else_help(true)
-            .arg(arg!(<BRANCH> "The name of the branch you want to merge in."))
+            .arg(
+                arg!([BRANCH] "The name of the branch you want to merge in.")
+                    .required_unless_present("abort"),
+            )
+            .arg(
+                Arg::new("abort")
+                    .long("abort")
+                    .help("Abandon an interrupted or in-conflict merge and restore HEAD.")
+                    .action(clap::ArgAction::SetTrue)
+                    .conflicts_with("BRANCH"),
+            )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
-        // Parse args
-        let branch = args
-            .get_one::<String>("BRANCH")
-            .expect("Must supply a branch");
-
         let repository = LocalRepository::from_current_dir()?;
 
         // Don't allow in remote mode
@@ -38,6 +42,15 @@ impl RunCmd for MergeCmd {
                 "Error: Command 'oxen merge' not implemented for remote mode repositories",
             ));
         }
+
+        check_repo_migration_needed(&repository)?;
+
+        if args.get_flag("abort") {
+            repositories::merge::abort_merge(&repository).await?;
+            return Ok(());
+        }
+
+        let branch = args.get_one::<String>("BRANCH").expect("required");
 
         // Return immediately if the merge branch is the current branch
         let current = if let Some(current) = repositories::branches::current_branch(&repository)? {
@@ -53,8 +66,6 @@ impl RunCmd for MergeCmd {
                 "Error: Cannot merge into current branch",
             ));
         }
-
-        check_repo_migration_needed(&repository)?;
 
         repositories::merge::merge(&repository, branch).await?;
         Ok(())
