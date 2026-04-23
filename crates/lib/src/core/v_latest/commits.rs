@@ -256,10 +256,7 @@ pub fn create_empty_commit(
     repo: &LocalRepository,
     branch_name: impl AsRef<str>,
     new_commit: &Commit,
-) -> Result<Commit, OxenError>
-where
-    OxenError: From<R::Error>,
-{
+) -> Result<Commit, OxenError> {
     let branch_name = branch_name.as_ref();
     let Some(existing_commit) = repositories::revisions::get(repo, branch_name)? else {
         return Err(OxenError::RevisionNotFound(branch_name.into()));

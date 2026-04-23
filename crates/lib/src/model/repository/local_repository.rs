@@ -5,7 +5,6 @@ use crate::core::db::merkle_node::FileBackend;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
-use crate::model::merkle_tree::MerkleStore;
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
 use crate::opts::StorageOpts;
 use crate::storage::{StorageConfig, VersionStore, create_version_store};
@@ -97,15 +96,20 @@ impl LocalRepository {
 
     /// Obtain the Merkle tree store for this repository.
     ///
-    /// The returned backend's `Error` associated type is `MerkleDbError` (the
-    /// file backend's native error). The `Into<OxenError>` bound on every
-    /// merkle-store trait's `Error` lets callers convert via
+    /// Returns the concrete file-based backend for now. The backend's `Error`
+    /// associated type is `MerkleDbError`; the `Into<OxenError>` bound on
+    /// every merkle-store trait's `Error` lets generic callers convert via
     /// `.map_err(Into::into)?` without any caller-side `where` clauses.
     ///
-    /// Today this always returns the file-based backend. When the LMDB
-    /// backend lands, this method will be updated to dispatch based on an
-    /// on-disk identifier; callers won't need to change.
-    pub fn merkle_store(&self) -> impl MerkleStore {
+    /// The return type stays concrete (not `impl MerkleStore`) because the
+    /// write-session GATs combined with an opaque `impl` return cause
+    /// Rust's drop-check to conservatively extend borrows across
+    /// `session.finish()` moves — `let session = store.begin()?; ... &session
+    /// used ...; session.finish()?;` fails to compile on generic returns.
+    /// A concrete backend type lets dropck see the inner session has no
+    /// outbound references. Phase 2 will switch to a dispatch enum that also
+    /// has this property.
+    pub fn merkle_store(&self) -> FileBackend<'_> {
         FileBackend::new(self)
     }
 
