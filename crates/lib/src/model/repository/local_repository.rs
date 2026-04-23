@@ -99,7 +99,7 @@ impl LocalRepository {
     /// Returns the concrete file-based backend for now. The backend's `Error`
     /// associated type is `MerkleDbError`; the `Into<OxenError>` bound on
     /// every merkle-store trait's `Error` lets generic callers convert via
-    /// `.map_err(Into::into)?` without any caller-side `where` clauses.
+    /// `?` without any caller-side `where` clauses.
     ///
     /// The return type stays concrete (not `impl MerkleStore`) because the
     /// write-session GATs combined with an opaque `impl` return cause

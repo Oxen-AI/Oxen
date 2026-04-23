@@ -553,9 +553,9 @@ pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Res
 
     // One merkle write session covers every node written during the traversal.
     let store = repo.merkle_store();
-    let session = store.begin().map_err(Into::into)?;
+    let session = store.begin()?;
     traverse_and_update_sizes_and_counts(&session, &mut node, &mut num_bytes)?;
-    session.finish().map_err(Into::into)?;
+    session.finish()?;
 
     Ok(())
 }
@@ -581,11 +581,9 @@ fn traverse_and_update_sizes_and_counts<'a, S: MerkleWriteSession<'a>>(
                 &mut local_sizes,
                 num_bytes,
             )?;
-            let mut dir_ns = session
-                .create_node(commit_node, node.parent_id)
-                .map_err(Into::into)?;
+            let mut dir_ns = session.create_node(commit_node, node.parent_id)?;
             add_children_to_session(&mut dir_ns, &node.children)?;
-            dir_ns.finish().map_err(Into::into)?;
+            dir_ns.finish()?;
         }
         EMerkleTreeNode::VNode(vnode) => {
             log::debug!("Traversing vnode {vnode:?}");
@@ -596,11 +594,9 @@ fn traverse_and_update_sizes_and_counts<'a, S: MerkleWriteSession<'a>>(
                 &mut local_sizes,
                 num_bytes,
             )?;
-            let mut dir_ns = session
-                .create_node(vnode, node.parent_id)
-                .map_err(Into::into)?;
+            let mut dir_ns = session.create_node(vnode, node.parent_id)?;
             add_children_to_session(&mut dir_ns, &node.children)?;
-            dir_ns.finish().map_err(Into::into)?;
+            dir_ns.finish()?;
         }
         EMerkleTreeNode::Directory(dir_node) => {
             log::debug!("No need to aggregate dir {}", dir_node.name());
@@ -613,11 +609,9 @@ fn traverse_and_update_sizes_and_counts<'a, S: MerkleWriteSession<'a>>(
             )?;
             dir_node.set_data_type_counts(local_counts.clone());
             dir_node.set_data_type_sizes(local_sizes.clone());
-            let mut dir_ns = session
-                .create_node(dir_node, node.parent_id)
-                .map_err(Into::into)?;
+            let mut dir_ns = session.create_node(dir_node, node.parent_id)?;
             add_children_to_session(&mut dir_ns, &node.children)?;
-            dir_ns.finish().map_err(Into::into)?;
+            dir_ns.finish()?;
         }
         EMerkleTreeNode::File(file_node) => {
             log::debug!(
@@ -672,16 +666,16 @@ fn add_children_to_session<S: NodeWriteSession>(
     for child in children {
         match &child.node {
             EMerkleTreeNode::Commit(commit_node) => {
-                ns.add_child(commit_node).map_err(Into::into)?;
+                ns.add_child(commit_node)?;
             }
             EMerkleTreeNode::Directory(dir_node) => {
-                ns.add_child(dir_node).map_err(Into::into)?;
+                ns.add_child(dir_node)?;
             }
             EMerkleTreeNode::File(file_node) => {
-                ns.add_child(file_node).map_err(Into::into)?;
+                ns.add_child(file_node)?;
             }
             EMerkleTreeNode::VNode(vnode) => {
-                ns.add_child(vnode).map_err(Into::into)?;
+                ns.add_child(vnode)?;
             }
             _ => {
                 // TODO: change to a structured error variant

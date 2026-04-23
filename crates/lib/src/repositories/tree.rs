@@ -1033,9 +1033,9 @@ pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), O
     };
     let commit_node = CommitNode::new(repo, commit_node.get_opts())?;
     let store = repo.merkle_store();
-    let session = store.begin().map_err(Into::into)?;
+    let session = store.begin()?;
     p_write_tree(&session, node, &commit_node)?;
-    session.finish().map_err(Into::into)?;
+    session.finish()?;
     Ok(())
 }
 
@@ -1053,21 +1053,19 @@ fn p_write_tree<'a, N: TMerkleTreeNode, S: MerkleWriteSession<'a>>(
 ) -> Result<(), OxenError> {
     let parent_id = node.parent_id;
 
-    let mut ns = session
-        .create_node(node_impl, parent_id)
-        .map_err(Into::into)?;
+    let mut ns = session.create_node(node_impl, parent_id)?;
     for child in &node.children {
         match &child.node {
             EMerkleTreeNode::VNode(vnode) => {
-                ns.add_child(vnode).map_err(Into::into)?;
+                ns.add_child(vnode)?;
                 p_write_tree(session, child, vnode)?;
             }
             EMerkleTreeNode::Directory(dir_node) => {
-                ns.add_child(dir_node).map_err(Into::into)?;
+                ns.add_child(dir_node)?;
                 p_write_tree(session, child, dir_node)?;
             }
             EMerkleTreeNode::File(file_node) => {
-                ns.add_child(file_node).map_err(Into::into)?;
+                ns.add_child(file_node)?;
             }
             node => {
                 // TODO: change this to `return Err(OxenError::DisallowedNodeWrite(node.clone()));`
@@ -1075,7 +1073,7 @@ fn p_write_tree<'a, N: TMerkleTreeNode, S: MerkleWriteSession<'a>>(
             }
         }
     }
-    ns.finish().map_err(Into::into)?;
+    ns.finish()?;
     Ok(())
 }
 

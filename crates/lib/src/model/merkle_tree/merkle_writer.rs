@@ -9,7 +9,7 @@ pub trait MerkleWriter: Send + Sync {
     /// (e.g. [`MerkleDbError`] for the [`FileBackend`]). The `Into<OxenError>`
     /// bound on the associated type propagates as an implied bound at every
     /// use site, so generic callers can convert errors via
-    /// `.map_err(Into::into)?` with no additional `where` clauses.
+    /// `?` with no additional `where` clauses.
     type Error: std::error::Error + Into<OxenError>;
 
     /// The write session that manages writing multiple nodes to the store.

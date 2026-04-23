@@ -290,8 +290,8 @@ pub fn commit_dir_entries_with_parents(
     }
 
     let store = repo.merkle_store();
-    let session = store.begin().map_err(Into::into)?;
-    let mut commit_ns = session.create_node(&node, parent_id).map_err(Into::into)?;
+    let session = store.begin()?;
+    let mut commit_ns = session.create_node(&node, parent_id)?;
     write_commit_entries(
         repo,
         commit_id,
@@ -301,8 +301,8 @@ pub fn commit_dir_entries_with_parents(
         &dir_hashes,
         &vnode_entries,
     )?;
-    commit_ns.finish().map_err(Into::into)?;
-    session.finish().map_err(Into::into)?;
+    commit_ns.finish()?;
+    session.finish()?;
     commit_progress_bar.finish_and_clear();
 
     Ok(node.to_commit())
@@ -390,8 +390,8 @@ pub fn commit_dir_entries_new(
     }
 
     let store = repo.merkle_store();
-    let session = store.begin().map_err(Into::into)?;
-    let mut commit_ns = session.create_node(&node, parent_id).map_err(Into::into)?;
+    let session = store.begin()?;
+    let mut commit_ns = session.create_node(&node, parent_id)?;
 
     write_commit_entries(
         repo,
@@ -403,8 +403,8 @@ pub fn commit_dir_entries_new(
         &vnode_entries,
     )?;
 
-    commit_ns.finish().map_err(Into::into)?;
-    session.finish().map_err(Into::into)?;
+    commit_ns.finish()?;
+    session.finish()?;
     commit_progress_bar.finish_and_clear();
 
     // Remove all the directories that are staged for removal
@@ -509,8 +509,8 @@ pub fn commit_dir_entries(
     }
 
     let store = repo.merkle_store();
-    let session = store.begin().map_err(Into::into)?;
-    let mut commit_ns = session.create_node(&node, None).map_err(Into::into)?;
+    let session = store.begin()?;
+    let mut commit_ns = session.create_node(&node, None)?;
     write_commit_entries(
         repo,
         commit_id,
@@ -520,8 +520,8 @@ pub fn commit_dir_entries(
         &dir_hashes,
         &vnode_entries,
     )?;
-    commit_ns.finish().map_err(Into::into)?;
-    session.finish().map_err(Into::into)?;
+    commit_ns.finish()?;
+    session.finish()?;
     commit_progress_bar.finish_and_clear();
 
     // Remove all the directories that are staged for removal
@@ -813,7 +813,7 @@ fn write_commit_entries<'a, S: MerkleWriteSession<'a>>(
     let mut total_written = 0;
     let root_path = PathBuf::from("");
     let dir_node = compute_dir_node(repo, commit_id, entries, dir_hashes, &root_path)?;
-    commit_ns.add_child(&dir_node).map_err(Into::into)?;
+    commit_ns.add_child(&dir_node)?;
     total_written += 1;
 
     str_val_db::put(
@@ -821,9 +821,7 @@ fn write_commit_entries<'a, S: MerkleWriteSession<'a>>(
         root_path.to_str().unwrap(),
         &dir_node.hash().to_string(),
     )?;
-    let mut dir_ns = session
-        .create_node(&dir_node, Some(commit_id))
-        .map_err(Into::into)?;
+    let mut dir_ns = session.create_node(&dir_node, Some(commit_id))?;
     r_create_dir_node(
         repo,
         session,
@@ -835,7 +833,7 @@ fn write_commit_entries<'a, S: MerkleWriteSession<'a>>(
         root_path,
         &mut total_written,
     )?;
-    dir_ns.finish().map_err(Into::into)?;
+    dir_ns.finish()?;
 
     // The dir_hash_db was pre-populated from the previous commit, so
     // removed directories still have stale entries that must be deleted;
@@ -899,13 +897,11 @@ fn r_create_dir_node<'a, S: MerkleWriteSession<'a>>(
         // Capture the parent's hash before we reborrow `maybe_parent_ns` mutably.
         let parent_id_for_vnode = maybe_parent_ns.as_deref().map(|ns| *ns.node_id());
         if let Some(parent_ns) = maybe_parent_ns.as_deref_mut() {
-            parent_ns.add_child(&vnode_obj).map_err(Into::into)?;
+            parent_ns.add_child(&vnode_obj)?;
             *total_written += 1;
         }
 
-        let mut vnode_ns = session
-            .create_node(&vnode_obj, parent_id_for_vnode)
-            .map_err(Into::into)?;
+        let mut vnode_ns = session.create_node(&vnode_obj, parent_id_for_vnode)?;
         for entry in vnode.entries.iter() {
             log::trace!("Processing entry {} in vnode {}", entry.node, vnode.id);
             match &entry.node.node {
@@ -916,12 +912,10 @@ fn r_create_dir_node<'a, S: MerkleWriteSession<'a>>(
                         let dir_node =
                             compute_dir_node(repo, commit_id, entries, dir_hashes, &dir_path)?;
 
-                        vnode_ns.add_child(&dir_node).map_err(Into::into)?;
+                        vnode_ns.add_child(&dir_node)?;
                         *total_written += 1;
 
-                        let mut child_ns = session
-                            .create_node(&dir_node, Some(vnode.id))
-                            .map_err(Into::into)?;
+                        let mut child_ns = session.create_node(&dir_node, Some(vnode.id))?;
                         r_create_dir_node(
                             repo,
                             session,
@@ -933,7 +927,7 @@ fn r_create_dir_node<'a, S: MerkleWriteSession<'a>>(
                             &dir_path,
                             total_written,
                         )?;
-                        child_ns.finish().map_err(Into::into)?;
+                        child_ns.finish()?;
 
                         dir_node
                     } else {
@@ -948,7 +942,7 @@ fn r_create_dir_node<'a, S: MerkleWriteSession<'a>>(
                             continue;
                         };
                         let dir_node = old_dir_node.dir()?;
-                        vnode_ns.add_child(&dir_node).map_err(Into::into)?;
+                        vnode_ns.add_child(&dir_node)?;
                         *total_written += 1;
                         dir_node
                     };
@@ -975,7 +969,7 @@ fn r_create_dir_node<'a, S: MerkleWriteSession<'a>>(
                     file_node.set_last_commit_id(&last_commit_id);
                     file_node.set_name(file_name);
 
-                    vnode_ns.add_child(&file_node).map_err(Into::into)?;
+                    vnode_ns.add_child(&file_node)?;
                     *total_written += 1;
                 }
                 _ => {
@@ -986,7 +980,7 @@ fn r_create_dir_node<'a, S: MerkleWriteSession<'a>>(
                 }
             }
         }
-        vnode_ns.finish().map_err(Into::into)?;
+        vnode_ns.finish()?;
     }
 
     log::debug!("Finished processing dir {path:?} total written {total_written} entries");

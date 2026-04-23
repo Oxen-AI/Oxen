@@ -141,13 +141,11 @@ fn run_on_commit(repository: &LocalRepository, commit: &Commit) -> Result<(), Ox
     let commit_node = CommitNode::from_commit(commit.clone());
     let old_store = old_repo.merkle_store();
     let new_store = new_repo.merkle_store();
-    let old_session = old_store.begin().map_err(Into::into)?;
-    let new_session = new_store.begin().map_err(Into::into)?;
-    let mut root_commit_ns = old_session
-        .create_node(&commit_node, root_node.parent_id)
-        .map_err(Into::into)?;
-    root_commit_ns.add_child(&dir_node).map_err(Into::into)?;
-    root_commit_ns.finish().map_err(Into::into)?;
+    let old_session = old_store.begin()?;
+    let new_session = new_store.begin()?;
+    let mut root_commit_ns = old_session.create_node(&commit_node, root_node.parent_id)?;
+    root_commit_ns.add_child(&dir_node)?;
+    root_commit_ns.finish()?;
 
     let current_path = Path::new("");
     rewrite_nodes(
@@ -158,8 +156,8 @@ fn run_on_commit(repository: &LocalRepository, commit: &Commit) -> Result<(), Ox
         &root_node,
         current_path,
     )?;
-    new_session.finish().map_err(Into::into)?;
-    old_session.finish().map_err(Into::into)?;
+    new_session.finish()?;
+    old_session.finish()?;
 
     // println!("new tree for commit {}", commit);
     // repositories::tree::print_tree(&new_repo, commit)?;
@@ -201,9 +199,7 @@ fn rewrite_nodes<'a, OldS: MerkleWriteSession<'a>, NewS: MerkleWriteSession<'a>>
                 let mut dir_node_opts = dir.get_opts();
                 dir_node_opts.num_entries = total_children as u64;
                 let dir = DirNode::new(new_repo, dir_node_opts)?;
-                let mut dir_ns = old_session
-                    .create_node(&dir, node.parent_id)
-                    .map_err(Into::into)?;
+                let mut dir_ns = old_session.create_node(&dir, node.parent_id)?;
 
                 // log::debug!(
                 //     "rewrite_nodes {} VNodes for {} children in {} with vnode size {}",
@@ -263,33 +259,31 @@ fn rewrite_nodes<'a, OldS: MerkleWriteSession<'a>, NewS: MerkleWriteSession<'a>>
                         num_entries: entries.len() as u64,
                     };
                     let vnode_obj = VNode::new(new_repo, opts)?;
-                    dir_ns.add_child(&vnode_obj).map_err(Into::into)?;
+                    dir_ns.add_child(&vnode_obj)?;
 
                     let dir_ns_id = *dir_ns.node_id();
-                    let mut vnode_ns = new_session
-                        .create_node(&vnode_obj, Some(dir_ns_id))
-                        .map_err(Into::into)?;
+                    let mut vnode_ns = new_session.create_node(&vnode_obj, Some(dir_ns_id))?;
 
                     for entry in entries {
                         match &entry.node {
                             EMerkleTreeNode::File(f_node) => {
-                                vnode_ns.add_child(f_node).map_err(Into::into)?;
+                                vnode_ns.add_child(f_node)?;
                             }
                             EMerkleTreeNode::Directory(d_node) => {
                                 let mut d_node_opts = d_node.get_opts();
                                 let d_children = repositories::tree::list_files_and_folders(entry)?;
                                 d_node_opts.num_entries = d_children.len() as u64;
                                 let d_node = DirNode::new(new_repo, d_node_opts)?;
-                                vnode_ns.add_child(&d_node).map_err(Into::into)?;
+                                vnode_ns.add_child(&d_node)?;
                             }
                             _ => {
                                 panic!("Shouldn't reach here.")
                             }
                         }
                     }
-                    vnode_ns.finish().map_err(Into::into)?;
+                    vnode_ns.finish()?;
                 }
-                dir_ns.finish().map_err(Into::into)?;
+                dir_ns.finish()?;
 
                 rewrite_nodes(
                     old_repo,
