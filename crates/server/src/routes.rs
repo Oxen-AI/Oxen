@@ -34,6 +34,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                 .service(services::export())
                 .service(services::file())
                 .service(services::fork())
+                .service(services::fsck())
                 .service(services::import())
                 .service(services::merge())
                 .service(services::meta())

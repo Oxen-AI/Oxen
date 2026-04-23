@@ -365,6 +365,11 @@ pub enum OxenError {
     #[error("{0}")]
     JoinError(#[from] JoinError),
 
+    /// A synchronization primitive (Mutex/RwLock) was found poisoned because a thread panicked
+    /// while holding it. Indicates a bug; should not occur in normal operation.
+    #[error("Lock poisoned: {0}")]
+    LockPoisoned(StringError),
+
     #[error(
         "Cannot push commit '{commit_id}' (\"{commit_message}\"): file data is not available locally.\nThis usually means the repository was cloned without full history.\n{help}"
     )]

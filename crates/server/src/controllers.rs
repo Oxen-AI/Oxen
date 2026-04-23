@@ -8,6 +8,7 @@ pub mod entries;
 pub mod export;
 pub mod file;
 pub mod fork;
+pub mod fsck;
 pub mod health;
 pub mod import;
 pub mod merger;
