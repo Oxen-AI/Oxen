@@ -256,7 +256,10 @@ pub fn create_empty_commit(
     repo: &LocalRepository,
     branch_name: impl AsRef<str>,
     new_commit: &Commit,
-) -> Result<Commit, OxenError> {
+) -> Result<Commit, OxenError>
+where
+    OxenError: From<R::Error>,
+{
     let branch_name = branch_name.as_ref();
     let Some(existing_commit) = repositories::revisions::get(repo, branch_name)? else {
         return Err(OxenError::RevisionNotFound(branch_name.into()));
@@ -286,8 +289,10 @@ pub fn create_empty_commit(
 
     let parent_id = Some(existing_node.hash);
     let store = repo.merkle_store();
-    let session = store.begin()?;
-    let mut commit_ns = session.create_node(&commit_node, parent_id)?;
+    let session = store.begin().map_err(Into::into)?;
+    let mut commit_ns = session
+        .create_node(&commit_node, parent_id)
+        .map_err(Into::into)?;
     // There should always be one child, the root directory
     let dir_node = existing_node.children.first().unwrap().dir()?;
     commit_ns.add_child(&dir_node)?;
@@ -370,11 +375,13 @@ pub fn create_initial_commit(
 
     // Open the commit write session and add the root directory
     let store = repo.merkle_store();
-    let session = store.begin()?;
-    let mut commit_ns = session.create_node(&commit_node, None)?;
-    commit_ns.add_child(&dir_node)?;
-    commit_ns.finish()?;
-    session.finish()?;
+    let session = store.begin().map_err(Into::into)?;
+    let mut commit_ns = session
+        .create_node(&commit_node, None)
+        .map_err(Into::into)?;
+    commit_ns.add_child(&dir_node).map_err(Into::into)?;
+    commit_ns.finish().map_err(Into::into)?;
+    session.finish().map_err(Into::into)?;
 
     // Initialize the dir_hash_db with the root directory hash
     let commit_id_string = commit_id.to_string();

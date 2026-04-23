@@ -191,15 +191,24 @@ mod tests {
             // Scope the session so Drop runs at its end.
             {
                 let store = repo.merkle_store();
-                let session = store.begin()?;
-                let mut ns = session.create_node(&commit, None)?;
-                ns.add_child(&dir)?;
+                let session = store.begin().expect("Could not begin session");
+                let mut ns = session
+                    .create_node(&commit, None)
+                    .expect("Could not begin node session");
+                ns.add_child(&dir)
+                    .expect("Could not add a child to the node session");
                 // Deliberately DO NOT call ns.finish() or session.finish().
             }
 
             let store = repo.merkle_store();
-            assert!(store.exists(&commit_hash)?);
-            let children = store.get_children(&commit_hash)?;
+            assert!(
+                store
+                    .exists(&commit_hash)
+                    .expect("commit to exist after being written")
+            );
+            let children = store
+                .get_children(&commit_hash)
+                .expect("children to exist after being written");
             assert_eq!(children.len(), 1, "expected the single dir child");
             Ok(())
         })

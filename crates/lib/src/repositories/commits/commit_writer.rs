@@ -290,8 +290,8 @@ pub fn commit_dir_entries_with_parents(
     }
 
     let store = repo.merkle_store();
-    let session = store.begin()?;
-    let mut commit_ns = session.create_node(&node, parent_id)?;
+    let session = store.begin().map_err(Into::into)?;
+    let mut commit_ns = session.create_node(&node, parent_id).map_err(Into::into)?;
     write_commit_entries(
         repo,
         commit_id,
@@ -301,8 +301,8 @@ pub fn commit_dir_entries_with_parents(
         &dir_hashes,
         &vnode_entries,
     )?;
-    commit_ns.finish()?;
-    session.finish()?;
+    commit_ns.finish().map_err(Into::into)?;
+    session.finish().map_err(Into::into)?;
     commit_progress_bar.finish_and_clear();
 
     Ok(node.to_commit())
@@ -390,8 +390,8 @@ pub fn commit_dir_entries_new(
     }
 
     let store = repo.merkle_store();
-    let session = store.begin()?;
-    let mut commit_ns = session.create_node(&node, parent_id)?;
+    let session = store.begin().map_err(Into::into)?;
+    let mut commit_ns = session.create_node(&node, parent_id).map_err(Into::into)?;
 
     write_commit_entries(
         repo,
@@ -403,8 +403,8 @@ pub fn commit_dir_entries_new(
         &vnode_entries,
     )?;
 
-    commit_ns.finish()?;
-    session.finish()?;
+    commit_ns.finish().map_err(Into::into)?;
+    session.finish().map_err(Into::into)?;
     commit_progress_bar.finish_and_clear();
 
     // Remove all the directories that are staged for removal
@@ -509,8 +509,8 @@ pub fn commit_dir_entries(
     }
 
     let store = repo.merkle_store();
-    let session = store.begin()?;
-    let mut commit_ns = session.create_node(&node, None)?;
+    let session = store.begin().map_err(Into::into)?;
+    let mut commit_ns = session.create_node(&node, None).map_err(Into::into)?;
     write_commit_entries(
         repo,
         commit_id,
@@ -520,8 +520,8 @@ pub fn commit_dir_entries(
         &dir_hashes,
         &vnode_entries,
     )?;
-    commit_ns.finish()?;
-    session.finish()?;
+    commit_ns.finish().map_err(Into::into)?;
+    session.finish().map_err(Into::into)?;
     commit_progress_bar.finish_and_clear();
 
     // Remove all the directories that are staged for removal

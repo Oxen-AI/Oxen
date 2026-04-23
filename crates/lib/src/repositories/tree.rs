@@ -1033,9 +1033,9 @@ pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), O
     };
     let commit_node = CommitNode::new(repo, commit_node.get_opts())?;
     let store = repo.merkle_store();
-    let session = store.begin()?;
+    let session = store.begin().map_err(Into::into)?;
     p_write_tree(&session, node, &commit_node)?;
-    session.finish()?;
+    session.finish().map_err(Into::into)?;
     Ok(())
 }
 

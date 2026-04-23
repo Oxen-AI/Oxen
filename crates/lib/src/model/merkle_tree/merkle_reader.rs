@@ -10,9 +10,7 @@ pub trait MerkleReader: Send + Sync {
     ///
     /// Backends may use whichever error type is natural for their storage
     /// (e.g. `MerkleDbError` for the file backend). The `Into<OxenError>`
-    /// bound on the associated type lets generic callers convert errors via
-    /// `.map_err(Into::into)?` without adding any `where` clauses of their own
-    /// — the bound propagates as an implied bound at every use site.
+    /// bound lets callers that return `Result<_, OxenError>` use `?` directly.
     type Error: std::error::Error + Into<OxenError>;
 
     /// True if there is some node with the given hash. False otherwise.

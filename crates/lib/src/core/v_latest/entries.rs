@@ -538,6 +538,10 @@ pub fn list_for_commit(
         .collect())
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("update_metadata failed: {0}")]
+pub struct UpdateError(String);
+
 pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<(), OxenError> {
     let commit = repositories::revisions::get(repo, revision.as_ref())?
         .ok_or_else(|| OxenError::RevisionNotFound(revision.as_ref().to_string().into()))?;
@@ -549,9 +553,9 @@ pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Res
 
     // One merkle write session covers every node written during the traversal.
     let store = repo.merkle_store();
-    let session = store.begin()?;
+    let session = store.begin().map_err(Into::into)?;
     traverse_and_update_sizes_and_counts(&session, &mut node, &mut num_bytes)?;
-    session.finish()?;
+    session.finish().map_err(Into::into)?;
 
     Ok(())
 }
@@ -630,6 +634,7 @@ fn traverse_and_update_sizes_and_counts<'a, S: MerkleWriteSession<'a>>(
                 .or_insert(0) += file_node.num_bytes();
         }
         _ => {
+            // TODO: change to a structured error variant
             return Err(OxenError::basic_str(format!(
                 "compute_dir_node found unexpected node type: {:?}",
                 node.node
@@ -679,6 +684,7 @@ fn add_children_to_session<S: NodeWriteSession>(
                 ns.add_child(vnode).map_err(Into::into)?;
             }
             _ => {
+                // TODO: change to a structured error variant
                 return Err(OxenError::basic_str("Unsupported node type"));
             }
         }

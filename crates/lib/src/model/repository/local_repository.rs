@@ -5,6 +5,7 @@ use crate::core::db::merkle_node::FileBackend;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
+use crate::model::merkle_tree::MerkleStore;
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
 use crate::opts::StorageOpts;
 use crate::storage::{StorageConfig, VersionStore, create_version_store};
@@ -104,7 +105,7 @@ impl LocalRepository {
     /// Today this always returns the file-based backend. When the LMDB
     /// backend lands, this method will be updated to dispatch based on an
     /// on-disk identifier; callers won't need to change.
-    pub fn merkle_store(&self) -> FileBackend<'_> {
+    pub fn merkle_store(&self) -> impl MerkleStore {
         FileBackend::new(self)
     }
 

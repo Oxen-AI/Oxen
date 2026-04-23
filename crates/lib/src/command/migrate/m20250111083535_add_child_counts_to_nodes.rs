@@ -141,11 +141,13 @@ fn run_on_commit(repository: &LocalRepository, commit: &Commit) -> Result<(), Ox
     let commit_node = CommitNode::from_commit(commit.clone());
     let old_store = old_repo.merkle_store();
     let new_store = new_repo.merkle_store();
-    let old_session = old_store.begin()?;
-    let new_session = new_store.begin()?;
-    let mut root_commit_ns = old_session.create_node(&commit_node, root_node.parent_id)?;
-    root_commit_ns.add_child(&dir_node)?;
-    root_commit_ns.finish()?;
+    let old_session = old_store.begin().map_err(Into::into)?;
+    let new_session = new_store.begin().map_err(Into::into)?;
+    let mut root_commit_ns = old_session
+        .create_node(&commit_node, root_node.parent_id)
+        .map_err(Into::into)?;
+    root_commit_ns.add_child(&dir_node).map_err(Into::into)?;
+    root_commit_ns.finish().map_err(Into::into)?;
 
     let current_path = Path::new("");
     rewrite_nodes(
@@ -156,8 +158,8 @@ fn run_on_commit(repository: &LocalRepository, commit: &Commit) -> Result<(), Ox
         &root_node,
         current_path,
     )?;
-    new_session.finish()?;
-    old_session.finish()?;
+    new_session.finish().map_err(Into::into)?;
+    old_session.finish().map_err(Into::into)?;
 
     // println!("new tree for commit {}", commit);
     // repositories::tree::print_tree(&new_repo, commit)?;

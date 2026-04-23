@@ -43,7 +43,9 @@ impl MerkleTreeNode {
     fn from_hash_uncached(repo: &LocalRepository, hash: &MerkleHash) -> Result<Self, OxenError> {
         let record = repo
             .merkle_store()
-            .get_node(hash)?
+            .get_node(hash)
+            .map_err(Into::into)?
+            // TODO: use a structured error variant
             .ok_or_else(|| OxenError::basic_str(format!("Merkle node not found: {hash}")))?;
         let parent_id = record.parent_id().copied();
         Ok(MerkleTreeNode {
@@ -81,11 +83,11 @@ impl MerkleTreeNode {
         // We don't return an error for missing-node here because there are some situations
         // where we won't have all the node files, e.g. when working in a subtree clone.
         // Parse/IO errors from an existing node DO still propagate.
-        if !store.exists(hash)? {
+        if !store.exists(hash).map_err(Into::into)? {
             log::warn!("no child node db: {hash:?}");
             return Ok(Vec::new());
         }
-        Ok(store.get_children(hash)?)
+        Ok(store.get_children(hash).map_err(Into::into)?)
     }
 
     /// Check if the node is a leaf node (i.e. it has no children)
