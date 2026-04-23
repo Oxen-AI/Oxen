@@ -1,5 +1,7 @@
 use rocksdb::{DBWithThreadMode, SingleThreaded, WriteBatch};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use crate::constants::STAGED_DIR;
 use crate::core::db::{self};
@@ -10,7 +12,6 @@ use crate::opts::RestoreOpts;
 use crate::repositories;
 use crate::storage::version_store::VersionStore;
 use crate::util;
-use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct FileToRestore {
@@ -351,6 +352,14 @@ pub fn should_restore_file(
     Ok(true)
 }
 
+fn abs_duration_diff(a: SystemTime, b: SystemTime) -> Duration {
+    if a >= b {
+        a.duration_since(b).unwrap_or_default()
+    } else {
+        b.duration_since(a).unwrap_or_default()
+    }
+}
+
 pub async fn restore_file(
     repo: &LocalRepository,
     file_node: &FileNode,
@@ -363,6 +372,23 @@ pub async fn restore_file(
     let last_modified_nanoseconds = file_node.last_modified_nanoseconds();
 
     let working_path = repo.path.join(path);
+    let expected_mtime = SystemTime::UNIX_EPOCH
+        + Duration::from_secs(last_modified_seconds as u64)
+        + Duration::from_nanos(last_modified_nanoseconds as u64);
+
+    // Fast path: if the on-disk file already matches the target by size + mtime (within
+    // the filesystem's measured rounding), skip the copy entirely. Mirrors git's "stat
+    // index" heuristic. Tolerance comes from the version store's one-time-per-repo probe
+    // so we don't hard-code per-platform values and we catch cross-cutting cases like a
+    // FAT USB stick mounted on Linux.
+    if let Ok(meta) = tokio::fs::metadata(&working_path).await
+        && meta.len() == file_node.num_bytes()
+        && let Ok(actual_mtime) = meta.modified()
+        && abs_duration_diff(actual_mtime, expected_mtime) <= repo.mtime_tolerance().await
+    {
+        return Ok(());
+    }
+
     let parent = working_path.parent().unwrap();
     util::fs::create_dir_all(parent)?;
 
@@ -372,12 +398,9 @@ pub async fn restore_file(
         .copy_version_to_path(&hash_str, &working_path)
         .await?;
 
-    let last_modified = std::time::SystemTime::UNIX_EPOCH
-        + std::time::Duration::from_secs(last_modified_seconds as u64)
-        + std::time::Duration::from_nanos(last_modified_nanoseconds as u64);
     filetime::set_file_mtime(
         &working_path,
-        filetime::FileTime::from_system_time(last_modified),
+        filetime::FileTime::from_system_time(expected_mtime),
     )?;
     Ok(())
 }

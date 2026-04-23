@@ -13,8 +13,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, SystemTime};
 use utoipa::ToSchema;
+
+/// Per-process cache of mtime round-trip tolerance, keyed by repo path. Probed at most
+/// once per repo per process via `probe_mtime_drift`.
+static MTIME_TOLERANCE_CACHE: LazyLock<Mutex<HashMap<PathBuf, Duration>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct LocalRepository {
@@ -508,6 +514,68 @@ impl LocalRepository {
             util::fs::remove_file(&shallow_flag_path)?;
         }
         Ok(())
+    }
+
+    /// Tolerance to allow when comparing an on-disk file's mtime against a value recorded
+    /// on a merkle-tree node (used by `restore`'s fast-path skip check, and available for
+    /// any other caller that needs to do mtime equality against a recorded value). The
+    /// working tree is always on the same filesystem as `.oxen/`, so we probe inside
+    /// `.oxen/` — same filesystem, guaranteed writable for a local repo, and already
+    /// hidden from `oxen status`.
+    ///
+    /// Returns `Duration::ZERO` if the filesystem round-trips nanosecond-precision
+    /// mtimes exactly (ext4 / APFS / NTFS), `Duration::from_secs(2)` if any drift is
+    /// detected (conservative upper bound covering FAT/exFAT's 2s rounding, HFS+'s 1s,
+    /// coarse NFS mounts, etc. — one probe isn't authoritative about the true max drift,
+    /// so we pick a safe ceiling). I/O errors also return `ZERO`.
+    ///
+    /// Probed at most once per repo per process; the result is memoized in a module-level
+    /// `HashMap` keyed by `self.path`.
+    pub async fn mtime_tolerance(&self) -> Duration {
+        if let Some(&t) = MTIME_TOLERANCE_CACHE
+            .lock()
+            .expect("mtime tolerance cache poisoned")
+            .get(&self.path)
+        {
+            return t;
+        }
+        let t = probe_mtime_drift(&self.path.join(constants::OXEN_HIDDEN_DIR)).await;
+        MTIME_TOLERANCE_CACHE
+            .lock()
+            .expect("mtime tolerance cache poisoned")
+            .insert(self.path.clone(), t);
+        t
+    }
+}
+
+/// Write a probe file inside `probe_dir`, set its mtime to a non-zero-nanosecond value,
+/// read the mtime back, and return a conservative tolerance. See `LocalRepository::mtime_tolerance`
+/// for the policy and rationale.
+async fn probe_mtime_drift(probe_dir: &Path) -> Duration {
+    let probe_path = probe_dir.join(".oxen-mtime-probe");
+    if tokio::fs::write(&probe_path, b"").await.is_err() {
+        return Duration::ZERO;
+    }
+    // 1970-01-01 00:00:01.123456789 — non-zero nanoseconds so any rounding is measurable.
+    let target = SystemTime::UNIX_EPOCH + Duration::new(1, 123_456_789);
+    let set_ok =
+        filetime::set_file_mtime(&probe_path, filetime::FileTime::from_system_time(target)).is_ok();
+    let drift_detected = if set_ok {
+        match tokio::fs::metadata(&probe_path).await {
+            Ok(meta) => meta
+                .modified()
+                .map(|actual| actual != target)
+                .unwrap_or(false),
+            Err(_) => false,
+        }
+    } else {
+        false
+    };
+    let _ = tokio::fs::remove_file(&probe_path).await;
+    if drift_detected {
+        Duration::from_secs(2)
+    } else {
+        Duration::ZERO
     }
 }
 

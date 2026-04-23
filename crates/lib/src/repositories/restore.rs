@@ -349,6 +349,92 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_restore_fast_path_skips_when_mtime_and_size_match() -> Result<(), OxenError> {
+        // `restore_file` has a fast path that skips the copy when the on-disk file already
+        // matches the target by size + mtime (within the filesystem's measured rounding
+        // tolerance). We can observe that the fast path fired by setting up the state it
+        // checks for (matching size + matching mtime) with deliberately different content
+        // on disk, then asserting the content isn't rewritten.
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            let filename = Path::new("annotations")
+                .join("train")
+                .join("annotations.txt");
+            let path = repo.path.join(&filename);
+
+            // Step 1: normal restore, capture the expected mtime.
+            repositories::restore::restore(&repo, RestoreOpts::from_path(&filename)).await?;
+            let meta = std::fs::metadata(&path)?;
+            let expected_mtime = meta.modified()?;
+            let size = meta.len();
+
+            // Step 2: overwrite with same-length garbage (distinct bytes).
+            let garbage: Vec<u8> = (0..size).map(|_| b'X').collect();
+            std::fs::write(&path, &garbage)?;
+
+            // Step 3: reset mtime to the recorded value.
+            filetime::set_file_mtime(&path, filetime::FileTime::from_system_time(expected_mtime))?;
+
+            // Step 4: restore again — fast path should skip the copy.
+            repositories::restore::restore(&repo, RestoreOpts::from_path(&filename)).await?;
+
+            // Step 5: garbage should still be there.
+            let after = std::fs::read(&path).expect("read back after fast-path restore");
+            assert_eq!(
+                after, garbage,
+                "fast path should have skipped the copy, leaving garbage in place"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_restore_overwrites_when_mtime_differs_but_size_matches() -> Result<(), OxenError>
+    {
+        // Complement to the fast-path test above: if mtime doesn't match, restore should
+        // fall through to the full copy and fix the content even when size happens to match.
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            let filename = Path::new("annotations")
+                .join("train")
+                .join("annotations.txt");
+            let path = repo.path.join(&filename);
+
+            let og_contents = util::fs::read_from_path(&path)?;
+            let og_meta = std::fs::metadata(&path)?;
+            let size = og_meta.len();
+            let recorded_mtime = og_meta.modified()?;
+
+            // Overwrite with same-length garbage.
+            let garbage: Vec<u8> = (0..size).map(|_| b'X').collect();
+            std::fs::write(&path, &garbage)?;
+
+            // Set the mtime explicitly outside the fast-path tolerance window so the
+            // fast path can't fire even on coarse filesystems. Without this, a coarse FS
+            // (e.g. FAT/exFAT or some NFS mounts) might round the post-write "now" back
+            // to the same second as the recorded mtime, leaving the diff inside the 2s
+            // tolerance and making the test flaky.
+            let tolerance = repo.mtime_tolerance().await;
+            let outside_tolerance = recorded_mtime + tolerance + std::time::Duration::from_secs(1);
+            filetime::set_file_mtime(
+                &path,
+                filetime::FileTime::from_system_time(outside_tolerance),
+            )?;
+
+            repositories::restore::restore(&repo, RestoreOpts::from_path(&filename)).await?;
+
+            let after = util::fs::read_from_path(&path)?;
+            assert_eq!(
+                og_contents, after,
+                "restore should overwrite when mtime differs, even if size matches"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_restore_staged_file() -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let bbox_file = Path::new("annotations")
