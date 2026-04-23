@@ -86,6 +86,7 @@ pub fn rebuild_dir_hash_db(
 
     // 1. Write every (path, hash) into a fresh db at the temp location. Done outside the
     //    exclusive-access block so we don't hold the slot lock while doing RocksDB writes.
+    let mut successful_writes: usize = 0;
     {
         let opts = db::key_val::opts::default();
         let new_db: DBWithThreadMode<SingleThreaded> =
@@ -96,6 +97,7 @@ pub fn rebuild_dir_hash_db(
                 continue;
             };
             str_val_db::put(&new_db, path_str, &hash.to_string())?;
+            successful_writes += 1;
         }
         // Drop the handle before renaming so RocksDB releases file locks.
     }
@@ -124,7 +126,7 @@ pub fn rebuild_dir_hash_db(
 
     Ok(RebuildDirHashesStats {
         commit_id: commit.id.clone(),
-        dirs_written: pairs.len(),
+        dirs_written: successful_writes,
     })
 }
 
