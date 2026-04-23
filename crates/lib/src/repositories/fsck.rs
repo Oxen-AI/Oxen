@@ -282,19 +282,26 @@ mod tests {
                 "expected dir_with_children to find {child_rel:?} on a healthy repo"
             );
 
-            // Corrupt the dir_hash_db by removing the entry directly.
+            // Corrupt the dir_hash_db by removing the entry directly. Do it under
+            // `with_entry_evicted` so the cached read-only handle is dropped before our RW open,
+            // and no reader can open a stale snapshot between our delete and the next read. On
+            // Windows the interleaved RW/RO behavior is less forgiving than on Linux, so the
+            // extra sequencing matters.
             let db_path =
                 crate::core::db::dir_hashes::dir_hashes_db::dir_hash_db_path_from_commit_id(
                     &repo, &commit.id,
                 );
-            {
-                let opts = db::key_val::opts::default();
-                let db: DBWithThreadMode<SingleThreaded> =
-                    DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?;
-                str_val_db::delete(&db, child_rel.to_str().unwrap())?;
-            }
-            // Evict the LRU so the next read reopens from disk.
-            crate::core::db::dir_hashes::dir_hashes_db::remove_from_cache_with_children(&db_path)?;
+            crate::core::db::dir_hashes::dir_hashes_db::with_entry_evicted(
+                &repo,
+                &commit.id,
+                || {
+                    let opts = db::key_val::opts::default();
+                    let db: DBWithThreadMode<SingleThreaded> =
+                        DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?;
+                    str_val_db::delete(&db, child_rel.to_str().unwrap())?;
+                    Ok(())
+                },
+            )?;
 
             // Now the lookup should miss, reproducing the production symptom.
             let broken =
