@@ -153,11 +153,8 @@ fn collect_dir_hashes(root: &MerkleTreeNode) -> Vec<(PathBuf, MerkleHash)> {
 mod tests {
     use super::*;
 
-    use rocksdb::{DBWithThreadMode, SingleThreaded};
     use std::path::PathBuf;
 
-    use crate::core::db;
-    use crate::core::db::key_val::str_val_db;
     use crate::error::OxenError;
     use crate::repositories;
     use crate::storage::version_store::LocalFilePath;
@@ -282,33 +279,26 @@ mod tests {
                 "expected dir_with_children to find {child_rel:?} on a healthy repo"
             );
 
-            // Corrupt the dir_hash_db by removing the entry directly. Do it under
-            // `with_entry_evicted` so the cached read-only handle is dropped before our RW open,
-            // and no reader can open a stale snapshot between our delete and the next read. On
-            // Windows the interleaved RW/RO behavior is less forgiving than on Linux, so the
-            // extra sequencing matters.
+            // Simulate a corrupted dir_hash_db by evicting the cached handle and removing the
+            // on-disk directory entirely. This is a stronger corruption than production (where
+            // individual entries go missing) but exercises the same recovery path: the rebuild
+            // walks the merkle tree and writes a fresh dir_hash_db in place. We use this coarser
+            // corruption because removing a single entry requires opening a separate RW
+            // RocksDB on the same path — behavior that isn't reliably reflected in subsequent
+            // reads on Windows, even after evicting the cached handle.
             let db_path =
                 crate::core::db::dir_hashes::dir_hashes_db::dir_hash_db_path_from_commit_id(
                     &repo, &commit.id,
                 );
-            crate::core::db::dir_hashes::dir_hashes_db::with_entry_evicted(
-                &repo,
-                &commit.id,
-                || {
-                    let opts = db::key_val::opts::default();
-                    let db: DBWithThreadMode<SingleThreaded> =
-                        DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?;
-                    str_val_db::delete(&db, child_rel.to_str().unwrap())?;
-                    Ok(())
-                },
-            )?;
+            crate::core::db::dir_hashes::dir_hashes_db::remove_from_cache_with_children(&db_path)?;
+            util::fs::remove_dir_all(&db_path)?;
 
-            // Now the lookup should miss, reproducing the production symptom.
+            // With the db gone, path-based lookup now errors.
             let broken =
-                repositories::tree::get_dir_with_children(&repo, &commit, &child_rel, None)?;
+                repositories::tree::get_dir_with_children(&repo, &commit, &child_rel, None);
             assert!(
-                broken.is_none(),
-                "expected dir_with_children to miss after dir_hash_db entry was removed"
+                matches!(broken, Err(OxenError::PathDoesNotExist(_))),
+                "expected PathDoesNotExist after dir_hash_db was removed, got {broken:?}"
             );
 
             // Rebuild from the merkle tree.
