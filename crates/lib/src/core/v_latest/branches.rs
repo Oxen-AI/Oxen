@@ -13,6 +13,25 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// What to do when a checkout would overwrite a working-tree file that matches neither the source
+/// nor the target commit (i.e., the user has uncommitted changes or a crashed merge left the file
+/// in an intermediate state).
+#[derive(Debug, Clone, Copy)]
+pub enum OnConflict {
+    /// Return `OxenError::cannot_overwrite_files` and leave the working tree untouched.
+    Abort,
+    /// Discard the working-tree state and restore the target's version from the version store.
+    /// Only pass this when the user has explicitly asked to discard their working tree
+    /// (e.g. `oxen merge --abort`).
+    Overwrite,
+}
+
+impl OnConflict {
+    pub fn is_abort(self) -> bool {
+        matches!(self, Self::Abort)
+    }
+}
+
 struct CheckoutProgressBar {
     revision: String,
     progress: ProgressBar,
@@ -149,7 +168,7 @@ pub async fn checkout(
     let commit = repositories::commits::get_by_id(repo, &branch.commit_id)?
         .ok_or_else(|| OxenError::commit_id_does_not_exist(&branch.commit_id))?;
 
-    checkout_commit(repo, &commit, from_commit).await?;
+    checkout_commit(repo, &commit, from_commit, OnConflict::Abort).await?;
 
     Ok(())
 }
@@ -218,6 +237,7 @@ pub async fn checkout_subtrees(
             &mut partial_nodes,
             &mut hashes,
             depth,
+            OnConflict::Abort,
         )?;
 
         // If there are conflicts, return an error without restoring anything
@@ -229,7 +249,8 @@ pub async fn checkout_subtrees(
 
         if let Some(root) = from_root {
             log::debug!("Cleanup_removed_files");
-            cleanup_removed_files(repo, &root, &mut progress, &mut hashes).await?;
+            cleanup_removed_files(repo, &root, &mut progress, &mut hashes, OnConflict::Abort)
+                .await?;
         } else {
             log::debug!("head commit missing, no cleanup");
         }
@@ -269,8 +290,9 @@ pub async fn checkout_commit(
     repo: &LocalRepository,
     to_commit: &Commit,
     from_commit: &Option<Commit>,
+    on_conflict: OnConflict,
 ) -> Result<(), OxenError> {
-    log::debug!("checkout_commit to {to_commit} from {from_commit:?}");
+    log::debug!("checkout_commit to {to_commit} from {from_commit:?} on_conflict={on_conflict:?}");
 
     if let Some(from_commit) = from_commit
         && from_commit.id == to_commit.id
@@ -282,7 +304,7 @@ pub async fn checkout_commit(
     fetch::maybe_fetch_missing_entries(repo, to_commit).await?;
 
     // Set working repo to commit
-    set_working_repo_to_commit(repo, to_commit, from_commit).await?;
+    set_working_repo_to_commit(repo, to_commit, from_commit, on_conflict).await?;
 
     Ok(())
 }
@@ -291,10 +313,14 @@ pub async fn checkout_commit(
 // If a dir or a vnode is shared between the trees, then all files under it will also be shared exactly
 // However, shared file nodes may not always fall under the same dirs and vnodes between the trees
 // Hence, it's necessary to traverse all unique paths in each tree at least once
+/// Bring the working tree into line with `to_commit`, optionally using `maybe_from_commit` as a
+/// hint about the current on-disk state to skip unchanged files. `on_conflict` decides whether to
+/// abort or overwrite when the working tree has diverged from both commits (see [`OnConflict`]).
 pub async fn set_working_repo_to_commit(
     repo: &LocalRepository,
     to_commit: &Commit,
     maybe_from_commit: &Option<Commit>,
+    on_conflict: OnConflict,
 ) -> Result<(), OxenError> {
     let mut progress = CheckoutProgressBar::new(to_commit.id.clone());
 
@@ -353,6 +379,7 @@ pub async fn set_working_repo_to_commit(
         &mut partial_nodes,
         &mut hashes,
         i32::MAX,
+        on_conflict,
     )?;
 
     // If there are conflicts, return an error without restoring anything
@@ -365,7 +392,7 @@ pub async fn set_working_repo_to_commit(
     // Cleanup files if checking out fr om another commit
     if let Some(from_tree) = from_tree {
         log::debug!("Cleanup_removed_files");
-        cleanup_removed_files(repo, &from_tree, &mut progress, &mut hashes).await?;
+        cleanup_removed_files(repo, &from_tree, &mut progress, &mut hashes, on_conflict).await?;
     }
 
     for file_to_restore in results.files_to_restore {
@@ -388,6 +415,7 @@ async fn cleanup_removed_files(
     from_node: &MerkleTreeNode,
     progress: &mut CheckoutProgressBar,
     hashes: &mut CheckoutHashes,
+    on_conflict: OnConflict,
 ) -> Result<(), OxenError> {
     // Compare the nodes in the from tree to the nodes in the target tree
     // If the file node is in the from tree, but not in the target tree, remove it
@@ -404,6 +432,7 @@ async fn cleanup_removed_files(
         &mut files_to_store,
         &mut cannot_overwrite_entries,
         hashes,
+        on_conflict,
     )?;
 
     if !cannot_overwrite_entries.is_empty() {
@@ -439,6 +468,7 @@ async fn cleanup_removed_files(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn r_remove_if_not_in_target(
     repo: &LocalRepository,
     from_node: &MerkleTreeNode,
@@ -447,6 +477,7 @@ fn r_remove_if_not_in_target(
     files_to_store: &mut Vec<(MerkleHash, PathBuf)>,
     cannot_overwrite_entries: &mut Vec<PathBuf>,
     hashes: &mut CheckoutHashes,
+    on_conflict: OnConflict,
 ) -> Result<(), OxenError> {
     // Iterate through the from tree, removing files not present in the target tree
     match &from_node.node {
@@ -460,7 +491,8 @@ fn r_remove_if_not_in_target(
             if !hashes.seen_paths.contains(&file_path) {
                 // Before staging for removal, verify the path exists and isn't modified
                 if full_path.exists() {
-                    if util::fs::is_modified_from_node(&full_path, file_node)? {
+                    let modified_locally = util::fs::is_modified_from_node(&full_path, file_node)?;
+                    if on_conflict.is_abort() && modified_locally {
                         cannot_overwrite_entries.push(file_path.clone());
                     } else {
                         // If in remote mode, save file to version store before removing
@@ -509,6 +541,7 @@ fn r_remove_if_not_in_target(
                     files_to_store,
                     cannot_overwrite_entries,
                     hashes,
+                    on_conflict,
                 )?;
             }
             log::debug!(
@@ -533,6 +566,7 @@ fn r_remove_if_not_in_target(
                 files_to_store,
                 cannot_overwrite_entries,
                 hashes,
+                on_conflict,
             )?;
         }
         _ => {}
@@ -550,6 +584,7 @@ fn r_restore_missing_or_modified_files(
     partial_nodes: &mut HashMap<PathBuf, PartialNode>,
     hashes: &mut CheckoutHashes,
     depth: i32,
+    on_conflict: OnConflict,
 ) -> Result<(), OxenError> {
     // Recursively iterate through the tree, checking each file against the working repo
     // If the file is not in the working repo, restore it from the commit
@@ -575,7 +610,7 @@ fn r_restore_missing_or_modified_files(
                         // Same content in both trees - preserve the user's deletion
                         log::debug!("Preserving uncommitted deletion of file: {file_path:?}");
                         return Ok(());
-                    } else {
+                    } else if on_conflict.is_abort() {
                         // Different content - this is a conflict
                         log::debug!(
                             "Conflict: uncommitted deletion of modified file: {file_path:?}"
@@ -583,6 +618,7 @@ fn r_restore_missing_or_modified_files(
                         results.cannot_overwrite_entries.push(file_path.clone());
                         return Ok(());
                     }
+                    // Overwrite: fall through and restore the target's version anyway.
                 }
 
                 // File is new in the target commit, restore it
@@ -657,8 +693,21 @@ fn r_restore_missing_or_modified_files(
                     return Ok(());
                 }
 
-                // If neither hash matches, the file is modified in the working directory and cannot be overwritten
-                results.cannot_overwrite_entries.push(file_path.clone());
+                // Neither hash matches: the working file has been modified (or is mid-write,
+                // e.g. after a crashed merge). Normally a conflict — but with
+                // `OnConflict::Overwrite` (e.g. `oxen merge --abort`), discard the working state
+                // and restore the target's version.
+                match on_conflict {
+                    OnConflict::Abort => {
+                        results.cannot_overwrite_entries.push(file_path.clone());
+                    }
+                    OnConflict::Overwrite => {
+                        results.files_to_restore.push(FileToRestore {
+                            file_node: file_node.clone(),
+                            path: file_path.clone(),
+                        });
+                    }
+                }
                 progress.increment_modified();
             }
         }
@@ -707,6 +756,7 @@ fn r_restore_missing_or_modified_files(
                     partial_nodes,
                     hashes,
                     depth - 1,
+                    on_conflict,
                 )?;
             }
         }
@@ -722,6 +772,7 @@ fn r_restore_missing_or_modified_files(
                 partial_nodes,
                 hashes,
                 depth - 1,
+                on_conflict,
             )?;
         }
         _ => {

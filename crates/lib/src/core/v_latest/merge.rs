@@ -1,3 +1,4 @@
+use crate::constants;
 use crate::core::db;
 pub use crate::core::merge::entry_merge_conflict_db_reader::EntryMergeConflictDBReader;
 pub use crate::core::merge::node_merge_conflict_db_reader::NodeMergeConflictDBReader;
@@ -5,6 +6,7 @@ use crate::core::merge::node_merge_conflict_reader::NodeMergeConflictReader;
 use crate::core::merge::{db_path, node_merge_conflict_writer};
 use crate::core::refs::with_ref_manager;
 use crate::core::v_latest::add;
+use crate::core::v_latest::branches::OnConflict;
 use crate::core::v_latest::commits::{get_commit_or_head, list_between};
 use crate::core::v_latest::merge_marker;
 use crate::error::OxenError;
@@ -477,6 +479,67 @@ pub fn remove_conflict_path(repo: &LocalRepository, path: &Path) -> Result<(), O
     let path_str = path.to_str().unwrap();
     let key = path_str.as_bytes();
     merge_db.delete(key)?;
+    Ok(())
+}
+
+/// Abandon an interrupted or in-conflict merge, restoring the working tree to HEAD
+/// and clearing every piece of merge state on disk.
+///
+/// Returns `OxenError::NoMergeInProgress` if there is nothing to abort.
+pub async fn abort_merge(repo: &LocalRepository) -> Result<(), OxenError> {
+    let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
+    let merge_head_path = hidden_dir.join(constants::MERGE_HEAD_FILE);
+    let orig_head_path = hidden_dir.join(constants::ORIG_HEAD_FILE);
+    let conflict_db_path = db_path(repo);
+
+    // Gather the identifier of whatever target the in-progress merge was
+    // restoring toward. Either the MERGE_IN_PROGRESS marker (fast-forward
+    // mid-restore) or MERGE_HEAD (3-way conflict state) will tell us. If
+    // neither is present, there's no merge to abort. (The conflicts DB
+    // directory can exist as an empty rocksdb dir left over from a previous
+    // merge, so it is not a reliable "in progress" signal on its own.)
+    let target_id = match merge_marker::read(repo).await? {
+        Some(id) => Some(id),
+        None if merge_head_path.exists() => Some(
+            util::fs::read_from_path(&merge_head_path)?
+                .trim()
+                .to_string(),
+        ),
+        None => None,
+    };
+
+    if target_id.is_none() {
+        return Err(OxenError::NoMergeInProgress);
+    }
+
+    let head_commit = repositories::commits::head_commit(repo)?;
+
+    // If we know what the working tree was being pushed toward, synthesize that
+    // as the "from" commit so checkout_commit performs the reverse restore.
+    let from_commit = target_id
+        .as_deref()
+        .and_then(|id| repositories::commits::get_by_id(repo, id).ok().flatten());
+
+    repositories::branches::checkout_commit_from_commit(
+        repo,
+        &head_commit,
+        &from_commit,
+        OnConflict::Overwrite,
+    )
+    .await?;
+
+    merge_marker::clear(repo).await?;
+    if merge_head_path.exists() {
+        tokio::fs::remove_file(&merge_head_path).await?;
+    }
+    if orig_head_path.exists() {
+        tokio::fs::remove_file(&orig_head_path).await?;
+    }
+    if conflict_db_path.exists() {
+        tokio::fs::remove_dir_all(&conflict_db_path).await?;
+    }
+
+    println!("Merge aborted. HEAD is {}", head_commit.id);
     Ok(())
 }
 

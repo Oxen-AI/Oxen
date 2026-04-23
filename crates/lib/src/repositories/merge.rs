@@ -176,6 +176,15 @@ pub async fn merge_commit_into_base(
     }
 }
 
+/// Abandon an interrupted or in-conflict client-side merge. Clears `MERGE_IN_PROGRESS`,
+/// `MERGE_HEAD`, `ORIG_HEAD`, and the merge-conflicts DB, and restores the working tree to HEAD.
+pub async fn abort_merge(repo: &LocalRepository) -> Result<(), OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
+        _ => core::v_latest::merge::abort_merge(repo).await,
+    }
+}
+
 pub async fn merge_commit_into_base_on_branch(
     repo: &LocalRepository,
     merge_commit: &Commit,
@@ -2320,6 +2329,159 @@ mod tests {
             assert!(
                 !merge_marker::exists(&repo).await?,
                 "marker must be absent after a clean merge"
+            );
+            Ok(())
+        })
+        .await
+    }
+
+    // Abort restores the working tree from a fast-forward-in-progress state and
+    // clears every merge marker.
+    #[tokio::test]
+    async fn test_merge_abort_resets_partial_ff() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let (_main, base, target) = make_feature_branch_with_modification(
+                &repo,
+                "world.txt",
+                "World",
+                "World2",
+                "update-world",
+            )
+            .await?;
+
+            let world_file = repo.path.join("world.txt");
+            util::fs::write_to_path(&world_file, "World2")?;
+            merge_marker::write(&repo, &target.id).await?;
+
+            repositories::merge::abort_merge(&repo).await?;
+
+            assert_eq!(util::fs::read_from_path(&world_file)?, "World");
+            assert!(!merge_marker::exists(&repo).await?);
+            let head = repositories::commits::head_commit(&repo)?;
+            assert_eq!(head.id, base.id, "HEAD must remain at the pre-merge base");
+            Ok(())
+        })
+        .await
+    }
+
+    // An interrupted merge can leave a file truncated mid-write: its hash matches neither the
+    // pre-merge base nor the merge target. Abort must force-restore HEAD's version regardless —
+    // the core motivating case for Fix B.
+    #[tokio::test]
+    async fn test_merge_abort_resets_truncated_file() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let (_main, base, target) = make_feature_branch_with_modification(
+                &repo,
+                "world.txt",
+                "World",
+                "World2",
+                "update-world",
+            )
+            .await?;
+
+            let world_file = repo.path.join("world.txt");
+            // Content matches neither base ("World") nor target ("World2").
+            util::fs::write_to_path(&world_file, "TRUNC")?;
+            merge_marker::write(&repo, &target.id).await?;
+
+            repositories::merge::abort_merge(&repo).await?;
+
+            assert_eq!(util::fs::read_from_path(&world_file)?, "World");
+            assert!(!merge_marker::exists(&repo).await?);
+            let head = repositories::commits::head_commit(&repo)?;
+            assert_eq!(head.id, base.id);
+            Ok(())
+        })
+        .await
+    }
+
+    // Abort wipes the 3-way merge conflict state (MERGE_HEAD / ORIG_HEAD / conflict DB)
+    // left behind when a 3-way merge detects conflicts.
+    #[tokio::test]
+    async fn test_merge_abort_clears_conflict_state() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let base_branch = repositories::branches::current_branch(&repo)?.unwrap().name;
+
+            let file = repo.path.join("shared.txt");
+            util::fs::write_to_path(&file, "lca")?;
+            repositories::add(&repo, &file).await?;
+            repositories::commit(&repo, "lca")?;
+
+            repositories::branches::create_checkout(&repo, "feature")?;
+            util::fs::write_to_path(&file, "feature side")?;
+            repositories::add(&repo, &file).await?;
+            repositories::commit(&repo, "feature modification")?;
+
+            repositories::checkout(&repo, &base_branch).await?;
+            util::fs::write_to_path(&file, "base side")?;
+            repositories::add(&repo, &file).await?;
+            repositories::commit(&repo, "base modification")?;
+
+            // Conflicting 3-way merge: leaves MERGE_HEAD / ORIG_HEAD / conflicts DB.
+            let merge_result = repositories::merge::merge(&repo, "feature").await?;
+            assert!(merge_result.is_none(), "expected a conflict");
+
+            let hidden = util::fs::oxen_hidden_dir(&repo.path);
+            assert!(hidden.join(crate::constants::MERGE_HEAD_FILE).exists());
+            assert!(hidden.join(crate::constants::ORIG_HEAD_FILE).exists());
+
+            repositories::merge::abort_merge(&repo).await?;
+
+            assert!(!hidden.join(crate::constants::MERGE_HEAD_FILE).exists());
+            assert!(!hidden.join(crate::constants::ORIG_HEAD_FILE).exists());
+            assert!(
+                !hidden
+                    .join(crate::constants::MERGE_IN_PROGRESS_FILE)
+                    .exists()
+            );
+            Ok(())
+        })
+        .await
+    }
+
+    // A marker left over from a merge whose target commit no longer exists locally — exactly the
+    // "retry the original target" escape hatch in the MergeInProgressMismatch hint. Abort must
+    // still clean up the working tree and the marker without requiring the target to be resolvable.
+    #[tokio::test]
+    async fn test_merge_abort_with_unknown_marker_target() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let (_main, base, _target) = make_feature_branch_with_modification(
+                &repo,
+                "world.txt",
+                "World",
+                "World2",
+                "update-world",
+            )
+            .await?;
+
+            let world_file = repo.path.join("world.txt");
+            // Simulate an interrupted merge mid-write.
+            util::fs::write_to_path(&world_file, "TRUNC")?;
+            // Marker points at a commit id that does not exist in this repo.
+            let unknown = "deadbeefdeadbeefdeadbeefdeadbeef";
+            merge_marker::write(&repo, unknown).await?;
+
+            repositories::merge::abort_merge(&repo).await?;
+
+            assert_eq!(util::fs::read_from_path(&world_file)?, "World");
+            assert!(!merge_marker::exists(&repo).await?);
+            let head = repositories::commits::head_commit(&repo)?;
+            assert_eq!(head.id, base.id);
+            Ok(())
+        })
+        .await
+    }
+
+    // Abort with nothing to abort returns a specific error variant, not a silent no-op.
+    #[tokio::test]
+    async fn test_merge_abort_errors_when_nothing_to_abort() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let err = repositories::merge::abort_merge(&repo)
+                .await
+                .expect_err("abort on a clean repo should error");
+            assert!(
+                matches!(err, OxenError::NoMergeInProgress),
+                "expected NoMergeInProgress, got {err:?}"
             );
             Ok(())
         })

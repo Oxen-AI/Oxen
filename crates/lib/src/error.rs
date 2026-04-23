@@ -77,6 +77,10 @@ pub enum OxenError {
     #[error("Merge in progress targeting commit {expected}, but new merge targets {found}.")]
     MergeInProgressMismatch { expected: String, found: String },
 
+    /// `oxen merge --abort` was invoked with no merge to abort.
+    #[error("No merge in progress to abort.")]
+    NoMergeInProgress,
+
     /// A remote with the given name was not found.
     #[error(
         "No remote named '{0}' is set. You can set a remote by running:\n\noxen config --set-remote '{0}' <url>\n"
