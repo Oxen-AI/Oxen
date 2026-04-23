@@ -95,6 +95,7 @@ opentelemetry = { workspace = true, optional = true }
 opentelemetry-otlp = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }
 os_path = { workspace = true }
+oxen-macros = { path = "../oxen-macros", version = "0.47.0" }
 par-stream = { workspace = true }
 parking_lot = { workspace = true }
 pathdiff = { workspace = true }

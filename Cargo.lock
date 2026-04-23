@@ -4534,6 +4534,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "os_path",
+ "oxen-macros",
  "par-stream",
  "parking_lot",
  "pathdiff",
@@ -5408,6 +5409,15 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "oxen-macros"
+version = "0.47.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]

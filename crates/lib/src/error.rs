@@ -28,7 +28,30 @@ pub use crate::error::string_error::StringError;
 
 pub const AUTH_TOKEN_NOT_FOUND: &str = "oxen authentication token not found, obtain one from your administrator and configure with:\n\noxen config --auth <HOST> <TOKEN>\n";
 
-#[derive(thiserror::Error, Debug)]
+/// Funnel trait for converting foreign errors into `OxenError`.
+///
+/// Every error type that wants to convert into `OxenError` via `?` or
+/// `Into::into` implements this trait (usually via `#[from_impl]` on a
+/// variant field of `OxenError`). The blanket
+/// `impl<E: IntoOxenError> From<E> for OxenError` below then makes `?` work
+/// with no per-callsite `where`-clauses, even through a GAT like
+/// `MerkleReader::Error`, because the associated-type bound
+/// `Error: IntoOxenError` is elaborated at every use site.
+///
+/// `OxenError` itself must **not** implement `IntoOxenError`: that would
+/// collide with the stdlib's reflexive `impl<T> From<T> for T`.
+pub trait IntoOxenError {
+    fn into_oxen(self) -> OxenError;
+}
+
+/// Single conversion for anything that implements `IntoOxenError` into an actual `OxenError`.
+impl<E: IntoOxenError> From<E> for OxenError {
+    fn from(e: E) -> OxenError {
+        e.into_oxen()
+    }
+}
+
+#[derive(thiserror::Error, Debug, oxen_macros::IntoOxen)]
 pub enum OxenError {
     //
     // Configuration
@@ -130,7 +153,7 @@ pub enum OxenError {
     WorkspaceAlreadyExists(String),
 
     #[error("{0}")]
-    WorkspaceNameIndex(#[from] crate::core::workspaces::workspace_name_index::WsError),
+    WorkspaceNameIndex(#[from_impl] crate::core::workspaces::workspace_name_index::WsError),
 
     //
     // Resources (paths, uris, etc.)
@@ -184,10 +207,10 @@ pub enum OxenError {
     /// A failure during serialization or deserialization of a merkle tree node: it has an unknown
     /// u8 marker for its node type.
     #[error("{0}")]
-    MerkleTreeError(#[from] InvalidMerkleTreeNodeType),
+    MerkleTreeError(#[from_impl] InvalidMerkleTreeNodeType),
 
     #[error("{0}")]
-    MerkleDbError(#[from] MerkleDbError),
+    MerkleDbError(#[from_impl] MerkleDbError),
 
     //
     // Schema (dataframes)
@@ -256,11 +279,11 @@ pub enum OxenError {
 
     /// Wraps the error from std::path::strip_prefix.
     #[error("Error stripping prefix: {0}")]
-    StripPrefixError(#[from] std::path::StripPrefixError),
+    StripPrefixError(#[from_impl] std::path::StripPrefixError),
 
     /// Wraps errors encountered from file reading & writing operations.
     #[error("{0}")]
-    IO(#[from] io::Error),
+    IO(#[from_impl] io::Error),
 
     /// Encountered when authentication fails. Contains the authentication error message.
     #[error("Authentication failed: {0}")]
@@ -268,102 +291,102 @@ pub enum OxenError {
 
     /// Wraps errors from the Arrow library, which are encountered in dataframe operations.
     #[error("{0}")]
-    ArrowError(#[from] ArrowError),
+    ArrowError(#[from_impl] ArrowError),
 
     /// Wraps errors from bincode when serializing and deserializing Rust objects into binary data.
     #[error("{0}")]
-    BinCodeError(#[from] bincode::Error),
+    BinCodeError(#[from_impl] bincode::Error),
 
     /// Wraps errors encountered when trying to serialize TOML data.
     #[error("Configuration error: {0}")]
-    TomlSer(#[from] toml::ser::Error),
+    TomlSer(#[from_impl] toml::ser::Error),
 
     /// Wraps errors encountered when deserializing invalid TOML data.
     #[error("Configuration error: {0}")]
-    TomlDe(#[from] toml::de::Error),
+    TomlDe(#[from_impl] toml::de::Error),
 
     /// Wraps errors encountered when parsing malformed URIs.
     #[error("Invalid URI: {0}")]
-    URI(#[from] http::uri::InvalidUri),
+    URI(#[from_impl] http::uri::InvalidUri),
 
     /// Wraps errors encountered when parsing malformed URLs.
     #[error("Invalid URL: {0}")]
-    URL(#[from] url::ParseError),
+    URL(#[from_impl] url::ParseError),
 
     /// Wraps JSON serialization and deserialization errors.
     #[error("JSON error: {0}")]
-    JSON(#[from] serde_json::Error),
+    JSON(#[from_impl] serde_json::Error),
 
     /// Wraps any HTTP client errors we encounter.
     #[error("Network error: {0}")]
-    HTTP(#[from] reqwest::Error),
+    HTTP(#[from_impl] reqwest::Error),
 
     /// Wraps any error we encounter from handling non-UTF-8 strings.
     ///
     /// Most often occurs when interacting with filesystem paths as much
     /// of the oxen codebase relies on paths being valid UTF-8 strings.
     #[error("UTF-8 encoding error: {0}")]
-    UTF8Error(#[from] std::str::Utf8Error),
+    UTF8Error(#[from_impl] std::str::Utf8Error),
 
     /// Wraps any error we encounter from converting a byte slice to a UTF-8 string.
     #[error("UTF-8 conversion error: {0}")]
-    Utf8ConvError(#[from] std::string::FromUtf8Error),
+    Utf8ConvError(#[from_impl] std::string::FromUtf8Error),
 
     /// Wraps any error we encounter from interacting with RocksDB.
     #[error("Database error: {0}")]
-    DB(#[from] rocksdb::Error),
+    DB(#[from_impl] rocksdb::Error),
 
     /// Wraps any error we encounter from interacting with DuckDB.
     #[error("Query error: {0}")]
-    DUCKDB(#[from] duckdb::Error),
+    DUCKDB(#[from_impl] duckdb::Error),
 
     /// Wraps any error we encounter from interacting with environment variables.
     #[error("Environment variable error: {0}")]
-    ENV(#[from] std::env::VarError),
+    ENV(#[from_impl] std::env::VarError),
 
     /// Wraps any error that we get from using the image crate (image processing).
     #[error("Image processing error: {0}")]
-    ImageError(#[from] image::ImageError),
+    ImageError(#[from_impl] image::ImageError),
 
     /// Wraps any error that we get from Redis client use.
     #[error("Redis error: {0}")]
-    RedisError(#[from] redis::RedisError),
+    RedisError(#[from_impl] redis::RedisError),
 
     /// Wraps any error that we get from using r2d2 (the connection pool).
     #[error("Connection pool error: {0}")]
-    R2D2Error(#[from] r2d2::Error),
+    R2D2Error(#[from_impl] r2d2::Error),
 
     /// Wraps any error that we get from using jwalk (directory traversal).
     #[error("Directory traversal error: {0}")]
-    JwalkError(#[from] jwalk::Error),
+    JwalkError(#[from_impl] jwalk::Error),
 
     /// Wraps any error that we get from parsing malformed glob patterns.
     #[error("Pattern error: {0}")]
-    PatternError(#[from] glob::PatternError),
+    PatternError(#[from_impl] glob::PatternError),
 
     /// Wraps any error that we encounter when walking paths emitted from a glob pattern.
     #[error("Glob error: {0}")]
-    GlobError(#[from] glob::GlobError),
+    GlobError(#[from_impl] glob::GlobError),
 
     /// Wraps any error that we get from using polars (dataframe operations).
     #[error("DataFrame error: {0}")]
-    PolarsError(#[from] polars::prelude::PolarsError),
+    PolarsError(#[from_impl] polars::prelude::PolarsError),
 
     /// Wraps any error that we get from parsing integers from strings.
     #[error("Invalid integer: {0}")]
-    ParseIntError(#[from] ParseIntError),
+    ParseIntError(#[from_impl] ParseIntError),
 
     /// Wraps any error that we get from encoding message pack data.
     #[error("Encode error: {0}")]
-    RmpEncodeError(#[from] rmp_serde::encode::Error),
+    RmpEncodeError(#[from_impl] rmp_serde::encode::Error),
 
     /// Wraps any error that we get from decoding message pack data.
     #[error("Decode error: {0}")]
-    RmpDecodeError(#[from] rmp_serde::decode::Error),
+    RmpDecodeError(#[from_impl] rmp_serde::decode::Error),
 
     /// Wraps any error that we get from joining tasks.
     #[error("{0}")]
-    JoinError(#[from] JoinError),
+    JoinError(#[from_impl] JoinError),
 
     /// A synchronization primitive (Mutex/RwLock) was found poisoned because a thread panicked
     /// while holding it. Indicates a bug; should not occur in normal operation.
