@@ -347,8 +347,11 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
+    use bytesize::ByteSize;
+
     use super::*;
     use crate::error::OxenError;
+    use crate::model::Commit;
     use crate::model::merkle_tree::node::{CommitNode, DirNode};
     use crate::{repositories, test};
 
@@ -405,6 +408,197 @@ mod tests {
         out
     }
 
+    // --------------------------------------------------------------------------------------------
+    //
+    // [START] Old Implementation
+    //
+    // Retained for reference during review; never called at runtime.
+    //
+    // --------------------------------------------------------------------------------------------
+
+    fn compress_tree(repository: &LocalRepository) -> Result<Vec<u8>, OxenError> {
+        let enc = GzEncoder::new(Vec::new(), Compression::fast());
+        let mut tar = tar::Builder::new(enc);
+        compress_full_tree(repository, &mut tar)?;
+        tar.finish()?;
+
+        let buffer: Vec<u8> = tar.into_inner()?.finish()?;
+        let total_size: u64 = u64::try_from(buffer.len()).unwrap_or(u64::MAX);
+
+        log::debug!("Compressed entire tree size is {}", ByteSize::b(total_size));
+
+        Ok(buffer)
+    }
+
+    fn compress_full_tree(
+        repository: &LocalRepository,
+        tar: &mut tar::Builder<GzEncoder<Vec<u8>>>,
+    ) -> Result<(), OxenError> {
+        // This will be the subdir within the tarball,
+        // so when we untar it, all the subdirs will be extracted to
+        // tree/nodes/...
+        let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR);
+        let nodes_dir = repository
+            .path
+            .join(OXEN_HIDDEN_DIR)
+            .join(TREE_DIR)
+            .join(NODES_DIR);
+
+        log::debug!("Compressing tree in dir {nodes_dir:?}");
+
+        if nodes_dir.exists() {
+            tar.append_dir_all(&tar_subdir, nodes_dir)?;
+        }
+
+        Ok(())
+    }
+
+    fn compress_nodes(
+        repository: &LocalRepository,
+        hashes: &HashSet<MerkleHash>,
+    ) -> Result<Vec<u8>, OxenError> {
+        // zip up the node directories for each commit tree
+        let enc = GzEncoder::new(Vec::new(), Compression::fast());
+        let mut tar = tar::Builder::new(enc);
+
+        log::debug!("Compressing {} unique nodes...", hashes.len());
+        for hash in hashes {
+            // This will be the subdir within the tarball
+            // so when we untar it, all the subdirs will be extracted to
+            // tree/nodes/...
+            let dir_prefix = hash.to_hex_hash().node_db_prefix();
+            let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR).join(dir_prefix);
+
+            let node_dir = node_db_path(repository, hash);
+            // log::debug!("Compressing node from dir {:?}", node_dir);
+            if node_dir.exists() {
+                tar.append_dir_all(&tar_subdir, node_dir)?;
+            }
+        }
+        tar.finish()?;
+
+        let buffer: Vec<u8> = tar.into_inner()?.finish()?;
+        Ok(buffer)
+    }
+
+    fn compress_node(
+        repository: &LocalRepository,
+        hash: &MerkleHash,
+    ) -> Result<Vec<u8>, OxenError> {
+        // This will be the subdir within the tarball
+        // so when we untar it, all the subdirs will be extracted to
+        // tree/nodes/...
+        let dir_prefix = hash.to_hex_hash().node_db_prefix();
+        let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR).join(dir_prefix);
+
+        // zip up the node directory
+        let enc = GzEncoder::new(Vec::new(), Compression::fast());
+        let mut tar = tar::Builder::new(enc);
+        let node_dir = node_db_path(repository, hash);
+
+        // log::debug!("Compressing node {} from dir {:?}", hash, node_dir);
+        if node_dir.exists() {
+            tar.append_dir_all(&tar_subdir, node_dir)?;
+        }
+        tar.finish()?;
+
+        let buffer: Vec<u8> = tar.into_inner()?.finish()?;
+        let total_size: u64 = u64::try_from(buffer.len()).unwrap_or(u64::MAX);
+        log::debug!(
+            "Compressed node {} size is {}",
+            hash,
+            ByteSize::b(total_size)
+        );
+
+        Ok(buffer)
+    }
+
+    fn compress_commits(
+        repository: &LocalRepository,
+        commits: &Vec<Commit>,
+    ) -> Result<Vec<u8>, OxenError> {
+        // zip up the node directory
+        let enc = GzEncoder::new(Vec::new(), Compression::fast());
+        let mut tar = tar::Builder::new(enc);
+
+        for commit in commits {
+            let hash = commit.hash()?;
+            // This will be the subdir within the tarball
+            // so when we untar it, all the subdirs will be extracted to
+            // tree/nodes/...
+            let dir_prefix = hash.to_hex_hash().node_db_prefix();
+            let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR).join(dir_prefix);
+
+            let node_dir = node_db_path(repository, &hash);
+            log::debug!("Compressing commit from dir {node_dir:?}");
+            if node_dir.exists() {
+                tar.append_dir_all(&tar_subdir, node_dir)?;
+            }
+        }
+        tar.finish()?;
+
+        let buffer: Vec<u8> = tar.into_inner()?.finish()?;
+        Ok(buffer)
+    }
+
+    fn unpack_nodes(
+        repository: &LocalRepository,
+        buffer: &[u8],
+    ) -> Result<HashSet<MerkleHash>, OxenError> {
+        let mut hashes: HashSet<MerkleHash> = HashSet::new();
+        log::debug!("Unpacking nodes from buffer...");
+        let decoder = GzDecoder::new(buffer);
+        log::debug!("Decoder created");
+        let mut archive = Archive::new(decoder);
+        log::debug!("Archive created");
+        let Ok(entries) = archive.entries() else {
+            return Err(OxenError::basic_str(
+                "Could not unpack tree database from archive",
+            ));
+        };
+        log::debug!("Extracting entries...");
+        for file in entries {
+            let Ok(mut file) = file else {
+                log::error!("Could not unpack file in archive...");
+                continue;
+            };
+            let path = file.path().unwrap();
+            let oxen_hidden_path = repository.path.join(OXEN_HIDDEN_DIR);
+            let dst_path = oxen_hidden_path.join(TREE_DIR).join(NODES_DIR).join(path);
+
+            if let Some(parent) = dst_path.parent() {
+                util::fs::create_dir_all(parent).expect("Could not create parent dir");
+            }
+            // log::debug!("create_node writing {:?}", dst_path);
+            if dst_path.exists() {
+                log::debug!("Node already exists at {dst_path:?}");
+                continue;
+            }
+            file.unpack(&dst_path)?;
+
+            // the hash is the last two path components combined
+            if !dst_path.ends_with("node") && !dst_path.ends_with("children") {
+                let id = dst_path
+                    .components()
+                    .rev()
+                    .take(2)
+                    .map(|c| c.as_os_str().to_str().unwrap())
+                    .collect::<Vec<&str>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<String>();
+                hashes.insert(id.parse()?);
+            }
+        }
+        Ok(hashes)
+    }
+
+    // --------------------------------------------------------------------------------------------
+    //
+    // [END] Old Implementation
+    //
+    // --------------------------------------------------------------------------------------------
+
     /// Pack every node in a repo, unpack into a fresh empty repo, and verify every
     /// installed hash is readable from the target store.
     #[tokio::test]
@@ -445,8 +639,8 @@ mod tests {
             let hashes = HashSet::from_iter([head.hash().expect("no commit for head")]);
 
             // prior code for packing Merkle nodes into a .tar.gz
-            let old_pack_method = repositories::tree::compress_nodes(&repo, &hashes)
-                .expect("could not compress Merkle tree nodes");
+            let old_pack_method =
+                compress_nodes(&repo, &hashes).expect("could not compress Merkle tree nodes");
 
             let new_pack_method = {
                 let mut via_trait = Vec::new();
@@ -471,7 +665,7 @@ mod tests {
     async fn compress_tree_wire_format_unchanged() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test(|repo| {
             // prior code for packing an entire Merkle tree into a .tar.gz
-            let old_pack_method = repositories::tree::compress_tree(&repo)?;
+            let old_pack_method = compress_tree(&repo)?;
 
             let new_pack_method = {
                 let mut via_trait = Vec::new();

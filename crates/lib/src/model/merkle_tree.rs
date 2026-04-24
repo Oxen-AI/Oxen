@@ -25,23 +25,18 @@ impl<T> MerkleStore for T where T: MerkleReader + MerkleWriter<Error = <T as Mer
 
 /// A [`MerkleStore`] that can also pack and unpack the canonical tar-gz wire format.
 ///
-/// The extra [`MerkleTransport`] bound lets callers obtain transport-ready bytes from the
-/// store or install bytes received over the wire. All four associated error types
-/// ([`MerkleReader::Error`], [`MerkleWriter::Error`], [`MerklePacker::Error`],
-/// [`MerkleUnpacker::Error`]) must be the same type so that callers see one concrete
-/// backend error funneled through [`IntoOxenError`]. Pinning [`MerklePacker::Error`] is
-/// sufficient because [`MerkleTransport`] already pins [`MerkleUnpacker::Error`] to
-/// [`MerklePacker::Error`].
+/// The store side ([`MerkleStore`] = [`MerkleReader`] + [`MerkleWriter`]) uses one error type,
+/// and the transport side ([`MerkleTransport`] = [`MerklePacker`] + [`MerkleUnpacker`]) uses
+/// one error type, but those two sides are **not** required to share the same type. That gives
+/// backends room to use a transport-specific error that extends their store error with
+/// tar/gzip/parse variants, rather than having to fold every transport concern into the
+/// store error. Both sides still implement [`IntoOxenError`], so `?` at call sites converts
+/// each error directly to [`OxenError`] with no further plumbing.
 ///
 /// [`IntoOxenError`]: crate::error::IntoOxenError
-pub trait TransportableMerkleStore:
-    MerkleStore + MerkleTransport + MerklePacker<Error = <Self as MerkleReader>::Error>
-{
-}
+/// [`OxenError`]: crate::error::OxenError
+pub trait TransportableMerkleStore: MerkleStore + MerkleTransport {}
 
-/// Any type that is a [`MerkleStore`] and a [`MerkleTransport`] with a shared error type is
-/// automatically a [`TransportableMerkleStore`].
-impl<T> TransportableMerkleStore for T where
-    T: MerkleStore + MerkleTransport + MerklePacker<Error = <T as MerkleReader>::Error>
-{
-}
+/// Any type that is a [`MerkleStore`] and a [`MerkleTransport`] is automatically a
+/// [`TransportableMerkleStore`]. The store-side and transport-side error types can differ.
+impl<T> TransportableMerkleStore for T where T: MerkleStore + MerkleTransport {}
