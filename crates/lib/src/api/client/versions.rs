@@ -309,7 +309,7 @@ async fn upload_chunks(
     max_retries: usize,
     progress: Option<&Arc<PushProgress>>,
 ) -> Result<Vec<HashMap<String, String>>, OxenError> {
-    let client = Arc::new(api::client::builder_for_remote_repo(remote_repo)?.build()?);
+    let client = Arc::new(api::client::new_for_remote_repo(remote_repo)?);
 
     // Figure out how many parts we need to upload
     let file_size = upload.size;
