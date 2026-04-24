@@ -18,6 +18,7 @@ use crate::error::{IntoOxenError, OxenError};
 use crate::model::MerkleHash;
 use crate::model::TMerkleTreeNode;
 use crate::model::merkle_tree::merkle_reader::{MerkleNodeRecord, MerkleReader};
+use crate::model::merkle_tree::merkle_transport::{MerklePacker, MerkleUnpacker};
 use crate::model::merkle_tree::merkle_writer::{
     MerkleWriteSession, MerkleWriter, NodeWriteSession,
 };
@@ -167,6 +168,39 @@ macro_rules! define_merkle_store_dispatch {
             fn finish(self) -> Result<(), StoreError> {
                 match self {
                     $( Self::$variant(n) => n.finish().map_err(StoreError::$variant) ),*
+                }
+            }
+        }
+
+        impl<'repo> MerklePacker for StoreEnum<'repo> {
+            type Error = StoreError;
+
+            fn pack_nodes<W: std::io::Write>(
+                &self,
+                hashes: &std::collections::HashSet<MerkleHash>,
+                out: W,
+            ) -> Result<(), StoreError> {
+                match self {
+                    $( Self::$variant(b) => b.pack_nodes(hashes, out).map_err(StoreError::$variant) ),*
+                }
+            }
+
+            fn pack_all<W: std::io::Write>(&self, out: W) -> Result<(), StoreError> {
+                match self {
+                    $( Self::$variant(b) => b.pack_all(out).map_err(StoreError::$variant) ),*
+                }
+            }
+        }
+
+        impl<'repo> MerkleUnpacker for StoreEnum<'repo> {
+            type Error = StoreError;
+
+            fn unpack<R: std::io::Read>(
+                &self,
+                reader: R,
+            ) -> Result<std::collections::HashSet<MerkleHash>, StoreError> {
+                match self {
+                    $( Self::$variant(b) => b.unpack(reader).map_err(StoreError::$variant) ),*
                 }
             }
         }

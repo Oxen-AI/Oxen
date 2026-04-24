@@ -1,11 +1,25 @@
-use crate::core::db::merkle_node::merkle_node_db::{MerkleDbError, MerkleNodeDB};
+use std::collections::HashSet;
+use std::io::{Read, Write};
+use std::path::Path;
+
+use flate2::Compression;
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use tar::Archive;
+use tempfile::TempDir;
+
+use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
+use crate::core::db::merkle_node::merkle_node_db::{MerkleDbError, MerkleNodeDB, node_db_path};
+use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::model::merkle_tree::merkle_reader::{MerkleNodeRecord, MerkleReader};
+use crate::model::merkle_tree::merkle_transport::{MerklePacker, MerkleUnpacker};
 use crate::model::merkle_tree::merkle_writer::{
     MerkleWriteSession, MerkleWriter, NodeWriteSession,
 };
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::{MerkleHash, TMerkleTreeNode};
+use crate::util;
 
 /// File-based Merkle node store backend. Implements the [`MerkleStore`] trait.
 ///
@@ -173,11 +187,177 @@ impl NodeWriteSession for FileNodeSession {
     }
 }
 
+fn fs_op_err(err: OxenError) -> MerkleDbError {
+    MerkleDbError::FsOp(Box::new(err))
+}
+
+/// Pack the tar-gz wire format for a set of merkle hashes into `out`.
+fn write_hashes_tar<W: Write>(
+    repo: &LocalRepository,
+    hashes: &HashSet<MerkleHash>,
+    out: W,
+) -> Result<(), MerkleDbError> {
+    let enc = GzEncoder::new(out, Compression::fast());
+    let mut tar = tar::Builder::new(enc);
+    for hash in hashes {
+        let dir_prefix = hash.to_hex_hash().node_db_prefix();
+        let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR).join(dir_prefix);
+        let node_dir = node_db_path(repo, hash);
+        if node_dir.exists() {
+            tar.append_dir_all(&tar_subdir, node_dir)?;
+        }
+    }
+    tar.finish()?;
+    tar.into_inner()?.finish()?;
+    Ok(())
+}
+
+/// Pack the tar-gz wire format for every node in the store into `out`.
+fn write_all_tar<W: Write>(repo: &LocalRepository, out: W) -> Result<(), MerkleDbError> {
+    let enc = GzEncoder::new(out, Compression::fast());
+    let mut tar = tar::Builder::new(enc);
+    let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR);
+    let nodes_dir = repo
+        .path
+        .join(OXEN_HIDDEN_DIR)
+        .join(TREE_DIR)
+        .join(NODES_DIR);
+    if nodes_dir.exists() {
+        tar.append_dir_all(&tar_subdir, nodes_dir)?;
+    }
+    tar.finish()?;
+    tar.into_inner()?.finish()?;
+    Ok(())
+}
+
+/// Unpack a tar-gz wire stream into `oxen_hidden` (the repository's `.oxen/` directory).
+///
+/// Tolerates two historical tarball layouts so that either a new or legacy client can talk
+/// to a store built with this trait:
+///   - **Server-style** (emitted by [`pack_nodes`] / [`pack_all`] and the old `compress_*`
+///     helpers): entries carry the full `tree/nodes/{prefix}/{suffix}/{node,children}`
+///     prefix. Joined directly under `oxen_hidden`.
+///   - **Legacy client-push style** (emitted by the old `api::client::tree::create_nodes`):
+///     entries start at `{prefix}/{suffix}/{node,children}` with no `tree/nodes/` prefix.
+///     Prepended under `oxen_hidden/tree/nodes/`.
+///
+/// Returns the set of hashes parsed from the tarball. Entries whose destination already
+/// exists are skipped.
+fn extract_tar_under<R: Read>(
+    reader: R,
+    oxen_hidden: &Path,
+) -> Result<HashSet<MerkleHash>, MerkleDbError> {
+    let mut hashes: HashSet<MerkleHash> = HashSet::new();
+    let decoder = GzDecoder::new(reader);
+    let mut archive = Archive::new(decoder);
+    let entries = archive.entries().map_err(|_| {
+        MerkleDbError::FsOp(Box::new(OxenError::basic_str(
+            "Could not read entries from merkle tree tar archive",
+        )))
+    })?;
+
+    let tree_nodes_prefix = Path::new(TREE_DIR).join(NODES_DIR);
+
+    for entry in entries {
+        let Ok(mut file) = entry else {
+            log::error!("Could not unpack file in merkle tar archive");
+            continue;
+        };
+        let path = file.path()?.into_owned();
+        // Server-style entries already contain `tree/nodes/...`; join directly.
+        // Legacy client-push entries begin at `{prefix}/{suffix}/...`; prepend `tree/nodes/`.
+        let dst_path = if path.starts_with(&tree_nodes_prefix) {
+            oxen_hidden.join(&path)
+        } else {
+            oxen_hidden.join(&tree_nodes_prefix).join(&path)
+        };
+        if let Some(parent) = dst_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if dst_path.exists() {
+            log::debug!("Node already exists at {dst_path:?}");
+            continue;
+        }
+        file.unpack(&dst_path)?;
+
+        // The hash is the concatenation of the last two path components. Entries ending
+        // in "node" / "children" are the leaf files; entries that end at the {suffix}
+        // directory contribute the hash value. A full-tree tarball (from `pack_all`)
+        // also contains intermediate directory entries like `tree/nodes` or
+        // `tree/nodes/{prefix}` — those don't form a valid 32-hex-char hash when their
+        // last two components are concatenated, so we gate parsing on that.
+        if !dst_path.ends_with("node") && !dst_path.ends_with("children") {
+            let id: String = dst_path
+                .components()
+                .rev()
+                .take(2)
+                .filter_map(|c| c.as_os_str().to_str())
+                .collect::<Vec<&str>>()
+                .into_iter()
+                .rev()
+                .collect();
+            if id.len() == 32 && id.chars().all(|c| c.is_ascii_hexdigit()) {
+                let hash = u128::from_str_radix(&id, 16)?;
+                hashes.insert(MerkleHash::new(hash));
+            }
+        }
+    }
+    Ok(hashes)
+}
+
+/// Merkle packer implementation for the [`FileBackend`].
+impl<'repo> MerklePacker for FileBackend<'repo> {
+    type Error = MerkleDbError;
+
+    /// Pack the given node hashes into `out` as a tar-gz stream.
+    ///
+    /// Emits one subtree per hash under `{TREE_DIR}/{NODES_DIR}/{prefix}/{suffix}/...`.
+    /// Hashes absent from the store are silently skipped.
+    fn pack_nodes<W: Write>(
+        &self,
+        hashes: &HashSet<MerkleHash>,
+        out: W,
+    ) -> Result<(), MerkleDbError> {
+        write_hashes_tar(self.repo, hashes, out)
+    }
+
+    /// Pack every node the store holds into `out` as a tar-gz stream.
+    fn pack_all<W: Write>(&self, out: W) -> Result<(), MerkleDbError> {
+        write_all_tar(self.repo, out)
+    }
+}
+
+/// Merkle unpacker implementation for the [`FileBackend`].
+impl<'repo> MerkleUnpacker for FileBackend<'repo> {
+    type Error = MerkleDbError;
+
+    /// Unpack a tar-gz wire stream into the store.
+    ///
+    /// If the repository sits on a virtual filesystem ([`LocalRepository::is_vfs`] is true),
+    /// unpack into a tempdir first and `copy_dir_all` the result through the VFS. Some
+    /// VFS implementations don't tolerate tar's streaming many-small-files pattern, so the
+    /// staging hop is needed for correctness. Otherwise, unpack directly to `.oxen/`.
+    fn unpack<R: Read>(&self, reader: R) -> Result<HashSet<MerkleHash>, MerkleDbError> {
+        let oxen_hidden = self.repo.path.join(OXEN_HIDDEN_DIR);
+        if self.repo.is_vfs() {
+            let tmp = TempDir::new()?;
+            let hashes = extract_tar_under(reader, tmp.path())?;
+            util::fs::copy_dir_all(tmp.path(), &oxen_hidden).map_err(fs_op_err)?;
+            Ok(hashes)
+        } else {
+            extract_tar_under(reader, &oxen_hidden)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
     use super::*;
     use crate::model::merkle_tree::node::{CommitNode, DirNode};
-    use crate::test;
+    use crate::{repositories, test};
 
     /// Dropping a `FileNodeSession` without calling `finish()` must still
     /// flush+sync the underlying files. This is to match the implicit-drop semantics
@@ -213,5 +393,103 @@ mod tests {
             assert_eq!(children.len(), 1, "expected the single dir child");
             Ok(())
         })
+    }
+
+    /// Gunzip + collect tar entries into a deterministic map for byte-compat comparison.
+    /// Gzip-compressed bytes aren't stable (mtime field varies), but the tar entry set is.
+    fn list_tar_entries(buffer: &[u8]) -> Result<BTreeMap<PathBuf, Vec<u8>>, OxenError> {
+        let mut out = BTreeMap::new();
+        let decoder = GzDecoder::new(buffer);
+        let mut archive = Archive::new(decoder);
+        for entry in archive
+            .entries()
+            .map_err(|e| OxenError::basic_str(format!("tar entries failed: {e}")))?
+        {
+            let mut entry =
+                entry.map_err(|e| OxenError::basic_str(format!("tar entry failed: {e}")))?;
+            let path = entry
+                .path()
+                .map_err(|e| OxenError::basic_str(format!("tar path failed: {e}")))?
+                .into_owned();
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut bytes)
+                .map_err(|e| OxenError::basic_str(format!("tar read failed: {e}")))?;
+            out.insert(path, bytes);
+        }
+        Ok(out)
+    }
+
+    /// Pack every node in a repo, unpack into a fresh empty repo, and verify every
+    /// installed hash is readable from the target store.
+    #[tokio::test]
+    async fn transport_round_trip() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test(|repo| {
+            let mut packed = Vec::new();
+            repo.merkle_store()
+                .pack_all(&mut packed)
+                .expect("pack_all failed");
+            assert!(!packed.is_empty(), "pack_all produced empty buffer");
+
+            let tmp = tempfile::TempDir::new()?;
+            let clone = repositories::init(tmp.path())?;
+            let installed = clone
+                .merkle_store()
+                .unpack(&packed[..])
+                .expect("unpack failed");
+            assert!(!installed.is_empty(), "unpack installed no nodes");
+            for hash in &installed {
+                assert!(
+                    clone.merkle_store().exists(hash).expect("exists failed"),
+                    "expected installed hash {hash} to be readable"
+                );
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// The tar entry set produced by the legacy `compress_nodes` helper must equal the
+    /// one produced by the trait's `pack_nodes`. Gzip bytes differ on mtime, but the
+    /// decompressed tar payload must be identical.
+    #[tokio::test]
+    async fn compress_nodes_wire_format_unchanged() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test(|repo| {
+            let head = repositories::commits::head_commit(&repo)?;
+            let hashes: HashSet<_> = [head.hash()?].into_iter().collect();
+
+            let via_helper = repositories::tree::compress_nodes(&repo, &hashes)?;
+            let mut via_trait = Vec::new();
+            repo.merkle_store()
+                .pack_nodes(&hashes, &mut via_trait)
+                .expect("pack_nodes failed");
+
+            assert_eq!(
+                list_tar_entries(&via_helper)?,
+                list_tar_entries(&via_trait)?,
+                "tar entry set differs between compress_nodes helper and pack_nodes trait"
+            );
+            Ok(())
+        })
+        .await
+    }
+
+    /// Same byte-compat check for the whole-tree path.
+    #[tokio::test]
+    async fn compress_tree_wire_format_unchanged() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test(|repo| {
+            let via_helper = repositories::tree::compress_tree(&repo)?;
+            let mut via_trait = Vec::new();
+            repo.merkle_store()
+                .pack_all(&mut via_trait)
+                .expect("pack_all failed");
+
+            assert_eq!(
+                list_tar_entries(&via_helper)?,
+                list_tar_entries(&via_trait)?,
+                "tar entry set differs between compress_tree helper and pack_all trait"
+            );
+            Ok(())
+        })
+        .await
     }
 }

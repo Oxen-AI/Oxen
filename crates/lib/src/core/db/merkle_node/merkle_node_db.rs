@@ -104,6 +104,10 @@ pub enum MerkleDbError {
     DirCreate(Box<OxenError>), // TODO: replace with FsError from upcoming refactoring PR
     #[error("Failed to open file: {0}")]
     Open(Box<OxenError>), // TODO: replace with FsError from upcoming refactoring PR
+    #[error("Invalid hash in merkle tarball path: {0}")]
+    ParseHash(#[from] std::num::ParseIntError),
+    #[error("Filesystem operation failed during merkle transport: {0}")]
+    FsOp(Box<OxenError>),
 }
 
 impl MerkleDbError {

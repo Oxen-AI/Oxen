@@ -5,6 +5,7 @@ use crate::core::db::merkle_node::FileBackend;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
+use crate::model::merkle_tree::TransportableMerkleStore;
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
 use crate::opts::StorageOpts;
 use crate::storage::{StorageConfig, VersionStore, create_version_store};
@@ -99,15 +100,15 @@ impl LocalRepository {
 
     /// Obtain the Merkle tree store for this repository.
     ///
-    /// Returns an opaque `impl MerkleStore` whose concrete type is the private
-    /// dispatch enum in [`merkle_store_dispatch`]. Callers use it purely
-    /// through the trait surface; backend selection is an implementation
+    /// Returns an opaque `impl TransportableMerkleStore` whose concrete type is the private
+    /// dispatch enum in [`merkle_store_dispatch`]. Callers use it purely through the
+    /// trait surface (read, write, pack, unpack); backend selection is an implementation
     /// detail of this method.
     ///
     /// When new backends (e.g. LMDB) are added, they are registered in
     /// `merkle_store_dispatch::define_merkle_store_dispatch!`, and the
     /// dispatch logic for choosing among them lives here.
-    pub fn merkle_store(&self) -> impl MerkleStore + '_ {
+    pub fn merkle_store(&self) -> impl TransportableMerkleStore + '_ {
         merkle_store_dispatch::StoreEnum::File(FileBackend::new(self))
     }
 
