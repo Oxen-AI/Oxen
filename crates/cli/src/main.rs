@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use std::env;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use crate::cmd::RemoteModeCmd;
 use crate::cmd::WorkspaceCmd;
-use clap::Command;
+use clap::{Arg, Command};
 use liboxen::model::LocalRepository;
 use liboxen::util;
 use tracing::level_filters::LevelFilter;
@@ -102,7 +103,17 @@ async fn async_main() -> ExitCode {
         .long_about(LONG_ABOUT)
         .subcommand_required(true)
         .arg_required_else_help(true)
-        .allow_external_subcommands(true);
+        .allow_external_subcommands(true)
+        .arg(
+            Arg::new("config-dir")
+                .long("config-dir")
+                .value_parser(clap::value_parser!(PathBuf))
+                .global(true)
+                .help(
+                    "Directory for oxen's user and auth config files \
+                     (overrides $OXEN_CONFIG_DIR; defaults to ~/.config/oxen/)",
+                ),
+        );
 
     // Add all the commands to the command line
     let mut runners: HashMap<String, Box<dyn cmd::RunCmd>> = HashMap::new();
@@ -111,13 +122,21 @@ async fn async_main() -> ExitCode {
         runners.insert(cmd.name().to_string(), cmd);
     }
 
+    // Parse the command line args and run the appropriate command
+    let matches = command.get_matches();
+
+    // Install the --config-dir override before any work that might consult user/auth
+    // config via util::fs::oxen_config_dir(). `from_current_dir()` below currently reads
+    // only the per-repo .oxen/config.toml, but keeping this first preserves the invariant
+    // as that code path evolves.
+    if let Some(dir) = matches.get_one::<PathBuf>("config-dir") {
+        util::fs::set_oxen_config_dir(dir.clone());
+    }
+
     let is_remote_repo = match LocalRepository::from_current_dir() {
         Ok(repo) => repo.is_remote_mode(),
         Err(_) => false,
     };
-
-    // Parse the command line args and run the appropriate command
-    let matches = command.get_matches();
     match matches.subcommand() {
         // TODO: Get these in the help command instead of just falling back
         Some((command, args)) => {

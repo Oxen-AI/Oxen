@@ -74,6 +74,5 @@ pub mod resource;
 pub mod storage;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test;
-pub mod test_paths;
 pub mod util;
 pub mod view;

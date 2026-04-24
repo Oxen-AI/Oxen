@@ -1,4 +1,4 @@
-use crate::constants::{CONFIG_DIR, DEFAULT_HOST, OXEN};
+use crate::constants::DEFAULT_HOST;
 use crate::error::OxenError;
 use crate::util;
 use serde::{Deserialize, Serialize};
@@ -57,22 +57,7 @@ impl AuthConfig {
     }
 
     pub fn get() -> Result<AuthConfig, OxenError> {
-        let config_dir = util::fs::oxen_config_dir()?;
-
-        // TODO: refactor get() into impl Default {} and make a new function to create a config from a &path.
-        let config_file = match std::env::var("TEST") {
-            Ok(_) => {
-                #[cfg(not(test))]
-                log::warn!("TEST env var set but not in test mode");
-
-                crate::test_paths::REPO_ROOT
-                    .join("data")
-                    .join("test")
-                    .join("config")
-                    .join("auth_config.toml")
-            }
-            Err(_) => config_dir.join(Path::new(AUTH_CONFIG_FILENAME)),
-        };
+        let config_file = util::fs::oxen_config_dir()?.join(Path::new(AUTH_CONFIG_FILENAME));
 
         log::trace!("looking for config file in...{config_file:?}");
         if config_file.exists() {
@@ -93,9 +78,8 @@ impl AuthConfig {
             Err(_err) => {
                 let config = Self::new_empty();
                 config.save_default()?;
-                println!(
-                    "🐂 created a new config file in \"$HOME/{CONFIG_DIR}/{OXEN}/{AUTH_CONFIG_FILENAME}"
-                );
+                let config_file = util::fs::oxen_config_dir()?.join(AUTH_CONFIG_FILENAME);
+                println!("🐂 created a new config file at {}", config_file.display());
                 Ok(config)
             }
         }

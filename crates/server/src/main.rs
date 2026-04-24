@@ -291,6 +291,14 @@ impl Modify for SecurityAddon {
 struct ServerCli {
     #[command(subcommand)]
     command: ServerCommand,
+
+    #[arg(
+        long = "config-dir",
+        global = true,
+        help = "Directory for oxen's user and auth config files \
+                (overrides $OXEN_CONFIG_DIR; defaults to ~/.config/oxen/)"
+    )]
+    config_dir: Option<PathBuf>,
 }
 
 /// All server CLI subcommands.
@@ -397,7 +405,12 @@ async fn server() -> Result<(), ServerError> {
         Err(_) => PathBuf::from("data"),
     };
 
-    match ServerCli::parse().command {
+    let cli = ServerCli::parse();
+    if let Some(dir) = cli.config_dir {
+        util::fs::set_oxen_config_dir(dir);
+    }
+
+    match cli.command {
         ServerCommand::Start { ip, port, auth } => {
             let _metrics_guard = init_metrics()?;
 

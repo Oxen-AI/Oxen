@@ -1,4 +1,3 @@
-use crate::constants::{CONFIG_DIR, OXEN};
 use crate::error::OxenError;
 use crate::model::User;
 use crate::util;
@@ -46,22 +45,7 @@ impl UserConfig {
     }
 
     pub fn get() -> Result<UserConfig, OxenError> {
-        let config_dir = util::fs::oxen_config_dir()?;
-
-        // TODO: refactor get() into impl Default {} and make a new function to create a config from a &path.
-        let config_file = match std::env::var("TEST") {
-            Ok(_) => {
-                #[cfg(not(test))]
-                log::warn!("TEST env var set but not in test mode");
-
-                crate::test_paths::REPO_ROOT
-                    .join("data")
-                    .join("test")
-                    .join("config")
-                    .join("user_config.toml")
-            }
-            Err(_) => config_dir.join(Path::new(USER_CONFIG_FILENAME)),
-        };
+        let config_file = util::fs::oxen_config_dir()?.join(Path::new(USER_CONFIG_FILENAME));
 
         log::debug!("looking for config file in...{config_file:?}");
         if config_file.exists() {
@@ -88,9 +72,8 @@ impl UserConfig {
             Err(_err) => {
                 let config = Self::new_empty();
                 config.save_default()?;
-                println!(
-                    "🐂 created a new config file in \"$HOME/{CONFIG_DIR}/{OXEN}/{USER_CONFIG_FILENAME}"
-                );
+                let config_file = util::fs::oxen_config_dir()?.join(USER_CONFIG_FILENAME);
+                println!("🐂 created a new config file at {}", config_file.display());
                 Ok(config)
             }
         }
