@@ -107,7 +107,9 @@ pub enum MerkleDbError {
     #[error("Invalid hash in merkle tarball path: {0}")]
     ParseHash(#[from] std::num::ParseIntError),
     #[error("Filesystem operation failed during merkle transport: {0}")]
-    FsOp(Box<OxenError>),
+    FsTransport(Box<OxenError>), // TODO: replace with FsError from upcoming refactoring PR
+    #[error("Could not read entries from merkle tree tar archive: {0}")]
+    CannotReadMerkle(std::io::Error),
 }
 
 impl MerkleDbError {

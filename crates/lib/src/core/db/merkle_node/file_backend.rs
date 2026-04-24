@@ -10,7 +10,6 @@ use tempfile::TempDir;
 
 use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
 use crate::core::db::merkle_node::merkle_node_db::{MerkleDbError, MerkleNodeDB, node_db_path};
-use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::model::merkle_tree::merkle_reader::{MerkleNodeRecord, MerkleReader};
 use crate::model::merkle_tree::merkle_transport::{MerklePacker, MerkleUnpacker};
@@ -187,10 +186,6 @@ impl NodeWriteSession for FileNodeSession {
     }
 }
 
-fn fs_op_err(err: OxenError) -> MerkleDbError {
-    MerkleDbError::FsOp(Box::new(err))
-}
-
 /// Pack the tar-gz wire format for a set of merkle hashes into `out`.
 fn write_hashes_tar<W: Write>(
     repo: &LocalRepository,
@@ -250,11 +245,7 @@ fn extract_tar_under<R: Read>(
     let mut hashes: HashSet<MerkleHash> = HashSet::new();
     let decoder = GzDecoder::new(reader);
     let mut archive = Archive::new(decoder);
-    let entries = archive.entries().map_err(|_| {
-        MerkleDbError::FsOp(Box::new(OxenError::basic_str(
-            "Could not read entries from merkle tree tar archive",
-        )))
-    })?;
+    let entries = archive.entries().map_err(MerkleDbError::CannotReadMerkle)?;
 
     let tree_nodes_prefix = Path::new(TREE_DIR).join(NODES_DIR);
 
@@ -342,7 +333,8 @@ impl<'repo> MerkleUnpacker for FileBackend<'repo> {
         if self.repo.is_vfs() {
             let tmp = TempDir::new()?;
             let hashes = extract_tar_under(reader, tmp.path())?;
-            util::fs::copy_dir_all(tmp.path(), &oxen_hidden).map_err(fs_op_err)?;
+            util::fs::copy_dir_all(tmp.path(), &oxen_hidden)
+                .map_err(|e| MerkleDbError::FsTransport(Box::new(e)))?;
             Ok(hashes)
         } else {
             extract_tar_under(reader, &oxen_hidden)
@@ -356,6 +348,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+    use crate::error::OxenError;
     use crate::model::merkle_tree::node::{CommitNode, DirNode};
     use crate::{repositories, test};
 
@@ -397,26 +390,19 @@ mod tests {
 
     /// Gunzip + collect tar entries into a deterministic map for byte-compat comparison.
     /// Gzip-compressed bytes aren't stable (mtime field varies), but the tar entry set is.
-    fn list_tar_entries(buffer: &[u8]) -> Result<BTreeMap<PathBuf, Vec<u8>>, OxenError> {
+    /// Results in a panic! if internal errors are encountered.
+    fn list_tar_entries(buffer: &[u8]) -> BTreeMap<PathBuf, Vec<u8>> {
         let mut out = BTreeMap::new();
         let decoder = GzDecoder::new(buffer);
         let mut archive = Archive::new(decoder);
-        for entry in archive
-            .entries()
-            .map_err(|e| OxenError::basic_str(format!("tar entries failed: {e}")))?
-        {
-            let mut entry =
-                entry.map_err(|e| OxenError::basic_str(format!("tar entry failed: {e}")))?;
-            let path = entry
-                .path()
-                .map_err(|e| OxenError::basic_str(format!("tar path failed: {e}")))?
-                .into_owned();
+        for entry in archive.entries().expect("tar entries failed") {
+            let mut entry = entry.expect("tar entry failed");
+            let path = entry.path().expect("tar path failed").into_owned();
             let mut bytes = Vec::new();
-            std::io::Read::read_to_end(&mut entry, &mut bytes)
-                .map_err(|e| OxenError::basic_str(format!("tar read failed: {e}")))?;
+            std::io::Read::read_to_end(&mut entry, &mut bytes).expect("tar read failed");
             out.insert(path, bytes);
         }
-        Ok(out)
+        out
     }
 
     /// Pack every node in a repo, unpack into a fresh empty repo, and verify every
@@ -437,6 +423,7 @@ mod tests {
                 .unpack(&packed[..])
                 .expect("unpack failed");
             assert!(!installed.is_empty(), "unpack installed no nodes");
+
             for hash in &installed {
                 assert!(
                     clone.merkle_store().exists(hash).expect("exists failed"),
@@ -455,17 +442,23 @@ mod tests {
     async fn compress_nodes_wire_format_unchanged() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test(|repo| {
             let head = repositories::commits::head_commit(&repo)?;
-            let hashes: HashSet<_> = [head.hash()?].into_iter().collect();
+            let hashes = HashSet::from_iter([head.hash().expect("no commit for head")]);
 
-            let via_helper = repositories::tree::compress_nodes(&repo, &hashes)?;
-            let mut via_trait = Vec::new();
-            repo.merkle_store()
-                .pack_nodes(&hashes, &mut via_trait)
-                .expect("pack_nodes failed");
+            // prior code for packing Merkle nodes into a .tar.gz
+            let old_pack_method = repositories::tree::compress_nodes(&repo, &hashes)
+                .expect("could not compress Merkle tree nodes");
+
+            let new_pack_method = {
+                let mut via_trait = Vec::new();
+                repo.merkle_store()
+                    .pack_nodes(&hashes, &mut via_trait)
+                    .expect("pack_nodes failed");
+                via_trait
+            };
 
             assert_eq!(
-                list_tar_entries(&via_helper)?,
-                list_tar_entries(&via_trait)?,
+                list_tar_entries(&old_pack_method),
+                list_tar_entries(&new_pack_method),
                 "tar entry set differs between compress_nodes helper and pack_nodes trait"
             );
             Ok(())
@@ -477,15 +470,20 @@ mod tests {
     #[tokio::test]
     async fn compress_tree_wire_format_unchanged() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test(|repo| {
-            let via_helper = repositories::tree::compress_tree(&repo)?;
-            let mut via_trait = Vec::new();
-            repo.merkle_store()
-                .pack_all(&mut via_trait)
-                .expect("pack_all failed");
+            // prior code for packing an entire Merkle tree into a .tar.gz
+            let old_pack_method = repositories::tree::compress_tree(&repo)?;
+
+            let new_pack_method = {
+                let mut via_trait = Vec::new();
+                repo.merkle_store()
+                    .pack_all(&mut via_trait)
+                    .expect("pack_all failed");
+                via_trait
+            };
 
             assert_eq!(
-                list_tar_entries(&via_helper)?,
-                list_tar_entries(&via_trait)?,
+                list_tar_entries(&old_pack_method),
+                list_tar_entries(&new_pack_method),
                 "tar entry set differs between compress_tree helper and pack_all trait"
             );
             Ok(())
