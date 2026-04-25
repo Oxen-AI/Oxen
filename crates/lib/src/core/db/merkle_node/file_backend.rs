@@ -684,4 +684,152 @@ mod tests {
         })
         .await
     }
+
+    /// Byte-compat for the single-hash pack path (`compress_node` vs
+    /// `pack_nodes(&{hash})`).
+    #[tokio::test]
+    async fn compress_node_wire_format_unchanged() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test(|repo| {
+            let head = repositories::commits::head_commit(&repo)?;
+            let hash = head.hash().expect("no commit for head");
+
+            // prior code for packing a single Merkle node into a .tar.gz
+            let old_pack_method =
+                compress_node(&repo, &hash).expect("could not compress Merkle tree node");
+
+            let new_pack_method = {
+                let hashes = HashSet::from_iter([hash]);
+                let mut via_trait = Vec::new();
+                repo.merkle_store()
+                    .pack_nodes(&hashes, &mut via_trait)
+                    .expect("pack_nodes failed");
+                via_trait
+            };
+
+            assert_eq!(
+                list_tar_entries(&old_pack_method),
+                list_tar_entries(&new_pack_method),
+                "tar entry set differs between compress_node helper and pack_nodes trait"
+            );
+            Ok(())
+        })
+        .await
+    }
+
+    /// Byte-compat for the commit-set pack path (`compress_commits` vs
+    /// `pack_nodes(&{commit hashes})`).
+    #[tokio::test]
+    async fn compress_commits_wire_format_unchanged() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test(|repo| {
+            let head = repositories::commits::head_commit(&repo)?;
+            let commits: Vec<Commit> = vec![head];
+
+            // prior code for packing a set of commit hashes into a .tar.gz
+            let old_pack_method =
+                compress_commits(&repo, &commits).expect("could not compress Merkle tree commits");
+
+            let new_pack_method = {
+                let mut hashes = HashSet::with_capacity(commits.len());
+                for c in &commits {
+                    hashes.insert(c.hash().expect("no hash for commit"));
+                }
+                let mut via_trait = Vec::new();
+                repo.merkle_store()
+                    .pack_nodes(&hashes, &mut via_trait)
+                    .expect("pack_nodes failed");
+                via_trait
+            };
+
+            assert_eq!(
+                list_tar_entries(&old_pack_method),
+                list_tar_entries(&new_pack_method),
+                "tar entry set differs between compress_commits helper and pack_nodes trait"
+            );
+            Ok(())
+        })
+        .await
+    }
+
+    /// Build a tarball in the legacy client-push layout (entries begin at
+    /// `{prefix}/{suffix}/...` with no `tree/nodes/` prefix) — this is the format
+    /// the old `api::client::tree::create_nodes` emitted and the one
+    /// `unpack_nodes` was designed to consume.
+    fn compress_nodes_client_push_format(
+        repo: &LocalRepository,
+        hashes: &HashSet<MerkleHash>,
+    ) -> Result<Vec<u8>, OxenError> {
+        let enc = GzEncoder::new(Vec::new(), Compression::default());
+        let mut tar = tar::Builder::new(enc);
+        let node_path = repo
+            .path
+            .join(OXEN_HIDDEN_DIR)
+            .join(TREE_DIR)
+            .join(NODES_DIR);
+        for hash in hashes {
+            let dir_prefix = hash.to_hex_hash().node_db_prefix();
+            let node_dir = node_path.join(&dir_prefix);
+            if node_dir.exists() {
+                tar.append_dir_all(dir_prefix, node_dir)?;
+            }
+        }
+        tar.finish()?;
+        Ok(tar.into_inner()?.finish()?)
+    }
+
+    /// Behavioral parity between the legacy `unpack_nodes` and the new trait `unpack`
+    /// on a legacy client-push-format tarball: same reported hash set, same readability
+    /// through the store in both target repos.
+    #[tokio::test]
+    async fn unpack_nodes_unchanged() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test(|repo| {
+            let head = repositories::commits::head_commit(&repo)?;
+            let hashes = HashSet::from_iter([head.hash().expect("no commit for head")]);
+
+            // Produce a legacy client-push-format tarball (the one old `unpack_nodes`
+            // was designed to consume).
+            let bytes = compress_nodes_client_push_format(&repo, &hashes)
+                .expect("client-push-format pack failed");
+
+            // Unpack into two fresh repos: one via the old helper, one via the trait.
+            let tmp_old = tempfile::TempDir::new()?;
+            let repo_old = repositories::init(tmp_old.path())?;
+            let old_hashes = unpack_nodes(&repo_old, &bytes).expect("old unpack_nodes failed");
+
+            let tmp_new = tempfile::TempDir::new()?;
+            let repo_new = repositories::init(tmp_new.path())?;
+            let new_hashes = repo_new
+                .merkle_store()
+                .unpack(&bytes[..])
+                .expect("new unpack failed");
+
+            assert_eq!(
+                old_hashes, new_hashes,
+                "reported hash sets differ between unpack_nodes helper and unpack trait"
+            );
+            assert!(
+                !new_hashes.is_empty(),
+                "no hashes were unpacked — test input was empty"
+            );
+
+            // Every installed hash must be readable through both stores.
+            for h in &new_hashes {
+                assert!(
+                    repo_old
+                        .merkle_store()
+                        .exists(h)
+                        .expect("old repo exists check failed"),
+                    "hash {h} not readable in repo unpacked via legacy unpack_nodes"
+                );
+                assert!(
+                    repo_new
+                        .merkle_store()
+                        .exists(h)
+                        .expect("new repo exists check failed"),
+                    "hash {h} not readable in repo unpacked via trait unpack"
+                );
+            }
+            Ok(())
+        })
+        .await
+    }
 }
