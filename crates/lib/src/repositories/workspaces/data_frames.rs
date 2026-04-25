@@ -1401,4 +1401,184 @@ mod tests {
         assert_eq!(result, "SELECT label, COUNT(*) FROM table GROUP BY label");
         Ok(())
     }
+
+    /// Adds `column_name` of `data_type` (e.g. "list[i64]") to a workspace-indexed dataframe,
+    /// adds a single row whose `column_name` is `list_value`, and returns the polars list series
+    /// for that column read back from the staged DuckDB.
+    async fn add_row_with_list_column(
+        repo: &crate::model::LocalRepository,
+        workspace: &crate::model::Workspace,
+        file_path: &Path,
+        column_name: &str,
+        data_type: &str,
+        list_value: serde_json::Value,
+    ) -> Result<polars::prelude::Series, OxenError> {
+        use crate::view::data_frames::columns::NewColumn;
+
+        let new_column = NewColumn {
+            name: column_name.to_string(),
+            data_type: data_type.to_string(),
+        };
+        workspaces::data_frames::columns::add(repo, workspace, file_path, &new_column)?;
+
+        let json_data = json!({
+            "file": "list_row.jpg",
+            "label": "dog",
+            "min_x": 1.0,
+            "min_y": 2.0,
+            "width": 3,
+            "height": 4,
+            column_name: list_value,
+        });
+        let added = workspaces::data_frames::rows::add(repo, workspace, file_path, &json_data)?;
+        let row_id = added
+            .column(OXEN_ID_COL)?
+            .get(0)?
+            .to_string()
+            .trim_matches('"')
+            .to_string();
+
+        let row = workspaces::data_frames::rows::get_by_id(workspace, file_path, &row_id)?;
+        let column = row.column(column_name)?;
+        Ok(column.as_materialized_series().clone())
+    }
+
+    fn list_typed_add_row_test_paths() -> std::path::PathBuf {
+        Path::new("annotations")
+            .join("train")
+            .join("bounding_box.csv")
+    }
+
+    #[tokio::test]
+    async fn test_add_row_with_list_i64_column() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-list-i64")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = list_typed_add_row_test_paths();
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            let series = add_row_with_list_column(
+                &repo,
+                &workspace,
+                &file_path,
+                "scores",
+                "list[i64]",
+                json!([10, 20, 30]),
+            )
+            .await?;
+
+            let inner = series.list()?.get_as_series(0).unwrap();
+            let values: Vec<i64> = inner.i64()?.into_iter().map(|v| v.unwrap()).collect();
+            assert_eq!(values, vec![10, 20, 30]);
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_add_row_with_list_str_column_preserves_nulls() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-list-str")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = list_typed_add_row_test_paths();
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            let series = add_row_with_list_column(
+                &repo,
+                &workspace,
+                &file_path,
+                "tags",
+                "list[str]",
+                json!(["a", null, "b"]),
+            )
+            .await?;
+
+            let inner = series.list()?.get_as_series(0).unwrap();
+            let values: Vec<Option<String>> = inner
+                .str()?
+                .into_iter()
+                .map(|v| v.map(|s| s.to_string()))
+                .collect();
+            assert_eq!(
+                values,
+                vec![Some("a".to_string()), None, Some("b".to_string())]
+            );
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_add_row_with_list_u32_column() -> Result<(), OxenError> {
+        // Regression: previously, list[u32]/list[u8]/etc. panicked in value_to_tosql
+        // because only Int32/Int64/Float32/Float64/String/Boolean were handled.
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-list-u32")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = list_typed_add_row_test_paths();
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            let series = add_row_with_list_column(
+                &repo,
+                &workspace,
+                &file_path,
+                "ids",
+                "list[u32]",
+                json!([1u32, 2u32, 3u32]),
+            )
+            .await?;
+
+            let inner = series.list()?.get_as_series(0).unwrap();
+            let values: Vec<u32> = inner.u32()?.into_iter().map(|v| v.unwrap()).collect();
+            assert_eq!(values, vec![1, 2, 3]);
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_add_row_with_list_f64_column() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-list-f64")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = list_typed_add_row_test_paths();
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            let series = add_row_with_list_column(
+                &repo,
+                &workspace,
+                &file_path,
+                "embedding",
+                "list[f64]",
+                json!([0.1, 0.2, 0.3]),
+            )
+            .await?;
+
+            let inner = series.list()?.get_as_series(0).unwrap();
+            let values: Vec<f64> = inner.f64()?.into_iter().map(|v| v.unwrap()).collect();
+            assert_eq!(values, vec![0.1, 0.2, 0.3]);
+            Ok(())
+        })
+        .await
+    }
 }
