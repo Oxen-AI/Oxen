@@ -5,6 +5,7 @@ use crate::constants::{
     DEFAULT_PAGE_SIZE, DUCKDB_DF_TABLE_NAME, OXEN_COLS, OXEN_ID_COL, OXEN_ROW_ID_COL, TABLE_NAME,
 };
 
+use crate::core::db::data_frames::rows;
 use crate::core::df::tabular;
 use crate::core::v_latest::workspaces::data_frames::{
     is_valid_export_extension, wrap_sql_for_export,
@@ -578,14 +579,15 @@ pub fn modify_row_with_polars_df(
     let table_name = table_name.as_ref();
 
     let schema = df.schema();
-    let column_names: Vec<String> = schema
-        .iter_fields()
-        .map(|f| format!("\"{}\"", f.name()))
-        .collect();
+    let field_names: Vec<&str> = schema.iter_names().map(|s| s.as_str()).collect();
+    let column_sql_types = rows::column_sql_types_by_name(conn, table_name)?;
 
-    let set_clauses: String = column_names
+    let set_clauses: String = field_names
         .iter()
-        .map(|col_name| format!("{col_name} = ?"))
+        .map(|name| {
+            let placeholder = rows::placeholder_for_column(&column_sql_types, name);
+            format!("\"{name}\" = {placeholder}")
+        })
         .collect::<Vec<String>>()
         .join(", ");
 
@@ -625,29 +627,30 @@ pub fn modify_rows_with_polars_df(
     let mut all_params: Vec<Box<dyn ToSql>> = Vec::new();
 
     // Construct the SQL query with combined CASE statements
-    let mut column_names: Vec<String> = Vec::new();
-    if let Some((_, df)) = row_map.iter().next() {
-        let schema = df.schema();
-        column_names = schema
-            .iter_fields()
-            .map(|f| format!("\"{}\"", f.name()))
-            .collect();
-    }
+    let column_names: Vec<String> = match row_map.iter().next() {
+        Some((_, df)) => df.schema().iter_names().map(|s| s.to_string()).collect(),
+        None => Vec::new(),
+    };
+
+    let column_sql_types = rows::column_sql_types_by_name(conn, table_name)?;
 
     for col_name in &column_names {
+        let placeholder = rows::placeholder_for_column(&column_sql_types, col_name);
         let mut case_clauses = Vec::new();
         for (id, df) in row_map.iter() {
-            let series = df.column(col_name.trim_matches('"'))?;
+            let series = df.column(col_name)?;
             let value = series.get(0)?;
 
             let boxed_value: Box<dyn ToSql> = Box::new(tabular::value_to_tosql(value));
 
-            case_clauses.push(format!("WHEN \"{OXEN_ID_COL}\" = '{id}' THEN ?"));
+            case_clauses.push(format!(
+                "WHEN \"{OXEN_ID_COL}\" = '{id}' THEN {placeholder}"
+            ));
 
             all_params.push(boxed_value);
         }
         set_clauses.push(format!(
-            "{} = CASE {} END",
+            "\"{}\" = CASE {} END",
             col_name,
             case_clauses.join(" ")
         ));

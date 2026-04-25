@@ -704,75 +704,7 @@ pub fn any_val_to_json(value: AnyValue) -> Value {
         AnyValue::Float64(f) => json!(f),
         AnyValue::String(s) => Value::String(s.to_string()),
         AnyValue::StringOwned(s) => Value::String(s.to_string()),
-        AnyValue::List(l) => match l.dtype() {
-            polars::prelude::DataType::Int64 => {
-                let vec: Vec<i64> = l.i64().unwrap().into_iter().flatten().collect();
-                json!(vec)
-            }
-            polars::prelude::DataType::Int32 => {
-                let vec: Vec<i32> = l.i32().unwrap().into_iter().flatten().collect();
-                json!(vec)
-            }
-            polars::prelude::DataType::Float64 => {
-                let vec: Vec<f64> = l.f64().unwrap().into_iter().flatten().collect();
-                json!(vec)
-            }
-            polars::prelude::DataType::Float32 => {
-                let vec: Vec<f32> = l.f32().unwrap().into_iter().flatten().collect();
-                json!(vec)
-            }
-            polars::prelude::DataType::String => {
-                let vec: Vec<String> = l
-                    .str()
-                    .unwrap()
-                    .into_iter()
-                    .flatten()
-                    .map(|s| s.to_string())
-                    .collect();
-                json!(vec)
-            }
-            polars::prelude::DataType::Boolean => {
-                let vec: Vec<bool> = l.bool().unwrap().into_iter().flatten().collect();
-                json!(vec)
-            }
-            polars::prelude::DataType::List(_) => {
-                let mut array = Vec::new();
-
-                if let Ok(list_chunked) = l.list() {
-                    for i in 0..list_chunked.len() {
-                        if let Some(inner_series) = list_chunked.get_as_series(i) {
-                            array.push(any_val_to_json(AnyValue::List(inner_series)));
-                        } else {
-                            array.push(Value::Null);
-                        }
-                    }
-                }
-
-                Value::Array(array)
-            }
-            polars::prelude::DataType::Struct(_fields) => {
-                // Convert List(Struct) directly to DataFrame, then to JSON array
-                if let Ok(ca) = l.struct_() {
-                    let series_vec = ca.fields_as_series();
-                    let mut objs = Vec::with_capacity(ca.len());
-
-                    for row_idx in 0..ca.len() {
-                        let mut map = serde_json::Map::new();
-                        for series in series_vec.iter() {
-                            let val = series.get(row_idx).unwrap_or(AnyValue::Null);
-                            map.insert(series.name().to_string(), any_val_to_json(val));
-                        }
-                        objs.push(Value::Object(map));
-                    }
-                    Value::Array(objs)
-                } else {
-                    Value::Null
-                }
-            }
-            dtype => {
-                panic!("Unsupported list dtype: {dtype:?}")
-            }
-        },
+        AnyValue::List(l) => series_to_json_array(&l),
         AnyValue::StructOwned(s) => {
             let mut map = serde_json::Map::new();
 
@@ -794,6 +726,15 @@ pub fn any_val_to_json(value: AnyValue) -> Value {
 
         other => panic!("Unsupported dtype in JSON conversion: {other:?}"),
     }
+}
+
+fn series_to_json_array(series: &polars::prelude::Series) -> Value {
+    let mut array = Vec::with_capacity(series.len());
+    for i in 0..series.len() {
+        let val = series.get(i).unwrap_or(AnyValue::Null);
+        array.push(any_val_to_json(val));
+    }
+    Value::Array(array)
 }
 
 fn struct_array_to_json(
@@ -883,46 +824,7 @@ pub fn value_to_tosql(value: AnyValue) -> Box<dyn ToSql> {
             polars_time_unit_to_duckdb(tu),
             val,
         )),
-        AnyValue::List(l) => {
-            let json_array = match l.dtype() {
-                polars::prelude::DataType::Int64 => {
-                    let vec: Vec<i64> = l.i64().unwrap().into_iter().flatten().collect();
-                    json!(vec)
-                }
-                polars::prelude::DataType::Int32 => {
-                    let vec: Vec<i32> = l.i32().unwrap().into_iter().flatten().collect();
-                    json!(vec)
-                }
-                polars::prelude::DataType::Float64 => {
-                    let vec: Vec<f64> = l.f64().unwrap().into_iter().flatten().collect();
-                    json!(vec)
-                }
-                polars::prelude::DataType::Float32 => {
-                    let vec: Vec<f32> = l.f32().unwrap().into_iter().flatten().collect();
-                    json!(vec)
-                }
-                polars::prelude::DataType::String => {
-                    let vec: Vec<String> = l
-                        .str()
-                        .unwrap()
-                        .into_iter()
-                        .flatten()
-                        .map(|s| s.to_string())
-                        .collect();
-                    json!(vec)
-                }
-                polars::prelude::DataType::Boolean => {
-                    let vec: Vec<bool> = l.bool().unwrap().into_iter().flatten().collect();
-                    json!(vec)
-                }
-                polars::prelude::DataType::List(_) => any_val_to_json(AnyValue::List(l)),
-                polars::prelude::DataType::Struct(_) => any_val_to_json(AnyValue::List(l)),
-                dtype => {
-                    panic!("Unsupported dtype: {dtype:?}")
-                }
-            };
-            Box::new(json_array.to_string())
-        }
+        AnyValue::List(l) => Box::new(series_to_json_array(&l).to_string()),
         AnyValue::StructOwned(s) => {
             let json_value = any_val_to_json(AnyValue::StructOwned(s));
             Box::new(json_value.to_string())

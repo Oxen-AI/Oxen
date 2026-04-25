@@ -16,6 +16,7 @@ use crate::core::db;
 use crate::core::db::data_frames::row_changes_db;
 use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
 use crate::core::df::tabular;
+use crate::model::data_frame::schema::DataType;
 use crate::model::staged_row_status::StagedRowStatus;
 use crate::view::data_frames::DataFrameRowChange;
 use crate::{constants::TABLE_NAME, error::OxenError};
@@ -323,14 +324,16 @@ pub fn insert_polars_df(
     let table_name = table_name.as_ref();
 
     let schema = df.schema();
-    let column_names: Vec<String> = schema
-        .iter_fields()
-        .map(|f| format!("\"{}\"", f.name()))
+    let field_names: Vec<&str> = schema.iter_names().map(|s| s.as_str()).collect();
+    let column_names: Vec<String> = field_names
+        .iter()
+        .map(|name| format!("\"{name}\""))
         .collect();
 
-    let placeholders: String = column_names
+    let column_sql_types = column_sql_types_by_name(conn, table_name)?;
+    let placeholders: String = field_names
         .iter()
-        .map(|_| "?".to_string())
+        .map(|name| placeholder_for_column(&column_sql_types, name))
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
@@ -402,4 +405,38 @@ pub fn maybe_revert_row_changes(db: &DB, row_id: String) -> Result<(), OxenError
 
 pub fn revert_row_changes(db: &DB, row_id: String) -> Result<(), OxenError> {
     row_changes_db::delete_data_frame_row_changes(db, &row_id)
+}
+
+/// Build a column-name → SQL type map for the given DuckDB table.
+///
+/// Used to wrap List/Struct/Embedding placeholders in `CAST(? AS <sql_type>)` so that
+/// JSON-encoded payloads bind unambiguously to typed list columns.
+pub(crate) fn column_sql_types_by_name(
+    conn: &duckdb::Connection,
+    table_name: &str,
+) -> Result<HashMap<String, String>, OxenError> {
+    let schema = df_db::get_schema(conn, table_name)?;
+    let mut by_name = HashMap::with_capacity(schema.fields.len());
+    for field in schema.fields {
+        let sql_type = DataType::from_string(&field.dtype).to_sql();
+        by_name.insert(field.name, sql_type);
+    }
+    Ok(by_name)
+}
+
+/// Returns `CAST(? AS <sql_type>)` for List/Struct/Embedding columns and a bare `?` otherwise.
+pub(crate) fn placeholder_for_column(
+    column_sql_types: &HashMap<String, String>,
+    column_name: &str,
+) -> String {
+    match column_sql_types.get(column_name) {
+        Some(sql_type) if needs_explicit_cast(sql_type) => format!("CAST(? AS {sql_type})"),
+        _ => "?".to_string(),
+    }
+}
+
+fn needs_explicit_cast(sql_type: &str) -> bool {
+    // List columns end with `[]` (e.g. INTEGER[], VARCHAR[]); fixed-size arrays / embeddings end with `[N]`.
+    // Structs are stored as JSON (which already accepts string binds), but cast for symmetry / clarity.
+    sql_type.ends_with(']') || sql_type == "JSON"
 }
