@@ -370,6 +370,11 @@ pub enum OxenError {
     #[error("Lock poisoned: {0}")]
     LockPoisoned(StringError),
 
+    /// The process-wide HTTP client cache's `RwLock` was found poisoned. Indicates a panic
+    /// occurred while another thread held the write lock; should not occur in normal operation.
+    #[error("Internal error: HTTP client cache lock poisoned")]
+    ClientCachePoisoned,
+
     #[error(
         "Cannot push commit '{commit_id}' (\"{commit_message}\"): file data is not available locally.\nThis usually means the repository was cloned without full history.\n{help}"
     )]
