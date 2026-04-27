@@ -33,7 +33,7 @@ clap = { workspace = true }
 colored = { workspace = true }
 dialoguer = { workspace = true }
 glob = { workspace = true }
-liboxen = { path = "../lib" }
+liboxen = { workspace = true }
 log = { workspace = true }
 minus = { workspace = true }
 serde_json = { workspace = true }
@@ -45,7 +45,7 @@ url = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-liboxen = { path = "../lib", features = ["test-utils"] }
+liboxen = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true
