@@ -895,7 +895,10 @@ pub fn unpack_nodes(
     buffer: &[u8],
 ) -> Result<HashSet<MerkleHash>, OxenError> {
     log::debug!("Unpacking nodes from buffer ({} bytes)", buffer.len());
-    Ok(repository.merkle_store().unpack(buffer)?)
+    // `unpack_nodes` runs on the server-side upload-consumer path, which on `main`
+    // skipped files that already exist on disk (matches the old `unpack_nodes`
+    // body in `repositories/tree.rs` from main).
+    Ok(repository.merkle_store_skip_existing().unpack(buffer)?)
 }
 
 /// Write a node to disk

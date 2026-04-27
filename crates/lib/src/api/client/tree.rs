@@ -7,6 +7,7 @@ use tokio_util::io::{ReaderStream, StreamReader, SyncIoBridge};
 
 use crate::api;
 use crate::api::client;
+use crate::core::db::merkle_node::file_backend;
 use crate::core::progress::push_progress::PushProgress;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
@@ -61,6 +62,13 @@ pub async fn create_nodes(
 ) -> Result<(), OxenError> {
     let n = nodes.len();
     progress.set_message(format!("Pushing {n} nodes"));
+
+    // Extend the progress bar's total length by an uncompressed-bytes estimate of the
+    // tarball so the upload phase has a known end and a meaningful ETA. Random-ish
+    // merkle hash bytes compress to ~1.0×, so the uncompressed estimate is a tight
+    // upper bound on the bytes that will actually flow over the wire.
+    let estimated_upload_bytes = file_backend::pack_nodes_byte_estimate(local_repo, &nodes);
+    progress.inc_total_bytes(estimated_upload_bytes);
 
     // Pack -> duplex writer (sync) -> duplex reader (async) -> HTTP body stream.
     // 64 KiB duplex buffer mirrors the server-side streaming pattern in

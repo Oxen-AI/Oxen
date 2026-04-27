@@ -105,11 +105,29 @@ impl LocalRepository {
     /// trait surface (read, write, pack, unpack); backend selection is an implementation
     /// detail of this method.
     ///
+    /// The returned store **overwrites** files that already exist on disk during
+    /// [`MerkleUnpacker::unpack`] — this matches `main`'s
+    /// `util::fs::unpack_async_tar_archive` behaviour, used by the client download path
+    /// (`api::client::tree::node_download_request`). Use
+    /// [`Self::merkle_store_skip_existing`] for the skip-existing variant required by
+    /// the server-side upload-consumer path (`repositories::tree::unpack_nodes`).
+    ///
     /// When new backends (e.g. LMDB) are added, they are registered in
     /// `merkle_store_dispatch::define_merkle_store_dispatch!`, and the
     /// dispatch logic for choosing among them lives here.
+    ///
+    /// [`MerkleUnpacker::unpack`]: crate::model::merkle_tree::merkle_transport::MerkleUnpacker::unpack
     pub fn merkle_store(&self) -> impl TransportableMerkleStore + '_ {
-        merkle_store_dispatch::StoreEnum::File(FileBackend::new(self))
+        merkle_store_dispatch::StoreEnum::File(FileBackend::new(self, true))
+    }
+
+    /// Variant of [`Self::merkle_store`] whose [`MerkleUnpacker::unpack`] **skips**
+    /// files that already exist on disk. Matches `main`'s `repositories::tree::unpack_nodes`
+    /// behaviour, used by the server-side upload-consumer path.
+    ///
+    /// [`MerkleUnpacker::unpack`]: crate::model::merkle_tree::merkle_transport::MerkleUnpacker::unpack
+    pub fn merkle_store_skip_existing(&self) -> impl TransportableMerkleStore + '_ {
+        merkle_store_dispatch::StoreEnum::File(FileBackend::new(self, false))
     }
 
     pub fn init_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {

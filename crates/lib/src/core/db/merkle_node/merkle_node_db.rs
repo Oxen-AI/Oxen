@@ -110,6 +110,12 @@ pub enum MerkleDbError {
     FsTransport(Box<OxenError>), // TODO: replace with FsError from upcoming refactoring PR
     #[error("Could not read entries from merkle tree tar archive: {0}")]
     CannotReadMerkle(std::io::Error),
+    #[error(
+        "Unsupported tar entry type for {path}: only regular files and directories are allowed"
+    )]
+    UnsupportedTarEntry { path: String },
+    #[error("Path traversal detected in merkle tar entry: {0}")]
+    PathTraversal(String),
 }
 
 impl MerkleDbError {
