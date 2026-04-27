@@ -93,8 +93,7 @@ impl<'repo> MerkleWriter for FileBackend<'repo> {
 /// Write session for the file backend. Used to write multiple nodes & their children.
 ///
 /// Writes happen eagerly through each [`FileNodeSession`]; this session's
-/// [`finish`] is a no-op. The `Drop` impl below exists for symmetry with
-/// [`FileNodeSession`] — the compiler elides it in release builds.
+/// [`finish`] is a no-op.
 pub struct FileWriteSession<'repo> {
     repo: &'repo LocalRepository,
 }
@@ -359,7 +358,7 @@ mod tests {
     /// flush+sync the underlying files. This is to match the implicit-drop semantics
     /// that `MerkleNodeDB` has before these `MerkleStore` traits were introduced.
     #[test]
-    fn drop_finishes_file_node_session() -> Result<(), crate::error::OxenError> {
+    fn test_drop_finishes_file_node_session() -> Result<(), crate::error::OxenError> {
         test::run_empty_local_repo_test(|repo| {
             let commit = CommitNode::default();
             let dir = DirNode::default();
@@ -602,7 +601,7 @@ mod tests {
     /// Pack every node in a repo, unpack into a fresh empty repo, and verify every
     /// installed hash is readable from the target store.
     #[tokio::test]
-    async fn transport_round_trip() -> Result<(), OxenError> {
+    async fn test_transport_round_trip() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test(|repo| {
             let mut packed = Vec::new();
             repo.merkle_store()
@@ -633,7 +632,7 @@ mod tests {
     /// one produced by the trait's `pack_nodes`. Gzip bytes differ on mtime, but the
     /// decompressed tar payload must be identical.
     #[tokio::test]
-    async fn compress_nodes_wire_format_unchanged() -> Result<(), OxenError> {
+    async fn test_compress_nodes_wire_format_unchanged() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test(|repo| {
             let head = repositories::commits::head_commit(&repo)?;
             let hashes = HashSet::from_iter([head.hash().expect("no commit for head")]);
@@ -662,7 +661,7 @@ mod tests {
 
     /// Same byte-compat check for the whole-tree path.
     #[tokio::test]
-    async fn compress_tree_wire_format_unchanged() -> Result<(), OxenError> {
+    async fn test_compress_tree_wire_format_unchanged() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test(|repo| {
             // prior code for packing an entire Merkle tree into a .tar.gz
             let old_pack_method = compress_tree(&repo)?;
@@ -688,7 +687,7 @@ mod tests {
     /// Byte-compat for the single-hash pack path (`compress_node` vs
     /// `pack_nodes(&{hash})`).
     #[tokio::test]
-    async fn compress_node_wire_format_unchanged() -> Result<(), OxenError> {
+    async fn test_compress_node_wire_format_unchanged() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test(|repo| {
             let head = repositories::commits::head_commit(&repo)?;
             let hash = head.hash().expect("no commit for head");
@@ -719,7 +718,7 @@ mod tests {
     /// Byte-compat for the commit-set pack path (`compress_commits` vs
     /// `pack_nodes(&{commit hashes})`).
     #[tokio::test]
-    async fn compress_commits_wire_format_unchanged() -> Result<(), OxenError> {
+    async fn test_compress_commits_wire_format_unchanged() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test(|repo| {
             let head = repositories::commits::head_commit(&repo)?;
             let commits: Vec<Commit> = vec![head];
@@ -780,7 +779,7 @@ mod tests {
     /// on a legacy client-push-format tarball: same reported hash set, same readability
     /// through the store in both target repos.
     #[tokio::test]
-    async fn unpack_nodes_unchanged() -> Result<(), OxenError> {
+    async fn test_unpack_nodes_unchanged() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test(|repo| {
             let head = repositories::commits::head_commit(&repo)?;
             let hashes = HashSet::from_iter([head.hash().expect("no commit for head")]);
