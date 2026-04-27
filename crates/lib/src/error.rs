@@ -598,11 +598,6 @@ impl OxenError {
         OxenError::InternalError(StringError::from(s.as_ref()))
     }
 
-    /// Make a new OxenError::ClientCachePoisoned error.
-    pub fn client_cache_poisoned() -> Self {
-        OxenError::ClientCachePoisoned
-    }
-
     //
     // OxenError::Basic constructors
     //

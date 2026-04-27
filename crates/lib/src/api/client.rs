@@ -97,7 +97,7 @@ fn new_for_host(host: String, should_add_user_agent: bool) -> Result<Client, Oxe
     // Double-check under the write lock; another thread may have inserted while we built.
     let mut cache = CLIENT_CACHE
         .write()
-        .map_err(|_| OxenError::client_cache_poisoned())?;
+        .map_err(|_| OxenError::ClientCachePoisoned)?;
     Ok(cache.entry(key).or_insert(client).clone())
 }
 
