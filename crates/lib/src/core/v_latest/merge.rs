@@ -31,10 +31,10 @@ use super::index::restore;
 use super::index::restore::FileToRestore;
 
 // entries_to_restore: files that ought to be restored from the currently traversed tree
-// I.e., In r_ff_merge_commit, it contains merge commit files that are not present in or have changed from the base tree
+// I.e., In walk_merge_commit, it contains merge commit files that are not present in or have changed from the base tree
 // cannot_overwrite_entries: files that would be restored, but are modified from the from_tree, and thus would erase work if overwritten
 
-// for r_ff_base_dir, the 'entries to restore' are actually entries being removed
+// for walk_base_dir, the 'entries to restore' are actually entries being removed
 struct MergeResult {
     pub entries_to_restore: Vec<FileToRestore>,
     pub cannot_overwrite_entries: Vec<PathBuf>,
@@ -644,19 +644,8 @@ async fn fast_forward_merge(
     };
 
     // Stop early if there are conflicts
-    let mut merge_tree_results = MergeResult::new();
-    let mut seen_files = HashSet::new();
-
-    r_ff_merge_commit(
-        repo,
-        &merge_tree,
-        PathBuf::from(""),
-        &mut merge_tree_results,
-        &mut partial_nodes,
-        &mut shared_hashes,
-        &mut seen_files,
-        is_resume,
-    )?;
+    let (merge_tree_results, seen_files) =
+        walk_merge_commit(repo, &merge_tree, &partial_nodes, &shared_hashes, is_resume).await?;
 
     if !merge_tree_results.cannot_overwrite_entries.is_empty() {
         return Err(OxenError::cannot_overwrite_files(
@@ -664,17 +653,8 @@ async fn fast_forward_merge(
         ));
     }
 
-    let mut base_tree_results = MergeResult::new();
-
-    r_ff_base_dir(
-        repo,
-        &base_tree,
-        PathBuf::from(""),
-        &mut base_tree_results,
-        &mut shared_hashes,
-        &mut seen_files,
-        is_resume,
-    )?;
+    let base_tree_results =
+        walk_base_dir(repo, &base_tree, &shared_hashes, &seen_files, is_resume).await?;
 
     // If there are no conflicts, restore the entries
     // Grouping the processing of merge_tree_results and base_tree_results like this ensures no files are modified if the merge doesn't complete
@@ -710,217 +690,168 @@ async fn fast_forward_merge(
     Ok(Some(merge_commit.clone()))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn r_ff_merge_commit(
+/// Walk the merge tree and decide, file by file, whether each entry can be safely restored
+/// from the version store or whether the working copy looks like a local edit we shouldn't
+/// stomp on. Returns the populated `MergeResult` plus the set of paths actually seen on the
+/// merge side, which `walk_base_dir` consumes to find files HEAD has but the merge target
+/// doesn't (i.e., deletions to apply).
+async fn walk_merge_commit<'a>(
     repo: &LocalRepository,
-    merge_node: &MerkleTreeNode,
-    path: impl AsRef<Path>,
-    results: &mut MergeResult,
-    base_files: &mut HashMap<PathBuf, PartialNode>,
-    shared_hashes: &mut HashSet<MerkleHash>,
-    seen_files: &mut HashSet<PathBuf>,
+    root: &'a MerkleTreeNode,
+    base_files: &HashMap<PathBuf, PartialNode>,
+    shared_hashes: &HashSet<MerkleHash>,
     is_resume: bool,
-) -> Result<(), OxenError> {
-    let path = path.as_ref();
-    match &merge_node.node {
-        EMerkleTreeNode::File(merge_file_node) => {
-            let file_path = path.join(merge_file_node.name());
-            seen_files.insert(file_path.clone());
-            // log::debug!("r_ff_merge_commit file_path {:?}", file_path);
-            // log::debug!("merge_node {}", merge_node);
-            // log::debug!("merge_file_node {}", merge_file_node);
+) -> Result<(MergeResult, HashSet<PathBuf>), OxenError> {
+    let mut results = MergeResult::new();
+    let mut seen_files: HashSet<PathBuf> = HashSet::new();
+    let mut stack: Vec<(PathBuf, &'a MerkleTreeNode)> = vec![(PathBuf::new(), root)];
 
-            // If file_path found in base_tree, get the corresponding PartialNode
-            // A PartialNode is the minimal representation of a file necessary to determine whether it should be restored
-            // To properly handle moved files, the partial nodes are associated with their path in the base tree
-            // I.e., if a file has been moved in the merge tree, this code will find that it shouldn't be restored
+    while let Some((path, node)) = stack.pop() {
+        match &node.node {
+            EMerkleTreeNode::File(merge_file_node) => {
+                let file_path = path.join(merge_file_node.name());
+                seen_files.insert(file_path.clone());
 
-            if is_resume {
-                // Resuming an interrupted merge targeting this same commit:
-                // trust the target and force-restore every file the merge
-                // wants, regardless of working-tree state.
-                results.entries_to_restore.push(FileToRestore {
-                    file_node: merge_file_node.clone(),
-                    path: file_path.clone(),
-                });
-            } else if base_files.contains_key(&file_path) {
-                // if found, use to determine whether the file should be restored
-                let base_file_node = &base_files[&file_path];
-
-                // determine if file should be restored from its hash and last modified time
-                let should_restore = restore::should_restore_partial_node(
-                    repo,
-                    Some(base_file_node.clone()),
-                    merge_file_node,
-                    &file_path,
-                )?;
-                if merge_node.hash != base_file_node.hash {
-                    if should_restore {
-                        results.entries_to_restore.push(FileToRestore {
-                            file_node: merge_file_node.clone(),
-                            path: file_path.clone(),
-                        });
+                // If file_path is found in the base tree, look up the corresponding PartialNode —
+                // the minimal representation needed to decide whether to restore. PartialNodes are
+                // keyed by base-tree path so that a file moved between base and merge is correctly
+                // detected as "shouldn't restore".
+                if is_resume {
+                    // Resuming an interrupted merge targeting this same commit: trust the target
+                    // and force-restore every file the merge wants, regardless of working-tree state.
+                    results.entries_to_restore.push(FileToRestore {
+                        file_node: merge_file_node.clone(),
+                        path: file_path.clone(),
+                    });
+                } else if let Some(base_file_node) = base_files.get(&file_path) {
+                    let should_restore = restore::should_restore_partial_node(
+                        repo,
+                        Some(base_file_node.clone()),
+                        merge_file_node,
+                        &file_path,
+                    )
+                    .await?;
+                    if node.hash != base_file_node.hash {
+                        if should_restore {
+                            results.entries_to_restore.push(FileToRestore {
+                                file_node: merge_file_node.clone(),
+                                path: file_path.clone(),
+                            });
+                        } else {
+                            results.cannot_overwrite_entries.push(file_path.clone());
+                        }
                     } else {
-                        results.cannot_overwrite_entries.push(file_path.clone());
+                        log::debug!(
+                            "Merge entry has not changed, but still !restore: {file_path:?}"
+                        );
+                        if !should_restore {
+                            results.cannot_overwrite_entries.push(file_path.clone());
+                        }
                     }
+                } else if restore::should_restore_file(repo, None, merge_file_node, &file_path)
+                    .await?
+                {
+                    results.entries_to_restore.push(FileToRestore {
+                        file_node: merge_file_node.clone(),
+                        path: file_path.clone(),
+                    });
                 } else {
-                    log::debug!("Merge entry has not changed, but still !restore: {file_path:?}");
-                    if !should_restore {
-                        results.cannot_overwrite_entries.push(file_path.clone());
-                    }
+                    results.cannot_overwrite_entries.push(file_path.clone());
                 }
-            } else if restore::should_restore_file(repo, None, merge_file_node, &file_path)? {
-                results.entries_to_restore.push(FileToRestore {
-                    file_node: merge_file_node.clone(),
-                    path: file_path.clone(),
-                });
-            } else {
-                results.cannot_overwrite_entries.push(file_path.clone());
             }
-        }
-        EMerkleTreeNode::Directory(dir_node) => {
-            let dir_path = path.join(dir_node.name());
-            // Early exit if the directory is the same in the from and target trees
-            if shared_hashes.contains(&merge_node.hash) {
-                return Ok(());
-            };
-            let merge_children = {
-                // Get vnodes for the from dir node
-                let dir_vnodes = &merge_node.children;
-
-                // Only iterate through vnodes not shared between the trees
-                let mut unique_nodes = Vec::new();
-                for vnode in dir_vnodes {
+            EMerkleTreeNode::Directory(dir_node) => {
+                // Early exit if the directory is the same in the from and target trees.
+                if shared_hashes.contains(&node.hash) {
+                    continue;
+                }
+                let dir_path = path.join(dir_node.name());
+                // Only enqueue children of vnodes not shared between the trees.
+                for vnode in &node.children {
                     if !shared_hashes.contains(&vnode.hash) {
-                        unique_nodes.extend(vnode.children.iter().cloned());
+                        for child in &vnode.children {
+                            log::debug!("walk_merge_commit child_path {child}");
+                            stack.push((dir_path.clone(), child));
+                        }
                     }
                 }
-
-                unique_nodes
-            };
-
-            for child in merge_children.iter() {
-                log::debug!("r_ff_merge_commit child_path {child}");
-                r_ff_merge_commit(
-                    repo,
-                    child,
-                    &dir_path,
-                    results,
-                    base_files,
-                    shared_hashes,
-                    seen_files,
-                    is_resume,
-                )?;
             }
-        }
-        EMerkleTreeNode::Commit(_) => {
-            // If we get a commit node, we need to skip to the root directory
-            let root_dir = repositories::tree::get_root_dir(merge_node)?;
-            r_ff_merge_commit(
-                repo,
-                root_dir,
-                path,
-                results,
-                base_files,
-                shared_hashes,
-                seen_files,
-                is_resume,
-            )?;
-        }
-        _ => {
-            return Err(OxenError::basic_str(
-                "Got an unexpected node type during checkout",
-            ));
+            EMerkleTreeNode::Commit(_) => {
+                // Skip the commit wrapper to its root directory.
+                let root_dir = repositories::tree::get_root_dir(node)?;
+                stack.push((path, root_dir));
+            }
+            _ => {
+                return Err(OxenError::basic_str(
+                    "Got an unexpected node type during checkout",
+                ));
+            }
         }
     }
 
-    Ok(())
+    Ok((results, seen_files))
 }
 
-fn r_ff_base_dir(
+/// Walk the base (HEAD) tree to find files that exist in HEAD but not in the merge target —
+/// those are deletions the FF merge must apply on disk. Same iterative async depth-first
+/// search shape as `walk_merge_commit`. `merge_files` is the set of paths the merge walker
+/// visited.
+async fn walk_base_dir<'a>(
     repo: &LocalRepository,
-    base_node: &MerkleTreeNode,
-    path: impl AsRef<Path>,
-    results: &mut MergeResult,
-    shared_hashes: &mut HashSet<MerkleHash>,
-    merge_files: &mut HashSet<PathBuf>,
+    root: &'a MerkleTreeNode,
+    shared_hashes: &HashSet<MerkleHash>,
+    merge_files: &HashSet<PathBuf>,
     is_resume: bool,
-) -> Result<(), OxenError> {
-    let path = path.as_ref();
-    match &base_node.node {
-        EMerkleTreeNode::File(base_file_node) => {
-            let file_path = path.join(base_file_node.name());
-            // Remove all entries that are in HEAD but not in merge entries
-            if !merge_files.contains(&file_path) {
-                // Here, we don't need partial node representation, as we're only concerned with restoring files that aren't in the merge tree
-                let path = repo.path.join(file_path.clone());
-                if path.exists() {
-                    if is_resume
-                        || restore::should_restore_file(repo, None, base_file_node, &file_path)?
-                    {
-                        results.entries_to_restore.push(FileToRestore {
-                            file_node: base_file_node.clone(),
-                            path: path.clone(),
-                        });
-                    } else {
-                        results.cannot_overwrite_entries.push(file_path);
+) -> Result<MergeResult, OxenError> {
+    let mut results = MergeResult::new();
+    let mut stack: Vec<(PathBuf, &'a MerkleTreeNode)> = vec![(PathBuf::new(), root)];
+
+    while let Some((path, node)) = stack.pop() {
+        match &node.node {
+            EMerkleTreeNode::File(base_file_node) => {
+                let file_path = path.join(base_file_node.name());
+                // Only consider paths in HEAD that aren't also in the merge tree — those are
+                // the deletions to apply.
+                if !merge_files.contains(&file_path) {
+                    let full_path = repo.path.join(&file_path);
+                    if full_path.exists() {
+                        if is_resume
+                            || restore::should_restore_file(repo, None, base_file_node, &file_path)
+                                .await?
+                        {
+                            results.entries_to_restore.push(FileToRestore {
+                                file_node: base_file_node.clone(),
+                                path: full_path,
+                            });
+                        } else {
+                            results.cannot_overwrite_entries.push(file_path);
+                        }
                     }
                 }
             }
-        }
-        EMerkleTreeNode::Directory(dir_node) => {
-            let dir_path = path.join(dir_node.name());
-
-            if shared_hashes.contains(&base_node.hash) {
-                return Ok(());
-            };
-
-            let base_children = {
-                // Get vnodes for the from dir node
-                let dir_vnodes = &base_node.children;
-
-                // Only iterate through vnodes not shared between the trees
-                let mut unique_nodes = Vec::new();
-                for vnode in dir_vnodes {
+            EMerkleTreeNode::Directory(dir_node) => {
+                if shared_hashes.contains(&node.hash) {
+                    continue;
+                }
+                let dir_path = path.join(dir_node.name());
+                for vnode in &node.children {
                     if !shared_hashes.contains(&vnode.hash) {
-                        unique_nodes.extend(vnode.children.iter().cloned());
+                        for child in &vnode.children {
+                            stack.push((dir_path.clone(), child));
+                        }
                     }
                 }
-
-                unique_nodes
-            };
-
-            for child in base_children.iter() {
-                //log::debug!("r_ff_base_dir child_path {}", child);
-                r_ff_base_dir(
-                    repo,
-                    child,
-                    &dir_path,
-                    results,
-                    shared_hashes,
-                    merge_files,
-                    is_resume,
-                )?;
             }
-        }
-        EMerkleTreeNode::Commit(_) => {
-            // If we get a commit node, we need to skip to the root directory
-            let root_dir = repositories::tree::get_root_dir(base_node)?;
-            r_ff_base_dir(
-                repo,
-                root_dir,
-                path,
-                results,
-                shared_hashes,
-                merge_files,
-                is_resume,
-            )?;
-        }
-        _ => {
-            log::debug!("r_ff_base_dir unknown node type");
+            EMerkleTreeNode::Commit(_) => {
+                let root_dir = repositories::tree::get_root_dir(node)?;
+                stack.push((path, root_dir));
+            }
+            _ => {
+                log::debug!("walk_base_dir unknown node type");
+            }
         }
     }
-    Ok(())
+
+    Ok(results)
 }
 
 /// Perform a merge between commits.
@@ -1238,7 +1169,8 @@ pub async fn find_merge_conflicts(
                                 Some(base_file_node.clone()),
                                 merge_file_node,
                                 entry_path,
-                            )?
+                            )
+                            .await?
                         {
                             entries_to_restore.push(FileToRestore {
                                 file_node: merge_file_node.clone(),
@@ -1299,7 +1231,8 @@ pub async fn find_merge_conflicts(
                             base_file_node,
                             merge_file_node,
                             entry_path,
-                        )?
+                        )
+                        .await?
                     {
                         entries_to_restore.push(FileToRestore {
                             file_node: merge_file_node.clone(),
@@ -1325,7 +1258,8 @@ pub async fn find_merge_conflicts(
                 entries.push((entry_path.clone(), merge_file_node.clone(), Added));
                 if write_to_disk {
                     if is_resume
-                        || restore::should_restore_file(repo, None, merge_file_node, entry_path)?
+                        || restore::should_restore_file(repo, None, merge_file_node, entry_path)
+                            .await?
                     {
                         entries_to_restore.push(FileToRestore {
                             file_node: merge_file_node.clone(),
