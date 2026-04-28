@@ -95,6 +95,9 @@ liboxen = { path = "crates/lib", version = "=0.48.1" }
 lofty = "0.22.2"
 log = "0.4.20"
 lru = "0.14.0"
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
 metrics = "0.24"
 metrics-exporter-prometheus = "0.16"
 mime = "0.3.17"
