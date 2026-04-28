@@ -52,8 +52,6 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
-        with:
-          ignore-nothing-to-cache: true
 
       - name: Bump version
         id: bump
