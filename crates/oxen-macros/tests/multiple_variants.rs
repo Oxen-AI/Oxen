@@ -102,3 +102,11 @@ fn unit_and_unannotated_variants_compile() {
     let _ = Multi::NoConversion(true);
     let _ = Multi::Empty;
 }
+
+// Strict negative check: the macro must NOT have emitted `IntoOxenError`
+// for the field type of the unannotated `NoConversion(bool)` variant. If a
+// future macro change wrongly emitted that impl, this assertion would fail
+// to compile, and the test crate (and thus CI) would break. `Empty` is a
+// unit variant with no field type, so there's nothing to assert about it
+// — the manual construction in the test above is the only check available.
+static_assertions::assert_not_impl_any!(bool: error::IntoOxenError);

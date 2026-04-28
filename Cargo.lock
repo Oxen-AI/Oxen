@@ -5417,6 +5417,7 @@ version = "0.48.1"
 dependencies = [
  "proc-macro2",
  "quote",
+ "static_assertions",
  "syn 2.0.117",
  "thiserror 2.0.18",
 ]

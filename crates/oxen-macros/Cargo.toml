@@ -19,8 +19,12 @@ proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { workspace = true }
 
-
 [dev-dependencies]
+# Compile-time `assert_not_impl_any!` lets the negative tests fail to compile
+# if the macro ever wrongly emits an `IntoOxenError` impl for a type it should
+# have skipped. Used in tests/multiple_variants.rs, tests/nested_box.rs, and
+# tests/non_box_shapes.rs.
+static_assertions = { workspace = true }
 # Used in integration tests to validate that the `#[source]` attribute the
 # macro injects is correctly picked up by `#[derive(thiserror::Error)]` for
 # `Error::source()` chaining.

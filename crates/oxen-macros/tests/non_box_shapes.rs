@@ -98,11 +98,14 @@ fn user_defined_box_lookalike_is_not_unboxed() {
         Shapes::MyBoxed(MyBox(x)) => assert_eq!(x, 9),
         _ => panic!("expected Shapes::MyBoxed"),
     }
-    // The bare `u16` MUST NOT have an `IntoOxenError` impl from this enum's
-    // macro. If the macro had wrongly unwrapped `MyBox<u16>` into
-    // `IntoOxenError for u16`, a future contributor adding `u16` to another
-    // variant would hit a surprise conflict.
 }
+
+// Strict negative check: the macro detector matches *only* the literal `Box`
+// path (or `std::boxed::Box`), so the user-defined `MyBox<T>` lookalike must
+// not be auto-unboxed. If the detector accidentally became too permissive
+// (e.g., matched any `*Box` ident) and emitted `IntoOxenError for u16`, this
+// assertion would fail to compile.
+static_assertions::assert_not_impl_any!(u16: error::IntoOxenError);
 
 #[test]
 fn absolute_path_box_triggers_auto_unboxing() {
