@@ -224,21 +224,20 @@ pub async fn checkout_subtrees(
         };
 
         let parent_path = subtree_path.parent().unwrap_or(Path::new(""));
-        let mut results = CheckoutResult::new();
         let mut hashes = CheckoutHashes::from_hashes(shared_hashes);
         let version_store = repo.version_store()?;
 
-        r_restore_missing_or_modified_files(
+        let results = walk_target_tree(
             repo,
             &target_root,
             parent_path,
-            &mut results,
             &mut progress,
-            &mut partial_nodes,
+            &partial_nodes,
             &mut hashes,
             depth,
             OnConflict::Abort,
-        )?;
+        )
+        .await?;
 
         // If there are conflicts, return an error without restoring anything
         if !results.cannot_overwrite_entries.is_empty() {
@@ -364,23 +363,22 @@ pub async fn set_working_repo_to_commit(
         None
     };
 
-    let mut results = CheckoutResult::new();
     let mut hashes = CheckoutHashes::from_hashes(shared_hashes);
     let version_store = repo.version_store()?;
 
-    log::debug!("restore_missing_or_modified_files");
+    log::debug!("walk_target_tree");
     // Restore files present in the target commit
-    r_restore_missing_or_modified_files(
+    let results = walk_target_tree(
         repo,
         &target_tree,
         Path::new(""),
-        &mut results,
         &mut progress,
-        &mut partial_nodes,
+        &partial_nodes,
         &mut hashes,
         i32::MAX,
         on_conflict,
-    )?;
+    )
+    .await?;
 
     // If there are conflicts, return an error without restoring anything
     if !results.cannot_overwrite_entries.is_empty() {
@@ -574,129 +572,127 @@ fn r_remove_if_not_in_target(
     Ok(())
 }
 
+/// Walk the target tree and stage every file that is missing from disk or differs from the
+/// target node. Iterative depth-first search over an explicit stack so the file branch can
+/// `.await` `repo.mtime_matches` — same shape as the merge-side walkers.
+///
+/// Also populates `hashes.seen_paths` with every path in the target tree, which the cleanup
+/// walker (`r_remove_if_not_in_target`) consumes to identify HEAD files that aren't in the
+/// target (i.e., deletions to apply).
 #[allow(clippy::too_many_arguments)]
-fn r_restore_missing_or_modified_files(
+async fn walk_target_tree<'a>(
     repo: &LocalRepository,
-    target_node: &MerkleTreeNode,
-    path: &Path, // relative path
-    results: &mut CheckoutResult,
+    target_root: &'a MerkleTreeNode,
+    starting_path: &Path,
     progress: &mut CheckoutProgressBar,
-    partial_nodes: &mut HashMap<PathBuf, PartialNode>,
+    partial_nodes: &HashMap<PathBuf, PartialNode>,
     hashes: &mut CheckoutHashes,
-    depth: i32,
+    starting_depth: i32,
     on_conflict: OnConflict,
-) -> Result<(), OxenError> {
-    // Recursively iterate through the tree, checking each file against the working repo
-    // If the file is not in the working repo, restore it from the commit
-    // If the file is in the working repo, but the hash does not match, overwrite the file in the working repo with the file from the commit
-    // If the file is in the working repo, and the hash matches, do nothing
-    if depth < 0 {
-        return Ok(());
-    }
+) -> Result<CheckoutResult, OxenError> {
+    let mut results = CheckoutResult::new();
+    let mut stack: Vec<(PathBuf, &'a MerkleTreeNode, i32)> =
+        vec![(starting_path.to_path_buf(), target_root, starting_depth)];
 
-    match &target_node.node {
-        EMerkleTreeNode::File(file_node) => {
-            let file_path = path.join(file_node.name());
-            let full_path = repo.path.join(&file_path);
+    while let Some((path, node, depth)) = stack.pop() {
+        if depth < 0 {
+            continue;
+        }
 
-            // Collect path for matching in r_remove_if_not_in_target
-            hashes.seen_paths.insert(file_path.clone());
-            if !full_path.exists() {
-                // Before restoring, check if the user intentionally deleted this file
-                // If the file existed in the from tree (tracked in partial_nodes), it was
-                // deleted in the working directory without being committed
-                if let Some(from_node) = partial_nodes.get(&file_path) {
-                    if from_node.hash == target_node.hash {
-                        // Same content in both trees - preserve the user's deletion
-                        log::debug!("Preserving uncommitted deletion of file: {file_path:?}");
-                        return Ok(());
-                    } else if on_conflict.is_abort() {
-                        // Different content - this is a conflict
-                        log::debug!(
-                            "Conflict: uncommitted deletion of modified file: {file_path:?}"
-                        );
-                        results.cannot_overwrite_entries.push(file_path.clone());
-                        return Ok(());
+        match &node.node {
+            EMerkleTreeNode::File(file_node) => {
+                let file_path = path.join(file_node.name());
+                let full_path = repo.path.join(&file_path);
+
+                // Collect path for matching in r_remove_if_not_in_target
+                hashes.seen_paths.insert(file_path.clone());
+
+                if !full_path.exists() {
+                    // Before restoring, check if the user intentionally deleted this file. If
+                    // the file existed in the from tree (tracked in partial_nodes), it was
+                    // deleted in the working directory without being committed.
+                    if let Some(from_node) = partial_nodes.get(&file_path) {
+                        if from_node.hash == node.hash {
+                            // Same content in both trees - preserve the user's deletion
+                            log::debug!("Preserving uncommitted deletion of file: {file_path:?}");
+                            continue;
+                        } else if on_conflict.is_abort() {
+                            log::debug!(
+                                "Conflict: uncommitted deletion of modified file: {file_path:?}"
+                            );
+                            results.cannot_overwrite_entries.push(file_path.clone());
+                            continue;
+                        }
+                        // Overwrite: fall through and restore the target's version anyway.
                     }
-                    // Overwrite: fall through and restore the target's version anyway.
+
+                    // File is new in the target commit, restore it
+                    log::debug!("Restoring missing file: {file_path:?}");
+                    results.files_to_restore.push(FileToRestore {
+                        file_node: file_node.clone(),
+                        path: file_path.clone(),
+                    });
+                    progress.increment_restored();
+                    continue;
                 }
 
-                // File is new in the target commit, restore it
-                log::debug!("Restoring missing file: {file_path:?}");
-                results.files_to_restore.push(FileToRestore {
-                    file_node: file_node.clone(),
-                    path: file_path.clone(),
-                });
+                // TODO: Refactor this check into a separate module — there is no module for
+                // a 3-way is_modified_from_node right now.
 
-                progress.increment_restored();
-            } else {
-                // TODO: Refactor this check into a separate module
-                // We don't have a module for a 3-way is_modified_from_node right now
-
-                // File exists, check whether it matches the target node or a from node
-                // First, check the metadata
+                // File exists. Check whether it matches the target node or a from node.
                 let meta = util::fs::metadata(&full_path)?;
-                let last_modified = Some(FileTime::from_last_modification_time(&meta));
-                let size = Some(meta.len());
+                let disk_mtime = FileTime::from_last_modification_time(&meta);
+                let disk_size = meta.len();
 
-                let target_last_modified = util::fs::last_modified_time(
+                let target_mtime = util::fs::last_modified_time(
                     file_node.last_modified_seconds(),
                     file_node.last_modified_nanoseconds(),
                 );
-
                 let target_size = file_node.num_bytes();
 
-                // If this matches the target, do nothing
-                if last_modified == Some(target_last_modified) && size == Some(target_size) {
-                    return Ok(());
+                // If this matches the target, do nothing. `mtime_matches` honors the FS's
+                // rounding tolerance — without it, a file that `restore_file`'s fast path
+                // would skip looks "modified" here on coarse-mtime mounts (FAT/exFAT, HFS+,
+                // some NFS).
+                if repo.mtime_matches(disk_mtime, target_mtime).await && disk_size == target_size {
+                    continue;
                 }
 
-                // If the metadata matches a corresponding from_node, stage it to be restored
-                let (from_node, from_last_modified, from_size) =
-                    if let Some(from_node) = partial_nodes.get(&file_path) {
-                        (
-                            Some(from_node),
-                            Some(from_node.last_modified),
-                            Some(from_node.size),
-                        )
-                    } else {
-                        (None, None, None)
-                    };
+                let from_node = partial_nodes.get(&file_path);
 
-                if last_modified == from_last_modified && size == from_size {
+                // If the metadata matches a corresponding from_node, stage it to be restored.
+                if let Some(from) = from_node
+                    && repo.mtime_matches(disk_mtime, from.last_modified).await
+                    && disk_size == from.size
+                {
                     results.files_to_restore.push(FileToRestore {
                         file_node: file_node.clone(),
                         path: file_path.clone(),
                     });
                     progress.increment_modified();
-                    return Ok(());
+                    continue;
                 }
 
-                // Otherwise, check hashes
-                let working_hash = Some(util::hasher::get_hash_given_metadata(&full_path, &meta)?);
-                //log::debug!("Working hash: {:?}", working_hash);
-                let target_hash = target_node.hash.to_u128();
-                //log::debug!("Target hash: {:?}", MerkleHash::new(target_hash));
-                if working_hash == Some(target_hash) {
-                    return Ok(());
+                // Otherwise, check hashes.
+                let working_hash = util::hasher::get_hash_given_metadata(&full_path, &meta)?;
+                let target_hash = node.hash.to_u128();
+                if working_hash == target_hash {
+                    continue;
                 }
 
-                let from_hash = from_node.map(|from_node| from_node.hash.to_u128());
-                //log::debug!("from hash: {from_hash:?}");
-
-                if working_hash == from_hash {
+                let from_hash = from_node.map(|n| n.hash.to_u128());
+                if Some(working_hash) == from_hash {
                     results.files_to_restore.push(FileToRestore {
                         file_node: file_node.clone(),
                         path: file_path.clone(),
                     });
                     progress.increment_modified();
-                    return Ok(());
+                    continue;
                 }
 
-                // Neither hash matches: the working file has been modified (or is mid-write,
-                // e.g. after a crashed merge). Normally a conflict — but with
-                // `OnConflict::Overwrite` (e.g. `oxen merge --abort`), discard the working state
-                // and restore the target's version.
+                // Neither hash matches: the working file has diverged from both. Normally a
+                // conflict — but with `OnConflict::Overwrite` (e.g. `oxen merge --abort`),
+                // discard the working state and restore the target's version.
                 match on_conflict {
                     OnConflict::Abort => {
                         results.cannot_overwrite_entries.push(file_path.clone());
@@ -710,76 +706,44 @@ fn r_restore_missing_or_modified_files(
                 }
                 progress.increment_modified();
             }
-        }
-        EMerkleTreeNode::Directory(dir_node) => {
-            let dir_path = path.join(dir_node.name());
-            let full_dir_path = repo.path.join(&dir_path);
-            // If something exists at this path but is not a directory (e.g. the
-            // user replaced a dir with a file), remove it so restoration can proceed.
-            if full_dir_path.exists() && !full_dir_path.is_dir() {
-                std::fs::remove_file(&full_dir_path)?;
-            }
-
-            // Early exit if the directory is the same in the from and target trees
-            // AND it still exists on disk as a directory (if deleted or replaced, we need to restore it)
-            if hashes.common_nodes.contains(&target_node.hash) && full_dir_path.is_dir() {
-                return Ok(());
-            };
-
-            // If the directory doesn't exist on disk, we need to walk all vnodes
-            // (including shared ones) to restore all missing files
-            let walk_all = !full_dir_path.is_dir();
-
-            let children = {
-                // Get vnodes for the from dir node
-                let dir_vnodes = &target_node.children;
-
-                // Only iterate through vnodes not shared between the trees
-                // unless walk_all is set (directory deleted from disk)
-                let mut unique_nodes = Vec::new();
-                for vnode in dir_vnodes {
-                    if walk_all || !hashes.common_nodes.contains(&vnode.hash) {
-                        unique_nodes.extend(vnode.children.iter().cloned());
-                    }
+            EMerkleTreeNode::Directory(dir_node) => {
+                let dir_path = path.join(dir_node.name());
+                let full_dir_path = repo.path.join(&dir_path);
+                // If something exists at this path but is not a directory (e.g. the user
+                // replaced a dir with a file), remove it so restoration can proceed.
+                if full_dir_path.exists() && !full_dir_path.is_dir() {
+                    std::fs::remove_file(&full_dir_path)?;
                 }
 
-                unique_nodes
-            };
+                // Early exit if the directory is the same in the from and target trees AND
+                // it still exists on disk as a directory.
+                if hashes.common_nodes.contains(&node.hash) && full_dir_path.is_dir() {
+                    continue;
+                }
 
-            for child_node in children {
-                r_restore_missing_or_modified_files(
-                    repo,
-                    &child_node,
-                    &dir_path,
-                    results,
-                    progress,
-                    partial_nodes,
-                    hashes,
-                    depth - 1,
-                    on_conflict,
-                )?;
+                // If the directory doesn't exist on disk, walk all vnodes (including shared
+                // ones) to restore all missing files.
+                let walk_all = !full_dir_path.is_dir();
+
+                for vnode in &node.children {
+                    if walk_all || !hashes.common_nodes.contains(&vnode.hash) {
+                        for child in &vnode.children {
+                            stack.push((dir_path.clone(), child, depth - 1));
+                        }
+                    }
+                }
+            }
+            EMerkleTreeNode::Commit(_) => {
+                let root_dir = repositories::tree::get_root_dir(node)?;
+                stack.push((path, root_dir, depth - 1));
+            }
+            _ => {
+                return Err(OxenError::basic_str(
+                    "Got an unexpected node type during checkout",
+                ));
             }
         }
-        EMerkleTreeNode::Commit(_) => {
-            // If we get a commit node, we need to skip to the root directory
-            let root_dir = repositories::tree::get_root_dir(target_node)?;
-            r_restore_missing_or_modified_files(
-                repo,
-                root_dir,
-                path,
-                results,
-                progress,
-                partial_nodes,
-                hashes,
-                depth - 1,
-                on_conflict,
-            )?;
-        }
-        _ => {
-            return Err(OxenError::basic_str(
-                "Got an unexpected node type during checkout",
-            ));
-        }
     }
-    Ok(())
+
+    Ok(results)
 }
