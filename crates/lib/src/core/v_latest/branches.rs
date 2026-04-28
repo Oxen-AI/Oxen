@@ -508,7 +508,14 @@ async fn walk_from_tree<'a>(
                             if on_conflict.is_abort() && modified_locally {
                                 candidates.cannot_overwrite_entries.push(file_path);
                             } else {
-                                if repo.is_remote_mode() {
+                                // In remote mode, back up the file under `node.hash` before we
+                                // remove it so future checkouts can restore from the version store.
+                                // Only safe when the on-disk bytes match `node.hash`. The remaining
+                                // case (`OnConflict::Overwrite` + `modified_locally`) is the user
+                                // discarding their working state, so storing those bytes under the
+                                // committed hash would pollute the content-addressable store with
+                                // mismatched content.
+                                if repo.is_remote_mode() && !modified_locally {
                                     candidates
                                         .files_to_store
                                         .push((node.hash, full_path.clone()));
@@ -517,10 +524,13 @@ async fn walk_from_tree<'a>(
                             }
                         }
                     } else if full_path.exists() && repo.is_remote_mode() {
-                        // File exists in both trees at the same path — it may be
-                        // overwritten during restore. Store the current version so future
-                        // checkouts can restore it from the version store.
-                        candidates.files_to_store.push((node.hash, full_path));
+                        // File exists in both trees at the same path — it may be overwritten by the
+                        // restore step. Same gate as above: back up the on-disk bytes only when
+                        // they match `node.hash`. If the user modified the file locally, those
+                        // bytes would pollute the content-addressable store under the wrong hash.
+                        if !repo.is_modified_from_node(&full_path, file_node).await? {
+                            candidates.files_to_store.push((node.hash, full_path));
+                        }
                     }
                 }
                 EMerkleTreeNode::Directory(dir_node) => {
