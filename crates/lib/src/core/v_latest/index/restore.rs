@@ -254,6 +254,7 @@ pub async fn should_restore_partial_node(
             if repo
                 .mtime_matches(file_last_modified, node_last_modified)
                 .await
+                && file_size == file_node.num_bytes()
             {
                 return Ok(true);
             }
@@ -296,6 +297,7 @@ pub async fn should_restore_file(
             if repo
                 .mtime_matches(file_last_modified, node_last_modified)
                 .await
+                && meta.len() == base_node.num_bytes()
             {
                 return Ok(true);
             }
@@ -338,6 +340,7 @@ pub async fn should_restore_file(
             if repo
                 .mtime_matches(file_last_modified, node_last_modified)
                 .await
+                && meta.len() == file_node.num_bytes()
             {
                 return Ok(true);
             }
