@@ -110,6 +110,24 @@ pub fn from_ox(_args: TokenStream, input: TokenStream) -> TokenStream {
             .into();
     };
 
+    // Reject generic enums up-front. The macro emits `impl ... for #FieldType
+    // { fn into_oxen(self) -> #enum_name { #enum_name::#Variant(self) } }`, which
+    // references the enum by its bare ident. For an `enum E<T> { ... }`, the
+    // bare `E` isn't a valid type spelling, so the compiler would produce a
+    // confusing "missing generics for enum `E`" diagnostic pointing at
+    // macro-generated tokens. A clear up-front error is friendlier.
+    //
+    // This isn't a current bug (the only intended user, `OxenError`, has no
+    // generics) — it's a guard against future misuse.
+    if !input.generics.params.is_empty() {
+        return syn::Error::new_spanned(
+            &input.generics,
+            "`#[from_ox]` cannot be applied to enums with generic parameters",
+        )
+        .to_compile_error()
+        .into();
+    }
+
     let mut impls = Vec::new();
     let mut errors = Vec::new();
 
