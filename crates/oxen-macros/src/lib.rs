@@ -1,7 +1,7 @@
 //! Proc-macro derive for `liboxen`'s `IntoOxenError` trait.
 //!
 //! On an enum variant with a single tuple field, annotate the field with
-//! `#[from_impl]` to auto-generate `impl IntoOxenError for <FieldType>` that
+//! `#[from_ox]` to auto-generate `impl IntoOxenError for <FieldType>` that
 //! constructs the enum via that variant. Mirrors the shape of `thiserror`'s
 //! `#[from]`, but routes through `IntoOxenError` so the crate-wide blanket
 //! `impl<E: IntoOxenError> From<E> for OxenError` stays unambiguous.
@@ -12,7 +12,7 @@
 //! #[derive(thiserror::Error, IntoOxen)]
 //! pub enum OxenError {
 //!     #[error("IO error: {0}")]
-//!     IO(#[from_impl] std::io::Error),
+//!     IO(#[from_ox] std::io::Error),
 //! }
 //! ```
 //!
@@ -28,7 +28,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput, Fields, parse_macro_input, spanned::Spanned};
 
-#[proc_macro_derive(IntoOxen, attributes(from_impl))]
+#[proc_macro_derive(IntoOxen, attributes(from_ox))]
 pub fn derive_into_oxen(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let enum_name = &input.ident;
@@ -44,11 +44,11 @@ pub fn derive_into_oxen(input: TokenStream) -> TokenStream {
 
     for variant in &data.variants {
         let Fields::Unnamed(fields) = &variant.fields else {
-            // Struct-like or unit variants can't carry `#[from_impl]`; skip.
-            if let Some(attr) = find_from_impl_attr(&variant.fields) {
+            // Struct-like or unit variants can't carry `#[from_ox]`; skip.
+            if let Some(attr) = find_from_ox_attr(&variant.fields) {
                 errors.push(syn::Error::new(
                     attr.span(),
-                    "`#[from_impl]` is only valid on single-field tuple variants",
+                    "`#[from_ox]` is only valid on single-field tuple variants",
                 ));
             }
             continue;
@@ -57,7 +57,7 @@ pub fn derive_into_oxen(input: TokenStream) -> TokenStream {
         let marked: Vec<_> = fields
             .unnamed
             .iter()
-            .filter(|f| f.attrs.iter().any(is_from_impl_attr))
+            .filter(|f| f.attrs.iter().any(is_from_ox_attr))
             .collect();
 
         if marked.is_empty() {
@@ -67,7 +67,7 @@ pub fn derive_into_oxen(input: TokenStream) -> TokenStream {
         if fields.unnamed.len() != 1 {
             errors.push(syn::Error::new(
                 variant.span(),
-                "`#[from_impl]` is only valid on single-field tuple variants",
+                "`#[from_ox]` is only valid on single-field tuple variants",
             ));
             continue;
         }
@@ -93,22 +93,22 @@ pub fn derive_into_oxen(input: TokenStream) -> TokenStream {
     .into()
 }
 
-fn is_from_impl_attr(attr: &syn::Attribute) -> bool {
-    attr.path().is_ident("from_impl")
+fn is_from_ox_attr(attr: &syn::Attribute) -> bool {
+    attr.path().is_ident("from_ox")
 }
 
-fn find_from_impl_attr(fields: &Fields) -> Option<&syn::Attribute> {
+fn find_from_ox_attr(fields: &Fields) -> Option<&syn::Attribute> {
     match fields {
         Fields::Named(named) => named
             .named
             .iter()
             .flat_map(|f| &f.attrs)
-            .find(|a| is_from_impl_attr(a)),
+            .find(|a| is_from_ox_attr(a)),
         Fields::Unnamed(unnamed) => unnamed
             .unnamed
             .iter()
             .flat_map(|f| &f.attrs)
-            .find(|a| is_from_impl_attr(a)),
+            .find(|a| is_from_ox_attr(a)),
         Fields::Unit => None,
     }
 }
