@@ -11,7 +11,9 @@ use crate::core::db::merkle_node::file_backend;
 use crate::core::progress::push_progress::PushProgress;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
-use crate::model::merkle_tree::merkle_transport::{MerklePacker, MerkleUnpacker};
+use crate::model::merkle_tree::merkle_transport::{
+    MerklePacker, MerkleUnpacker, PackOptions, UnpackOptions,
+};
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
 use crate::opts::download_tree_opts::DownloadTreeOpts;
@@ -77,7 +79,11 @@ pub async fn create_nodes(
     let repo = local_repo.clone();
     let pack_handle = tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
         let sync_writer = SyncIoBridge::new(async_writer);
-        repo.merkle_store().pack_nodes(&nodes, sync_writer)?;
+        // Legacy client-push wire format: required so older `oxen-server` deployments
+        // (which pre-pend `tree/nodes/` server-side at install time) install entries
+        // at the right paths.
+        repo.merkle_store()
+            .pack_nodes(&nodes, PackOptions::LegacyClientPush, sync_writer)?;
         Ok(())
     });
 
@@ -360,7 +366,10 @@ async fn node_download_request(
 
     let repo = local_repo.clone();
     tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
-        repo.merkle_store().unpack(sync_reader)?;
+        // Download path: overwrite existing files on disk, matching `main`'s
+        // `util::fs::unpack_async_tar_archive` behaviour.
+        repo.merkle_store()
+            .unpack(sync_reader, UnpackOptions::Overwrite)?;
         Ok(())
     })
     .await

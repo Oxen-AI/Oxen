@@ -9,7 +9,9 @@ use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_old::v0_19_0::index::CommitMerkleTree as CommitMerkleTreeV0_19_0;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::merkle_tree::merkle_transport::{MerklePacker, MerkleUnpacker};
+use crate::model::merkle_tree::merkle_transport::{
+    MerklePacker, MerkleUnpacker, PackOptions, UnpackOptions,
+};
 use crate::model::merkle_tree::merkle_writer::{
     MerkleWriteSession, MerkleWriter, NodeWriteSession,
 };
@@ -856,7 +858,9 @@ pub fn compress_nodes(
 ) -> Result<Vec<u8>, OxenError> {
     log::debug!("Compressing {} unique nodes...", hashes.len());
     let mut buf = Vec::new();
-    repository.merkle_store().pack_nodes(hashes, &mut buf)?;
+    repository
+        .merkle_store()
+        .pack_nodes(hashes, PackOptions::ServerCanonical, &mut buf)?;
     Ok(buf)
 }
 
@@ -867,7 +871,9 @@ pub fn compress_node(
     let mut set = HashSet::with_capacity(1);
     set.insert(*hash);
     let mut buf = Vec::new();
-    repository.merkle_store().pack_nodes(&set, &mut buf)?;
+    repository
+        .merkle_store()
+        .pack_nodes(&set, PackOptions::ServerCanonical, &mut buf)?;
     let total_size: u64 = u64::try_from(buf.len()).unwrap_or(u64::MAX);
     log::debug!(
         "Compressed node {} size is {}",
@@ -886,7 +892,9 @@ pub fn compress_commits(
         hashes.insert(commit.hash()?);
     }
     let mut buf = Vec::new();
-    repository.merkle_store().pack_nodes(&hashes, &mut buf)?;
+    repository
+        .merkle_store()
+        .pack_nodes(&hashes, PackOptions::ServerCanonical, &mut buf)?;
     Ok(buf)
 }
 
@@ -895,10 +903,9 @@ pub fn unpack_nodes(
     buffer: &[u8],
 ) -> Result<HashSet<MerkleHash>, OxenError> {
     log::debug!("Unpacking nodes from buffer ({} bytes)", buffer.len());
-    // `unpack_nodes` runs on the server-side upload-consumer path, which on `main`
-    // skipped files that already exist on disk (matches the old `unpack_nodes`
-    // body in `repositories/tree.rs` from main).
-    Ok(repository.merkle_store_skip_existing().unpack(buffer)?)
+    Ok(repository
+        .merkle_store()
+        .unpack(buffer, UnpackOptions::SkipExisting)?)
 }
 
 /// Write a node to disk
