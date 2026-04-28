@@ -1,10 +1,10 @@
-//! Edge case: an enum that derives `IntoOxen` but has zero `#[from_ox]`
-//! annotations should compile cleanly and emit zero impls. The derive must
-//! not fail, ICE, or warn — it should produce an empty token stream.
+//! Edge case: an enum that uses `#[oxen_macros::from_ox]` but has zero
+//! `#[from_ox]` field annotations should compile cleanly and emit zero impls.
+//! The macro must not fail, ICE, or warn — it should produce an empty
+//! token stream alongside the unmodified enum.
 //!
-//! We can't directly assert "no impl exists for type X" inside the test, but
-//! we can confirm:
-//! 1. The crate compiles (the derive didn't error out).
+//! We also confirm:
+//! 1. The crate compiles (the macro didn't error out).
 //! 2. The enum constructs and matches normally.
 //! 3. Calling `IntoOxenError::into_oxen` on an unrelated type that *does*
 //!    have a hand-written impl still works — proving the trait import
@@ -16,12 +16,17 @@ mod error {
     }
 }
 
-#[derive(Debug, oxen_macros::IntoOxen)]
+#[oxen_macros::from_ox]
+#[derive(thiserror::Error, Debug)]
 #[allow(dead_code, non_camel_case_types)]
 pub enum None_ {
+    #[error("unit")]
     Unit,
+    #[error("tuple: {0}")]
     Tuple(u32),
+    #[error("pair: {0}, {1}")]
     Pair(u32, u32),
+    #[error("named: {x}")]
     Named { x: u32 },
 }
 

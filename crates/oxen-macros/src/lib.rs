@@ -1,68 +1,81 @@
-//! Proc-macro derive for `liboxen`'s `IntoOxenError` trait.
+//! Attribute macro for `liboxen`'s `IntoOxenError` trait.
 //!
-//! On an enum variant with a single tuple field, annotate the field with
-//! `#[from_ox]` to auto-generate `impl IntoOxenError for <FieldType>` that
-//! constructs the enum via that variant. Mirrors the shape of `thiserror`'s
-//! `#[from]`, but routes through `IntoOxenError` so the crate-wide blanket
-//! `impl<E: IntoOxenError> From<E> for OxenError` stays unambiguous.
+//! Apply `#[oxen_macros::from_ox]` to an enum (typically `OxenError`) and mark
+//! the foreign-error fields you want auto-converted with `#[from_ox]` on the
+//! field. The macro:
 //!
-//! ## `Box<T>` auto-unboxing
+//! 1. Strips each `#[from_ox]` field marker and inserts `#[source]` in its
+//!    place. This makes thiserror's subsequent `#[derive(thiserror::Error)]`
+//!    chain `Error::source()` to the wrapped foreign error — the same
+//!    behaviour that thiserror's `#[from]` provides implicitly. (We need to
+//!    rewrite the input here because a `#[proc_macro_derive]` cannot modify
+//!    its input; only an attribute macro can.)
+//! 2. Emits `impl IntoOxenError for <FieldType>` for each marked field, which
+//!    when combined with the crate-wide blanket
+//!    `impl<E: IntoOxenError> From<E> for OxenError` makes `?` work both at
+//!    every concrete call site and through traits whose `type Error: IntoOxenError`.
 //!
-//! When the annotated field's syntactic type is `Box<T>`, **two** impls are
-//! emitted instead of one:
-//!
-//! 1. `impl IntoOxenError for Box<T>` — constructs the variant directly.
-//! 2. `impl IntoOxenError for T` — wraps `self` in a fresh `Box::new(...)`
-//!    before constructing the variant.
-//!
-//! This lets callers use `?` against an unboxed `T` value without manually
-//! boxing at every call site, while preserving the option to construct from
-//! an already-allocated `Box<T>`.
-//!
-//! Because the crate-wide blanket `impl<E: IntoOxenError> From<E> for OxenError`
-//! turns each `IntoOxenError` impl into a corresponding `From` impl, **the same
-//! `T` cannot be the inner type of two different `Box<T>` variants** — the
-//! compiler will report a conflicting `IntoOxenError for T` (and a conflicting
-//! `From<T> for OxenError`). Pick one canonical variant for `T`. The same is
-//! true if you have one variant `Variant1(#[from_ox] T)` and another
-//! `Variant2(#[from_ox] Box<T>)` — those two also conflict on `IntoOxenError for T`.
-//!
-//! ## When the inner-`T` impl is **not** emitted
-//!
-//! `IntoOxenError::into_oxen` takes `self` by value, which requires `Sized`.
-//! If the inner type can't be guaranteed `Sized` from the syntactic form alone,
-//! emitting the inner impl would produce a downstream compile error. To avoid
-//! that, the auto-unbox impl is emitted only when the inner type is a
-//! [`syn::Type::Path`] (e.g. `MyType`, `crate::path::MyType<'a, U>`). Other
-//! shapes — `dyn Trait`, `[T]`, `&T`, etc. — silently fall back to "outer impl
-//! only", because those cases are typically `?Sized` or otherwise wrong for
-//! by-value conversion. The outer `impl IntoOxenError for Box<...>` is still
-//! emitted in every case, since `Box<...>` itself is always sized.
-//!
-//! Example:
+//! Usage shape (apply the attribute **before** `#[derive(thiserror::Error)]`
+//! so thiserror sees the rewritten enum):
 //!
 //! ```ignore
-//! #[derive(thiserror::Error, IntoOxen)]
+//! #[oxen_macros::from_ox]
+//! #[derive(thiserror::Error, Debug)]
 //! pub enum OxenError {
 //!     #[error("IO error: {0}")]
 //!     IO(#[from_ox] std::io::Error),
 //!     #[error("Schema invalid: {0}")]
 //!     InvalidSchema(#[from_ox] Box<Schema>),
-//!     // dyn Trait inner: only the outer Box impl is emitted.
 //!     #[error("AWS error: {0}")]
 //!     AwsError(#[from_ox] Box<dyn std::error::Error + Send + Sync>),
 //! }
 //! ```
 //!
-//! Generates:
+//! ## `Box<T>` auto-unboxing
+//!
+//! When the marked field's syntactic type is `Box<T>`, **two** `IntoOxenError`
+//! impls are emitted instead of one:
+//!
+//! 1. `impl IntoOxenError for Box<T>` — constructs the variant directly.
+//! 2. `impl IntoOxenError for T` — wraps `self` in a fresh `Box::new(...)`
+//!    before constructing the variant.
+//!
+//! Because the crate-wide blanket `impl<E: IntoOxenError> From<E> for OxenError`
+//! turns each `IntoOxenError` impl into a corresponding `From` impl, **the same
+//! `T` cannot be the inner type of two different `Box<T>` variants** — the
+//! compiler will report a conflicting `IntoOxenError for T`. Pick one canonical
+//! variant for `T`. The same is true if you have one variant
+//! `Variant1(#[from_ox] T)` and another `Variant2(#[from_ox] Box<T>)`.
+//!
+//! ## When the inner-`T` impl is **not** emitted
+//!
+//! `IntoOxenError::into_oxen` takes `self` by value, which requires `Sized`.
+//! If the inner type can't be guaranteed `Sized` from the syntactic form alone,
+//! emitting the inner impl would produce a downstream compile error. The
+//! auto-unbox impl is therefore emitted only when the inner type is a
+//! [`syn::Type::Path`] (e.g. `MyType`, `crate::path::MyType<'a, U>`). Other
+//! shapes — `dyn Trait`, `[T]`, `&T`, etc. — silently fall back to "outer impl
+//! only". The outer `impl IntoOxenError for Box<...>` is still emitted in
+//! every case, since `Box<...>` itself is always sized.
+//!
+//! ## Generated code (for the example above)
 //!
 //! ```ignore
-//! // From the IO(#[from_ox] std::io::Error) variant:
+//! // After macro expansion, the enum looks like:
+//! #[derive(thiserror::Error, Debug)]
+//! pub enum OxenError {
+//!     #[error("IO error: {0}")]
+//!     IO(#[source] std::io::Error),
+//!     #[error("Schema invalid: {0}")]
+//!     InvalidSchema(#[source] Box<Schema>),
+//!     #[error("AWS error: {0}")]
+//!     AwsError(#[source] Box<dyn std::error::Error + Send + Sync>),
+//! }
+//!
+//! // Plus, alongside the rewritten enum:
 //! impl crate::error::IntoOxenError for std::io::Error {
 //!     fn into_oxen(self) -> OxenError { OxenError::IO(self) }
 //! }
-//!
-//! // From the InvalidSchema(#[from_ox] Box<Schema>) variant:
 //! impl crate::error::IntoOxenError for Box<Schema> {
 //!     fn into_oxen(self) -> OxenError { OxenError::InvalidSchema(self) }
 //! }
@@ -71,8 +84,6 @@
 //!         OxenError::InvalidSchema(::std::boxed::Box::new(self))
 //!     }
 //! }
-//!
-//! // From the AwsError(#[from_ox] Box<dyn ...>) variant — outer only:
 //! impl crate::error::IntoOxenError
 //!     for Box<dyn std::error::Error + Send + Sync>
 //! {
@@ -80,19 +91,21 @@
 //! }
 //! ```
 //!
-//! **NOTE**: This macro can **only be used from within `liboxen`**.
+//! **NOTE**: This macro can **only be used from within `liboxen`** because the
+//! emitted impls reference `crate::error::IntoOxenError` by absolute crate
+//! path.
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, Fields, parse_macro_input, spanned::Spanned};
+use syn::{Data, DeriveInput, Fields, parse_macro_input, parse_quote, spanned::Spanned};
 
-#[proc_macro_derive(IntoOxen, attributes(from_ox))]
-pub fn derive_into_oxen(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    let enum_name = &input.ident;
+#[proc_macro_attribute]
+pub fn from_ox(_args: TokenStream, input: TokenStream) -> TokenStream {
+    let mut input = parse_macro_input!(input as DeriveInput);
+    let enum_name = input.ident.clone();
 
-    let Data::Enum(data) = &input.data else {
-        return syn::Error::new(input.span(), "`IntoOxen` can only be derived on enums")
+    let Data::Enum(data) = &mut input.data else {
+        return syn::Error::new(input.span(), "`#[from_ox]` can only be applied to enums")
             .to_compile_error()
             .into();
     };
@@ -100,10 +113,10 @@ pub fn derive_into_oxen(input: TokenStream) -> TokenStream {
     let mut impls = Vec::new();
     let mut errors = Vec::new();
 
-    for variant in &data.variants {
-        let Fields::Unnamed(fields) = &variant.fields else {
+    for variant in &mut data.variants {
+        let Fields::Unnamed(fields) = &mut variant.fields else {
             // Struct-like or unit variants can't carry `#[from_ox]`; skip.
-            if let Some(attr) = find_from_ox_attr(&variant.fields) {
+            if let Some(attr) = find_from_ox_attr_in_fields(&variant.fields) {
                 errors.push(syn::Error::new(
                     attr.span(),
                     "`#[from_ox]` is only valid on single-field tuple variants",
@@ -112,13 +125,12 @@ pub fn derive_into_oxen(input: TokenStream) -> TokenStream {
             continue;
         };
 
-        let marked: Vec<_> = fields
+        // Are any fields in this variant marked `#[from_ox]`?
+        let any_marked = fields
             .unnamed
             .iter()
-            .filter(|f| f.attrs.iter().any(is_from_ox_attr))
-            .collect();
-
-        if marked.is_empty() {
+            .any(|f| f.attrs.iter().any(is_from_ox_attr));
+        if !any_marked {
             continue;
         }
 
@@ -130,10 +142,27 @@ pub fn derive_into_oxen(input: TokenStream) -> TokenStream {
             continue;
         }
 
-        let variant_ident = &variant.ident;
-        let outer_ty = &marked[0].ty;
+        let variant_ident = variant.ident.clone();
+        let outer_ty = fields.unnamed[0].ty.clone();
 
-        // Always emit `IntoOxenError for <FieldType>`.
+        // Rewrite the field's attributes:
+        //   - drop `#[from_ox]` (its job is done — the impls are emitted below);
+        //   - add `#[source]` (so thiserror's `#[derive(Error)]`, which runs
+        //     after this attribute macro on the rewritten input, chains
+        //     `Error::source()` to the wrapped foreign error).
+        // Skip the add if `#[source]` (or `#[from]`) is already present, to
+        // avoid generating a duplicate.
+        let field = &mut fields.unnamed[0];
+        field.attrs.retain(|a| !is_from_ox_attr(a));
+        let already_has_source = field
+            .attrs
+            .iter()
+            .any(|a| a.path().is_ident("source") || a.path().is_ident("from"));
+        if !already_has_source {
+            field.attrs.push(parse_quote!(#[source]));
+        }
+
+        // Emit `IntoOxenError for <FieldType>`.
         impls.push(quote! {
             impl crate::error::IntoOxenError for #outer_ty {
                 fn into_oxen(self) -> #enum_name {
@@ -146,7 +175,7 @@ pub fn derive_into_oxen(input: TokenStream) -> TokenStream {
         // (and so very likely sized), also emit `IntoOxenError for T` that
         // re-boxes on construction. See the module docs for the rationale on
         // restricting to path-shaped inner types.
-        if let Some(inner_ty) = unbox_inner_path_type(outer_ty) {
+        if let Some(inner_ty) = unbox_inner_path_type(&outer_ty) {
             impls.push(quote! {
                 impl crate::error::IntoOxenError for #inner_ty {
                     fn into_oxen(self) -> #enum_name {
@@ -161,6 +190,7 @@ pub fn derive_into_oxen(input: TokenStream) -> TokenStream {
 
     quote! {
         #(#error_tokens)*
+        #input
         #(#impls)*
     }
     .into()
@@ -170,7 +200,7 @@ fn is_from_ox_attr(attr: &syn::Attribute) -> bool {
     attr.path().is_ident("from_ox")
 }
 
-fn find_from_ox_attr(fields: &Fields) -> Option<&syn::Attribute> {
+fn find_from_ox_attr_in_fields(fields: &Fields) -> Option<&syn::Attribute> {
     match fields {
         Fields::Named(named) => named
             .named

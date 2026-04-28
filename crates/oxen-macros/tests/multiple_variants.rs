@@ -8,41 +8,63 @@ mod error {
     }
 }
 
-#[derive(Debug, oxen_macros::IntoOxen)]
+#[derive(thiserror::Error, Debug)]
+#[error("PlainErr({0})")]
+pub struct PlainErr(pub u32);
+
+#[derive(thiserror::Error, Debug)]
+#[error("IntErr({0})")]
+pub struct IntErr(pub i64);
+
+#[derive(thiserror::Error, Debug)]
+#[error("StrErr({0})")]
+pub struct StrErr(pub String);
+
+#[oxen_macros::from_ox]
+#[derive(thiserror::Error, Debug)]
 #[allow(dead_code)]
 pub enum Multi {
     /// Plain field — single impl.
-    Plain(#[from_ox] u32),
-    /// Boxed concrete inner — both Box<i64> and i64 impls.
-    Boxed(#[from_ox] Box<i64>),
+    #[error("plain: {0}")]
+    Plain(#[from_ox] PlainErr),
+    /// Boxed concrete inner — both `Box<IntErr>` and `IntErr` impls.
+    #[error("boxed: {0}")]
+    Boxed(#[from_ox] Box<IntErr>),
     /// Boxed concrete inner with a different inner type — independent impls.
-    AnotherBoxed(#[from_ox] Box<String>),
+    #[error("string: {0}")]
+    AnotherBoxed(#[from_ox] Box<StrErr>),
     /// Boxed dyn — only the outer impl (inner is `?Sized`).
+    #[error("dyn: {0}")]
     DynBoxed(#[from_ox] Box<dyn std::error::Error + Send + Sync>),
     /// No `#[from_ox]`: must NOT have an `IntoOxenError` impl generated.
+    #[error("no conv: {0}")]
     NoConversion(bool),
     /// Unit variant — no field to annotate; macro must skip without error.
+    #[error("empty")]
     Empty,
 }
 
 #[test]
 fn plain_variant_works() {
     use error::IntoOxenError;
-    let m: Multi = 7u32.into_oxen();
-    assert!(matches!(m, Multi::Plain(7)));
+    let m: Multi = PlainErr(7).into_oxen();
+    match m {
+        Multi::Plain(PlainErr(7)) => {}
+        _ => panic!("expected Multi::Plain(PlainErr(7))"),
+    }
 }
 
 #[test]
 fn first_box_variant_emits_both_impls() {
     use error::IntoOxenError;
-    let m: Multi = Box::new(42i64).into_oxen();
+    let m: Multi = Box::new(IntErr(42)).into_oxen();
     match m {
-        Multi::Boxed(b) => assert_eq!(*b, 42),
+        Multi::Boxed(b) => assert_eq!(b.0, 42),
         _ => panic!("expected Multi::Boxed"),
     }
-    let m: Multi = 100i64.into_oxen();
+    let m: Multi = IntErr(100).into_oxen();
     match m {
-        Multi::Boxed(b) => assert_eq!(*b, 100),
+        Multi::Boxed(b) => assert_eq!(b.0, 100),
         _ => panic!("expected Multi::Boxed"),
     }
 }
@@ -50,16 +72,16 @@ fn first_box_variant_emits_both_impls() {
 #[test]
 fn second_box_variant_emits_both_impls_independently() {
     use error::IntoOxenError;
-    // Independent inner type (`String`) — its own pair of impls, no collision
-    // with the `i64` pair from `Boxed`.
-    let m: Multi = Box::new(String::from("alpha")).into_oxen();
+    // Independent inner type (`StrErr`) — its own pair of impls, no collision
+    // with the `IntErr` pair from `Boxed`.
+    let m: Multi = Box::new(StrErr(String::from("alpha"))).into_oxen();
     match m {
-        Multi::AnotherBoxed(b) => assert_eq!(b.as_str(), "alpha"),
+        Multi::AnotherBoxed(b) => assert_eq!(b.0.as_str(), "alpha"),
         _ => panic!("expected Multi::AnotherBoxed"),
     }
-    let m: Multi = String::from("beta").into_oxen();
+    let m: Multi = StrErr(String::from("beta")).into_oxen();
     match m {
-        Multi::AnotherBoxed(b) => assert_eq!(b.as_str(), "beta"),
+        Multi::AnotherBoxed(b) => assert_eq!(b.0.as_str(), "beta"),
         _ => panic!("expected Multi::AnotherBoxed"),
     }
 }

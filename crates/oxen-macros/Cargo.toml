@@ -19,5 +19,11 @@ proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }
 
+[dev-dependencies]
+# Used in integration tests to validate that the `#[source]` attribute the
+# macro injects is correctly picked up by `#[derive(thiserror::Error)]` for
+# `Error::source()` chaining.
+thiserror = { workspace = true }
+
 [lints]
 workspace = true

@@ -51,7 +51,8 @@ impl<E: IntoOxenError> From<E> for OxenError {
     }
 }
 
-#[derive(thiserror::Error, Debug, oxen_macros::IntoOxen)]
+#[oxen_macros::from_ox]
+#[derive(thiserror::Error, Debug)]
 pub enum OxenError {
     //
     // Configuration

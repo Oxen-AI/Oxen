@@ -1,49 +1,63 @@
-//! Integration test for `oxen_macros::IntoOxen`'s `Box<T>` auto-unboxing.
+//! Integration test for `oxen_macros::from_ox`'s `Box<T>` auto-unboxing.
 //!
 //! The proc-macro emits `impl crate::error::IntoOxenError for ...` against the
 //! enclosing crate's `crate::error::IntoOxenError`, so this test stands up a
 //! minimal `error` module whose trait shape matches the one in liboxen but
 //! returns the test enum instead of `OxenError`. That lets us exercise the
 //! macro standalone, away from liboxen's full error machinery.
+//!
+//! All `#[from_ox]`-marked field types implement `std::error::Error` because
+//! the macro injects `#[source]` next to each `#[from_ox]`, and thiserror's
+//! `#[source]` requires the field type to be an `Error`. This matches the
+//! intended real-world usage on `OxenError`.
 
-/// Mock funnel trait, shaped exactly like liboxen's `IntoOxenError` except its
-/// `into_oxen` returns the test enum (which is what the macro emits in the
-/// impl method body — see the `quote!` block in `crates/oxen-macros/src/lib.rs`).
 mod error {
     pub trait IntoOxenError {
         fn into_oxen(self) -> super::TestErr;
     }
 }
 
+#[derive(thiserror::Error, Debug)]
+#[error("Plain({0})")]
+pub struct Plain(pub String);
+
+#[derive(thiserror::Error, Debug)]
+#[error("Inner({0})")]
+pub struct Inner(pub i64);
+
 /// Test enum exercising the three `#[from_ox]` shapes:
 /// - plain field (no `Box`) — single impl emitted;
 /// - `Box<T>` with path-shaped `T` — both `Box<T>` and `T` impls emitted;
 /// - `Box<dyn Trait>` — only the outer `Box<dyn Trait>` impl emitted (the
 ///   inner `dyn Trait` is `?Sized` and would not satisfy `into_oxen(self)`).
-#[derive(Debug, oxen_macros::IntoOxen)]
+#[oxen_macros::from_ox]
+#[derive(thiserror::Error, Debug)]
 #[allow(dead_code)] // variants exist solely to drive macro expansion
 pub enum TestErr {
-    Plain(#[from_ox] u32),
-    Boxed(#[from_ox] Box<i64>),
+    #[error("plain: {0}")]
+    PlainV(#[from_ox] Plain),
+    #[error("boxed: {0}")]
+    Boxed(#[from_ox] Box<Inner>),
+    #[error("boxed dyn: {0}")]
     BoxedDyn(#[from_ox] Box<dyn std::error::Error + Send + Sync>),
 }
 
 #[test]
 fn plain_field_emits_outer_impl() {
     use error::IntoOxenError;
-    let e: TestErr = 7u32.into_oxen();
-    assert!(matches!(e, TestErr::Plain(7)));
+    let e: TestErr = Plain("hello".into()).into_oxen();
+    assert!(matches!(e, TestErr::PlainV(Plain(ref s)) if s == "hello"));
 }
 
 #[test]
 fn box_field_emits_outer_impl() {
     use error::IntoOxenError;
-    // `IntoOxenError for Box<i64>` constructs the variant directly without
+    // `IntoOxenError for Box<Inner>` constructs the variant directly without
     // re-allocating.
-    let boxed: Box<i64> = Box::new(42);
+    let boxed: Box<Inner> = Box::new(Inner(42));
     let e: TestErr = boxed.into_oxen();
     match e {
-        TestErr::Boxed(b) => assert_eq!(*b, 42),
+        TestErr::Boxed(b) => assert_eq!(b.0, 42),
         _ => panic!("expected TestErr::Boxed"),
     }
 }
@@ -51,11 +65,11 @@ fn box_field_emits_outer_impl() {
 #[test]
 fn box_field_also_emits_inner_unboxed_impl() {
     use error::IntoOxenError;
-    // `IntoOxenError for i64` boxes `self` on construction. This is the new
+    // `IntoOxenError for Inner` boxes `self` on construction. This is the new
     // capability — without it the call below would not compile.
-    let e: TestErr = 99i64.into_oxen();
+    let e: TestErr = Inner(99).into_oxen();
     match e {
-        TestErr::Boxed(b) => assert_eq!(*b, 99),
+        TestErr::Boxed(b) => assert_eq!(b.0, 99),
         _ => panic!("expected TestErr::Boxed"),
     }
 }
