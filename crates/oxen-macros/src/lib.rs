@@ -23,6 +23,8 @@
 //!     fn into_oxen(self) -> OxenError { OxenError::IO(self) }
 //! }
 //! ```
+//!
+//! **NOTE**: This macro can **only be used from within `liboxen`**.
 
 use proc_macro::TokenStream;
 use quote::quote;
