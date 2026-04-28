@@ -119,6 +119,24 @@ if ! grep -qxF "$expected_liboxen_line" Cargo.toml; then
 fi
 echo "  ✓ Cargo.toml" >&2
 
+# Update the oxen-macros dependency pin in crates/lib/Cargo.toml so its `version`
+# matches [workspace.package].version. Same rationale as the liboxen pin in the
+# workspace Cargo.toml above: cargo publish strips the `path` at publish time, so
+# liboxen must carry an exact crates.io version for oxen-macros to resolve correctly.
+echo "Updating crates/lib/Cargo.toml..." >&2
+if [[ "$(uname)" == "Darwin" ]]; then
+  sed -i '' 's|^oxen-macros = { path = "../oxen-macros", version = "=.*" }|oxen-macros = { path = "../oxen-macros", version = "='"$VERSION"'" }|' crates/lib/Cargo.toml
+else
+  sed -i 's|^oxen-macros = { path = "../oxen-macros", version = "=.*" }|oxen-macros = { path = "../oxen-macros", version = "='"$VERSION"'" }|' crates/lib/Cargo.toml
+fi
+expected_oxen_macros_line='oxen-macros = { path = "../oxen-macros", version = "='"$VERSION"'" }'
+if ! grep -qxF "$expected_oxen_macros_line" crates/lib/Cargo.toml; then
+  echo "Error: failed to update oxen-macros version in crates/lib/Cargo.toml" >&2
+  echo "       Expected line: $expected_oxen_macros_line" >&2
+  exit 1
+fi
+echo "  ✓ crates/lib/Cargo.toml" >&2
+
 # Update the readme
 echo "Updating the rust readme..." >&2
 if [[ "$(uname)" == "Darwin" ]]; then
@@ -169,6 +187,7 @@ echo "Committing changes..." >&2
 git add oxen-python/pyproject.toml
 git add crates/oxen-py/Cargo.toml
 git add Cargo.toml
+git add crates/lib/Cargo.toml
 git add Cargo.lock
 git add crates/lib/README.md
 git add oxen-python/uv.lock
