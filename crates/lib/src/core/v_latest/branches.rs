@@ -85,6 +85,10 @@ struct CheckoutResult {
     pub files_to_restore: Vec<FileToRestore>,
     /// cannot_overwrite_entries: files that would be restored, but are modified from the from_tree, and thus would erase work if overwritten
     pub cannot_overwrite_entries: Vec<PathBuf>,
+    /// Working-tree paths that hold a non-directory where the target tree has a directory.
+    /// These are removed only after `cannot_overwrite_entries` has been confirmed empty so an
+    /// aborted checkout never mutates the working tree.
+    pub dir_replacements: Vec<DirReplacement>,
 }
 
 impl CheckoutResult {
@@ -92,8 +96,19 @@ impl CheckoutResult {
         CheckoutResult {
             files_to_restore: vec![],
             cannot_overwrite_entries: vec![],
+            dir_replacements: vec![],
         }
     }
+}
+
+/// A working-tree non-directory entry blocking a target-tree directory. Application is deferred
+/// until after conflict resolution, mirroring the file-vs-file flow.
+struct DirReplacement {
+    /// Absolute on-disk path to the blocking entry.
+    full_path: PathBuf,
+    /// Hash of the entry as it existed in the from tree, or `None` if the path was untracked.
+    /// Used in remote-mode to back up the file's content before deletion.
+    from_hash: Option<MerkleHash>,
 }
 
 struct CheckoutHashes {
@@ -246,6 +261,8 @@ pub async fn checkout_subtrees(
             ));
         }
 
+        apply_dir_replacements(repo, &results.dir_replacements).await?;
+
         if let Some(root) = from_root {
             log::debug!("Cleanup_removed_files");
             cleanup_removed_files(repo, &root, &mut progress, &hashes, OnConflict::Abort).await?;
@@ -385,6 +402,8 @@ pub async fn set_working_repo_to_commit(
             &results.cannot_overwrite_entries,
         ));
     }
+
+    apply_dir_replacements(repo, &results.dir_replacements).await?;
 
     // Cleanup files if checking out fr om another commit
     if let Some(from_tree) = from_tree {
@@ -568,6 +587,41 @@ async fn walk_from_tree<'a>(
     Ok(candidates)
 }
 
+/// Apply working-tree replacements where the target tree has a directory but the working tree
+/// has a non-directory entry. Runs after `cannot_overwrite_entries` is confirmed empty so an
+/// aborted checkout never mutates the working tree. In remote mode, the file's content is
+/// stored under its from-tree hash before deletion so future checkouts can restore it.
+async fn apply_dir_replacements(
+    repo: &LocalRepository,
+    replacements: &[DirReplacement],
+) -> Result<(), OxenError> {
+    if replacements.is_empty() {
+        return Ok(());
+    }
+    let version_store = if repo.is_remote_mode() {
+        Some(repo.version_store()?)
+    } else {
+        None
+    };
+    for replacement in replacements {
+        if !replacement.full_path.exists() {
+            continue;
+        }
+        if let (Some(version_store), Some(from_hash)) =
+            (version_store.as_ref(), replacement.from_hash)
+        {
+            let file = tokio::fs::File::open(&replacement.full_path).await?;
+            let size = file.metadata().await?.len();
+            let reader = tokio::io::BufReader::new(file);
+            version_store
+                .store_version_from_reader(&from_hash.to_string(), Box::new(reader), size)
+                .await?;
+        }
+        util::fs::remove_file(&replacement.full_path)?;
+    }
+    Ok(())
+}
+
 /// Walk the target tree and stage every file that is missing from disk or differs from the
 /// target node. Iterative depth-first search over an explicit stack so the file branch can
 /// `.await` `repo.mtime_matches` — same shape as the merge-side walkers.
@@ -705,10 +759,43 @@ async fn walk_target_tree<'a>(
             EMerkleTreeNode::Directory(dir_node) => {
                 let dir_path = path.join(dir_node.name());
                 let full_dir_path = repo.path.join(&dir_path);
-                // If something exists at this path but is not a directory (e.g. the user
-                // replaced a dir with a file), remove it so restoration can proceed.
+                // Something exists at this path but is not a directory (e.g. the user
+                // replaced a dir with a file). Stage it for replacement instead of removing
+                // eagerly.
                 if full_dir_path.exists() && !full_dir_path.is_dir() {
-                    std::fs::remove_file(&full_dir_path)?;
+                    // Only block when the from tree had a *file* at this path and the disk
+                    // copy diverges from it — the case where eager removal would silently
+                    // destroy committed-then-locally-modified work. Other shapes (untracked
+                    // content, or a tracked directory the user destructively replaced with a
+                    // file) were silently overwritten before this fix; preserve that
+                    // contract since `partial_nodes` only tracks file paths and we cannot
+                    // cheaply distinguish those cases here.
+                    let from = partial_nodes.get(&dir_path);
+                    if let Some(from) = from {
+                        let meta = util::fs::metadata(&full_dir_path)?;
+                        let disk_mtime = FileTime::from_last_modification_time(&meta);
+                        let disk_size = meta.len();
+                        let unmodified = if repo.mtime_matches(disk_mtime, from.last_modified).await
+                            && disk_size == from.size
+                        {
+                            true
+                        } else {
+                            let working_hash =
+                                util::hasher::get_hash_given_metadata(&full_dir_path, &meta)?;
+                            working_hash == from.hash.to_u128()
+                        };
+                        if !unmodified && on_conflict.is_abort() {
+                            results.cannot_overwrite_entries.push(dir_path.clone());
+                            // Skip the children walk: the checkout will abort, so queueing
+                            // restorations under this path would be wasted work.
+                            continue;
+                        }
+                    }
+
+                    results.dir_replacements.push(DirReplacement {
+                        full_path: full_dir_path.clone(),
+                        from_hash: from.map(|f| f.hash),
+                    });
                 }
 
                 // Early exit if the directory is the same in the from and target trees AND
