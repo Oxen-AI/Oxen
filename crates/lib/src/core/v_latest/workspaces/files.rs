@@ -82,7 +82,7 @@ pub async fn rm(
     Ok(err_files)
 }
 
-pub fn add_version_file(
+pub async fn add_version_file(
     workspace: &Workspace,
     version_path: impl AsRef<Path>,
     dst_path: impl AsRef<Path>,
@@ -104,7 +104,8 @@ pub fn add_version_file(
         &staged_db_manager,
         &Arc::new(Mutex::new(HashSet::new())),
         update_timestamp,
-    )?;
+    )
+    .await?;
 
     Ok(dst_path.to_path_buf())
 }
@@ -147,7 +148,9 @@ pub async fn add_version_files(
             &staged_db_manager,
             &seen_dirs,
             update_timestamp,
-        ) {
+        )
+        .await
+        {
             Ok(_) => {
                 // Add parents to staged db
                 // let parent_dirs = item.parents;
@@ -883,8 +886,13 @@ async fn p_add_file(
     }
 
     // See if this is a new file or a modified file
-    let mut file_status =
-        core::v_latest::add::determine_file_status(&maybe_dir_node, &file_name, &full_path)?;
+    let mut file_status = core::v_latest::add::determine_file_status(
+        base_repo,
+        &maybe_dir_node,
+        &file_name,
+        &full_path,
+    )
+    .await?;
 
     // When update_timestamp is set, override Unmodified status to Modified
     // and use the current time so the commit gets a new merkle tree hash

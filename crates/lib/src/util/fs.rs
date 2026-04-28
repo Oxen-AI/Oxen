@@ -1575,6 +1575,15 @@ pub fn remove_paths(src: &Path) -> Result<(), OxenError> {
     }
 }
 
+/// Strict-mtime variant. Treats `disk_mtime != node_mtime` (to the nanosecond) as "different
+/// enough to fall through to the hash check," which on coarse-mtime mounts (FAT/exFAT, HFS+,
+/// some NFS) misclassifies files inside `restore_file`'s tolerance window as modified.
+///
+/// Use [`crate::model::LocalRepository::is_modified_from_node`] /
+/// [`crate::model::LocalRepository::is_modified_from_node_with_metadata`] from any caller
+/// that has access to a `&LocalRepository` and is already in an async context — those use
+/// `repo.mtime_matches`. The sync version remains for `oxen status`, whose walker is
+/// sync-everywhere by design.
 pub fn is_modified_from_node_with_metadata(
     path: &Path,
     node: &FileNode,
@@ -1586,26 +1595,40 @@ pub fn is_modified_from_node_with_metadata(
     }
 
     let metadata = metadata?;
-    // Second, check the length of the file
-    let file_size = metadata.len();
-    let node_size = node.num_bytes();
-
-    if file_size != node_size {
-        return Ok(true);
-    }
-
-    // Third, check the last modified times
     let file_last_modified = FileTime::from_last_modification_time(&metadata);
     let node_last_modified = util::fs::last_modified_time(
         node.last_modified_seconds(),
         node.last_modified_nanoseconds(),
     );
+    let mtime_matched = file_last_modified == node_last_modified;
+    classify_modified_from_node_with_metadata(path, node, &metadata, mtime_matched)
+}
 
-    if file_last_modified == node_last_modified {
+pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenError> {
+    is_modified_from_node_with_metadata(path, node, util::fs::metadata(path))
+}
+
+/// Shared between [`is_modified_from_node_with_metadata`] and
+/// [`crate::model::LocalRepository::is_modified_from_node_with_metadata`]. Given the
+/// already-decided mtime equality verdict, applies the size / metadata-hash / content-hash
+/// checks. `path` is assumed to exist and `metadata` to be valid.
+pub(crate) fn classify_modified_from_node_with_metadata(
+    path: &Path,
+    node: &FileNode,
+    metadata: &std::fs::Metadata,
+    mtime_matched: bool,
+) -> Result<bool, OxenError> {
+    // Size check first — different size means definitely modified, no hashing needed.
+    if metadata.len() != node.num_bytes() {
+        return Ok(true);
+    }
+
+    // Mtime equality + matching size is sufficient; trust the FS.
+    if mtime_matched {
         return Ok(false);
     }
 
-    // Fourth, check the metadata hashes
+    // Mtime drifted but size matches — fall back to metadata hash, then content hash.
     let node_metadata_hash = node.metadata_hash();
     let file_metadata_hash = {
         let mime_type = util::fs::file_mime_type(path);
@@ -1622,19 +1645,9 @@ pub fn is_modified_from_node_with_metadata(
         return Ok(true);
     }
 
-    // Finally, check the hashes
     let node_hash = node.hash().to_u128();
-    let working_hash = util::hasher::get_hash_given_metadata(path, &metadata)?;
-
-    if node_hash == working_hash {
-        Ok(false)
-    } else {
-        Ok(true)
-    }
-}
-
-pub fn is_modified_from_node(path: &Path, node: &FileNode) -> Result<bool, OxenError> {
-    is_modified_from_node_with_metadata(path, node, util::fs::metadata(path))
+    let working_hash = util::hasher::get_hash_given_metadata(path, metadata)?;
+    Ok(node_hash != working_hash)
 }
 
 // Calculate a node's last modified time

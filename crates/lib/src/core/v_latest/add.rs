@@ -490,8 +490,9 @@ pub async fn process_add_dir(
                                             &path.file_name().unwrap_or_default().to_string_lossy();
                                         let file_status =
                                             core::v_latest::add::determine_file_status(
-                                                &dir_node, file_name, &path,
-                                            )?;
+                                                &repo, &dir_node, file_name, &path,
+                                            )
+                                            .await?;
 
                                         match process_add_file(
                                             &repo,
@@ -669,7 +670,7 @@ async fn add_file_inner(
     };
 
     let file_name = path.file_name().unwrap_or_default().to_string_lossy();
-    let file_status = determine_file_status(&maybe_dir_node, &file_name, path)?;
+    let file_status = determine_file_status(repo, &maybe_dir_node, &file_name, path).await?;
     let file = tokio::fs::File::open(path).await?;
     let size = file.metadata().await?.len();
     let reader = tokio::io::BufReader::new(file);
@@ -694,7 +695,8 @@ async fn add_file_inner(
     )
 }
 
-pub fn determine_file_status(
+pub async fn determine_file_status(
+    repo: &LocalRepository,
     maybe_dir_node: &Option<MerkleTreeNode>,
     file_name: impl AsRef<str>,  // Name of the file in the repository
     data_path: impl AsRef<Path>, // Path to the data file (maybe in the version store)
@@ -717,7 +719,10 @@ pub fn determine_file_status(
         let num_bytes = metadata.len();
 
         previous_oxen_metadata = file_node.metadata();
-        if util::fs::is_modified_from_node_with_metadata(data_path, file_node, Ok(metadata))? {
+        if repo
+            .is_modified_from_node_with_metadata(data_path, file_node, Ok(metadata))
+            .await?
+        {
             (
                 StagedEntryStatus::Modified,
                 MerkleHash::new(hash),
@@ -973,7 +978,7 @@ pub fn add_file_node_to_staged_db(
     Ok(())
 }
 
-pub fn stage_file_with_hash(
+pub async fn stage_file_with_hash(
     workspace: &Workspace,
     data_path: &Path,
     dst_path: &Path,
@@ -999,7 +1004,10 @@ pub fn stage_file_with_hash(
 
     let file_status = if let Some(file_node) = maybe_file_node {
         let previous_metadata = file_node.metadata();
-        let status = if util::fs::is_modified_from_node(data_path, &file_node)? {
+        let status = if base_repo
+            .is_modified_from_node(data_path, &file_node)
+            .await?
+        {
             StagedEntryStatus::Modified
         } else if update_timestamp {
             // Force staging even though the content hasn't changed
