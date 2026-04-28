@@ -95,11 +95,27 @@ echo "" >&2
 
 # Update the workspace Cargo.toml file
 echo "Updating workspace Cargo.toml file..." >&2
-# Only update the [workspace.package] version line, not dependency versions
+# Update the [workspace.package] version line.
 if [[ "$(uname)" == "Darwin" ]]; then
   sed -i '' '/^\[workspace\.package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' Cargo.toml
 else
   sed -i '/^\[workspace\.package\]/,/^\[/ s/^version = ".*"/version = "'"$VERSION"'"/' Cargo.toml
+fi
+# Update the liboxen entry under [workspace.dependencies] so its `version` matches
+# [workspace.package].version. cargo publish for oxen-cli / oxen-server uses this version
+# (the `path` is stripped at publish time) to resolve liboxen from crates.io.
+if [[ "$(uname)" == "Darwin" ]]; then
+  sed -i '' 's|^liboxen = { path = "crates/lib", version = "=.*" }|liboxen = { path = "crates/lib", version = "='"$VERSION"'" }|' Cargo.toml
+else
+  sed -i 's|^liboxen = { path = "crates/lib", version = "=.*" }|liboxen = { path = "crates/lib", version = "='"$VERSION"'" }|' Cargo.toml
+fi
+# Fail fast if the sed silently no-op'd (e.g., the line was reformatted). A stale liboxen
+# version here would cause oxen-cli / oxen-server to publish against the wrong liboxen.
+expected_liboxen_line='liboxen = { path = "crates/lib", version = "='"$VERSION"'" }'
+if ! grep -qxF "$expected_liboxen_line" Cargo.toml; then
+  echo "Error: failed to update [workspace.dependencies].liboxen version in Cargo.toml" >&2
+  echo "       Expected line: $expected_liboxen_line" >&2
+  exit 1
 fi
 echo "  ✓ Cargo.toml" >&2
 

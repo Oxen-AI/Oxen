@@ -21,7 +21,7 @@ otel = ["liboxen/otel"]
 production = ["metrics", "otel", "default"]
 
 [dependencies]
-liboxen = { path = "../lib" }
+liboxen = { workspace = true }
 log = { workspace = true }
 pyo3 = { workspace = true }
 pyo3-async-runtimes = { workspace = true }

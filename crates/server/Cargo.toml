@@ -40,7 +40,7 @@ flate2 = { workspace = true }
 futures-util = { workspace = true }
 hex = { workspace = true }
 jsonwebtoken = { workspace = true }
-liboxen = { path = "../lib" }
+liboxen = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
 metrics = { workspace = true, optional = true }
@@ -67,7 +67,7 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 actix-multipart-test = { workspace = true }
-liboxen = { path = "../lib", features = ["test-utils"] }
+liboxen = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true

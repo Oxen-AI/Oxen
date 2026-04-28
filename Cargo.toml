@@ -88,6 +88,10 @@ jsonwebtoken = "9.3.0"
 jwalk = "0.8.1"
 lazy_static = "1.4.0"
 libduckdb-sys = { version = "=1.10502.0" }
+# liboxen's `version` is kept in lockstep with `[workspace.package].version` by `bin/bump-version`.
+# `path` is used for local builds; `version` is used by `cargo publish` so oxen-cli and oxen-server
+# resolve liboxen from crates.io when published.
+liboxen = { path = "crates/lib", version = "=0.48.1" }
 lofty = "0.22.2"
 log = "0.4.20"
 lru = "0.14.0"
