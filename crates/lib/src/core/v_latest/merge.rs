@@ -724,14 +724,14 @@ async fn walk_merge_commit<'a>(
                         path: file_path.clone(),
                     });
                 } else if let Some(base_file_node) = base_files.get(&file_path) {
-                    let should_restore = restore::should_restore_partial_node(
-                        repo,
-                        Some(base_file_node.clone()),
-                        merge_file_node,
-                        &file_path,
-                    )
-                    .await?;
                     if node.hash != base_file_node.hash {
+                        let should_restore = restore::should_restore_partial_node(
+                            repo,
+                            Some(base_file_node.clone()),
+                            merge_file_node,
+                            &file_path,
+                        )
+                        .await?;
                         if should_restore {
                             results.entries_to_restore.push(FileToRestore {
                                 file_node: merge_file_node.clone(),
@@ -741,12 +741,9 @@ async fn walk_merge_commit<'a>(
                             results.cannot_overwrite_entries.push(file_path.clone());
                         }
                     } else {
-                        log::debug!(
-                            "Merge entry has not changed, but still !restore: {file_path:?}"
-                        );
-                        if !should_restore {
-                            results.cannot_overwrite_entries.push(file_path.clone());
-                        }
+                        // Merge target matches base for this path — nothing to apply, so a
+                        // locally modified working copy is not an overwrite conflict.
+                        log::debug!("Merge entry has not changed: {file_path:?}");
                     }
                 } else if restore::should_restore_file(repo, None, merge_file_node, &file_path)
                     .await?
