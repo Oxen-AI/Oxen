@@ -248,8 +248,7 @@ pub async fn checkout_subtrees(
 
         if let Some(root) = from_root {
             log::debug!("Cleanup_removed_files");
-            cleanup_removed_files(repo, &root, &mut progress, &mut hashes, OnConflict::Abort)
-                .await?;
+            cleanup_removed_files(repo, &root, &mut progress, &hashes, OnConflict::Abort).await?;
         } else {
             log::debug!("head commit missing, no cleanup");
         }
@@ -390,7 +389,7 @@ pub async fn set_working_repo_to_commit(
     // Cleanup files if checking out fr om another commit
     if let Some(from_tree) = from_tree {
         log::debug!("Cleanup_removed_files");
-        cleanup_removed_files(repo, &from_tree, &mut progress, &mut hashes, on_conflict).await?;
+        cleanup_removed_files(repo, &from_tree, &mut progress, &hashes, on_conflict).await?;
     }
 
     for file_to_restore in results.files_to_restore {
@@ -412,35 +411,21 @@ async fn cleanup_removed_files(
     repo: &LocalRepository,
     from_node: &MerkleTreeNode,
     progress: &mut CheckoutProgressBar,
-    hashes: &mut CheckoutHashes,
+    hashes: &CheckoutHashes,
     on_conflict: OnConflict,
 ) -> Result<(), OxenError> {
-    // Compare the nodes in the from tree to the nodes in the target tree
-    // If the file node is in the from tree, but not in the target tree, remove it
+    let candidates = walk_from_tree(repo, from_node, hashes, on_conflict).await?;
 
-    let mut paths_to_remove: Vec<PathBuf> = vec![];
-    let mut files_to_store: Vec<(MerkleHash, PathBuf)> = vec![];
-    let mut cannot_overwrite_entries: Vec<PathBuf> = vec![];
-
-    r_remove_if_not_in_target(
-        repo,
-        from_node,
-        Path::new(""),
-        &mut paths_to_remove,
-        &mut files_to_store,
-        &mut cannot_overwrite_entries,
-        hashes,
-        on_conflict,
-    )?;
-
-    if !cannot_overwrite_entries.is_empty() {
-        return Err(OxenError::cannot_overwrite_files(&cannot_overwrite_entries));
+    if !candidates.cannot_overwrite_entries.is_empty() {
+        return Err(OxenError::cannot_overwrite_files(
+            &candidates.cannot_overwrite_entries,
+        ));
     }
 
     // If in remote mode, need to store committed paths before removal
     if repo.is_remote_mode() {
         let version_store = repo.version_store()?;
-        for (hash, full_path) in files_to_store {
+        for (hash, full_path) in candidates.files_to_store {
             log::debug!("Storing hash {hash:?} and path {full_path:?}");
             let file = tokio::fs::File::open(&full_path).await?;
             let size = file.metadata().await?.len();
@@ -451,7 +436,7 @@ async fn cleanup_removed_files(
         }
     }
 
-    for full_path in paths_to_remove {
+    for full_path in candidates.paths_to_remove {
         // If it's a directory, and it's empty, remove it
         if full_path.is_dir() && full_path.read_dir()?.next().is_none() {
             log::debug!("Removing dir: {full_path:?}");
@@ -466,110 +451,121 @@ async fn cleanup_removed_files(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn r_remove_if_not_in_target(
+/// Files and directories the cleanup pass might remove, plus blockers it found.
+#[derive(Default)]
+struct CleanupCandidates {
+    /// Paths to remove, in post-order (children before their parent dir) so that by the
+    /// time we get to a directory entry its files have already been removed and the
+    /// emptiness check in `cleanup_removed_files` succeeds.
+    paths_to_remove: Vec<PathBuf>,
+    /// (hash, full_path) pairs to store in the version store before removal — only
+    /// populated in remote-mode repos.
+    files_to_store: Vec<(MerkleHash, PathBuf)>,
+    /// Files in HEAD that don't appear in the target tree but have local modifications;
+    /// `OnConflict::Abort` upgrades these to a `cannot_overwrite_files` error.
+    cannot_overwrite_entries: Vec<PathBuf>,
+}
+
+/// Stack item for the iterative depth-first search in `walk_from_tree`. `Visit` is the
+/// usual "process this node next"; `FinalizeDir` runs after a directory's subtree is
+/// fully processed so we can append the directory itself to `paths_to_remove` in
+/// post-order. Pushed BEFORE the directory's children so the LIFO `pop()` returns it last.
+enum WalkFromItem<'a> {
+    Visit(PathBuf, &'a MerkleTreeNode),
+    FinalizeDir(PathBuf),
+}
+
+/// Walk the from tree (HEAD) and gather files-and-dirs to remove (anything HEAD has that
+/// the target tree doesn't), files to back up to the version store, and conflict blockers.
+/// Iterative depth-first search over an explicit stack so the file branch can `.await`
+/// `repo.is_modified_from_node` — same shape as `walk_target_tree` and the merge-side
+/// walkers.
+async fn walk_from_tree<'a>(
     repo: &LocalRepository,
-    from_node: &MerkleTreeNode,
-    current_path: &Path,
-    paths_to_remove: &mut Vec<PathBuf>,
-    files_to_store: &mut Vec<(MerkleHash, PathBuf)>,
-    cannot_overwrite_entries: &mut Vec<PathBuf>,
-    hashes: &mut CheckoutHashes,
+    from_root: &'a MerkleTreeNode,
+    hashes: &CheckoutHashes,
     on_conflict: OnConflict,
-) -> Result<(), OxenError> {
-    // Iterate through the from tree, removing files not present in the target tree
-    match &from_node.node {
-        EMerkleTreeNode::File(file_node) => {
-            let file_path = current_path.join(file_node.name());
-            let full_path = repo.path.join(&file_path);
+) -> Result<CleanupCandidates, OxenError> {
+    let mut candidates = CleanupCandidates::default();
+    let mut stack: Vec<WalkFromItem<'a>> = vec![WalkFromItem::Visit(PathBuf::new(), from_root)];
 
-            // Only consider files whose path is not in the target tree
-            // (using path-based check instead of hash-based, because different
-            // files at different paths can share the same content hash)
-            if !hashes.seen_paths.contains(&file_path) {
-                // Before staging for removal, verify the path exists and isn't modified
-                if full_path.exists() {
-                    let modified_locally = util::fs::is_modified_from_node(&full_path, file_node)?;
-                    if on_conflict.is_abort() && modified_locally {
-                        cannot_overwrite_entries.push(file_path.clone());
-                    } else {
-                        // If in remote mode, save file to version store before removing
-                        if repo.is_remote_mode() {
-                            files_to_store.push((from_node.hash, full_path.clone()))
+    while let Some(item) = stack.pop() {
+        match item {
+            WalkFromItem::Visit(path, node) => match &node.node {
+                EMerkleTreeNode::File(file_node) => {
+                    let file_path = path.join(file_node.name());
+                    let full_path = repo.path.join(&file_path);
+
+                    // Only consider files whose path is not in the target tree (using
+                    // path-based check instead of hash-based, because different files at
+                    // different paths can share the same content hash).
+                    if !hashes.seen_paths.contains(&file_path) {
+                        if full_path.exists() {
+                            let modified_locally =
+                                repo.is_modified_from_node(&full_path, file_node).await?;
+                            if on_conflict.is_abort() && modified_locally {
+                                candidates.cannot_overwrite_entries.push(file_path);
+                            } else {
+                                // In remote mode, back up the file under `node.hash` before we
+                                // remove it so future checkouts can restore from the version store.
+                                // Only safe when the on-disk bytes match `node.hash`. The remaining
+                                // case (`OnConflict::Overwrite` + `modified_locally`) is the user
+                                // discarding their working state, so storing those bytes under the
+                                // committed hash would pollute the content-addressable store with
+                                // mismatched content.
+                                if repo.is_remote_mode() && !modified_locally {
+                                    candidates
+                                        .files_to_store
+                                        .push((node.hash, full_path.clone()));
+                                }
+                                candidates.paths_to_remove.push(full_path);
+                            }
                         }
-
-                        paths_to_remove.push(full_path.clone());
+                    } else if full_path.exists() && repo.is_remote_mode() {
+                        // File exists in both trees at the same path — it may be overwritten by the
+                        // restore step. Same gate as above: back up the on-disk bytes only when
+                        // they match `node.hash`. If the user modified the file locally, those
+                        // bytes would pollute the content-addressable store under the wrong hash.
+                        if !repo.is_modified_from_node(&full_path, file_node).await? {
+                            candidates.files_to_store.push((node.hash, full_path));
+                        }
                     }
                 }
-            } else if full_path.exists() && repo.is_remote_mode() {
-                // File exists in both trees at the same path — it may be overwritten
-                // during restore. Store the current version so future checkouts can
-                // restore it from the version store.
-                files_to_store.push((from_node.hash, full_path.clone()))
-            }
-        }
+                EMerkleTreeNode::Directory(dir_node) => {
+                    if hashes.common_nodes.contains(&node.hash) {
+                        continue;
+                    }
+                    let dir_path = path.join(dir_node.name());
 
-        EMerkleTreeNode::Directory(dir_node) => {
-            let dir_path = current_path.join(dir_node.name());
-            if hashes.common_nodes.contains(&from_node.hash) {
-                return Ok(());
-            };
+                    // Post-order: schedule the directory's "remove if empty" finalize task
+                    // FIRST so that after the LIFO walks every child the FinalizeDir item
+                    // pops last.
+                    stack.push(WalkFromItem::FinalizeDir(dir_path.clone()));
 
-            let children = {
-                // Get vnodes for the from dir node
-                let dir_vnodes = &from_node.children;
-
-                // Only iterate through vnodes not shared between the trees
-                let mut unique_nodes = Vec::new();
-                for vnode in dir_vnodes {
-                    if !hashes.common_nodes.contains(&vnode.hash) {
-                        unique_nodes.extend(vnode.children.iter().cloned());
+                    for vnode in &node.children {
+                        if !hashes.common_nodes.contains(&vnode.hash) {
+                            for child in &vnode.children {
+                                stack.push(WalkFromItem::Visit(dir_path.clone(), child));
+                            }
+                        }
                     }
                 }
-
-                unique_nodes
-            };
-
-            for child in &children {
-                r_remove_if_not_in_target(
-                    repo,
-                    child,
-                    &dir_path,
-                    paths_to_remove,
-                    files_to_store,
-                    cannot_overwrite_entries,
-                    hashes,
-                    on_conflict,
-                )?;
-            }
-            log::debug!(
-                "r_remove_if_not_in_target checked {:?} paths",
-                children.len()
-            );
-
-            // Remove directory if it's empty
-            let full_dir_path = repo.path.join(&dir_path);
-            if full_dir_path.exists() {
-                paths_to_remove.push(full_dir_path.clone());
+                EMerkleTreeNode::Commit(_) => {
+                    let root_dir = repositories::tree::get_root_dir(node)?;
+                    stack.push(WalkFromItem::Visit(path, root_dir));
+                }
+                _ => {}
+            },
+            WalkFromItem::FinalizeDir(dir_path) => {
+                let full_dir_path = repo.path.join(&dir_path);
+                if full_dir_path.exists() {
+                    candidates.paths_to_remove.push(full_dir_path);
+                }
             }
         }
-        EMerkleTreeNode::Commit(_) => {
-            // If we get a commit node, we need to skip to the root directory
-            let root_dir = repositories::tree::get_root_dir(from_node)?;
-            r_remove_if_not_in_target(
-                repo,
-                root_dir,
-                current_path,
-                paths_to_remove,
-                files_to_store,
-                cannot_overwrite_entries,
-                hashes,
-                on_conflict,
-            )?;
-        }
-        _ => {}
     }
-    Ok(())
+
+    Ok(candidates)
 }
 
 /// Walk the target tree and stage every file that is missing from disk or differs from the

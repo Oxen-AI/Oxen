@@ -522,9 +522,30 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                 batch.len()
                             );
                             for (path, size) in batch {
-                                let base_or_repo_path_clone = base_or_repo_path_clone.clone();
-                                let head_commit_local_repo_maybe_clone =
-                                    head_commit_local_repo_maybe_clone.clone();
+                                let relative_path = util::fs::path_relative_to_dir(
+                                    &path,
+                                    &base_or_repo_path_clone,
+                                )?;
+
+                                // In remote-mode repos, skip adding files already present in
+                                // the tree unless update_timestamp is set. Done here in async
+                                // context (rather than inside `spawn_blocking` below) so the
+                                // mtime-tolerance comparison can `.await`.
+                                if !update_timestamp
+                                    && let Some((ref head_commit, ref local_repository)) =
+                                        head_commit_local_repo_maybe_clone
+                                    && let Some(file_node) = repositories::tree::get_file_by_path(
+                                        local_repository,
+                                        head_commit,
+                                        &relative_path,
+                                    )?
+                                    && !local_repository
+                                        .is_modified_from_node(&path, &file_node)
+                                        .await?
+                                {
+                                    log::debug!("Skipping add on unmodified path {path:?}");
+                                    continue;
+                                }
 
                                 let file_data_maybe: Option<(
                                     reqwest::multipart::Part,
@@ -532,28 +553,6 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                     PathBuf,
                                     u64,
                                 )> = tokio::task::spawn_blocking(move || {
-                                    let relative_path = util::fs::path_relative_to_dir(
-                                        &path,
-                                        &base_or_repo_path_clone,
-                                    )?;
-
-                                    // In remote-mode repos, skip adding files already present in tree
-                                    // unless update_timestamp is set
-                                    if !update_timestamp
-                                        && let Some((ref head_commit, ref local_repository)) =
-                                            head_commit_local_repo_maybe_clone
-                                        && let Some(file_node) =
-                                            repositories::tree::get_file_by_path(
-                                                local_repository,
-                                                head_commit,
-                                                &relative_path,
-                                            )?
-                                        && !util::fs::is_modified_from_node(&path, &file_node)?
-                                    {
-                                        log::debug!("Skipping add on unmodified path {path:?}");
-                                        return Ok(None);
-                                    }
-
                                     // When preserve_paths is set or in remote-mode repos, use the
                                     // full relative path. Otherwise use just the filename.
                                     let staging_path = if keep_relative_paths {

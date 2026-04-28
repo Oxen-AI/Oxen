@@ -621,7 +621,7 @@ pub(crate) async fn workspace_multipart_batch_upload_versions(
             if let Some((ref head_commit, local_repo)) = head_commit_local_repo_maybe
                 && let Some(file_node) =
                     repositories::tree::get_file_by_path(local_repo, head_commit, &relative_path)?
-                && !util::fs::is_modified_from_node(&path, &file_node)?
+                && !local_repo.is_modified_from_node(&path, &file_node).await?
             {
                 continue;
             }

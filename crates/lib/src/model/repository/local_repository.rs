@@ -3,6 +3,7 @@ use crate::constants::SHALLOW_FLAG;
 use crate::constants::{self, DEFAULT_VNODE_SIZE, MIN_OXEN_VERSION};
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
+use crate::model::merkle_tree::node::FileNode;
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
 use crate::opts::StorageOpts;
 use crate::storage::{StorageConfig, VersionStore, create_version_store};
@@ -571,6 +572,46 @@ impl LocalRepository {
             node.duration_since(disk).unwrap_or_default()
         };
         diff <= tolerance
+    }
+
+    /// Async, tolerance-aware modification check. Routes the mtime comparison through
+    /// [`Self::mtime_matches`] so it agrees with `restore_file`'s fast-path skip on
+    /// coarse-mtime mounts (FAT/exFAT, HFS+, some NFS). Use this from any caller that has
+    /// access to a `&LocalRepository` and is in an async context.
+    ///
+    /// `oxen status` and its sync chain still use the strict-mtime free function in
+    /// [`crate::util::fs::is_modified_from_node`]; when that path goes async, the free
+    /// functions can be removed in favor of these methods.
+    pub async fn is_modified_from_node(
+        &self,
+        path: &Path,
+        node: &FileNode,
+    ) -> Result<bool, OxenError> {
+        self.is_modified_from_node_with_metadata(path, node, util::fs::metadata(path))
+            .await
+    }
+
+    /// Pre-fetched-metadata variant of [`Self::is_modified_from_node`].
+    pub async fn is_modified_from_node_with_metadata(
+        &self,
+        path: &Path,
+        node: &FileNode,
+        metadata: Result<std::fs::Metadata, OxenError>,
+    ) -> Result<bool, OxenError> {
+        if !path.exists() {
+            log::debug!("is_modified_from_node found non-existent path {path:?}. Returning false");
+            return Ok(false);
+        }
+        let metadata = metadata?;
+        let file_last_modified = filetime::FileTime::from_last_modification_time(&metadata);
+        let node_last_modified = util::fs::last_modified_time(
+            node.last_modified_seconds(),
+            node.last_modified_nanoseconds(),
+        );
+        let mtime_matched = self
+            .mtime_matches(file_last_modified, node_last_modified)
+            .await;
+        util::fs::classify_modified_from_node_with_metadata(path, node, &metadata, mtime_matched)
     }
 
     /// Override the mtime tolerance for this repo path in the per-process cache. Test-only
