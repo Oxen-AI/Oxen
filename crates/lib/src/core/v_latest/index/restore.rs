@@ -201,7 +201,7 @@ async fn restore_dir(
     Ok(())
 }
 
-pub fn should_restore_partial_node(
+pub async fn should_restore_partial_node(
     repo: &LocalRepository,
     base_node: Option<PartialNode>,
     file_node: &FileNode,
@@ -222,7 +222,11 @@ pub fn should_restore_partial_node(
             let node_last_modified = base_node.last_modified;
             let node_size = base_node.size;
 
-            if file_last_modified == node_last_modified && file_size == node_size {
+            if repo
+                .mtime_matches(file_last_modified, node_last_modified)
+                .await
+                && file_size == node_size
+            {
                 return Ok(true);
             }
 
@@ -247,7 +251,11 @@ pub fn should_restore_partial_node(
             let node_last_modified =
                 filetime::FileTime::from_system_time(node_modified_nanoseconds);
 
-            if file_last_modified == node_last_modified {
+            if repo
+                .mtime_matches(file_last_modified, node_last_modified)
+                .await
+                && file_size == file_node.num_bytes()
+            {
                 return Ok(true);
             }
 
@@ -262,7 +270,7 @@ pub fn should_restore_partial_node(
     Ok(true)
 }
 
-pub fn should_restore_file(
+pub async fn should_restore_file(
     repo: &LocalRepository,
     base_node: Option<FileNode>,
     file_node: &FileNode,
@@ -286,7 +294,11 @@ pub fn should_restore_file(
             let node_last_modified =
                 filetime::FileTime::from_system_time(node_modified_nanoseconds);
 
-            if file_last_modified == node_last_modified {
+            if repo
+                .mtime_matches(file_last_modified, node_last_modified)
+                .await
+                && meta.len() == base_node.num_bytes()
+            {
                 return Ok(true);
             }
 
@@ -325,7 +337,11 @@ pub fn should_restore_file(
             let node_last_modified =
                 filetime::FileTime::from_system_time(node_modified_nanoseconds);
 
-            if file_last_modified == node_last_modified {
+            if repo
+                .mtime_matches(file_last_modified, node_last_modified)
+                .await
+                && meta.len() == file_node.num_bytes()
+            {
                 return Ok(true);
             }
 

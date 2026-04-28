@@ -1810,7 +1810,7 @@ mod tests {
 
                 // Pull should succeed because we did not modify README on remote
                 let result = repositories::pull(&user_a_repo).await;
-                assert!(result.is_err());
+                assert!(result.is_ok());
 
                 // Make sure that the local changes are not overwritten
                 let content = util::fs::read_from_path(&modified_file_path)?;
@@ -1818,7 +1818,7 @@ mod tests {
 
                 // Pull again
                 let result = repositories::pull(&user_a_repo).await;
-                assert!(result.is_err());
+                assert!(result.is_ok());
 
                 // Make sure that the local changes are still not overwritten
                 let content = util::fs::read_from_path(&modified_file_path)?;

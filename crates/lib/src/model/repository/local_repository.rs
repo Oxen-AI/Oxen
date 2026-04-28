@@ -546,6 +546,43 @@ impl LocalRepository {
             .insert(self.path.clone(), t);
         t
     }
+
+    /// Compare two filesystem mtimes for equality, allowing for this repo's filesystem-rounding
+    /// tolerance. Used by the merge / restore code paths so the conflict check (`should_restore_*`)
+    /// agrees with `restore_file`'s fast-path skip — without this, a file whose mtime drifts
+    /// inside the tolerance window on coarse-mtime mounts (FAT/exFAT, HFS+, some NFS) is treated
+    /// as a no-op by one and as a unique local edit by the other, which is the bug behind a
+    /// spurious `cannot_overwrite_files` from `oxen pull` after `oxen restore .`.
+    pub async fn mtime_matches(&self, disk: filetime::FileTime, node: filetime::FileTime) -> bool {
+        if disk == node {
+            return true;
+        }
+        let tolerance = self.mtime_tolerance().await;
+        if tolerance.is_zero() {
+            return false;
+        }
+        let disk =
+            SystemTime::UNIX_EPOCH + Duration::new(disk.unix_seconds() as u64, disk.nanoseconds());
+        let node =
+            SystemTime::UNIX_EPOCH + Duration::new(node.unix_seconds() as u64, node.nanoseconds());
+        let diff = if disk >= node {
+            disk.duration_since(node).unwrap_or_default()
+        } else {
+            node.duration_since(disk).unwrap_or_default()
+        };
+        diff <= tolerance
+    }
+
+    /// Override the mtime tolerance for this repo path in the per-process cache. Test-only
+    /// hook for simulating coarse-mtime filesystems (FAT/HFS+/NFS) on hosts whose real FS
+    /// round-trips nanosecond mtimes exactly.
+    #[cfg(test)]
+    pub fn set_mtime_tolerance_for_test(&self, tolerance: Duration) {
+        MTIME_TOLERANCE_CACHE
+            .lock()
+            .expect("mtime tolerance cache poisoned")
+            .insert(self.path.clone(), tolerance);
+    }
 }
 
 /// Write a probe file inside `probe_dir`, set its mtime to a non-zero-nanosecond value,
@@ -581,10 +618,56 @@ async fn probe_mtime_drift(probe_dir: &Path) -> Duration {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use filetime::FileTime;
+
     use crate::error::OxenError;
     use crate::model::{LocalRepository, RepoNew};
     use crate::test;
     use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_mtime_matches_honors_tolerance() -> Result<(), OxenError> {
+        // Regression for ENG-94X: on coarse-mtime mounts (FAT/exFAT, HFS+, some NFS) a file's
+        // disk mtime can drift inside the FS-rounding window relative to the value recorded on
+        // a merkle node. `restore_file`'s fast path skips inside that window; the merge-side
+        // conflict check (`should_restore_*`) must agree, or `oxen pull` after `oxen restore .`
+        // surfaces a spurious `cannot_overwrite_files`. `mtime_matches` is the single point
+        // they both consult, so unit-test it directly here.
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let a = FileTime::from_unix_time(1_000_000, 500_000_000);
+            let b = FileTime::from_unix_time(1_000_000, 500_000_000);
+            let one_sec_off = FileTime::from_unix_time(1_000_001, 500_000_000);
+            let three_sec_off = FileTime::from_unix_time(1_000_003, 500_000_000);
+
+            // Default tolerance on the test host's FS is ZERO (APFS/ext4 round-trip nanos), so
+            // anything but exact equality is rejected.
+            repo.set_mtime_tolerance_for_test(Duration::ZERO);
+            assert!(
+                repo.mtime_matches(a, b).await,
+                "exact equality always matches"
+            );
+            assert!(
+                !repo.mtime_matches(a, one_sec_off).await,
+                "1 s drift must not match when tolerance is zero",
+            );
+
+            // Simulate a coarse-mtime mount.
+            repo.set_mtime_tolerance_for_test(Duration::from_secs(2));
+            assert!(
+                repo.mtime_matches(a, one_sec_off).await,
+                "1 s drift is inside the 2 s tolerance window",
+            );
+            assert!(
+                !repo.mtime_matches(a, three_sec_off).await,
+                "3 s drift is outside the 2 s tolerance window",
+            );
+
+            Ok(())
+        })
+        .await
+    }
 
     #[test]
     fn test_get_dirname_from_url() -> Result<(), OxenError> {
