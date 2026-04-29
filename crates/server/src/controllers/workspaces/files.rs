@@ -235,7 +235,9 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
             &dst_path,
             &upload_file.hash,
             update_timestamp,
-        ) {
+        )
+        .await
+        {
             Ok(ret_file) => ret_file,
             Err(e) => {
                 log::error!("Error adding file {version_path:?}: {e:?}");

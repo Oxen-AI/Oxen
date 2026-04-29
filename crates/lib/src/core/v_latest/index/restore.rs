@@ -283,6 +283,7 @@ pub async fn should_restore_file(
         // Check metadata for changes first
         let meta = util::fs::metadata(&working_path)?;
         let file_last_modified = filetime::FileTime::from_last_modification_time(&meta);
+        let file_size = meta.len();
 
         // If there are modifications compared to the base node, we should not restore the file
         if let Some(base_node) = base_node {
@@ -297,7 +298,7 @@ pub async fn should_restore_file(
             if repo
                 .mtime_matches(file_last_modified, node_last_modified)
                 .await
-                && meta.len() == base_node.num_bytes()
+                && file_size == base_node.num_bytes()
             {
                 return Ok(true);
             }
@@ -340,7 +341,7 @@ pub async fn should_restore_file(
             if repo
                 .mtime_matches(file_last_modified, node_last_modified)
                 .await
-                && meta.len() == file_node.num_bytes()
+                && file_size == file_node.num_bytes()
             {
                 return Ok(true);
             }

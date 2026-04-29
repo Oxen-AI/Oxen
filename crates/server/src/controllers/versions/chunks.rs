@@ -125,7 +125,8 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
                 &dst_path,
                 &version_id,
                 request.update_timestamp,
-            )?;
+            )
+            .await?;
         }
 
         return Ok(HttpResponse::Ok().json(StatusMessage::resource_found()));
