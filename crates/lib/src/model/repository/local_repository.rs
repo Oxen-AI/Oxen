@@ -1,8 +1,10 @@
 use crate::config::RepositoryConfig;
 use crate::constants::SHALLOW_FLAG;
 use crate::constants::{self, DEFAULT_VNODE_SIZE, MIN_OXEN_VERSION};
+use crate::core::db::merkle_node::FileBackend;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
+use crate::model::merkle_tree::MerkleStore;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
 use crate::opts::StorageOpts;
@@ -52,6 +54,9 @@ pub struct LocalRepositoryWithEntries {
     pub entries: Option<Vec<MetadataEntry>>,
 }
 
+// Keep this private: it is an implementation detail for providing dynamic loading of the MerkleTree trait.
+mod merkle_store_dispatch;
+
 impl LocalRepository {
     /// Create a LocalRepository from a directory
     pub fn from_dir(path: impl AsRef<Path>) -> Result<Self, OxenError> {
@@ -91,6 +96,20 @@ impl LocalRepository {
             Some(store) => Ok(Arc::clone(store)),
             None => Err(OxenError::basic_str("Version store not initialized")),
         }
+    }
+
+    /// Obtain the Merkle tree store for this repository.
+    ///
+    /// Returns an opaque `impl MerkleStore` whose concrete type is the private
+    /// dispatch enum in [`merkle_store_dispatch`]. Callers use it purely through the
+    /// trait surface (read, write); backend selection is an implementation detail
+    /// of this method.
+    ///
+    /// When new backends (e.g. LMDB) are added, they are registered in
+    /// `merkle_store_dispatch::define_merkle_store_dispatch!`, and the
+    /// dispatch logic for choosing among them lives here.
+    pub fn merkle_store(&self) -> impl MerkleStore + '_ {
+        merkle_store_dispatch::StoreEnum::File(FileBackend::new(self))
     }
 
     pub fn init_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {

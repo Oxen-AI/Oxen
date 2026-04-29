@@ -6,8 +6,7 @@ use std::str;
 use crate::core::db::dir_hashes::dir_hashes_db::{
     dir_hash_db_path, dir_hash_db_path_from_commit_id, with_dir_hash_db_manager,
 };
-use crate::core::db::merkle_node::MerkleNodeDB;
-
+use crate::model::merkle_tree::merkle_reader::MerkleReader;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 
 use crate::model::merkle_tree::node::FileNode;
@@ -207,7 +206,7 @@ impl CommitMerkleTree {
         unique_hashes: Option<&mut HashSet<MerkleHash>>,
         shared_hashes: Option<&mut HashSet<MerkleHash>>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        if !MerkleNodeDB::exists(repo, hash) {
+        if !repo.merkle_store().exists(hash)? {
             // log::debug!("read_node merkle node db does not exist for hash: {}", hash);
             return Ok(None);
         }
@@ -232,7 +231,7 @@ impl CommitMerkleTree {
         unique_hashes: Option<&mut HashMap<(MerkleHash, MerkleTreeNodeType), PathBuf>>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         // log::debug!("Read node hash [{}]", hash);
-        if !MerkleNodeDB::exists(repo, hash) {
+        if !repo.merkle_store().exists(hash)? {
             // log::debug!("read_node merkle node db does not exist for hash: {}", hash);
             return Ok(None);
         }
@@ -258,7 +257,7 @@ impl CommitMerkleTree {
         partial_nodes: &mut HashMap<PathBuf, PartialNode>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         // log::debug!("Read node hash [{}]", hash);
-        if !MerkleNodeDB::exists(repo, hash) {
+        if !repo.merkle_store().exists(hash)? {
             // log::debug!("read_node merkle node db does not exist for hash: {}", hash);
             return Ok(None);
         }
@@ -282,7 +281,7 @@ impl CommitMerkleTree {
         depth: i32,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         // log::debug!("Read depth {} node hash [{}]", depth, hash);
-        if !MerkleNodeDB::exists(repo, hash) {
+        if !repo.merkle_store().exists(hash)? {
             log::debug!("read_depth merkle node db does not exist for hash: {hash}");
             return Ok(None);
         }
@@ -314,7 +313,7 @@ impl CommitMerkleTree {
         shared_hashes: Option<&mut HashSet<MerkleHash>>,
         depth: i32,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
-        if !MerkleNodeDB::exists(repo, hash) {
+        if !repo.merkle_store().exists(hash)? {
             // log::debug!("read_node merkle node db does not exist for hash: {}", hash);
             return Ok(None);
         }
@@ -343,7 +342,7 @@ impl CommitMerkleTree {
         depth: i32,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         // log::debug!("Read node hash [{}]", hash);
-        if !MerkleNodeDB::exists(repo, hash) {
+        if !repo.merkle_store().exists(hash)? {
             // log::debug!("read_node merkle node db does not exist for hash: {}", hash);
             return Ok(None);
         }
@@ -375,7 +374,7 @@ impl CommitMerkleTree {
         depth: i32,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         // log::debug!("Read node hash [{}]", hash);
-        if !MerkleNodeDB::exists(repo, hash) {
+        if !repo.merkle_store().exists(hash)? {
             // log::debug!("read_node merkle node db does not exist for hash: {}", hash);
             return Ok(None);
         }
