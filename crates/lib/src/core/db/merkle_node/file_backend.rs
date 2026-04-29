@@ -596,6 +596,12 @@ mod tests {
     // [START] Old Implementation
     //
     // Retained for reference during review; never called at runtime.
+    // These functions preserve the existing Merkle tree operations (both reading, writing,
+    // and tree packing & unpacking) **before** the refactor to use these MerkleStore and
+    // MerkleTransport traits.
+    //
+    // Tests use these here to ensure that we're backwards compatible and that older clients
+    // and servers are inoperable with their newer counterparts.
     //
     // --------------------------------------------------------------------------------------------
 
@@ -725,11 +731,10 @@ mod tests {
     }
 
     /// Synchronous mirror of `main`'s `api::client::tree::node_download_request` unpack
-    /// step, sans HTTP/streaming. The HTTP layer is irrelevant for parity — what we need
-    /// to compare is what bytes-on-disk the old `unpack_async_tar_archive` install
-    /// produced for a given input tarball.
+    /// step, sans HTTP/streaming. Allows for comparing bytes-on-disk in the old
+    /// `unpack_async_tar_archive` install produced for a given input tarball.
     ///
-    /// Wire identity with `main`:
+    /// Wire identity with existing oxen behavior:
     ///   - decompress the gzip stream as-is;
     ///   - construct an `async_tar::Archive`;
     ///   - call `util::fs::unpack_async_tar_archive(archive, <oxen_hidden>)`.
@@ -752,11 +757,10 @@ mod tests {
         Ok(())
     }
 
-    /// Exact copy of `api::client::tree::create_nodes`'s pack body on `main`, stripped
-    /// of HTTP / progress concerns. Used as the byte-level oracle for the upload path
-    /// (Finding 2 regression test).
-    ///
-    /// Do not edit unless `main`'s `create_nodes` body changes.
+    /// Exact copy of `api::client::tree::create_nodes`'s pack body pre Merkle packing traits,
+    /// but stripped of HTTP / progress concerns. Used as the byte-level source of truth to
+    /// ensure that the Merkle packing & unpacking refactor allows for older clients & servers
+    /// to interoperate with the refactored code.
     fn create_nodes_pack_old(
         local_repo: &LocalRepository,
         nodes: &HashSet<MerkleHash>,
