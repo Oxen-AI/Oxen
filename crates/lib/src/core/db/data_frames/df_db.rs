@@ -788,6 +788,33 @@ pub fn index_file_with_id(
                     format!("ALTER TABLE {DUCKDB_DF_TABLE_NAME} ALTER COLUMN \"{col}\" TYPE JSON");
                 conn.execute(&alter, [])?;
             }
+
+            // Convert JSON[] columns to VARCHAR[]. `read_json` types a list as
+            // JSON[] when the element type can't be inferred (e.g. every row
+            // has `[]`, or elements are mixed scalars). JSON[] survives the
+            // write path but corrupts the read path: each element is stored
+            // as a JSON value (so a string element becomes the JSON string
+            // `"foo"` with literal quotes), and polars/arrow surface those
+            // quoted forms as plain VARCHARs, which `JsonWriter` then escapes
+            // again. The result is one extra layer of `\"` per round-trip,
+            // compounding for any flow that reads existing list elements and
+            // writes them back.
+            let alter_query = format!(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = '{DUCKDB_DF_TABLE_NAME}' AND data_type = 'JSON[]'"
+            );
+            let mut stmt = conn.prepare(&alter_query)?;
+            let json_list_cols: Vec<String> = stmt
+                .query_map([], |row| row.get(0))?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            for col in json_list_cols {
+                let alter = format!(
+                    "ALTER TABLE {DUCKDB_DF_TABLE_NAME} ALTER COLUMN \"{col}\" TYPE VARCHAR[] \
+                     USING list_transform(\"{col}\", lambda x: json_extract_string(x, '$'))"
+                );
+                conn.execute(&alter, [])?;
+            }
         }
         _ => {
             return Err(OxenError::basic_str(
@@ -1145,6 +1172,144 @@ mod tests {
             );
 
             // Clean up cache for other tests.
+            remove_df_db_from_cache(&db_file)?;
+            Ok(())
+        })
+    }
+
+    /// Round-tripping a list of strings through `rows::modify_row` on a list
+    /// column inferred from a JSONL with empty arrays must not add a
+    /// JSON-string wrapper around each element. Without the fix in
+    /// `index_file_with_id`, every write adds one layer: `["a"]` is stored
+    /// as `["\"a\""]`, and any merge-and-write flow doubles it.
+    ///
+    /// `read_json` types `[]`-only columns as JSON[]. JSON[] survives the
+    /// write path but corrupts the read path (DuckDB stores each element as
+    /// a JSON value, polars surfaces that as a quoted VARCHAR, JsonWriter
+    /// escapes the quotes again). The fix rewrites JSON[] columns to
+    /// VARCHAR[] at index time. This test goes through that path end-to-end.
+    #[test]
+    fn test_rows_modify_row_round_trip_preserves_json_array_strings() -> Result<(), OxenError> {
+        use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL};
+        use crate::core::db::data_frames::rows;
+        use crate::model::staged_row_status::StagedRowStatus;
+
+        test::run_empty_dir_test(|data_dir| {
+            let jsonl_path = data_dir.join("data.jsonl");
+            // Two rows, all empty lists — forces read_json to type the
+            // column as JSON[] (no element type to infer).
+            std::fs::write(
+                &jsonl_path,
+                "{\"name\":\"a\",\"items\":[]}\n{\"name\":\"b\",\"items\":[]}\n",
+            )
+            .map_err(|e| OxenError::basic_str(format!("write fixture: {e}")))?;
+
+            let db_file = data_dir.join("data.db");
+            let conn = get_connection(&db_file)?;
+
+            // Index via the real production path — `index_file_with_id` is
+            // what the workspace controller calls and is where the column
+            // type gets locked in.
+            index_file_with_id(&jsonl_path, &conn, "jsonl")?;
+
+            // `rows::modify_row` requires the diff-status bookkeeping columns
+            // and a non-null status value. The full server flow adds these via
+            // `add_row_status_cols` after indexing — replicate inline so this
+            // test stays scoped to the type-coercion bug.
+            conn.execute(
+                &format!(
+                    "ALTER TABLE {TABLE_NAME} ADD COLUMN {DIFF_STATUS_COL} VARCHAR DEFAULT '{}'",
+                    StagedRowStatus::Unchanged
+                ),
+                [],
+            )?;
+            conn.execute(
+                &format!("ALTER TABLE {TABLE_NAME} ADD COLUMN {DIFF_HASH_COL} VARCHAR DEFAULT '0'"),
+                [],
+            )?;
+            conn.execute(
+                &format!(
+                    "UPDATE {TABLE_NAME} \
+                       SET {DIFF_STATUS_COL} = '{}', {DIFF_HASH_COL} = '0'",
+                    StagedRowStatus::Unchanged
+                ),
+                [],
+            )?;
+
+            // Grab the auto-assigned _oxen_id for row 'a'.
+            let row_id: String = conn.query_row(
+                &format!("SELECT {OXEN_ID_COL} FROM {TABLE_NAME} WHERE name = 'a'"),
+                [],
+                |row| row.get(0),
+            )?;
+
+            // First write: items -> ["first"]. Build the polars DataFrame
+            // via `parse_json_to_df` so the path matches the `rows::update`
+            // controller (JSON body → polars via JsonLineReader) — different
+            // DataFrame construction routes produce different element-level
+            // dtypes that affect the subsequent ToSql binding.
+            let mut update_df = tabular::parse_json_to_df(&serde_json::json!({
+                "items": ["first"]
+            }))?;
+            rows::modify_row(&conn, &mut update_df, &row_id)?;
+
+            // Read each element back as a VARCHAR via UNNEST so we don't
+            // depend on the column's outer DuckDB serialization (which differs
+            // between JSON[] and VARCHAR[] on the way to text).
+            let read_items = || -> Result<Vec<String>, OxenError> {
+                let mut stmt = conn.prepare(&format!(
+                    "SELECT unnest(items) FROM {TABLE_NAME} WHERE name = 'a'"
+                ))?;
+                let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+                let mut out = Vec::new();
+                for r in rows {
+                    out.push(r?);
+                }
+                Ok(out)
+            };
+
+            assert_eq!(
+                read_items()?,
+                vec!["first".to_string()],
+                "after one write, each element should be the bare string, not a JSON-encoded form"
+            );
+
+            // Second write: append a new element to the existing list and
+            // write back. Exercises the same JsonLineReader path that
+            // re-binds existing elements — the case that compounds the bug.
+            let mut update_df = tabular::parse_json_to_df(&serde_json::json!({
+                "items": ["first", "second"]
+            }))?;
+            rows::modify_row(&conn, &mut update_df, &row_id)?;
+
+            assert_eq!(
+                read_items()?,
+                vec!["first".to_string(), "second".to_string()],
+                "merge-and-write must not double-encode existing elements"
+            );
+
+            // The piece that surfaces in the API: when a row is read back as
+            // a polars DataFrame and serialised via
+            // `JsonDataFrameView::json_from_df`, each list element should
+            // appear as a bare JSON string — not a JSON-encoded JSON string.
+            // Polars reads JSON[] elements as VARCHAR-with-quotes, and the
+            // writer faithfully escapes the quotes, which is what users
+            // observe as `"\"first\""`.
+            let mut df = select_raw(
+                &conn,
+                &format!("SELECT items FROM {TABLE_NAME} WHERE name = 'a'"),
+            )?;
+            let api_json = crate::view::JsonDataFrameView::json_from_df(&mut df);
+            let elems = api_json[0]["items"]
+                .as_array()
+                .expect("items should be array");
+            let elem_strings: Vec<&str> = elems.iter().map(|v| v.as_str().unwrap()).collect();
+            assert_eq!(
+                elem_strings,
+                vec!["first", "second"],
+                "API serialization must not preserve JSON-string quoting on JSON[] elements"
+            );
+
             remove_df_db_from_cache(&db_file)?;
             Ok(())
         })
