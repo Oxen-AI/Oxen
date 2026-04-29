@@ -61,8 +61,7 @@ use crate::model::merkle_tree::node_type::InvalidMerkleTreeNodeType;
 use crate::util;
 
 use crate::model::merkle_tree::node::{
-    CommitNode, DirNode, EMerkleTreeNode, FileChunkNode, FileNode, MerkleTreeNode,
-    MerkleTreeNodeType, TMerkleTreeNode, VNode,
+    EMerkleTreeNode, MerkleTreeNode, MerkleTreeNodeType, TMerkleTreeNode,
 };
 
 const NODE_FILE: &str = "node";
@@ -260,17 +259,7 @@ impl MerkleNodeDB {
         dtype: MerkleTreeNodeType,
         data: &[u8],
     ) -> Result<EMerkleTreeNode, rmp_serde::decode::Error> {
-        match dtype {
-            MerkleTreeNodeType::Commit => {
-                Ok(EMerkleTreeNode::Commit(CommitNode::deserialize(data)?))
-            }
-            MerkleTreeNodeType::Dir => Ok(EMerkleTreeNode::Directory(DirNode::deserialize(data)?)),
-            MerkleTreeNodeType::File => Ok(EMerkleTreeNode::File(FileNode::deserialize(data)?)),
-            MerkleTreeNodeType::VNode => Ok(EMerkleTreeNode::VNode(VNode::deserialize(data)?)),
-            MerkleTreeNodeType::FileChunk => Ok(EMerkleTreeNode::FileChunk(
-                FileChunkNode::deserialize(data)?,
-            )),
-        }
+        EMerkleTreeNode::from_type_and_bytes(dtype, data)
     }
 
     pub fn path(&self) -> PathBuf {
