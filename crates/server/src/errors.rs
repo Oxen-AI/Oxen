@@ -321,6 +321,23 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::NotFound().json(error_json)
                     }
+                    OxenError::WorkspaceStagedDbCorrupted {
+                        workspace_id,
+                        source,
+                    } => {
+                        log::error!("Workspace '{workspace_id}' staged db corrupted: {source}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "workspace_staged_db_corrupted",
+                                "title": "Workspace staged data is inconsistent",
+                                "detail": "The staged database for this workspace is in an inconsistent state and cannot be read. The workspace may need to be recreated.",
+                                "workspace_id": workspace_id,
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_INTERNAL_SERVER_ERROR,
+                        });
+                        HttpResponse::InternalServerError().json(error_json)
+                    }
                     OxenError::RemoteRepoNotFound(remote) => {
                         log::debug!("Remote repo not found: {remote}");
                         HttpResponse::NotFound().json(StatusMessageDescription::not_found(format!(

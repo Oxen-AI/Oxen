@@ -129,6 +129,15 @@ pub enum OxenError {
     #[error("A workspace with the name '{0}' already exists")]
     WorkspaceAlreadyExists(String),
 
+    /// The workspace's staged database is in an inconsistent state — the directory
+    /// exists but the underlying store cannot be read. Distinct from the clean-empty
+    /// case, which yields an empty `StagedData` rather than an error.
+    #[error("Workspace '{workspace_id}' staged db is corrupted: {source}")]
+    WorkspaceStagedDbCorrupted {
+        workspace_id: String,
+        source: Box<OxenError>,
+    },
+
     #[error("{0}")]
     WorkspaceNameIndex(#[from] crate::core::workspaces::workspace_name_index::WsError),
 
@@ -441,6 +450,9 @@ impl OxenError {
             DB(_) | ArrowError(_) | BinCodeError(_) | RedisError(_) | R2D2Error(_)
             | RmpDecodeError(_) => {
                 "This is an internal error. Run with RUST_LOG=debug for more details."
+            }
+            WorkspaceStagedDbCorrupted { .. } => {
+                "Recreate the workspace: `oxen workspace delete <id>` then re-create it."
             }
             _ => return None,
         }
