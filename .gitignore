@@ -27,6 +27,6 @@ cli-test/vendor/
 .cursor
 .cargo/config.toml
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 .superset
-
 data/

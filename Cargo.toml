@@ -150,7 +150,7 @@ time = { version = "0.3.28", features = ["serde", "formatting"] }
 tokio = { version = "1.32.0", features = ["full", "tracing"] }
 tokio-console = "0.1.13"
 tokio-stream = "0.1.17"
-tokio-util = { version = "0.7.8", features = ["compat"] }
+tokio-util = { version = "0.7.8", features = ["compat", "io", "io-util"] }
 toml = "0.8.19"
 tracing = "0.1"
 tracing-actix-web = "0.7"
