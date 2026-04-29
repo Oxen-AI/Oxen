@@ -237,13 +237,16 @@ pub fn pack_nodes_byte_estimate(repo: &LocalRepository, hashes: &HashSet<MerkleH
 /// Pack the tar-gz wire format for a set of merkle hashes into `out`, using the
 /// in-tar layout and gzip compression level selected by `opts`.
 ///
-/// Hashes whose node directory is missing on disk are silently skipped, matching
-/// `compress_nodes` / `compress_node` / `compress_commits` from `main`.
+/// Hashes whose node directory is missing on disk are silently skipped iff
+/// `skip_missing_node_dir` is `true`: this matches the existing oxen behavior
+/// of `compress_nodes` / `compress_node` / `compress_commits`. If `false`,
+/// missing node directories result in an `Err(MerkleDbError::MissingNodeDir)`.
 fn write_hashes_tar<W: Write>(
     repo: &LocalRepository,
     hashes: &HashSet<MerkleHash>,
     opts: PackOptions,
     out: W,
+    skip_missing_node_dir: bool,
 ) -> Result<(), MerkleDbError> {
     let enc = GzEncoder::new(out, pack_options_compression(opts));
     let mut tar = tar::Builder::new(enc);
@@ -256,6 +259,10 @@ fn write_hashes_tar<W: Write>(
         let node_dir = node_db_path(repo, hash);
         if node_dir.exists() {
             tar.append_dir_all(&tar_subdir, node_dir)?;
+        } else if !skip_missing_node_dir {
+            return Err(MerkleDbError::MissingNodeDir(*hash));
+        } else {
+            log::warn!("Skipping missing node dir for hash {}", hash.to_hex_hash());
         }
     }
     tar.finish()?;
@@ -274,7 +281,14 @@ fn pack_options_compression(opts: PackOptions) -> Compression {
 }
 
 /// Pack the tar-gz wire format for every node in the store into `out`.
-fn write_all_tar<W: Write>(repo: &LocalRepository, out: W) -> Result<(), MerkleDbError> {
+/// If `skip_missing_node_dir` is `false`, missing node directories result in
+/// an `Err(MerkleDbError::MissingTreeNodesDir)`. Otherwise, missing node dirs
+/// are skipped and logged as a warning.
+fn write_all_tar<W: Write>(
+    repo: &LocalRepository,
+    out: W,
+    skip_missing_node_dir: bool,
+) -> Result<(), MerkleDbError> {
     let enc = GzEncoder::new(out, Compression::fast());
     let mut tar = tar::Builder::new(enc);
     let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR);
@@ -285,6 +299,10 @@ fn write_all_tar<W: Write>(repo: &LocalRepository, out: W) -> Result<(), MerkleD
         .join(NODES_DIR);
     if nodes_dir.exists() {
         tar.append_dir_all(&tar_subdir, nodes_dir)?;
+    } else if !skip_missing_node_dir {
+        return Err(MerkleDbError::MissingTreeNodesDir);
+    } else {
+        log::warn!("Missing oxen tree/nodes dir in this repository: resulting in empty tarball");
     }
     tar.finish()?;
     tar.into_inner()?.finish()?;
@@ -304,15 +322,17 @@ fn write_all_tar<W: Write>(repo: &LocalRepository, out: W) -> Result<(), MerkleD
 ///
 /// Returns the set of hashes parsed from the tarball.
 ///
-/// Behaviour controls (for parity with the two unpack code paths on `main`):
+/// Behaviour controls (to provide a backwards-compatible format that older clients & servers speak):
 /// - `overwrite_existing == true` overwrites entries whose destination already exists;
 ///   matches `util::fs::unpack_async_tar_archive`'s download-path behaviour.
 /// - `overwrite_existing == false` skips them; matches
 ///   `repositories::tree::unpack_nodes`'s upload-consumer behaviour.
 ///
-/// Entries that aren't regular files or directories return [`MerkleDbError::UnsupportedTarEntry`].
-/// Entries whose path contains a `..` component return [`MerkleDbError::PathTraversal`].
-/// Both checks mirror `main`'s `util::fs::unpack_async_tar_archive`.
+/// Errors:
+/// - Entries that aren't regular files or directories return [`MerkleDbError::UnsupportedTarEntry`].
+/// - Entries whose path contains a `..` component return [`MerkleDbError::PathTraversal`].
+///
+/// Both checks mirror `util::fs::unpack_async_tar_archive`.
 fn extract_tar_under<R: Read>(
     reader: R,
     oxen_hidden: &Path,
@@ -363,25 +383,25 @@ fn extract_tar_under<R: Read>(
         //
         // After the path-resolution above, `dst_path` is of the form
         // `<oxen_hidden>/tree/nodes/<rest>`. We classify entries by the SHAPE
-        // of `<rest>`, never by whether components happen to be hex — the
-        // earlier "all chars ascii-hex AND length==32" gate silently dropped
-        // entries whose hex hash had stripped leading zeros (since
-        // `MerkleHash`'s `Display` uses `{:x}` and so produces a < 32-char
-        // string for hashes with high zero nibbles).
+        // of `<rest>`, never by whether components happen to be hex. We assume that
+        // we have the hex-encoded hash as the `{prefix}/{suffix}` dirs.
         if let Some(hash) = extract_hash_from_entry_path(&dst_path, oxen_hidden)? {
             hashes.insert(hash);
         } else {
-            log::warn!("Skipping non-merkle entry in tarball: {}", dst_path.display());
+            log::warn!(
+                "Skipping non-merkle entry in tarball: {}",
+                dst_path.display()
+            );
         }
     }
     Ok(hashes)
 }
 
-/// Inspect a fully-resolved tar entry destination path and, if it identifies a
-/// merkle node, return that node's hash.
+/// Inspect a fully-resolved tar entry destination path and, if it identifies a Merkle
+/// node, return that node's hash.
 ///
-/// `dst_path` must be inside `<oxen_hidden>/tree/nodes/`. The path's segments
-/// after that prefix determine the entry kind:
+/// `dst_path` must be inside `<oxen_hidden>/tree/nodes/`. The path's segments after
+/// that prefix determine the entry kind:
 ///
 /// | Segments after `tree/nodes/` | Entry kind | Result |
 /// |---|---|---|
@@ -390,17 +410,18 @@ fn extract_tar_under<R: Read>(
 /// | 2 (`{prefix}/{suffix}` dir) | hash-bearing dir | `Ok(Some(hash))` (hash parsed from `{prefix}{suffix}` as hex u128) |
 /// | 3 (`{prefix}/{suffix}/node` or `.../children`) | leaf file | `Ok(None)` (hash already produced from the parent dir entry) |
 ///
-/// Anything else returns [`MerkleDbError::InvalidTarStructure`]. A
-/// `{prefix}/{suffix}` dir whose `{prefix}{suffix}` doesn't parse as a hex
-/// `u128` returns [`MerkleDbError::InvalidNodeIdHex`]. Non-UTF-8 path
-/// components return [`MerkleDbError::InvalidTarStructure`] as well, since
-/// the merkle layout never produces non-UTF-8 segment names.
+/// Anything else returns [`MerkleDbError::InvalidTarStructure`]. A `{prefix}/{suffix}`
+/// dir whose `{prefix}` & `{suffix}` don't hex-parse as a `u128` value returns a Err of
+/// [`MerkleDbError::InvalidNodeIdHex`]. Any non-UTF-8 path components in the tarball return
+/// an Err of [`MerkleDbError::InvalidTarStructure`]: the merkle layout should never produce
+/// a non-UTF-8 segment name.
 fn extract_hash_from_entry_path(
     dst_path: &Path,
     oxen_hidden: &Path,
 ) -> Result<Option<MerkleHash>, MerkleDbError> {
     let tree_nodes_prefix = Path::new(TREE_DIR).join(NODES_DIR);
 
+    // make a new InvalidTarStructure MerkleDbError instance
     let invalid_structure = |reason: &str| MerkleDbError::InvalidTarStructure {
         entry_path: dst_path.display().to_string(),
         reason: reason.to_string(),
@@ -452,7 +473,7 @@ fn extract_hash_from_entry_path(
     }
 }
 
-/// Merkle packer implementation for the [`FileBackend`].
+/// Merkle tree node packing implementation for the [`FileBackend`].
 impl<'repo> MerklePacker for FileBackend<'repo> {
     type Error = MerkleDbError;
 
@@ -465,22 +486,21 @@ impl<'repo> MerklePacker for FileBackend<'repo> {
         opts: PackOptions,
         out: W,
     ) -> Result<(), MerkleDbError> {
-        write_hashes_tar(self.repo, hashes, opts, out)
+        write_hashes_tar(self.repo, hashes, opts, out, true)
     }
 
-    /// Pack every node the store holds into `out` as a tar-gz stream. Always emits
-    /// the server-canonical layout — see [`MerklePacker::pack_all`].
+    /// Pack every node the store holds into `out` as a tar-gz stream.
+    /// Always emits the server-canonical layout.
     fn pack_all<W: Write>(&self, out: W) -> Result<(), MerkleDbError> {
-        write_all_tar(self.repo, out)
+        write_all_tar(self.repo, out, true)
     }
 }
 
-/// Merkle unpacker implementation for the [`FileBackend`].
+/// Merkle tree node unpacking implementation for the [`FileBackend`].
 impl<'repo> MerkleUnpacker for FileBackend<'repo> {
     type Error = MerkleDbError;
 
-    /// Unpack a tar-gz wire stream into the store, applying `opts`'s existing-file
-    /// policy.
+    /// Unpack a tar-gz wire stream into the store, applying `opts`'s existing-file policy.
     ///
     /// If the repository sits on a virtual filesystem ([`LocalRepository::is_vfs`] is true),
     /// unpack into a tempdir first and `copy_dir_all` the result through the VFS. Some
@@ -1414,6 +1434,100 @@ mod tests {
             "expected InvalidTarStructure error mentioning the offending filename; got {msg}"
         );
         Ok(())
+    }
+
+    /// Cross-platform sanity check for `extract_hash_from_entry_path`. We
+    /// bypass tar entirely and feed the helper paths constructed with
+    /// explicit forward-slash literals — the same shape that
+    /// `tar::Entry::path()` produces on every platform (tar archives are
+    /// canonically `/`-separated, and the `tar` crate's `bytes2path` impl
+    /// just feeds those bytes into `Path::new`).
+    ///
+    /// On Windows, `Path::components()` and `Path::strip_prefix` both treat
+    /// `/` and `\` as separators, so the helper's match on segment-name
+    /// strings dispatches the same way regardless of host. This test pins
+    /// that down without needing CI on every OS.
+    #[test]
+    fn test_extract_hash_from_entry_path_is_path_separator_agnostic() {
+        // Concrete hash whose hex form is < 32 chars (exercising the
+        // leading-zero-nibble fix at the same time).
+        let hash = MerkleHash::new(0xfeed_face_u128);
+        let hex = hash.to_string();
+        let prefix: String = hex.chars().take(3).collect();
+        let suffix: String = hex.chars().skip(3).collect();
+
+        let oxen_hidden = PathBuf::from("repo").join(".oxen");
+
+        // Helper to build a tar-style path under `tree/nodes/...`.
+        let under_tree_nodes = |tail: &[&str]| -> PathBuf {
+            let mut s = PathBuf::from("repo")
+                .join(".oxen")
+                .join("tree")
+                .join("nodes");
+            for t in tail {
+                if !t.is_empty() {
+                    s.push(t);
+                }
+            }
+            s
+        };
+
+        // tree/nodes itself — intermediate, no hash.
+        let p = under_tree_nodes(&[""]);
+        assert_eq!(
+            extract_hash_from_entry_path(&p, &oxen_hidden)
+                .expect("Could not extract hash from entry path"),
+            None
+        );
+
+        // tree/nodes/{prefix} — intermediate prefix dir, no hash.
+        let p = under_tree_nodes(&[prefix.as_str()]);
+        assert_eq!(
+            extract_hash_from_entry_path(&p, &oxen_hidden)
+                .expect("Could not extract hash from entry path"),
+            None
+        );
+
+        // tree/nodes/{prefix}/{suffix} — hash-bearing dir.
+        let p = under_tree_nodes(&[prefix.as_str(), suffix.as_str()]);
+        assert_eq!(
+            extract_hash_from_entry_path(&p, &oxen_hidden)
+                .expect("Could not extract hash from entry path"),
+            Some(hash),
+            "{prefix}/{suffix} must classify as the hash dir on every platform"
+        );
+
+        // tree/nodes/{prefix}/{suffix}/node — leaf file, no hash from this entry.
+        let p = under_tree_nodes(&[prefix.as_str(), suffix.as_str(), "node"]);
+        assert_eq!(
+            extract_hash_from_entry_path(&p, &oxen_hidden)
+                .expect("Could not extract hash from entry path"),
+            None
+        );
+
+        // tree/nodes/{prefix}/{suffix}/children — leaf file, no hash from this entry.
+        let p = under_tree_nodes(&[prefix.as_str(), suffix.as_str(), "children"]);
+        assert_eq!(
+            extract_hash_from_entry_path(&p, &oxen_hidden)
+                .expect("Could not extract hash from entry path"),
+            None
+        );
+
+        // Mixed-separator construction: `oxen_hidden` via platform-native
+        // `Path::join` (uses `\` on Windows, `/` on Unix), but the entry
+        // path itself uses forward slashes from a tar archive. `strip_prefix`
+        // is documented to be component-aware, so this must still match on
+        // every platform.
+        let p = oxen_hidden
+            .join("tree")
+            .join("nodes")
+            .join(&prefix)
+            .join(&suffix);
+        assert_eq!(
+            extract_hash_from_entry_path(&p, &oxen_hidden).unwrap(),
+            Some(hash),
+            "platform-native joins must classify the same as forward-slash literals"
+        );
     }
 
     /// Byte-level parity for the upload-pack path: legacy `create_nodes` body on

@@ -128,6 +128,10 @@ pub enum MerkleDbError {
         #[source]
         source: std::num::ParseIntError,
     },
+    #[error("Missing node dir for hash {0}")]
+    MissingNodeDir(MerkleHash),
+    #[error("Missing oxen tree/nodes dir in this repository")]
+    MissingTreeNodesDir,
 }
 
 impl MerkleDbError {
