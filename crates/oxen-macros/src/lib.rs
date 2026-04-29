@@ -234,24 +234,40 @@ fn find_from_ox_attr_in_fields(fields: &Fields) -> Option<&syn::Attribute> {
     }
 }
 
-/// If `ty` is syntactically `Box<T>` (any path that ends in `Box` with one
-/// type-argument), return the inner `T` *only if* `T` itself is a `Type::Path`.
+/// If `ty` is syntactically the standard library's `Box<T>`, return the inner
+/// `T` *only if* `T` itself is a `Type::Path`.
 ///
-/// That filter excludes shapes like `dyn Trait`, `[T]`, `&T`, tuples, etc., for
-/// which an `impl IntoOxenError for T { fn into_oxen(self) }` would not compile
+/// "Standard library `Box`" means the path is one of:
+///   - bare `Box`,
+///   - `std::boxed::Box` / `core::boxed::Box` / `alloc::boxed::Box`,
+///   - any of the above with a leading `::`.
+///
+/// Anything else — e.g. a user-defined `my_crate::Box<T>`, a re-export under
+/// a different module path, or `Self::Box` — is rejected. Without this
+/// gate, the macro would happily emit `impl IntoOxenError for U` for any
+/// path ending in `Box`, even though `my_crate::Box<U>` has no relationship
+/// to `std::boxed::Box` and the auto-unbox semantics would be nonsense.
+///
+/// The path-shape filter on `T` (`syn::Type::Path` only) excludes shapes
+/// like `dyn Trait`, `[T]`, `&T`, tuples, etc., for which an
+/// `impl IntoOxenError for T { fn into_oxen(self) }` would not compile
 /// because `into_oxen` takes `self` by value (requires `Sized`).
 ///
-/// Type aliases for `Box<...>` are not unwrapped — the macro only matches the
-/// literal token `Box`. Callers that want auto-unboxing through an alias should
-/// spell the field type as `Box<T>` directly.
+/// Type aliases for `Box<...>` are not unwrapped — the macro inspects the
+/// path syntactically, so it cannot see through aliases. Callers that want
+/// auto-unboxing through an alias should spell the field type as `Box<T>`
+/// directly.
 fn unbox_inner_path_type(ty: &syn::Type) -> Option<&syn::Type> {
     let syn::Type::Path(syn::TypePath { qself: None, path }) = ty else {
         return None;
     };
-    let last = path.segments.last()?;
-    if last.ident != "Box" {
+
+    if !path_is_std_box(path) {
         return None;
     }
+
+    // We've confirmed the last segment is `Box`; pull its single type-argument.
+    let last = path.segments.last()?;
     let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
         return None;
     };
@@ -272,5 +288,32 @@ fn unbox_inner_path_type(ty: &syn::Type) -> Option<&syn::Type> {
         Some(first)
     } else {
         None
+    }
+}
+
+/// Whether `path` names the standard library's `Box` type.
+///
+/// Accepted segment shapes:
+///   - `Box` (bare, the prelude form)
+///   - `std::boxed::Box`
+///   - `core::boxed::Box`
+///   - `alloc::boxed::Box`
+///
+/// A leading `::` is allowed on any of the above and does not affect
+/// acceptance (we don't read `path.leading_colon`). Anything else returns
+/// `false` — including user-defined paths like `my_crate::Box`, single-segment
+/// `boxed::Box`, or `something::std::boxed::Box`.
+fn path_is_std_box(path: &syn::Path) -> bool {
+    let segments: Vec<_> = path.segments.iter().collect();
+    match segments.as_slice() {
+        // Bare `Box` (relies on prelude / explicit `use`).
+        [only] => only.ident == "Box",
+        // `std::boxed::Box` / `core::boxed::Box` / `alloc::boxed::Box`.
+        [crate_seg, boxed, box_seg] => {
+            (crate_seg.ident == "std" || crate_seg.ident == "core" || crate_seg.ident == "alloc")
+                && boxed.ident == "boxed"
+                && box_seg.ident == "Box"
+        }
+        _ => false,
     }
 }
