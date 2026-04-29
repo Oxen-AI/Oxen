@@ -328,6 +328,7 @@ fn extract_tar_under<R: Read>(
     for entry in entries {
         let Ok(mut file) = entry else {
             log::error!("Could not unpack file in merkle tar archive");
+            // TODO: raise this error to the caller instead!?
             continue;
         };
         let path = file.path()?.into_owned();
@@ -353,34 +354,102 @@ fn extract_tar_under<R: Read>(
             std::fs::create_dir_all(parent)?;
         }
         if dst_path.exists() && !overwrite_existing {
-            log::debug!("Node already exists at {dst_path:?}, skipping");
+            log::info!("Node already exists at {dst_path:?}, skipping");
             continue;
         }
         file.unpack(&dst_path)?;
 
-        // The hash is the concatenation of the last two path components. Entries ending
-        // in "node" / "children" are the leaf files; entries that end at the {suffix}
-        // directory contribute the hash value. A full-tree tarball (from `pack_all`)
-        // also contains intermediate directory entries like `tree/nodes` or
-        // `tree/nodes/{prefix}` — those don't form a valid 32-hex-char hash when their
-        // last two components are concatenated, so we gate parsing on that.
-        if !dst_path.ends_with("node") && !dst_path.ends_with("children") {
-            let id: String = dst_path
-                .components()
-                .rev()
-                .take(2)
-                .filter_map(|c| c.as_os_str().to_str())
-                .collect::<Vec<&str>>()
-                .into_iter()
-                .rev()
-                .collect();
-            if id.len() == 32 && id.chars().all(|c| c.is_ascii_hexdigit()) {
-                let hash = u128::from_str_radix(&id, 16)?;
-                hashes.insert(MerkleHash::new(hash));
-            }
+        // Extract the merkle hash from this entry's path, if it identifies one.
+        //
+        // After the path-resolution above, `dst_path` is of the form
+        // `<oxen_hidden>/tree/nodes/<rest>`. We classify entries by the SHAPE
+        // of `<rest>`, never by whether components happen to be hex — the
+        // earlier "all chars ascii-hex AND length==32" gate silently dropped
+        // entries whose hex hash had stripped leading zeros (since
+        // `MerkleHash`'s `Display` uses `{:x}` and so produces a < 32-char
+        // string for hashes with high zero nibbles).
+        if let Some(hash) = extract_hash_from_entry_path(&dst_path, oxen_hidden)? {
+            hashes.insert(hash);
+        } else {
+            log::warn!("Skipping non-merkle entry in tarball: {}", dst_path.display());
         }
     }
     Ok(hashes)
+}
+
+/// Inspect a fully-resolved tar entry destination path and, if it identifies a
+/// merkle node, return that node's hash.
+///
+/// `dst_path` must be inside `<oxen_hidden>/tree/nodes/`. The path's segments
+/// after that prefix determine the entry kind:
+///
+/// | Segments after `tree/nodes/` | Entry kind | Result |
+/// |---|---|---|
+/// | 0 (the `tree/nodes` dir itself) | intermediate dir | `Ok(None)` |
+/// | 1 (the `{prefix}` dir) | intermediate dir | `Ok(None)` |
+/// | 2 (`{prefix}/{suffix}` dir) | hash-bearing dir | `Ok(Some(hash))` (hash parsed from `{prefix}{suffix}` as hex u128) |
+/// | 3 (`{prefix}/{suffix}/node` or `.../children`) | leaf file | `Ok(None)` (hash already produced from the parent dir entry) |
+///
+/// Anything else returns [`MerkleDbError::InvalidTarStructure`]. A
+/// `{prefix}/{suffix}` dir whose `{prefix}{suffix}` doesn't parse as a hex
+/// `u128` returns [`MerkleDbError::InvalidNodeIdHex`]. Non-UTF-8 path
+/// components return [`MerkleDbError::InvalidTarStructure`] as well, since
+/// the merkle layout never produces non-UTF-8 segment names.
+fn extract_hash_from_entry_path(
+    dst_path: &Path,
+    oxen_hidden: &Path,
+) -> Result<Option<MerkleHash>, MerkleDbError> {
+    let tree_nodes_prefix = Path::new(TREE_DIR).join(NODES_DIR);
+
+    let invalid_structure = |reason: &str| MerkleDbError::InvalidTarStructure {
+        entry_path: dst_path.display().to_string(),
+        reason: reason.to_string(),
+    };
+
+    let rel = dst_path.strip_prefix(oxen_hidden).map_err(|_| {
+        invalid_structure("entry resolved outside of the repo's `.oxen/` directory")
+    })?;
+    let under_tree_nodes = rel
+        .strip_prefix(&tree_nodes_prefix)
+        .map_err(|_| invalid_structure("entry path is not under `tree/nodes/`"))?;
+
+    // Collect normal path components as `&str`. Reject non-UTF-8 components
+    // up front (they can't appear in a well-formed merkle tar archive).
+    let mut components: Vec<&str> = Vec::new();
+    for component in under_tree_nodes.components() {
+        let Component::Normal(segment) = component else {
+            return Err(invalid_structure(
+                "entry path contains a non-`Normal` component",
+            ));
+        };
+        let Some(s) = segment.to_str() else {
+            return Err(invalid_structure("entry path contains a non-UTF-8 segment"));
+        };
+        components.push(s);
+    }
+
+    match components.as_slice() {
+        // `tree/nodes` itself, or `tree/nodes/{prefix}` — intermediate dirs
+        // produced by `pack_all`. No hash to record.
+        [] | [_] => Ok(None),
+        // `tree/nodes/{prefix}/{suffix}` — the hash-bearing dir. Parse
+        // unconditionally; failure is a structured error.
+        [prefix, suffix] => {
+            let id = format!("{prefix}{suffix}");
+            let hash_value = u128::from_str_radix(&id, 16)
+                .map_err(|source| MerkleDbError::InvalidNodeIdHex { id, source })?;
+            Ok(Some(MerkleHash::new(hash_value)))
+        }
+        // `tree/nodes/{prefix}/{suffix}/{node|children}` — leaf files. The
+        // hash is recorded when the parent dir entry is processed.
+        [_, _, leaf] if *leaf == "node" || *leaf == "children" => Ok(None),
+        [_, _, other] => Err(invalid_structure(&format!(
+            "leaf file under `tree/nodes/{{prefix}}/{{suffix}}/` must be `node` or `children`, got `{other}`"
+        ))),
+        _ => Err(invalid_structure(
+            "entry has more components than `tree/nodes/{prefix}/{suffix}/[node|children]`",
+        )),
+    }
 }
 
 /// Merkle packer implementation for the [`FileBackend`].
@@ -1153,6 +1222,196 @@ mod tests {
         assert!(
             msg.contains("Unsupported tar entry"),
             "unexpected error message: {msg}"
+        );
+        Ok(())
+    }
+
+    /// Regression: a hash whose hex form has stripped leading zeros (so its
+    /// `node_db_prefix()` produces a `{prefix}/{suffix}` shorter than 32 chars
+    /// total) must still round-trip through pack → unpack and appear in the
+    /// returned hash set.
+    ///
+    /// Before the fix to `extract_hash_from_entry_path`, the unpack side had a
+    /// silent `id.len() == 32` gate that dropped these entries.
+    #[tokio::test]
+    async fn test_unpack_recovers_hash_with_leading_zero_nibbles() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test(|repo| {
+            // Pick a small `u128` whose hex form is much shorter than 32 chars.
+            // `MerkleHash`'s `Display` is `{:x}` (no zero padding) so this is
+            // exactly the shape that triggered the bug.
+            let stripped_hash = MerkleHash::new(0x1234_u128);
+            let hex = stripped_hash.to_string();
+            assert!(
+                hex.len() < 32,
+                "expected hex form < 32 chars to exercise the regression, got {hex:?}"
+            );
+
+            // Manually plant a `{prefix}/{suffix}/node` and `.../children`
+            // pair on disk so `pack_nodes` will tar them up.
+            let prefix = stripped_hash.to_hex_hash().node_db_prefix();
+            let nodes_root = repo
+                .path
+                .join(crate::constants::OXEN_HIDDEN_DIR)
+                .join(crate::constants::TREE_DIR)
+                .join(crate::constants::NODES_DIR);
+            let node_dir = nodes_root.join(prefix);
+            std::fs::create_dir_all(&node_dir)?;
+            std::fs::write(node_dir.join("node"), b"node-bytes")?;
+            std::fs::write(node_dir.join("children"), b"children-bytes")?;
+
+            // Pack just this hash.
+            let hashes = HashSet::from_iter([stripped_hash]);
+            let mut buf = Vec::new();
+            repo.merkle_store()
+                .pack_nodes(&hashes, PackOptions::ServerCanonical, &mut buf)
+                .expect("pack_nodes failed");
+
+            // Unpack into a fresh repo and confirm the short hash made it out.
+            let tmp = tempfile::TempDir::new()?;
+            let target = repositories::init(tmp.path())?;
+            let installed = target
+                .merkle_store()
+                .unpack(&buf[..], UnpackOptions::Overwrite)
+                .expect("unpack failed");
+
+            assert!(
+                installed.contains(&stripped_hash),
+                "unpack must report the short-hex hash; got {installed:?}"
+            );
+            Ok(())
+        })
+    }
+
+    /// A `{prefix}/{suffix}` dir entry whose name isn't valid hex must produce
+    /// the structured `InvalidNodeIdHex` error, not a silent skip and not a
+    /// generic `ParseIntError`.
+    #[tokio::test]
+    async fn test_unpack_rejects_non_hex_node_id() -> Result<(), OxenError> {
+        // Build a server-canonical-format tarball with a bogus dir name where
+        // the suffix contains non-hex characters.
+        let mut buf = Vec::new();
+        {
+            let enc = GzEncoder::new(&mut buf, Compression::fast());
+            let mut tar = tar::Builder::new(enc);
+            // Three levels of dir entries: tree/nodes/abc/zzzznothex.
+            for path in &["tree/nodes", "tree/nodes/abc", "tree/nodes/abc/zzzznothex"] {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(0);
+                header.set_mode(0o755);
+                header.set_entry_type(tar::EntryType::Directory);
+                header.set_cksum();
+                tar.append_data(&mut header, path, std::io::Cursor::new(Vec::new()))?;
+            }
+            tar.finish()?;
+            tar.into_inner()?.finish()?;
+        }
+
+        let tmp = tempfile::TempDir::new()?;
+        let repo = repositories::init(tmp.path())?;
+        let err = repo
+            .merkle_store()
+            .unpack(&buf[..], UnpackOptions::Overwrite)
+            .expect_err("non-hex node id must be rejected");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("Invalid merkle node id") && msg.contains("abczzzznothex"),
+            "expected InvalidNodeIdHex error mentioning the offending id; got {msg}"
+        );
+        Ok(())
+    }
+
+    /// A tar entry whose path goes deeper than `tree/nodes/{prefix}/{suffix}/{node|children}`
+    /// must produce `InvalidTarStructure`.
+    #[tokio::test]
+    async fn test_unpack_rejects_path_too_deep() -> Result<(), OxenError> {
+        let mut buf = Vec::new();
+        {
+            let enc = GzEncoder::new(&mut buf, Compression::fast());
+            let mut tar = tar::Builder::new(enc);
+            // Five levels under tree/nodes — too deep.
+            for path in &[
+                "tree/nodes",
+                "tree/nodes/abc",
+                "tree/nodes/abc/def0123",
+                "tree/nodes/abc/def0123/extra",
+            ] {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(0);
+                header.set_mode(0o755);
+                header.set_entry_type(tar::EntryType::Directory);
+                header.set_cksum();
+                tar.append_data(&mut header, path, std::io::Cursor::new(Vec::new()))?;
+            }
+            // Append a file at the over-deep level.
+            let mut file_header = tar::Header::new_gnu();
+            file_header.set_size(0);
+            file_header.set_mode(0o644);
+            file_header.set_entry_type(tar::EntryType::Regular);
+            file_header.set_cksum();
+            tar.append_data(
+                &mut file_header,
+                "tree/nodes/abc/def0123/extra/node",
+                std::io::Cursor::new(Vec::new()),
+            )?;
+            tar.finish()?;
+            tar.into_inner()?.finish()?;
+        }
+
+        let tmp = tempfile::TempDir::new()?;
+        let repo = repositories::init(tmp.path())?;
+        let err = repo
+            .merkle_store()
+            .unpack(&buf[..], UnpackOptions::Overwrite)
+            .expect_err("over-deep entry must be rejected");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("Invalid merkle tar archive structure"),
+            "expected InvalidTarStructure error; got {msg}"
+        );
+        Ok(())
+    }
+
+    /// A leaf file under `{prefix}/{suffix}/` whose name is neither `node`
+    /// nor `children` must be rejected with `InvalidTarStructure`.
+    #[tokio::test]
+    async fn test_unpack_rejects_unknown_leaf_filename() -> Result<(), OxenError> {
+        let mut buf = Vec::new();
+        {
+            let enc = GzEncoder::new(&mut buf, Compression::fast());
+            let mut tar = tar::Builder::new(enc);
+            for path in &["tree/nodes", "tree/nodes/abc", "tree/nodes/abc/def0123"] {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(0);
+                header.set_mode(0o755);
+                header.set_entry_type(tar::EntryType::Directory);
+                header.set_cksum();
+                tar.append_data(&mut header, path, std::io::Cursor::new(Vec::new()))?;
+            }
+            // Bogus leaf filename `unexpected.txt` instead of `node`/`children`.
+            let mut file_header = tar::Header::new_gnu();
+            file_header.set_size(0);
+            file_header.set_mode(0o644);
+            file_header.set_entry_type(tar::EntryType::Regular);
+            file_header.set_cksum();
+            tar.append_data(
+                &mut file_header,
+                "tree/nodes/abc/def0123/unexpected.txt",
+                std::io::Cursor::new(Vec::new()),
+            )?;
+            tar.finish()?;
+            tar.into_inner()?.finish()?;
+        }
+
+        let tmp = tempfile::TempDir::new()?;
+        let repo = repositories::init(tmp.path())?;
+        let err = repo
+            .merkle_store()
+            .unpack(&buf[..], UnpackOptions::Overwrite)
+            .expect_err("unknown leaf filename must be rejected");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("Invalid merkle tar archive structure") && msg.contains("unexpected.txt"),
+            "expected InvalidTarStructure error mentioning the offending filename; got {msg}"
         );
         Ok(())
     }
