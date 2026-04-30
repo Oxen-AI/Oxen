@@ -23,15 +23,20 @@ pub trait MerkleStore: MerkleReader + MerkleWriter<Error = <Self as MerkleReader
 /// of a MerkleStore, provided that the error types in both the reader & writer align.
 impl<T> MerkleStore for T where T: MerkleReader + MerkleWriter<Error = <T as MerkleReader>::Error> {}
 
-/// A Merkle tree backend that can also be transported (packed/unpacked) over the wire.
+/// A [`MerkleStore`] that can also pack and unpack the canonical tar-gz wire format.
 ///
-/// The store-side and transport-side `Error` types are intentionally allowed to differ —
-/// transport-layer errors (tar parsing, gzip framing, path-traversal rejection) have a
-/// different shape than store-layer errors (filesystem / database faults), and pinning
-/// them together would force one surface to absorb the other's variants. See
-/// [`MerkleTransport`] for more detail.
+/// The store side ([`MerkleStore`] = [`MerkleReader`] + [`MerkleWriter`]) uses one error type,
+/// and the transport side ([`MerkleTransport`] = [`MerklePacker`] + [`MerkleUnpacker`]) uses
+/// one error type, but those two sides are **not** required to share the same type. That gives
+/// backends room to use a transport-specific error that extends their store error with
+/// tar/gzip/parse variants, rather than having to fold every transport concern into the
+/// store error. Both sides still implement [`IntoOxenError`], so `?` at call sites converts
+/// each error directly to [`OxenError`] with no further plumbing.
+///
+/// [`IntoOxenError`]: crate::error::IntoOxenError
+/// [`OxenError`]: crate::error::OxenError
 pub trait TransportableMerkleStore: MerkleStore + MerkleTransport {}
 
-/// Any type that implements both [`MerkleStore`] and [`MerkleTransport`] is automatically
-/// a [`TransportableMerkleStore`].
+/// Any type that is a [`MerkleStore`] and a [`MerkleTransport`] is automatically a
+/// [`TransportableMerkleStore`]. The store-side and transport-side error types can differ.
 impl<T> TransportableMerkleStore for T where T: MerkleStore + MerkleTransport {}

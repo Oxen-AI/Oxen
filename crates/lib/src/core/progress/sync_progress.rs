@@ -72,6 +72,15 @@ impl SyncProgress {
         self.total_bytes = Some(total_bytes);
     }
 
+    /// Extend the underlying progress bar's total length by `delta`. Used when an
+    /// additional pre-known byte count needs to be added to a bar that was already
+    /// constructed with an initial total (e.g., the merkle-tree upload bytes layered
+    /// on top of file-content upload bytes during a push). Uses `ProgressBar`'s
+    /// interior mutability, so this works through `&Arc<SyncProgress>`.
+    pub fn inc_total_bytes(&self, delta: u64) {
+        self.progress_bar.inc_length(delta);
+    }
+
     pub fn set_message(&self, message: impl Into<Cow<'static, str>>) {
         self.progress_bar.set_message(message);
     }

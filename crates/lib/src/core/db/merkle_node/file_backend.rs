@@ -22,8 +22,7 @@ use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::{MerkleHash, TMerkleTreeNode};
 use crate::util;
 
-/// File-based Merkle node store backend. Implements the [`MerkleReader`],
-/// [`MerkleWriter`], [`MerklePacker`], and [`MerkleUnpacker`] traits.
+/// File-based Merkle node store backend. Implements the [`MerkleStore`] trait.
 ///
 /// Holds a borrowed `&LocalRepository` so it can delegate straight to
 /// [`MerkleNodeDB`]'s existing repository-based methods without any modification.
@@ -314,8 +313,8 @@ fn write_all_tar<W: Write>(
 ///
 /// Tolerates two historical tarball layouts so that either a new or legacy client can talk
 /// to a store built with this trait:
-///   - **Server-style** (emitted by [`write_hashes_tar`] / [`write_all_tar`] and the old
-///     `compress_*` helpers): entries carry the full `tree/nodes/{prefix}/{suffix}/{node,children}`
+///   - **Server-style** (emitted by [`pack_nodes`] / [`pack_all`] and the old `compress_*`
+///     helpers): entries carry the full `tree/nodes/{prefix}/{suffix}/{node,children}`
 ///     prefix. Joined directly under `oxen_hidden`.
 ///   - **Legacy client-push style** (emitted by the old `api::client::tree::create_nodes`):
 ///     entries start at `{prefix}/{suffix}/{node,children}` with no `tree/nodes/` prefix.
@@ -347,11 +346,12 @@ fn extract_tar_under<R: Read>(
     let tree_nodes_prefix = Path::new(TREE_DIR).join(NODES_DIR);
 
     for entry in entries {
-        let Ok(mut file) = entry else {
-            log::error!("Could not unpack file in merkle tar archive");
-            // TODO: raise this error to the caller instead!?
-            continue;
-        };
+        // Propagate per-entry read errors (e.g. truncated/corrupted gzip stream surfacing
+        // as the iterator yields `Err`). Matches `main`'s `unpack_async_tar_archive`
+        // behavior, which `?`'d the entry directly. Silent-skip would otherwise return
+        // `Ok` with an empty hash set on a corrupted body, hiding the failure from the
+        // download path's `JoinHandle`-error surface in `api::client::tree`.
+        let mut file = entry.map_err(MerkleDbError::CannotReadMerkle)?;
         let path = file.path()?.into_owned();
         // Path-traversal guard: refuse any entry whose path resolves above its container.
         if path.components().any(|c| matches!(c, Component::ParentDir)) {
@@ -551,7 +551,7 @@ mod tests {
 
             // Scope the session so Drop runs at its end.
             {
-                let store = FileBackend::new(&repo);
+                let store = repo.merkle_store();
                 let session = store.begin().expect("Could not begin session");
                 let mut ns = session
                     .create_node(&commit, None)
@@ -561,7 +561,7 @@ mod tests {
                 // Deliberately DO NOT call ns.finish() or session.finish().
             }
 
-            let store = FileBackend::new(&repo);
+            let store = repo.merkle_store();
             assert!(
                 store
                     .exists(commit_hash)
@@ -844,23 +844,22 @@ mod tests {
     async fn test_transport_round_trip() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test(|repo| {
             let mut packed = Vec::new();
-            FileBackend::new(&repo)
+            repo.merkle_store()
                 .pack_all(&mut packed)
                 .expect("pack_all failed");
             assert!(!packed.is_empty(), "pack_all produced empty buffer");
 
             let tmp = tempfile::TempDir::new()?;
             let clone = repositories::init(tmp.path())?;
-            let installed = FileBackend::new(&clone)
+            let installed = clone
+                .merkle_store()
                 .unpack(&packed[..], UnpackOptions::Overwrite)
                 .expect("unpack failed");
             assert!(!installed.is_empty(), "unpack installed no nodes");
 
             for hash in &installed {
                 assert!(
-                    FileBackend::new(&clone)
-                        .exists(hash)
-                        .expect("exists failed"),
+                    clone.merkle_store().exists(hash).expect("exists failed"),
                     "expected installed hash {hash} to be readable"
                 );
             }
@@ -884,7 +883,7 @@ mod tests {
 
             let new_pack_method = {
                 let mut via_trait = Vec::new();
-                FileBackend::new(&repo)
+                repo.merkle_store()
                     .pack_nodes(&hashes, PackOptions::ServerCanonical, &mut via_trait)
                     .expect("pack_nodes failed");
                 via_trait
@@ -909,7 +908,7 @@ mod tests {
 
             let new_pack_method = {
                 let mut via_trait = Vec::new();
-                FileBackend::new(&repo)
+                repo.merkle_store()
                     .pack_all(&mut via_trait)
                     .expect("pack_all failed");
                 via_trait
@@ -940,7 +939,7 @@ mod tests {
             let new_pack_method = {
                 let hashes = HashSet::from_iter([hash]);
                 let mut via_trait = Vec::new();
-                FileBackend::new(&repo)
+                repo.merkle_store()
                     .pack_nodes(&hashes, PackOptions::ServerCanonical, &mut via_trait)
                     .expect("pack_nodes failed");
                 via_trait
@@ -974,7 +973,7 @@ mod tests {
                     hashes.insert(c.hash().expect("no hash for commit"));
                 }
                 let mut via_trait = Vec::new();
-                FileBackend::new(&repo)
+                repo.merkle_store()
                     .pack_nodes(&hashes, PackOptions::ServerCanonical, &mut via_trait)
                     .expect("pack_nodes failed");
                 via_trait
@@ -1039,7 +1038,8 @@ mod tests {
             let repo_new = repositories::init(tmp_new.path())?;
             // Old `unpack_nodes` skipped existing files; mirror that with
             // `UnpackOptions::SkipExisting` so the parity check is semantically faithful.
-            let new_hashes = FileBackend::new(&repo_new)
+            let new_hashes = repo_new
+                .merkle_store()
                 .unpack(&bytes[..], UnpackOptions::SkipExisting)
                 .expect("new unpack failed");
 
@@ -1055,13 +1055,15 @@ mod tests {
             // Every installed hash must be readable through both stores.
             for h in &new_hashes {
                 assert!(
-                    FileBackend::new(&repo_old)
+                    repo_old
+                        .merkle_store()
                         .exists(h)
                         .expect("old repo exists check failed"),
                     "hash {h} not readable in repo unpacked via legacy unpack_nodes"
                 );
                 assert!(
-                    FileBackend::new(&repo_new)
+                    repo_new
+                        .merkle_store()
                         .exists(h)
                         .expect("new repo exists check failed"),
                     "hash {h} not readable in repo unpacked via trait unpack"
@@ -1100,7 +1102,7 @@ mod tests {
     /// today), feed the **same** bytes to:
     ///   - the old client unpack: `node_download_request_unpack_old` (the verbatim
     ///     `unpack_async_tar_archive` install from `main`'s `node_download_request`),
-    ///   - the new client unpack: `FileBackend::unpack(...)` (overwrite-existing
+    ///   - the new client unpack: `merkle_store().unpack(...)` (overwrite-existing
     ///     default, matching `unpack_async_tar_archive`'s behaviour).
     /// The on-disk merkle-node tree under `<oxen_hidden>/tree/nodes/` must be identical
     /// in both target repos. The set of hashes the trait reports is also asserted to
@@ -1109,7 +1111,7 @@ mod tests {
     async fn test_node_download_request_unpack_unchanged() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|repo| async move {
             let mut packed = Vec::new();
-            FileBackend::new(&repo)
+            repo.merkle_store()
                 .pack_all(&mut packed)
                 .expect("pack_all failed");
             assert!(!packed.is_empty(), "pack_all produced empty buffer");
@@ -1124,7 +1126,8 @@ mod tests {
             // New client install path: trait, with download-path overwrite semantics.
             let tmp_new = tempfile::TempDir::new()?;
             let repo_new = repositories::init(tmp_new.path())?;
-            let installed = FileBackend::new(&repo_new)
+            let installed = repo_new
+                .merkle_store()
                 .unpack(&packed[..], UnpackOptions::Overwrite)
                 .expect("new unpack failed");
 
@@ -1157,9 +1160,7 @@ mod tests {
             assert!(!installed.is_empty(), "trait unpack reported no hashes");
             for h in &installed {
                 assert!(
-                    FileBackend::new(&repo_new)
-                        .exists(h)
-                        .expect("exists failed"),
+                    repo_new.merkle_store().exists(h).expect("exists failed"),
                     "hash {h} not readable in repo unpacked via trait unpack"
                 );
             }
@@ -1196,7 +1197,8 @@ mod tests {
 
         let tmp = tempfile::TempDir::new()?;
         let repo = repositories::init(tmp.path())?;
-        let err = FileBackend::new(&repo)
+        let err = repo
+            .merkle_store()
             .unpack(&buf[..], UnpackOptions::Overwrite)
             .expect_err("path traversal must be rejected");
         let msg = format!("{err}");
@@ -1234,7 +1236,8 @@ mod tests {
 
         let tmp = tempfile::TempDir::new()?;
         let repo = repositories::init(tmp.path())?;
-        let err = FileBackend::new(&repo)
+        let err = repo
+            .merkle_store()
             .unpack(&buf[..], UnpackOptions::Overwrite)
             .expect_err("unsupported entry type must be rejected");
         let msg = format!("{err}");
@@ -1281,14 +1284,15 @@ mod tests {
             // Pack just this hash.
             let hashes = HashSet::from_iter([stripped_hash]);
             let mut buf = Vec::new();
-            FileBackend::new(&repo)
+            repo.merkle_store()
                 .pack_nodes(&hashes, PackOptions::ServerCanonical, &mut buf)
                 .expect("pack_nodes failed");
 
             // Unpack into a fresh repo and confirm the short hash made it out.
             let tmp = tempfile::TempDir::new()?;
             let target = repositories::init(tmp.path())?;
-            let installed = FileBackend::new(&target)
+            let installed = target
+                .merkle_store()
                 .unpack(&buf[..], UnpackOptions::Overwrite)
                 .expect("unpack failed");
 
@@ -1326,7 +1330,8 @@ mod tests {
 
         let tmp = tempfile::TempDir::new()?;
         let repo = repositories::init(tmp.path())?;
-        let err = FileBackend::new(&repo)
+        let err = repo
+            .merkle_store()
             .unpack(&buf[..], UnpackOptions::Overwrite)
             .expect_err("non-hex node id must be rejected");
         let msg = format!("{err}");
@@ -1376,7 +1381,8 @@ mod tests {
 
         let tmp = tempfile::TempDir::new()?;
         let repo = repositories::init(tmp.path())?;
-        let err = FileBackend::new(&repo)
+        let err = repo
+            .merkle_store()
             .unpack(&buf[..], UnpackOptions::Overwrite)
             .expect_err("over-deep entry must be rejected");
         let msg = format!("{err}");
@@ -1420,7 +1426,8 @@ mod tests {
 
         let tmp = tempfile::TempDir::new()?;
         let repo = repositories::init(tmp.path())?;
-        let err = FileBackend::new(&repo)
+        let err = repo
+            .merkle_store()
             .unpack(&buf[..], UnpackOptions::Overwrite)
             .expect_err("unknown leaf filename must be rejected");
         let msg = format!("{err}");
@@ -1540,7 +1547,7 @@ mod tests {
 
             let new_pack = {
                 let mut buf = Vec::new();
-                FileBackend::new(&repo)
+                repo.merkle_store()
                     .pack_nodes(&hashes, PackOptions::LegacyClientPush, &mut buf)
                     .expect("new pack failed");
                 buf
@@ -1560,7 +1567,7 @@ mod tests {
     #[test]
     fn test_exists_returns_false_for_missing_hash() -> Result<(), OxenError> {
         test::run_empty_local_repo_test(|repo| {
-            let store = FileBackend::new(&repo);
+            let store = repo.merkle_store();
             let missing = MerkleHash::new(0xDEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF_u128);
             assert!(
                 !store.exists(&missing).expect("exists must not error"),
@@ -1574,7 +1581,7 @@ mod tests {
     #[test]
     fn test_get_node_returns_none_for_missing_hash() -> Result<(), OxenError> {
         test::run_empty_local_repo_test(|repo| {
-            let store = FileBackend::new(&repo);
+            let store = repo.merkle_store();
             let missing = MerkleHash::new(0xDEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF_u128);
             assert!(
                 store
@@ -1596,7 +1603,7 @@ mod tests {
             let commit = CommitNode::default();
             let commit_hash = *commit.hash();
             {
-                let store = FileBackend::new(&repo);
+                let store = repo.merkle_store();
                 let session = store.begin().expect("begin failed");
                 let ns = session
                     .create_node(&commit, None)
@@ -1604,7 +1611,7 @@ mod tests {
                 ns.finish().expect("finish node session failed");
                 session.finish().expect("finish session failed");
             }
-            let store = FileBackend::new(&repo);
+            let store = repo.merkle_store();
             let children = store
                 .get_children(&commit_hash)
                 .expect("get_children must not error");
@@ -1622,7 +1629,7 @@ mod tests {
     #[test]
     fn test_writer_session_with_no_nodes() -> Result<(), OxenError> {
         test::run_empty_local_repo_test(|repo| {
-            let store = FileBackend::new(&repo);
+            let store = repo.merkle_store();
             let session = store.begin().expect("begin failed");
             session
                 .finish()
@@ -1637,13 +1644,14 @@ mod tests {
     async fn test_unpack_empty_tarball() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test(|repo| {
             let mut buf = Vec::new();
-            FileBackend::new(&repo)
+            repo.merkle_store()
                 .pack_nodes(&HashSet::new(), PackOptions::ServerCanonical, &mut buf)
                 .expect("pack_nodes(empty) must not error");
 
             let tmp = tempfile::TempDir::new()?;
             let target = repositories::init(tmp.path())?;
-            let installed = FileBackend::new(&target)
+            let installed = target
+                .merkle_store()
                 .unpack(&buf[..], UnpackOptions::Overwrite)
                 .expect("unpack of empty tarball must not error");
             assert!(
@@ -1671,7 +1679,7 @@ mod tests {
             hashes.insert(absent);
 
             let mut buf = Vec::new();
-            FileBackend::new(&repo)
+            repo.merkle_store()
                 .pack_nodes(&hashes, PackOptions::ServerCanonical, &mut buf)
                 .expect("pack_nodes failed");
 
@@ -1717,7 +1725,7 @@ mod tests {
             assert!(estimate > 0, "estimate must be non-zero for a present hash");
 
             let mut buf = Vec::new();
-            FileBackend::new(&repo)
+            repo.merkle_store()
                 .pack_nodes(&hashes, PackOptions::ServerCanonical, &mut buf)
                 .expect("pack_nodes failed");
             assert!(
@@ -1757,7 +1765,7 @@ mod tests {
     async fn test_unpack_via_vfs_branch() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test(|repo| {
             let mut packed = Vec::new();
-            FileBackend::new(&repo)
+            repo.merkle_store()
                 .pack_all(&mut packed)
                 .expect("pack_all failed");
             assert!(!packed.is_empty(), "pack_all produced empty buffer");
@@ -1767,7 +1775,8 @@ mod tests {
             clone.set_vfs(Some(true));
             assert!(clone.is_vfs(), "vfs flag should be on for this test");
 
-            let installed = FileBackend::new(&clone)
+            let installed = clone
+                .merkle_store()
                 .unpack(&packed[..], UnpackOptions::Overwrite)
                 .expect("unpack via vfs branch failed");
             assert!(
@@ -1776,7 +1785,7 @@ mod tests {
             );
             for h in &installed {
                 assert!(
-                    FileBackend::new(&clone).exists(h).expect("exists failed"),
+                    clone.merkle_store().exists(h).expect("exists failed"),
                     "hash {h} not readable in vfs-cloned repo"
                 );
             }

@@ -108,18 +108,8 @@ pub trait MerkleUnpacker: Send + Sync {
 
 /// Marker super-trait: a backend that can both pack and unpack with a single error type.
 ///
-/// Note: [`MerkleTransport`]'s shared error type is intentionally **separate** from any
-/// store-side error type (e.g. on a [`MerkleStore`]-also implementor). Transport errors
-/// (tar parse, gzip, path traversal) and store errors (RocksDB / filesystem layout)
-/// have different shapes and decoupling them lets each surface report what it knows
-/// without leaking unrelated variants. See the
-/// `transport errors != merkle store errors` discussion in the merkle-tree refactor
-/// branch for the historical motivation.
-///
 /// The blanket impl below makes any type that implements [`MerklePacker`] and
 /// [`MerkleUnpacker`] with matching error types automatically a [`MerkleTransport`].
-///
-/// [`MerkleStore`]: crate::model::merkle_tree::MerkleStore
 pub trait MerkleTransport:
     MerklePacker + MerkleUnpacker<Error = <Self as MerklePacker>::Error>
 {
