@@ -7,7 +7,6 @@ use std::path::PathBuf;
 
 use super::*;
 use crate::error::OxenError;
-use crate::model::merkle_tree::merkle_reader::MerkleReader;
 use crate::model::{LocalRepository, MerkleHash, MerkleTreeNodeType};
 
 use serde::{Deserialize, Serialize};
@@ -86,7 +85,7 @@ impl MerkleTreeNode {
             log::warn!("no child node db: {hash:?}");
             return Ok(Vec::new());
         }
-        Ok(store.get_children(hash)?)
+        store.get_children(hash)
     }
 
     /// Check if the node is a leaf node (i.e. it has no children)

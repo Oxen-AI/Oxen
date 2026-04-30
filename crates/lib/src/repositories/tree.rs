@@ -9,12 +9,8 @@ use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_old::v0_19_0::index::CommitMerkleTree as CommitMerkleTreeV0_19_0;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::merkle_tree::merkle_transport::{
-    MerklePacker, MerkleUnpacker, PackOptions, UnpackOptions,
-};
-use crate::model::merkle_tree::merkle_writer::{
-    MerkleWriteSession, MerkleWriter, NodeWriteSession,
-};
+use crate::model::merkle_tree::merkle_transport::{PackOptions, UnpackOptions};
+use crate::model::merkle_tree::merkle_writer::MerkleWriteSession;
 use crate::model::merkle_tree::node::{
     CommitNode, DirNodeWithPath, EMerkleTreeNode, FileNode, FileNodeWithDir, MerkleTreeNode,
 };
@@ -903,9 +899,12 @@ pub fn unpack_nodes(
     buffer: &[u8],
 ) -> Result<HashSet<MerkleHash>, OxenError> {
     log::debug!("Unpacking nodes from buffer ({} bytes)", buffer.len());
-    Ok(repository
+    // `&[u8]` doesn't auto-coerce to `&mut dyn Read`, so we hand the unpacker
+    // a `&mut` over a fresh slice cursor that advances as bytes are consumed.
+    let mut reader: &[u8] = buffer;
+    repository
         .merkle_store()
-        .unpack(buffer, UnpackOptions::SkipExisting)?)
+        .unpack(&mut reader, UnpackOptions::SkipExisting)
 }
 
 /// Write a node to disk
@@ -917,7 +916,7 @@ pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), O
     let commit_node = CommitNode::new(repo, commit_node.get_opts())?;
     let store = repo.merkle_store();
     let session = store.begin()?;
-    p_write_tree(&session, node, &commit_node)?;
+    p_write_tree(&*session, node, &commit_node)?;
     session.finish()?;
     Ok(())
 }
@@ -926,13 +925,11 @@ pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), O
 ///
 /// Recursively writes the node and all its children to disk. To write a full tree, the node
 /// (`node_impl`) **MUST** be the root of the tree -- i.e. a `Commit` node.
-///
-// [1] https://github.com/rust-lang/rust/issues/20041
 // TODO: this should just accept `MerkleTreeNode` since the `node_impl` always comes from this
-fn p_write_tree<N: TMerkleTreeNode, S: MerkleWriteSession>(
-    session: &S,
+fn p_write_tree(
+    session: &dyn MerkleWriteSession,
     node: &MerkleTreeNode,
-    node_impl: &N,
+    node_impl: &dyn TMerkleTreeNode,
 ) -> Result<(), OxenError> {
     let parent_id = node.parent_id;
 

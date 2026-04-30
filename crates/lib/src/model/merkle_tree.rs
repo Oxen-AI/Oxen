@@ -16,27 +16,31 @@ pub use crate::model::merkle_tree::node_type::{
     MerkleTreeNodeIdType, MerkleTreeNodeType, TMerkleTreeNode,
 };
 
-/// A complete Merkle tree store supports reading and writing with a shared error type.
-pub trait MerkleStore: MerkleReader + MerkleWriter<Error = <Self as MerkleReader>::Error> {}
+/// A complete Merkle tree store supports reading and writing.
+///
+/// Object-safe via the dyn-compatible [`MerkleReader`] and [`MerkleWriter`].
+/// Both sides return [`OxenError`] at the trait surface, so callers can use `?`
+/// anywhere they're already returning `Result<_, OxenError>`.
+///
+/// [`OxenError`]: crate::error::OxenError
+pub trait MerkleStore: MerkleReader + MerkleWriter {}
 
-/// Any type that implements the Merkle reading and writing traits is automatically an instance
-/// of a MerkleStore, provided that the error types in both the reader & writer align.
-impl<T> MerkleStore for T where T: MerkleReader + MerkleWriter<Error = <T as MerkleReader>::Error> {}
+/// Any type that implements both the Merkle reading and writing traits is
+/// automatically a [`MerkleStore`]. The `?Sized` bound lets the marker apply
+/// to `dyn MerkleStore` itself.
+impl<T: MerkleReader + MerkleWriter + ?Sized> MerkleStore for T {}
 
 /// A [`MerkleStore`] that can also pack and unpack the canonical tar-gz wire format.
 ///
-/// The store side ([`MerkleStore`] = [`MerkleReader`] + [`MerkleWriter`]) uses one error type,
-/// and the transport side ([`MerkleTransport`] = [`MerklePacker`] + [`MerkleUnpacker`]) uses
-/// one error type, but those two sides are **not** required to share the same type. That gives
-/// backends room to use a transport-specific error that extends their store error with
-/// tar/gzip/parse variants, rather than having to fold every transport concern into the
-/// store error. Both sides still implement [`IntoOxenError`], so `?` at call sites converts
-/// each error directly to [`OxenError`] with no further plumbing.
+/// All four sub-traits — [`MerkleReader`], [`MerkleWriter`], [`MerklePacker`],
+/// [`MerkleUnpacker`] — return [`OxenError`] uniformly, so this super-trait carries
+/// no associated-type bounds. Object-safe; callers typically hold it as
+/// `Box<dyn TransportableMerkleStore + '_>`.
 ///
-/// [`IntoOxenError`]: crate::error::IntoOxenError
 /// [`OxenError`]: crate::error::OxenError
 pub trait TransportableMerkleStore: MerkleStore + MerkleTransport {}
 
 /// Any type that is a [`MerkleStore`] and a [`MerkleTransport`] is automatically a
-/// [`TransportableMerkleStore`]. The store-side and transport-side error types can differ.
-impl<T> TransportableMerkleStore for T where T: MerkleStore + MerkleTransport {}
+/// [`TransportableMerkleStore`]. The `?Sized` bound lets the marker apply to
+/// `dyn TransportableMerkleStore` itself.
+impl<T: MerkleStore + MerkleTransport + ?Sized> TransportableMerkleStore for T {}

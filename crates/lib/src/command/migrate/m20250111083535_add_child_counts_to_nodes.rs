@@ -6,9 +6,7 @@ use crate::config::RepositoryConfig;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::merkle_tree_node_cache;
-use crate::model::merkle_tree::merkle_writer::{
-    MerkleWriteSession, MerkleWriter, NodeWriteSession,
-};
+use crate::model::merkle_tree::merkle_writer::MerkleWriteSession;
 use crate::model::merkle_tree::node::vnode::VNodeOpts;
 use crate::model::merkle_tree::node::{
     CommitNode, DirNode, EMerkleTreeNode, MerkleTreeNode, VNode,
@@ -151,8 +149,8 @@ fn run_on_commit(repository: &LocalRepository, commit: &Commit) -> Result<(), Ox
     rewrite_nodes(
         &old_repo,
         &new_repo,
-        &old_session,
-        &new_session,
+        &*old_session,
+        &*new_session,
         &root_node,
         current_path,
     )?;
@@ -174,11 +172,11 @@ fn run_on_commit(repository: &LocalRepository, commit: &Commit) -> Result<(), Ox
 // Forgive me if you are reading this for reference, we don't have great writers for the
 // merkle tree yet - so there is a lot of duplicate logic with `commit_writer.rs`
 #[allow(clippy::too_many_arguments)]
-fn rewrite_nodes<OldS: MerkleWriteSession, NewS: MerkleWriteSession>(
+fn rewrite_nodes(
     old_repo: &LocalRepository,
     new_repo: &LocalRepository,
-    old_session: &OldS,
-    new_session: &NewS,
+    old_session: &dyn MerkleWriteSession,
+    new_session: &dyn MerkleWriteSession,
     node: &MerkleTreeNode,
     current_dir: &Path,
 ) -> Result<(), OxenError> {

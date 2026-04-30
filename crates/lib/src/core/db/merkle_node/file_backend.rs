@@ -10,6 +10,7 @@ use tempfile::TempDir;
 
 use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
 use crate::core::db::merkle_node::merkle_node_db::{MerkleDbError, MerkleNodeDB, node_db_path};
+use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::model::merkle_tree::merkle_reader::{MerkleNodeRecord, MerkleReader};
 use crate::model::merkle_tree::merkle_transport::{
@@ -42,25 +43,27 @@ impl<'repo> FileBackend<'repo> {
 }
 
 /// Merkle reader implementation for the [`FileBackend`].
+///
+/// Internal failures use `MerkleDbError`; the trait surface returns `OxenError`,
+/// so each method has a trailing `.map_err(OxenError::from)?` (or equivalent
+/// implicit `?` via `IntoOxenError`) at its trait boundary.
 impl<'repo> MerkleReader for FileBackend<'repo> {
-    type Error = MerkleDbError;
-
     /// Checks if a node with the given `hash` exists in the store.
     ///
     /// Alias for [`MerkleNodeDB::exists`].
-    fn exists(&self, hash: &MerkleHash) -> Result<bool, MerkleDbError> {
+    fn exists(&self, hash: &MerkleHash) -> Result<bool, OxenError> {
         Ok(MerkleNodeDB::exists(self.repo, hash))
     }
 
     /// Retrieves the node with the given `hash` from the store. `None` means no such node exists.
     ///
     /// Alias for [`MerkleNodeDB::open_read_only`].
-    fn get_node(&self, hash: &MerkleHash) -> Result<Option<MerkleNodeRecord>, MerkleDbError> {
+    fn get_node(&self, hash: &MerkleHash) -> Result<Option<MerkleNodeRecord>, OxenError> {
         if !MerkleNodeDB::exists(self.repo, hash) {
             return Ok(None);
         }
-        let db = MerkleNodeDB::open_read_only(self.repo, hash)?;
-        let node = db.node()?;
+        let db = MerkleNodeDB::open_read_only(self.repo, hash).map_err(OxenError::from)?;
+        let node = db.node().map_err(OxenError::from)?;
         Ok(Some(MerkleNodeRecord::new(
             db.node_id,
             db.dtype,
@@ -78,20 +81,16 @@ impl<'repo> MerkleReader for FileBackend<'repo> {
     fn get_children(
         &self,
         hash: &MerkleHash,
-    ) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, MerkleDbError> {
-        let mut db = MerkleNodeDB::open_read_only(self.repo, hash)?;
-        db.map()
+    ) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, OxenError> {
+        let mut db = MerkleNodeDB::open_read_only(self.repo, hash).map_err(OxenError::from)?;
+        db.map().map_err(OxenError::from)
     }
 }
 
 /// Merkle writer implementation for the [`FileBackend`].
 impl<'repo> MerkleWriter for FileBackend<'repo> {
-    type Error = MerkleDbError;
-    #[rustfmt::skip]
-    type Session<'a> = FileWriteSession<'repo> where Self: 'a;
-
-    fn begin(&self) -> Result<FileWriteSession<'repo>, MerkleDbError> {
-        Ok(FileWriteSession { repo: self.repo })
+    fn begin<'a>(&'a self) -> Result<Box<dyn MerkleWriteSession + 'a>, OxenError> {
+        Ok(Box::new(FileWriteSession { repo: self.repo }))
     }
 }
 
@@ -105,23 +104,20 @@ pub struct FileWriteSession<'repo> {
 
 /// Merkle write session implementation that the [`FileBackend`] uses.
 impl<'repo> MerkleWriteSession for FileWriteSession<'repo> {
-    type Error = MerkleDbError;
-    #[rustfmt::skip]
-    type NodeSession<'b> = FileNodeSession where Self: 'b;
-
     /// Creates a new session for writing a `node` and `children` file.
     /// Calls [`MerkleNodeDb::open_read_write`] internally.
-    fn create_node<N: TMerkleTreeNode>(
-        &self,
-        node: &N,
+    fn create_node<'a>(
+        &'a self,
+        node: &dyn TMerkleTreeNode,
         parent_id: Option<MerkleHash>,
-    ) -> Result<FileNodeSession, MerkleDbError> {
-        FileNodeSession::new(self.repo, node, parent_id)
+    ) -> Result<Box<dyn NodeWriteSession + 'a>, OxenError> {
+        let session = FileNodeSession::new(self.repo, node, parent_id)?;
+        Ok(Box::new(session))
     }
 
     /// A no-op -- the node write session from [`create_node`] eagerly writes its files.
     /// The [`FileNodeSession::finish`] method flushes and closes open file handles.
-    fn finish(self) -> Result<(), MerkleDbError> {
+    fn finish(self: Box<Self>) -> Result<(), OxenError> {
         Ok(())
     }
 }
@@ -138,9 +134,9 @@ pub struct FileNodeSession {
 
 impl FileNodeSession {
     /// Opens a new [`MerkleNodeDB`] in read-write mode.
-    fn new<N: TMerkleTreeNode>(
+    fn new(
         repo: &LocalRepository,
-        node: &N,
+        node: &dyn TMerkleTreeNode,
         parent_id: Option<MerkleHash>,
     ) -> Result<Self, MerkleDbError> {
         Ok(Self {
@@ -170,23 +166,21 @@ impl Drop for FileNodeSession {
 
 /// Merkle node write session that the [`FileBackend`] uses.
 impl NodeWriteSession for FileNodeSession {
-    type Error = MerkleDbError;
-
     /// The node currently being written.
     fn node_id(&self) -> &MerkleHash {
         &self.db.node_id
     }
 
     /// Adds an entry to the `children` file for the current node. Alias for [`MerkleNodeDB::add_child`].
-    fn add_child<N: TMerkleTreeNode>(&mut self, child: &N) -> Result<(), MerkleDbError> {
-        MerkleNodeDB::add_child(&mut self.db, child)
+    fn add_child(&mut self, child: &dyn TMerkleTreeNode) -> Result<(), OxenError> {
+        MerkleNodeDB::add_child(&mut self.db, child).map_err(OxenError::from)
     }
 
     /// Flushes the open `node` and `children` file handles, closes them, then calls `fsync` on them.
-    /// Consumes the session; [`Drop`] becomes a no-op after this returns `Ok` because the
+    /// Consumes the boxed session; [`Drop`] becomes a no-op after this returns `Ok` because the
     /// `finished` sentinel guards `idempotent_finish`.
-    fn finish(mut self) -> Result<(), MerkleDbError> {
-        self.idempotent_finish()
+    fn finish(mut self: Box<Self>) -> Result<(), OxenError> {
+        self.idempotent_finish().map_err(OxenError::from)
     }
 }
 
@@ -474,53 +468,52 @@ fn extract_hash_from_entry_path(
 }
 
 /// Merkle tree node packing implementation for the [`FileBackend`].
+///
+/// The trait surface returns `OxenError`; internal helpers use `MerkleDbError`
+/// and convert at the boundary.
 impl<'repo> MerklePacker for FileBackend<'repo> {
-    type Error = MerkleDbError;
-
     /// Pack the given node hashes into `out` as a tar-gz stream, using the layout
     /// and compression level selected by `opts`. Hashes absent from the store are
     /// silently skipped.
-    fn pack_nodes<W: Write>(
+    fn pack_nodes(
         &self,
         hashes: &HashSet<MerkleHash>,
         opts: PackOptions,
-        out: W,
-    ) -> Result<(), MerkleDbError> {
-        write_hashes_tar(self.repo, hashes, opts, out, true)
+        out: &mut dyn Write,
+    ) -> Result<(), OxenError> {
+        write_hashes_tar(self.repo, hashes, opts, out, true).map_err(OxenError::from)
     }
 
     /// Pack every node the store holds into `out` as a tar-gz stream.
     /// Always emits the server-canonical layout.
-    fn pack_all<W: Write>(&self, out: W) -> Result<(), MerkleDbError> {
-        write_all_tar(self.repo, out, true)
+    fn pack_all(&self, out: &mut dyn Write) -> Result<(), OxenError> {
+        write_all_tar(self.repo, out, true).map_err(OxenError::from)
     }
 }
 
 /// Merkle tree node unpacking implementation for the [`FileBackend`].
 impl<'repo> MerkleUnpacker for FileBackend<'repo> {
-    type Error = MerkleDbError;
-
     /// Unpack a tar-gz wire stream into the store, applying `opts`'s existing-file policy.
     ///
     /// If the repository sits on a virtual filesystem ([`LocalRepository::is_vfs`] is true),
     /// unpack into a tempdir first and `copy_dir_all` the result through the VFS. Some
     /// VFS implementations don't tolerate tar's streaming many-small-files pattern, so the
     /// staging hop is needed for correctness. Otherwise, unpack directly to `.oxen/`.
-    fn unpack<R: Read>(
+    fn unpack(
         &self,
-        reader: R,
+        reader: &mut dyn Read,
         opts: UnpackOptions,
-    ) -> Result<HashSet<MerkleHash>, MerkleDbError> {
+    ) -> Result<HashSet<MerkleHash>, OxenError> {
         let overwrite_existing = matches!(opts, UnpackOptions::Overwrite);
         let oxen_hidden = self.repo.path.join(OXEN_HIDDEN_DIR);
         if self.repo.is_vfs() {
             let tmp = TempDir::new()?;
-            let hashes = extract_tar_under(reader, tmp.path(), overwrite_existing)?;
-            util::fs::copy_dir_all(tmp.path(), &oxen_hidden)
-                .map_err(|e| MerkleDbError::FsTransport(Box::new(e)))?;
+            let hashes = extract_tar_under(reader, tmp.path(), overwrite_existing)
+                .map_err(OxenError::from)?;
+            util::fs::copy_dir_all(tmp.path(), &oxen_hidden)?;
             Ok(hashes)
         } else {
-            extract_tar_under(reader, &oxen_hidden, overwrite_existing)
+            extract_tar_under(reader, &oxen_hidden, overwrite_existing).map_err(OxenError::from)
         }
     }
 }
@@ -855,7 +848,7 @@ mod tests {
             let clone = repositories::init(tmp.path())?;
             let installed = clone
                 .merkle_store()
-                .unpack(&packed[..], UnpackOptions::Overwrite)
+                .unpack(&mut &packed[..], UnpackOptions::Overwrite)
                 .expect("unpack failed");
             assert!(!installed.is_empty(), "unpack installed no nodes");
 
@@ -1042,7 +1035,7 @@ mod tests {
             // `UnpackOptions::SkipExisting` so the parity check is semantically faithful.
             let new_hashes = repo_new
                 .merkle_store()
-                .unpack(&bytes[..], UnpackOptions::SkipExisting)
+                .unpack(&mut &bytes[..], UnpackOptions::SkipExisting)
                 .expect("new unpack failed");
 
             assert_eq!(
@@ -1130,7 +1123,7 @@ mod tests {
             let repo_new = repositories::init(tmp_new.path())?;
             let installed = repo_new
                 .merkle_store()
-                .unpack(&packed[..], UnpackOptions::Overwrite)
+                .unpack(&mut &packed[..], UnpackOptions::Overwrite)
                 .expect("new unpack failed");
 
             // 1. The on-disk node trees must be identical.
@@ -1201,7 +1194,7 @@ mod tests {
         let repo = repositories::init(tmp.path())?;
         let err = repo
             .merkle_store()
-            .unpack(&buf[..], UnpackOptions::Overwrite)
+            .unpack(&mut &buf[..], UnpackOptions::Overwrite)
             .expect_err("path traversal must be rejected");
         let msg = format!("{err}");
         assert!(
@@ -1240,7 +1233,7 @@ mod tests {
         let repo = repositories::init(tmp.path())?;
         let err = repo
             .merkle_store()
-            .unpack(&buf[..], UnpackOptions::Overwrite)
+            .unpack(&mut &buf[..], UnpackOptions::Overwrite)
             .expect_err("unsupported entry type must be rejected");
         let msg = format!("{err}");
         assert!(
@@ -1295,7 +1288,7 @@ mod tests {
             let target = repositories::init(tmp.path())?;
             let installed = target
                 .merkle_store()
-                .unpack(&buf[..], UnpackOptions::Overwrite)
+                .unpack(&mut &buf[..], UnpackOptions::Overwrite)
                 .expect("unpack failed");
 
             assert!(
@@ -1334,7 +1327,7 @@ mod tests {
         let repo = repositories::init(tmp.path())?;
         let err = repo
             .merkle_store()
-            .unpack(&buf[..], UnpackOptions::Overwrite)
+            .unpack(&mut &buf[..], UnpackOptions::Overwrite)
             .expect_err("non-hex node id must be rejected");
         let msg = format!("{err}");
         assert!(
@@ -1385,7 +1378,7 @@ mod tests {
         let repo = repositories::init(tmp.path())?;
         let err = repo
             .merkle_store()
-            .unpack(&buf[..], UnpackOptions::Overwrite)
+            .unpack(&mut &buf[..], UnpackOptions::Overwrite)
             .expect_err("over-deep entry must be rejected");
         let msg = format!("{err}");
         assert!(
@@ -1430,7 +1423,7 @@ mod tests {
         let repo = repositories::init(tmp.path())?;
         let err = repo
             .merkle_store()
-            .unpack(&buf[..], UnpackOptions::Overwrite)
+            .unpack(&mut &buf[..], UnpackOptions::Overwrite)
             .expect_err("unknown leaf filename must be rejected");
         let msg = format!("{err}");
         assert!(
@@ -1656,7 +1649,7 @@ mod tests {
             let target = repositories::init(tmp.path())?;
             let installed = target
                 .merkle_store()
-                .unpack(&buf[..], UnpackOptions::Overwrite)
+                .unpack(&mut &buf[..], UnpackOptions::Overwrite)
                 .expect("unpack of empty tarball must not error");
             assert!(
                 installed.is_empty(),
@@ -1778,7 +1771,7 @@ mod tests {
 
             let installed = clone
                 .merkle_store()
-                .unpack(&packed[..], UnpackOptions::Overwrite)
+                .unpack(&mut &packed[..], UnpackOptions::Overwrite)
                 .expect("unpack via vfs branch failed");
             assert!(
                 !installed.is_empty(),

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::io::{Read, Write};
 
-use crate::error::IntoOxenError;
+use crate::error::OxenError;
 use crate::model::MerkleHash;
 
 /// Wire-format selector for [`MerklePacker::pack_nodes`].
@@ -53,32 +53,30 @@ pub enum UnpackOptions {
 /// Writes a tar-gz wire stream directly into the caller-provided sink. No buffer is
 /// materialized inside the trait, so memory use is O(compressor window). Callers can
 /// plug in HTTP response bodies, pipes, files, or in-memory `Vec<u8>` sinks as the writer.
+///
+/// Object-safe: callers can store this as `Box<dyn MerklePacker + '_>` or
+/// `&dyn MerklePacker`. Methods take `&mut dyn Write` instead of generic `W: Write`
+/// so the trait carries no per-call type parameters.
 pub trait MerklePacker: Send + Sync {
-    /// Native backend error. Must be convertible into an [`OxenError`] via [`IntoOxenError`]
-    /// so callers returning [`OxenError`] can use `?` directly.
-    ///
-    /// [`OxenError`]: crate::error::OxenError
-    type Error: std::error::Error + IntoOxenError;
-
     /// Pack the given node `hashes` into `out` as a tar-gz stream, in the layout
     /// selected by `opts`.
     ///
     /// Hashes not present in the store are silently skipped, and an empty `hashes`
     /// produces a valid but empty tarball. See [`PackOptions`] for the per-variant
     /// wire-format details.
-    fn pack_nodes<W: Write>(
+    fn pack_nodes(
         &self,
         hashes: &HashSet<MerkleHash>,
         opts: PackOptions,
-        out: W,
-    ) -> Result<(), Self::Error>;
+        out: &mut dyn Write,
+    ) -> Result<(), OxenError>;
 
     /// Pack every node the backend currently holds into `out` as a tar-gz stream.
     ///
     /// Single-format: only the server-canonical layout has ever been emitted for a
     /// whole-tree pack on `main`. There is no legacy whole-tree variant, so this
     /// method does not accept [`PackOptions`].
-    fn pack_all<W: Write>(&self, out: W) -> Result<(), Self::Error>;
+    fn pack_all(&self, out: &mut dyn Write) -> Result<(), OxenError>;
 }
 
 /// Consume transport bytes and install the nodes they contain into the backend.
@@ -86,36 +84,30 @@ pub trait MerklePacker: Send + Sync {
 /// Reads the tar-gz wire format incrementally from `reader`. Nothing buffers the full
 /// payload inside the trait. Async callers bridge a `Stream<Item = Bytes>` to a sync
 /// [`Read`] via [`tokio_util::io::SyncIoBridge`] inside a [`tokio::task::spawn_blocking`].
+///
+/// Object-safe: callers can store this as `Box<dyn MerkleUnpacker + '_>` or
+/// `&dyn MerkleUnpacker`. The reader is taken as `&mut dyn Read` for the same
+/// reason as [`MerklePacker`]'s `&mut dyn Write` argument.
 pub trait MerkleUnpacker: Send + Sync {
-    /// Native backend error. Must be convertible into an [`OxenError`] via [`IntoOxenError`]
-    /// so callers returning [`OxenError`] can use `?` directly.
-    ///
-    /// [`OxenError`]: crate::error::OxenError
-    type Error: std::error::Error + IntoOxenError;
-
     /// Unpack the tar-gz stream from `reader` into the store, applying the existing-file
     /// policy in `opts`.
     ///
     /// Returns the set of hashes parsed from the tarball (not necessarily only those
     /// newly installed — entries skipped per [`UnpackOptions::SkipExisting`] still appear
     /// in the result, matching `main`'s `repositories::tree::unpack_nodes` behaviour).
-    fn unpack<R: Read>(
+    fn unpack(
         &self,
-        reader: R,
+        reader: &mut dyn Read,
         opts: UnpackOptions,
-    ) -> Result<HashSet<MerkleHash>, Self::Error>;
+    ) -> Result<HashSet<MerkleHash>, OxenError>;
 }
 
-/// Marker super-trait: a backend that can both pack and unpack with a single error type.
+/// Marker super-trait: a backend that can both pack and unpack.
 ///
 /// The blanket impl below makes any type that implements [`MerklePacker`] and
-/// [`MerkleUnpacker`] with matching error types automatically a [`MerkleTransport`].
-pub trait MerkleTransport:
-    MerklePacker + MerkleUnpacker<Error = <Self as MerklePacker>::Error>
-{
-}
+/// [`MerkleUnpacker`] automatically a [`MerkleTransport`]. The `?Sized` bound lets
+/// the marker apply to `dyn MerkleTransport` itself, so the impl works for both
+/// concrete backends and trait-object views over them.
+pub trait MerkleTransport: MerklePacker + MerkleUnpacker {}
 
-impl<T> MerkleTransport for T where
-    T: MerklePacker + MerkleUnpacker<Error = <T as MerklePacker>::Error>
-{
-}
+impl<T: MerklePacker + MerkleUnpacker + ?Sized> MerkleTransport for T {}

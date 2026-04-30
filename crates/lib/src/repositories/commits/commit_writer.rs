@@ -26,9 +26,7 @@ use crate::model::MerkleTreeNodeType;
 use crate::model::NewCommit;
 use crate::model::NewCommitBody;
 use crate::model::User;
-use crate::model::merkle_tree::merkle_writer::{
-    MerkleWriteSession, MerkleWriter, NodeWriteSession,
-};
+use crate::model::merkle_tree::merkle_writer::{MerkleWriteSession, NodeWriteSession};
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::StagedMerkleTreeNode;
 use crate::model::merkle_tree::node::VNode;
@@ -295,8 +293,8 @@ pub fn commit_dir_entries_with_parents(
     write_commit_entries(
         repo,
         commit_id,
-        &session,
-        &mut commit_ns,
+        &*session,
+        &mut *commit_ns,
         &dir_hash_db,
         &dir_hashes,
         &vnode_entries,
@@ -396,8 +394,8 @@ pub fn commit_dir_entries_new(
     write_commit_entries(
         repo,
         commit_id,
-        &session,
-        &mut commit_ns,
+        &*session,
+        &mut *commit_ns,
         &dir_hash_db,
         &dir_hashes,
         &vnode_entries,
@@ -514,8 +512,8 @@ pub fn commit_dir_entries(
     write_commit_entries(
         repo,
         commit_id,
-        &session,
-        &mut commit_ns,
+        &*session,
+        &mut *commit_ns,
         &dir_hash_db,
         &dir_hashes,
         &vnode_entries,
@@ -800,11 +798,11 @@ pub fn compute_commit_id(new_commit: &NewCommit) -> Result<MerkleHash, OxenError
 }
 
 #[allow(clippy::too_many_arguments)]
-fn write_commit_entries<'a, S: MerkleWriteSession>(
+fn write_commit_entries(
     repo: &LocalRepository,
     commit_id: MerkleHash,
-    session: &'a S,
-    commit_ns: &mut S::NodeSession<'a>,
+    session: &dyn MerkleWriteSession,
+    commit_ns: &mut dyn NodeWriteSession,
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
@@ -826,7 +824,7 @@ fn write_commit_entries<'a, S: MerkleWriteSession>(
         repo,
         session,
         commit_id,
-        Some(&mut dir_ns),
+        Some(&mut *dir_ns),
         dir_hash_db,
         dir_hashes,
         entries,
@@ -866,11 +864,11 @@ fn cache_invalidate_dir_hash_db<'a>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn r_create_dir_node<'a, S: MerkleWriteSession>(
+fn r_create_dir_node(
     repo: &LocalRepository,
-    session: &'a S,
+    session: &dyn MerkleWriteSession,
     commit_id: MerkleHash,
-    mut maybe_parent_ns: Option<&mut S::NodeSession<'a>>,
+    mut maybe_parent_ns: Option<&mut dyn NodeWriteSession>,
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
@@ -920,7 +918,7 @@ fn r_create_dir_node<'a, S: MerkleWriteSession>(
                             repo,
                             session,
                             commit_id,
-                            Some(&mut child_ns),
+                            Some(&mut *child_ns),
                             dir_hash_db,
                             dir_hashes,
                             entries,

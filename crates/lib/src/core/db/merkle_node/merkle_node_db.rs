@@ -307,9 +307,9 @@ impl MerkleNodeDB {
         Self::open(path, true)
     }
 
-    pub fn open_read_write<N: TMerkleTreeNode>(
+    pub fn open_read_write(
         repo: &LocalRepository,
-        node: &N,
+        node: &dyn TMerkleTreeNode,
         parent_id: Option<MerkleHash>,
     ) -> Result<Self, MerkleDbError> {
         let path = node_db_path(repo, &node.hash());
@@ -404,9 +404,9 @@ impl MerkleNodeDB {
 
     /// Write the base node info.
     /// WARNING: Sets the internal dtype, node_id, parent_id of `self` to the values from `node`.
-    fn write_node<N: TMerkleTreeNode>(
+    fn write_node(
         &mut self,
-        node: &N,
+        node: &dyn TMerkleTreeNode,
         parent_id: Option<MerkleHash>,
     ) -> Result<(), MerkleDbError> {
         if self.read_only {
@@ -452,7 +452,7 @@ impl MerkleNodeDB {
         Ok(())
     }
 
-    pub fn add_child<N: TMerkleTreeNode>(&mut self, item: &N) -> Result<(), MerkleDbError> {
+    pub fn add_child(&mut self, item: &dyn TMerkleTreeNode) -> Result<(), MerkleDbError> {
         if self.read_only {
             return Err(MerkleDbError::ReadOnly);
         }

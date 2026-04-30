@@ -54,9 +54,6 @@ pub struct LocalRepositoryWithEntries {
     pub entries: Option<Vec<MetadataEntry>>,
 }
 
-// Keep this private: it is an implementation detail for providing dynamic loading of the MerkleTree trait.
-mod merkle_store_dispatch;
-
 impl LocalRepository {
     /// Create a LocalRepository from a directory
     pub fn from_dir(path: impl AsRef<Path>) -> Result<Self, OxenError> {
@@ -100,23 +97,22 @@ impl LocalRepository {
 
     /// Obtain the Merkle tree store for this repository.
     ///
-    /// Returns an opaque `impl TransportableMerkleStore` whose concrete type is the private
-    /// dispatch enum in [`merkle_store_dispatch`]. Callers use it purely through the
-    /// trait surface (read, write, pack, unpack); backend selection is an implementation
-    /// detail of this method.
+    /// Returns a boxed trait object so the trait surface stays simple and dyn-dispatch
+    /// handles backend selection. Callers use it purely through the trait surface
+    /// (read, write, pack, unpack); backend selection is an implementation detail of
+    /// this method.
     ///
     /// Wire-format and existing-file policy are per-call concerns — see
     /// [`PackOptions`] and [`UnpackOptions`] for the variants each pack/unpack
     /// call site picks.
     ///
-    /// When new backends (e.g. LMDB) are added, they are registered in
-    /// `merkle_store_dispatch::define_merkle_store_dispatch!`, and the
-    /// dispatch logic for choosing among them lives here.
+    /// When new backends (e.g. LMDB) are added, branch on the appropriate config
+    /// here and return a `Box::new(NewBackend::new(self))`.
     ///
     /// [`PackOptions`]: crate::model::merkle_tree::merkle_transport::PackOptions
     /// [`UnpackOptions`]: crate::model::merkle_tree::merkle_transport::UnpackOptions
-    pub fn merkle_store(&self) -> impl TransportableMerkleStore + '_ {
-        merkle_store_dispatch::StoreEnum::File(FileBackend::new(self))
+    pub fn merkle_store(&self) -> Box<dyn TransportableMerkleStore + '_> {
+        Box::new(FileBackend::new(self))
     }
 
     pub fn init_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {

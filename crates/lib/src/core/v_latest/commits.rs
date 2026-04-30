@@ -22,9 +22,6 @@ use std::str;
 use crate::constants::COMMIT_COUNT_DIR;
 use crate::core::db::key_val::{opts, str_val_db};
 use crate::core::v_latest::index::CommitMerkleTree;
-use crate::model::merkle_tree::merkle_writer::{
-    MerkleWriteSession, MerkleWriter, NodeWriteSession,
-};
 use rocksdb::{DBWithThreadMode, MultiThreaded, SingleThreaded};
 
 /// Configuration for commit traversal operations

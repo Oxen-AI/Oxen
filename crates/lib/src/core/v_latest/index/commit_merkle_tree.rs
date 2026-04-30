@@ -6,7 +6,6 @@ use std::str;
 use crate::core::db::dir_hashes::dir_hashes_db::{
     dir_hash_db_path, dir_hash_db_path_from_commit_id, with_dir_hash_db_manager,
 };
-use crate::model::merkle_tree::merkle_reader::MerkleReader;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 
 use crate::model::merkle_tree::node::FileNode;

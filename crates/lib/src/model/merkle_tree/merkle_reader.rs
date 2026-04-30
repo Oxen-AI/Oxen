@@ -1,25 +1,23 @@
-use crate::error::IntoOxenError;
+use crate::error::OxenError;
 use crate::model::{
     MerkleHash, MerkleTreeNodeType,
     merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode},
 };
 
 /// Interface for read-only access to Merkle tree nodes.
+///
+/// Object-safe: callers can store this as `Box<dyn MerkleReader + '_>` or
+/// `&dyn MerkleReader`. The error type is fixed to [`OxenError`] so the
+/// trait surface stays narrow; backends with their own native error types
+/// (e.g. `MerkleDbError` on the file backend) convert at the trait boundary.
 pub trait MerkleReader: Send + Sync {
-    /// The error type for the Merkle tree's underlying storage layer.
-    ///
-    /// Backends may use whichever error type is natural for their storage
-    /// (e.g. `MerkleDbError` for the file backend). The `Into<OxenError>`
-    /// bound lets callers that return `Result<_, OxenError>` use `?` directly.
-    type Error: std::error::Error + IntoOxenError;
-
     /// True if there is some node with the given hash. False otherwise.
     /// An error is returned if there is some other failure in the Merkle tree's underlying storage layer.
-    fn exists(&self, hash: &MerkleHash) -> Result<bool, Self::Error>;
+    fn exists(&self, hash: &MerkleHash) -> Result<bool, OxenError>;
 
     /// Retrieve the node record for the given hash, if it exists. None means no such node exists.
     /// An error is returned if there is some other failure in the Merkle tree's underlying storage layer.
-    fn get_node(&self, hash: &MerkleHash) -> Result<Option<MerkleNodeRecord>, Self::Error>;
+    fn get_node(&self, hash: &MerkleHash) -> Result<Option<MerkleNodeRecord>, OxenError>;
 
     /// Retrieve the children of the node for the given hash, if it exists and if it is a directory node.
     /// If the node represents a file, then an empty list is always returned.
@@ -27,7 +25,7 @@ pub trait MerkleReader: Send + Sync {
     fn get_children(
         &self,
         hash: &MerkleHash,
-    ) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, Self::Error>;
+    ) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, OxenError>;
 }
 
 /// Metadata returned when reading a single node.
