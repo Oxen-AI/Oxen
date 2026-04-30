@@ -442,22 +442,33 @@ impl StagedSource<'_> {
         }
     }
 
-    /// True if `path` is in the in-memory staged-files map. Used at the tree-side check
-    /// to gate "missing on disk" → unsynced classification: a file the user has already
-    /// staged for delete shouldn't be re-surfaced as unsynced. Always false in `Db` mode
-    /// (`status_from_opts` doesn't classify into unsynced).
-    fn is_file_staged(&self, path: &Path) -> bool {
+    /// True if `path` is staged for deletion in the in-memory staged-files map. Used at
+    /// the tree-side check to gate "missing on disk" → unsynced classification: a file
+    /// the user has already staged for delete shouldn't be re-surfaced as unsynced.
+    /// A file staged with any other status (e.g. Added/Modified) is not relevant here,
+    /// so we check the entry's status rather than mere presence in the map. Always false
+    /// in `Db` mode (`status_from_opts` doesn't classify into unsynced).
+    fn is_file_deleted(&self, path: &Path) -> bool {
         match self {
             Self::Db(_) => false,
-            Self::Data(data) => data.staged_files.contains_key(path),
+            Self::Data(data) => data
+                .staged_files
+                .get(path)
+                .is_some_and(|entry| entry.status == StagedEntryStatus::Removed),
         }
     }
 
-    /// Like [`Self::is_file_staged`] but for directories.
-    fn is_dir_staged(&self, path: &Path) -> bool {
+    /// Like [`Self::is_file_deleted`] but for directories. Returns true when the path's
+    /// staged-dir stats include a `Removed` entry (a single dir can have both an
+    /// `Added` and a `Removed` rollup if it contains a mix of staged adds and removes).
+    fn is_dir_deleted(&self, path: &Path) -> bool {
         match self {
             Self::Db(_) => false,
-            Self::Data(data) => data.staged_dirs.paths.contains_key(path),
+            Self::Data(data) => {
+                data.staged_dirs.paths.get(path).is_some_and(|stats| {
+                    stats.iter().any(|s| s.status == StagedEntryStatus::Removed)
+                })
+            }
         }
     }
 }
@@ -708,7 +719,7 @@ fn walk_status(
                                 out.removed.insert(relative_file_path);
                             }
                             MissingClassification::AsUnsynced => {
-                                if !staged.is_file_staged(&relative_file_path) {
+                                if !staged.is_file_deleted(&relative_file_path) {
                                     out.unsynced.add_file(relative_file_path);
                                 }
                             }
@@ -720,10 +731,10 @@ fn walk_status(
                     if !dir_path.exists() {
                         // Only do this for non-existent dirs — existing dirs already
                         // trigger a recursive walk_status call.
-                        let staged_dir = staged.is_dir_staged(&relative_dir_path);
+                        let dir_deleted = staged.is_dir_deleted(&relative_dir_path);
                         let should_record = match missing {
                             MissingClassification::AsRemoved => true,
-                            MissingClassification::AsUnsynced => !staged_dir,
+                            MissingClassification::AsUnsynced => !dir_deleted,
                         };
                         if should_record {
                             let mut count: usize = 0;
