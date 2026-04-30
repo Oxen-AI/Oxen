@@ -518,7 +518,8 @@ impl WalkOutput {
 /// rather than failing the whole walk. A non-dir path whose metadata is unreadable
 /// (e.g. the user passed a path that's been deleted on disk — `rm_with_staged_db`
 /// runs status against just-deleted dirs to check for modifications) yields an empty
-/// list, leaving the walker's tree-side check to surface the deletion via `removed`.
+/// list; the missing-file case is then surfaced by `walk_status`'s tree-side check
+/// for single-file paths (see the block guarded on `!is_dir && !full_path.exists()`).
 fn read_dir_entries(
     full_path: &Path,
     is_dir: bool,
@@ -677,6 +678,29 @@ fn walk_status(
             .add_dir(search_node_path.to_path_buf(), untracked_count);
         // Clear individual files as they're now represented by the directory.
         out.untracked.files.clear();
+    }
+
+    // Tree-side check for a single-file path that's missing on disk. The dir-based
+    // block below only fires for paths in `dir_hashes` (i.e. directories), so a
+    // tracked file passed directly in `opts.paths` and then deleted would otherwise
+    // be silently dropped. Classify it the same way the dir-based check classifies
+    // missing children.
+    if !is_dir
+        && !full_path.exists()
+        && let Some(node) = &search_node
+        && let EMerkleTreeNode::File(_) = &node.node
+    {
+        let relative_file_path = search_node_path.to_path_buf();
+        match missing {
+            MissingClassification::AsRemoved => {
+                out.removed.insert(relative_file_path);
+            }
+            MissingClassification::AsUnsynced => {
+                if !staged.is_file_deleted(&relative_file_path) {
+                    out.unsynced.add_file(relative_file_path);
+                }
+            }
+        }
     }
 
     // Tree-side check for paths that are in the merkle tree but missing on disk.
