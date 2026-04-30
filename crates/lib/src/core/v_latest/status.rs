@@ -56,37 +56,24 @@ pub fn status_from_opts(
     read_progress.set_style(ProgressStyle::default_spinner());
     read_progress.enable_steady_tick(Duration::from_millis(100));
 
-    let mut total_entries = 0;
+    let out = walk_paths(
+        repo,
+        opts,
+        StagedSource::Db(&staged_db_maybe),
+        MissingClassification::AsRemoved,
+        &dir_hashes,
+        &read_progress,
+    )?;
 
-    let mut untracked = UntrackedData::new();
-    let mut modified = HashSet::new();
-    let mut removed = HashSet::new();
-
-    for dir in opts.paths.iter() {
-        let relative_dir = util::fs::path_relative_to_dir(dir, &repo.path)?;
-        let (sub_untracked, sub_modified, sub_removed) = find_changes(
-            repo,
-            opts,
-            &relative_dir,
-            &staged_db_maybe,
-            &dir_hashes,
-            &read_progress,
-            &mut total_entries,
-        )?;
-        untracked.merge(sub_untracked);
-        modified.extend(sub_modified);
-        removed.extend(sub_removed);
-    }
-
-    log::debug!("find_changes untracked: {untracked:?}");
-    log::debug!("find_changes modified: {modified:?}");
-    log::debug!("find_changes removed: {removed:?}");
+    log::debug!("status_from_opts untracked: {:?}", out.untracked);
+    log::debug!("status_from_opts modified: {:?}", out.modified);
+    log::debug!("status_from_opts removed: {:?}", out.removed);
 
     let mut staged_data = StagedData::empty();
-    staged_data.untracked_dirs = untracked.dirs.into_iter().collect();
-    staged_data.untracked_files = untracked.files;
-    staged_data.modified_files = modified;
-    staged_data.removed_files = removed;
+    staged_data.untracked_dirs = out.untracked.dirs.into_iter().collect();
+    staged_data.untracked_files = out.untracked.files;
+    staged_data.modified_files = out.modified;
+    staged_data.removed_files = out.removed;
 
     // Find merge conflicts
     let conflicts = repositories::merge::list_conflicts(repo)?;
@@ -129,42 +116,38 @@ pub fn status_from_opts_and_staged_data(
     read_progress.set_style(ProgressStyle::default_spinner());
     read_progress.enable_steady_tick(Duration::from_millis(100));
 
-    let mut total_entries = 0;
+    let out = walk_paths(
+        repo,
+        opts,
+        StagedSource::Data(staged_data),
+        MissingClassification::AsUnsynced,
+        &dir_hashes,
+        &read_progress,
+    )?;
 
-    let mut untracked = UntrackedData::new();
-    let mut unsynced = UnsyncedData::new();
-    let mut modified = HashSet::new();
-    let mut removed = HashSet::new();
+    log::debug!(
+        "status_from_opts_and_staged_data untracked: {:?}",
+        out.untracked
+    );
+    log::debug!(
+        "status_from_opts_and_staged_data unsynced: {:?}",
+        out.unsynced
+    );
+    log::debug!(
+        "status_from_opts_and_staged_data modified: {:?}",
+        out.modified
+    );
+    log::debug!(
+        "status_from_opts_and_staged_data removed: {:?}",
+        out.removed
+    );
 
-    for dir in opts.paths.iter() {
-        let relative_dir = util::fs::path_relative_to_dir(dir, &repo.path)?;
-        let (sub_untracked, sub_unsynced, sub_modified, sub_removed) = find_local_changes(
-            repo,
-            opts,
-            &relative_dir,
-            staged_data,
-            &dir_hashes,
-            &read_progress,
-            &mut total_entries,
-        )?;
-
-        untracked.merge(sub_untracked);
-        unsynced.merge(sub_unsynced);
-        modified.extend(sub_modified);
-        removed.extend(sub_removed);
-    }
-
-    log::debug!("find_changes untracked: {untracked:?}");
-    log::debug!("find_changes unsynced: {unsynced:?}");
-    log::debug!("find_changes modified: {modified:?}");
-    log::debug!("find_changes removed: {removed:?}");
-
-    staged_data.untracked_dirs = untracked.dirs.into_iter().collect();
-    staged_data.untracked_files = untracked.files;
-    staged_data.unsynced_dirs = unsynced.dirs.into_iter().collect();
-    staged_data.unsynced_files = unsynced.files;
-    staged_data.modified_files = modified;
-    staged_data.removed_files = removed;
+    staged_data.untracked_dirs = out.untracked.dirs.into_iter().collect();
+    staged_data.untracked_files = out.untracked.files;
+    staged_data.unsynced_dirs = out.unsynced.dirs.into_iter().collect();
+    staged_data.unsynced_files = out.unsynced.files;
+    staged_data.modified_files = out.modified;
+    staged_data.removed_files = out.removed;
 
     // Find merge conflicts
     let conflicts = repositories::merge::list_conflicts(repo)?;
@@ -442,66 +425,164 @@ pub fn read_staged_entries_below_path(
     Ok((dir_entries, total_entries))
 }
 
-fn find_changes(
-    repo: &LocalRepository,
-    opts: &StagedDataOpts,
-    search_node_path: impl AsRef<Path>,
-    staged_db: &Option<DBWithThreadMode<SingleThreaded>>,
-    dir_hashes: &HashMap<PathBuf, MerkleHash>,
-    progress: &ProgressBar,
-    total_entries: &mut usize,
-) -> Result<(UntrackedData, HashSet<PathBuf>, HashSet<PathBuf>), OxenError> {
-    let search_node_path = search_node_path.as_ref();
-    let full_path = repo.path.join(search_node_path);
-    let is_dir = full_path.is_dir();
-    log::debug!("find_changes search_node_path: {search_node_path:?} full_path: {full_path:?}");
+/// Source of staging information for the walker. The two callers have different views
+/// of the staged set: `status_from_opts` queries the staged-db RocksDB directly, and
+/// `status_from_opts_and_staged_data` already has a fully-materialized `StagedData`.
+#[derive(Clone, Copy)]
+enum StagedSource<'a> {
+    Db(&'a Option<DBWithThreadMode<SingleThreaded>>),
+    Data(&'a StagedData),
+}
 
-    if let Some(ignore) = &opts.ignore
-        && (ignore.contains(search_node_path) || ignore.contains(&full_path))
-    {
-        return Ok((UntrackedData::new(), HashSet::new(), HashSet::new()));
+impl StagedSource<'_> {
+    fn is_path_staged(&self, path: &Path) -> Result<bool, OxenError> {
+        match self {
+            Self::Db(db) => is_staged(path, db),
+            Self::Data(data) => in_staged_data(path, data),
+        }
     }
 
-    let mut untracked = UntrackedData::new();
-    let mut modified = HashSet::new();
-    let mut removed = HashSet::new();
-    let gitignore: Option<Gitignore> = oxenignore::create(repo);
+    /// True if `path` is in the in-memory staged-files map. Used at the tree-side check
+    /// to gate "missing on disk" → unsynced classification: a file the user has already
+    /// staged for delete shouldn't be re-surfaced as unsynced. Always false in `Db` mode
+    /// (`status_from_opts` doesn't classify into unsynced).
+    fn is_file_staged(&self, path: &Path) -> bool {
+        match self {
+            Self::Db(_) => false,
+            Self::Data(data) => data.staged_files.contains_key(path),
+        }
+    }
 
-    let mut entries: Vec<(PathBuf, bool, Result<std::fs::Metadata, OxenError>)> = Vec::new();
+    /// Like [`Self::is_file_staged`] but for directories.
+    fn is_dir_staged(&self, path: &Path) -> bool {
+        match self {
+            Self::Db(_) => false,
+            Self::Data(data) => data.staged_dirs.paths.contains_key(path),
+        }
+    }
+}
+
+/// Where to file paths that are in the merkle tree but missing on disk.
+#[derive(Clone, Copy)]
+enum MissingClassification {
+    /// Local-mode (`status_from_opts`): missing files+dirs go to `removed` unconditionally.
+    /// Upstream code reconciles against the staged-db afterward.
+    AsRemoved,
+    /// Remote-mode (`status_from_opts_and_staged_data`): missing files+dirs go to `unsynced`
+    /// unless already staged for delete. The subtree-root special case still uses `removed`,
+    /// so partially fetched subtree mode surfaces missing files even in unsynced mode.
+    AsUnsynced,
+}
+
+/// Output of the unified walker. `unsynced` is always empty under
+/// [`MissingClassification::AsRemoved`] (the `status_from_opts` caller doesn't
+/// distinguish unsynced from removed).
+struct WalkOutput {
+    untracked: UntrackedData,
+    unsynced: UnsyncedData,
+    modified: HashSet<PathBuf>,
+    removed: HashSet<PathBuf>,
+}
+
+impl WalkOutput {
+    fn empty() -> Self {
+        Self {
+            untracked: UntrackedData::new(),
+            unsynced: UnsyncedData::new(),
+            modified: HashSet::new(),
+            removed: HashSet::new(),
+        }
+    }
+
+    fn merge(&mut self, other: WalkOutput) {
+        self.untracked.merge(other.untracked);
+        self.unsynced.merge(other.unsynced);
+        self.modified.extend(other.modified);
+        self.removed.extend(other.removed);
+    }
+}
+
+/// Read the entries of a directory (one stat-call per entry, parallelized via rayon),
+/// or wrap a single non-dir path. Bad-metadata entries are skipped with a debug log
+/// rather than failing the whole walk. A non-dir path whose metadata is unreadable
+/// (e.g. the user passed a path that's been deleted on disk — `rm_with_staged_db`
+/// runs status against just-deleted dirs to check for modifications) yields an empty
+/// list, leaving the walker's tree-side check to surface the deletion via `removed`.
+fn read_dir_entries(
+    full_path: &Path,
+    is_dir: bool,
+) -> Result<Vec<(PathBuf, bool, std::fs::Metadata)>, OxenError> {
     if is_dir {
-        let Ok(dir_entries) = std::fs::read_dir(&full_path) else {
+        let Ok(dir_entries) = std::fs::read_dir(full_path) else {
             return Err(OxenError::basic_str(format!(
                 "Could not read dir {full_path:?}"
             )));
         };
         let new_entries: Vec<_> = dir_entries
             .par_bridge()
-            .filter_map(|res| match res {
-                Ok(entry) => {
-                    let path = entry.path();
-                    let is_dir = path.is_dir();
-                    let md = match entry.metadata() {
-                        Ok(md) => Ok(md),
-                        Err(err) => Err(OxenError::basic_str(err.to_string())),
-                    };
-                    Some((path, is_dir, md))
-                }
-                Err(err) => {
-                    log::debug!("Skipping unreadable entry: {err}");
-                    None
-                }
+            .filter_map(|res| {
+                let entry = match res {
+                    Ok(entry) => entry,
+                    Err(err) => {
+                        log::debug!("Skipping unreadable entry: {err}");
+                        return None;
+                    }
+                };
+                let path = entry.path();
+                let metadata = match entry.metadata() {
+                    Ok(md) => md,
+                    Err(err) => {
+                        log::debug!("Skipping entry with unreadable metadata {path:?}: {err}");
+                        return None;
+                    }
+                };
+                Some((path, metadata.is_dir(), metadata))
             })
             .collect();
-        entries.extend(new_entries);
+        Ok(new_entries)
     } else {
-        let metadata = util::fs::metadata(&full_path);
-        entries.push((full_path.to_owned(), false, metadata));
+        let Ok(metadata) = util::fs::metadata(full_path) else {
+            return Ok(Vec::new());
+        };
+        Ok(vec![(full_path.to_owned(), false, metadata)])
     }
+}
+
+/// Recursive walker shared between `status_from_opts` and `status_from_opts_and_staged_data`
+/// (via `walk_paths`). The two callers differ only in (1) which staged source they consult
+/// and (2) where they file paths that are in the merkle tree but missing on disk; both knobs
+/// are passed in.
+#[allow(clippy::too_many_arguments)]
+fn walk_status(
+    repo: &LocalRepository,
+    opts: &StagedDataOpts,
+    search_node_path: impl AsRef<Path>,
+    staged: StagedSource<'_>,
+    missing: MissingClassification,
+    dir_hashes: &HashMap<PathBuf, MerkleHash>,
+    progress: &ProgressBar,
+    total_entries: &mut usize,
+) -> Result<WalkOutput, OxenError> {
+    let search_node_path = search_node_path.as_ref();
+    let full_path = repo.path.join(search_node_path);
+    let is_dir = full_path.is_dir();
+    log::debug!("walk_status search_node_path: {search_node_path:?} full_path: {full_path:?}");
+
+    if let Some(ignore) = &opts.ignore
+        && (ignore.contains(search_node_path) || ignore.contains(&full_path))
+    {
+        return Ok(WalkOutput::empty());
+    }
+
+    let mut out = WalkOutput::empty();
+    let gitignore: Option<Gitignore> = oxenignore::create(repo);
+
+    let entries = read_dir_entries(&full_path, is_dir)?;
     let mut untracked_count = 0;
     let search_node = maybe_get_node(repo, dir_hashes, search_node_path)?;
     let dir_children = maybe_get_dir_children(&search_node)?;
 
-    for (path, is_dir, metadata) in entries {
+    for (path, is_entry_dir, metadata) in entries {
         progress.set_message(format!(
             "🐂 checking ({total_entries} files) scanning {search_node_path:?}"
         ));
@@ -509,103 +590,109 @@ fn find_changes(
         let relative_path = util::fs::path_relative_to_dir(&path, &repo.path)?;
         let node_path = util::fs::path_relative_to_dir(&relative_path, search_node_path)?;
         log::debug!(
-            "find_changes entry relative_path: {relative_path:?} in node_path {node_path:?} search_node_path: {search_node_path:?}"
+            "walk_status entry relative_path: {relative_path:?} in node_path {node_path:?} search_node_path: {search_node_path:?}"
         );
 
-        if oxenignore::is_ignored(&relative_path, &gitignore, is_dir) {
+        if oxenignore::is_ignored(&relative_path, &gitignore, is_entry_dir) {
             continue;
         }
 
-        if is_dir {
-            log::debug!("find_changes entry is a directory {path:?}");
-            // If it's a directory, recursively find changes below it
-            let (sub_untracked, sub_modified, sub_removed) = find_changes(
+        if is_entry_dir {
+            log::debug!("walk_status entry is a directory {path:?}");
+            // If it's a directory, recursively find changes below it.
+            let sub = walk_status(
                 repo,
                 opts,
                 &relative_path,
-                staged_db,
+                staged,
+                missing,
                 dir_hashes,
                 progress,
                 total_entries,
             )?;
-            untracked.merge(sub_untracked);
-            modified.extend(sub_modified);
-            removed.extend(sub_removed)
-        } else if is_staged(&relative_path, staged_db)? {
-            log::debug!("find_changes entry is staged {path:?}");
-            // check this after handling directories, because we still need to recurse into staged directories
-            untracked.all_untracked = false;
+            out.untracked.merge(sub.untracked);
+            out.unsynced.merge(sub.unsynced);
+            out.modified.extend(sub.modified);
+            out.removed.extend(sub.removed);
+        } else if staged.is_path_staged(&relative_path)? {
+            log::debug!("walk_status entry is staged {path:?}");
+            // Check this after handling directories, because we still need to recurse
+            // into staged directories.
+            out.untracked.all_untracked = false;
             continue;
         } else if let Some(node) = maybe_get_child_node(&node_path, &dir_children)? {
-            log::debug!("find_changes entry is a child node {path:?}");
-            // If we have a dir node, it's either tracked (clean) or modified
-            // Either way, we know the directory is not all_untracked
-            untracked.all_untracked = false;
+            log::debug!("walk_status entry is a child node {path:?}");
+            // If we have a dir node, it's either tracked (clean) or modified — either
+            // way, this directory is not all_untracked.
+            out.untracked.all_untracked = false;
             if let EMerkleTreeNode::File(file_node) = &node.node {
                 let is_modified =
-                    util::fs::is_modified_from_node_with_metadata(&path, file_node, metadata)?;
+                    util::fs::is_modified_from_node_with_metadata(&path, file_node, Ok(metadata))?;
                 log::debug!("is_modified {is_modified} {relative_path:?}");
                 if is_modified {
-                    modified.insert(relative_path.clone());
+                    out.modified.insert(relative_path.clone());
                 }
             }
         } else {
-            log::debug!("find_changes entry is not a child node {path:?}");
-            // If it's none of the above conditions
-            // then check if it's untracked or modified
+            log::debug!("walk_status entry is not a child node {path:?}");
+            // None of the above — check if it's untracked or modified.
             let mut found_file = false;
             if let Some(search_node) = &search_node
                 && let EMerkleTreeNode::File(file_node) = &search_node.node
             {
                 found_file = true;
-                if util::fs::is_modified_from_node_with_metadata(&path, file_node, metadata)? {
-                    modified.insert(relative_path.clone());
+                if util::fs::is_modified_from_node_with_metadata(&path, file_node, Ok(metadata))? {
+                    out.modified.insert(relative_path.clone());
                 }
             }
-            log::debug!("find_changes found_file {found_file:?} {path:?}");
+            log::debug!("walk_status found_file {found_file:?} {path:?}");
 
             if !found_file {
-                untracked.add_file(relative_path.clone());
+                out.untracked.add_file(relative_path.clone());
                 untracked_count += 1;
             }
         }
     }
 
-    // Only add the untracked directory if it's not the root directory
-    // and it's not staged or committed
-    if untracked.all_untracked
+    // Promote an all-untracked directory to a single dir entry, unless it's the root,
+    // is itself staged or committed, or isn't actually a directory (single-file walk).
+    if out.untracked.all_untracked
         && search_node_path != Path::new("")
-        && !is_staged(search_node_path, staged_db)?
+        && !staged.is_path_staged(search_node_path)?
         && is_dir
         && search_node.is_none()
     {
-        untracked.add_dir(search_node_path.to_path_buf(), untracked_count);
-        // Clear individual files as they're now represented by the directory
-        untracked.files.clear();
+        out.untracked
+            .add_dir(search_node_path.to_path_buf(), untracked_count);
+        // Clear individual files as they're now represented by the directory.
+        out.untracked.files.clear();
     }
 
-    // Check for removed files
+    // Tree-side check for paths that are in the merkle tree but missing on disk.
+    // TODO: Distinguish 'removed files' from unsynced more precisely.
     if let Some(dir_hash) = dir_hashes.get(search_node_path) {
-        // if we have subtree paths, don't check for removed files that are outside of the subtree
+        // If we have subtree paths, don't check for missing files outside of the subtree.
         if let Some(subtree_paths) = repo.subtree_paths() {
             if !subtree_paths.contains(&search_node_path.to_path_buf()) {
-                return Ok((untracked, modified, removed));
+                return Ok(out);
             }
 
             if subtree_paths.len() == 1 && subtree_paths[0] == Path::new("") {
-                // If the subtree is the root, we need to check for removed files in the root
+                // Subtree-root special case: surface missing files as `removed`
+                // regardless of `MissingClassification`, so partially-fetched subtree
+                // mode still flags them.
                 let dir_node = CommitMerkleTree::read_depth(repo, dir_hash, 1)?;
                 if let Some(node) = dir_node {
                     for child in repositories::tree::list_files_and_folders(&node)? {
                         if let EMerkleTreeNode::File(file_node) = &child.node {
                             let file_path = full_path.join(file_node.name());
-                            if !file_path.exists() {
-                                removed.insert(search_node_path.join(file_node.name()));
+                            if !file_path.exists() && !out.unsynced.files.contains(&file_path) {
+                                out.removed.insert(search_node_path.join(file_node.name()));
                             }
                         }
                     }
                 }
-                return Ok((untracked, modified, removed));
+                return Ok(out);
             }
         }
 
@@ -614,253 +701,86 @@ fn find_changes(
             for child in repositories::tree::list_files_and_folders(&node)? {
                 if let EMerkleTreeNode::File(file_node) = &child.node {
                     let file_path = full_path.join(file_node.name());
+                    let relative_file_path = search_node_path.join(file_node.name());
                     if !file_path.exists() {
-                        removed.insert(search_node_path.join(file_node.name()));
+                        match missing {
+                            MissingClassification::AsRemoved => {
+                                out.removed.insert(relative_file_path);
+                            }
+                            MissingClassification::AsUnsynced => {
+                                if !staged.is_file_staged(&relative_file_path) {
+                                    out.unsynced.add_file(relative_file_path);
+                                }
+                            }
+                        }
                     }
                 } else if let EMerkleTreeNode::Directory(dir) = &child.node {
                     let dir_path = full_path.join(dir.name());
                     let relative_dir_path = search_node_path.join(dir.name());
                     if !dir_path.exists() {
-                        // Only call this for non-existent dirs, because existant dirs already trigger a find_changes call
-
-                        let mut count: usize = 0;
-                        count_removed_entries(
-                            repo,
-                            &relative_dir_path,
-                            dir.hash(),
-                            &gitignore,
-                            &mut count,
-                        )?;
-
-                        *total_entries += count;
-                        removed.insert(relative_dir_path);
-                    }
-                }
-            }
-        }
-    }
-
-    Ok((untracked, modified, removed))
-}
-
-fn find_local_changes(
-    repo: &LocalRepository,
-    opts: &StagedDataOpts,
-    search_node_path: impl AsRef<Path>,
-    staged_data: &StagedData,
-    dir_hashes: &HashMap<PathBuf, MerkleHash>,
-    progress: &ProgressBar,
-    total_entries: &mut usize,
-) -> Result<
-    (
-        UntrackedData,
-        UnsyncedData,
-        HashSet<PathBuf>,
-        HashSet<PathBuf>,
-    ),
-    OxenError,
-> {
-    let search_node_path = search_node_path.as_ref();
-    let full_path = repo.path.join(search_node_path);
-    let is_dir = full_path.is_dir();
-
-    log::debug!("find_changes search_node_path: {search_node_path:?} full_path: {full_path:?}");
-
-    if let Some(ignore) = &opts.ignore
-        && (ignore.contains(search_node_path) || ignore.contains(&full_path))
-    {
-        return Ok((
-            UntrackedData::new(),
-            UnsyncedData::new(),
-            HashSet::new(),
-            HashSet::new(),
-        ));
-    }
-
-    let mut untracked = UntrackedData::new();
-    let mut unsynced = UnsyncedData::new();
-    let mut modified = HashSet::new();
-    let mut removed = HashSet::new();
-
-    let gitignore: Option<Gitignore> = oxenignore::create(repo);
-
-    let mut entries: Vec<(PathBuf, bool, std::fs::Metadata)> = Vec::new();
-    if is_dir {
-        let Ok(dir_entries) = std::fs::read_dir(&full_path) else {
-            return Err(OxenError::basic_str(format!(
-                "Could not read dir {full_path:?}"
-            )));
-        };
-        let metadata: Vec<_> = dir_entries
-            .par_bridge()
-            .map(|entry| {
-                let entry = entry?;
-                let path = entry.path();
-                let metadata = entry.metadata()?;
-                let is_dir = metadata.is_dir();
-                Ok((path, is_dir, metadata))
-            })
-            .collect::<Result<Vec<_>, std::io::Error>>()?;
-        // metadata.sort_by_key(|(path, _, _)| path.to_path_buf());
-        entries.extend(metadata);
-    } else {
-        let metadata = util::fs::metadata(&full_path)?;
-        entries.push((full_path.to_owned(), false, metadata));
-    }
-    let mut untracked_count = 0;
-    let search_node = maybe_get_node(repo, dir_hashes, search_node_path)?;
-    let dir_children = maybe_get_dir_children(&search_node)?;
-
-    for (path, is_dir, _) in entries {
-        progress.set_message(format!(
-            "🐂 checking ({total_entries} files) scanning {search_node_path:?}"
-        ));
-        *total_entries += 1;
-        let relative_path = util::fs::path_relative_to_dir(&path, &repo.path)?;
-        let node_path = util::fs::path_relative_to_dir(&relative_path, search_node_path)?;
-        log::debug!(
-            "find_changes entry relative_path: {relative_path:?} in node_path {node_path:?} search_node_path: {search_node_path:?}"
-        );
-
-        if oxenignore::is_ignored(&relative_path, &gitignore, is_dir) {
-            continue;
-        }
-
-        if is_dir {
-            log::debug!("find_changes entry is a directory {path:?}");
-            // If it's a directory, recursively find changes below it
-            let (sub_untracked, sub_unsynced, sub_modified, sub_removed) = find_local_changes(
-                repo,
-                opts,
-                &relative_path,
-                staged_data,
-                dir_hashes,
-                progress,
-                total_entries,
-            )?;
-            untracked.merge(sub_untracked);
-            unsynced.merge(sub_unsynced);
-            modified.extend(sub_modified);
-            removed.extend(sub_removed);
-        } else if in_staged_data(&relative_path, staged_data)? {
-            log::debug!("find_changes entry is staged {path:?}");
-            // check this after handling directories, because we still need to recurse into staged directories
-            untracked.all_untracked = false;
-            continue;
-        } else if let Some(node) = maybe_get_child_node(&node_path, &dir_children)? {
-            log::debug!("find_changes entry is a child node {path:?}");
-            // If we have a dir node, it's either tracked (clean) or modified
-            // Either way, we know the directory is not all_untracked
-            untracked.all_untracked = false;
-            if let EMerkleTreeNode::File(file_node) = &node.node {
-                let is_modified = util::fs::is_modified_from_node(&path, file_node)?;
-                log::debug!("is_modified {is_modified} {relative_path:?}");
-                if is_modified {
-                    modified.insert(relative_path.clone());
-                }
-            }
-        } else {
-            log::debug!("find_changes entry is not a child node {path:?}");
-            // If it's none of the above conditions
-            // then check if it's untracked or modified
-            let mut found_file = false;
-            if let Some(search_node) = &search_node
-                && let EMerkleTreeNode::File(file_node) = &search_node.node
-            {
-                found_file = true;
-                if util::fs::is_modified_from_node(&path, file_node)? {
-                    modified.insert(relative_path.clone());
-                }
-            }
-            log::debug!("find_changes found_file {found_file:?} {path:?}");
-
-            if !found_file {
-                untracked.add_file(relative_path.clone());
-                untracked_count += 1;
-            }
-        }
-    }
-
-    // Only add the untracked directory if it's not the root directory
-    // and it's not staged or committed
-    if untracked.all_untracked
-        && search_node_path != Path::new("")
-        && !in_staged_data(search_node_path, staged_data)?
-        && is_dir
-        && search_node.is_none()
-    {
-        untracked.add_dir(search_node_path.to_path_buf(), untracked_count);
-        // Clear individual files as they're now represented by the directory
-        untracked.files.clear();
-    }
-
-    // Check for unsynced files
-    // TODO: Distinguish 'removed files' from unsynced
-    if let Some(dir_hash) = dir_hashes.get(search_node_path) {
-        // if we have subtree paths, don't check for removed files that are outside of the subtree
-        if let Some(subtree_paths) = repo.subtree_paths() {
-            if !subtree_paths.contains(&search_node_path.to_path_buf()) {
-                return Ok((untracked, unsynced, modified, removed));
-            }
-
-            if subtree_paths.len() == 1 && subtree_paths[0] == Path::new("") {
-                // If the subtree is the root, we need to check for removed files in the root
-                let dir_node = CommitMerkleTree::read_depth(repo, dir_hash, 1)?;
-                if let Some(node) = dir_node {
-                    for child in repositories::tree::list_files_and_folders(&node)? {
-                        if let EMerkleTreeNode::File(file_node) = &child.node {
-                            let file_path = full_path.join(file_node.name());
-                            if !file_path.exists() && !unsynced.files.contains(&file_path) {
-                                removed.insert(search_node_path.join(file_node.name()));
+                        // Only do this for non-existent dirs — existing dirs already
+                        // trigger a recursive walk_status call.
+                        let staged_dir = staged.is_dir_staged(&relative_dir_path);
+                        let should_record = match missing {
+                            MissingClassification::AsRemoved => true,
+                            MissingClassification::AsUnsynced => !staged_dir,
+                        };
+                        if should_record {
+                            let mut count: usize = 0;
+                            count_removed_entries(
+                                repo,
+                                &relative_dir_path,
+                                dir.hash(),
+                                &gitignore,
+                                &mut count,
+                            )?;
+                            *total_entries += count;
+                            match missing {
+                                MissingClassification::AsRemoved => {
+                                    out.removed.insert(relative_dir_path);
+                                }
+                                MissingClassification::AsUnsynced => {
+                                    out.unsynced.add_dir(relative_dir_path, count);
+                                }
                             }
                         }
                     }
                 }
-                return Ok((untracked, unsynced, modified, removed));
-            }
-        }
-
-        let dir_node = CommitMerkleTree::read_depth(repo, dir_hash, 1)?;
-        if let Some(node) = dir_node {
-            for child in repositories::tree::list_files_and_folders(&node)? {
-                if let EMerkleTreeNode::File(file_node) = &child.node {
-                    let file_path = full_path.join(file_node.name());
-
-                    if !file_path.exists()
-                        && !staged_data
-                            .staged_files
-                            .contains_key(&search_node_path.join(file_node.name()))
-                    {
-                        unsynced.add_file(search_node_path.join(file_node.name()));
-                    }
-                } else if let EMerkleTreeNode::Directory(dir) = &child.node {
-                    let dir_path = full_path.join(dir.name());
-                    let relative_dir_path = search_node_path.join(dir.name());
-                    if !dir_path.exists()
-                        && !staged_data
-                            .staged_dirs
-                            .paths
-                            .contains_key(&relative_dir_path)
-                    {
-                        // Only call this for non-existent dirs, because existant dirs already trigger a find_changes call
-                        let mut count: usize = 0;
-                        count_removed_entries(
-                            repo,
-                            &relative_dir_path,
-                            dir.hash(),
-                            &gitignore,
-                            &mut count,
-                        )?;
-
-                        *total_entries += count;
-                        unsynced.add_dir(relative_dir_path, count);
-                    }
-                }
             }
         }
     }
 
-    Ok((untracked, unsynced, modified, removed))
+    Ok(out)
+}
+
+/// Walk every path in `opts.paths` through [`walk_status`] and aggregate the results.
+/// Shared between `status_from_opts` (which uses `StagedSource::Db` + `AsRemoved`) and
+/// `status_from_opts_and_staged_data` (which uses `StagedSource::Data` + `AsUnsynced`).
+fn walk_paths(
+    repo: &LocalRepository,
+    opts: &StagedDataOpts,
+    staged: StagedSource<'_>,
+    missing: MissingClassification,
+    dir_hashes: &HashMap<PathBuf, MerkleHash>,
+    progress: &ProgressBar,
+) -> Result<WalkOutput, OxenError> {
+    let mut total_entries = 0;
+    let mut out = WalkOutput::empty();
+    for dir in opts.paths.iter() {
+        let relative_dir = util::fs::path_relative_to_dir(dir, &repo.path)?;
+        let sub = walk_status(
+            repo,
+            opts,
+            &relative_dir,
+            staged,
+            missing,
+            dir_hashes,
+            progress,
+            &mut total_entries,
+        )?;
+        out.merge(sub);
+    }
+    Ok(out)
 }
 
 // Traverse the merkle tree to count removed entries under a dir node
