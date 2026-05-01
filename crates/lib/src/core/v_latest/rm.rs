@@ -127,12 +127,11 @@ async fn list_modified_files(
     let status = repositories::status::status_from_opts(repo, &opts).await?;
     log::debug!("status modified_files: {:?}", status.modified_files);
     log::debug!("paths: {paths:?}");
+    // Keep a modified entry if any requested path is an ancestor (or exact match).
     let modified: Vec<PathBuf> = status
         .modified_files
         .into_iter()
-        .filter(|path| {
-            paths.contains(path.parent().unwrap_or(Path::new(""))) || paths.contains(path)
-        })
+        .filter(|path| paths.iter().any(|p| path.starts_with(p)))
         .collect();
     Ok(modified)
 }
