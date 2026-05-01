@@ -1012,7 +1012,7 @@ mod tests {
 
         repositories::add(&repo, &repo.path).await?;
 
-        repositories::status(&repo)?;
+        repositories::status(&repo).await?;
 
         repositories::commit(&repo, "commit 1")?;
 

@@ -1259,7 +1259,7 @@ mod tests {
 
             // Write data to the repo
             add_n_files_m_dirs(&repo, 10, 2).await?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Commit the data
@@ -1349,7 +1349,7 @@ mod tests {
             util::fs::write_to_path(&new_file, "New file")?;
             repositories::add(&repo, &repo.path).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Commit the data
@@ -1379,7 +1379,7 @@ mod tests {
             util::fs::write_to_path(&new_file, "New file")?;
             repositories::add(&repo, &new_file).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Commit the data
@@ -1405,7 +1405,7 @@ mod tests {
 
             // Write data to the repo
             add_n_files_m_dirs(&repo, 10, 3).await?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Commit the data
@@ -1461,7 +1461,7 @@ mod tests {
 
             // Write data to the repo
             add_n_files_m_dirs(&repo, 10, 3).await?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Commit the data
@@ -1585,7 +1585,7 @@ mod tests {
 
             // Write data to the repo, 23 files in 2 dirs
             add_n_files_m_dirs(&repo, 23, 2).await?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Commit the data
@@ -1664,7 +1664,7 @@ mod tests {
 
             // Write data to the repo, 20 files in 1 dir
             add_n_files_m_dirs(&repo, 20, 1).await?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Commit the data
@@ -1732,7 +1732,7 @@ mod tests {
 
             // Write data to the repo
             add_n_files_m_dirs(&repo, 10, 3).await?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Commit the data
@@ -1832,7 +1832,7 @@ mod tests {
 
             // remove a directory
             let rm_opts = RmOpts::from_path_recursive(Path::new("train"));
-            repositories::rm(&repo, &rm_opts)?;
+            repositories::rm(&repo, &rm_opts).await?;
             let third_commit = super::commit(&repo, "Removing train dir")?;
 
             let third_tree = CommitMerkleTree::from_commit(&repo, &third_commit)?;

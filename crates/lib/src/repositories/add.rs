@@ -88,7 +88,7 @@ mod tests {
                 repositories::add(&local_repo, &hello_file).await?;
 
                 // Get the status and make sure the file is staged
-                let status = repositories::status(&local_repo)?;
+                let status = repositories::status(&local_repo).await?;
                 assert_eq!(status.staged_files.len(), 1);
                 assert!(
                     status
@@ -128,7 +128,7 @@ A: Oxen.ai
                 repositories::add(&local_repo, &readme_file).await?;
 
                 // Get the status and make sure the file is staged
-                let status = repositories::status(&local_repo)?;
+                let status = repositories::status(&local_repo).await?;
                 assert_eq!(status.staged_files.len(), 1);
                 assert!(
                     status
@@ -157,7 +157,7 @@ A: Oxen.ai
             // Track the file
             repositories::add(&repo, &hello_file).await?;
             // Get status and make sure it is removed from the untracked, and added to the tracked
-            let repo_status = repositories::status(&repo)?;
+            let repo_status = repositories::status(&repo).await?;
             // TODO: v0_10_0 logic should have 0 staged_dirs
             // We stage the parent dir, so should have 1 staged_dir
             assert_eq!(repo_status.staged_dirs.len(), 1);
@@ -177,18 +177,18 @@ A: Oxen.ai
             let one_shot_path = repo.path.join("annotations/train/one_shot.csv");
             let file_contents = "file,label\ntrain/cat_1.jpg,0";
             test::modify_txt_file(one_shot_path, file_contents)?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             println!("status: {status:?}");
             status.print();
             assert_eq!(status.modified_files.len(), 1);
             // Add the top level directory, and make sure the modified file gets added
             let annotation_dir_path = repo.path.join("annotations");
             repositories::add(&repo, annotation_dir_path).await?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             assert_eq!(status.staged_files.len(), 1);
             repositories::commit(&repo, "Changing one shot")?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert!(status.is_clean());
 
             Ok(())
@@ -210,7 +210,7 @@ A: Oxen.ai
             util::fs::remove_file(&file_to_remove)?;
 
             // We should recognize it as missing now
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.removed_files.len(), 1);
 
             Ok(())
@@ -251,7 +251,7 @@ A: Oxen.ai
             repositories::add(&repo, &repo.path).await?;
 
             // The new file should be staged as removed
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             assert_eq!(status.staged_files.len(), 1);
             assert!(!hello_file.exists());
@@ -278,7 +278,7 @@ A: Oxen.ai
             repositories::add(&repo, &repo.path).await?;
 
             // All files should be staged
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_files.len(), 3);
 
             repositories::commit(&repo, "Adding 3 files")?;
@@ -291,7 +291,7 @@ A: Oxen.ai
             repositories::add(&repo, &repo.path).await?;
 
             // The modified and removed files should be staged
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_files.len(), 2);
 
             Ok(())
@@ -326,7 +326,7 @@ A: Oxen.ai
             // Try to merge in the changes
             repositories::merge::merge(&repo, branch_name).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.merge_conflicts.len(), 1);
 
             // Assume that we fixed the conflict and added the file
@@ -335,7 +335,7 @@ A: Oxen.ai
             repositories::add(&repo, fullpath).await?;
 
             // Adding should add to added files
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
 
             assert_eq!(status.staged_files.len(), 1);
 
@@ -354,7 +354,7 @@ A: Oxen.ai
             let repo_dir = repo.path.join(dir);
             repositories::add(&repo, repo_dir).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Should add all the sub dirs
@@ -380,16 +380,16 @@ A: Oxen.ai
             let one_shot_path = repo.path.join("annotations/train/one_shot.csv");
             let file_contents = "file,label\ntrain/cat_1.jpg,0";
             test::modify_txt_file(one_shot_path, file_contents)?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.modified_files.len(), 1);
             // Add the top level directory, and make sure the modified file gets added
             let annotation_dir_path = repo.path.join("annotations/*");
             repositories::add(&repo, annotation_dir_path).await?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             assert_eq!(status.staged_files.len(), 1);
             repositories::commit(&repo, "Changing one shot")?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert!(status.is_clean());
 
             Ok(())
@@ -404,7 +404,7 @@ A: Oxen.ai
             let repo_dir = repo.path.join(dir);
             repositories::add(&repo, repo_dir).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Should add all the sub dirs
@@ -422,7 +422,7 @@ A: Oxen.ai
             let repo_nlp_dir = repo.path.join(dir);
             std::fs::remove_dir_all(repo_nlp_dir)?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // status.removed_files currently is files and dirs,
@@ -434,7 +434,7 @@ A: Oxen.ai
             // Add the removed nlp dir with a wildcard
             repositories::add(&repo, "nlp/*").await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_dirs.len(), 1);
             assert_eq!(status.staged_files.len(), 2);
 
@@ -450,7 +450,7 @@ A: Oxen.ai
             let repo_dir = repo.path.join(dir);
             repositories::add(&repo, repo_dir).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Should add all the sub dirs
@@ -474,7 +474,7 @@ A: Oxen.ai
             let empty_dir = repo.path.join("empty_dir");
             util::fs::create_dir_all(&empty_dir)?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Should find the untracked dir
@@ -488,7 +488,7 @@ A: Oxen.ai
             // Add the empty dir
             repositories::add(&repo, &empty_dir).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Should find the untracked dir
@@ -525,7 +525,7 @@ A: Oxen.ai
             let sub_file_2 = test::add_txt_file_to_dir(&sub_dir, "Hello 2")?;
             let sub_file_3 = test::add_txt_file_to_dir(&sub_dir, "Hello 3")?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             let dirs = status.untracked_dirs;
 
             // There is one directory
@@ -537,7 +537,7 @@ A: Oxen.ai
             repositories::add(&repo, &sub_file_3).await?;
 
             // There now there are no untracked directories
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             println!("status after add: {status:?}");
             status.print();
             let dirs = status.untracked_dirs;
@@ -572,7 +572,7 @@ A: Oxen.ai
             repositories::add(&repo, &annotations_dir).await?;
 
             // List dirs
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             let dirs = status.staged_dirs;
 
@@ -601,7 +601,7 @@ A: Oxen.ai
             repositories::add(&repo, &hello_file).await?;
 
             // make sure we don't have it added again, because the hash hadn't changed since last commit
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_files.len(), 0);
 
             Ok(())
@@ -622,7 +622,7 @@ A: Oxen.ai
 
             let file_contents = "file,label\ntrain/cat_1.jpg,0\n";
             let one_shot_path = test::modify_txt_file(one_shot_path, file_contents)?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             assert_eq!(status.modified_files.len(), 1);
             assert!(
@@ -632,7 +632,7 @@ A: Oxen.ai
             );
 
             repositories::add(&repo, &one_shot_path).await?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             assert_eq!(status.staged_files.len(), 1);
             assert_eq!(status.modified_files.len(), 0);
@@ -656,13 +656,13 @@ A: Oxen.ai
 
             // Add only the cats
             repositories::add(&repo, "train/cat_*.jpg").await?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
 
             assert_eq!(status.staged_files.len(), 3);
 
             // Add the dogs
             repositories::add(&repo, "train/dog_*.jpg").await?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
 
             // Should stage all 7 files now
             assert_eq!(status.staged_files.len(), 7);
@@ -887,18 +887,24 @@ A: Oxen.ai
             let file = Path::new("file.txt");
 
             create_and_stage(&repo, file, "hello").await;
-            let status = repositories::status(&repo).expect("oxen status failed");
+            let status = repositories::status(&repo)
+                .await
+                .expect("oxen status failed");
             expect_staged(&status, 1, 0, 0);
             commit_staged(&repo, "added", file);
 
             expect_filesystem(&repo.path, &[file], &[".oxen"]).await;
 
             remove_and_stage(&repo, file).await;
-            let status = repositories::status(&repo).expect("oxen status failed");
+            let status = repositories::status(&repo)
+                .await
+                .expect("oxen status failed");
             expect_staged(&status, 0, 1, 0);
             commit_staged(&repo, "removed", file);
 
-            let status = repositories::status(&repo).expect("oxen status failed");
+            let status = repositories::status(&repo)
+                .await
+                .expect("oxen status failed");
             expect_staged(&status, 0, 0, 0);
             assert!(status.staged_dirs.is_empty());
             expect_filesystem(&repo.path, &[], &[".oxen"]).await;
@@ -918,18 +924,24 @@ A: Oxen.ai
             let file = dir.join("file.txt");
 
             create_and_stage(&repo, &file, "hello world!").await;
-            let status = repositories::status(&repo).expect("oxen status failed");
+            let status = repositories::status(&repo)
+                .await
+                .expect("oxen status failed");
             expect_staged(&status, 1, 0, 0);
             commit_staged(&repo, "added", &file);
 
             expect_filesystem(&repo.path, &[&dir, &file], &[".oxen"]).await;
 
             remove_and_stage(&repo, &dir).await;
-            let status = repositories::status(&repo).expect("oxen status failed");
+            let status = repositories::status(&repo)
+                .await
+                .expect("oxen status failed");
             expect_staged(&status, 0, 1, 0);
             commit_staged(&repo, "removed dir + contents", &dir);
 
-            let status = repositories::status(&repo).expect("oxen status failed");
+            let status = repositories::status(&repo)
+                .await
+                .expect("oxen status failed");
             expect_staged(&status, 0, 0, 0);
             assert!(status.staged_dirs.is_empty());
             expect_filesystem(&repo.path, &[], &[".oxen"]).await;
@@ -952,18 +964,24 @@ A: Oxen.ai
             let file = dir_3.join("file.txt");
 
             create_and_stage(&repo, &file, "hello world!").await;
-            let status = repositories::status(&repo).expect("oxen status failed");
+            let status = repositories::status(&repo)
+                .await
+                .expect("oxen status failed");
             expect_staged(&status, 1, 0, 0);
             commit_staged(&repo, "added", &file);
 
             expect_filesystem(&repo.path, &[&dir_1, &dir_2, &dir_3, &file], &[".oxen"]).await;
 
             remove_and_stage(&repo, &dir_1).await;
-            let status = repositories::status(&repo).expect("oxen status failed");
+            let status = repositories::status(&repo)
+                .await
+                .expect("oxen status failed");
             expect_staged(&status, 0, 1, 0);
             commit_staged(&repo, "removed dir + contents", &dir_1);
 
-            let status = repositories::status(&repo).expect("oxen status failed");
+            let status = repositories::status(&repo)
+                .await
+                .expect("oxen status failed");
             expect_staged(&status, 0, 0, 0);
             assert!(status.staged_dirs.is_empty());
             expect_filesystem(&repo.path, &[], &[".oxen"]).await;

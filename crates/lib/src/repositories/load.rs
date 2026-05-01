@@ -144,7 +144,7 @@ mod tests {
                 assert!(!hydrated_repo.path.join("hello.txt").exists());
 
                 // Should have `hello.txt` in removed files bc it's in commits db but not working dir
-                let status = repositories::status(&hydrated_repo)?;
+                let status = repositories::status(&hydrated_repo).await?;
 
                 assert_eq!(status.removed_files.len(), 1);
 

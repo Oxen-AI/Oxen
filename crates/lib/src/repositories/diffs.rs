@@ -170,7 +170,7 @@ pub async fn diff_uncommitted(
     opts: &DiffOpts,
 ) -> Result<Vec<DiffResult>, OxenError> {
     let status_opts = StagedDataOpts::from_paths(&[path_1.to_path_buf()]);
-    let status = repositories::status::status_from_opts(repo, &status_opts)?;
+    let status = repositories::status::status_from_opts(repo, &status_opts).await?;
     let unstaged_files = status.unstaged_files();
     log::debug!("unstaged_files: {unstaged_files:?}");
     let commit_1 = repositories::revisions::get(repo, rev_1)?
@@ -1634,7 +1634,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             util::fs::remove_file(bbox_file)?;
 
             let opts = RmOpts::from_path(&bbox_filename);
-            repositories::rm(&repo, &opts)?;
+            repositories::rm(&repo, &opts).await?;
             let head_commit = repositories::commit(&repo, "Removing a the training data file")?;
             let entries = repositories::diffs::list_diff_entries(
                 &repo,
@@ -1721,7 +1721,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             util::fs::remove_file(bbox_file)?;
 
             let opts = RmOpts::from_path(&bbox_filename);
-            repositories::rm(&repo, &opts)?;
+            repositories::rm(&repo, &opts).await?;
             let head_commit = repositories::commit(&repo, "Removing a the training data file")?;
 
             let entries = repositories::diffs::list_diff_entries(
@@ -1790,7 +1790,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             util::fs::remove_file(bbox_file)?;
 
             let opts = RmOpts::from_path(&bbox_filename);
-            repositories::rm(&repo, &opts)?;
+            repositories::rm(&repo, &opts).await?;
             repositories::add(&repo, &repo.path).await?;
             let head_commit = repositories::commit(&repo, "Removing a the training data file")?;
             let entries = repositories::diffs::list_diff_entries(
@@ -1885,7 +1885,7 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             util::fs::remove_file(bbox_file)?;
 
             let opts = RmOpts::from_path(&bbox_filename);
-            repositories::rm(&repo, &opts)?;
+            repositories::rm(&repo, &opts).await?;
             let head_commit = repositories::commit(&repo, "Removing a the training data file")?;
             let entries = repositories::diffs::list_diff_entries(
                 &repo,

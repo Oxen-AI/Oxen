@@ -911,7 +911,7 @@ mod tests {
                     assert!(result.is_err());
 
                     // There should be conflicts
-                    let status = repositories::status(&user_b_repo)?;
+                    let status = repositories::status(&user_b_repo).await?;
                     assert!(status.has_merge_conflicts());
                     println!("passed has_merge_conflicts");
                     status.print();
@@ -1166,7 +1166,7 @@ mod tests {
                 recursive: true,
             };
 
-            repositories::rm(&local_repo, &rm_opts)?;
+            repositories::rm(&local_repo, &rm_opts).await?;
             let commit =
                 repositories::commit(&local_repo, "Moved all the train image files to images/")?;
             repositories::push(&local_repo).await?;
@@ -1222,7 +1222,7 @@ mod tests {
 
             repositories::add(&local_repo, new_path).await?;
             let rm_opts = RmOpts::from_path("README.md");
-            repositories::rm(&local_repo, &rm_opts)?;
+            repositories::rm(&local_repo, &rm_opts).await?;
             let commit = repositories::commit(&local_repo, "Moved the readme")?;
             repositories::push(&local_repo).await?;
 
@@ -1704,7 +1704,7 @@ A: Checkout Oxen.ai
                 );
 
                 // Verify we have merge conflicts
-                let status = repositories::status(&original_repo)?;
+                let status = repositories::status(&original_repo).await?;
                 assert!(status.has_merge_conflicts(), "Should have merge conflicts");
 
                 // Verify we can't push

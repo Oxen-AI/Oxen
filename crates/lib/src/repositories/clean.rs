@@ -280,7 +280,7 @@ mod tests {
             repositories::clean::clean(&repo, &opts_force()).await?;
 
             // Working tree should now be clean.
-            let status = repositories::status::status(&repo)?;
+            let status = repositories::status::status(&repo).await?;
             assert!(
                 status.is_clean(),
                 "working tree should be clean after restore + clean; got {status:?}"

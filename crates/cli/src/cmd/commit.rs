@@ -54,7 +54,7 @@ impl RunCmd for CommitCmd {
         println!("Committing with message: {message}");
 
         if allow_empty {
-            repositories::commits::commit_allow_empty(&repo, &message)?;
+            repositories::commits::commit_allow_empty(&repo, &message).await?;
         } else {
             repositories::commit(&repo, &message)?;
         }

@@ -152,7 +152,7 @@ mod tests {
             util::fs::remove_file(&file_to_remove)?;
 
             // We should recognize it as missing now
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.removed_files.len(), 1);
 
             // Commit removed file
@@ -308,7 +308,7 @@ mod tests {
             let restored_contents = util::fs::read_from_path(&bbox_path)?;
             assert_eq!(og_contents, restored_contents);
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.modified_files.len(), 0);
             assert!(status.is_clean());
 
@@ -339,7 +339,7 @@ mod tests {
             let restored_contents = util::fs::read_from_path(&bbox_path)?;
             assert_eq!(og_contents, restored_contents);
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.modified_files.len(), 0);
             assert!(status.is_clean());
 
@@ -446,7 +446,7 @@ mod tests {
             repositories::add(&repo, bbox_path).await?;
 
             // Make sure is staged
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_files.len(), 1);
             status.print();
 
@@ -454,7 +454,7 @@ mod tests {
             repositories::restore::restore(&repo, RestoreOpts::from_staged_path(bbox_file)).await?;
 
             // Make sure is unstaged
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_files.len(), 0);
 
             Ok(())
@@ -551,7 +551,7 @@ mod tests {
             repositories::add(&repo, annotations_dir).await?;
 
             // Make sure is staged
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_dirs.len(), 3);
             assert_eq!(status.staged_files.len(), 6);
             status.print();
@@ -561,7 +561,7 @@ mod tests {
                 .await?;
 
             // Make sure is unstaged
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_dirs.len(), 0);
             assert_eq!(status.staged_files.len(), 0);
 
@@ -577,7 +577,7 @@ mod tests {
             let repo_dir = repo.path.join(dir);
             repositories::add(&repo, repo_dir).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Should add all the sub dirs
@@ -605,13 +605,13 @@ mod tests {
             let repo_nlp_dir = repo.path.join(dir);
             std::fs::remove_dir_all(repo_nlp_dir)?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.removed_files.len(), 1);
             assert_eq!(status.staged_files.len(), 0);
             // Add the removed nlp dir with a wildcard
             repositories::add(&repo, "nlp/*").await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_dirs.len(), 1);
             assert_eq!(status.staged_files.len(), 2);
 
@@ -653,10 +653,10 @@ mod tests {
                 ..Default::default()
             };
 
-            repositories::rm(&repo, &rm_opts)?;
+            repositories::rm(&repo, &rm_opts).await?;
 
             // Should now have 7 staged for removal
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_files.len(), 7);
             assert_eq!(status.removed_files.len(), 0);
 
@@ -673,7 +673,7 @@ mod tests {
 
             repositories::restore::restore(&repo, restore_opts).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
 
             // Should now have unstaged the 7 ommissions, moving them to removed_files
             assert_eq!(status.removed_files.len(), 7);
@@ -690,7 +690,7 @@ mod tests {
             };
             repositories::restore::restore(&repo, restore_opts).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
 
             // Should now have restored the 7 files to the working directory, no staged changes
             assert_eq!(status.removed_files.len(), 0);
@@ -709,9 +709,9 @@ mod tests {
                 path: PathBuf::from("train/*"),
                 ..Default::default()
             };
-            repositories::rm(&repo, &rm_opts)?;
+            repositories::rm(&repo, &rm_opts).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_files.len(), 7); // 3 cats, 4 dogs
 
             let mut paths = HashSet::new();
@@ -726,7 +726,7 @@ mod tests {
             };
             repositories::restore::restore(&repo, restore_opts).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
 
             assert_eq!(status.staged_files.len(), 3); // 3 cats should still be staged
             assert_eq!(status.removed_files.len(), 4); // 4 dogs back in working dir
@@ -771,7 +771,7 @@ mod tests {
             // Add both files
             repositories::add(&repo, &new_annotations_dir).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_files.len(), 2);
             assert_eq!(status.staged_schemas.len(), 2);
 
@@ -788,7 +788,7 @@ mod tests {
 
             repositories::restore::restore(&repo, restore_opts).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_files.len(), 0);
             assert_eq!(status.staged_schemas.len(), 0);
 

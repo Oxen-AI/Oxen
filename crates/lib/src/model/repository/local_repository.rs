@@ -575,35 +575,37 @@ impl LocalRepository {
     }
 
     /// Async, tolerance-aware modification check. Routes the mtime comparison through
-    /// [`Self::mtime_matches`] so it agrees with `restore_file`'s fast-path skip on
-    /// coarse-mtime mounts (FAT/exFAT, HFS+, some NFS). Use this from any caller that has
-    /// access to a `&LocalRepository` and is in an async context.
-    ///
-    /// `oxen status` and its sync chain still use the strict-mtime free function in
-    /// [`crate::util::fs::is_modified_from_node`]; when that path goes async, the free
-    /// functions can be removed in favor of these methods.
+    /// [`Self::mtime_matches`] so callers (`oxen status`, `oxen restore`, `oxen checkout`,
+    /// `oxen pull`'s overwrite check, etc.) agree with `restore_file`'s fast-path skip on
+    /// coarse-mtime mounts (FAT/exFAT, HFS+, some NFS). The previous strict-mtime free
+    /// functions in `util::fs` were retired once `oxen status`'s walker went async.
     pub async fn is_modified_from_node(
         &self,
         path: &Path,
         node: &FileNode,
     ) -> Result<bool, OxenError> {
-        self.is_modified_from_node_with_metadata(path, node, util::fs::metadata(path))
+        let metadata = match tokio::fs::symlink_metadata(path).await {
+            Ok(m) => m,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                log::debug!("is_modified_from_node: missing path {path:?}, returning false");
+                return Ok(false);
+            }
+            Err(err) => return Err(OxenError::file_metadata_error(path, err)),
+        };
+        self.is_modified_from_node_with_metadata(path, node, &metadata)
             .await
     }
 
-    /// Pre-fetched-metadata variant of [`Self::is_modified_from_node`].
+    /// Pre-fetched-metadata variant of [`Self::is_modified_from_node`]. Callers that
+    /// don't already have the metadata in hand should use the no-arg variant instead;
+    /// this one trusts that the metadata corresponds to `path` and is up-to-date.
     pub async fn is_modified_from_node_with_metadata(
         &self,
         path: &Path,
         node: &FileNode,
-        metadata: Result<std::fs::Metadata, OxenError>,
+        metadata: &std::fs::Metadata,
     ) -> Result<bool, OxenError> {
-        if !path.exists() {
-            log::debug!("is_modified_from_node found non-existent path {path:?}. Returning false");
-            return Ok(false);
-        }
-        let metadata = metadata?;
-        let file_last_modified = filetime::FileTime::from_last_modification_time(&metadata);
+        let file_last_modified = filetime::FileTime::from_last_modification_time(metadata);
         let node_last_modified = util::fs::last_modified_time(
             node.last_modified_seconds(),
             node.last_modified_nanoseconds(),
@@ -611,7 +613,7 @@ impl LocalRepository {
         let mtime_matched = self
             .mtime_matches(file_last_modified, node_last_modified)
             .await;
-        util::fs::classify_modified_from_node_with_metadata(path, node, &metadata, mtime_matched)
+        util::fs::classify_modified_from_node_with_metadata(path, node, metadata, mtime_matched)
     }
 
     /// Override the mtime tolerance for this repo path in the per-process cache. Test-only

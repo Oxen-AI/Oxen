@@ -28,11 +28,11 @@ use crate::core::v_latest::index::CommitMerkleTree;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::MerkleTreeNode;
 
-pub fn status(repo: &LocalRepository) -> Result<StagedData, OxenError> {
-    status_from_dir(repo, &repo.path)
+pub async fn status(repo: &LocalRepository) -> Result<StagedData, OxenError> {
+    status_from_dir(repo, &repo.path).await
 }
 
-pub fn status_from_dir(
+pub async fn status_from_dir(
     repo: &LocalRepository,
     dir: impl AsRef<Path>,
 ) -> Result<StagedData, OxenError> {
@@ -40,10 +40,10 @@ pub fn status_from_dir(
         paths: vec![dir.as_ref().to_path_buf()],
         ..StagedDataOpts::default()
     };
-    status_from_opts(repo, &opts)
+    status_from_opts(repo, &opts).await
 }
 
-pub fn status_from_opts(
+pub async fn status_from_opts(
     repo: &LocalRepository,
     opts: &StagedDataOpts,
 ) -> Result<StagedData, OxenError> {
@@ -63,7 +63,8 @@ pub fn status_from_opts(
         MissingClassification::AsRemoved,
         &dir_hashes,
         &read_progress,
-    )?;
+    )
+    .await?;
 
     log::debug!("status_from_opts untracked: {:?}", out.untracked);
     log::debug!("status_from_opts modified: {:?}", out.modified);
@@ -103,7 +104,7 @@ pub fn status_from_opts(
 }
 
 // Get status with pre-existing staged data
-pub fn status_from_opts_and_staged_data(
+pub async fn status_from_opts_and_staged_data(
     repo: &LocalRepository,
     opts: &StagedDataOpts,
     staged_data: &mut StagedData,
@@ -123,7 +124,8 @@ pub fn status_from_opts_and_staged_data(
         MissingClassification::AsUnsynced,
         &dir_hashes,
         &read_progress,
-    )?;
+    )
+    .await?;
 
     log::debug!(
         "status_from_opts_and_staged_data untracked: {:?}",
@@ -597,7 +599,7 @@ enum WalkItem {
 /// in (1) which staged source they consult and (2) where they record paths that are in
 /// the merkle tree but missing on disk; both knobs are passed in.
 #[allow(clippy::too_many_arguments)]
-fn walk_status(
+async fn walk_status(
     repo: &LocalRepository,
     opts: &StagedDataOpts,
     starting_path: &Path,
@@ -615,7 +617,13 @@ fn walk_status(
         match item {
             WalkItem::EnterDir(search_node_path) => {
                 let full_path = repo.path.join(&search_node_path);
-                let is_dir = full_path.is_dir();
+                // Use `metadata.is_dir()` rather than `full_path.is_dir()` to avoid
+                // following symlinks — Oxen does not track symlinks, and a symlink-to-dir
+                // at the walker root would otherwise be silently followed.
+                let is_dir = tokio::fs::symlink_metadata(&full_path)
+                    .await
+                    .map(|m| m.is_dir())
+                    .unwrap_or(false);
                 log::debug!(
                     "walk_status search_node_path: {search_node_path:?} full_path: {full_path:?}"
                 );
@@ -683,11 +691,9 @@ fn walk_status(
                         // either way, this directory is not all_untracked.
                         current.untracked.all_untracked = false;
                         if let EMerkleTreeNode::File(file_node) = &node.node {
-                            let is_modified = util::fs::is_modified_from_node_with_metadata(
-                                &path,
-                                file_node,
-                                Ok(metadata),
-                            )?;
+                            let is_modified = repo
+                                .is_modified_from_node_with_metadata(&path, file_node, &metadata)
+                                .await?;
                             log::debug!("is_modified {is_modified} {relative_path:?}");
                             if is_modified {
                                 current.modified.insert(relative_path.clone());
@@ -701,11 +707,10 @@ fn walk_status(
                             && let EMerkleTreeNode::File(file_node) = &search_node.node
                         {
                             found_file = true;
-                            if util::fs::is_modified_from_node_with_metadata(
-                                &path,
-                                file_node,
-                                Ok(metadata),
-                            )? {
+                            if repo
+                                .is_modified_from_node_with_metadata(&path, file_node, &metadata)
+                                .await?
+                            {
                                 current.modified.insert(relative_path.clone());
                             }
                         }
@@ -888,7 +893,7 @@ fn walk_status(
 /// Walk every path in `opts.paths` through [`walk_status`] and aggregate the results.
 /// Shared between `status_from_opts` (which uses `StagedSource::Db` + `AsRemoved`) and
 /// `status_from_opts_and_staged_data` (which uses `StagedSource::Data` + `AsUnsynced`).
-fn walk_paths(
+async fn walk_paths(
     repo: &LocalRepository,
     opts: &StagedDataOpts,
     staged: StagedSource<'_>,
@@ -911,7 +916,8 @@ fn walk_paths(
             &gitignore,
             progress,
             &mut total_entries,
-        )?;
+        )
+        .await?;
         out.merge(sub);
     }
     Ok(out)

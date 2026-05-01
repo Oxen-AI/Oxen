@@ -57,14 +57,14 @@ pub fn commit_with_user(
     repositories::commits::commit_writer::commit_with_user(repo, message, user)
 }
 
-pub fn commit_allow_empty(
+pub async fn commit_allow_empty(
     repo: &LocalRepository,
     message: impl AsRef<str>,
 ) -> Result<Commit, OxenError> {
     let message = message.as_ref();
 
     // Check if there are staged changes
-    let status = crate::core::v_latest::status::status(repo)?;
+    let status = crate::core::v_latest::status::status(repo).await?;
     let has_changes = !status.staged_files.is_empty() || !status.staged_dirs.is_empty();
 
     if has_changes {

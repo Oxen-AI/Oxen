@@ -89,7 +89,7 @@ pub async fn add_with_opts(
         walk_dirs: true,
     };
 
-    let expanded_paths = util::glob::parse_glob_paths(&glob_opts, local_repo.as_ref())?;
+    let expanded_paths = util::glob::parse_glob_paths(&glob_opts, local_repo.as_ref()).await?;
     let expanded_paths: Vec<PathBuf> = expanded_paths.iter().cloned().collect();
     // TODO: add a progress bar
 
@@ -1058,7 +1058,7 @@ pub async fn rm_files(
     };
 
     let expanded_paths: HashSet<PathBuf> =
-        util::glob::parse_glob_paths(&glob_opts, Some(local_repo))?;
+        util::glob::parse_glob_paths(&glob_opts, Some(local_repo)).await?;
 
     // Convert to relative paths
     let repo_path = &local_repo.path;
