@@ -19,6 +19,7 @@ use crate::model::ParsedResource;
 use crate::model::RepoNew;
 use crate::model::Schema;
 use crate::model::Workspace;
+use crate::model::merkle_tree::merkle_hash::HexHash;
 use crate::model::merkle_tree::node_type::InvalidMerkleTreeNodeType;
 
 pub mod path_buf_error;
@@ -174,7 +175,12 @@ pub enum OxenError {
     #[error("Invalid version: {0}")]
     InvalidVersion(StringError),
 
+    //
     // Version Store
+    //
+    #[error("Version store not initialized")]
+    VersionStoreNotInitialized,
+
     /// An error uploading a file to the version store
     #[error("{0}")]
     Upload(StringError),
@@ -237,6 +243,15 @@ pub enum OxenError {
     // Attempting to make a commit with no changes from its parent is an error.
     #[error("No changes to commit")]
     NoChanges,
+
+    #[error("No such commit, dir, or vnode Merkle tree node with hash (hex): {0}")]
+    MerkleNodeNotFound(HexHash),
+
+    #[error(
+        "Unsupported node type adding to a child file. Only accept Commit, Directory, File, or VNode. Found: {0}"
+    )]
+    /// Contains the name of the incompatible type as reported by [`std::any::type_name_of_val`].
+    DisallowedNodeWrite(&'static str),
 
     //
     // Schema (dataframes)
