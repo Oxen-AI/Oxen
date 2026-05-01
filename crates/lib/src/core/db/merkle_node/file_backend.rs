@@ -542,6 +542,340 @@ impl MerkleUnpacker for FileBackend {
     }
 }
 
+/// Estimate the **uncompressed** tar payload size for [`MerklePacker::pack_nodes`]
+/// over `hashes`, in bytes. Used to extend an upload progress bar's total length
+/// before the pack/upload kicks off, so the bar has a known end and a meaningful ETA.
+///
+/// The estimate sums each present node directory's file content sizes plus tar's
+/// fixed-size overhead (one 512-byte header per file/directory entry, file content
+/// padded to 512-byte multiples). It ignores the gzip ratio because the merkle
+/// `node` and `children` files contain mostly random-looking hash bytes, which
+/// compress to ~1.0× — so this uncompressed total is a tight upper bound on the
+/// post-gzip bytes that will flow over the wire.
+///
+/// Hashes whose node directory is missing on disk contribute 0, matching the
+/// silent-skip semantics of [`MerklePacker::pack_nodes`].
+pub fn pack_nodes_byte_estimate(repo: &LocalRepository, hashes: &HashSet<MerkleHash>) -> u64 {
+    const TAR_HEADER_BYTES: u64 = 512;
+    const TAR_BLOCK_SIZE: u64 = 512;
+
+    let mut total: u64 = 0;
+    for hash in hashes {
+        let node_dir = node_db_path(repo, hash);
+        if !node_dir.exists() {
+            continue;
+        }
+        // The directory entry itself.
+        total = total.saturating_add(TAR_HEADER_BYTES);
+        let Ok(entries) = std::fs::read_dir(&node_dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            if meta.is_file() {
+                let len = meta.len();
+                let padded = len.div_ceil(TAR_BLOCK_SIZE).saturating_mul(TAR_BLOCK_SIZE);
+                total = total.saturating_add(TAR_HEADER_BYTES.saturating_add(padded));
+            } else if meta.is_dir() {
+                total = total.saturating_add(TAR_HEADER_BYTES);
+            }
+        }
+    }
+    total
+}
+
+/// Pack the tar-gz wire format for a set of merkle hashes into `out`, using the
+/// in-tar layout and gzip compression level selected by `opts`.
+///
+/// Hashes whose node directory is missing on disk are silently skipped iff
+/// `skip_missing_node_dir` is `true`: this matches the existing oxen behavior
+/// of `compress_nodes` / `compress_node` / `compress_commits`. If `false`,
+/// missing node directories result in an `Err(MerkleDbError::MissingNodeDir)`.
+fn write_hashes_tar<W: Write>(
+    repo: &LocalRepository,
+    hashes: &HashSet<MerkleHash>,
+    opts: PackOptions,
+    out: W,
+    skip_missing_node_dir: bool,
+) -> Result<(), MerkleDbError> {
+    let enc = GzEncoder::new(out, pack_options_compression(opts));
+    let mut tar = tar::Builder::new(enc);
+    for hash in hashes {
+        let dir_prefix = hash.to_hex_hash().node_db_prefix();
+        let tar_subdir: PathBuf = match opts {
+            PackOptions::ServerCanonical => Path::new(TREE_DIR).join(NODES_DIR).join(&dir_prefix),
+            PackOptions::LegacyClientPush => PathBuf::from(&dir_prefix),
+        };
+        let node_dir = node_db_path(repo, hash);
+        if node_dir.exists() {
+            tar.append_dir_all(&tar_subdir, node_dir)?;
+        } else if !skip_missing_node_dir {
+            return Err(MerkleDbError::MissingNodeDir(*hash));
+        } else {
+            log::warn!("Skipping missing node dir for hash {}", hash.to_hex_hash());
+        }
+    }
+    tar.finish()?;
+    tar.into_inner()?.finish()?;
+    Ok(())
+}
+
+/// Map a [`PackOptions`] to the gzip compression level historically used for that
+/// layout. `Compression::fast` for the server-canonical download bytes;
+/// `Compression::default` for the legacy client-push upload bytes.
+fn pack_options_compression(opts: PackOptions) -> Compression {
+    match opts {
+        PackOptions::ServerCanonical => Compression::fast(),
+        PackOptions::LegacyClientPush => Compression::default(),
+    }
+}
+
+/// Pack the tar-gz wire format for every node in the store into `out`.
+/// If `skip_missing_node_dir` is `false`, missing node directories result in
+/// an `Err(MerkleDbError::MissingTreeNodesDir)`. Otherwise, missing node dirs
+/// are skipped and logged as a warning.
+fn write_all_tar<W: Write>(
+    repo: &LocalRepository,
+    out: W,
+    skip_missing_node_dir: bool,
+) -> Result<(), MerkleDbError> {
+    let enc = GzEncoder::new(out, Compression::fast());
+    let mut tar = tar::Builder::new(enc);
+    let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR);
+    let nodes_dir = repo
+        .path
+        .join(OXEN_HIDDEN_DIR)
+        .join(TREE_DIR)
+        .join(NODES_DIR);
+    if nodes_dir.exists() {
+        tar.append_dir_all(&tar_subdir, nodes_dir)?;
+    } else if !skip_missing_node_dir {
+        return Err(MerkleDbError::MissingTreeNodesDir);
+    } else {
+        log::warn!("Missing oxen tree/nodes dir in this repository: resulting in empty tarball");
+    }
+    tar.finish()?;
+    tar.into_inner()?.finish()?;
+    Ok(())
+}
+
+/// Unpack a tar-gz wire stream into `oxen_hidden` (the repository's `.oxen/` directory).
+///
+/// Tolerates two historical tarball layouts so that either a new or legacy client can talk
+/// to a store built with this trait:
+///   - **Server-style** (emitted by [`write_hashes_tar`] / [`write_all_tar`] and the old
+///     `compress_*` helpers): entries carry the full `tree/nodes/{prefix}/{suffix}/{node,children}`
+///     prefix. Joined directly under `oxen_hidden`.
+///   - **Legacy client-push style** (emitted by the old `api::client::tree::create_nodes`):
+///     entries start at `{prefix}/{suffix}/{node,children}` with no `tree/nodes/` prefix.
+///     Prepended under `oxen_hidden/tree/nodes/`.
+///
+/// Returns the set of hashes parsed from the tarball.
+///
+/// Behaviour controls (to provide a backwards-compatible format that older clients & servers speak):
+/// - `overwrite_existing == true` overwrites entries whose destination already exists;
+///   matches `util::fs::unpack_async_tar_archive`'s download-path behaviour.
+/// - `overwrite_existing == false` skips them; matches
+///   `repositories::tree::unpack_nodes`'s upload-consumer behaviour.
+///
+/// Errors:
+/// - Entries that aren't regular files or directories return [`MerkleDbError::UnsupportedTarEntry`].
+/// - Entries whose path contains a `..` component return [`MerkleDbError::PathTraversal`].
+///
+/// Both checks mirror `util::fs::unpack_async_tar_archive`.
+fn extract_tar_under<R: Read>(
+    reader: R,
+    oxen_hidden: &Path,
+    overwrite_existing: bool,
+) -> Result<HashSet<MerkleHash>, MerkleDbError> {
+    let mut hashes: HashSet<MerkleHash> = HashSet::new();
+    let decoder = GzDecoder::new(reader);
+    let mut archive = Archive::new(decoder);
+    let entries = archive.entries().map_err(MerkleDbError::CannotReadMerkle)?;
+
+    let tree_nodes_prefix = Path::new(TREE_DIR).join(NODES_DIR);
+
+    for entry in entries {
+        let Ok(mut file) = entry else {
+            log::error!("Could not unpack file in merkle tar archive");
+            // TODO: raise this error to the caller instead!?
+            continue;
+        };
+        let path = file.path()?.into_owned();
+        // Path-traversal guard: refuse any entry whose path resolves above its container.
+        if path.components().any(|c| matches!(c, Component::ParentDir)) {
+            return Err(MerkleDbError::PathTraversal(path.display().to_string()));
+        }
+        // Entry-type validation: only regular files and directories are allowed.
+        let entry_type = file.header().entry_type();
+        if !entry_type.is_file() && !entry_type.is_dir() {
+            return Err(MerkleDbError::UnsupportedTarEntry {
+                path: path.display().to_string(),
+            });
+        }
+        // Server-style entries already contain `tree/nodes/...`; join directly.
+        // Legacy client-push entries begin at `{prefix}/{suffix}/...`; prepend `tree/nodes/`.
+        let dst_path = if path.starts_with(&tree_nodes_prefix) {
+            oxen_hidden.join(&path)
+        } else {
+            oxen_hidden.join(&tree_nodes_prefix).join(&path)
+        };
+        if let Some(parent) = dst_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if dst_path.exists() && !overwrite_existing {
+            log::info!("Node already exists at {dst_path:?}, skipping");
+            continue;
+        }
+        file.unpack(&dst_path)?;
+
+        // Extract the merkle hash from this entry's path, if it identifies one.
+        //
+        // After the path-resolution above, `dst_path` is of the form
+        // `<oxen_hidden>/tree/nodes/<rest>`. We classify entries by the SHAPE
+        // of `<rest>`, never by whether components happen to be hex. We assume that
+        // we have the hex-encoded hash as the `{prefix}/{suffix}` dirs.
+        if let Some(hash) = extract_hash_from_entry_path(&dst_path, oxen_hidden)? {
+            hashes.insert(hash);
+        } else {
+            log::warn!(
+                "Skipping non-merkle entry in tarball: {}",
+                dst_path.display()
+            );
+        }
+    }
+    Ok(hashes)
+}
+
+/// Inspect a fully-resolved tar entry destination path and, if it identifies a Merkle
+/// node, return that node's hash.
+///
+/// `dst_path` must be inside `<oxen_hidden>/tree/nodes/`. The path's segments after
+/// that prefix determine the entry kind:
+///
+/// | Segments after `tree/nodes/` | Entry kind | Result |
+/// |---|---|---|
+/// | 0 (the `tree/nodes` dir itself) | intermediate dir | `Ok(None)` |
+/// | 1 (the `{prefix}` dir) | intermediate dir | `Ok(None)` |
+/// | 2 (`{prefix}/{suffix}` dir) | hash-bearing dir | `Ok(Some(hash))` (hash parsed from `{prefix}{suffix}` as hex u128) |
+/// | 3 (`{prefix}/{suffix}/node` or `.../children`) | leaf file | `Ok(None)` (hash already produced from the parent dir entry) |
+///
+/// Anything else returns [`MerkleDbError::InvalidTarStructure`]. A `{prefix}/{suffix}`
+/// dir whose `{prefix}` & `{suffix}` don't hex-parse as a `u128` value returns a Err of
+/// [`MerkleDbError::InvalidNodeIdHex`]. Any non-UTF-8 path components in the tarball return
+/// an Err of [`MerkleDbError::InvalidTarStructure`]: the merkle layout should never produce
+/// a non-UTF-8 segment name.
+fn extract_hash_from_entry_path(
+    dst_path: &Path,
+    oxen_hidden: &Path,
+) -> Result<Option<MerkleHash>, MerkleDbError> {
+    let tree_nodes_prefix = Path::new(TREE_DIR).join(NODES_DIR);
+
+    // make a new InvalidTarStructure MerkleDbError instance
+    let invalid_structure = |reason: &str| MerkleDbError::InvalidTarStructure {
+        entry_path: dst_path.display().to_string(),
+        reason: reason.to_string(),
+    };
+
+    let rel = dst_path.strip_prefix(oxen_hidden).map_err(|_| {
+        invalid_structure("entry resolved outside of the repo's `.oxen/` directory")
+    })?;
+    let under_tree_nodes = rel
+        .strip_prefix(&tree_nodes_prefix)
+        .map_err(|_| invalid_structure("entry path is not under `tree/nodes/`"))?;
+
+    // Collect normal path components as `&str`. Reject non-UTF-8 components
+    // up front (they can't appear in a well-formed merkle tar archive).
+    let mut components: Vec<&str> = Vec::new();
+    for component in under_tree_nodes.components() {
+        let Component::Normal(segment) = component else {
+            return Err(invalid_structure(
+                "entry path contains a non-`Normal` component",
+            ));
+        };
+        let Some(s) = segment.to_str() else {
+            return Err(invalid_structure("entry path contains a non-UTF-8 segment"));
+        };
+        components.push(s);
+    }
+
+    match components.as_slice() {
+        // `tree/nodes` itself, or `tree/nodes/{prefix}` — intermediate dirs
+        // produced by `pack_all`. No hash to record.
+        [] | [_] => Ok(None),
+        // `tree/nodes/{prefix}/{suffix}` — the hash-bearing dir. Parse
+        // unconditionally; failure is a structured error.
+        [prefix, suffix] => {
+            let id = format!("{prefix}{suffix}");
+            let hash_value = u128::from_str_radix(&id, 16)
+                .map_err(|source| MerkleDbError::InvalidNodeIdHex { id, source })?;
+            Ok(Some(MerkleHash::new(hash_value)))
+        }
+        // `tree/nodes/{prefix}/{suffix}/{node|children}` — leaf files. The
+        // hash is recorded when the parent dir entry is processed.
+        [_, _, leaf] if *leaf == "node" || *leaf == "children" => Ok(None),
+        [_, _, other] => Err(invalid_structure(&format!(
+            "leaf file under `tree/nodes/{{prefix}}/{{suffix}}/` must be `node` or `children`, got `{other}`"
+        ))),
+        _ => Err(invalid_structure(
+            "entry has more components than `tree/nodes/{prefix}/{suffix}/[node|children]`",
+        )),
+    }
+}
+
+/// Merkle tree node packing implementation for the [`FileBackend`].
+///
+/// The trait surface returns `OxenError`; internal helpers use `MerkleDbError`
+/// and convert at the boundary.
+impl<'repo> MerklePacker for FileBackend<'repo> {
+    /// Pack the given node hashes into `out` as a tar-gz stream, using the layout
+    /// and compression level selected by `opts`. Hashes absent from the store are
+    /// silently skipped.
+    fn pack_nodes(
+        &self,
+        hashes: &HashSet<MerkleHash>,
+        opts: PackOptions,
+        out: &mut dyn Write,
+    ) -> Result<(), OxenError> {
+        write_hashes_tar(self.repo, hashes, opts, out, true).map_err(OxenError::from)
+    }
+
+    /// Pack every node the store holds into `out` as a tar-gz stream.
+    /// Always emits the server-canonical layout.
+    fn pack_all(&self, out: &mut dyn Write) -> Result<(), OxenError> {
+        write_all_tar(self.repo, out, true).map_err(OxenError::from)
+    }
+}
+
+/// Merkle tree node unpacking implementation for the [`FileBackend`].
+impl<'repo> MerkleUnpacker for FileBackend<'repo> {
+    /// Unpack a tar-gz wire stream into the store, applying `opts`'s existing-file policy.
+    ///
+    /// If the repository sits on a virtual filesystem ([`LocalRepository::is_vfs`] is true),
+    /// unpack into a tempdir first and `copy_dir_all` the result through the VFS. Some
+    /// VFS implementations don't tolerate tar's streaming many-small-files pattern, so the
+    /// staging hop is needed for correctness. Otherwise, unpack directly to `.oxen/`.
+    fn unpack(
+        &self,
+        reader: &mut dyn Read,
+        opts: UnpackOptions,
+    ) -> Result<HashSet<MerkleHash>, OxenError> {
+        let overwrite_existing = matches!(opts, UnpackOptions::Overwrite);
+        let oxen_hidden = self.repo.path.join(OXEN_HIDDEN_DIR);
+        if self.repo.is_vfs() {
+            let tmp = TempDir::new()?;
+            let hashes = extract_tar_under(reader, tmp.path(), overwrite_existing)
+                .map_err(OxenError::from)?;
+            util::fs::copy_dir_all(tmp.path(), &oxen_hidden)?;
+            Ok(hashes)
+        } else {
+            extract_tar_under(reader, &oxen_hidden, overwrite_existing).map_err(OxenError::from)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
