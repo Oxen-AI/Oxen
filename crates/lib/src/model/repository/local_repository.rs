@@ -592,24 +592,20 @@ impl LocalRepository {
             }
             Err(err) => return Err(OxenError::file_metadata_error(path, err)),
         };
-        self.is_modified_from_node_with_metadata(path, node, Ok(metadata))
+        self.is_modified_from_node_with_metadata(path, node, &metadata)
             .await
     }
 
-    /// Pre-fetched-metadata variant of [`Self::is_modified_from_node`].
+    /// Pre-fetched-metadata variant of [`Self::is_modified_from_node`]. Callers that
+    /// don't already have the metadata in hand should use the no-arg variant instead;
+    /// this one trusts that the metadata corresponds to `path` and is up-to-date.
     pub async fn is_modified_from_node_with_metadata(
         &self,
         path: &Path,
         node: &FileNode,
-        metadata: Result<std::fs::Metadata, OxenError>,
+        metadata: &std::fs::Metadata,
     ) -> Result<bool, OxenError> {
-        let Ok(metadata) = metadata else {
-            log::debug!(
-                "is_modified_from_node_with_metadata: missing or unreadable metadata for {path:?}, returning false"
-            );
-            return Ok(false);
-        };
-        let file_last_modified = filetime::FileTime::from_last_modification_time(&metadata);
+        let file_last_modified = filetime::FileTime::from_last_modification_time(metadata);
         let node_last_modified = util::fs::last_modified_time(
             node.last_modified_seconds(),
             node.last_modified_nanoseconds(),
@@ -617,7 +613,7 @@ impl LocalRepository {
         let mtime_matched = self
             .mtime_matches(file_last_modified, node_last_modified)
             .await;
-        util::fs::classify_modified_from_node_with_metadata(path, node, &metadata, mtime_matched)
+        util::fs::classify_modified_from_node_with_metadata(path, node, metadata, mtime_matched)
     }
 
     /// Override the mtime tolerance for this repo path in the per-process cache. Test-only

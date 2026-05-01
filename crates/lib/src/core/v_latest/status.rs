@@ -692,7 +692,7 @@ async fn walk_status(
                         current.untracked.all_untracked = false;
                         if let EMerkleTreeNode::File(file_node) = &node.node {
                             let is_modified = repo
-                                .is_modified_from_node_with_metadata(&path, file_node, Ok(metadata))
+                                .is_modified_from_node_with_metadata(&path, file_node, &metadata)
                                 .await?;
                             log::debug!("is_modified {is_modified} {relative_path:?}");
                             if is_modified {
@@ -708,7 +708,7 @@ async fn walk_status(
                         {
                             found_file = true;
                             if repo
-                                .is_modified_from_node_with_metadata(&path, file_node, Ok(metadata))
+                                .is_modified_from_node_with_metadata(&path, file_node, &metadata)
                                 .await?
                             {
                                 current.modified.insert(relative_path.clone());
