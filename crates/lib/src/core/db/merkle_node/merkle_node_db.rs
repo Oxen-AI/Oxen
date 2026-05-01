@@ -60,8 +60,7 @@ use crate::model::merkle_tree::node_type::InvalidMerkleTreeNodeType;
 use crate::util;
 
 use crate::model::merkle_tree::node::{
-    CommitNode, DirNode, EMerkleTreeNode, FileChunkNode, FileNode, MerkleTreeNode,
-    MerkleTreeNodeType, TMerkleTreeNode, VNode,
+    EMerkleTreeNode, MerkleTreeNode, MerkleTreeNodeType, TMerkleTreeNode,
 };
 
 const NODE_FILE: &str = "node";
@@ -249,17 +248,7 @@ impl MerkleNodeDB {
         dtype: MerkleTreeNodeType,
         data: &[u8],
     ) -> Result<EMerkleTreeNode, rmp_serde::decode::Error> {
-        match dtype {
-            MerkleTreeNodeType::Commit => {
-                Ok(EMerkleTreeNode::Commit(CommitNode::deserialize(data)?))
-            }
-            MerkleTreeNodeType::Dir => Ok(EMerkleTreeNode::Directory(DirNode::deserialize(data)?)),
-            MerkleTreeNodeType::File => Ok(EMerkleTreeNode::File(FileNode::deserialize(data)?)),
-            MerkleTreeNodeType::VNode => Ok(EMerkleTreeNode::VNode(VNode::deserialize(data)?)),
-            MerkleTreeNodeType::FileChunk => Ok(EMerkleTreeNode::FileChunk(
-                FileChunkNode::deserialize(data)?,
-            )),
-        }
+        EMerkleTreeNode::from_type_and_bytes(dtype, data)
     }
 
     pub(crate) fn exists(repo_path: &Path, hash: &MerkleHash) -> bool {
@@ -275,9 +264,9 @@ impl MerkleNodeDB {
         Self::open(path, true, *hash)
     }
 
-    pub(crate) fn open_read_write<N: TMerkleTreeNode>(
+    pub(crate) fn open_read_write(
         repo_path: &Path,
-        node: &N,
+        node: &dyn TMerkleTreeNode,
         parent_id: Option<MerkleHash>,
     ) -> Result<Self, MerkleDbError> {
         let path = node_db_path(repo_path, &node.hash());
@@ -369,9 +358,9 @@ impl MerkleNodeDB {
 
     /// Write the base node info.
     /// WARNING: Sets the internal dtype, node_id, parent_id of `self` to the values from `node`.
-    fn write_node<N: TMerkleTreeNode>(
+    fn write_node(
         &mut self,
-        node: &N,
+        node: &dyn TMerkleTreeNode,
         parent_id: Option<MerkleHash>,
     ) -> Result<(), MerkleDbError> {
         if self.read_only {
@@ -417,7 +406,7 @@ impl MerkleNodeDB {
         Ok(())
     }
 
-    pub(crate) fn add_child<N: TMerkleTreeNode>(&mut self, item: &N) -> Result<(), MerkleDbError> {
+    pub(crate) fn add_child(&mut self, item: &dyn TMerkleTreeNode) -> Result<(), MerkleDbError> {
         if self.read_only {
             return Err(MerkleDbError::ReadOnly);
         }
