@@ -441,8 +441,12 @@ pub enum OxenError {
     RmpDecodeError(#[from] rmp_serde::decode::Error),
 
     /// Wraps any error that we get from joining tasks.
-    #[error("{0}")]
-    JoinError(#[from] JoinError),
+    #[error("{context}{cause}")]
+    JoinError {
+        context: String,
+        #[source]
+        cause: JoinError,
+    },
 
     /// A synchronization primitive (Mutex/RwLock) was found poisoned because a thread panicked
     /// while holding it. Indicates a bug; should not occur in normal operation.
@@ -1022,6 +1026,15 @@ impl OxenError {
             parent.as_ref(),
             name.as_ref()
         ))
+    }
+}
+
+impl From<JoinError> for OxenError {
+    fn from(error: JoinError) -> Self {
+        OxenError::JoinError {
+            context: "".to_string(),
+            cause: error,
+        }
     }
 }
 

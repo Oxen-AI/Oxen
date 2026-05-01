@@ -5,11 +5,13 @@ use liboxen::core::node_sync_status;
 use liboxen::error::OxenError;
 use liboxen::model::Commit;
 use liboxen::model::LocalRepository;
+use liboxen::model::merkle_tree::PackOptions;
 use liboxen::view::MerkleHashesResponse;
 use liboxen::view::StatusMessage;
 use liboxen::view::tree::MerkleHashResponse;
 use liboxen::view::tree::merkle_hashes::MerkleHashes;
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use liboxen::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
@@ -269,7 +271,16 @@ pub async fn download_tree_nodes(
         )?
     };
 
-    let buffer = repositories::tree::compress_nodes(&repository, &node_hashes)?;
+    let buffer = {
+        let mut buffer = Vec::new();
+        repository.merkle_store().pack_nodes(
+            &node_hashes,
+            PackOptions::ServerCanonical,
+            &mut buffer,
+        )?;
+        buffer
+    };
+
     let total_size: u64 = u64::try_from(buffer.len()).unwrap_or(u64::MAX);
     log::debug!(
         "Compressed {} commits size is {}",
@@ -317,7 +328,15 @@ pub async fn download_node(req: HttpRequest) -> actix_web::Result<HttpResponse, 
     let hash = hash_str.parse()?;
     let repository = get_repo(&app_data.path, namespace, name)?;
 
-    let buffer = repositories::tree::compress_node(&repository, &hash)?;
+    let buffer = {
+        let mut buffer = Vec::new();
+        repository.merkle_store().pack_nodes(
+            &HashSet::from_iter([hash]),
+            PackOptions::ServerCanonical,
+            &mut buffer,
+        )?;
+        buffer
+    };
 
     Ok(HttpResponse::Ok().body(buffer))
 }
