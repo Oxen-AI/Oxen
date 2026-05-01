@@ -720,7 +720,7 @@ pub async fn determine_file_status(
 
         previous_oxen_metadata = file_node.metadata();
         if repo
-            .is_modified_from_node_with_metadata(data_path, file_node, Ok(metadata))
+            .is_modified_from_node_with_metadata(data_path, file_node, &metadata)
             .await?
         {
             (
