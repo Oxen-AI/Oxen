@@ -536,10 +536,6 @@ pub fn list_for_commit(
         .collect())
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("update_metadata failed: {0}")]
-pub struct UpdateError(String);
-
 pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<(), OxenError> {
     let commit = repositories::revisions::get(repo, revision.as_ref())?
         .ok_or_else(|| OxenError::RevisionNotFound(revision.as_ref().to_string().into()))?;
