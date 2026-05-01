@@ -17,7 +17,6 @@ use crate::constants::ORIG_HEAD_FILE;
 use crate::constants::{HEAD_FILE, STAGED_DIR};
 use crate::core::db;
 use crate::core::db::key_val::str_val_db;
-use crate::core::db::merkle_node::MerkleNodeDB;
 use crate::core::refs::with_ref_manager;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_latest::status;
@@ -27,6 +26,7 @@ use crate::model::MerkleTreeNodeType;
 use crate::model::NewCommit;
 use crate::model::NewCommitBody;
 use crate::model::User;
+use crate::model::merkle_tree::merkle_writer::{MerkleWriteSession, NodeWriteSession};
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::StagedMerkleTreeNode;
 use crate::model::merkle_tree::node::VNode;
@@ -287,15 +287,20 @@ pub fn commit_dir_entries_with_parents(
         }
     }
 
-    let mut commit_db = MerkleNodeDB::open_read_write(&repo.path, &node, parent_id)?;
+    let store = repo.merkle_store();
+    let session = store.begin()?;
+    let mut commit_ns = session.create_node(&node, parent_id)?;
     write_commit_entries(
         repo,
         commit_id,
-        &mut commit_db,
+        &*session,
+        &mut *commit_ns,
         &dir_hash_db,
         &dir_hashes,
         &vnode_entries,
     )?;
+    commit_ns.finish()?;
+    session.finish()?;
     commit_progress_bar.finish_and_clear();
 
     Ok(node.to_commit())
@@ -382,17 +387,22 @@ pub fn commit_dir_entries_new(
         }
     }
 
-    let mut commit_db = MerkleNodeDB::open_read_write(&repo.path, &node, parent_id)?;
+    let store = repo.merkle_store();
+    let session = store.begin()?;
+    let mut commit_ns = session.create_node(&node, parent_id)?;
 
     write_commit_entries(
         repo,
         commit_id,
-        &mut commit_db,
+        &*session,
+        &mut *commit_ns,
         &dir_hash_db,
         &dir_hashes,
         &vnode_entries,
     )?;
 
+    commit_ns.finish()?;
+    session.finish()?;
     commit_progress_bar.finish_and_clear();
 
     // Remove all the directories that are staged for removal
@@ -496,15 +506,20 @@ pub fn commit_dir_entries(
         }
     }
 
-    let mut commit_db = MerkleNodeDB::open_read_write(&repo.path, &node, None)?;
+    let store = repo.merkle_store();
+    let session = store.begin()?;
+    let mut commit_ns = session.create_node(&node, None)?;
     write_commit_entries(
         repo,
         commit_id,
-        &mut commit_db,
+        &*session,
+        &mut *commit_ns,
         &dir_hash_db,
         &dir_hashes,
         &vnode_entries,
     )?;
+    commit_ns.finish()?;
+    session.finish()?;
     commit_progress_bar.finish_and_clear();
 
     // Remove all the directories that are staged for removal
@@ -782,10 +797,12 @@ pub fn compute_commit_id(new_commit: &NewCommit) -> Result<MerkleHash, OxenError
     Ok(MerkleHash::new(hasher.digest128()))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_commit_entries(
     repo: &LocalRepository,
     commit_id: MerkleHash,
-    commit_db: &mut MerkleNodeDB,
+    session: &dyn MerkleWriteSession,
+    commit_ns: &mut dyn NodeWriteSession,
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
@@ -794,7 +811,7 @@ fn write_commit_entries(
     let mut total_written = 0;
     let root_path = PathBuf::from("");
     let dir_node = compute_dir_node(repo, commit_id, entries, dir_hashes, &root_path)?;
-    commit_db.add_child(&dir_node)?;
+    commit_ns.add_child(&dir_node)?;
     total_written += 1;
 
     str_val_db::put(
@@ -802,17 +819,19 @@ fn write_commit_entries(
         root_path.to_str().unwrap(),
         &dir_node.hash().to_string(),
     )?;
-    let dir_db = MerkleNodeDB::open_read_write(&repo.path, &dir_node, Some(commit_id))?;
+    let mut dir_ns = session.create_node(&dir_node, Some(commit_id))?;
     r_create_dir_node(
         repo,
+        session,
         commit_id,
-        &mut Some(dir_db),
+        Some(&mut *dir_ns),
         dir_hash_db,
         dir_hashes,
         entries,
         root_path,
         &mut total_written,
     )?;
+    dir_ns.finish()?;
 
     // The dir_hash_db was pre-populated from the previous commit, so
     // removed directories still have stale entries that must be deleted;
@@ -847,8 +866,9 @@ fn cache_invalidate_dir_hash_db<'a>(
 #[allow(clippy::too_many_arguments)]
 fn r_create_dir_node(
     repo: &LocalRepository,
+    session: &dyn MerkleWriteSession,
     commit_id: MerkleHash,
-    maybe_dir_db: &mut Option<MerkleNodeDB>,
+    mut maybe_parent_ns: Option<&mut dyn NodeWriteSession>,
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
@@ -872,75 +892,62 @@ fn r_create_dir_node(
             num_entries: vnode.entries.len() as u64,
         };
         let vnode_obj = VNode::new(repo, opts)?;
-        if let Some(dir_db) = maybe_dir_db {
-            dir_db.add_child(&vnode_obj)?;
+        // Capture the parent's hash before we reborrow `maybe_parent_ns` mutably.
+        let parent_id_for_vnode = maybe_parent_ns.as_deref().map(|ns| *ns.node_id());
+        if let Some(parent_ns) = maybe_parent_ns.as_deref_mut() {
+            parent_ns.add_child(&vnode_obj)?;
             *total_written += 1;
         }
 
-        // log::debug!(
-        //     "Processing vnode {} with {} entries",
-        //     vnode.id,
-        //     vnode.entries.len()
-        // );
+        log::debug!(
+            "Processing vnode {} with {} entries",
+            vnode.id,
+            vnode.entries.len()
+        );
 
-        let mut vnode_db = MerkleNodeDB::open_read_write(
-            &repo.path,
-            &vnode_obj,
-            maybe_dir_db.as_ref().map(|db| db.node_id),
-        )?;
+        let mut vnode_ns = session.create_node(&vnode_obj, parent_id_for_vnode)?;
         for entry in vnode.entries.iter() {
-            // log::debug!("Processing entry {} in vnode {}", entry.node, vnode.id);
+            log::trace!("Processing entry {} in vnode {}", entry.node, vnode.id);
             match &entry.node.node {
                 EMerkleTreeNode::Directory(node) => {
                     // If the dir has updates, we need a new dir db
                     let dir_path = entry.node.maybe_path()?;
-                    // log::debug!("Processing dir node {:?}", dir_path);
                     let dir_node = if entries.contains_key(&dir_path) {
                         let dir_node =
                             compute_dir_node(repo, commit_id, entries, dir_hashes, &dir_path)?;
 
-                        // if let Some(vnode_db) = &mut maybe_vnode_db {
-                        vnode_db.add_child(&dir_node)?;
+                        vnode_ns.add_child(&dir_node)?;
                         *total_written += 1;
-                        // }
 
-                        // if the vnode is new, we need a new dir db
-                        // let mut child_db = if maybe_vnode_db.is_some() {
-                        let mut child_db = Some(MerkleNodeDB::open_read_write(
-                            &repo.path,
-                            &dir_node,
-                            Some(vnode.id),
-                        )?);
-
+                        let mut child_ns = session.create_node(&dir_node, Some(vnode.id))?;
                         r_create_dir_node(
                             repo,
+                            session,
                             commit_id,
-                            &mut child_db,
+                            Some(&mut *child_ns),
                             dir_hash_db,
                             dir_hashes,
                             entries,
                             &dir_path,
                             total_written,
                         )?;
+                        child_ns.finish()?;
+
                         dir_node
                     } else {
-                        // log::debug!("r_create_dir_node skipping {:?}", dir_path);
                         // Look up the old dir node and reference it
                         let Some(old_dir_node) =
                             CommitMerkleTree::read_node(repo, node.hash(), false)?
                         else {
-                            // log::debug!(
-                            //     "r_create_dir_node could not read old dir node {:?}",
-                            //     node.hash
-                            // );
+                            log::trace!(
+                                "r_create_dir_node could not read old dir node {}",
+                                node.hash().to_hex_hash(),
+                            );
                             continue;
                         };
                         let dir_node = old_dir_node.dir()?;
-
-                        // if let Some(vnode_db) = &mut maybe_vnode_db {
-                        vnode_db.add_child(&dir_node)?;
+                        vnode_ns.add_child(&dir_node)?;
                         *total_written += 1;
-                        // }
                         dir_node
                     };
 
@@ -955,12 +962,12 @@ fn r_create_dir_node(
                     let file_path = PathBuf::from(&file_node.name());
                     let file_name = file_path.file_name().unwrap().to_str().unwrap();
 
-                    // log::debug!(
-                    //     "Processing file {:?} in vnode {} in commit {}",
-                    //     path,
-                    //     vnode.id,
-                    //     commit_id
-                    // );
+                    log::trace!(
+                        "Processing file {:?} in vnode {} in commit {}",
+                        path,
+                        vnode.id,
+                        commit_id.to_hex_hash(),
+                    );
 
                     // Just single file chunk for now
                     let chunks = vec![file_node.hash().to_u128()];
@@ -973,9 +980,8 @@ fn r_create_dir_node(
                     file_node.set_last_commit_id(&last_commit_id);
                     file_node.set_name(file_name);
 
-                    vnode_db.add_child(&file_node)?;
+                    vnode_ns.add_child(&file_node)?;
                     *total_written += 1;
-                    // }
                 }
                 _ => {
                     return Err(OxenError::basic_str(format!(
@@ -985,6 +991,7 @@ fn r_create_dir_node(
                 }
             }
         }
+        vnode_ns.finish()?;
     }
 
     log::debug!("Finished processing dir {path:?} total written {total_written} entries");

@@ -87,7 +87,8 @@ pub struct StorageConfig {
 
 /// Trait defining operations for version file storage backends
 #[async_trait]
-pub trait VersionStore: Debug + Send + Sync + 'static {
+pub trait VersionStore: Debug + Send + Sync {
+    // + 'static {
     /// Initialize the storage backend
     async fn init(&self) -> Result<(), OxenError>;
 

@@ -106,7 +106,7 @@ pub struct FileWriteSession<'repo> {
 /// not return a wrapped `MerkleDbError`.
 impl<'repo> MerkleWriteSession for FileWriteSession<'repo> {
     /// Creates a new session for writing a `node` and `children` file.
-    /// Calls [`MerkleNodeDB::open_read_write`] internally.
+    /// Returns a [`FileNodeSession`] that calls [`MerkleNodeDB::open_read_write`] internally.
     fn create_node<'a>(
         &'a self,
         node: &dyn TMerkleTreeNode,

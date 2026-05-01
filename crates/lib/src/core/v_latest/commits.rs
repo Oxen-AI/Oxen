@@ -21,7 +21,6 @@ use std::str;
 
 use crate::constants::COMMIT_COUNT_DIR;
 use crate::core::db::key_val::{opts, str_val_db};
-use crate::core::db::merkle_node::MerkleNodeDB;
 use crate::core::v_latest::index::CommitMerkleTree;
 use rocksdb::{DBWithThreadMode, MultiThreaded, SingleThreaded};
 
@@ -283,10 +282,14 @@ pub fn create_empty_commit(
     )?;
 
     let parent_id = Some(existing_node.hash);
-    let mut commit_db = MerkleNodeDB::open_read_write(&repo.path, &commit_node, parent_id)?;
+    let store = repo.merkle_store();
+    let session = store.begin()?;
+    let mut commit_ns = session.create_node(&commit_node, parent_id)?;
     // There should always be one child, the root directory
     let dir_node = existing_node.children.first().unwrap().dir()?;
-    commit_db.add_child(&dir_node)?;
+    commit_ns.add_child(&dir_node)?;
+    commit_ns.finish()?;
+    session.finish()?;
 
     // Copy the dir hashes db to the new commit
     repositories::tree::cp_dir_hashes_to(repo, &existing_commit_id, commit_node.hash())?;
@@ -362,9 +365,13 @@ pub fn create_initial_commit(
         },
     )?;
 
-    // Open the commit database and add the root directory
-    let mut commit_db = MerkleNodeDB::open_read_write(&repo.path, &commit_node, None)?;
-    commit_db.add_child(&dir_node)?;
+    // Open the commit write session and add the root directory
+    let store = repo.merkle_store();
+    let session = store.begin()?;
+    let mut commit_ns = session.create_node(&commit_node, None)?;
+    commit_ns.add_child(&dir_node)?;
+    commit_ns.finish()?;
+    session.finish()?;
 
     // Initialize the dir_hash_db with the root directory hash
     let commit_id_string = commit_id.to_string();
