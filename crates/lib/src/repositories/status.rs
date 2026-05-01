@@ -695,6 +695,34 @@ mod tests {
         .await
     }
 
+    // Regression test: passing a deleted, tracked single-file path in opts.paths
+    // should classify it as removed. The dir-based tree-side check in walk_status
+    // only fires for directories in dir_hashes, so a missing file path was being
+    // silently dropped.
+    #[tokio::test]
+    async fn test_status_remove_file_with_explicit_file_path() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            let repo_path = &repo.path;
+            let target_file = repo_path
+                .join("annotations")
+                .join("train")
+                .join("one_shot.csv");
+
+            util::fs::remove_file(&target_file)?;
+
+            let opts = StagedDataOpts::from_paths(std::slice::from_ref(&target_file));
+            let status = repositories::status::status_from_opts(&repo, &opts)?;
+            status.print();
+
+            let relative_path = util::fs::path_relative_to_dir(&target_file, repo_path)?;
+            assert_eq!(status.removed_files.len(), 1);
+            assert!(status.removed_files.contains(&relative_path));
+
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_status_modify_file_in_subdirectory() -> Result<(), OxenError> {
         test::run_training_data_repo_test_fully_committed_async(|repo| async move {

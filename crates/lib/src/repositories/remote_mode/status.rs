@@ -86,7 +86,7 @@ mod tests {
     use crate::model::staged_data::StagedDataOpts;
     use crate::opts::clone_opts::CloneOpts;
 
-    use crate::{api, repositories, test};
+    use crate::{api, repositories, test, util};
 
     // For reference, the fully synced repo structure is as follows:
     // nlp/
@@ -293,6 +293,92 @@ mod tests {
                 assert_eq!(status.unsynced_files.len(), 6);
                 assert_eq!(status.staged_files.len(), 3);
                 assert_eq!(status.modified_files.len(), 0);
+
+                Ok(())
+            })
+            .await?;
+
+            Ok(remote_repo_copy)
+        })
+        .await
+    }
+
+    // Regression test for the missing-on-disk classification gate. A file that's tracked
+    // in the merkle tree, server-staged with status Added/Modified, and then removed
+    // from local disk should still surface as unsynced — only `Removed`-status entries
+    // should suppress the unsynced classification. Earlier the gate used a plain
+    // `contains_key` check on the staged-files map, which over-suppressed.
+    #[tokio::test]
+    async fn test_remote_mode_status_unsynced_when_modified_stage_missing_on_disk()
+    -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+
+            test::run_empty_dir_test_async(|dir| async move {
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                opts.is_remote = true;
+                let cloned_repo = repositories::clone(&opts).await?;
+
+                let repo_path = cloned_repo.path.clone();
+                let directory = ".".to_string();
+                let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
+                let status_opts =
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&repo_path));
+
+                // Restore a single file from HEAD so it lives on disk and in the tree.
+                let target_path = PathBuf::from("annotations")
+                    .join("train")
+                    .join("two_shot.csv");
+                let head_commit = repositories::commits::head_commit(&cloned_repo)?;
+                repositories::remote_mode::restore(
+                    &cloned_repo,
+                    std::slice::from_ref(&target_path),
+                    &head_commit.id,
+                )
+                .await?;
+
+                // Modify locally and stage on the server (Modified).
+                test::modify_txt_file(cloned_repo.path.join(&target_path), "new contents")?;
+                api::client::workspaces::files::add(
+                    &remote_repo,
+                    &workspace_identifier,
+                    &directory,
+                    vec![target_path.clone()],
+                    &Some(cloned_repo.clone()),
+                )
+                .await?;
+
+                // Sanity: file is server-staged and not unsynced while it's still on disk.
+                let status = repositories::remote_mode::status(
+                    &cloned_repo,
+                    &remote_repo,
+                    &workspace_identifier,
+                    &directory,
+                    &status_opts,
+                )
+                .await?;
+                assert!(status.staged_files.contains_key(&target_path));
+                assert!(!status.unsynced_files.contains(&target_path));
+
+                // Delete the local copy without going through `oxen rm` — the staged
+                // entry is still Modified on the server.
+                util::fs::remove_file(cloned_repo.path.join(&target_path))?;
+
+                let status = repositories::remote_mode::status(
+                    &cloned_repo,
+                    &remote_repo,
+                    &workspace_identifier,
+                    &directory,
+                    &status_opts,
+                )
+                .await?;
+                status.print();
+
+                // The server-side stage is still present, AND the missing-on-disk file
+                // now surfaces as unsynced because its staged status is Modified, not
+                // Removed.
+                assert!(status.staged_files.contains_key(&target_path));
+                assert!(status.unsynced_files.contains(&target_path));
 
                 Ok(())
             })
