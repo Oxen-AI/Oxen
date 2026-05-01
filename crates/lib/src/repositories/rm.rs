@@ -13,7 +13,7 @@ use crate::{core, util};
 use std::path::PathBuf;
 
 /// Removes the path from the index
-pub fn rm(repo: &LocalRepository, opts: &RmOpts) -> Result<(), OxenError> {
+pub async fn rm(repo: &LocalRepository, opts: &RmOpts) -> Result<(), OxenError> {
     log::debug!("Rm with opts: {opts:?}");
 
     let path = &opts.path;
@@ -26,19 +26,23 @@ pub fn rm(repo: &LocalRepository, opts: &RmOpts) -> Result<(), OxenError> {
         walk_dirs: false,
     };
 
-    let expanded_paths = util::glob::parse_glob_paths(&glob_opts, Some(repo))?;
+    let expanded_paths = util::glob::parse_glob_paths(&glob_opts, Some(repo)).await?;
 
-    p_rm(&expanded_paths, repo, opts)?;
+    p_rm(&expanded_paths, repo, opts).await?;
 
     Ok(())
 }
 
-fn p_rm(paths: &HashSet<PathBuf>, repo: &LocalRepository, opts: &RmOpts) -> Result<(), OxenError> {
+async fn p_rm(
+    paths: &HashSet<PathBuf>,
+    repo: &LocalRepository,
+    opts: &RmOpts,
+) -> Result<(), OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {
             log::debug!("Version found: V0_19_0");
-            core::v_latest::rm::rm(paths, repo, opts)?;
+            core::v_latest::rm::rm(paths, repo, opts).await?;
         }
     }
     Ok(())
@@ -82,10 +86,10 @@ mod tests {
                 recursive: true,
                 staged: false,
             };
-            repositories::rm(&repo, &opts)?;
+            repositories::rm(&repo, &opts).await?;
 
             // Make sure we staged these removals
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             assert_eq!(num_files, status.staged_files.len());
             for (path, entry) in status.staged_files.iter() {
@@ -102,7 +106,7 @@ mod tests {
             repositories::restore::restore(&repo, opts).await?;
 
             // This should have removed all the staged files, but not restored from disk yet.
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             assert_eq!(0, status.staged_files.len());
             // One removed dir (rolled up)
@@ -112,7 +116,7 @@ mod tests {
             let opts = RestoreOpts::from_path(&rm_dir);
             repositories::restore::restore(&repo, opts).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             let num_restored = util::fs::rcount_files_in_dir(&full_path);
@@ -247,7 +251,7 @@ mod tests {
                     ..Default::default()
                 };
 
-                repositories::rm(&cloned_repo, &rm_opts)?;
+                repositories::rm(&cloned_repo, &rm_opts).await?;
                 repositories::commit(&cloned_repo, "Removing phi-4")?;
 
                 // Push it to the remote
@@ -301,7 +305,7 @@ mod tests {
                 recursive: true,
                 ..Default::default()
             };
-            repositories::rm(&repo, &rm_opts)?;
+            repositories::rm(&repo, &rm_opts).await?;
             let commit = repositories::commit(&repo, "Removing cat images")?;
 
             for i in 1..=3 {
@@ -395,7 +399,7 @@ mod tests {
 
             repositories::add(&repo, &images_dir).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             assert_eq!(status.staged_dirs.len(), 7);
@@ -416,7 +420,7 @@ mod tests {
                 ..Default::default()
             };
 
-            repositories::rm(&repo, &rm_opts)?;
+            repositories::rm(&repo, &rm_opts).await?;
             let commit = repositories::commit(&repo, "Removing cat images and sub_directories")?;
 
             // None of these files should exist after rm -r
@@ -520,7 +524,7 @@ mod tests {
             let repo_filepath = PathBuf::from("images").join("dog_1.jpg");
 
             let rm_opts = RmOpts::from_path(repo_filepath);
-            repositories::rm(&repo, &rm_opts)?;
+            repositories::rm(&repo, &rm_opts).await?;
             let _commit = repositories::commit(&repo, "Removing dog")?;
 
             // Add dwight howard and vince carter
@@ -557,7 +561,7 @@ mod tests {
             let repo_dir = repo.path.join(dir);
             repositories::add(&repo, repo_dir).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Should add all the sub dirs
@@ -576,7 +580,7 @@ mod tests {
             let repo_nlp_dir = repo.path.join(dir);
             std::fs::remove_dir_all(repo_nlp_dir)?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
 
             // status.removed_files currently is files and dirs,
             // we roll up the dirs into the parent dir, so len should be 1
@@ -590,7 +594,7 @@ mod tests {
             repositories::add(&repo, "nlp/*").await?;
             status.print();
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // There is one rolled up dir
@@ -638,7 +642,7 @@ mod tests {
             std::fs::remove_file(repo.path.join("images").join("cat_2.jpg"))?;
             std::fs::remove_file(repo.path.join("images").join("dog_1.jpg"))?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             assert_eq!(status.removed_files.len(), 3);
             assert_eq!(status.staged_files.len(), 0);
@@ -649,9 +653,9 @@ mod tests {
                 ..Default::default()
             };
 
-            repositories::rm(&repo, &rm_opts)?;
+            repositories::rm(&repo, &rm_opts).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             // Should now have 7 staged for removal
             assert_eq!(status.staged_files.len(), 7);
@@ -664,8 +668,8 @@ mod tests {
                 ..Default::default()
             };
 
-            repositories::rm(&repo, &rm_opts)?;
-            let status = repositories::status(&repo)?;
+            repositories::rm(&repo, &rm_opts).await?;
+            let status = repositories::status(&repo).await?;
             log::debug!("status: {status:?}");
             status.print();
 
@@ -690,7 +694,7 @@ mod tests {
 
             // Remove the file and commit
             let opts = RmOpts::from_path(&path);
-            repositories::rm(&repo, &opts)?;
+            repositories::rm(&repo, &opts).await?;
             repositories::commit(&repo, "commit_message")?;
 
             // Add the file again. This should err, but not panic
@@ -709,13 +713,13 @@ mod tests {
             let path = Path::new("README.md");
             repositories::add(&repo, repo.path.join(path)).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_files.len(), 1);
             assert!(status.staged_files.contains_key(path));
             let opts = RmOpts::from_staged_path(path);
-            repositories::rm(&repo, &opts)?;
+            repositories::rm(&repo, &opts).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             log::debug!("status: {status:?}");
             assert_eq!(status.staged_files.len(), 0);
 
@@ -731,7 +735,7 @@ mod tests {
             let path = Path::new("train");
             repositories::add(&repo, repo.path.join(path)).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             // 2: train
             assert_eq!(status.staged_dirs.len(), 1);
@@ -741,7 +745,7 @@ mod tests {
                 staged: true,
                 recursive: false, // This should be an error
             };
-            let result = repositories::rm(&repo, &opts);
+            let result = repositories::rm(&repo, &opts).await;
             assert!(result.is_err());
 
             Ok(())
@@ -756,7 +760,7 @@ mod tests {
             let path = Path::new("annotations").join("train");
             repositories::add(&repo, repo.path.join(&path)).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             // 1: annotations/train
             assert_eq!(status.staged_dirs.len(), 1);
@@ -766,9 +770,9 @@ mod tests {
                 staged: true,
                 recursive: true, // make sure to pass in recursive
             };
-            repositories::rm(&repo, &opts)?;
+            repositories::rm(&repo, &opts).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             assert_eq!(status.staged_dirs.len(), 0);
@@ -786,7 +790,7 @@ mod tests {
             let path = Path::new("train");
             repositories::add(&repo, repo.path.join(path)).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             // 1: train
             assert_eq!(status.staged_dirs.len(), 1);
@@ -796,9 +800,9 @@ mod tests {
                 staged: true,
                 recursive: true, // make sure to pass in recursive
             };
-            repositories::rm(&repo, &opts)?;
+            repositories::rm(&repo, &opts).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             assert_eq!(status.staged_dirs.len(), 0);
@@ -816,7 +820,7 @@ mod tests {
             let path = Path::new("train/");
             repositories::add(&repo, repo.path.join(path)).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             // 1: train dir
             assert_eq!(status.staged_dirs.len(), 1);
 
@@ -825,10 +829,10 @@ mod tests {
                 staged: true,
                 recursive: true, // make sure to pass in recursive
             };
-            let result = repositories::rm(&repo, &opts);
+            let result = repositories::rm(&repo, &opts).await;
             assert!(result.is_ok());
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             assert_eq!(status.staged_dirs.len(), 0);
@@ -846,9 +850,9 @@ mod tests {
             let path = Path::new("README.md");
 
             let opts = RmOpts::from_path(path);
-            repositories::rm(&repo, &opts)?;
+            repositories::rm(&repo, &opts).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             assert_eq!(status.staged_files.len(), 1);
@@ -874,7 +878,7 @@ mod tests {
                 recursive: false, // This should be an error
             };
 
-            let result = repositories::rm(&repo, &opts);
+            let result = repositories::rm(&repo, &opts).await;
             assert!(result.is_err());
 
             Ok(())
@@ -894,7 +898,7 @@ mod tests {
                 recursive: true, // Need to specify recursive
             };
 
-            let result = repositories::rm(&repo, &opts);
+            let result = repositories::rm(&repo, &opts).await;
             assert!(result.is_err());
 
             Ok(())
@@ -930,7 +934,7 @@ mod tests {
             )?;
 
             // There should be one modified file
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             assert_eq!(
                 status.modified_files.len(),
@@ -939,7 +943,7 @@ mod tests {
                 status.modified_files
             );
 
-            let result = repositories::rm(&repo, &opts);
+            let result = repositories::rm(&repo, &opts).await;
             assert!(result.is_err(), "{result:?}");
 
             Ok(())
@@ -960,9 +964,9 @@ mod tests {
                 staged: false,
                 recursive: true, // Must pass in recursive = true
             };
-            repositories::rm(&repo, &opts)?;
+            repositories::rm(&repo, &opts).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             assert_eq!(status.staged_files.len(), og_num_files);
@@ -995,9 +999,9 @@ mod tests {
                 staged: false,
                 recursive: true, // Must pass in recursive = true
             };
-            repositories::rm(&repo, &opts)?;
+            repositories::rm(&repo, &opts).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             assert_eq!(status.staged_files.len(), og_num_files);
@@ -1022,9 +1026,9 @@ mod tests {
                 staged: false,
                 recursive: true, // Must pass in recursive = true
             };
-            repositories::rm(&repo, &opts)?;
+            repositories::rm(&repo, &opts).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             assert_eq!(status.staged_files.len(), og_num_files);
@@ -1066,7 +1070,7 @@ mod tests {
                 staged: false,
                 recursive: true,
             };
-            repositories::rm(&repo, &opts)?;
+            repositories::rm(&repo, &opts).await?;
 
             // Verify that .oxen directory still exists after rm operation
             assert!(
@@ -1075,7 +1079,7 @@ mod tests {
             );
 
             // Verify that the test files were staged for removal
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Should have staged the test files for removal but not .oxen
@@ -1104,7 +1108,7 @@ mod tests {
                 staged: false,
                 recursive: true,
             };
-            let err = repositories::rm(&repo, &direct_oxen_opts);
+            let err = repositories::rm(&repo, &direct_oxen_opts).await;
 
             assert!(err.is_err());
 
@@ -1132,9 +1136,9 @@ mod tests {
                 path: PathBuf::from("annotations/test/*"),
                 ..Default::default()
             };
-            repositories::rm(&repo, &rm_opts)?;
+            repositories::rm(&repo, &rm_opts).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
 
             assert_eq!(status.staged_files.len(), 1);
             assert_eq!(
@@ -1179,10 +1183,10 @@ mod tests {
                 recursive: true,
                 staged: false,
             };
-            repositories::rm(&repo, &rm_opts)?;
+            repositories::rm(&repo, &rm_opts).await?;
 
             // Should have staged the file for removal
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             let has_staged_removal = status
                 .staged_files
                 .iter()
@@ -1193,7 +1197,7 @@ mod tests {
             repositories::commit(&repo, "remove dir")?;
 
             // Status should be clean — no removed files
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert!(
                 status.removed_files.is_empty(),
                 "status should be clean after committing removal, but got removed_files: {:?}",
@@ -1253,7 +1257,7 @@ mod tests {
             repositories::add(&repo, &repo.path).await?;
 
             // Should have staged the file for removal
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             let has_staged_removal = status
                 .staged_files
                 .iter()
@@ -1267,7 +1271,7 @@ mod tests {
             repositories::commit(&repo, "remove dir")?;
 
             // Status should be clean
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert!(
                 status.removed_files.is_empty(),
                 "status should be clean after committing removal, but got removed_files: {:?}",
@@ -1329,7 +1333,7 @@ mod tests {
             repositories::add(&repo, &repo.path).await?;
 
             // Should have staged the file for removal
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             let has_staged_removal = status
                 .staged_files
                 .iter()
@@ -1343,7 +1347,7 @@ mod tests {
             repositories::commit(&repo, "remove file")?;
 
             // Status should be clean
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert!(
                 status.removed_files.is_empty(),
                 "status should be clean after committing removal, but got removed_files: {:?}",

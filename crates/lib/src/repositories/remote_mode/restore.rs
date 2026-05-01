@@ -22,7 +22,7 @@ pub async fn restore(
         walk_dirs: false,
     };
 
-    let expanded_paths = util::glob::parse_glob_paths(&glob_opts, Some(repo))?;
+    let expanded_paths = util::glob::parse_glob_paths(&glob_opts, Some(repo)).await?;
 
     for entry_path in expanded_paths.iter().collect::<Vec<&PathBuf>>() {
         let relative_path = util::fs::path_relative_to_dir(entry_path, &repo_path)?;

@@ -214,7 +214,7 @@ mod tests {
     async fn test_stage_and_commit_schema() -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Make sure no schemas are staged
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_schemas.len(), 0);
 
             // Schema should be staged when added
@@ -225,7 +225,7 @@ mod tests {
             repositories::add(&repo, bbox_file).await?;
 
             // Make sure it is staged
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_schemas.len(), 1);
             for (path, schema) in status.staged_schemas.iter() {
                 println!("GOT SCHEMA {path:?} -> {schema:?}");
@@ -235,7 +235,7 @@ mod tests {
             let commit = repositories::commit(&repo, "Adding bounding box schema")?;
 
             // Make sure no schemas are staged after commit
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_schemas.len(), 0);
             let path = PathBuf::from("annotations")
                 .join("train")
@@ -268,7 +268,7 @@ mod tests {
     async fn test_copy_schemas_from_parent() -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Make sure no schemas are staged
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_schemas.len(), 0);
 
             // Schema should be staged when added
@@ -279,7 +279,7 @@ mod tests {
             repositories::add(&repo, bbox_file).await?;
 
             // Make sure it is staged
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_schemas.len(), 1);
             for (path, schema) in status.staged_schemas.iter() {
                 println!("GOT SCHEMA {path:?} -> {schema:?}");
@@ -523,7 +523,7 @@ mod tests {
             // Stage the file
             repositories::add(&repo, &bbox_path).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             println!("status: {status:?}");
             status.print();
 

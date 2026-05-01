@@ -39,7 +39,7 @@ use rocksdb::{DBWithThreadMode, MultiThreaded};
 
 use std::sync::Arc;
 
-pub fn rm(
+pub async fn rm(
     paths: &HashSet<PathBuf>,
     repo: &LocalRepository,
     opts: &RmOpts,
@@ -49,16 +49,16 @@ pub fn rm(
     let staged_db: DBWithThreadMode<MultiThreaded> =
         DBWithThreadMode::open(&db_opts, dunce::simplified(&db_path))?;
 
-    rm_with_staged_db(paths, repo, opts, &staged_db)
+    rm_with_staged_db(paths, repo, opts, &staged_db).await
 }
 
-pub fn rm_with_staged_db(
+pub async fn rm_with_staged_db(
     paths: &HashSet<PathBuf>,
     repo: &LocalRepository,
     opts: &RmOpts,
     staged_db: &DBWithThreadMode<MultiThreaded>,
 ) -> Result<(), OxenError> {
-    if has_modified_files(repo, paths)? {
+    if !list_modified_files(repo, paths).await?.is_empty() {
         let error = "There are modified files in the working directory.\n\tUse `oxen status` to see the modified files.".to_string();
         return Err(OxenError::basic_str(error));
     }
@@ -118,18 +118,13 @@ fn remove_staged_recursively_inner(
     Ok(())
 }
 
-fn has_modified_files(repo: &LocalRepository, paths: &HashSet<PathBuf>) -> Result<bool, OxenError> {
-    let modified = list_modified_files(repo, paths)?;
-    Ok(!modified.is_empty())
-}
-
-fn list_modified_files(
+async fn list_modified_files(
     repo: &LocalRepository,
     paths: &HashSet<PathBuf>,
 ) -> Result<Vec<PathBuf>, OxenError> {
     let paths_vec: Vec<PathBuf> = paths.iter().map(|p| repo.path.join(p)).collect();
     let opts = StagedDataOpts::from_paths(&paths_vec);
-    let status = repositories::status::status_from_opts(repo, &opts)?;
+    let status = repositories::status::status_from_opts(repo, &opts).await?;
     log::debug!("status modified_files: {:?}", status.modified_files);
     log::debug!("paths: {paths:?}");
     let modified: Vec<PathBuf> = status

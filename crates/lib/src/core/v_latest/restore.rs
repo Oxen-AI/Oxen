@@ -17,7 +17,7 @@ pub async fn restore(repo: &LocalRepository, restore_opts: RestoreOpts) -> Resul
         walk_dirs: false,
     };
 
-    let expanded_paths = util::glob::parse_glob_paths(&glob_opts, Some(repo))?;
+    let expanded_paths = util::glob::parse_glob_paths(&glob_opts, Some(repo)).await?;
 
     let mut restore_opts = restore_opts.clone();
     restore_opts.paths = expanded_paths;

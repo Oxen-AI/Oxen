@@ -138,7 +138,7 @@ mod tests {
                 assert_eq!(repo_commits.len(), cloned_commits.len());
 
                 // Make sure we updated the dbs properly
-                let status = repositories::status(&cloned_repo)?;
+                let status = repositories::status(&cloned_repo).await?;
                 assert!(status.is_clean());
 
                 // Have this side add a file, and send it back over
@@ -154,7 +154,7 @@ mod tests {
 
                 // Pull back from the OG Repo
                 repositories::pull(&repo).await?;
-                let old_repo_status = repositories::status(&repo)?;
+                let old_repo_status = repositories::status(&repo).await?;
                 old_repo_status.print();
                 // Make sure we don't modify the timestamps or anything of the OG data
                 assert!(!old_repo_status.has_modified_entries());
@@ -856,7 +856,7 @@ mod tests {
                 assert!(!user_b_repo.path.join("train").exists());
 
                 // Check for merge conflict
-                let status = repositories::status(&user_b_repo)?;
+                let status = repositories::status(&user_b_repo).await?;
                 assert!(!status.merge_conflicts.is_empty());
                 status.print();
 
@@ -940,7 +940,7 @@ mod tests {
                 assert!(!user_b_repo.path.join("train").exists());
 
                 // Check for merge conflict
-                let status = repositories::status(&user_b_repo)?;
+                let status = repositories::status(&user_b_repo).await?;
                 status.print();
                 assert!(!status.merge_conflicts.is_empty());
                 assert_eq!(status.merge_conflicts.len(), 1);
@@ -1016,7 +1016,7 @@ mod tests {
                     assert!(result.is_err());
 
                     // Check for merge conflict
-                    let status = repositories::status(&user_b_repo)?;
+                    let status = repositories::status(&user_b_repo).await?;
                     assert!(!status.merge_conflicts.is_empty());
                     status.print();
 
@@ -1310,7 +1310,7 @@ mod tests {
                 assert_eq!(cloned_contents, og_contents);
 
                 // Status should be empty too
-                let status = repositories::status(&cloned_repo)?;
+                let status = repositories::status(&cloned_repo).await?;
                 status.print();
                 assert!(status.is_clean());
 
@@ -1373,7 +1373,7 @@ mod tests {
                 println!("Cloned {filename:?} {cloned_df}");
 
                 // Status should be empty too
-                let status = repositories::status(&cloned_repo)?;
+                let status = repositories::status(&cloned_repo).await?;
                 status.print();
                 assert!(status.is_clean());
 
@@ -1860,7 +1860,7 @@ mod tests {
                         path: PathBuf::from("README.md"),
                         ..Default::default()
                     };
-                    repositories::rm(&user_b_repo, &rm_opts)?;
+                    repositories::rm(&user_b_repo, &rm_opts).await?;
                     repositories::commit(&user_b_repo, "Removing the README.md on the remote")?;
 
                     // Push the remote

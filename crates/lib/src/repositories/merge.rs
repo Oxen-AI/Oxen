@@ -796,7 +796,7 @@ mod tests {
 
             // We should have a conflict....
             println!("status plz");
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.merge_conflicts.len(), 1);
 
             println!("checkout theirs plz");
@@ -847,7 +847,7 @@ mod tests {
             repositories::merge::merge(&repo, branch_name).await?;
 
             // We should have a conflict....
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.merge_conflicts.len(), 1);
 
             // Run repositories::checkout::checkout_theirs() and make sure their changes get kept
@@ -900,7 +900,7 @@ mod tests {
             repositories::merge::merge(&repo, branch_name).await?;
 
             // We should have a conflict....
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.merge_conflicts.len(), 1);
 
             // Run repositories::checkout::checkout_theirs() and make sure we cannot

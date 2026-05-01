@@ -45,7 +45,7 @@ pub async fn clean(repo: &LocalRepository, opts: &CleanOpts) -> Result<CleanResu
     } else {
         StagedDataOpts::from_paths(&opts.paths)
     };
-    let status = repositories::status::status_from_opts(repo, &status_opts)?;
+    let status = repositories::status::status_from_opts(repo, &status_opts).await?;
 
     let mut files: Vec<PathBuf> = status
         .untracked_files

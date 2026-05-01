@@ -1472,7 +1472,7 @@ mod tests {
                 recursive: true,
             };
 
-            repositories::rm(&repo, &opts)?;
+            repositories::rm(&repo, &opts).await?;
             let commit = repositories::commit(&repo, "Removing dir")?;
 
             let files = repositories::tree::list_tabular_files_in_repo(&repo, &commit)?;
@@ -1499,7 +1499,7 @@ mod tests {
             repositories::add(&local_repo, &path_1).await?;
             repositories::add(&local_repo, &path_2).await?;
 
-            let status = repositories::status(&local_repo)?;
+            let status = repositories::status(&local_repo).await?;
 
             log::debug!("staged files here are {:?}", status.staged_files);
 

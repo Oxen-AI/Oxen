@@ -256,7 +256,7 @@ mod tests {
             assert!(!world_file.exists());
 
             // // Check status
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert!(status.is_clean());
 
             Ok(())
@@ -310,7 +310,7 @@ mod tests {
             assert!(!world_file.exists());
 
             // Check status
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert!(status.is_clean());
 
             // Checkout branch again
@@ -668,11 +668,11 @@ mod tests {
 
             let file_contents = "file,label\ntrain/cat_1.jpg,0\n";
             let one_shot_path = test::modify_txt_file(one_shot_path, file_contents)?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.modified_files.len(), 1);
             status.print();
             repositories::add(&repo, &one_shot_path).await?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             repositories::commit(&repo, "Changing one shot")?;
 
@@ -711,15 +711,15 @@ mod tests {
 
             let file_contents = "file,label\ntrain/cat_1.jpg,0\n";
             let one_shot_path = test::modify_txt_file(one_shot_path, file_contents)?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.modified_files.len(), 1);
             repositories::add(&repo, &one_shot_path).await?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             assert_eq!(status.modified_files.len(), 0);
             assert_eq!(status.staged_files.len(), 1);
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             repositories::commit(&repo, "Changing one shot")?;
 
