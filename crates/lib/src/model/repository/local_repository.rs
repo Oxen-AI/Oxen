@@ -35,7 +35,7 @@ fn placeholder_version_store() -> Arc<dyn VersionStore> {
 }
 
 // TODO: A `LocalRepository` shouldn't require serialization.
-// TODO: The `merkle}store` fields should **NOT** be Option. It should be impossible to create a
+// TODO: The `merkle_store` fields should **NOT** be Option. It should be impossible to create a
 //       `LocalRepository` without a `version_store` and `merkle_store`. They're only `Option` beacuse of
 //       the serialization derives, which is unused.
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]

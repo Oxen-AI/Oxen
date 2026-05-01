@@ -167,7 +167,6 @@ impl<'de> Deserialize<'de> for StorageConfig {
 /// Trait defining operations for version file storage backends
 #[async_trait]
 pub trait VersionStore: Debug + Send + Sync + 'static {
-    // + 'static {
     /// Initialize the storage backend
     async fn init(&self) -> Result<(), OxenError>;
 
