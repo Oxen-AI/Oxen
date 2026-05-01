@@ -584,11 +584,15 @@ impl LocalRepository {
         path: &Path,
         node: &FileNode,
     ) -> Result<bool, OxenError> {
-        let metadata = tokio::fs::symlink_metadata(path).await.map_err(|err| {
-            log::debug!("symlink_metadata {path:?} {err}");
-            OxenError::file_metadata_error(path, err)
-        });
-        self.is_modified_from_node_with_metadata(path, node, metadata)
+        let metadata = match tokio::fs::symlink_metadata(path).await {
+            Ok(m) => m,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                log::debug!("is_modified_from_node: missing path {path:?}, returning false");
+                return Ok(false);
+            }
+            Err(err) => return Err(OxenError::file_metadata_error(path, err)),
+        };
+        self.is_modified_from_node_with_metadata(path, node, Ok(metadata))
             .await
     }
 
