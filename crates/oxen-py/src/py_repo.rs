@@ -121,7 +121,8 @@ impl PyRepo {
             recursive,
         };
 
-        repositories::rm(&repo, &rm_opts)?;
+        pyo3_async_runtimes::tokio::get_runtime()
+            .block_on(async { repositories::rm(&repo, &rm_opts).await })?;
 
         Ok(())
     }
@@ -149,7 +150,8 @@ impl PyRepo {
 
     pub fn status(&self) -> Result<PyStagedData, PyOxenError> {
         let repo = LocalRepository::from_dir(&self.path)?;
-        let status = repositories::status(&repo)?;
+        let status = pyo3_async_runtimes::tokio::get_runtime()
+            .block_on(async { repositories::status(&repo).await })?;
         Ok(PyStagedData { data: status })
     }
 

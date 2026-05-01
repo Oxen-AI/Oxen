@@ -72,7 +72,7 @@ pub async fn status(
         ignore: None,
     };
 
-    status_from_opts_and_staged_data(local_repository, &local_opts, &mut status)?;
+    status_from_opts_and_staged_data(local_repository, &local_opts, &mut status).await?;
 
     Ok(status)
 }

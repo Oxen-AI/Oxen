@@ -93,7 +93,7 @@ impl RunCmd for StatusCmd {
         };
         log::debug!("status opts: {opts:?}");
 
-        let repo_status = repositories::status::status_from_opts(&repository, &opts)?;
+        let repo_status = repositories::status::status_from_opts(&repository, &opts).await?;
 
         if let Some(current_branch) = repositories::branches::current_branch(&repository)? {
             println!(

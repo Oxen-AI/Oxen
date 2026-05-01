@@ -572,7 +572,7 @@ pub async fn make_many_commits(local_repo: &LocalRepository) -> Result<(), OxenE
         ..Default::default()
     };
 
-    repositories::rm(local_repo, &rm_opts)?;
+    repositories::rm(local_repo, &rm_opts).await?;
     repositories::commit(local_repo, "Removing test/")?;
 
     // Add all the files
@@ -1613,7 +1613,7 @@ where
     repositories::add(&repo, &repo.path).await?;
 
     // Get the status and print it
-    let status = repositories::status(&repo)?;
+    let status = repositories::status(&repo).await?;
     println!("setup status: {status:?}");
     status.print();
 
@@ -2321,7 +2321,7 @@ mod tests {
             let oxenignore_file = repo.path.join(".oxenignore");
             write_txt_file_to_path(oxenignore_file, ignore_filename)?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             // Only untracked file should be .oxenignore
             assert_eq!(status.untracked_files.len(), 1);
             assert_eq!(
@@ -2347,7 +2347,7 @@ mod tests {
             let oxenignore_file = repo.path.join(".oxenignore");
             write_txt_file_to_path(oxenignore_file, "ignoreme/")?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             // Only untracked file should be .oxenignore
             assert_eq!(status.untracked_files.len(), 1);
             assert_eq!(

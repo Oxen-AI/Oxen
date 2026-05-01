@@ -70,7 +70,7 @@ impl RunCmd for RmCmd {
 
         for path in paths {
             let path_opts = RmOpts::from_path_opts(&path, &opts);
-            repositories::rm(&repository, &path_opts)?;
+            repositories::rm(&repository, &path_opts).await?;
         }
 
         Ok(())

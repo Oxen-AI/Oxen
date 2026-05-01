@@ -1222,7 +1222,7 @@ mod tests {
 
             // Write data to the repo
             add_n_files_m_dirs(&repo, 10, 3).await?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Commit the data

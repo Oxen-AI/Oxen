@@ -26,7 +26,7 @@ use crate::model::{LocalRepository, StagedData};
 /// // Initialize empty repo
 /// let repo = repositories::init(&base_dir)?;
 /// // Get status on repo
-/// let status = repositories::status(&repo)?;
+/// let status = repositories::status(&repo).await?;
 /// assert!(status.is_clean());
 /// ```
 ///
@@ -44,33 +44,33 @@ use crate::model::{LocalRepository, StagedData};
 /// util::fs::write_to_path(&hello_file, "Hello World");
 ///
 /// // Get status on repo
-/// let status = repositories::status(&repo)?;
+/// let status = repositories::status(&repo).await?;
 /// assert_eq!(status.untracked_files.len(), 1);
 /// ```
-pub fn status(repo: &LocalRepository) -> Result<StagedData, OxenError> {
+pub async fn status(repo: &LocalRepository) -> Result<StagedData, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::status::status(repo),
+        _ => core::v_latest::status::status(repo).await,
     }
 }
 
-pub fn status_from_opts(
+pub async fn status_from_opts(
     repo: &LocalRepository,
     opts: &StagedDataOpts,
 ) -> Result<StagedData, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v10 not supported"),
-        _ => core::v_latest::status::status_from_opts(repo, opts),
+        _ => core::v_latest::status::status_from_opts(repo, opts).await,
     }
 }
 
-pub fn status_from_dir(
+pub async fn status_from_dir(
     repo: &LocalRepository,
     dir: impl AsRef<Path>,
 ) -> Result<StagedData, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::status::status_from_dir(repo, dir),
+        _ => core::v_latest::status::status_from_dir(repo, dir).await,
     }
 }
 
@@ -92,8 +92,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_status_empty() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
-            let repo_status = repositories::status(&repo)?;
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let repo_status = repositories::status(&repo).await?;
 
             assert_eq!(repo_status.staged_dirs.len(), 0);
             assert_eq!(repo_status.staged_files.len(), 0);
@@ -102,12 +102,13 @@ mod tests {
 
             Ok(())
         })
+        .await
     }
 
     #[tokio::test]
     async fn test_command_status_nothing_staged_full_directory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits(|repo| {
-            let repo_status = repositories::status(&repo)?;
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+            let repo_status = repositories::status(&repo).await?;
 
             assert_eq!(repo_status.staged_dirs.len(), 0);
             assert_eq!(repo_status.staged_files.len(), 0);
@@ -125,6 +126,7 @@ mod tests {
 
             Ok(())
         })
+        .await
     }
 
     #[tokio::test]
@@ -132,7 +134,7 @@ mod tests {
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
             repositories::add(&repo, repo.path.join(Path::new("labels.txt"))).await?;
 
-            let repo_status = repositories::status(&repo)?;
+            let repo_status = repositories::status(&repo).await?;
             repo_status.print();
 
             // TODO: v0_10_0 logic should have no dirs staged
@@ -168,7 +170,7 @@ mod tests {
             .await?;
 
             // Make sure that we now see the full annotations/train/ directory
-            let repo_status = repositories::status(&repo)?;
+            let repo_status = repositories::status(&repo).await?;
             repo_status.print();
 
             // annotations/
@@ -211,7 +213,7 @@ mod tests {
             let opts =
                 StagedDataOpts::from_paths(&[repo.path.join(Path::new("annotations/train"))]);
 
-            let repo_status = repositories::status::status_from_opts(&repo, &opts)?;
+            let repo_status = repositories::status::status_from_opts(&repo, &opts).await?;
             repo_status.print();
 
             // Make sure that we only see the modified files
@@ -249,7 +251,7 @@ mod tests {
                 .path
                 .join(Path::new("annotations/train/one_shot.csv"))]);
 
-            let repo_status = repositories::status::status_from_opts(&repo, &opts)?;
+            let repo_status = repositories::status::status_from_opts(&repo, &opts).await?;
             repo_status.print();
 
             // Make sure that we only see the modified files
@@ -289,7 +291,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let repo_status = repositories::status::status_from_opts(&repo, &opts)?;
+            let repo_status = repositories::status::status_from_opts(&repo, &opts).await?;
             repo_status.print();
 
             // Make sure that we only see the modified files
@@ -334,7 +336,7 @@ mod tests {
             let opts =
                 StagedDataOpts::from_paths(&[repo.path.join(Path::new("annotations/train"))]);
 
-            let repo_status = repositories::status::status_from_opts(&repo, &opts)?;
+            let repo_status = repositories::status::status_from_opts(&repo, &opts).await?;
             repo_status.print();
 
             // Make sure that we only see the modified files
@@ -399,13 +401,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_status_has_txt_file() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Write to file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(hello_file, "Hello World")?;
 
             // Get status
-            let repo_status = repositories::status(&repo)?;
+            let repo_status = repositories::status(&repo).await?;
             assert_eq!(repo_status.staged_dirs.len(), 0);
             assert_eq!(repo_status.staged_files.len(), 0);
             assert_eq!(repo_status.untracked_files.len(), 1);
@@ -413,6 +415,7 @@ mod tests {
 
             Ok(())
         })
+        .await
     }
 
     #[tokio::test]
@@ -446,7 +449,7 @@ mod tests {
             assert!(commit.is_none());
 
             // Make sure we can access the conflicts in the status command
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.merge_conflicts.len(), 1);
 
             Ok(())
@@ -462,14 +465,14 @@ mod tests {
             let og_file = repo.path.join(&og_basename);
             util::fs::remove_file(og_file)?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             assert_eq!(status.removed_files.len(), 1);
 
             let opts = RmOpts::from_path(&og_basename);
-            repositories::rm(&repo, &opts)?;
-            let status = repositories::status(&repo)?;
+            repositories::rm(&repo, &opts).await?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             assert_eq!(status.staged_files.len(), 1);
@@ -491,14 +494,14 @@ mod tests {
             let og_file = repo.path.join(&og_basename);
             util::fs::remove_file(og_file)?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             assert_eq!(status.removed_files.len(), 1);
 
             let opts = RmOpts::from_path(&og_basename);
-            repositories::rm(&repo, &opts)?;
-            let status = repositories::status(&repo)?;
+            repositories::rm(&repo, &opts).await?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             assert_eq!(status.staged_files.len(), 1);
@@ -524,7 +527,7 @@ mod tests {
             util::fs::rename(&og_file, &new_file)?;
 
             // Status before
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
 
             assert_eq!(status.moved_files.len(), 0);
             assert_eq!(status.removed_files.len(), 1);
@@ -532,14 +535,14 @@ mod tests {
 
             // Add one file...
             repositories::add(&repo, &og_file).await?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             // No notion of movement until the pair are added
             assert_eq!(status.moved_files.len(), 0);
             assert_eq!(status.staged_files.len(), 1);
 
             // Complete the pair
             repositories::add(&repo, &new_file).await?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.moved_files.len(), 1);
             assert_eq!(status.staged_files.len(), 2); // Staged files still operates on the addition + removal
 
@@ -547,7 +550,7 @@ mod tests {
             repositories::restore(&repo, RestoreOpts::from_staged_path(og_basename)).await?;
 
             // Pair is broken; no more "moved"
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.moved_files.len(), 0);
             assert_eq!(status.staged_files.len(), 1);
 
@@ -569,7 +572,7 @@ mod tests {
             util::fs::create_dir_all(&new_dir)?;
             util::fs::rename(&og_dir, &new_dir)?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             assert_eq!(status.moved_files.len(), 0);
             // TODO: v0_10_0 logic should have root and new_train/train2
@@ -582,7 +585,7 @@ mod tests {
             repositories::add(&repo, &og_dir).await?;
             // repositories::add(&repo, &new_dir)?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             // No moved files, 7 staged (the removals)
             assert_eq!(status.moved_files.len(), 0);
             assert_eq!(status.staged_files.len(), 7);
@@ -590,7 +593,7 @@ mod tests {
 
             // Complete the pairs
             repositories::add(&repo, &new_dir).await?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.moved_files.len(), 7);
             assert_eq!(status.staged_files.len(), 14);
             assert_eq!(status.staged_dirs.len(), 2);
@@ -614,7 +617,7 @@ mod tests {
             repositories::add(&repo, &sub_dir).await?;
 
             // List files
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             println!("status: {status:?}");
             status.print();
             let dirs = status.staged_dirs;
@@ -638,14 +641,14 @@ mod tests {
             let repo_path = &repo.path;
             let file_to_rm = repo_path.join("labels.txt");
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Remove a committed file
             util::fs::remove_file(&file_to_rm)?;
 
             // List removed
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             let files = status.removed_files;
 
@@ -679,7 +682,7 @@ mod tests {
             util::fs::remove_file(&one_shot_file)?;
 
             // List removed
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             let files = status.removed_files;
 
@@ -711,7 +714,7 @@ mod tests {
             util::fs::remove_file(&target_file)?;
 
             let opts = StagedDataOpts::from_paths(std::slice::from_ref(&target_file));
-            let status = repositories::status::status_from_opts(&repo, &opts)?;
+            let status = repositories::status::status_from_opts(&repo, &opts).await?;
             status.print();
 
             let relative_path = util::fs::path_relative_to_dir(&target_file, repo_path)?;
@@ -736,7 +739,7 @@ mod tests {
             let one_shot_file = test::modify_txt_file(one_shot_file, "new content coming in hot")?;
 
             // List modified
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             let files = status.modified_files;
 
@@ -799,7 +802,7 @@ mod tests {
             let _base_file_3 = test::add_txt_file_to_dir(repo_path, "Hello 3")?;
 
             // At first there should be 3 untracked
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             let untracked_dirs = status.untracked_dirs;
             assert_eq!(untracked_dirs.len(), 3);
@@ -810,7 +813,7 @@ mod tests {
             repositories::add(&repo, &base_file_1).await?;
 
             // List the files
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             println!("status: {status:?}");
             status.print();
             let staged_files = status.staged_files;
@@ -845,7 +848,7 @@ mod tests {
             // commit the file
             repositories::commit(&repo, "added hello 1")?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             let mod_files = status.modified_files;
             assert_eq!(mod_files.len(), 0);
 
@@ -853,7 +856,7 @@ mod tests {
             let hello_file = test::modify_txt_file(hello_file, "Hello 2")?;
 
             // List files
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             let mod_files = status.modified_files;
             assert_eq!(mod_files.len(), 1);
@@ -878,7 +881,7 @@ mod tests {
 
             let file_contents = "file,label\ntrain/cat_1.jpg,0\n";
             test::modify_txt_file(one_shot_path, file_contents)?;
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
             assert_eq!(status.modified_files.len(), 1);
             assert!(

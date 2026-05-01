@@ -17,7 +17,7 @@ use walkdir::WalkDir;
 // TODO: Should 'oxenignore' filter out non-glob paths too, or only dictate which paths glob patterns can expand into?
 
 // Top level module for parsing glob paths
-pub fn parse_glob_paths(
+pub async fn parse_glob_paths(
     opts: &GlobOpts,
     repo: Option<&LocalRepository>,
 ) -> Result<HashSet<PathBuf>, OxenError> {
@@ -73,7 +73,7 @@ pub fn parse_glob_paths(
                     ));
                 };
 
-                let staged_paths = search_staged_db(&glob_path, repo)?;
+                let staged_paths = search_staged_db(&glob_path, repo).await?;
 
                 expanded_paths.extend(staged_paths);
                 // If the merkle_tree flag is set, match against the merkle tree
@@ -128,13 +128,16 @@ pub fn parse_glob_paths(
     Ok(expanded_paths)
 }
 
-fn search_staged_db(path: &Path, repo: &LocalRepository) -> Result<HashSet<PathBuf>, OxenError> {
+async fn search_staged_db(
+    path: &Path,
+    repo: &LocalRepository,
+) -> Result<HashSet<PathBuf>, OxenError> {
     let mut paths = HashSet::new();
     let path_str = path
         .to_str()
         .ok_or_else(|| OxenError::basic_str("Invalid UTF-8 in search path"))?;
     let glob_pattern = Pattern::new(path_str)?;
-    let staged_data = repositories::status::status(repo)?;
+    let staged_data = repositories::status::status(repo).await?;
 
     for entry in staged_data.staged_files {
         let entry_path_str = entry
@@ -461,7 +464,7 @@ mod tests {
                 walk_dirs: false,
             };
 
-            let paths = parse_glob_paths(&opts, Some(&repo))?;
+            let paths = parse_glob_paths(&opts, Some(&repo)).await?;
 
             let expected: HashSet<PathBuf> = vec![
                 PathBuf::from("README.md"),
@@ -489,7 +492,7 @@ mod tests {
                 walk_dirs: false,
             };
 
-            let paths = parse_glob_paths(&opts, Some(&repo))?;
+            let paths = parse_glob_paths(&opts, Some(&repo)).await?;
             let expected: HashSet<PathBuf> = vec![
                 PathBuf::from("annotations/README.md"),
                 PathBuf::from("annotations/train"),
@@ -520,7 +523,7 @@ mod tests {
                 walk_dirs: true,
             };
 
-            let paths = parse_glob_paths(&opts, Some(&repo))?;
+            let paths = parse_glob_paths(&opts, Some(&repo)).await?;
 
             let expected: HashSet<PathBuf> = vec![
                 PathBuf::from("nlp/classification/annotations/test.tsv"),
@@ -541,7 +544,7 @@ mod tests {
                 walk_dirs: true,
             };
 
-            let paths = parse_glob_paths(&opts, Some(&repo))?;
+            let paths = parse_glob_paths(&opts, Some(&repo)).await?;
 
             let expected: HashSet<PathBuf> = vec![
                 PathBuf::from("annotations/README.md"),
@@ -579,7 +582,7 @@ mod tests {
                 walk_dirs: false,
             };
 
-            let paths = parse_glob_paths(&opts, Some(&repo))?;
+            let paths = parse_glob_paths(&opts, Some(&repo)).await?;
 
             let expected: HashSet<PathBuf> = vec![
                 PathBuf::from("annotations/train/annotations.txt"),
@@ -601,7 +604,7 @@ mod tests {
                 walk_dirs: false,
             };
 
-            let paths_root = parse_glob_paths(&opts_root, Some(&repo))?;
+            let paths_root = parse_glob_paths(&opts_root, Some(&repo)).await?;
 
             let expected_root: HashSet<PathBuf> = vec![
                 PathBuf::from("annotations/train/annotations.txt"),
@@ -633,7 +636,7 @@ mod tests {
                 walk_dirs: false,
             };
 
-            let paths = parse_glob_paths(&opts, Some(&repo))?;
+            let paths = parse_glob_paths(&opts, Some(&repo)).await?;
 
             let expected: HashSet<PathBuf> = vec![
                 PathBuf::from("nlp/classification/annotations/test.tsv"),
@@ -653,7 +656,7 @@ mod tests {
                 walk_dirs: false,
             };
 
-            let paths_root = parse_glob_paths(&opts_root, Some(&repo))?;
+            let paths_root = parse_glob_paths(&opts_root, Some(&repo)).await?;
 
             // Merkle tree search should return both files and directories at this level
             let expected_root: HashSet<PathBuf> = vec![

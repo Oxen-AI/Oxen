@@ -94,7 +94,7 @@ pub async fn add<T: AsRef<Path>>(
             walk_dirs: false,
         };
 
-        let matching_paths = util::glob::parse_glob_paths(&glob_opts, Some(repo))?;
+        let matching_paths = util::glob::parse_glob_paths(&glob_opts, Some(repo)).await?;
 
         expanded_paths.extend(matching_paths);
 
@@ -234,7 +234,7 @@ pub async fn add_files(
     // TODO: Make rm_with_staged_db return the stats of the files it removes
     if !paths_to_remove.is_empty() {
         log::trace!("removing paths: {:?}", paths_to_remove);
-        core::v_latest::rm::rm_with_staged_db(&paths_to_remove, repo, &rm_opts, &staged_db)?;
+        core::v_latest::rm::rm_with_staged_db(&paths_to_remove, repo, &rm_opts, &staged_db).await?;
     }
 
     // Stop the timer, and round the duration to the nearest second
@@ -1289,7 +1289,7 @@ mod tests {
 
             add(&repo, vec![Path::new(&repo.path)]).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
 
             // The normal file should be staged
             assert!(
@@ -1344,7 +1344,7 @@ mod tests {
 
             add(&repo, vec![&repo.path]).await?;
 
-            let status = repositories::status(&repo);
+            let status = repositories::status(&repo).await;
             assert!(status.is_ok());
             let status = status.unwrap();
 
@@ -1410,7 +1410,7 @@ mod tests {
 
             add(&repo, vec![Path::new(&repo.path)]).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
 
             // Files in normal_dir should be staged
             assert!(

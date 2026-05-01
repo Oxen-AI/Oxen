@@ -575,19 +575,20 @@ impl LocalRepository {
     }
 
     /// Async, tolerance-aware modification check. Routes the mtime comparison through
-    /// [`Self::mtime_matches`] so it agrees with `restore_file`'s fast-path skip on
-    /// coarse-mtime mounts (FAT/exFAT, HFS+, some NFS). Use this from any caller that has
-    /// access to a `&LocalRepository` and is in an async context.
-    ///
-    /// `oxen status` and its sync chain still use the strict-mtime free function in
-    /// [`crate::util::fs::is_modified_from_node`]; when that path goes async, the free
-    /// functions can be removed in favor of these methods.
+    /// [`Self::mtime_matches`] so callers (`oxen status`, `oxen restore`, `oxen checkout`,
+    /// `oxen pull`'s overwrite check, etc.) agree with `restore_file`'s fast-path skip on
+    /// coarse-mtime mounts (FAT/exFAT, HFS+, some NFS). The previous strict-mtime free
+    /// functions in `util::fs` were retired once `oxen status`'s walker went async.
     pub async fn is_modified_from_node(
         &self,
         path: &Path,
         node: &FileNode,
     ) -> Result<bool, OxenError> {
-        self.is_modified_from_node_with_metadata(path, node, util::fs::metadata(path))
+        let metadata = tokio::fs::symlink_metadata(path).await.map_err(|err| {
+            log::debug!("symlink_metadata {path:?} {err}");
+            OxenError::file_metadata_error(path, err)
+        });
+        self.is_modified_from_node_with_metadata(path, node, metadata)
             .await
     }
 
@@ -598,11 +599,12 @@ impl LocalRepository {
         node: &FileNode,
         metadata: Result<std::fs::Metadata, OxenError>,
     ) -> Result<bool, OxenError> {
-        if !path.exists() {
-            log::debug!("is_modified_from_node found non-existent path {path:?}. Returning false");
+        let Ok(metadata) = metadata else {
+            log::debug!(
+                "is_modified_from_node_with_metadata: missing or unreadable metadata for {path:?}, returning false"
+            );
             return Ok(false);
-        }
-        let metadata = metadata?;
+        };
         let file_last_modified = filetime::FileTime::from_last_modification_time(&metadata);
         let node_last_modified = util::fs::last_modified_time(
             node.last_modified_seconds(),

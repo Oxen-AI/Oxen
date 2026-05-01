@@ -59,10 +59,13 @@ pub fn commit_with_user(
 ///
 /// Allows creating a commit even when there are no staged changes.
 /// This reuses the existing create_empty_commit infrastructure.
-pub fn commit_allow_empty(repo: &LocalRepository, message: &str) -> Result<Commit, OxenError> {
+pub async fn commit_allow_empty(
+    repo: &LocalRepository,
+    message: &str,
+) -> Result<Commit, OxenError> {
     match repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::commits::commit_allow_empty(repo, message),
+        _ => core::v_latest::commits::commit_allow_empty(repo, message).await,
     }
 }
 
@@ -419,7 +422,7 @@ mod tests {
             assert_eq!(commit.message, "My message");
 
             // Get status and make sure it is removed from the untracked and added
-            let repo_status = repositories::status(&repo)?;
+            let repo_status = repositories::status(&repo).await?;
             assert_eq!(repo_status.staged_dirs.len(), 0);
             assert_eq!(repo_status.staged_files.len(), 0);
             assert_eq!(repo_status.untracked_files.len(), 0);
@@ -477,7 +480,7 @@ mod tests {
             // Commit the file
             let commit = repositories::commit(&repo, "Adding training data")?;
 
-            let repo_status = repositories::status(&repo)?;
+            let repo_status = repositories::status(&repo).await?;
             repo_status.print();
             assert_eq!(repo_status.staged_dirs.len(), 0);
             assert_eq!(repo_status.staged_files.len(), 0);
@@ -506,7 +509,7 @@ mod tests {
             repositories::add(&repo, annotations_dir).await?;
             repositories::commit(&repo, "Adding annotations data dir, which has two levels")?;
 
-            let repo_status = repositories::status(&repo)?;
+            let repo_status = repositories::status(&repo).await?;
             repo_status.print();
 
             assert_eq!(repo_status.staged_dirs.len(), 0);
@@ -575,7 +578,7 @@ mod tests {
             repositories::add(&repo, &dir_to_remove).await?;
 
             // Make sure we have the correct amount of files tagged as removed
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_files.len(), og_file_count);
             assert_eq!(
                 status.staged_files.iter().next().unwrap().1.status,
@@ -620,7 +623,7 @@ mod tests {
             repositories::merge::merge(&repo, branch_name).await?;
 
             // We should have a conflict
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert_eq!(status.merge_conflicts.len(), 1);
 
             // Assume that we fixed the conflict and added the file
@@ -658,7 +661,7 @@ mod tests {
             // Modify the text file
             util::fs::write_to_path(&text_path, "Goodbye, world!")?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // There should be nothing to commit since the file is untracked
@@ -688,7 +691,7 @@ mod tests {
                 util::hasher::hash_file_contents(&text_path)?.parse::<MerkleHash>()?;
             repositories::add(&repo, &text_path).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Note v10 did not have this line, and we didn't copy to the versions dir on add
@@ -753,7 +756,7 @@ mod tests {
             assert_eq!(commit_history.len(), 1);
 
             // Check that the files are no longer staged
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             let files = status.staged_files;
             let dirs = status.staged_dirs;
             assert_eq!(files.len(), 0);
@@ -932,7 +935,7 @@ mod tests {
             assert!(result.is_err());
 
             // Create an empty commit with --allow-empty (should succeed)
-            let empty_commit = commit_allow_empty(&repo, "Empty commit")?;
+            let empty_commit = commit_allow_empty(&repo, "Empty commit").await?;
             assert_eq!(empty_commit.message, "Empty commit");
             assert_eq!(empty_commit.parent_ids, vec![first_commit.id.clone()]);
 
@@ -975,7 +978,7 @@ mod tests {
             repositories::add(&repo, &goodbye_file).await?;
 
             // commit_allow_empty should commit the staged changes normally
-            let commit = commit_allow_empty(&repo, "Add goodbye")?;
+            let commit = commit_allow_empty(&repo, "Add goodbye").await?;
             assert_eq!(commit.message, "Add goodbye");
 
             // Verify both files are in the tree
@@ -1035,7 +1038,7 @@ mod tests {
             let empty_dir = repo.path.join("empty_dir");
             util::fs::create_dir_all(&empty_dir)?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             // Should find the untracked dir
@@ -1049,7 +1052,7 @@ mod tests {
             // Add the empty dir
             repositories::add(&repo, &empty_dir).await?;
 
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             status.print();
 
             let commit = repositories::commit(&repo, "adding empty dir")?;
@@ -1065,7 +1068,7 @@ mod tests {
                 ..Default::default()
             };
 
-            repositories::rm(&repo, &rm_opts)?;
+            repositories::rm(&repo, &rm_opts).await?;
             let commit_2 = repositories::commit(&repo, "removing empty dir")?;
 
             let tree_2 = repositories::tree::get_root_with_children(&repo, &commit_2)?.unwrap();
@@ -1355,7 +1358,7 @@ A: Oxen.ai
             assert_eq!(second_commit.message, "Add hello.txt");
 
             // Verify the file is in the commit
-            let status = repositories::status(&repo)?;
+            let status = repositories::status(&repo).await?;
             assert!(status.is_clean());
 
             Ok(())
@@ -1381,7 +1384,7 @@ A: Oxen.ai
             let _c2 = repositories::commit(&repo, "c2: modify data/a.txt")?;
 
             // Commit 3: Empty commit (no changes)
-            let _c3 = commit_allow_empty(&repo, "c3: empty commit")?;
+            let _c3 = commit_allow_empty(&repo, "c3: empty commit").await?;
 
             // Commit 4: Add src/c.txt
             let src_c = repo.path.join("src").join("c.txt");
@@ -1390,7 +1393,7 @@ A: Oxen.ai
             let _c4 = repositories::commit(&repo, "c4: add src/c.txt")?;
 
             // Commit 5: Empty commit (no tree changes, should not appear in any path history)
-            let _c5 = commit_allow_empty(&repo, "c5: another empty commit")?;
+            let _c5 = commit_allow_empty(&repo, "c5: another empty commit").await?;
 
             // Commit 6: Add root-level other.txt
             let other = repo.path.join("other.txt");
