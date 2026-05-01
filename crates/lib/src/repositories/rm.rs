@@ -951,6 +951,50 @@ mod tests {
         .await
     }
 
+    /// Regression: `rm_with_staged_db`'s "modified files" safety check used to filter
+    /// `status.modified_files` with `paths.contains(path.parent())`, which only caught
+    /// modifications one level below a requested dir. A modification two-or-more levels
+    /// down was silently dropped, so `oxen rm -r <dir>` proceeded and destroyed the
+    /// user's edits. The filter now uses `path.starts_with(p)` so any descendant depth
+    /// is caught.
+    #[tokio::test]
+    async fn test_rm_dir_with_deep_modifications_should_throw_error() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            // `annotations/train/one_shot.csv` is two levels deep under `annotations/`.
+            let nested_modified = Path::new("annotations/train/one_shot.csv");
+            test::modify_txt_file(repo.path.join(nested_modified), "modified at depth 2")?;
+
+            // Sanity: status sees the deep modification.
+            let status = repositories::status(&repo).await?;
+            assert!(
+                status
+                    .modified_files
+                    .contains(&nested_modified.to_path_buf()),
+                "expected status to see {nested_modified:?} as modified, got: {:?}",
+                status.modified_files
+            );
+
+            // `oxen rm -r annotations/` must refuse — there's a modified file under it.
+            let opts = RmOpts {
+                path: PathBuf::from("annotations"),
+                staged: false,
+                recursive: true,
+            };
+            let result = repositories::rm(&repo, &opts).await;
+            assert!(
+                result.is_err(),
+                "rm -r of a dir with a deeply-nested modified file should fail, got: {result:?}"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_rm_train_dir() -> Result<(), OxenError> {
         test::run_select_data_repo_test_committed_async("train", |repo| async move {
