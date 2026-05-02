@@ -76,8 +76,54 @@ curl -H "Authorization: Bearer $TOKEN" "http://0.0.0.0:3000/api/repos"
 
 #### Create Repository
 ```bash
-curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"name": "MyRepo"}' "http://0.0.0.0:3000api/repos"
+curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"name": "MyRepo"}' "http://0.0.0.0:3000/api/repos"
 ```
+
+#### Upload a File (Raw PUT)
+
+Upload a file directly using a raw HTTP body (no multipart form needed):
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: text/plain" \
+     -H "oxen-commit-author: Ox" \
+     -H "oxen-commit-email: ox@oxen.ai" \
+     -H "oxen-commit-message: Add hello.txt" \
+     -X PUT \
+     -d "Hello, World!" \
+     "http://0.0.0.0:3000/api/repos/my_namespace/MyRepo/file/main/hello.txt"
+```
+
+For raw PUTs, commit metadata is supplied via headers:
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `oxen-commit-author` | No | Commit author name (defaults to empty) |
+| `oxen-commit-email` | No | Commit author email (defaults to empty) |
+| `oxen-commit-message` | No | Commit message (defaults to "Auto-commit files to {path}") |
+
+The existing multipart PUT is still supported (where these fields are form parts instead). The server detects the format from the `Content-Type` header.
+
+#### Optimistic Concurrency (`oxen-based-on`)
+
+When downloading a file via GET, the response includes an `oxen-revision-id` header with the commit that last modified the file. To prevent overwriting concurrent changes, pass this value back on PUT or DELETE:
+
+```bash
+# Get the current revision
+REVISION=$(curl -sI -H "Authorization: Bearer $TOKEN" \
+  "http://0.0.0.0:3000/api/repos/my_namespace/MyRepo/file/main/hello.txt" \
+  | grep -i oxen-revision-id | awk '{print $2}' | tr -d '\r')
+
+# Update with concurrency check
+curl -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: text/plain" \
+     -H "oxen-based-on: $REVISION" \
+     -X PUT \
+     -d "Updated content" \
+     "http://0.0.0.0:3000/api/repos/my_namespace/MyRepo/file/main/hello.txt"
+```
+
+If the file has been modified since the claimed revision, the server returns `400 Bad Request`.
 
 
 ## Logging
