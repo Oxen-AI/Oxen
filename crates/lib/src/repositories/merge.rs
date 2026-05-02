@@ -22,6 +22,13 @@ impl MergeCommits {
     pub fn is_fast_forward_merge(&self) -> bool {
         self.lca.as_ref().is_some_and(|lca| lca.id == self.base.id)
     }
+
+    /// True when the merge branch is an ancestor of base (LCA equals merge). Mirrors `git merge`'s
+    /// "Already up to date" condition — no merge work needed because every change reachable from
+    /// the merge branch is already in base.
+    pub fn is_already_up_to_date(&self) -> bool {
+        self.lca.as_ref().is_some_and(|lca| lca.id == self.merge.id)
+    }
 }
 
 pub fn list_conflicts(repo: &LocalRepository) -> Result<Vec<MergeConflict>, OxenError> {
@@ -527,6 +534,146 @@ mod tests {
         .await
     }
 
+    // Regression test for a three-way merge where the merge branch's content is already entirely
+    // present in base via a separate path (e.g. base was squash-merged from the merge branch and
+    // then advanced with an unrelated commit). Pre-fix this errored with "No changes to commit",
+    // which surfaced as a 500 from oxen-server's `/merge/{base..head}` endpoint and broke
+    // OxenHub merge requests in that state.
+    //
+    //   A — B — D    <- main (base): B replays the merge branch's change as its own commit, then
+    //    \     /                     D adds an unrelated file so main has commits not on feature.
+    //     C        <- feature (merge): the change that B already incorporated.
+    async fn populate_already_up_to_date_three_way(
+        repo: &LocalRepository,
+        feature_branch_name: &str,
+    ) -> Result<Commit, OxenError> {
+        let main_branch = repositories::branches::current_branch(repo)?.unwrap();
+
+        // A: shared ancestor — a.txt at v1.
+        let a_path = repo.path.join("a.txt");
+        util::fs::write_to_path(&a_path, "v1")?;
+        repositories::add(repo, &a_path).await?;
+        repositories::commit(repo, "A: add a.txt with v1")?;
+
+        // C: feature branch flips a.txt to v2.
+        repositories::branches::create_checkout(repo, feature_branch_name)?;
+        test::modify_txt_file(&a_path, "v2")?;
+        repositories::add(repo, &a_path).await?;
+        repositories::commit(repo, "C: change a.txt to v2 on feature")?;
+
+        // Back on main, replay the same content change (a.txt -> v2). This makes main's a.txt
+        // identical to feature's, but via a different commit (not a fast-forward).
+        repositories::checkout(repo, &main_branch.name).await?;
+        test::modify_txt_file(&a_path, "v2")?;
+        repositories::add(repo, &a_path).await?;
+        repositories::commit(repo, "B: replay feature's a.txt change on main")?;
+
+        // D: an unrelated commit on main so main is genuinely diverged from feature.
+        let d_path = repo.path.join("d.txt");
+        util::fs::write_to_path(&d_path, "d")?;
+        repositories::add(repo, &d_path).await?;
+        repositories::commit(repo, "D: add d.txt on main")
+    }
+
+    /// Verifies a 3-way merge with no content delta produced an empty merge commit: a NEW commit
+    /// with two parents and a tree that matches base's content (each path maps to the same file
+    /// hash as in base). Mirrors `git merge`'s empty-merge-commit semantics.
+    fn assert_empty_merge_commit(
+        repo: &LocalRepository,
+        merge_commit: &Commit,
+        base: &Commit,
+        merge_branch_tip: &Commit,
+    ) -> Result<(), OxenError> {
+        assert_ne!(
+            merge_commit.id, base.id,
+            "an empty merge commit must be a new commit, not base itself"
+        );
+        assert_eq!(
+            merge_commit.parent_ids.len(),
+            2,
+            "merge commit should have two parents"
+        );
+        assert!(
+            merge_commit.parent_ids.contains(&base.id),
+            "merge commit parents should include base ({}); got {:?}",
+            base.id,
+            merge_commit.parent_ids,
+        );
+        assert!(
+            merge_commit.parent_ids.contains(&merge_branch_tip.id),
+            "merge commit parents should include merge branch tip ({}); got {:?}",
+            merge_branch_tip.id,
+            merge_commit.parent_ids,
+        );
+        // Tree content: every file present in base must be present at the same path in the merge
+        // commit with the same content hash.
+        for path in ["a.txt", "d.txt"] {
+            let base_file = repositories::tree::get_file_by_path(repo, base, path)?
+                .unwrap_or_else(|| panic!("base should contain {path}"));
+            let merge_file = repositories::tree::get_file_by_path(repo, merge_commit, path)?
+                .unwrap_or_else(|| panic!("merge commit should contain {path}"));
+            assert_eq!(
+                base_file.combined_hash(),
+                merge_file.combined_hash(),
+                "{path} should have the same content hash as base"
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_merge_three_way_no_content_delta_client_side() -> Result<(), OxenError> {
+        // Three-way merge where merge isn't an ancestor of base but contributes no new content —
+        // base squash-replayed the merge branch. Pre-fix this 500ed with "No changes to commit".
+        // Post-fix: succeeds and produces an empty merge commit with two parents and base's tree.
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let feature_branch = "feature";
+            let main_head_before_merge =
+                populate_already_up_to_date_three_way(&repo, feature_branch).await?;
+            let feature_tip = repositories::revisions::get(&repo, feature_branch)?
+                .expect("feature branch should resolve");
+
+            let result = repositories::merge::merge(&repo, feature_branch).await?;
+            let merge_commit = result.expect("merge should succeed and produce a commit");
+
+            assert_empty_merge_commit(&repo, &merge_commit, &main_head_before_merge, &feature_tip)?;
+            // Client-side merge advances HEAD to the new merge commit.
+            let current_head = repositories::commits::head_commit(&repo)?;
+            assert_eq!(current_head.id, merge_commit.id);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_merge_three_way_no_content_delta_server_side() -> Result<(), OxenError> {
+        // Server-side equivalent — exercises `merge_into_base`, the path called from the
+        // oxen-server `/api/repos/.../merge/{base..head}` controller.
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+            let feature_branch_name = "feature";
+            let main_head_before_merge =
+                populate_already_up_to_date_three_way(&repo, feature_branch_name).await?;
+
+            let base_branch = repositories::branches::get_by_name(&repo, &main_branch.name)?;
+            let merge_branch = repositories::branches::get_by_name(&repo, feature_branch_name)?;
+            let feature_tip = repositories::revisions::get(&repo, feature_branch_name)?
+                .expect("feature branch should resolve");
+
+            let merge_commit =
+                repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
+
+            assert_empty_merge_commit(&repo, &merge_commit, &main_head_before_merge, &feature_tip)?;
+            // Server-side: base branch ref is advanced to the new merge commit.
+            let base_after = repositories::branches::get_by_name(&repo, &main_branch.name)?;
+            assert_eq!(base_after.commit_id, merge_commit.id);
+
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_merge_conflict_three_way_merge() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|repo| async move {
@@ -1022,14 +1169,13 @@ mod tests {
             // 4. merge main onto new branch (re-fetch branches to get current commit IDs)
             let og_branch = repositories::branches::get_by_name(&repo, &og_branch.name)?;
             let new_branch = repositories::branches::get_by_name(&repo, new_branch_name)?;
-            let merge_result =
-                repositories::merge::merge_into_base(&repo, &og_branch, &new_branch).await;
+            let merge_commit =
+                repositories::merge::merge_into_base(&repo, &og_branch, &new_branch).await?;
 
-            // 5. There should be no commit
-            assert_eq!(
-                merge_result.unwrap_err().to_string(),
-                OxenError::basic_str("No changes to commit").to_string()
-            );
+            // 5. Already up to date: merge_into_base returns base unchanged, no new commit.
+            assert_eq!(merge_commit.id, new_branch.commit_id);
+            let new_branch_after = repositories::branches::get_by_name(&repo, new_branch_name)?;
+            assert_eq!(new_branch_after.commit_id, new_branch.commit_id);
 
             Ok(())
         })
@@ -1088,11 +1234,12 @@ mod tests {
             );
 
             // 7. Merge new branch onto main branch again.
-            // There should be no new merge commit
-            let merge_result2 = repositories::merge::merge(&repo, new_branch_name).await;
+            // Already up to date: no new merge commit, HEAD stays at the first merge commit.
+            let merge_result2 = repositories::merge::merge(&repo, new_branch_name).await?;
+            let merge_commit2 =
+                merge_result2.expect("second merge should succeed (already up to date)");
             assert_eq!(
-                merge_result2.unwrap_err().to_string(),
-                OxenError::basic_str("No changes to commit").to_string(),
+                merge_commit2.id, merge_commit1.id,
                 "Second merge attempt should not create a new commit as it's already merged"
             );
 

@@ -1958,10 +1958,10 @@ mod tests {
                 )
                 .await;
 
-                assert_eq!(
-                    pull_result.unwrap_err().to_string(),
-                    OxenError::basic_str("No changes to commit").to_string()
-                );
+                // Pulling main into branch1 is a no-op: main is an ancestor of branch1 (branch1
+                // was branched from main and added newfile.txt on top), so the merge step
+                // succeeds as "Already up to date" with no new merge commit.
+                pull_result?;
 
                 // Verify the state after pull
                 assert!(repo.path.join("train").exists());

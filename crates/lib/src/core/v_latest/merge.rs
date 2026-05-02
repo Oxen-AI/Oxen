@@ -1,5 +1,6 @@
 use crate::constants;
 use crate::core::db;
+use crate::core::db::merkle_node::MerkleNodeDB;
 pub use crate::core::merge::entry_merge_conflict_db_reader::EntryMergeConflictDBReader;
 pub use crate::core::merge::node_merge_conflict_db_reader::NodeMergeConflictDBReader;
 use crate::core::merge::node_merge_conflict_reader::NodeMergeConflictReader;
@@ -10,9 +11,12 @@ use crate::core::v_latest::branches::OnConflict;
 use crate::core::v_latest::commits::{get_commit_or_head, list_between};
 use crate::core::v_latest::merge_marker;
 use crate::error::OxenError;
+use crate::model::NewCommit;
 use crate::model::StagedEntryStatus;
 use crate::model::merge_conflict::NodeMergeConflict;
+use crate::model::merkle_tree::node::CommitNode;
 use crate::model::merkle_tree::node::StagedMerkleTreeNode;
+use crate::model::merkle_tree::node::commit_node::CommitNodeOpts;
 use crate::model::merkle_tree::node::file_node::FileNode;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
 use crate::model::{Branch, Commit, LocalRepository};
@@ -247,6 +251,10 @@ pub async fn merge_into_base(
 
     let result = if commits.is_fast_forward_merge() {
         Ok(commits.merge)
+    } else if commits.is_already_up_to_date() {
+        // Merge branch is an ancestor of base — base already contains everything from merge.
+        // Mirrors `git merge`'s "Already up to date" outcome: no merge commit, base unchanged.
+        Ok(commits.base.clone())
     } else {
         server_three_way_merge(repo, &commits).await
     };
@@ -293,7 +301,16 @@ async fn server_three_way_merge(
     }
 
     if analysis.entries.is_empty() {
-        return Err(OxenError::basic_str("No changes to commit"));
+        // The merge branch contributes no new content on top of base — its changes are already
+        // present in base via a separate path (e.g. base squash-replayed the merge branch). Build
+        // an empty merge commit (two parents, base's tree) so the merge is preserved in commit
+        // history. Mirrors `git merge`'s behavior on a 3-way merge with no content delta.
+        log::info!(
+            "server_three_way_merge: merge {} contributes no new content to base {}; creating empty merge commit",
+            merge_commits.merge.id,
+            merge_commits.base.id,
+        );
+        return create_empty_merge_commit(repo, merge_commits);
     }
 
     // 2. Build dir_entries HashMap (parent dir -> staged nodes) for the commit writer
@@ -915,6 +932,11 @@ async fn merge_commits(
         let commit =
             fast_forward_merge(repo, &merge_commits.base, &merge_commits.merge, checkout).await?;
         Ok(commit)
+    } else if merge_commits.is_already_up_to_date() {
+        // Merge branch is an ancestor of base — `git merge`'s "Already up to date" outcome.
+        // No merge commit, working tree and HEAD unchanged.
+        println!("Already up to date.");
+        Ok(Some(merge_commits.base.clone()))
     } else {
         log::debug!(
             "Three way merge! {} -> {}",
@@ -950,7 +972,18 @@ Found {} conflicts, please resolve them before merging.
         log::debug!("Got {} conflicts", analysis.conflicts.len());
 
         if analysis.conflicts.is_empty() {
-            let commit = create_merge_commit(repo, merge_commits, shared_hashes).await?;
+            let commit = if analysis.entries.is_empty() {
+                // Same case as server_three_way_merge: merge contributes no new content on top of
+                // base. Build an empty merge commit aliasing base's tree (matches `git merge`'s
+                // 3-way no-delta behavior). Skips the staging path since there's nothing to stage,
+                // and advances HEAD afterward since `commit_dir_entries_with_parents` and the
+                // empty-merge-commit helper don't update HEAD on their own.
+                let commit = create_empty_merge_commit(repo, merge_commits)?;
+                with_ref_manager(repo, |manager| manager.set_head_commit_id(&commit.id))?;
+                commit
+            } else {
+                create_merge_commit(repo, merge_commits, shared_hashes).await?
+            };
             Ok(Some(commit))
         } else {
             let db_path = db_path(repo);
@@ -991,6 +1024,76 @@ async fn create_merge_commit(
     // rm::remove_staged(repo, &HashSet::from([PathBuf::from("/")]))?;
 
     Ok(commit)
+}
+
+/// Create an empty merge commit: a commit with two parents whose tree is identical to base's
+/// tree. Used when a 3-way merge analysis produces no entries (the merge branch contributes no
+/// new content on top of base) but the merge isn't a fast-forward / "already up to date" case
+/// either. Mirrors `git merge`'s empty-merge-commit behavior on a 3-way merge with no content
+/// delta.
+///
+/// This aliases base's existing root DirNode by hash — Merkle storage is content-addressed, so
+/// the new commit and base share the underlying tree storage. Only a new CommitNode and a copy
+/// of base's `dir_hash_db` are written. The caller is responsible for advancing the appropriate
+/// ref (server-side: the base branch ref via `merge_into_base`; client-side: HEAD via the
+/// `with_ref_manager` helper).
+fn create_empty_merge_commit(
+    repo: &LocalRepository,
+    merge_commits: &MergeCommits,
+) -> Result<Commit, OxenError> {
+    let cfg = crate::config::UserConfig::get()?;
+    let timestamp = time::OffsetDateTime::now_utc();
+    let new_commit_data = NewCommit {
+        parent_ids: vec![
+            merge_commits.base.id.clone(),
+            merge_commits.merge.id.clone(),
+        ],
+        message: merge_commits.commit_message(),
+        author: cfg.name.clone(),
+        email: cfg.email.clone(),
+        timestamp,
+    };
+    let commit_id = commit_writer::compute_commit_id(&new_commit_data)?;
+
+    let base_commit_hash: MerkleHash = merge_commits.base.id.parse()?;
+    let merge_commit_hash: MerkleHash = merge_commits.merge.id.parse()?;
+
+    let commit_node = CommitNode::new(
+        repo,
+        CommitNodeOpts {
+            hash: commit_id,
+            // CommitNode.parent_ids holds parent commit hashes (matches `create_empty_commit`
+            // in core/v_latest/commits.rs).
+            parent_ids: vec![base_commit_hash, merge_commit_hash],
+            email: cfg.email.clone(),
+            author: cfg.name.clone(),
+            message: merge_commits.commit_message(),
+            timestamp,
+        },
+    )?;
+
+    // Open the new commit's MerkleNodeDB and add base's existing root DirNode as the only child.
+    // Tree is content-addressed, so the new commit's tree equals base's tree without any tree
+    // rebuild or copy.
+    let base_node = repositories::tree::get_node_by_id_with_children(repo, &base_commit_hash)?
+        .ok_or_else(|| {
+            OxenError::resource_not_found(format!(
+                "Merkle tree node not found for base commit '{}'",
+                merge_commits.base.id
+            ))
+        })?;
+    let mut commit_db = MerkleNodeDB::open_read_write(repo, &commit_node, Some(base_node.hash))?;
+    let root_dir = base_node
+        .children
+        .first()
+        .expect("base commit must have a root dir as its first child")
+        .dir()?;
+    commit_db.add_child(&root_dir)?;
+
+    // Copy base's path -> dir hash mapping so path-based tree lookups work for the new commit.
+    repositories::tree::cp_dir_hashes_to(repo, &base_commit_hash, commit_node.hash())?;
+
+    Ok(commit_node.to_commit())
 }
 
 pub fn lowest_common_ancestor_from_commits(
