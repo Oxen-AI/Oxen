@@ -58,6 +58,7 @@ async fn async_main() -> ExitCode {
     let cmds: Vec<Box<dyn cmd::RunCmd>> = vec![
         Box::new(cmd::AddCmd),
         Box::new(cmd::BranchCmd),
+        Box::new(cmd::CatCmd),
         Box::new(cmd::CheckoutCmd),
         Box::new(cmd::CleanCmd),
         Box::new(cmd::CloneCmd),

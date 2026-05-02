@@ -12,6 +12,9 @@ pub use branch::BranchCmd;
 pub mod checkout;
 pub use checkout::CheckoutCmd;
 
+pub mod cat;
+pub use cat::CatCmd;
+
 pub mod clean;
 pub use clean::CleanCmd;
 
