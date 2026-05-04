@@ -13,7 +13,9 @@ permissions:
 env:
   AWS_ROLE: arn:aws:iam::213020545630:role/github-runner-role
   AWS_REGION: us-west-1
-  PYTHON_VERSIONS: "3.14 3.13 3.12 3.11"
+  # The extension uses pyo3's stable abi3 ABI (abi3-py311), so we only need to build
+  # against the floor Python version — the resulting wheel works for 3.11+.
+  PYTHON_VERSIONS: "3.11"
 
 defaults:
   run:
@@ -183,9 +185,10 @@ jobs:
             The MacOS x86_64 (Intel) binaries require a minimum version of MacOS 10.13 High Sierra.
 
             🐍 Python Wheels
-            The Python wheels are available for the following platforms:
-            - Linux arm64 (Python ${{ env.PYTHON_VERSIONS }})
-            - Linux x86_64 (Python ${{ env.PYTHON_VERSIONS }})
-            - MacOS arm64 [Apple Silicon] (Python ${{ env.PYTHON_VERSIONS }})
-            - MacOS x86_64 [Intel] (Python ${{ env.PYTHON_VERSIONS }})
-            - Windows x86_64 (Python ${{ env.PYTHON_VERSIONS }})
+            The Python wheels are abi3 wheels built against Python 3.11 and compatible with
+            Python 3.11+. They are available for the following platforms:
+            - Linux arm64
+            - Linux x86_64
+            - MacOS arm64 [Apple Silicon]
+            - MacOS x86_64 [Intel]
+            - Windows x86_64

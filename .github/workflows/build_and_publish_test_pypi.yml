@@ -19,7 +19,9 @@ permissions:
 env:
   AWS_ROLE: arn:aws:iam::213020545630:role/github-runner-role
   AWS_REGION: us-west-1
-  PYTHON_VERSIONS: "3.14 3.13 3.12 3.11"
+  # The extension uses pyo3's stable abi3 ABI (abi3-py311), so we only need to build
+  # against the floor Python version — the resulting wheel works for 3.11+.
+  PYTHON_VERSIONS: "3.11"
 
 defaults:
   run:
