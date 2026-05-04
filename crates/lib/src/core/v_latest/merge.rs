@@ -232,10 +232,6 @@ pub async fn merge_into_base(
 ) -> Result<Commit, OxenError> {
     log::debug!("merge_into_base merge {merge_branch} into {base_branch}");
 
-    if merge_branch.commit_id == base_branch.commit_id {
-        return Err(OxenError::basic_str("No changes to merge"));
-    }
-
     let base_commit = get_commit_or_head(repo, Some(base_branch.commit_id.clone()))?;
     let merge_commit = get_commit_or_head(repo, Some(merge_branch.commit_id.clone()))?;
 
@@ -249,12 +245,13 @@ pub async fn merge_into_base(
         merge: merge_commit,
     };
 
-    let result = if commits.is_fast_forward_merge() {
-        Ok(commits.merge)
-    } else if commits.is_already_up_to_date() {
-        // Merge branch is an ancestor of base — base already contains everything from merge.
-        // Mirrors `git merge`'s "Already up to date" outcome: no merge commit, base unchanged.
+    let result = if commits.is_already_up_to_date() {
+        // Merge branch is an ancestor of base (or equal tips) — base already contains everything
+        // from merge. Mirrors `git merge`'s "Already up to date" outcome: no merge commit, base
+        // unchanged.
         Ok(commits.base.clone())
+    } else if commits.is_fast_forward_merge() {
+        Ok(commits.merge)
     } else {
         server_three_way_merge(repo, &commits).await
     };
@@ -465,7 +462,12 @@ pub async fn merge_commit_into_base_on_branch(
         merge: merge_commit.to_owned(),
     };
 
-    let result = if merge_commits.is_fast_forward_merge() {
+    let result = if merge_commits.is_already_up_to_date() {
+        // Merge is an ancestor of base (or equal tips) — base already contains everything from
+        // merge. Return base unchanged rather than fabricating an empty merge commit via
+        // `server_three_way_merge`. Mirrors `git merge`'s "Already up to date" outcome.
+        Ok(merge_commits.base.clone())
+    } else if merge_commits.is_fast_forward_merge() {
         Ok(merge_commits.merge)
     } else {
         server_three_way_merge(repo, &merge_commits).await
@@ -927,16 +929,19 @@ async fn merge_commits(
         LocalCheckout::Absent
     };
 
-    // Check which type of merge we need to do
-    if merge_commits.is_fast_forward_merge() {
+    // Check which type of merge we need to do.
+    // "Already up to date" must be checked before the fast-forward case: when base == merge both
+    // predicates are true, and we want the no-op outcome (return base unchanged) rather than
+    // calling `fast_forward_merge`, which would return Ok(None).
+    if merge_commits.is_already_up_to_date() {
+        // Merge branch is an ancestor of base (or equal tips) — `git merge`'s "Already up to
+        // date" outcome. No merge commit, working tree and HEAD unchanged.
+        println!("Already up to date.");
+        Ok(Some(merge_commits.base.clone()))
+    } else if merge_commits.is_fast_forward_merge() {
         let commit =
             fast_forward_merge(repo, &merge_commits.base, &merge_commits.merge, checkout).await?;
         Ok(commit)
-    } else if merge_commits.is_already_up_to_date() {
-        // Merge branch is an ancestor of base — `git merge`'s "Already up to date" outcome.
-        // No merge commit, working tree and HEAD unchanged.
-        println!("Already up to date.");
-        Ok(Some(merge_commits.base.clone()))
     } else {
         log::debug!(
             "Three way merge! {} -> {}",

@@ -23,11 +23,14 @@ impl MergeCommits {
         self.lca.as_ref().is_some_and(|lca| lca.id == self.base.id)
     }
 
-    /// True when the merge branch is an ancestor of base (LCA equals merge). Mirrors `git merge`'s
-    /// "Already up to date" condition — no merge work needed because every change reachable from
-    /// the merge branch is already in base.
+    /// True when the merge branch is an ancestor of base — including the equal-tip case, where
+    /// base and merge are the same commit. Mirrors `git merge`'s "Already up to date" condition:
+    /// no merge work needed because every change reachable from the merge branch is already in
+    /// base. The equal-tip branch is checked explicitly so this still returns true even if a
+    /// caller built `MergeCommits` with `lca: None`.
     pub fn is_already_up_to_date(&self) -> bool {
-        self.lca.as_ref().is_some_and(|lca| lca.id == self.merge.id)
+        self.base.id == self.merge.id
+            || self.lca.as_ref().is_some_and(|lca| lca.id == self.merge.id)
     }
 }
 
@@ -1183,6 +1186,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_merge_client_equal_tips_returns_base() -> Result<(), OxenError> {
+        // Equal-tip merge on the client path: a sibling branch points at the same commit as HEAD.
+        // Must report "Already up to date" — Some(base) — rather than None (which is what
+        // fast_forward_merge used to return for this case before the equal-tip dispatch fix).
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let base_branch = repositories::branches::current_branch(&repo)?.unwrap();
+            repositories::branches::create_from_head(&repo, "twin")?;
+
+            let merged = repositories::merge::merge(&repo, "twin").await?;
+            assert_eq!(
+                merged.map(|c| c.id),
+                Some(base_branch.commit_id.clone()),
+                "client merge of equal tips must return the base commit, not None"
+            );
+
+            // HEAD must remain on the same commit.
+            let head_commit = repositories::commits::head_commit(&repo)?;
+            assert_eq!(head_commit.id, base_branch.commit_id);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_merge_diverged_branches_then_merge_again() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|repo| async move {
             // 1. Commit something in main branch
@@ -1258,8 +1286,6 @@ mod tests {
     #[tokio::test]
     async fn test_merge_immediately_after_checkout() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|repo| async move {
-            // Need to have main branch get ahead of branch so that you can traverse to directory to it, but they
-            // have a common ancestor
             // 1. Commit something in main branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
             let labels_path = repo.path.join("labels.txt");
@@ -1267,15 +1293,17 @@ mod tests {
             repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "Add initial labels.txt file with cat and dog")?;
 
-            // 2. Create a new branch
+            // 2. Create a new branch pointing at HEAD and check it out — equal tips with main.
             let new_branch_name = "new_branch";
-            let _new_branch = repositories::branches::create_checkout(&repo, new_branch_name)?;
+            let new_branch = repositories::branches::create_checkout(&repo, new_branch_name)?;
 
-            // 4. merge main onto new branch
-            let commit = repositories::merge::merge(&repo, og_branch.name).await?;
+            // 3. Merging main into new_branch is a no-op (already up to date): returns the current
+            //    HEAD commit unchanged, with no new merge commit and no movement of HEAD.
+            let merged = repositories::merge::merge(&repo, og_branch.name).await?;
+            assert_eq!(merged.map(|c| c.id), Some(new_branch.commit_id.clone()));
 
-            // 5. There should be no commit
-            assert!(commit.is_none());
+            let head_commit = repositories::commits::head_commit(&repo)?;
+            assert_eq!(head_commit.id, new_branch.commit_id);
 
             Ok(())
         })
@@ -1484,6 +1512,29 @@ mod tests {
             // The base branch ref should now point to the merge commit
             let updated_branch = repositories::branches::get_by_name(&repo, &base_branch.name)?;
             assert_eq!(updated_branch.commit_id, merge_commit.id);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_merge_into_base_equal_tips_returns_base() -> Result<(), OxenError> {
+        // Equal-tip merge on the server path: a sibling branch points at the same commit as the
+        // base branch. Must succeed and return base unchanged — previously this returned
+        // Err("No changes to merge").
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let base_branch = repositories::branches::current_branch(&repo)?.unwrap();
+            repositories::branches::create_from_head(&repo, "twin")?;
+            let merge_branch = repositories::branches::get_by_name(&repo, "twin")?;
+
+            let merge_commit =
+                repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
+            assert_eq!(merge_commit.id, base_branch.commit_id);
+
+            // The base branch ref must still point at the same commit.
+            let updated_base = repositories::branches::get_by_name(&repo, &base_branch.name)?;
+            assert_eq!(updated_base.commit_id, base_branch.commit_id);
 
             Ok(())
         })
@@ -2196,6 +2247,47 @@ mod tests {
                 repositories::tree::get_file_by_path(&repo, &merge_commit, "data/b.txt")?.is_none(),
                 "data/b.txt should be deleted in merge commit"
             );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_merge_commit_into_base_on_branch_ancestor_is_no_op() -> Result<(), OxenError> {
+        // When the merge commit is an ancestor of the base commit (lca == merge), the merge is a
+        // no-op. The branch ref must NOT advance to a fabricated empty merge commit.
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let base_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            // First commit on main becomes the "ancestor" we'll later try to merge into HEAD.
+            let f1 = repo.path.join("f1.txt");
+            util::fs::write_to_path(&f1, "one")?;
+            repositories::add(&repo, &f1).await?;
+            let ancestor_commit = repositories::commit(&repo, "Add f1")?;
+
+            // Advance main with a second commit so base != merge but lca == merge.
+            let f2 = repo.path.join("f2.txt");
+            util::fs::write_to_path(&f2, "two")?;
+            repositories::add(&repo, &f2).await?;
+            let head_commit = repositories::commit(&repo, "Add f2")?;
+
+            let base_branch = repositories::branches::get_by_name(&repo, &base_branch.name)?;
+            let merge_commit_result = repositories::merge::merge_commit_into_base_on_branch(
+                &repo,
+                &ancestor_commit,
+                &head_commit,
+                &base_branch,
+            )
+            .await?;
+
+            // Should return base unchanged, not a new (empty) merge commit.
+            assert_eq!(merge_commit_result.id, head_commit.id);
+            assert_eq!(merge_commit_result.parent_ids, head_commit.parent_ids);
+
+            // Branch ref must still point at the original head commit.
+            let branch_after = repositories::branches::get_by_name(&repo, &base_branch.name)?;
+            assert_eq!(branch_after.commit_id, head_commit.id);
 
             Ok(())
         })
