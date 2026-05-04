@@ -195,13 +195,13 @@ impl CommitMerkleTree {
         recurse: bool,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         // log::debug!("Read node v0.19.0 hash [{}]", hash);
-        if !MerkleNodeDB::exists(repo, hash) {
+        if !MerkleNodeDB::exists(&repo.path, hash) {
             // log::debug!("read_node merkle node db does not exist for hash: {}", hash);
             return Ok(None);
         }
 
         let mut node = MerkleTreeNode::from_hash(repo, hash)?;
-        let mut node_db = MerkleNodeDB::open_read_only(repo, hash)?;
+        let mut node_db = MerkleNodeDB::open_read_only(&repo.path, hash)?;
         CommitMerkleTree::read_children_from_node(repo, &mut node_db, &mut node, recurse)?;
         // log::debug!("read_node v0.19.0 done: {:?} recurse: {}", node.hash, recurse);
         Ok(Some(node))
@@ -213,13 +213,13 @@ impl CommitMerkleTree {
         depth: i32,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         // log::debug!("Read depth {} node hash [{}]", depth, hash);
-        if !MerkleNodeDB::exists(repo, hash) {
+        if !MerkleNodeDB::exists(&repo.path, hash) {
             log::debug!("read_depth merkle node db does not exist for hash: {hash}");
             return Ok(None);
         }
 
         let mut node = MerkleTreeNode::from_hash(repo, hash)?;
-        let mut node_db = MerkleNodeDB::open_read_only(repo, hash)?;
+        let mut node_db = MerkleNodeDB::open_read_only(&repo.path, hash)?;
 
         CommitMerkleTree::read_children_until_depth(repo, &mut node_db, &mut node, depth, 0)?;
         // log::debug!("Read depth {} node done: {:?}", depth, node.hash);
@@ -470,7 +470,9 @@ impl CommitMerkleTree {
                         };
                         // Here we have to not panic on error, because if we clone a subtree we might not have all of the children nodes of a particular dir
                         // given that we are only loading the nodes that are needed.
-                        if let Ok(mut node_db) = MerkleNodeDB::open_read_only(repo, &child.hash) {
+                        if let Ok(mut node_db) =
+                            MerkleNodeDB::open_read_only(&repo.path, &child.hash)
+                        {
                             CommitMerkleTree::read_children_until_depth(
                                 repo,
                                 &mut node_db,
@@ -533,7 +535,7 @@ impl CommitMerkleTree {
                 | MerkleTreeNodeType::VNode => {
                     if recurse {
                         // log::debug!("read_children_from_node recurse: {:?}", child.hash);
-                        let Ok(mut node_db) = MerkleNodeDB::open_read_only(repo, &child.hash)
+                        let Ok(mut node_db) = MerkleNodeDB::open_read_only(&repo.path, &child.hash)
                         else {
                             log::warn!("no child node db: {:?}", child.hash);
                             return Ok(());

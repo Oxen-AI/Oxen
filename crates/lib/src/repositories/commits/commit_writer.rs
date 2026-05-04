@@ -287,7 +287,7 @@ pub fn commit_dir_entries_with_parents(
         }
     }
 
-    let mut commit_db = MerkleNodeDB::open_read_write(repo, &node, parent_id)?;
+    let mut commit_db = MerkleNodeDB::open_read_write(&repo.path, &node, parent_id)?;
     write_commit_entries(
         repo,
         commit_id,
@@ -382,7 +382,7 @@ pub fn commit_dir_entries_new(
         }
     }
 
-    let mut commit_db = MerkleNodeDB::open_read_write(repo, &node, parent_id)?;
+    let mut commit_db = MerkleNodeDB::open_read_write(&repo.path, &node, parent_id)?;
 
     write_commit_entries(
         repo,
@@ -496,7 +496,7 @@ pub fn commit_dir_entries(
         }
     }
 
-    let mut commit_db = MerkleNodeDB::open_read_write(repo, &node, None)?;
+    let mut commit_db = MerkleNodeDB::open_read_write(&repo.path, &node, None)?;
     write_commit_entries(
         repo,
         commit_id,
@@ -802,7 +802,7 @@ fn write_commit_entries(
         root_path.to_str().unwrap(),
         &dir_node.hash().to_string(),
     )?;
-    let dir_db = MerkleNodeDB::open_read_write(repo, &dir_node, Some(commit_id))?;
+    let dir_db = MerkleNodeDB::open_read_write(&repo.path, &dir_node, Some(commit_id))?;
     r_create_dir_node(
         repo,
         commit_id,
@@ -884,7 +884,7 @@ fn r_create_dir_node(
         // );
 
         let mut vnode_db = MerkleNodeDB::open_read_write(
-            repo,
+            &repo.path,
             &vnode_obj,
             maybe_dir_db.as_ref().map(|db| db.node_id),
         )?;
@@ -907,7 +907,7 @@ fn r_create_dir_node(
                         // if the vnode is new, we need a new dir db
                         // let mut child_db = if maybe_vnode_db.is_some() {
                         let mut child_db = Some(MerkleNodeDB::open_read_write(
-                            repo,
+                            &repo.path,
                             &dir_node,
                             Some(vnode.id),
                         )?);

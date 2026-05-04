@@ -572,7 +572,8 @@ fn traverse_and_update_sizes_and_counts(
                 &mut local_sizes,
                 num_bytes,
             )?;
-            let mut dir_db = MerkleNodeDB::open_read_write(repo, commit_node, node.parent_id)?;
+            let mut dir_db =
+                MerkleNodeDB::open_read_write(&repo.path, commit_node, node.parent_id)?;
             add_children_to_db(&mut dir_db, &node.children)?;
         }
         EMerkleTreeNode::VNode(vnode) => {
@@ -584,7 +585,7 @@ fn traverse_and_update_sizes_and_counts(
                 &mut local_sizes,
                 num_bytes,
             )?;
-            let mut dir_db = MerkleNodeDB::open_read_write(repo, vnode, node.parent_id)?;
+            let mut dir_db = MerkleNodeDB::open_read_write(&repo.path, vnode, node.parent_id)?;
             add_children_to_db(&mut dir_db, &node.children)?;
         }
         EMerkleTreeNode::Directory(dir_node) => {
@@ -598,7 +599,7 @@ fn traverse_and_update_sizes_and_counts(
             )?;
             dir_node.set_data_type_counts(local_counts.clone());
             dir_node.set_data_type_sizes(local_sizes.clone());
-            let mut dir_db = MerkleNodeDB::open_read_write(repo, dir_node, node.parent_id)?;
+            let mut dir_db = MerkleNodeDB::open_read_write(&repo.path, dir_node, node.parent_id)?;
             add_children_to_db(&mut dir_db, &node.children)?;
         }
         EMerkleTreeNode::File(file_node) => {
