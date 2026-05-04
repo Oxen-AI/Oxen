@@ -174,7 +174,11 @@ debug-assertions = false
 [profile.release]
 codegen-units = 1
 lto = true
+opt-level = "s"
+strip = true
 
 [profile.profiling]
 inherits = "release"
 debug = true
+# Undo `strip = true` from `release` so debug info actually reaches the binary.
+strip = "none"
