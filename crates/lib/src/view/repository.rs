@@ -1,4 +1,5 @@
 use super::{DataTypeCount, StatusMessage};
+use crate::model::parsed_resource::ParsedResourceView;
 use crate::model::{Commit, EntryDataType, MetadataEntry};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -64,6 +65,7 @@ pub struct RepositoryCreationView {
             { "data_type": "tabular", "count": 5 }
         ],
         "is_empty": false,
+        "branch_count": 3,
     })
 )]
 pub struct RepositoryDataTypesView {
@@ -73,6 +75,9 @@ pub struct RepositoryDataTypesView {
     pub data_types: Vec<DataTypeCount>,
     pub min_version: Option<String>,
     pub is_empty: bool,
+    pub branch_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_resource: Option<ParsedResourceView>,
 }
 
 #[derive(Serialize, Deserialize, Debug, ToSchema)]
