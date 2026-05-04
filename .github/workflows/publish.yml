@@ -57,6 +57,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: rust-test # use the same key as the rust tests since we're not building with --release
+          save-if: ${{ github.ref == 'refs/heads/main' }} # Only save cache on main; always restore.
+          cache-all-crates: true
+          cache-on-failure: true
+      - name: Build crates
+        run: |
+            # Build the crates first, before getting the temporary API key to publish to crates.io
+            # NOTE: The temporary API key is only valid for 30 minutes. Builds were sometimes taking
+            #       longer than this time limit, resulting in an expired key and failed publish step.
+            cargo build --workspace --exclude oxen-py
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
       - name: Upload to crates.io
