@@ -321,12 +321,16 @@ mod tests {
             // // Checkout the branch
             // repositories::checkout(&repo, second_commit.id).await?;
 
-            let has_merges = repositories::merge::merge(&repo, DEFAULT_BRANCH_NAME)
-                .await
-                .is_ok();
-
-            // We should not have a merge because the current branch has all the old commits
-            assert!(!has_merges);
+            // Merging main into the current branch is a no-op: main is an ancestor of
+            // feature/my-branch (current HEAD), so the merge succeeds as "Already up to date" —
+            // no new merge commit, HEAD unchanged.
+            let head_before_merge = repositories::commits::head_commit(&repo)?;
+            let merge_result = repositories::merge::merge(&repo, DEFAULT_BRANCH_NAME)
+                .await?
+                .expect("merge should succeed (already up to date)");
+            assert_eq!(merge_result.id, head_before_merge.id);
+            let head_after_merge = repositories::commits::head_commit(&repo)?;
+            assert_eq!(head_after_merge.id, head_before_merge.id);
             assert!(world_file.exists());
             assert!(hello_file.exists());
 
