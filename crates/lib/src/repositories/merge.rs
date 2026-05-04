@@ -2574,6 +2574,39 @@ mod tests {
         .await
     }
 
+    // A successful no-op (already-up-to-date) merge must also clear any stale marker for the
+    // same target left behind by a prior interrupted attempt — otherwise the next merge of a
+    // different target would error with MergeInProgressMismatch.
+    #[tokio::test]
+    async fn test_merge_clears_marker_on_already_up_to_date() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            // Create commit A on main, then advance main with commit B. Make a sibling branch
+            // "ancestor" pointing at A so merging it into main hits is_already_up_to_date.
+            let f1 = repo.path.join("f1.txt");
+            util::fs::write_to_path(&f1, "one")?;
+            repositories::add(&repo, &f1).await?;
+            let ancestor_commit = repositories::commit(&repo, "Add f1")?;
+            repositories::branches::create(&repo, "ancestor", &ancestor_commit.id)?;
+
+            let f2 = repo.path.join("f2.txt");
+            util::fs::write_to_path(&f2, "two")?;
+            repositories::add(&repo, &f2).await?;
+            repositories::commit(&repo, "Add f2")?;
+
+            // Simulate a prior interrupted merge of "ancestor" by writing a stale marker.
+            merge_marker::write(&repo, &ancestor_commit.id).await?;
+
+            let merged = repositories::merge::merge(&repo, "ancestor").await?;
+            assert!(merged.is_some(), "no-op merge should succeed");
+            assert!(
+                !merge_marker::exists(&repo).await?,
+                "marker must be cleared after an already-up-to-date merge"
+            );
+            Ok(())
+        })
+        .await
+    }
+
     // Abort restores the working tree from a fast-forward-in-progress state and
     // clears every merge marker.
     #[tokio::test]

@@ -934,6 +934,12 @@ async fn merge_commits(
     // predicates are true, and we want the no-op outcome (return base unchanged) rather than
     // calling `fast_forward_merge`, which would return Ok(None).
     if merge_commits.is_already_up_to_date() {
+        // Clear any stale marker for this target left by a prior interrupted attempt at the same
+        // merge: the mismatch check above already rejected markers naming a different target, so
+        // anything still on disk here is for the very merge we're now declaring done.
+        if checkout.writes_to_disk() {
+            merge_marker::clear(repo).await?;
+        }
         // Merge branch is an ancestor of base (or equal tips) — `git merge`'s "Already up to
         // date" outcome. No merge commit, working tree and HEAD unchanged.
         println!("Already up to date.");
