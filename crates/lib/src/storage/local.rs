@@ -202,15 +202,14 @@ impl VersionStore for LocalVersionStore {
         // caller (oxen restore / merge / etc.) can surface a useful hint pointing the user
         // at `oxen fetch --missing-files`. Real IO errors from the existence check (e.g.
         // permission denied on `.oxen/versions/`) propagate as-is.
-        match fs::try_exists(&version_path).await {
-            Ok(true) => {}
-            Ok(false) => {
+        match fs::try_exists(&version_path).await? {
+            true => {}
+            false => {
                 return Err(OxenError::VersionStoreDataMissing {
                     hash: hash.to_string(),
                     target_path: dest_path.to_path_buf().into(),
                 });
             }
-            Err(err) => return Err(OxenError::file_error(&version_path, err)),
         }
         util::fs::copy_mkdir(&version_path, dest_path).await?;
         Ok(())
