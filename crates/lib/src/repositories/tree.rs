@@ -8,7 +8,6 @@ use std::str;
 use tar::Archive;
 
 use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
-use crate::core::commit_sync_status;
 use crate::core::db::merkle_node::MerkleNodeDB;
 use crate::core::db::merkle_node::merkle_node_db::node_db_path;
 use crate::core::node_sync_status;
@@ -627,21 +626,6 @@ pub fn unique_dir_entries(
     }
 
     Ok(entries)
-}
-
-// Given a set of commit hashes, return the hashes that are unsynced
-pub fn list_unsynced_commit_hashes(
-    repo: &LocalRepository,
-    hashes: &HashSet<MerkleHash>,
-) -> Result<HashSet<MerkleHash>, OxenError> {
-    let mut results = HashSet::new();
-    for hash in hashes {
-        if !commit_sync_status::commit_is_synced(repo, hash) {
-            results.insert(*hash);
-        }
-    }
-
-    Ok(results)
 }
 
 async fn list_missing_file_hashes_from_hashes(

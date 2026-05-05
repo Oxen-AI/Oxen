@@ -5,7 +5,6 @@ use liboxen::constants::DIRS_DIR;
 use liboxen::constants::HISTORY_DIR;
 use liboxen::constants::VERSION_FILE_NAME;
 
-use liboxen::core::commit_sync_status;
 use liboxen::error::OxenError;
 use liboxen::model::{Commit, LocalRepository};
 use liboxen::opts::PaginateOpts;
@@ -36,6 +35,7 @@ use flate2::Compression;
 use flate2::write::GzEncoder;
 use futures_util::stream::StreamExt as _;
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::Cursor;
 use std::io::Read;
@@ -258,14 +258,15 @@ pub async fn list_missing(
         return Ok(HttpResponse::BadRequest().json(StatusMessage::error("Invalid JSON")));
     };
 
+    let mut missing_commits = HashSet::new();
+    for hash in &merkle_hashes.hashes {
+        if repositories::tree::get_node_by_id(&repo, hash)?.is_none() {
+            missing_commits.insert(*hash);
+        }
+    }
     log::debug!(
-        "list_missing checking {} commit hashes",
-        merkle_hashes.hashes.len()
-    );
-    let missing_commits =
-        repositories::tree::list_unsynced_commit_hashes(&repo, &merkle_hashes.hashes)?;
-    log::debug!(
-        "list_missing found {} missing commits",
+        "list_missing checked {} commit hashes, {} missing",
+        merkle_hashes.hashes.len(),
         missing_commits.len()
     );
     let response = MerkleHashesResponse {
@@ -327,7 +328,7 @@ pub async fn list_missing_files(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits/synced",
     tag = "Commits",
-    description = "Mark a list of commit hashes as successfully synchronized to the server.",
+    description = "DEPRECATED - This operation is a no-op that echoes the hashes from the request, and will be removed in a future release.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -345,14 +346,8 @@ pub async fn list_missing_files(
     )
 )]
 pub async fn mark_commits_as_synced(
-    req: HttpRequest,
     mut body: web::Payload,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repository = get_repo(&app_data.path, namespace, repo_name)?;
-
     let mut bytes = web::BytesMut::new();
     while let Some(item) = body.next().await {
         bytes.extend_from_slice(&item.map_err(|_| OxenHttpError::FailedToReadRequestPayload)?);
@@ -360,16 +355,17 @@ pub async fn mark_commits_as_synced(
 
     let request: MerkleHashes = serde_json::from_slice(&bytes)?;
     let hashes = request.hashes;
+
+    // We removed the commit-level synced-marker mechanism: this endpoint used to write a per-commit
+    // `IS_SYNCED` marker file that `list_missing` would later consult to skip re-uploading commit
+    // metadata. The marker was load-bearing for skipping duplicate metadata uploads but became a
+    // silent-data-loss vector when stale (see sibling no-op note on `list_missing`). It now accepts
+    // the request and returns OK without writing anything, preserving protocol compatibility with
+    // until we delete this endpoint entirely in the near future as part of ENG-994
     log::debug!(
-        "mark_commits_as_synced marking {} commit hashes",
+        "mark_commits_as_synced received {} commit hashes (no-op)",
         &hashes.len()
     );
-
-    for hash in &hashes {
-        commit_sync_status::mark_commit_as_synced(&repository, hash)?;
-    }
-
-    log::debug!("successfully marked {} commit hashes", &hashes.len());
     Ok(HttpResponse::Ok().json(MerkleHashesResponse {
         status: StatusMessage::resource_found(),
         hashes,

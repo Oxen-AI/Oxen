@@ -627,30 +627,6 @@ pub fn list_all(repo: &LocalRepository) -> Result<HashSet<Commit>, OxenError> {
     Ok(commits)
 }
 
-pub fn list_unsynced_from(
-    repo: &LocalRepository,
-    revision: impl AsRef<str>,
-) -> Result<HashSet<Commit>, OxenError> {
-    let revision = revision.as_ref();
-    let all_commits: HashSet<Commit> = list_from(repo, revision)?.into_iter().collect();
-    filter_unsynced(repo, all_commits)
-}
-
-fn filter_unsynced(
-    repo: &LocalRepository,
-    commits: HashSet<Commit>,
-) -> Result<HashSet<Commit>, OxenError> {
-    log::debug!("filter_unsynced filtering down from {}", commits.len());
-    let mut unsynced_commits = HashSet::new();
-    for commit in commits {
-        if !core::commit_sync_status::commit_is_synced(repo, &commit.id.parse()?) {
-            unsynced_commits.insert(commit);
-        }
-    }
-    log::debug!("list_unsynced filtered down to {}", unsynced_commits.len());
-    Ok(unsynced_commits)
-}
-
 fn list_all_recursive(
     repo: &LocalRepository,
     commit: Commit,
