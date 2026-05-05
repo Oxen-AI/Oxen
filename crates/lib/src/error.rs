@@ -18,6 +18,8 @@ use crate::model::ParsedResource;
 use crate::model::RepoNew;
 use crate::model::Schema;
 use crate::model::Workspace;
+use crate::model::merkle_tree::merkle_hash::HexHash;
+use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node_type::InvalidMerkleTreeNodeType;
 
 pub mod path_buf_error;
@@ -173,7 +175,12 @@ pub enum OxenError {
     #[error("Invalid version: {0}")]
     InvalidVersion(StringError),
 
+    //
     // Version Store
+    //
+    #[error("Version store not initialized")]
+    VersionStoreNotInitialized,
+
     /// An error uploading a file to the version store
     #[error("{0}")]
     Upload(StringError),
@@ -197,6 +204,20 @@ pub enum OxenError {
 
     #[error("{0}")]
     MerkleDbError(#[from] MerkleDbError),
+
+    #[error("Unsupported node type")]
+    UnsupportedNodeType,
+
+    #[error("Merkle node not found: {0}")]
+    MerkleNodeNotFound(HexHash),
+
+    // TODO: p_write_tree is unusued. Delete it and this variant?
+    #[error("p_write_tree Unexpected node type: {0:?}")]
+    DisallowedNodeWrite(Box<EMerkleTreeNode>),
+
+    // TODO: should not exist. LocalRepository needs to drop its unusued serialization derives.
+    #[error("Merkle store not initialized")]
+    MerkleStoreNotInitialized,
 
     //
     // Schema (dataframes)

@@ -31,7 +31,7 @@ pub fn init_workspace_repo(
     let config = RepositoryConfig::from_file(&target_config_file)?;
     let storage_opts = config
         .storage
-        .map(|s| StorageOpts::from_repo_config(repo, &s))
+        .map(|s| StorageOpts::from_repo_config(&repo.path, &s))
         .transpose()?;
 
     LocalRepository::new(workspace_dir, storage_opts)

@@ -1,7 +1,7 @@
 use crate::core;
-use crate::core::db::merkle_node::MerkleNodeDB;
 use crate::error::OxenError;
 use crate::model::entry::metadata_entry::WorkspaceMetadataEntry;
+use crate::model::merkle_tree::merkle_writer::{MerkleWriteSession, NodeWriteSession};
 use crate::model::merkle_tree::node::{DirNode, EMerkleTreeNode, FileNode, MerkleTreeNode};
 use crate::model::metadata::MetadataDir;
 use crate::model::metadata::generic_metadata::GenericMetadata;
@@ -545,15 +545,18 @@ pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Res
     // Initialize data structures for aggregation
     let mut num_bytes = 0;
 
-    // Start the recursive traversal
-    traverse_and_update_sizes_and_counts(repo, &mut node, &mut num_bytes)?;
+    // One merkle write session covers every node written during the traversal.
+    let store = repo.merkle_store();
+    let session = store.begin()?;
+    traverse_and_update_sizes_and_counts(&*session, &mut node, &mut num_bytes)?;
+    session.finish()?;
 
     Ok(())
 }
 
 #[allow(clippy::type_complexity)]
 fn traverse_and_update_sizes_and_counts(
-    repo: &LocalRepository,
+    session: &dyn MerkleWriteSession,
     node: &mut MerkleTreeNode,
     num_bytes: &mut u64,
 ) -> Result<(HashMap<String, u64>, HashMap<String, u64>), OxenError> {
@@ -566,32 +569,33 @@ fn traverse_and_update_sizes_and_counts(
         EMerkleTreeNode::Commit(commit_node) => {
             log::debug!("Traversing node {commit_node:?}");
             process_children(
-                repo,
+                session,
                 children,
                 &mut local_counts,
                 &mut local_sizes,
                 num_bytes,
             )?;
-            let mut dir_db =
-                MerkleNodeDB::open_read_write(&repo.path, commit_node, node.parent_id)?;
-            add_children_to_db(&mut dir_db, &node.children)?;
+            let mut dir_ns = session.create_node(commit_node, node.parent_id)?;
+            add_children_to_session(&mut *dir_ns, &node.children)?;
+            dir_ns.finish()?;
         }
         EMerkleTreeNode::VNode(vnode) => {
             log::debug!("Traversing vnode {vnode:?}");
             process_children(
-                repo,
+                session,
                 children,
                 &mut local_counts,
                 &mut local_sizes,
                 num_bytes,
             )?;
-            let mut dir_db = MerkleNodeDB::open_read_write(&repo.path, vnode, node.parent_id)?;
-            add_children_to_db(&mut dir_db, &node.children)?;
+            let mut dir_ns = session.create_node(vnode, node.parent_id)?;
+            add_children_to_session(&mut *dir_ns, &node.children)?;
+            dir_ns.finish()?;
         }
         EMerkleTreeNode::Directory(dir_node) => {
             log::debug!("No need to aggregate dir {}", dir_node.name());
             process_children(
-                repo,
+                session,
                 children,
                 &mut local_counts,
                 &mut local_sizes,
@@ -599,8 +603,9 @@ fn traverse_and_update_sizes_and_counts(
             )?;
             dir_node.set_data_type_counts(local_counts.clone());
             dir_node.set_data_type_sizes(local_sizes.clone());
-            let mut dir_db = MerkleNodeDB::open_read_write(&repo.path, dir_node, node.parent_id)?;
-            add_children_to_db(&mut dir_db, &node.children)?;
+            let mut dir_ns = session.create_node(dir_node, node.parent_id)?;
+            add_children_to_session(&mut *dir_ns, &node.children)?;
+            dir_ns.finish()?;
         }
         EMerkleTreeNode::File(file_node) => {
             log::debug!(
@@ -617,6 +622,7 @@ fn traverse_and_update_sizes_and_counts(
                 .or_insert(0) += file_node.num_bytes();
         }
         _ => {
+            // TODO: change to a structured error variant
             return Err(OxenError::basic_str(format!(
                 "compute_dir_node found unexpected node type: {:?}",
                 node.node
@@ -628,7 +634,7 @@ fn traverse_and_update_sizes_and_counts(
 }
 
 fn process_children(
-    repo: &LocalRepository,
+    session: &dyn MerkleWriteSession,
     children: &mut [MerkleTreeNode],
     local_counts: &mut HashMap<String, u64>,
     local_sizes: &mut HashMap<String, u64>,
@@ -636,7 +642,7 @@ fn process_children(
 ) -> Result<(), OxenError> {
     for child in children.iter_mut() {
         let (child_counts, child_sizes) =
-            traverse_and_update_sizes_and_counts(repo, child, num_bytes)?;
+            traverse_and_update_sizes_and_counts(session, child, num_bytes)?;
         for (key, count) in child_counts {
             *local_counts.entry(key).or_insert(0) += count;
         }
@@ -647,26 +653,26 @@ fn process_children(
     Ok(())
 }
 
-fn add_children_to_db(
-    dir_db: &mut MerkleNodeDB,
+fn add_children_to_session(
+    ns: &mut dyn NodeWriteSession,
     children: &[MerkleTreeNode],
 ) -> Result<(), OxenError> {
     for child in children {
         match &child.node {
             EMerkleTreeNode::Commit(commit_node) => {
-                dir_db.add_child(commit_node)?;
+                ns.add_child(commit_node)?;
             }
             EMerkleTreeNode::Directory(dir_node) => {
-                dir_db.add_child(dir_node)?;
+                ns.add_child(dir_node)?;
             }
             EMerkleTreeNode::File(file_node) => {
-                dir_db.add_child(file_node)?;
+                ns.add_child(file_node)?;
             }
             EMerkleTreeNode::VNode(vnode) => {
-                dir_db.add_child(vnode)?;
+                ns.add_child(vnode)?;
             }
             _ => {
-                return Err(OxenError::basic_str("Unsupported node type"));
+                return Err(OxenError::UnsupportedNodeType);
             }
         }
     }

@@ -1,8 +1,10 @@
 use crate::config::RepositoryConfig;
 use crate::constants::SHALLOW_FLAG;
 use crate::constants::{self, DEFAULT_VNODE_SIZE, MIN_OXEN_VERSION};
+use crate::core::db::merkle_node::file_backend::FileBackend;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
+use crate::model::merkle_tree::MerkleStore;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
 use crate::opts::StorageOpts;
@@ -23,6 +25,10 @@ use utoipa::ToSchema;
 static MTIME_TOLERANCE_CACHE: LazyLock<Mutex<HashMap<PathBuf, Duration>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+// TODO: A `LocalRepository` shouldn't require serialization.
+// TODO: The `{version,merkle}_store` fields should **NOT** be Option. It should be impossible to create a
+//       `LocalRepository` without a `version_store` and `merkle_store`. They're only `Option` beacuse of
+//       the serialization derives, which is unused.
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct LocalRepository {
     #[schema(value_type = String)]
@@ -40,10 +46,15 @@ pub struct LocalRepository {
     pub workspace_name: Option<String>, // ID of the associated workspace for remote mode
     workspaces: Option<Vec<String>>, // List of workspaces for remote mode
 
-    // Skip this field during serialization/deserialization
+    // Skip these fields during serialization/deserialization as it relates to
+    // state for the entire repository.
     #[serde(skip)]
     #[schema(ignore)]
     version_store: Option<Arc<dyn VersionStore>>,
+    // TODO: once the serialization requirement is fixed, then we can store and reuse the merkle_store
+    // #[serde(skip)]
+    // #[schema(ignore)]
+    // merkle_store: Arc<Box<dyn MerkleStore>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -55,42 +66,68 @@ pub struct LocalRepositoryWithEntries {
 impl LocalRepository {
     /// Create a LocalRepository from a directory
     pub fn from_dir(path: impl AsRef<Path>) -> Result<Self, OxenError> {
-        let path = path.as_ref().to_path_buf();
-        let config_path = util::fs::config_filepath(&path);
+        let path = path.as_ref();
+        let config_path = util::fs::config_filepath(path);
         let config = RepositoryConfig::from_file(&config_path)?;
 
-        let mut repo = LocalRepository {
-            path,
+        let repo = LocalRepository {
+            path: path.to_path_buf(),
             remote_name: config.remote_name,
             min_version: config.min_version,
             remotes: config.remotes,
             vnode_size: config.vnode_size,
             subtree_paths: config.subtree_paths.clone(),
             depth: config.depth,
-            version_store: None,
             vfs: config.vfs,
             remote_mode: config.remote_mode,
             workspace_name: config.workspace_name,
             workspaces: config.workspaces,
+            version_store: {
+                // Initialize the version store based on config
+                let storage_opts = if let Some(storage_config) = config.storage {
+                    StorageOpts::from_repo_config(path, &storage_config)?
+                } else {
+                    StorageOpts::from_path(path, true)
+                };
+                let version_store = create_version_store(path, &storage_opts)?;
+                Some(version_store)
+            },
+            // merkle_store: Arc::new(Self::load_merkle_store(path)?),
         };
 
-        // Initialize the version store based on config
-        let storage_opts = if let Some(storage_config) = config.storage {
-            StorageOpts::from_repo_config(&repo, &storage_config)?
-        } else {
-            StorageOpts::from_path(&repo.path, true)
-        };
-        let store = create_version_store(&repo.path, &storage_opts)?;
-        repo.version_store = Some(store);
         Ok(repo)
+    }
+
+    /// Loads the Merkle store for the repository at the specified root path.
+    // NOTE: When new backends (e.g. LMDB) are added, branch on the appropriate config
+    // here and return a `Box::new(<that new backend>)`.
+    #[inline]
+    fn load_merkle_store(repo_path: PathBuf) -> Box<dyn MerkleStore> {
+        // TODO: Add reading config to select Merkle store implementation that
+        //       the repository uses.
+        //       => Right now, the only option is the FileBackend.
+        Box::new(FileBackend { repo_path })
     }
 
     /// Get a reference to the version store
     pub fn version_store(&self) -> Result<Arc<dyn VersionStore>, OxenError> {
-        match &self.version_store {
-            Some(store) => Ok(Arc::clone(store)),
-            None => Err(OxenError::basic_str("Version store not initialized")),
+        match self.version_store.as_ref() {
+            Some(version_store) => Ok(Arc::clone(version_store)),
+            None => Err(OxenError::VersionStoreNotInitialized),
         }
+    }
+
+    /// Obtain the Merkle tree store for this repository.
+    ///
+    /// All operations with the repository's Merkle tree store **MUST** go through its
+    /// `MerkleStore` implementation.
+    ///
+    /// Returns a boxed trait object so the trait surface stays simple and dyn-dispatch
+    /// handles backend selection. Callers use it purely through the trait surface
+    /// (read, write); backend selection is an implementation detail of this method.
+    pub fn merkle_store(&self) -> Box<dyn MerkleStore> {
+        // **self.merkle_store
+        Self::load_merkle_store(self.path.clone())
     }
 
     pub fn init_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
@@ -136,8 +173,9 @@ impl LocalRepository {
         path: impl AsRef<Path>,
         storage_opts: Option<StorageOpts>,
     ) -> Result<LocalRepository, OxenError> {
+        let path = path.as_ref();
         let mut repo = LocalRepository {
-            path: path.as_ref().to_path_buf(),
+            path: path.to_path_buf(),
             // No remotes are set yet
             remotes: vec![],
             remote_name: None,
@@ -147,6 +185,7 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
+            // merkle_store: Arc::new(Self::load_merkle_store(&path)?),
             vfs: None,
             remote_mode: None,
             workspace_name: None,
@@ -167,8 +206,9 @@ impl LocalRepository {
         min_version: impl AsRef<str>,
         storage_opts: Option<StorageOpts>,
     ) -> Result<LocalRepository, OxenError> {
+        let path = path.as_ref();
         let mut repo = LocalRepository {
-            path: path.as_ref().to_path_buf(),
+            path: path.to_path_buf(),
             remotes: vec![],
             remote_name: None,
             min_version: Some(min_version.as_ref().to_string()),
@@ -176,6 +216,7 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
+            // merkle_store: Arc::new(Self::load_merkle_store(&path)?),
             vfs: None,
             remote_mode: None,
             workspace_name: None,
@@ -191,8 +232,9 @@ impl LocalRepository {
     }
 
     pub fn from_view(view: RepositoryView) -> Result<LocalRepository, OxenError> {
+        let path = std::env::current_dir()?.join(view.name);
         let mut repo = LocalRepository {
-            path: std::env::current_dir()?.join(view.name),
+            path,
             remotes: vec![],
             remote_name: None,
             min_version: None,
@@ -200,6 +242,7 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
+            // merkle_store: Arc::new(Self::load_merkle_store(path.as_path())?),
             vfs: None,
             remote_mode: None,
             workspace_name: None,
@@ -220,6 +263,7 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
+            // merkle_store: Arc::new(Self::load_merkle_store(&path)?),
             vfs: None,
             remote_mode: None,
             workspace_name: None,

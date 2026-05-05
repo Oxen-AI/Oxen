@@ -91,7 +91,7 @@ pub fn get_by_dir(
     let repo_config = RepositoryConfig::from_file(&config_file)?;
     let storage_opts = repo_config
         .storage
-        .map(|s| StorageOpts::from_repo_config(repo, &s))
+        .map(|s| StorageOpts::from_repo_config(&repo.path, &s))
         .transpose()?;
 
     Ok(Some(Workspace {

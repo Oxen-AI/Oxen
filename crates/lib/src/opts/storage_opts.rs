@@ -1,5 +1,4 @@
 use crate::error::OxenError;
-use crate::model::LocalRepository;
 use crate::opts::{LocalStorageOpts, S3Opts};
 use crate::storage::StorageConfig;
 use crate::{constants, util};
@@ -17,7 +16,7 @@ pub struct StorageOpts {
 
 impl StorageOpts {
     pub fn from_repo_config(
-        repo: &LocalRepository,
+        repo_path: &Path,
         config: &StorageConfig,
     ) -> Result<StorageOpts, OxenError> {
         match config.type_.as_str() {
@@ -27,8 +26,7 @@ impl StorageOpts {
                 let version_path = if let Some(path) = config.settings.get("path") {
                     PathBuf::from(path)
                 } else {
-                    let repo_path = util::fs::oxen_hidden_dir(&repo.path);
-                    repo_path
+                    util::fs::oxen_hidden_dir(repo_path)
                         .join(constants::VERSIONS_DIR)
                         .join(constants::FILES_DIR)
                 };

@@ -1,6 +1,5 @@
 use crate::constants;
 use crate::core::db;
-use crate::core::db::merkle_node::MerkleNodeDB;
 pub use crate::core::merge::entry_merge_conflict_db_reader::EntryMergeConflictDBReader;
 pub use crate::core::merge::node_merge_conflict_db_reader::NodeMergeConflictDBReader;
 use crate::core::merge::node_merge_conflict_reader::NodeMergeConflictReader;
@@ -1083,7 +1082,7 @@ fn create_empty_merge_commit(
         },
     )?;
 
-    // Open the new commit's MerkleNodeDB and add base's existing root DirNode as the only child.
+    // Add base's existing root DirNode as the only child.
     // Tree is content-addressed, so the new commit's tree equals base's tree without any tree
     // rebuild or copy.
     let base_node = repositories::tree::get_node_by_id_with_children(repo, &base_commit_hash)?
@@ -1093,14 +1092,18 @@ fn create_empty_merge_commit(
                 merge_commits.base.id
             ))
         })?;
-    let mut commit_db =
-        MerkleNodeDB::open_read_write(&repo.path, &commit_node, Some(base_node.hash))?;
+
+    let merkle_store = repo.merkle_store();
+    let session = merkle_store.begin()?;
+    let mut ns = session.create_node(&commit_node, Some(base_node.hash))?;
     let root_dir = base_node
         .children
         .first()
         .expect("base commit must have a root dir as its first child")
         .dir()?;
-    commit_db.add_child(&root_dir)?;
+    ns.add_child(&root_dir)?;
+    ns.finish()?;
+    session.finish()?;
 
     // Copy base's path -> dir hash mapping so path-based tree lookups work for the new commit.
     repositories::tree::cp_dir_hashes_to(repo, &base_commit_hash, commit_node.hash())?;

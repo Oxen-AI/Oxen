@@ -6,7 +6,6 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use super::*;
-use crate::core::db::merkle_node::MerkleNodeDB;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, MerkleHash, MerkleTreeNodeType};
 
@@ -41,11 +40,14 @@ impl MerkleTreeNode {
 
     /// Private implementation that loads from disk without caching
     fn from_hash_uncached(repo: &LocalRepository, hash: &MerkleHash) -> Result<Self, OxenError> {
-        let node_db = MerkleNodeDB::open_read_only(&repo.path, hash)?;
-        let parent_id = node_db.parent_id;
+        let record = repo
+            .merkle_store()
+            .get_node(hash)?
+            .ok_or_else(|| OxenError::MerkleNodeNotFound(hash.to_hex_hash()))?;
+        let parent_id = record.parent_id().copied();
         Ok(MerkleTreeNode {
             hash: *hash,
-            node: node_db.node()?,
+            node: record.into_node(),
             parent_id,
             children: Vec::new(),
         })
@@ -74,13 +76,15 @@ impl MerkleTreeNode {
         repo: &LocalRepository,
         hash: &MerkleHash,
     ) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, OxenError> {
-        let Ok(mut node_db) = MerkleNodeDB::open_read_only(&repo.path, hash) else {
-            // We don't return an error here because there are some situations where we won't have all the node files.
-            // For example, when working in a subtree clone.
-            log::warn!("no child node db: {hash:?}");
+        let store = repo.merkle_store();
+        // We don't return an error here because there are some situations where we won't have
+        // all of the node files. For example, when working in a subtree clone.
+        // However, parse/IO errors from an existing node DO still propagate.
+        if !store.exists(hash)? {
+            log::error!("[assuming no children] no child node db for {hash}");
             return Ok(Vec::new());
-        };
-        Ok(node_db.map()?)
+        }
+        repo.merkle_store().get_children(hash)
     }
 
     /// Check if the node is a leaf node (i.e. it has no children)
