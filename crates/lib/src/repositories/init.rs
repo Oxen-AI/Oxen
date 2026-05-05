@@ -32,7 +32,7 @@ pub fn init_with_version(
     let path = path.as_ref();
     match version {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::init_with_version_default(path, version),
+        _ => core::v_latest::init_with_version_default(path, version, false),
     }
 }
 
@@ -52,8 +52,13 @@ pub async fn init_with_version_and_storage_config(
     match version {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => {
-            core::v_latest::init_with_version_and_storage_config(path, version, storage_config)
-                .await
+            core::v_latest::init_with_version_and_storage_config(
+                path,
+                version,
+                storage_config,
+                false,
+            )
+            .await
         }
     }
 }

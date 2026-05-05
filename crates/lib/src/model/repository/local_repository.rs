@@ -1,11 +1,12 @@
 use crate::config::RepositoryConfig;
+use crate::config::repository_config::MerkleStoreKind;
 use crate::constants::SHALLOW_FLAG;
 use crate::constants::{self, DEFAULT_VNODE_SIZE, MIN_OXEN_VERSION};
 use crate::core::db::merkle_node::file_backend::FileBackend;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::merkle_tree::TransportableMerkleStore;
 use crate::model::merkle_tree::node::FileNode;
+use crate::model::merkle_tree::{MerkleStore, MerkleTransport, TransportableMerkleStore};
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
 use crate::storage::{NoopVersionStore, StorageConfig, VersionStore, create_version_store};
 use crate::util;
@@ -50,7 +51,7 @@ pub struct LocalRepository {
     #[schema(value_type = Option<Vec<String>>)]
     subtree_paths: Option<Vec<PathBuf>>, // If the user clones a subtree, we store the paths here so that we know we don't have the full tree
     pub depth: Option<i32>, // If the user clones with a depth, we store the depth here so that we know we don't have the full tree
-    pub vfs: Option<bool>,  // Flag for repositories stored on virtual file systems
+    vfs: Option<bool>,      // Flag for repositories stored on virtual file systems
     pub remote_mode: Option<bool>, // Flag for remote repositories
     pub workspace_name: Option<String>, // ID of the associated workspace for remote mode
     workspaces: Option<Vec<String>>, // List of workspaces for remote mode
@@ -68,6 +69,15 @@ pub struct LocalRepository {
     #[serde(skip, default = "placeholder_version_store")]
     #[schema(ignore)]
     version_store: Arc<dyn VersionStore>,
+
+    // Skip this field during serialization/deserialization as it relates to on-disk repo state.
+    #[serde(skip)]
+    #[schema(ignore)]
+    merkle_store: Option<Arc<dyn TransportableMerkleStore>>,
+    #[serde(default)]
+    merkle_store_kind: MerkleStoreKind, // it's a little awkward to have both, but the `Serialize` trait
+                                        // means we can't always have the `merkle_store`, so we can't
+                                        // rely on it to always provide the MerkleStoreKind
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -83,8 +93,16 @@ impl LocalRepository {
         let config_path = util::fs::config_filepath(path);
         let config = RepositoryConfig::from_file(&config_path)?;
 
+        let merkle_store_kind = config.merkle_store_kind;
+        let m_store = Self::load_merkle_store(
+            path.to_path_buf(),
+            merkle_store_kind,
+            config.vfs.unwrap_or(false),
+        )?;
+
         let storage_config = config.storage.unwrap_or_default();
         let version_store = create_version_store(path, &storage_config)?;
+
         Ok(LocalRepository {
             path: path.to_path_buf(),
             remote_name: config.remote_name,
@@ -99,36 +117,49 @@ impl LocalRepository {
             workspaces: config.workspaces,
             storage_config,
             version_store,
+            merkle_store: Some(m_store),
+            merkle_store_kind,
         })
     }
 
-    /// Get a reference to the storage configuration this repository was constructed with.
-    pub fn storage_config(&self) -> &StorageConfig {
-        &self.storage_config
-    }
-
     /// Loads the Merkle store for the repository at the specified root path.
-    // NOTE: When new backends (e.g. LMDB) are added, branch on the appropriate config
-    // here and return a `Box::new(<that new backend>)`.
-    #[inline]
-    fn load_merkle_store(repo_path: PathBuf, _is_vfs: bool) -> Box<dyn TransportableMerkleStore> {
-        // TODO: Add reading config to select Merkle store implementation that
-        //       the repository uses.
-        //       => Right now, the only option is the FileBackend.
-        Box::new(FileBackend { repo_path })
+    fn load_merkle_store(
+        repo_path: PathBuf,
+        merkle_store_kind: MerkleStoreKind,
+        _is_vfs: bool,
+    ) -> Result<Arc<dyn TransportableMerkleStore>, OxenError> {
+        match merkle_store_kind {
+            MerkleStoreKind::File => Ok(Arc::new(FileBackend { repo_path })),
+        }
     }
 
     /// Obtain the Merkle tree store for this repository.
     ///
     /// All operations with the repository's Merkle tree store **MUST** go through its
-    /// `MerkleStore` implementation.
+    /// [`MerkleStore`] implementation.
+    pub fn merkle_store(&self) -> Result<&dyn MerkleStore, OxenError> {
+        let store = self
+            .merkle_store
+            .as_ref()
+            .ok_or(OxenError::MerkleStoreNotInitialized)?;
+        Ok(&**store)
+    }
+
+    /// Obtain the Merkle tree node packer & unpacker for this repository's merkle store.
     ///
-    /// Returns a boxed trait object so the trait surface stays simple and dyn-dispatch
-    /// handles backend selection. Callers use it purely through the trait surface
-    /// (read, write); backend selection is an implementation detail of this method.
-    pub fn merkle_store(&self) -> Box<dyn TransportableMerkleStore> {
-        // **self.merkle_store
-        Self::load_merkle_store(self.path.clone(), self.is_vfs())
+    /// All operations that transmit Merkle tree nodes between a client and a server **MUST**
+    /// go through its [`MerkleTransport`] implementation.
+    pub fn merkle_transport(&self) -> Result<&dyn MerkleTransport, OxenError> {
+        let store = self
+            .merkle_store
+            .as_ref()
+            .ok_or(OxenError::MerkleStoreNotInitialized)?;
+        Ok(&**store)
+    }
+
+    /// Get a reference to the storage configuration this repository was constructed with.
+    pub fn storage_config(&self) -> &StorageConfig {
+        &self.storage_config
     }
 
     /// Get a reference to the version store.
@@ -156,6 +187,8 @@ impl LocalRepository {
         let path = path.as_ref().to_path_buf();
         let storage_config = storage_config.unwrap_or_default();
         let version_store = create_version_store(&path, &storage_config)?;
+        let merkle_store_kind = MerkleStoreKind::default();
+        let m_store = Self::load_merkle_store(path.clone(), merkle_store_kind, false)?;
         Ok(LocalRepository {
             path,
             remotes: vec![],
@@ -171,6 +204,8 @@ impl LocalRepository {
             workspaces: None,
             storage_config,
             version_store,
+            merkle_store: Some(m_store),
+            merkle_store_kind,
         })
     }
 
@@ -179,10 +214,13 @@ impl LocalRepository {
         path: impl AsRef<Path>,
         min_version: impl AsRef<str>,
         storage_config: Option<StorageConfig>,
+        is_vfs: bool,
     ) -> Result<LocalRepository, OxenError> {
         let path = path.as_ref().to_path_buf();
         let storage_config = storage_config.unwrap_or_default();
         let version_store = create_version_store(&path, &storage_config)?;
+        let merkle_store_kind = MerkleStoreKind::default();
+        let m_store = Self::load_merkle_store(path.clone(), merkle_store_kind, is_vfs)?;
         Ok(LocalRepository {
             path,
             remotes: vec![],
@@ -191,12 +229,14 @@ impl LocalRepository {
             vnode_size: None,
             subtree_paths: None,
             depth: None,
-            vfs: None,
+            vfs: if is_vfs { Some(true) } else { None },
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
             storage_config,
             version_store,
+            merkle_store: Some(m_store),
+            merkle_store_kind,
         })
     }
 
@@ -204,6 +244,8 @@ impl LocalRepository {
         let path = std::env::current_dir()?.join(view.name);
         let storage_config = StorageConfig::default();
         let version_store = create_version_store(&path, &storage_config)?;
+        let merkle_store_kind = MerkleStoreKind::default();
+        let m_store = Self::load_merkle_store(path.clone(), merkle_store_kind, false)?;
         Ok(LocalRepository {
             path,
             remotes: vec![],
@@ -218,13 +260,21 @@ impl LocalRepository {
             workspaces: None,
             storage_config,
             version_store,
+            merkle_store: Some(m_store),
+            merkle_store_kind,
         })
     }
 
-    pub fn from_remote(repo: RemoteRepository, path: &Path) -> Result<LocalRepository, OxenError> {
+    pub fn from_remote(
+        repo: RemoteRepository,
+        path: &Path,
+        is_vfs: bool,
+    ) -> Result<LocalRepository, OxenError> {
         let path = path.to_owned();
         let storage_config = StorageConfig::default();
         let version_store = create_version_store(&path, &storage_config)?;
+        let merkle_store_kind = MerkleStoreKind::default();
+        let m_store = Self::load_merkle_store(path.clone(), merkle_store_kind, is_vfs)?;
         Ok(LocalRepository {
             path,
             remotes: vec![repo.remote],
@@ -233,12 +283,14 @@ impl LocalRepository {
             vnode_size: None,
             subtree_paths: None,
             depth: None,
-            vfs: None,
+            vfs: if is_vfs { Some(true) } else { None },
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
             storage_config,
             version_store,
+            merkle_store: Some(m_store),
+            merkle_store_kind,
         })
     }
 
@@ -314,15 +366,16 @@ impl LocalRepository {
         self.vfs.unwrap_or(false)
     }
 
-    pub fn set_vfs(&mut self, is_vfs: Option<bool>) {
-        self.vfs = is_vfs;
-    }
-
     /// Save the repository configuration to disk
     pub fn save(&self) -> Result<(), OxenError> {
+        let config = self.as_config();
         let config_path = util::fs::config_filepath(&self.path);
+        config.save(&config_path)
+    }
 
-        let config = RepositoryConfig {
+    /// Re-create the repository's configuration.
+    pub fn as_config(&self) -> RepositoryConfig {
+        RepositoryConfig {
             remote_name: self.remote_name.clone(),
             remotes: self.remotes.clone(),
             subtree_paths: self.subtree_paths.clone(),
@@ -334,9 +387,8 @@ impl LocalRepository {
             remote_mode: self.remote_mode,
             workspace_name: self.workspace_name.clone(),
             workspaces: self.workspaces.clone(),
-        };
-
-        config.save(&config_path)
+            merkle_store_kind: self.merkle_store_kind,
+        }
     }
 
     pub fn set_remote(&mut self, name: impl AsRef<str>, url: impl AsRef<str>) -> Remote {

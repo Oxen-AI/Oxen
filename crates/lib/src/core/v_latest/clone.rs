@@ -29,19 +29,17 @@ pub async fn clone_repo(
     util::fs::create_dir_all(&oxen_hidden_path)?;
 
     // save LocalRepository in .oxen directory
-    let mut local_repo = LocalRepository::from_remote(remote_repo.clone(), repo_path)?;
-    local_repo.version_store().init().await?;
-    repo_path.clone_into(&mut local_repo.path);
-    local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
-    local_repo.set_min_version(remote_repo.min_version());
-    local_repo.set_subtree_paths(opts.fetch_opts.subtree_paths.clone());
-    local_repo.set_depth(opts.fetch_opts.depth);
-
-    if opts.is_vfs {
-        local_repo.set_vfs(Some(true));
-    } else {
-        local_repo.set_vfs(None);
-    }
+    let local_repo = {
+        let mut local_repo =
+            LocalRepository::from_remote(remote_repo.clone(), repo_path, opts.is_vfs)?;
+        local_repo.version_store().init().await?;
+        repo_path.clone_into(&mut local_repo.path);
+        local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
+        local_repo.set_min_version(remote_repo.min_version());
+        local_repo.set_subtree_paths(opts.fetch_opts.subtree_paths.clone());
+        local_repo.set_depth(opts.fetch_opts.depth);
+        local_repo
+    };
 
     local_repo.save()?;
 
@@ -92,18 +90,12 @@ pub async fn clone_repo_remote_mode(
     let name = format!("{}: {workspace_id}", branch_name.clone());
 
     // Save LocalRepository in .oxen directory
-    let mut local_repo = LocalRepository::from_remote(remote_repo.clone(), repo_path)?;
+    let mut local_repo = LocalRepository::from_remote(remote_repo.clone(), repo_path, opts.is_vfs)?;
     local_repo.version_store().init().await?;
     repo_path.clone_into(&mut local_repo.path);
     local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
     local_repo.set_min_version(remote_repo.min_version());
     local_repo.set_remote_mode(Some(true));
-
-    if opts.is_vfs {
-        local_repo.set_vfs(Some(true));
-    } else {
-        local_repo.set_vfs(None);
-    }
 
     let workspace = api::client::workspaces::create_with_path(
         &remote_repo,
