@@ -61,7 +61,6 @@ mod tests {
     use crate::command;
     use crate::constants;
     use crate::constants::OXEN_HIDDEN_DIR;
-    use crate::core;
     use crate::core::df::tabular;
     use crate::error::OxenError;
     use crate::opts::CloneOpts;
@@ -1275,6 +1274,90 @@ mod tests {
     }
 
     #[tokio::test]
+    /// `oxen pull` should always walks the merkle tree and re-fetch any missing blobs.
+    async fn test_pull_re_fetches_missing_blobs() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|mut repo| async move {
+            // Two commits on the remote so the cloned repo has somewhere to lag back to.
+            let labels = repo.path.join("labels.txt");
+            repositories::add(&repo, &labels).await?;
+            let first_commit = repositories::commit(&repo, "First commit")?;
+
+            let remote = test::repo_remote_url_from(&repo.dirname());
+            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
+            let remote_repo = test::create_remote_repo(&repo).await?;
+            repositories::push(&repo).await?;
+
+            let second_path = repo.path.join("second.txt");
+            let second_contents = "second commit content";
+            util::fs::write_to_path(&second_path, second_contents)?;
+            repositories::add(&repo, &second_path).await?;
+            let second_commit = repositories::commit(&repo, "Second commit")?;
+            repositories::push(&repo).await?;
+
+            test::run_empty_dir_test_async(|new_repo_dir| async move {
+                let new_repo_dir = new_repo_dir.join("clone");
+                let cloned_repo =
+                    repositories::clone_url(&remote_repo.remote.url, &new_repo_dir).await?;
+
+                // Reset the cloned branch ref back to the first commit so HEAD < remote.
+                // This puts us in the state: HEAD lags, the target commit (second_commit) is on
+                // the remote, and any synced marker for the target is in place from the clone's
+                // fetch.
+                repositories::branches::update(
+                    &cloned_repo,
+                    constants::DEFAULT_BRANCH_NAME,
+                    &first_commit.id,
+                )?;
+                let head = repositories::commits::head_commit(&cloned_repo)?;
+                assert_eq!(head.id, first_commit.id);
+
+                // Wipe the blob backing second.txt to simulate post-fetch blob loss
+                // (NFS hiccup, partial sync, manual cleanup, etc).
+                let second_node = repositories::tree::get_node_by_path(
+                    &cloned_repo,
+                    &second_commit,
+                    "second.txt",
+                )?
+                .expect("second.txt must be reachable from the second commit's tree");
+                let blob_hash = second_node.hash.to_string();
+                let version_store = cloned_repo.version_store()?;
+                let blob_path = version_store.get_version_path(&blob_hash).await?;
+                assert!(blob_path.exists(), "blob should be present after clone");
+                util::fs::remove_file(&*blob_path)?;
+                let blob_path_after_wipe = version_store.get_version_path(&blob_hash).await?;
+                assert!(
+                    !blob_path_after_wipe.exists(),
+                    "blob should be gone after wipe"
+                );
+
+                // Pull. Should walk the diff between HEAD and target, find blob_hash missing in
+                // the version store, re-download it, and the merge should succeed.
+                repositories::pull(&cloned_repo).await?;
+
+                // Blob is back in the version store.
+                let blob_path_after_pull = version_store.get_version_path(&blob_hash).await?;
+                assert!(
+                    blob_path_after_pull.exists(),
+                    "pull should have re-fetched the wiped blob"
+                );
+
+                // HEAD advanced to the target commit, and second.txt is on disk with
+                // the right content.
+                let new_head = repositories::commits::head_commit(&cloned_repo)?;
+                assert_eq!(new_head.id, second_commit.id);
+                let cloned_second = cloned_repo.path.join("second.txt");
+                assert!(cloned_second.exists());
+                assert_eq!(util::fs::read_from_path(&cloned_second)?, second_contents);
+
+                api::client::repositories::delete(&remote_repo).await?;
+                Ok(())
+            })
+            .await
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_pull_data_frame() -> Result<(), OxenError> {
         test::run_select_data_repo_test_no_commits_async("annotations", |mut repo| async move {
             // Track a file
@@ -1448,78 +1531,6 @@ mod tests {
                 Ok(())
             })
             .await
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_pull_standard_clone_only_pulls_head() -> Result<(), OxenError> {
-        // Push the Remote Repo
-        test::run_training_data_fully_sync_remote(|_, remote_repo| async move {
-            let remote_repo_copy = remote_repo.clone();
-            test::run_empty_dir_test_async(|user_a_repo_dir| async move {
-                let user_a_repo_dir_copy = user_a_repo_dir.join("repo_a");
-                let user_a_repo =
-                    repositories::clone_url(&remote_repo.remote.url, &user_a_repo_dir_copy).await?;
-
-                // Deep copy pushes two new commits to advance the remote
-                test::run_empty_dir_test_async(|user_b_repo_dir| async move {
-                    let user_b_repo_dir_copy = user_b_repo_dir.join("repo_b");
-
-                    let user_b_repo = repositories::deep_clone_url(
-                        &remote_repo.remote.url,
-                        &user_b_repo_dir_copy,
-                    )
-                    .await?;
-
-                    let new_file = "new_file.txt";
-                    let new_file_path = user_b_repo.path.join(new_file);
-                    test::write_txt_file_to_path(&new_file_path, "hello from a file")?;
-                    repositories::add(&user_b_repo, &new_file_path).await?;
-                    repositories::commit(&user_b_repo, "Adding new file")?;
-
-                    let new_file = "new_file_2.txt";
-                    let new_file_path = user_b_repo.path.join(new_file);
-                    test::write_txt_file_to_path(&new_file_path, "hello from a different")?;
-                    repositories::add(&user_b_repo, &new_file_path).await?;
-                    repositories::commit(&user_b_repo, "Adding new file 2")?;
-                    repositories::push(&user_b_repo).await?;
-
-                    Ok(())
-                })
-                .await?;
-
-                // Pull again
-                let all = false;
-                repositories::pull_remote_branch(
-                    &user_a_repo,
-                    &FetchOpts {
-                        all,
-                        ..FetchOpts::new()
-                    },
-                )
-                .await?;
-
-                // Get all commits on the remote
-                let remote_commits = repositories::commits::list(&user_a_repo)?;
-
-                let mut synced_commits = 0;
-                log::debug!("total n remote commits {}", remote_commits.len());
-                for commit in remote_commits {
-                    if core::commit_sync_status::commit_is_synced(&user_a_repo, &commit.id.parse()?)
-                    {
-                        synced_commits += 1;
-                    }
-                }
-
-                // Two fully synced commits: the original clone, and the one we just grabbed.
-                assert_eq!(synced_commits, 2);
-
-                Ok(())
-            })
-            .await?;
-
-            Ok(remote_repo_copy)
         })
         .await
     }

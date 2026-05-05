@@ -502,7 +502,7 @@ async fn push_commits(
                         )
                         .await?;
 
-                        // TODO: we might not need this syncing mechanism
+                        // This call will be removed in ENG-994
                         api::client::commits::mark_commits_as_synced(
                             remote_repo,
                             HashSet::from([commit_hash]),
