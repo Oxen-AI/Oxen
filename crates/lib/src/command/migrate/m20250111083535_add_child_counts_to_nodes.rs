@@ -138,7 +138,7 @@ fn run_on_commit(repository: &LocalRepository, commit: &Commit) -> Result<(), Ox
     // Write a new commit db
     let commit_node = CommitNode::from_commit(commit.clone());
     let mut root_commit_db =
-        MerkleNodeDB::open_read_write(&old_repo, &commit_node, root_node.parent_id)?;
+        MerkleNodeDB::open_read_write(&old_repo.path, &commit_node, root_node.parent_id)?;
     root_commit_db.add_child(&dir_node)?;
 
     let current_path = Path::new("");
@@ -190,7 +190,8 @@ fn rewrite_nodes(
                 let mut dir_node_opts = dir.get_opts();
                 dir_node_opts.num_entries = total_children as u64;
                 let dir = DirNode::new(new_repo, dir_node_opts)?;
-                let mut dir_db = MerkleNodeDB::open_read_write(old_repo, &dir, node.parent_id)?;
+                let mut dir_db =
+                    MerkleNodeDB::open_read_write(&old_repo.path, &dir, node.parent_id)?;
 
                 // log::debug!(
                 //     "rewrite_nodes {} VNodes for {} children in {} with vnode size {}",
@@ -253,8 +254,11 @@ fn rewrite_nodes(
                     // log::debug!("rewrite_nodes adding VNode to DirNode! {:?}", vnode_obj);
                     dir_db.add_child(&vnode_obj)?;
 
-                    let mut vnode_db =
-                        MerkleNodeDB::open_read_write(new_repo, &vnode_obj, Some(dir_db.node_id))?;
+                    let mut vnode_db = MerkleNodeDB::open_read_write(
+                        &new_repo.path,
+                        &vnode_obj,
+                        Some(dir_db.node_id),
+                    )?;
 
                     // log::debug!("rewrite_nodes count entries {}", entries.len());
                     for entry in entries {

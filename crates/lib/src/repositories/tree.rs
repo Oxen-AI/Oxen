@@ -899,7 +899,7 @@ pub fn compress_nodes(
         let dir_prefix = hash.to_hex_hash().node_db_prefix();
         let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR).join(dir_prefix);
 
-        let node_dir = node_db_path(repository, hash);
+        let node_dir = node_db_path(&repository.path, hash);
         // log::debug!("Compressing node from dir {:?}", node_dir);
         if node_dir.exists() {
             tar.append_dir_all(&tar_subdir, node_dir)?;
@@ -924,7 +924,7 @@ pub fn compress_node(
     // zip up the node directory
     let enc = GzEncoder::new(Vec::new(), Compression::fast());
     let mut tar = tar::Builder::new(enc);
-    let node_dir = node_db_path(repository, hash);
+    let node_dir = node_db_path(&repository.path, hash);
 
     // log::debug!("Compressing node {} from dir {:?}", hash, node_dir);
     if node_dir.exists() {
@@ -959,7 +959,7 @@ pub fn compress_commits(
         let dir_prefix = hash.to_hex_hash().node_db_prefix();
         let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR).join(dir_prefix);
 
-        let node_dir = node_db_path(repository, &hash);
+        let node_dir = node_db_path(&repository.path, &hash);
         log::debug!("Compressing commit from dir {node_dir:?}");
         if node_dir.exists() {
             tar.append_dir_all(&tar_subdir, node_dir)?;
@@ -1046,7 +1046,7 @@ fn p_write_tree<N: TMerkleTreeNode>(
 ) -> Result<(), OxenError> {
     let parent_id = node.parent_id;
 
-    let mut db = MerkleNodeDB::open_read_write(repo, node_impl, parent_id)?;
+    let mut db = MerkleNodeDB::open_read_write(&repo.path, node_impl, parent_id)?;
     for child in &node.children {
         match &child.node {
             EMerkleTreeNode::VNode(vnode) => {
