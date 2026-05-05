@@ -1,4 +1,5 @@
 use crate::config::RepositoryConfig;
+use crate::config::repository_config::MerkleStoreKind;
 use crate::constants::SHALLOW_FLAG;
 use crate::constants::{self, DEFAULT_VNODE_SIZE, MIN_OXEN_VERSION};
 use crate::core::db::merkle_node::file_backend::FileBackend;
@@ -25,7 +26,9 @@ use utoipa::ToSchema;
 static MTIME_TOLERANCE_CACHE: LazyLock<Mutex<HashMap<PathBuf, Duration>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-// TODO: A `LocalRepository` shouldn't require serialization.
+// TODO: A `LocalRepository` shouldn't require serialization. There is information that is relevant to
+//       on-disk structures that is not useful if it is transmitted to a remote process.
+//
 // TODO: The `{version,merkle}_store` fields should **NOT** be Option. It should be impossible to create a
 //       `LocalRepository` without a `version_store` and `merkle_store`. They're only `Option` beacuse of
 //       the serialization derives, which is unused.
@@ -50,11 +53,15 @@ pub struct LocalRepository {
     // state for the entire repository.
     #[serde(skip)]
     #[schema(ignore)]
-    version_store: Option<Arc<dyn VersionStore>>,
-    // TODO: once the serialization requirement is fixed, then we can store and reuse the merkle_store
-    // #[serde(skip)]
-    // #[schema(ignore)]
-    // merkle_store: Arc<Box<dyn TransportableMerkleStore>>,
+    version_store: Option<Arc<dyn VersionStore>>, // TODO: should not be an option.
+
+    #[serde(skip)]
+    #[schema(ignore)]
+    merkle_store: Option<Arc<Box<dyn TransportableMerkleStore>>>, // TODO: should not be an option
+    /// The kind of Merkle store used by this repository. Aligns with the `merkle_store` field.
+    merkle_store_kind: MerkleStoreKind, // it's a little awkward to have both, but the `Serialize` trait
+                                        // means we can't always have the `merkle_store`, so we can't
+                                        // rely on it to always provide the MerkleStoreKind
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -69,6 +76,9 @@ impl LocalRepository {
         let path = path.as_ref();
         let config_path = util::fs::config_filepath(path);
         let config = RepositoryConfig::from_file(&config_path)?;
+
+        let (m_store, merkle_store_kind) =
+            Self::load_merkle_store(path.to_path_buf(), Some(&config))?;
 
         let repo = LocalRepository {
             path: path.to_path_buf(),
@@ -92,21 +102,36 @@ impl LocalRepository {
                 let version_store = create_version_store(path, &storage_opts)?;
                 Some(version_store)
             },
-            // merkle_store: Arc::new(Self::load_merkle_store(path, config.vfs.unwrap_or(false))?),
+            merkle_store: Some(Arc::new(m_store)),
+            merkle_store_kind,
         };
 
         Ok(repo)
     }
 
     /// Loads the Merkle store for the repository at the specified root path.
-    // NOTE: When new backends (e.g. LMDB) are added, branch on the appropriate config
-    // here and return a `Box::new(<that new backend>)`.
-    #[inline]
-    fn load_merkle_store(repo_path: PathBuf, is_vfs: bool) -> Box<dyn TransportableMerkleStore> {
-        // TODO: Add reading config to select Merkle store implementation that
-        //       the repository uses.
-        //       => Right now, the only option is the FileBackend.
-        Box::new(FileBackend { repo_path, is_vfs })
+    fn load_merkle_store(
+        repo_path: PathBuf,
+        config: Option<&RepositoryConfig>,
+    ) -> Result<(Box<dyn TransportableMerkleStore>, MerkleStoreKind), OxenError> {
+        let initialized_config: RepositoryConfig;
+        let config = match config {
+            Some(c) => c,
+            None => {
+                let config_path = util::fs::config_filepath(&repo_path);
+                initialized_config = RepositoryConfig::from_file(config_path)?;
+                &initialized_config
+            }
+        };
+
+        let store = match config.merkle_store_kind {
+            MerkleStoreKind::File => Box::new(FileBackend {
+                repo_path,
+                is_vfs: config.vfs.unwrap_or(false),
+            }),
+        };
+
+        Ok((store, config.merkle_store_kind))
     }
 
     /// Get a reference to the version store
@@ -125,9 +150,11 @@ impl LocalRepository {
     /// Returns a boxed trait object so the trait surface stays simple and dyn-dispatch
     /// handles backend selection. Callers use it purely through the trait surface
     /// (read, write); backend selection is an implementation detail of this method.
-    pub fn merkle_store(&self) -> Box<dyn TransportableMerkleStore> {
-        // **self.merkle_store
-        Self::load_merkle_store(self.path.clone(), self.is_vfs())
+    pub fn merkle_store(&self) -> Result<Arc<Box<dyn TransportableMerkleStore>>, OxenError> {
+        let Some(merkle_store) = &self.merkle_store else {
+            return Err(OxenError::MerkleStoreNotInitialized);
+        };
+        Ok(merkle_store.clone())
     }
 
     pub fn init_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
@@ -174,6 +201,7 @@ impl LocalRepository {
         storage_opts: Option<StorageOpts>,
     ) -> Result<LocalRepository, OxenError> {
         let path = path.as_ref();
+        let (m_store, merkle_store_kind) = Self::load_merkle_store(path.to_path_buf(), None)?;
         let mut repo = LocalRepository {
             path: path.to_path_buf(),
             // No remotes are set yet
@@ -185,11 +213,12 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
-            // merkle_store: Arc::new(Self::load_merkle_store(&path, config.vfs.unwrap_or(false))?),
             vfs: None,
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
+            merkle_store: Some(Arc::new(m_store)),
+            merkle_store_kind,
         };
 
         if let Some(storage_opts) = storage_opts {
@@ -207,6 +236,7 @@ impl LocalRepository {
         storage_opts: Option<StorageOpts>,
     ) -> Result<LocalRepository, OxenError> {
         let path = path.as_ref();
+        let (m_store, merkle_store_kind) = Self::load_merkle_store(path.to_path_buf(), None)?;
         let mut repo = LocalRepository {
             path: path.to_path_buf(),
             remotes: vec![],
@@ -216,11 +246,12 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
-            // merkle_store: Arc::new(Self::load_merkle_store(&path, config.vfs.unwrap_or(false))?),
             vfs: None,
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
+            merkle_store: Some(Arc::new(m_store)),
+            merkle_store_kind,
         };
 
         if let Some(storage_opts) = storage_opts {
@@ -233,8 +264,9 @@ impl LocalRepository {
 
     pub fn from_view(view: RepositoryView) -> Result<LocalRepository, OxenError> {
         let path = std::env::current_dir()?.join(view.name);
+        let (m_store, merkle_store_kind) = Self::load_merkle_store(path.to_path_buf(), None)?;
         let mut repo = LocalRepository {
-            path,
+            path: path.clone(),
             remotes: vec![],
             remote_name: None,
             min_version: None,
@@ -242,11 +274,12 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
-            // merkle_store: Arc::new(Self::load_merkle_store(path.as_path(), config.vfs.unwrap_or(false))?),
             vfs: None,
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
+            merkle_store: Some(Arc::new(m_store)),
+            merkle_store_kind,
         };
 
         repo.init_default_version_store()?;
@@ -254,8 +287,9 @@ impl LocalRepository {
     }
 
     pub fn from_remote(repo: RemoteRepository, path: &Path) -> Result<LocalRepository, OxenError> {
+        let (m_store, merkle_store_kind) = Self::load_merkle_store(path.to_path_buf(), None)?;
         let mut local_repo = LocalRepository {
-            path: path.to_owned(),
+            path: path.to_path_buf(),
             remotes: vec![repo.remote],
             remote_name: Some(String::from(constants::DEFAULT_REMOTE_NAME)),
             min_version: None,
@@ -263,11 +297,12 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
-            // merkle_store: Arc::new(Self::load_merkle_store(&path, config.vfs.unwrap_or(false))?),
             vfs: None,
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
+            merkle_store: Some(Arc::new(m_store)),
+            merkle_store_kind,
         };
 
         local_repo.init_default_version_store()?;
@@ -404,6 +439,7 @@ impl LocalRepository {
             remote_mode: self.remote_mode,
             workspace_name: self.workspace_name.clone(),
             workspaces: self.workspaces.clone(),
+            merkle_store_kind: self.merkle_store_kind,
         };
 
         config.save(&config_path)

@@ -546,7 +546,7 @@ pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Res
     let mut num_bytes = 0;
 
     // One merkle write session covers every node written during the traversal.
-    let store = repo.merkle_store();
+    let store = repo.merkle_store()?;
     let session = store.begin()?;
     traverse_and_update_sizes_and_counts(&*session, &mut node, &mut num_bytes)?;
     session.finish()?;

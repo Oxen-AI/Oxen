@@ -41,7 +41,7 @@ impl MerkleTreeNode {
     /// Private implementation that loads from disk without caching
     fn from_hash_uncached(repo: &LocalRepository, hash: &MerkleHash) -> Result<Self, OxenError> {
         let record = repo
-            .merkle_store()
+            .merkle_store()?
             .get_node(hash)?
             .ok_or_else(|| OxenError::MerkleNodeNotFound(hash.to_hex_hash()))?;
         let parent_id = record.parent_id().copied();
@@ -76,7 +76,7 @@ impl MerkleTreeNode {
         repo: &LocalRepository,
         hash: &MerkleHash,
     ) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, OxenError> {
-        let store = repo.merkle_store();
+        let store = repo.merkle_store()?;
         // We don't return an error here because there are some situations where we won't have
         // all of the node files. For example, when working in a subtree clone.
         // However, parse/IO errors from an existing node DO still propagate.
@@ -84,7 +84,7 @@ impl MerkleTreeNode {
             log::error!("[assuming no children] no child node db for {hash}");
             return Ok(Vec::new());
         }
-        repo.merkle_store().get_children(hash)
+        repo.merkle_store()?.get_children(hash)
     }
 
     /// Check if the node is a leaf node (i.e. it has no children)

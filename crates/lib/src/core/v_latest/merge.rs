@@ -1093,7 +1093,7 @@ fn create_empty_merge_commit(
             ))
         })?;
 
-    let merkle_store = repo.merkle_store();
+    let merkle_store = repo.merkle_store()?;
     let session = merkle_store.begin()?;
     let mut ns = session.create_node(&commit_node, Some(base_node.hash))?;
     let root_dir = base_node

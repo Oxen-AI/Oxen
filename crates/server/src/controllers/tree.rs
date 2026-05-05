@@ -273,7 +273,7 @@ pub async fn download_tree_nodes(
 
     let buffer = {
         let mut buffer = Vec::new();
-        repository.merkle_store().pack_nodes(
+        repository.merkle_store()?.pack_nodes(
             &node_hashes,
             PackOptions::ServerCanonical,
             &mut buffer,
@@ -330,7 +330,7 @@ pub async fn download_node(req: HttpRequest) -> actix_web::Result<HttpResponse, 
 
     let buffer = {
         let mut buffer = Vec::new();
-        repository.merkle_store().pack_nodes(
+        repository.merkle_store()?.pack_nodes(
             &HashSet::from_iter([hash]),
             PackOptions::ServerCanonical,
             &mut buffer,
