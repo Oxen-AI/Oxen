@@ -127,6 +127,7 @@ oxen push origin main               # Push to remote
 - When calling `get_staged_db_manager`, follow the doc comment on that function: drop the returned `StagedDBManager` as soon as possible (via a block scope or explicit `drop()`) to avoid holding the shared database handle longer than necessary.
 - When altering the `OxenError` enum, consider whether a hint needs to be added or updated in the `hint` method.
 - Instead of using `cargo test` to test Rust code, use the `bin/test-rust` script. The script usage is documented in a comment at the top of its file.
+- If the ram disk is not able to be mounted in `bin/test-rust`, then use the `--no-ramdisk` option.
 - The `bin/test-rust` script does not install prerequisites by default. If any dependencies turn out to be missing, prompt the user to run `bin/install-prereqs` (or re-run `bin/test-rust --install-deps`).
 - Prefer using inline code over creating a new function when the function would only be called once and the function body would be less than 15 lines.
 - Do not use "out parameters" (functions that take an `&mut Vec` / `&mut HashMap` / etc. for the callee to fill). Return the value directly instead. Exceptions: the user explicitly asks for an out parameter, or the caller genuinely needs to reuse a pre-allocated buffer across many calls to avoid allocation churn in a measured hot path.
