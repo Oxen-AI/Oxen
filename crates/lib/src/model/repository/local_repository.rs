@@ -92,7 +92,7 @@ impl LocalRepository {
                 let version_store = create_version_store(path, &storage_opts)?;
                 Some(version_store)
             },
-            // merkle_store: Arc::new(Self::load_merkle_store(path)?),
+            // merkle_store: Arc::new(Self::load_merkle_store(path, config.vfs.unwrap_or(false))?),
         };
 
         Ok(repo)
@@ -102,11 +102,11 @@ impl LocalRepository {
     // NOTE: When new backends (e.g. LMDB) are added, branch on the appropriate config
     // here and return a `Box::new(<that new backend>)`.
     #[inline]
-    fn load_merkle_store(repo_path: PathBuf) -> Box<dyn MerkleStore> {
+    fn load_merkle_store(repo_path: PathBuf, is_vfs: bool) -> Box<dyn MerkleStore> {
         // TODO: Add reading config to select Merkle store implementation that
         //       the repository uses.
         //       => Right now, the only option is the FileBackend.
-        Box::new(FileBackend { repo_path })
+        Box::new(FileBackend { repo_path, is_vfs })
     }
 
     /// Get a reference to the version store
@@ -127,7 +127,7 @@ impl LocalRepository {
     /// (read, write); backend selection is an implementation detail of this method.
     pub fn merkle_store(&self) -> Box<dyn MerkleStore> {
         // **self.merkle_store
-        Self::load_merkle_store(self.path.clone())
+        Self::load_merkle_store(self.path.clone(), self.is_vfs())
     }
 
     pub fn init_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
@@ -185,7 +185,7 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
-            // merkle_store: Arc::new(Self::load_merkle_store(&path)?),
+            // merkle_store: Arc::new(Self::load_merkle_store(&path, config.vfs.unwrap_or(false))?),
             vfs: None,
             remote_mode: None,
             workspace_name: None,
@@ -216,7 +216,7 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
-            // merkle_store: Arc::new(Self::load_merkle_store(&path)?),
+            // merkle_store: Arc::new(Self::load_merkle_store(&path, config.vfs.unwrap_or(false))?),
             vfs: None,
             remote_mode: None,
             workspace_name: None,
@@ -242,7 +242,7 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
-            // merkle_store: Arc::new(Self::load_merkle_store(path.as_path())?),
+            // merkle_store: Arc::new(Self::load_merkle_store(path.as_path(), config.vfs.unwrap_or(false))?),
             vfs: None,
             remote_mode: None,
             workspace_name: None,
@@ -263,7 +263,7 @@ impl LocalRepository {
             subtree_paths: None,
             depth: None,
             version_store: None,
-            // merkle_store: Arc::new(Self::load_merkle_store(&path)?),
+            // merkle_store: Arc::new(Self::load_merkle_store(&path, config.vfs.unwrap_or(false))?),
             vfs: None,
             remote_mode: None,
             workspace_name: None,

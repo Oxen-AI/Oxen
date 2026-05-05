@@ -103,6 +103,34 @@ pub enum MerkleDbError {
     DirCreate(Box<OxenError>), // TODO: replace with FsError from upcoming refactoring PR
     #[error("Failed to open file: {0}")]
     Open(Box<OxenError>), // TODO: replace with FsError from upcoming refactoring PR
+    #[error("Filesystem operation failed during merkle transport: {0}")]
+    FsTransport(Box<OxenError>), // TODO: replace with FsError from upcoming refactoring PR
+    #[error("Could not read entries from merkle tree tar archive: {0}")]
+    CannotReadMerkle(std::io::Error),
+    #[error(
+        "Unsupported tar entry type for {path}: only regular files and directories are allowed"
+    )]
+    UnsupportedTarEntry { path: String },
+    #[error("Path traversal detected in merkle tar entry: {0}")]
+    PathTraversal(String),
+    /// The merkle tarball entry's path doesn't have the expected
+    /// `tree/nodes/{prefix}/{suffix}/[node|children]` shape. Either the path is
+    /// shorter or longer than expected, or the leaf file isn't `node`/`children`,
+    /// or one of the path components isn't valid UTF-8.
+    #[error("Invalid merkle tar archive structure at {entry_path:?}: {reason}")]
+    InvalidTarStructure { entry_path: String, reason: String },
+    /// A `{prefix}/{suffix}` directory entry was found, but the concatenated
+    /// `{prefix}{suffix}` string doesn't parse as a hexadecimal `u128` node id.
+    #[error("Invalid merkle node id {id:?} in tar archive (not a hex u128): {source}")]
+    InvalidNodeIdHex {
+        id: String,
+        #[source]
+        source: std::num::ParseIntError,
+    },
+    #[error("Missing node dir for hash {0}")]
+    MissingNodeDir(MerkleHash),
+    #[error("Missing oxen tree/nodes dir in this repository")]
+    MissingTreeNodesDir,
 }
 
 impl MerkleDbError {
