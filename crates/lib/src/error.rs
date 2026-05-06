@@ -409,6 +409,34 @@ pub enum OxenError {
         help: String,
     },
 
+    /// Bulk download (`/versions` QUERY endpoint) failed across all retry attempts. The
+    /// `(hash, path)` pairs in the failing batch and the last underlying error are preserved
+    /// so end users see which file paths failed and operators can map them back to specific
+    /// content blobs. Common cause: a content blob referenced by a commit's tree is absent
+    /// from the server's version store, and the bulk endpoint fail-fasts on the first
+    /// missing hash.
+    #[error(
+        "Failed to download {num_files} files after {num_retries} retries: {last_error}\n{}",
+        format_download_entries(entries)
+    )]
+    DownloadBatchExhausted {
+        num_files: usize,
+        num_retries: u64,
+        entries: Vec<(String, PathBuf)>,
+        last_error: String,
+    },
+
+    /// The version store could not produce a stream for a specific content hash — usually
+    /// because the file is missing on disk (or in object storage) despite the merkle tree
+    /// referencing it. The hash is preserved so the failure can be tied to a specific blob
+    /// during streaming downloads where HTTP 200 has already been sent.
+    #[error("Failed to fetch version {file_hash} from version store")]
+    VersionFetchFailed {
+        file_hash: String,
+        #[source]
+        source: Box<OxenError>,
+    },
+
     // Fallback
     // TODO: remove all uses of `Basic` and replace with specific errors.
     #[error("{0}")]
@@ -416,6 +444,17 @@ pub enum OxenError {
 
     #[error("{0}")]
     InternalError(StringError),
+}
+
+/// Multi-line render for [`OxenError::DownloadBatchExhausted`]. Lists the file path first
+/// (most useful to end users) and the content hash second (most useful to operators chasing
+/// the failure server-side).
+fn format_download_entries(entries: &[(String, PathBuf)]) -> String {
+    let mut out = format!("Failing batch ({} files):", entries.len());
+    for (hash, path) in entries {
+        let _ = write!(out, "\n  {} (hash: {hash})", path.display());
+    }
+    out
 }
 
 /// Multi-line render for [`OxenError::RestoreFailed`]. Each failed file is listed with its
@@ -508,6 +547,9 @@ impl OxenError {
             }
             WorkspaceStagedDbCorrupted { .. } => {
                 "Recreate the workspace: `oxen workspace delete <id>` then re-create it."
+            }
+            DownloadBatchExhausted { .. } => {
+                "If a content blob is missing on the server, run `oxen push --missing-files` from a clone with the full local history to repair it."
             }
             _ => return None,
         }
@@ -866,5 +908,88 @@ where
 impl From<BuildError> for OxenError {
     fn from(e: BuildError) -> Self {
         OxenError::AwsError(Box::new(e))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn download_batch_exhausted_display_lists_paths_hashes_and_last_error() {
+        let err = OxenError::DownloadBatchExhausted {
+            num_files: 7,
+            num_retries: 5,
+            entries: vec![
+                (
+                    "b30cefc4eb9ad1c6f3f61047cec5c828".to_string(),
+                    PathBuf::from("parquet/arize-ax-alex_sessions.parquet"),
+                ),
+                (
+                    "d13964d33acc80244980c9e16fe5fc2b".to_string(),
+                    PathBuf::from("parquet/phoenix-lambda2-dal_sessions.parquet"),
+                ),
+            ],
+            last_error: "underlying io error: file not found".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("7 files"), "missing num_files: {msg}");
+        assert!(msg.contains("5 retries"), "missing num_retries: {msg}");
+        assert!(
+            msg.contains("parquet/arize-ax-alex_sessions.parquet"),
+            "missing first path: {msg}"
+        );
+        assert!(
+            msg.contains("parquet/phoenix-lambda2-dal_sessions.parquet"),
+            "missing second path: {msg}"
+        );
+        assert!(
+            msg.contains("b30cefc4eb9ad1c6f3f61047cec5c828"),
+            "missing first hash: {msg}"
+        );
+        assert!(
+            msg.contains("d13964d33acc80244980c9e16fe5fc2b"),
+            "missing second hash: {msg}"
+        );
+        assert!(
+            msg.contains("underlying io error"),
+            "missing last_error: {msg}"
+        );
+    }
+
+    #[test]
+    fn download_batch_exhausted_hint_mentions_missing_files_recovery() {
+        let err = OxenError::DownloadBatchExhausted {
+            num_files: 1,
+            num_retries: 5,
+            entries: vec![("abc".to_string(), PathBuf::from("foo.txt"))],
+            last_error: "io error".to_string(),
+        };
+        let hint = err.hint().expect("expected a hint");
+        assert!(
+            hint.contains("--missing-files"),
+            "hint should point at recovery flag: {hint}"
+        );
+    }
+
+    #[test]
+    fn version_fetch_failed_display_names_hash_and_chains_source() {
+        let inner = OxenError::Basic(StringError::from("file not found"));
+        let err = OxenError::VersionFetchFailed {
+            file_hash: "b30cefc4eb9ad1c6f3f61047cec5c828".to_string(),
+            source: Box::new(inner),
+        };
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("b30cefc4eb9ad1c6f3f61047cec5c828"),
+            "missing file_hash: {msg}"
+        );
+        // thiserror exposes the wrapped error via std::error::Error::source(), so the underlying
+        // message is reachable for callers that walk the chain (e.g. log::error formatters).
+        let source = std::error::Error::source(&err).expect("expected a source error");
+        assert!(
+            source.to_string().contains("file not found"),
+            "source chain missing inner message: {source}"
+        );
     }
 }

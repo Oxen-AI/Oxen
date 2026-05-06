@@ -759,8 +759,11 @@ async fn pull_small_entries(
         entries.len()
     );
 
-    // Split into chunks, zip up, and post to server
-    type PieceOfWork = (RemoteRepository, Vec<String>, LocalRepository);
+    // Split into chunks, zip up, and post to server. We carry `(hash, path)` pairs through
+    // the queue (rather than just hashes) so the bulk-download client can put the file paths
+    // into its retry-exhausted error message — paths are far more recognizable to end users
+    // than content hashes.
+    type PieceOfWork = (RemoteRepository, Vec<(String, PathBuf)>, LocalRepository);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
 
     log::debug!(
@@ -770,11 +773,11 @@ async fn pull_small_entries(
     let chunks: Vec<PieceOfWork> = entries
         .chunks(chunk_size)
         .map(|chunk| {
-            let hashes = chunk
+            let entries = chunk
                 .iter()
-                .map(|commit_entry| commit_entry.hash.clone())
+                .map(|commit_entry| (commit_entry.hash.clone(), commit_entry.path.clone()))
                 .collect();
-            (remote_repo.to_owned(), hashes, repo.to_owned())
+            (remote_repo.to_owned(), entries, repo.to_owned())
         })
         .collect();
 
