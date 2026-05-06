@@ -14,6 +14,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use tokio::task::JoinError;
 
+use crate::core::db::merkle_node::lmdb::LmdbError;
 use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
 use crate::model::ParsedResource;
 use crate::model::RepoNew;
@@ -259,6 +260,9 @@ pub enum OxenError {
     )]
     /// Contains the name of the incompatible type as reported by [`std::any::type_name_of_val`].
     DisallowedNodeWrite(&'static str),
+
+    #[error("{0}")]
+    Lmdb(#[from] LmdbError),
 
     //
     // Schema (dataframes)
@@ -546,6 +550,7 @@ pub enum OxenError {
     #[error("{0}")]
     Basic(StringError),
 
+    // TODO: remove all uses of `Basic` and replace with specific errors.
     #[error("{0}")]
     InternalError(StringError),
 }

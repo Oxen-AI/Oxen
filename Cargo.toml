@@ -74,6 +74,7 @@ futures = "0.3.28"
 futures-util = "0.3.28"
 glob = "0.3.1"
 glob-match = "0.2.1"
+heed = "0.22.0"
 hex = "0.4.3"
 http = "1.1.0"
 humantime = "2.1.0"
@@ -161,6 +162,7 @@ utoipa-swagger-ui = { version = "9", features = ["actix-web"] }
 uuid = { version = "1.4.1", features = ["serde", "v4"] }
 walkdir = "2.5.0"
 xxhash-rust = { version = "0.8.7", features = ["xxh3"] }
+zerocopy = { version = "0.8", features = ["derive"] }
 zip = { version = "2.4.1", default-features = false, features = ["deflate"] }
 
 [profile.dev]

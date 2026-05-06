@@ -55,6 +55,7 @@ impl VNode {
         }
     }
 
+    #[inline(always)]
     pub fn deserialize(data: &[u8]) -> Result<VNode, rmp_serde::decode::Error> {
         // In order to support versions that didn't have the enum,
         // if it fails we will fall back to the old struct, then populate the enum

@@ -388,7 +388,7 @@ impl MerkleNodeDB {
         Ok(())
     }
 
-    /// Write the base node info.
+    /// Writes the content of the Merkle tree node according to the specific `node` file format.
     /// WARNING: Sets the internal dtype, node_id, parent_id of `self` to the values from `node`.
     fn write_node(
         &mut self,
@@ -406,15 +406,16 @@ impl MerkleNodeDB {
         let Some(node_file) = self.node_file.as_mut() else {
             return Err(MerkleDbError::WriteBeforeOpen);
         };
-        // log::debug!("write_node node: {}", node);
 
-        // Write data type
+        log::trace!("write_node node: {}", node);
+
         node_file.write_all(&node.node_type().to_u8().to_le_bytes())?;
 
         // Write parent id
         if let Some(parent_id) = parent_id {
             node_file.write_all(&parent_id.to_le_bytes())?;
         } else {
+            // write 16 bytes, each is zero => write a 0_u128
             node_file.write_all(&[0u8; 16])?;
         }
 
@@ -422,7 +423,7 @@ impl MerkleNodeDB {
         let buf = node.to_msgpack_bytes()?;
         let data_len = buf.len() as u32;
         node_file.write_all(&data_len.to_le_bytes())?;
-        // log::debug!("write_node Wrote data length {}", data_len);
+        log::trace!("write_node Wrote data length {}", data_len);
 
         // Write data
         node_file.write_all(&buf)?;
@@ -438,6 +439,7 @@ impl MerkleNodeDB {
         Ok(())
     }
 
+    /// Writes the content of a node's child as the child would appear in the `children` file.
     pub(crate) fn add_child(&mut self, item: &dyn TMerkleTreeNode) -> Result<(), MerkleDbError> {
         if self.read_only {
             return Err(MerkleDbError::ReadOnly);
@@ -467,6 +469,7 @@ impl MerkleNodeDB {
         // log::debug!("--add_child-- children_file {:?}", children_file);
         // log::debug!("--add_child-- buf.len() {}", buf.len());
         children_file.write_all(&buf)?;
+
         self.data_offset += data_len;
 
         Ok(())
