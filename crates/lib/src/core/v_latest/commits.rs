@@ -9,7 +9,6 @@ use time::OffsetDateTime;
 
 use crate::config::UserConfig;
 use crate::constants::COMMIT_COUNT_DIR;
-use crate::core;
 use crate::core::db::key_val::{opts, str_val_db};
 use crate::core::db::merkle_node::MerkleNodeDB;
 use crate::core::refs::with_ref_manager;

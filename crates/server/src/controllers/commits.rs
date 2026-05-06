@@ -338,7 +338,7 @@ pub async fn list_missing_files(
 /// Mark commits as synced
 #[utoipa::path(
     post,
-    path = "/api/repos/{namespace}/{repo_name}/commits/synced",
+    path = "/api/repos/{namespace}/{repo_name}/commits/mark_commits_as_synced",
     tag = "Commits",
     description = "DEPRECATED - This operation is a no-op that echoes the hashes from the request, and will be removed in a future release.",
     params(
@@ -347,13 +347,13 @@ pub async fn list_missing_files(
     ),
     request_body(
         content = MerkleHashes,
-        description = "List of commit hashes successfully synced to the server.",
+        description = "DEPRECATED - Deprecated no-op response echoing the submitted hashes",
         example = json!({
             "hashes": ["abc1234567890def1234567890fedcba", "84c76a5b2e9a2637f9091991475c404d"]
         })
     ),
     responses(
-        (status = 200, description = "Commits marked as synced", body = MerkleHashesResponse),
+        (status = 200, description = "Deprecated no-op response echoing the submitted hashes", body = MerkleHashesResponse),
         (status = 404, description = "Repository not found")
     )
 )]
