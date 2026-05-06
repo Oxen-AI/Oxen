@@ -251,16 +251,28 @@ pub async fn list_missing(
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
-    // Parse commit ids from a body and return the missing ids
     let data: Result<MerkleHashes, serde_json::Error> = serde_json::from_str(&body);
     let Ok(merkle_hashes) = data else {
         log::error!("list_missing invalid JSON: {body:?}");
         return Ok(HttpResponse::BadRequest().json(StatusMessage::error("Invalid JSON")));
     };
 
+    // Treat a commit as fully present iff BOTH the commit's merkle-tree node is on disk under
+    // `.oxen/tree/nodes/<prefix>/<rest>/` AND the commit's dir-hashes directory exists at
+    // `.oxen/history/<commit_id>/dir_hashes/`. The dir-hashes directory is uploaded as the last
+    // data step of `push` (right before the now-no-op marker write), so requiring both files is a
+    // stronger proxy for "the push got all the way to the end" than node-existence alone — and
+    // avoids regressing the `create_nodes`-without-push pattern, which uploads non-leaf nodes
+    // directly without ever populating the dir-hashes DB.
+    let history_dir = util::fs::oxen_hidden_dir(&repo.path).join(HISTORY_DIR);
     let mut missing_commits = HashSet::new();
     for hash in &merkle_hashes.hashes {
-        if repositories::tree::get_node_by_id(&repo, hash)?.is_none() {
+        let node_present = repositories::tree::get_node_by_id(&repo, hash)?.is_some();
+        let dir_hashes_present = history_dir
+            .join(hash.to_string())
+            .join(DIR_HASHES_DIR)
+            .exists();
+        if !node_present || !dir_hashes_present {
             missing_commits.insert(*hash);
         }
     }
