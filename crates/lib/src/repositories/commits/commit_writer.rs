@@ -795,19 +795,19 @@ fn write_commit_entries(
         root_path.to_str().unwrap(),
         &dir_node.hash().to_string(),
     )?;
-    let mut dir_ns = session.create_node(&dir_node, Some(commit_id))?;
+
     r_create_dir_node(
         repo,
         session,
         commit_id,
-        Some(&mut *dir_ns),
+        commit_id,
+        &dir_node,
+        &root_path,
         dir_hash_db,
         dir_hashes,
         entries,
-        root_path,
         &mut total_written,
     )?;
-    dir_ns.finish()?;
 
     // The dir_hash_db was pre-populated from the previous commit, so
     // removed directories still have stale entries that must be deleted;
@@ -839,77 +839,90 @@ fn cache_invalidate_dir_hash_db<'a>(
     Ok(())
 }
 
+/// Write the merkle subtree rooted at `dir_node` into `session`.
+///
+/// Each `NodeWriteSession` opened here follows the strict `create_node → add_child* → finish`
+/// pattern: no other `create_node` is called on `session` between a node session's open and
+/// its finish. At any moment at most one `NodeWriteSession` from this call frame is alive,
+/// so the open file-handle count is constant in `dir_depth` rather than `O(dir_depth)`.
 #[allow(clippy::too_many_arguments)]
 fn r_create_dir_node(
     repo: &LocalRepository,
     session: &dyn MerkleWriteSession,
     commit_id: MerkleHash,
-    mut maybe_parent_ns: Option<&mut dyn NodeWriteSession>,
+    parent_id: MerkleHash,
+    dir_node: &DirNode,
+    dir_path: &Path,
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
-    path: impl AsRef<Path>,
     total_written: &mut u64,
 ) -> Result<(), OxenError> {
-    let path = path.as_ref().to_path_buf();
+    log::debug!("r_create_dir_node path {dir_path:?}");
 
-    let keys = entries.keys();
-    log::debug!("r_create_dir_node path {path:?} keys: {keys:?}");
-
-    let Some((vnodes, _)) = entries.get(&path) else {
-        log::debug!("r_create_dir_node No entries found for directory {path:?}");
+    let Some((vnodes, _)) = entries.get(dir_path) else {
+        // Mirrors the prior early-return: the recursive call site below is gated on
+        // `entries.contains_key(&sub_path)`, so this branch is only reachable from
+        // the top-level call in `write_commit_entries`. Open and immediately close
+        // the dir's session so the dir node is still written to the store.
+        log::debug!("r_create_dir_node No entries found for directory {dir_path:?}");
+        let dir_ns = session.create_node(dir_node, Some(parent_id))?;
+        dir_ns.finish()?;
         return Ok(());
     };
 
-    log::debug!("Processing dir {:?} with {} vnodes", path, vnodes.len());
-    for vnode in vnodes.iter() {
-        let opts = VNodeOpts {
-            hash: vnode.id,
-            num_entries: vnode.entries.len() as u64,
-        };
-        let vnode_obj = VNode::new(repo, opts)?;
-        // Capture the parent's hash before we reborrow `maybe_parent_ns` mutably.
-        let parent_id_for_vnode = maybe_parent_ns.as_deref().map(|ns| *ns.node_id());
-        if let Some(parent_ns) = maybe_parent_ns.as_deref_mut() {
-            parent_ns.add_child(&vnode_obj)?;
-            *total_written += 1;
-        }
+    log::debug!("Processing dir {:?} with {} vnodes", dir_path, vnodes.len());
 
-        log::debug!(
-            "Processing vnode {} with {} entries",
-            vnode.id,
-            vnode.entries.len()
-        );
+    // ── Phase 1: open dir_ns, add this dir's vnodes as its immediate children.
+    let mut dir_ns = session.create_node(dir_node, Some(parent_id))?;
+    let dir_id = *dir_ns.node_id();
 
-        let mut vnode_ns = session.create_node(&vnode_obj, parent_id_for_vnode)?;
-        for entry in vnode.entries.iter() {
-            log::trace!("Processing entry {} in vnode {}", entry.node, vnode.id);
+    let vnode_objs: Vec<VNode> = vnodes
+        .iter()
+        .map(|v| {
+            VNode::new(
+                repo,
+                VNodeOpts {
+                    hash: v.id,
+                    num_entries: v.entries.len() as u64,
+                },
+            )
+        })
+        .collect::<Result<_, _>>()?;
+
+    for v_obj in &vnode_objs {
+        dir_ns.add_child(v_obj)?;
+        *total_written += 1;
+    }
+
+    // ── Phase 2: finish dir_ns. No other create_node has been called on `session`
+    // since dir_ns was opened, so the strict invariant holds.
+    dir_ns.finish()?;
+
+    // ── Phase 3: write each vnode's children. Defer recursion into staged subdirs
+    // until after every vnode_ns from this frame is finished. Each subdir's merkle
+    // parent in its `node` file header is its referencing vnode's id.
+    let mut subdirs_to_recurse: Vec<(DirNode, PathBuf, MerkleHash)> = Vec::new();
+
+    for (v, v_obj) in vnodes.iter().zip(vnode_objs.iter()) {
+        log::debug!("Processing vnode {} with {} entries", v.id, v.entries.len());
+
+        let mut vnode_ns = session.create_node(v_obj, Some(dir_id))?;
+        for entry in v.entries.iter() {
+            log::trace!("Processing entry {} in vnode {}", entry.node, v.id);
             match &entry.node.node {
                 EMerkleTreeNode::Directory(node) => {
                     // If the dir has updates, we need a new dir db
-                    let dir_path = entry.node.maybe_path()?;
-                    let dir_node = if entries.contains_key(&dir_path) {
-                        let dir_node =
-                            compute_dir_node(repo, commit_id, entries, dir_hashes, &dir_path)?;
+                    let sub_path = entry.node.maybe_path()?;
+                    let sub_dir_node_hash = if entries.contains_key(&sub_path) {
+                        let n = compute_dir_node(repo, commit_id, entries, dir_hashes, &sub_path)?;
 
-                        vnode_ns.add_child(&dir_node)?;
+                        vnode_ns.add_child(&n)?;
                         *total_written += 1;
 
-                        let mut child_ns = session.create_node(&dir_node, Some(vnode.id))?;
-                        r_create_dir_node(
-                            repo,
-                            session,
-                            commit_id,
-                            Some(&mut *child_ns),
-                            dir_hash_db,
-                            dir_hashes,
-                            entries,
-                            &dir_path,
-                            total_written,
-                        )?;
-                        child_ns.finish()?;
-
-                        dir_node
+                        let n_hash = *n.hash();
+                        subdirs_to_recurse.push((n, sub_path.clone(), v.id));
+                        n_hash
                     } else {
                         // Look up the old dir node and reference it
                         let Some(old_dir_node) =
@@ -921,16 +934,16 @@ fn r_create_dir_node(
                             );
                             continue;
                         };
-                        let dir_node = old_dir_node.dir()?;
-                        vnode_ns.add_child(&dir_node)?;
+                        let n = old_dir_node.dir()?;
+                        vnode_ns.add_child(&n)?;
                         *total_written += 1;
-                        dir_node
+                        *n.hash()
                     };
 
                     str_val_db::put(
                         dir_hash_db,
-                        dir_path.to_str().unwrap(),
-                        &dir_node.hash().to_string(),
+                        sub_path.to_str().unwrap(),
+                        &sub_dir_node_hash.to_string(),
                     )?;
                 }
                 EMerkleTreeNode::File(file_node) => {
@@ -940,8 +953,8 @@ fn r_create_dir_node(
 
                     log::trace!(
                         "Processing file {:?} in vnode {} in commit {}",
-                        path,
-                        vnode.id,
+                        dir_path,
+                        v.id,
                         commit_id.to_hex_hash(),
                     );
 
@@ -970,7 +983,24 @@ fn r_create_dir_node(
         vnode_ns.finish()?;
     }
 
-    log::debug!("Finished processing dir {path:?} total written {total_written} entries");
+    // ── Phase 4: recurse into each staged subdir. By construction, no
+    // NodeWriteSession owned by this call frame is alive at this point.
+    for (sub_dir_node, sub_path, vnode_id) in subdirs_to_recurse {
+        r_create_dir_node(
+            repo,
+            session,
+            commit_id,
+            vnode_id,
+            &sub_dir_node,
+            &sub_path,
+            dir_hash_db,
+            dir_hashes,
+            entries,
+            total_written,
+        )?;
+    }
+
+    log::debug!("Finished processing dir {dir_path:?} total written {total_written} entries");
 
     Ok(())
 }
@@ -1221,6 +1251,7 @@ fn create_commit_data(
 
 #[cfg(test)]
 mod tests {
+    use crate::model::merkle_tree::merkle_reader::MerkleEntry;
     use crate::test;
     use std::collections::HashSet;
     use std::path::Path;
@@ -1828,6 +1859,586 @@ mod tests {
             assert_eq!(first_root_dir_node.hash, first_root_dir_node_2.hash);
             assert_ne!(first_root_dir_node_2.hash, third_root_dir_node.hash);
 
+            Ok(())
+        })
+        .await
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Regression test for the refactor of `r_create_dir_node` and
+    // `write_commit_entries` that reordered merkle-tree node writes.
+    //
+    // Two implementations are exercised side-by-side:
+    //
+    //   * "previous node writing" — `r_create_dir_node_previous` and
+    //     `write_commit_entries_previous`, preserved verbatim from before
+    //     the refactor. Holds the parent's `NodeWriteSession` open across
+    //     recursion into its children's subtrees, so nested write sessions
+    //     are live simultaneously on the same `MerkleWriteSession`.
+    //
+    //   * "updated node writing" — the production `r_create_dir_node` and
+    //     `write_commit_entries` after the refactor. Each `NodeWriteSession`
+    //     follows a strict `create_node → add_child* → finish` shape with
+    //     no other `create_node` interleaved on the same write session.
+    //
+    // ── What this test verifies ─────────────────────────────────────────────
+    //
+    // The merkle store written by the updated node writing is the *same
+    // merkle store* as the one written by the previous node writing.
+    // "Same" here means: same set of node hashes (== same set of per-node
+    // directories under `tree/nodes/<prefix>/<suffix>/`) and, for each
+    // hash, the same decoded node value, the same decoded list of
+    // children, and the same decoded `parent_id` link back up the tree.
+    //
+    // Concretely, the test:
+    //
+    //   1. Stages a non-trivial nested tree (README.md, files.csv, plus
+    //      `files/dir_<n>/file<i>.txt`) into a fresh repo so that the
+    //      recursion is exercised: multiple directories, multiple vnodes per
+    //      directory, vnodes containing both file entries and directory
+    //      references.
+    //   2. Builds the merkle-write inputs ONCE (`vnode_entries`,
+    //      `dir_hashes`, `commit_id`, the root `CommitNode`, etc.) so both
+    //      runs see byte-identical inputs. The timestamp is pinned to a
+    //      fixed Unix epoch so `commit_id` is deterministic across runs.
+    //   3. Run #1 — previous node writing: opens a fresh write session and
+    //      invokes the preserved-verbatim `write_commit_entries_previous`
+    //      against the inputs. Snapshots `tree/nodes/`.
+    //   4. Wipes `tree/nodes/` so run #2 starts from an empty merkle store.
+    //   5. Run #2 — updated node writing: same fresh-session/finish dance,
+    //      but invokes the production `write_commit_entries`. Snapshots
+    //      `tree/nodes/` again.
+    //   6. Compares the two snapshots and asserts they're equal.
+    //
+    // ── Why structural comparison, not byte-by-byte ─────────────────────────
+    //
+    // The natural form of this test would be: snapshot every byte under
+    // `tree/nodes/` after each run and assert the two byte streams are
+    // identical. We deliberately do NOT do that because it would flake.
+    //
+    // `DirNode` carries `data_type_counts: HashMap<String, u64>` and
+    // `data_type_sizes: HashMap<String, u64>` (see
+    // `crates/lib/src/model/merkle_tree/node/dir_node.rs:48-49`). When the
+    // node is msgpack-encoded for the per-node `children` and `node` files,
+    // the serializer iterates each `HashMap` to emit its key/value pairs.
+    // `std::collections::HashMap` uses `RandomState`, which is randomized
+    // per-instance via a thread-local PRNG, so two `HashMap`s containing
+    // the exact same keys/values can iterate in different orders.
+    //
+    // `compute_dir_node` allocates a fresh `HashMap` on every call. The
+    // previous and updated implementations both call `compute_dir_node`
+    // (the updated implementation calls it from its caller for the root
+    // and inside Phase 3 for staged subdirs; the previous implementation
+    // calls it inline in the recursion), and each call gets its own
+    // `RandomState`. The result: the same logical `DirNode` produced by
+    // each run can msgpack-encode to byte sequences with the *same length*
+    // but *different inner-map key orders*. The bytes are functionally
+    // equivalent — they decode back to identical `DirNode` values — but
+    // `assert_eq!` on the raw bytes would fail nondeterministically.
+    //
+    // This non-determinism is observable even comparing the previous
+    // implementation to itself (running the same code twice produces
+    // non-identical bytes), so it isn't a property of the refactor; it's a
+    // property of how `DirNode` is serialized today. The merkle node
+    // *hash* is computed from the raw field bytes (not from msgpack), so
+    // node hashes are stable and the set of `tree/nodes/<prefix>/<suffix>/`
+    // paths is stable; only the per-node msgpack body bytes are not.
+    //
+    // ── What the structural comparison actually tests ───────────────────────
+    //
+    // For each node directory, `snapshot_tree_nodes` opens the per-node
+    // `MerkleNodeDB` read-only (via `MerkleStore::get_node` /
+    // `get_children`) and **deserializes** the stored bytes back into:
+    //
+    //   - `parent_id: Option<MerkleHash>`  (read from the node-file header)
+    //   - `node: EMerkleTreeNode`          (msgpack-deserialized body of
+    //                                       the node-file's data section)
+    //   - `children: Vec<(MerkleHash, EMerkleTreeNode)>`
+    //                                      (each child decoded from the
+    //                                       children-file via the lookup
+    //                                       table in the node-file)
+    //
+    // The test then compares these triples between the two runs with
+    // `assert_eq!`. Equality on `EMerkleTreeNode` is derived
+    // (`#[derive(PartialEq, Eq)]` on the enum and on every node variant
+    // including `DirNode`), which means equality on the inner
+    // `HashMap<String, u64>` fields is by content (key/value membership)
+    // rather than by iteration order.
+    //
+    // Therefore: the test verifies that **what serialize-then-deserialize
+    // round-trips to** is identical between the two write paths, even
+    // though the on-disk msgpack bytes themselves can differ in
+    // HashMap-key ordering. That is the property that actually matters for
+    // correctness — the merkle store must be readable to the same logical
+    // contents — and it is the strongest equivalence that's observable
+    // without changing `DirNode`'s map-typed fields to a deterministic
+    // container (e.g. `BTreeMap`) or to a fixed-seeded `BuildHasher`.
+    // ════════════════════════════════════════════════════════════════════════
+
+    use super::{
+        EntryVNode, NewCommitBody, compute_commit_id, compute_dir_node, create_commit_data,
+        split_into_vnodes, write_commit_entries,
+    };
+    use crate::constants::STAGED_DIR;
+    use crate::core::db;
+    use crate::core::db::key_val::str_val_db;
+    use crate::core::v_latest::status;
+    use crate::model::LocalRepository;
+    use crate::model::StagedEntryStatus;
+    use crate::model::merkle_tree::merkle_writer::{MerkleWriteSession, NodeWriteSession};
+    use crate::model::merkle_tree::node::commit_node::CommitNodeOpts;
+    use crate::model::merkle_tree::node::vnode::VNodeOpts;
+    use crate::model::merkle_tree::node::{
+        CommitNode, DirNode, EMerkleTreeNode, MerkleTreeNode, StagedMerkleTreeNode, VNode,
+    };
+    use indicatif::ProgressBar;
+    use rocksdb::{DBWithThreadMode, SingleThreaded};
+    use std::collections::{BTreeMap, HashMap};
+    use std::path::PathBuf;
+    use time::OffsetDateTime;
+
+    /// PATTERN A LEGACY — preserved verbatim from the pre-refactor implementation.
+    /// Holds `maybe_parent_ns` (the dir's `NodeWriteSession`) open across the
+    /// recursion: nested `child_ns` and `vnode_ns` are opened on the same
+    /// `MerkleWriteSession` while the parent's session is still alive.
+    #[allow(clippy::too_many_arguments)]
+    fn r_create_dir_node_previous(
+        repo: &LocalRepository,
+        session: &dyn MerkleWriteSession,
+        commit_id: MerkleHash,
+        mut maybe_parent_ns: Option<&mut dyn NodeWriteSession>,
+        dir_hash_db: &DBWithThreadMode<SingleThreaded>,
+        dir_hashes: &HashMap<PathBuf, MerkleHash>,
+        entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
+        path: impl AsRef<Path>,
+        total_written: &mut u64,
+    ) -> Result<(), OxenError> {
+        let path = path.as_ref().to_path_buf();
+
+        let Some((vnodes, _)) = entries.get(&path) else {
+            return Ok(());
+        };
+
+        for vnode in vnodes.iter() {
+            let opts = VNodeOpts {
+                hash: vnode.id,
+                num_entries: vnode.entries.len() as u64,
+            };
+            let vnode_obj = VNode::new(repo, opts)?;
+            let parent_id_for_vnode = maybe_parent_ns.as_deref().map(|ns| *ns.node_id());
+            if let Some(parent_ns) = maybe_parent_ns.as_deref_mut() {
+                parent_ns.add_child(&vnode_obj)?;
+                *total_written += 1;
+            }
+
+            let mut vnode_ns = session.create_node(&vnode_obj, parent_id_for_vnode)?;
+            for entry in vnode.entries.iter() {
+                match &entry.node.node {
+                    EMerkleTreeNode::Directory(node) => {
+                        let dir_path = entry.node.maybe_path()?;
+                        let dir_node = if entries.contains_key(&dir_path) {
+                            let dir_node =
+                                compute_dir_node(repo, commit_id, entries, dir_hashes, &dir_path)?;
+
+                            vnode_ns.add_child(&dir_node)?;
+                            *total_written += 1;
+
+                            let mut child_ns = session.create_node(&dir_node, Some(vnode.id))?;
+                            r_create_dir_node_previous(
+                                repo,
+                                session,
+                                commit_id,
+                                Some(&mut *child_ns),
+                                dir_hash_db,
+                                dir_hashes,
+                                entries,
+                                &dir_path,
+                                total_written,
+                            )?;
+                            child_ns.finish()?;
+
+                            dir_node
+                        } else {
+                            let Some(old_dir_node) =
+                                CommitMerkleTree::read_node(repo, node.hash(), false)?
+                            else {
+                                continue;
+                            };
+                            let dir_node = old_dir_node.dir()?;
+                            vnode_ns.add_child(&dir_node)?;
+                            *total_written += 1;
+                            dir_node
+                        };
+
+                        str_val_db::put(
+                            dir_hash_db,
+                            dir_path.to_str().unwrap(),
+                            &dir_node.hash().to_string(),
+                        )?;
+                    }
+                    EMerkleTreeNode::File(file_node) => {
+                        let mut file_node = file_node.clone();
+                        let file_path = PathBuf::from(&file_node.name());
+                        let file_name = file_path.file_name().unwrap().to_str().unwrap();
+
+                        let chunks = vec![file_node.hash().to_u128()];
+                        file_node.set_chunk_hashes(chunks);
+                        let last_commit_id = if entry.status == StagedEntryStatus::Unmodified {
+                            *file_node.last_commit_id()
+                        } else {
+                            commit_id
+                        };
+                        file_node.set_last_commit_id(&last_commit_id);
+                        file_node.set_name(file_name);
+
+                        vnode_ns.add_child(&file_node)?;
+                        *total_written += 1;
+                    }
+                    _ => {
+                        return Err(OxenError::basic_str(format!(
+                            "[legacy A] r_create_dir_node found unexpected node type: {:?}",
+                            entry.node
+                        )));
+                    }
+                }
+            }
+            vnode_ns.finish()?;
+        }
+
+        Ok(())
+    }
+
+    /// PATTERN A LEGACY caller — preserved verbatim. Opens `dir_ns` for the root
+    /// dir up-front and holds it across the recursion via `maybe_parent_ns`.
+    #[allow(clippy::too_many_arguments)]
+    fn write_commit_entries_previous(
+        repo: &LocalRepository,
+        commit_id: MerkleHash,
+        session: &dyn MerkleWriteSession,
+        commit_ns: &mut dyn NodeWriteSession,
+        dir_hash_db: &DBWithThreadMode<SingleThreaded>,
+        dir_hashes: &HashMap<PathBuf, MerkleHash>,
+        entries: &HashMap<PathBuf, (Vec<EntryVNode>, Vec<StagedMerkleTreeNode>)>,
+    ) -> Result<(), OxenError> {
+        let mut total_written: u64 = 0;
+        let root_path = PathBuf::from("");
+        let dir_node: DirNode = compute_dir_node(repo, commit_id, entries, dir_hashes, &root_path)?;
+        commit_ns.add_child(&dir_node)?;
+        total_written += 1;
+
+        str_val_db::put(
+            dir_hash_db,
+            root_path.to_str().unwrap(),
+            &dir_node.hash().to_string(),
+        )?;
+        let mut dir_ns = session.create_node(&dir_node, Some(commit_id))?;
+        r_create_dir_node_previous(
+            repo,
+            session,
+            commit_id,
+            Some(&mut *dir_ns),
+            dir_hash_db,
+            dir_hashes,
+            entries,
+            root_path,
+            &mut total_written,
+        )?;
+        dir_ns.finish()?;
+        Ok(())
+    }
+
+    /// Snapshot of one node in the merkle store: its parent_id, its decoded
+    /// node value, and its decoded children list (each child as `(hash, EMerkleTreeNode)`).
+    /// Stored in a path-keyed map indexed by node hash.
+    type NodeSnapshot = (
+        Option<MerkleHash>,
+        EMerkleTreeNode,
+        Vec<(MerkleHash, EMerkleTreeNode)>,
+    );
+
+    /// Walk every per-node directory under `<repo>/.oxen/tree/nodes/<prefix>/<suffix>/`,
+    /// open each per-node DB read-only via the `MerkleStore` API, and capture
+    /// the **deserialized** structured contents:
+    ///
+    /// - `parent_id: Option<MerkleHash>`    — from the per-node `node` file's
+    ///   fixed-size header (16 raw bytes; deterministic).
+    /// - `node: EMerkleTreeNode`            — msgpack-decoded from the data
+    ///   section of the per-node `node` file. Decoding undoes the HashMap
+    ///   key-order non-determinism described in the module-level comment.
+    /// - `children: Vec<(MerkleHash, EMerkleTreeNode)>` — each child msgpack-
+    ///   decoded from the per-node `children` file via the lookup table in `node`.
+    ///
+    /// Returned as a `BTreeMap` keyed by node hash so the iteration order is
+    /// deterministic and comparable. The result is the deserialize side of a
+    /// serialize → write → read → deserialize round-trip; it represents the
+    /// merkle-store content as the rest of oxen would observe it through
+    /// `MerkleStore::get_node` / `get_children`.
+    ///
+    /// **Why this is structural rather than byte-for-byte.** `DirNode`'s
+    /// `data_type_counts` / `data_type_sizes` are `HashMap<String, u64>`
+    /// (`crates/lib/src/model/merkle_tree/node/dir_node.rs:48-49`). The
+    /// msgpack serializer iterates each map to emit key/value pairs, and
+    /// `std::collections::HashMap` uses `RandomState` (per-instance,
+    /// thread-local PRNG seed) — so two HashMaps with the same key/value
+    /// content can iterate in different orders, producing same-length but
+    /// byte-different msgpack outputs. `compute_dir_node` allocates a fresh
+    /// `HashMap` on every call, so even running the previous-node-writing
+    /// code twice can produce non-identical on-disk bytes for `DirNode`
+    /// bodies.
+    /// The merkle hash is computed from raw fields (not msgpack), so node
+    /// hashes are stable, but the byte image of the msgpack body is not.
+    ///
+    /// Decoding back into `EMerkleTreeNode` makes the comparison agnostic to
+    /// that map-key ordering: equality on `EMerkleTreeNode` (derived
+    /// `PartialEq`/`Eq`, including for `DirNode` and its inner `HashMap`s)
+    /// is by membership/content, not iteration order. This is the strongest
+    /// equivalence observable without changing the production map-typed
+    /// fields to a deterministic container (e.g. `BTreeMap`) or to a
+    /// fixed-seeded `BuildHasher`.
+    fn snapshot_tree_nodes(
+        repo: &LocalRepository,
+    ) -> Result<BTreeMap<MerkleHash, NodeSnapshot>, OxenError> {
+        let nodes_dir = util::fs::oxen_hidden_dir(&repo.path)
+            .join("tree")
+            .join("nodes");
+        let mut out: BTreeMap<MerkleHash, NodeSnapshot> = BTreeMap::new();
+        if !nodes_dir.exists() {
+            return Ok(out);
+        }
+        let store = repo.merkle_store()?;
+        for entry in walkdir::WalkDir::new(&nodes_dir)
+            .follow_links(false)
+            .min_depth(2)
+            .max_depth(2)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            let path = entry.path();
+            let Ok(meta) = path.metadata() else { continue };
+            if !meta.is_dir() {
+                continue;
+            }
+            let rel = match path.strip_prefix(&nodes_dir) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let components: Vec<&str> = rel
+                .components()
+                .filter_map(|c| match c {
+                    std::path::Component::Normal(s) => s.to_str(),
+                    _ => None,
+                })
+                .collect();
+            if components.len() != 2 {
+                continue;
+            }
+            let hex = format!("{}{}", components[0], components[1]);
+            let Ok(hash_value) = u128::from_str_radix(&hex, 16) else {
+                continue;
+            };
+            let hash = MerkleHash::new(hash_value);
+
+            let Some(MerkleEntry { node, parent_id }) = store.get_node(&hash)? else {
+                continue;
+            };
+            let children: Vec<(MerkleHash, EMerkleTreeNode)> = store
+                .get_children(&hash)?
+                .into_iter()
+                .map(|(h, n)| (h, n.node))
+                .collect();
+            out.insert(hash, (parent_id, node, children));
+        }
+        Ok(out)
+    }
+
+    /// Remove `<repo>/.oxen/tree/nodes/` so the second run starts from a clean
+    /// merkle store. The dir_hash_db is left in place; its writes are
+    /// idempotent (same key/value), so leaving stale entries doesn't perturb
+    /// the second run.
+    fn wipe_tree_nodes(repo: &LocalRepository) -> Result<(), OxenError> {
+        let nodes_dir = util::fs::oxen_hidden_dir(&repo.path)
+            .join("tree")
+            .join("nodes");
+        if nodes_dir.exists() {
+            std::fs::remove_dir_all(&nodes_dir).map_err(|e| OxenError::basic_str(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// Regression test: the updated-node-writing production code
+    /// (`r_create_dir_node` / `write_commit_entries`) produces a merkle
+    /// store that round-trips to the **same deserialized content** as the
+    /// preserved-verbatim previous-node-writing implementation
+    /// (`r_create_dir_node_previous` / `write_commit_entries_previous`),
+    /// given identical merkle-write inputs.
+    ///
+    /// Test shape (also documented in the module-level comment above):
+    ///
+    /// 1. Init a fresh repo. Stage a non-trivial nested tree
+    ///    (README.md, files.csv, `files/dir_<n>/file<i>.txt`) — exercises
+    ///    multi-vnode dirs, multi-level recursion, and mixed file/dir-ref
+    ///    entries inside vnodes.
+    /// 2. Build the merkle-write inputs ONCE, with a pinned timestamp so
+    ///    `commit_id` is identical between runs.
+    /// 3. Run the previous node writing → snapshot deserialized contents
+    ///    of `tree/nodes/`.
+    /// 4. Wipe `tree/nodes/`.
+    /// 5. Run the updated node writing → snapshot deserialized contents.
+    /// 6. Assert both snapshots have identical hash sets and identical
+    ///    per-node `(parent_id, EMerkleTreeNode, children)` triples.
+    ///
+    /// This is **structural** equivalence, not byte equivalence — see the
+    /// module-level comment above and `snapshot_tree_nodes`'s doc for why
+    /// byte-by-byte comparison is intentionally not done. The merkle store
+    /// content as observed via `MerkleStore::get_node` / `get_children` is
+    /// what callers actually consume, and this test pins that.
+    #[tokio::test]
+    async fn updated_node_writing_structurally_equivalent_to_previous() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|dir| async move {
+            let repo = repositories::init::init(dir)?;
+            // Stage a non-trivial nested tree (README.md, files.csv, files/dir_*/file*.txt)
+            // so the test exercises the recursion: multiple dirs, multiple vnodes
+            // per dir, mixed file/dir entries inside vnodes.
+            test::add_n_files_m_dirs(&repo, 12, 3).await?;
+
+            // Read the staged dir_entries map (mirrors the start of `commit_with_cfg`).
+            let opts = db::key_val::opts::default();
+            let staged_db_path = util::fs::oxen_hidden_dir(&repo.path).join(STAGED_DIR);
+            let staged_db: DBWithThreadMode<SingleThreaded> =
+                DBWithThreadMode::open(&opts, dunce::simplified(&staged_db_path))?;
+            let progress = ProgressBar::hidden();
+            let (dir_entries, _total) = status::read_staged_entries(&repo, &staged_db, &progress)?;
+            drop(staged_db);
+
+            // Build the merkle-write inputs once — both runs must see the
+            // SAME inputs so any difference observed below is attributable to
+            // the previous vs updated write logic, not to a difference in
+            // what was asked of either implementation. Mirrors the input-prep
+            // portion of `commit_dir_entries_new`. The timestamp is pinned to
+            // a fixed Unix epoch so `commit_id` is identical across runs.
+            let new_commit = NewCommitBody {
+                message: "regression test".to_string(),
+                author: "test".to_string(),
+                email: "test@test.com".to_string(),
+            };
+            let existing_nodes: HashMap<PathBuf, MerkleTreeNode> = HashMap::new();
+            let vnode_entries =
+                split_into_vnodes(&repo, &dir_entries, &existing_nodes, &new_commit)?;
+            let timestamp = OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
+            let new_commit_data =
+                create_commit_data(&repo, &new_commit.message, timestamp, vec![], &new_commit)?;
+            let commit_id = compute_commit_id(&new_commit_data)?;
+            let node = CommitNode::new(
+                &repo,
+                CommitNodeOpts {
+                    hash: commit_id,
+                    parent_ids: vec![],
+                    email: new_commit_data.email.clone(),
+                    author: new_commit_data.author.clone(),
+                    message: new_commit.message.clone(),
+                    timestamp,
+                },
+            )?;
+            let commit_id_string = format!("{commit_id}");
+            let dir_hash_db_path =
+                CommitMerkleTree::dir_hash_db_path_from_commit_id(&repo, &commit_id_string);
+            let dir_hashes: HashMap<PathBuf, MerkleHash> = HashMap::new();
+
+            // ── Run 1: previous node writing ───────────────────────────────────
+            {
+                let dir_hash_db: DBWithThreadMode<SingleThreaded> =
+                    DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
+                let store = repo.merkle_store()?;
+                let session = store.begin()?;
+                let mut commit_ns = session.create_node(&node, None)?;
+                write_commit_entries_previous(
+                    &repo,
+                    commit_id,
+                    &*session,
+                    &mut *commit_ns,
+                    &dir_hash_db,
+                    &dir_hashes,
+                    &vnode_entries,
+                )?;
+                commit_ns.finish()?;
+                session.finish()?;
+            }
+            let snap_previous = snapshot_tree_nodes(&repo)?;
+            wipe_tree_nodes(&repo)?;
+
+            // ── Run 2: updated node writing (production) ──────────────────────
+            {
+                let dir_hash_db: DBWithThreadMode<SingleThreaded> =
+                    DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
+                let store = repo.merkle_store()?;
+                let session = store.begin()?;
+                let mut commit_ns = session.create_node(&node, None)?;
+                write_commit_entries(
+                    &repo,
+                    commit_id,
+                    &*session,
+                    &mut *commit_ns,
+                    &dir_hash_db,
+                    &dir_hashes,
+                    &vnode_entries,
+                )?;
+                commit_ns.finish()?;
+                session.finish()?;
+            }
+            let snap_updated = snapshot_tree_nodes(&repo)?;
+
+            // ── Compare ────────────────────────────────────────────────────────
+            //
+            // Both `snap_previous` and `snap_updated` are the deserialized merkle store
+            // content (see `snapshot_tree_nodes` doc) — i.e. the result of
+            // a full serialize → write → read → deserialize round-trip via
+            // `MerkleStore`. Equality below is therefore equality of what
+            // any consumer of the merkle store would observe, not equality
+            // of the on-disk msgpack bytes (which the module-level comment
+            // explains can legitimately differ in HashMap key ordering).
+            assert!(
+                !snap_previous.is_empty(),
+                "expected non-empty previous-node-writing snapshot — \
+                 if this fails, the test is no longer exercising the write path",
+            );
+
+            // 1. Same set of node hashes ⟹ same set of per-node directories
+            //    under `tree/nodes/<prefix>/<suffix>/`. Each node hash is
+            //    content-addressed (computed from raw fields, not msgpack),
+            //    so this assertion catches any divergence in the field
+            //    values that go into hashing — even before we look at the
+            //    deserialized bodies.
+            let keys_previous: Vec<&MerkleHash> = snap_previous.keys().collect();
+            let keys_updated: Vec<&MerkleHash> = snap_updated.keys().collect();
+            assert_eq!(
+                keys_previous, keys_updated,
+                "tree/nodes/ hash sets differ between previous and updated node writing",
+            );
+
+            // 2. Per-node round-tripped equivalence: for every node, the
+            //    `parent_id` recorded in its on-disk header, the
+            //    msgpack-decoded `EMerkleTreeNode`, and the
+            //    msgpack-decoded children list must all match.
+            //
+            //    `EMerkleTreeNode` (and every variant: `DirNode`, `VNode`,
+            //    `FileNode`, ...) derives `PartialEq` / `Eq`. Equality on
+            //    `HashMap` fields inside (e.g. `DirNode::data_type_counts`,
+            //    `data_type_sizes`) is by membership, not iteration order —
+            //    so this assertion catches every real divergence in the
+            //    merkle store contents while remaining robust to the
+            //    msgpack-key-order non-determinism of the write side.
+            for (hash, snap_previous_entry) in &snap_previous {
+                let snap_updated_entry = snap_updated.get(hash).expect(
+                    "hash present in previous-node-writing snapshot but missing in updated",
+                );
+                assert_eq!(
+                    snap_previous_entry,
+                    snap_updated_entry,
+                    "previous vs updated node writing diverged for node {} \
+                     after serialize → write → read → deserialize round-trip",
+                    hash.to_hex_hash(),
+                );
+            }
             Ok(())
         })
         .await
