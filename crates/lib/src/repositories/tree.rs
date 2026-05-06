@@ -842,7 +842,7 @@ pub fn cp_dir_hashes_to(
 
 pub fn compress_tree(repository: &LocalRepository) -> Result<Vec<u8>, OxenError> {
     let mut buf = Vec::new();
-    repository.merkle_store().pack_all(&mut buf)?;
+    repository.merkle_store()?.pack_all(&mut buf)?;
     let total_size: u64 = u64::try_from(buf.len()).unwrap_or(u64::MAX);
     log::debug!("Compressed entire tree size is {}", ByteSize::b(total_size));
     Ok(buf)
@@ -857,7 +857,7 @@ pub fn unpack_nodes(
     // a `&mut` over a fresh slice cursor that advances as bytes are consumed.
     let mut reader: &[u8] = buffer;
     repository
-        .merkle_store()
+        .merkle_store()?
         .unpack(&mut reader, UnpackOptions::SkipExisting)
 }
 
@@ -868,7 +868,7 @@ pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), O
         return Err(OxenError::basic_str("Expected commit node"));
     };
     let commit_node = CommitNode::new(repo, commit_node.get_opts())?;
-    let store = repo.merkle_store();
+    let store = repo.merkle_store()?;
     let session = store.begin()?;
     p_write_tree(&*session, node, &commit_node)?;
     session.finish()?;

@@ -80,7 +80,7 @@ pub async fn create_nodes(
         // Legacy client-push wire format: required so older `oxen-server` deployments
         // (which pre-pend `tree/nodes/` server-side at install time) install entries
         // at the right paths.
-        repo.merkle_store()
+        repo.merkle_store()?
             .pack_nodes(&nodes, PackOptions::LegacyClientPush, &mut sync_writer)?;
         Ok(())
     });
@@ -367,7 +367,7 @@ async fn node_download_request(
     tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
         // Download path: overwrite existing files on disk, matching `main`'s
         // `util::fs::unpack_async_tar_archive` behaviour.
-        repo.merkle_store()
+        repo.merkle_store()?
             .unpack(&mut sync_reader, UnpackOptions::Overwrite)?;
         Ok(())
     })

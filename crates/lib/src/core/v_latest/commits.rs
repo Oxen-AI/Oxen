@@ -282,7 +282,7 @@ pub fn create_empty_commit(
     )?;
 
     let parent_id = Some(existing_node.hash);
-    let store = repo.merkle_store();
+    let store = repo.merkle_store()?;
     let session = store.begin()?;
     let mut commit_ns = session.create_node(&commit_node, parent_id)?;
     // There should always be one child, the root directory
@@ -366,7 +366,7 @@ pub fn create_initial_commit(
     )?;
 
     // Open the commit write session and add the root directory
-    let store = repo.merkle_store();
+    let store = repo.merkle_store()?;
     let session = store.begin()?;
     let mut commit_ns = session.create_node(&commit_node, None)?;
     commit_ns.add_child(&dir_node)?;

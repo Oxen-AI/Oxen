@@ -13,6 +13,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use tokio::task::JoinError;
 
+use crate::config::repository_config::UnknownMerkleStoreKind;
 use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
 use crate::model::ParsedResource;
 use crate::model::RepoNew;
@@ -218,6 +219,9 @@ pub enum OxenError {
     // TODO: should not exist. LocalRepository needs to drop its unusued serialization derives.
     #[error("Merkle store not initialized")]
     MerkleStoreNotInitialized,
+
+    #[error("{0}")]
+    UnknownMerkleStoreKind(#[from] UnknownMerkleStoreKind),
 
     //
     // Schema (dataframes)

@@ -137,8 +137,8 @@ fn run_on_commit(repository: &LocalRepository, commit: &Commit) -> Result<(), Ox
 
     // Write a new commit node via a session on the old repo.
     let commit_node = CommitNode::from_commit(commit.clone());
-    let old_store = old_repo.merkle_store();
-    let new_store = new_repo.merkle_store();
+    let old_store = old_repo.merkle_store()?;
+    let new_store = new_repo.merkle_store()?;
     let old_session = old_store.begin()?;
     let new_session = new_store.begin()?;
     let mut root_commit_ns = old_session.create_node(&commit_node, root_node.parent_id)?;
