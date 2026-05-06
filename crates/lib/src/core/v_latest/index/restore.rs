@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::constants::STAGED_DIR;
 use crate::core::db::{self};
-use crate::error::OxenError;
+use crate::error::{OxenError, PathBufError};
 use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode, MerkleTreeNode};
 use crate::model::{Commit, LocalRepository, MerkleHash, PartialNode};
 use crate::opts::RestoreOpts;
@@ -36,6 +36,10 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
 
     let repo_path = repo.path.clone();
 
+    // Accumulate per-file failures so the caller can recover everything that did succeed
+    // and we can still surface a single aggregated error at the end.
+    let mut failures: Vec<(PathBufError, Box<OxenError>)> = Vec::new();
+
     for path in paths {
         let path = util::fs::path_relative_to_dir(&path, &repo_path)?;
         let Some(node) = repositories::tree::get_node_by_path_with_children(repo, &commit, &path)?
@@ -51,23 +55,13 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
         match &node.node {
             EMerkleTreeNode::Directory(_dir_node) => {
                 log::debug!("restore::restore: restoring directory");
-                match restore_dir(repo, node, &path, &version_store).await {
-                    Ok(_) => {}
-                    Err(e) => {
-                        log::error!(
-                            "restore::restore_dir failed for dir {path:?} with error {e:?}"
-                        );
-                    }
-                }
+                let dir_failures = restore_dir(repo, node, &path, &version_store).await?;
+                failures.extend(dir_failures);
             }
             EMerkleTreeNode::File(file_node) => {
-                match restore_file(repo, file_node, &path, &version_store).await {
-                    Ok(_) => {}
-                    Err(e) => {
-                        log::error!(
-                            "restore::restore_file failed for file {path:?} with error {e:?}"
-                        );
-                    }
+                if let Err(e) = restore_file(repo, file_node, &path, &version_store).await {
+                    log::error!("restore::restore_file failed for file {path:?} with error {e:?}");
+                    failures.push((path.clone().into(), Box::new(e)));
                 }
             }
             _ => {
@@ -76,7 +70,11 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
         }
     }
 
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(OxenError::RestoreFailed { failures })
+    }
 }
 
 fn restore_staged(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenError> {
@@ -167,14 +165,17 @@ fn open_staged_db(db_path: &Path) -> Result<Option<DBWithThreadMode<SingleThread
     }
 }
 
+/// Restore every file in `dir` (recursive). Returns the list of files that failed to
+/// restore — empty when every entry succeeded. Restoration of one file failing does not
+/// stop the loop; the caller wraps any non-empty result in [`OxenError::RestoreFailed`].
+/// An outer error means some other error occurred other than a failed file restore.
 async fn restore_dir(
     repo: &LocalRepository,
     dir: MerkleTreeNode,
     path: &PathBuf,
     version_store: &Arc<dyn VersionStore>,
-) -> Result<(), OxenError> {
+) -> Result<Vec<(PathBufError, Box<OxenError>)>, OxenError> {
     log::debug!("restore::restore_dir: start");
-    // Change the return type to include both FileNode and PathBuf
     let file_nodes_with_paths = repositories::tree::dir_entries_with_paths(&dir, path)?;
     log::debug!(
         "restore::restore_dir: got {} entries",
@@ -185,20 +186,22 @@ async fn restore_dir(
     let bar =
         util::progress_bar::oxen_progress_bar_with_msg(file_nodes_with_paths.len() as u64, &msg);
 
+    let mut failures: Vec<(PathBufError, Box<OxenError>)> = Vec::new();
     for (file_node, file_path) in file_nodes_with_paths.iter() {
         match restore_file(repo, file_node, file_path, version_store).await {
             Ok(_) => log::debug!("restore::restore_dir: entry restored successfully"),
             Err(e) => {
                 log::error!("restore::restore_dir: error restoring file {file_path:?}: {e:?}");
+                failures.push((file_path.clone().into(), Box::new(e)));
             }
         }
         bar.inc(1);
     }
 
     bar.finish_and_clear();
-    log::debug!("restore::restore_dir: end");
+    log::debug!("restore::restore_dir: end ({} failures)", failures.len());
 
-    Ok(())
+    Ok(failures)
 }
 
 pub async fn should_restore_partial_node(

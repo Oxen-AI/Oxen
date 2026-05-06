@@ -7,6 +7,7 @@ use aws_sdk_s3::error::BuildError;
 use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
 use aws_smithy_runtime_api::client::result::SdkError;
 use duckdb::arrow::error::ArrowError;
+use std::fmt::Write;
 use std::io;
 use std::num::ParseIntError;
 use std::path::Path;
@@ -181,6 +182,21 @@ pub enum OxenError {
     /// An error deleting keys
     #[error("delete_objects: some keys failed to delete: {0:?}")]
     DeleteFailure(Vec<(String, String)>),
+
+    /// The version store does not have the data file for the given hash that `oxen restore` is
+    /// attempting to copy from.
+    #[error("Cannot restore {target_path}: version-store data missing for hash {hash}")]
+    VersionStoreDataMissing {
+        hash: String,
+        target_path: PathBufError,
+    },
+
+    /// `oxen restore` finished with one or more file-restore failures. Aggregated rather than
+    /// fail-fast so the rest of the files can still be restored. The vector should be non-empty.
+    #[error("{}", format_restore_failures(failures))]
+    RestoreFailed {
+        failures: Vec<(PathBufError, Box<OxenError>)>,
+    },
 
     // Entry
     /// A commit entry is not present in the repository.
@@ -402,6 +418,27 @@ pub enum OxenError {
     InternalError(StringError),
 }
 
+/// Multi-line render for [`OxenError::RestoreFailed`]. Each failed file is listed with its
+/// underlying error so users debugging a stuck restore see every problem at once.
+fn format_restore_failures(failures: &[(PathBufError, Box<OxenError>)]) -> String {
+    let mut out = format!("Failed to restore {} file(s):", failures.len());
+    for (path, err) in failures {
+        // Indent each entry
+        let rendered = err.to_string();
+        let mut lines = rendered.lines();
+        if let Some(first) = lines.next() {
+            let _ = write!(out, "\n  {path}: {first}");
+        } else {
+            let _ = write!(out, "\n  {path}:");
+        }
+        // Indent each subsequent line of the error message even further
+        for line in lines {
+            let _ = write!(out, "\n    {line}");
+        }
+    }
+    out
+}
+
 impl OxenError {
     //
     //
@@ -435,6 +472,19 @@ impl OxenError {
             | CommitEntryNotFound(_) => "Check the path and current branch with `oxen status`.",
             MergeInProgressMismatch { .. } => {
                 "Run `oxen merge --abort` to abandon the in-progress merge, or retry the original target."
+            }
+            VersionStoreDataMissing { .. } => {
+                "Run `oxen fetch --missing-files` to re-fetch missing version-store data, then retry `oxen restore`."
+            }
+            RestoreFailed { failures } => {
+                if failures
+                    .iter()
+                    .any(|(_, err)| matches!(err.as_ref(), VersionStoreDataMissing { .. }))
+                {
+                    "Some files could not be restored because their version-store data is missing. Run `oxen fetch --missing-files` to re-fetch, then retry `oxen restore`."
+                } else {
+                    "Run with RUST_LOG=debug for per-file details, or check `oxen status`."
+                }
             }
             HTTP(req_err) => {
                 if req_err.is_connect() || req_err.is_timeout() {

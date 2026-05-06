@@ -173,6 +173,148 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_restore_aggregates_per_file_failures() -> Result<(), OxenError> {
+        // `oxen restore .` was silently swallowing per-file failures, so when a previous
+        // interrupted pull left the working tree in a state where the version store no longer had
+        // the data needed to restore HEAD's expected content, the user got a misleading successful
+        // return code with nothing changed on disk. Restore must now surface an
+        // `OxenError::RestoreFailed` whose Display lists every failed file with its underlying
+        // error, so the user can see all the broken paths at once and the CLI hint can point them
+        // at `oxen fetch --missing-files`.
+        //
+        // Three branches of behavior in one restore call:
+        //   succeeds.txt    — blob present, working file removed       → restore writes it back
+        //   missing_blob    — blob removed, working file removed       → VersionStoreDataMissing
+        //   other_error     — blob present, dir replaces working file  → non-missing-data error
+        // This covers (1) the mixed-success case (RestoreFailed must not be raised when zero
+        // files failed, and a successful restore in the same call must still happen) and
+        // (2) the path where a RestoreFailed wraps a non-missing-data error — important
+        // because the CLI hint logic must not assume every failure is a missing blob.
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let succeeds = repo.path.join("succeeds.txt");
+            let missing_blob = repo.path.join("missing_blob.txt");
+            let other_error = repo.path.join("other_error.txt");
+            let succeeds_content = "alpha alpha alpha";
+            util::fs::write_to_path(&succeeds, succeeds_content)?;
+            util::fs::write_to_path(&missing_blob, "beta beta beta")?;
+            util::fs::write_to_path(&other_error, "gamma gamma gamma")?;
+            repositories::add(&repo, &succeeds).await?;
+            repositories::add(&repo, &missing_blob).await?;
+            repositories::add(&repo, &other_error).await?;
+            repositories::commit(&repo, "Add three files")?;
+
+            // Locate and delete the blob backing missing_blob.txt only — leave the other
+            // two blobs alone so succeeds.txt can be restored and other_error.txt's failure
+            // is forced by the destination state, not the source.
+            let head = repositories::commits::head_commit(&repo)?;
+            let node = repositories::tree::get_node_by_path(&repo, &head, "missing_blob.txt")?
+                .expect("missing_blob.txt must be in HEAD's tree");
+            let missing_hash = node.hash.to_string();
+            let missing_blob_data = repo
+                .path
+                .join(crate::constants::OXEN_HIDDEN_DIR)
+                .join("versions")
+                .join("files")
+                .join(&missing_hash[..2])
+                .join(&missing_hash[2..])
+                .join("data");
+            assert!(
+                missing_blob_data.exists(),
+                "test setup expected blob to exist: {missing_blob_data:?}"
+            );
+            util::fs::remove_file(&missing_blob_data)?;
+
+            // Working-tree mutations:
+            //   succeeds and missing_blob: removed so restore takes the copy path
+            //     (succeeds restores cleanly, missing_blob hits VersionStoreDataMissing).
+            //   other_error: replaced by a directory of the same name. The blob is intact,
+            //     but tokio::fs::copy will fail with EISDIR when restore_file tries to
+            //     write the file content to a path that's now a directory — surfacing a
+            //     non-VersionStoreDataMissing error inside the same RestoreFailed.
+            util::fs::remove_file(&succeeds)?;
+            util::fs::remove_file(&missing_blob)?;
+            util::fs::remove_file(&other_error)?;
+            std::fs::create_dir(&other_error)?;
+
+            let mut paths = HashSet::new();
+            paths.insert(PathBuf::from("succeeds.txt"));
+            paths.insert(PathBuf::from("missing_blob.txt"));
+            paths.insert(PathBuf::from("other_error.txt"));
+            let result = repositories::restore::restore(
+                &repo,
+                RestoreOpts {
+                    paths,
+                    staged: false,
+                    is_remote: false,
+                    source_ref: None,
+                },
+            )
+            .await;
+
+            let Err(OxenError::RestoreFailed { failures }) = result else {
+                panic!("expected RestoreFailed, got: {result:?}");
+            };
+
+            // succeeds.txt is not in the failure list — it was actually restored.
+            assert_eq!(failures.len(), 2, "failures: {failures:#?}");
+            let by_path = |name: &str| -> &OxenError {
+                failures
+                    .iter()
+                    .find(|(p, _)| p.to_string() == name)
+                    .map(|(_, e)| e.as_ref())
+                    .unwrap_or_else(|| panic!("{name} should be in failures: {failures:#?}"))
+            };
+
+            assert!(
+                matches!(
+                    by_path("missing_blob.txt"),
+                    OxenError::VersionStoreDataMissing { .. }
+                ),
+                "missing_blob.txt: expected VersionStoreDataMissing, got: {:?}",
+                by_path("missing_blob.txt")
+            );
+            assert!(
+                !matches!(
+                    by_path("other_error.txt"),
+                    OxenError::VersionStoreDataMissing { .. }
+                ),
+                "other_error.txt: expected a non-missing-data error, got: {:?}",
+                by_path("other_error.txt")
+            );
+
+            // Display lists both failed files, exactly one of them as missing-data.
+            let rendered = OxenError::RestoreFailed { failures }.to_string();
+            assert!(
+                rendered.starts_with("Failed to restore 2 file(s):"),
+                "rendered did not lead with the count summary: {rendered}"
+            );
+            assert!(
+                rendered.contains("missing_blob.txt"),
+                "missing_blob.txt missing in:\n{rendered}"
+            );
+            assert!(
+                rendered.contains("other_error.txt"),
+                "other_error.txt missing in:\n{rendered}"
+            );
+            assert_eq!(
+                rendered.matches("version-store data missing").count(),
+                1,
+                "expected exactly one missing-data line in:\n{rendered}"
+            );
+
+            // succeeds.txt was restored from its still-present blob.
+            assert!(succeeds.exists(), "succeeds.txt should have been restored");
+            assert_eq!(util::fs::read_from_path(&succeeds)?, succeeds_content);
+            // The other two files remain in their pre-restore state.
+            assert!(!missing_blob.exists());
+            assert!(other_error.is_dir());
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_restore_directory() -> Result<(), OxenError> {
         test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let history = repositories::commits::list(&repo)?;
