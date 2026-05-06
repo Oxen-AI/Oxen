@@ -223,6 +223,7 @@ pub enum OxenError {
     #[error("{0}")]
     UnknownMerkleStoreKind(#[from] UnknownMerkleStoreKind),
 
+
     //
     // Schema (dataframes)
     //
@@ -422,11 +423,15 @@ pub enum OxenError {
         help: String,
     },
 
+    #[error("Error accessing LMDB Merkle store: {0}")]
+    HeedError(#[from] heed::Error),
+
     // Fallback
     // TODO: remove all uses of `Basic` and replace with specific errors.
     #[error("{0}")]
     Basic(StringError),
 
+    // TODO: remove all uses of `Basic` and replace with specific errors.
     #[error("{0}")]
     InternalError(StringError),
 }

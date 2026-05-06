@@ -70,4 +70,14 @@ impl MerkleNodeRecord {
     pub fn into_node(self) -> EMerkleTreeNode {
         self.node
     }
+
+    /// Consumes the `MerkleNodeRecord` and returns a `MerkleTreeNode` with the given `children`.
+    pub fn into_tree_node(self, children: Vec<MerkleTreeNode>) -> MerkleTreeNode {
+        MerkleTreeNode {
+            hash: self.hash,
+            node: self.node,
+            parent_id: self.parent_id,
+            children,
+        }
+    }
 }

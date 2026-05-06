@@ -1,22 +1,28 @@
+use std::path::{Path, PathBuf};
+
+use futures::SinkExt;
 use heed::byteorder::LE;
 use heed::types::{Bytes, DecodeIgnore, U128};
 use heed::{Database, Env, EnvOpenOptions};
+
+use crate::error::OxenError;
+use crate::model::MerkleHash;
+use crate::model::merkle_tree::merkle_reader::{MerkleNodeRecord, MerkleReader};
+use crate::model::merkle_tree::merkle_writer::MerkleWriteSession;
+use crate::model::merkle_tree::node::MerkleTreeNode;
 
 /// MUST USE LITTLE ENDIAN (LE) so the byte layout matches
 /// `ContentHash::as_bytes` / `LocationHash::as_bytes`.
 type KeyLmdb = U128<LE>;
 type ValueLmdb = Bytes;
 
-const DB_LOCATIONS: &str = "locations";
 const DB_CONTENTS: &str = "contents";
-const DB_COMMITS: &str = "commits";
 
+/// Merkle tree node storage that is backed by LMDB.
 pub struct LmdbBackend {
-    repo_root: AbsolutePath,
+    repo_root: PathBuf,
     lmdb_env: Env,
-    locations: Database<KeyLmdb, ValueLmdb>,
     contents: Database<KeyLmdb, ValueLmdb>,
-    commits: Database<KeyLmdb, ValueLmdb>,
 }
 
 impl std::fmt::Debug for LmdbBackend {
@@ -30,35 +36,24 @@ impl std::fmt::Debug for LmdbBackend {
 
 impl LmdbBackend {
     pub fn new(
-        repo_root: &AbsolutePath,
-        db_location: &AbsolutePath,
+        repo_root: PathBuf,
+        db_location: &Path,
         options: EnvOpenOptions,
-    ) -> Result<Self, <Self as MerkleReader>::Error> {
-        // Three named DBs: locations / contents / commits.
+    ) -> Result<Self, OxenError> {
         let options = {
             let mut options = options;
-            options.max_dbs(3);
+            options.max_dbs(1);
             options
         };
 
-        let lmdb_env = unsafe { options.open(db_location.as_path())? };
+        let lmdb_env = unsafe { options.open(db_location)? };
 
         let mut wtxn = lmdb_env.write_txn()?;
-        let locations =
-            lmdb_env.create_database::<KeyLmdb, ValueLmdb>(&mut wtxn, Some(DB_LOCATIONS))?;
         let contents =
             lmdb_env.create_database::<KeyLmdb, ValueLmdb>(&mut wtxn, Some(DB_CONTENTS))?;
-        let commits =
-            lmdb_env.create_database::<KeyLmdb, ValueLmdb>(&mut wtxn, Some(DB_COMMITS))?;
         wtxn.commit()?;
 
-        Ok(Self {
-            repo_root: repo_root.clone(),
-            lmdb_env,
-            locations,
-            contents,
-            commits,
-        })
+        Ok(Self { repo_root, lmdb_env, contents })
     }
 
     /// Retrieve the value and decode it into a struct of type `T`.
@@ -98,57 +93,62 @@ impl LmdbBackend {
 }
 
 impl MerkleReader for LmdbBackend {
-    type Error = heed::Error;
 
-    fn repository(&self) -> &AbsolutePath {
-        &self.repo_root
+    /// Checks if a node with the given `hash` exists in the store.
+    fn exists(&self, hash: &MerkleHash) -> Result<bool, OxenError> {
+        let exists = Self::key_present(&self.lmdb_env, &self.contents, hash.into())?;
+        Ok(exists)
     }
 
-    fn location_exists(&self, location: LocationHash) -> Result<bool, Self::Error> {
-        Self::key_present(&self.lmdb_env, &self.locations, location.into())
+    /// Retrieves the node with the given `hash` from the store. `None` means no such node exists.
+    fn get_node(&self, hash: &MerkleHash) -> Result<Option<MerkleNodeRecord>, OxenError> {
+        let maybe_node = Self::retrieve_from(&self.lmdb_env, &self.contents, hash.into())?;
+        Ok(maybe_node)
     }
 
-    fn content_exists(&self, content: ContentHash) -> Result<bool, Self::Error> {
-        Self::key_present(&self.lmdb_env, &self.contents, content.into())
+    /// Retrieves the children of the node with the given `hash` from the store.
+    /// An empty vec means that either the node is a not a directory or virtual node or it is one
+    /// but has no files.
+    fn get_children(
+        &self,
+        hash: &MerkleHash,
+    ) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, OxenError> {
+
+        let Some(node) = self.get_node(hash)? else {
+            return Ok(Vec::with_capacity(0));
+        };
+
+        node.node()
+
+
+
+
+        if !MerkleNodeDB::exists(&self.repo_path, hash) {
+            return Ok(Vec::with_capacity(0));
+        }
+        let mut db = MerkleNodeDB::open_read_only(&self.repo_path, hash)?;
+        let children = db.map()?;
+        Ok(children)
     }
 
-    fn commit_exists(&self, commit: ContentHash) -> Result<bool, Self::Error> {
-        Self::key_present(&self.lmdb_env, &self.commits, commit.into())
-    }
-
-    fn node(&self, location: LocationHash) -> Result<Option<MerkleTreeL>, Self::Error> {
-        Self::retrieve_from(&self.lmdb_env, &self.locations, location.into())
-    }
-
-    fn content(&self, content: ContentHash) -> Result<Option<NodeContent>, Self::Error> {
-        Self::retrieve_from(&self.lmdb_env, &self.contents, content.into())
-    }
-
-    fn commit(&self, commit: ContentHash) -> Result<Option<Root>, Self::Error> {
-        Self::retrieve_from(&self.lmdb_env, &self.commits, commit.into())
-    }
 }
 
+/// Merkle writer implementation for the [`LmdbBackend`].
 impl MerkleWriter for LmdbBackend {
-    type Error = heed::Error;
-    type Session<'a> = LmdbWriteSession<'a>;
 
-    fn write_session(&self) -> Result<Self::Session<'_>, Self::Error> {
+    /// Returns a new [`LmdbWriteSession`] that can be used to write nodes to the store.
+    fn begin<'a>(&'a self) -> Result<Box<dyn MerkleWriteSession + 'a>, OxenError> {
         let wtxn = self.lmdb_env.write_txn()?;
         Ok(LmdbWriteSession {
             wtxn,
-            locations: &self.locations,
             contents: &self.contents,
-            commits: &self.commits,
         })
     }
 }
 
 pub struct LmdbWriteSession<'a> {
     wtxn: heed::RwTxn<'a>,
-    locations: &'a Database<KeyLmdb, ValueLmdb>,
     contents: &'a Database<KeyLmdb, ValueLmdb>,
-    commits: &'a Database<KeyLmdb, ValueLmdb>,
 }
 
 impl<'a> LmdbWriteSession<'a> {
@@ -169,8 +169,23 @@ impl<'a> LmdbWriteSession<'a> {
     }
 }
 
-impl<'a> WriteSession<'a> for LmdbWriteSession<'a> {
-    type Error = heed::Error;
+impl<'a> MerkleWriteSession<'a> for LmdbWriteSession<'a> {
+    fn create_node<'b>(
+        &'b self,
+        node: &dyn TMerkleTreeNode,
+        parent_id: Option<MerkleHash>,
+    ) -> Result<Box<dyn NodeWriteSession + 'b>, OxenError> {
+
+    }
+
+    fn finish(self: Box<Self>) -> Result<(), OxenError> {
+        self.wtxn.commit()?;
+        Ok(())
+    }
+}
+
+impl<'a> NodeWriteSession for LmdbNodeWriteSession<'a> {
+
 
     fn queue_location(&mut self, key: LocationHash, node: &MerkleTreeL) -> Result<(), Self::Error> {
         Self::put_serialized(&mut self.wtxn, self.locations, key.into(), node)

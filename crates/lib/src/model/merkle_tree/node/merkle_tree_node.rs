@@ -44,13 +44,7 @@ impl MerkleTreeNode {
             .merkle_store()?
             .get_node(hash)?
             .ok_or_else(|| OxenError::MerkleNodeNotFound(hash.to_hex_hash()))?;
-        let parent_id = record.parent_id().copied();
-        Ok(MerkleTreeNode {
-            hash: *hash,
-            node: record.into_node(),
-            parent_id,
-            children: Vec::new(),
-        })
+        Ok(record.into_tree_node(Vec::new()))
     }
 
     pub fn read_children_from_hash(

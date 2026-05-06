@@ -402,26 +402,8 @@ impl MerkleNodeDB {
         let Some(node_file) = self.node_file.as_mut() else {
             return Err(MerkleDbError::WriteBeforeOpen);
         };
-        // log::debug!("write_node node: {}", node);
 
-        // Write data type
-        node_file.write_all(&node.node_type().to_u8().to_le_bytes())?;
-
-        // Write parent id
-        if let Some(parent_id) = parent_id {
-            node_file.write_all(&parent_id.to_le_bytes())?;
-        } else {
-            node_file.write_all(&[0u8; 16])?;
-        }
-
-        // Write data length
-        let buf = node.to_msgpack_bytes()?;
-        let data_len = buf.len() as u32;
-        node_file.write_all(&data_len.to_le_bytes())?;
-        // log::debug!("write_node Wrote data length {}", data_len);
-
-        // Write data
-        node_file.write_all(&buf)?;
+        Self::serialize_node(node_file, node, parent_id.as_ref())?;
 
         self.dtype = node.node_type();
         self.node_id = node.hash();
@@ -432,6 +414,34 @@ impl MerkleNodeDB {
         //     node.node_type()
         // );
         Ok(())
+    }
+
+    /// Writes the content of the Merkle tree node according to the specific `node` file format.
+    pub(crate) fn serialize_node<W: std::io::Write>(
+        node_file: &mut W,
+        node: &dyn TMerkleTreeNode,
+        parent_id: Option<&MerkleHash>,
+    ) -> Result<(), std::io::Error> {
+        log::trace!("write_node node: {}", node);
+
+        node_file.write_all(&node.node_type().to_u8().to_le_bytes())?;
+
+        // Write parent id
+        if let Some(parent_id) = parent_id {
+            node_file.write_all(&parent_id.to_le_bytes())?;
+        } else {
+            // write 16 bytes, each is zero => write a 0_u128
+            node_file.write_all(&[0u8; 16])?;
+        }
+
+        // Write data length
+        let buf = node.to_msgpack_bytes()?;
+        let data_len = buf.len() as u32;
+        node_file.write_all(&data_len.to_le_bytes())?;
+        log::trace!("write_node Wrote data length {}", data_len);
+
+        // Write data
+        node_file.write_all(&buf)
     }
 
     pub(crate) fn add_child(&mut self, item: &dyn TMerkleTreeNode) -> Result<(), MerkleDbError> {
@@ -446,6 +456,21 @@ impl MerkleNodeDB {
             return Err(MerkleDbError::WriteBeforeOpen);
         };
 
+        let data_len = Self::serialize_child(node_file, children_file, item, self.data_offset)?;
+        self.data_offset += data_len;
+
+        Ok(())
+    }
+
+    /// Writes the content of a node's child as the child would appear in the `children` file.
+    /// Returns the length of the serialized [`TMerkleTreeNode`] in bytes.
+    pub(crate) fn serialize_child(
+        node_file: &mut impl std::io::Write,
+        children_file: &mut impl std::io::Write,
+        item: &dyn TMerkleTreeNode,
+        data_offset: u64,
+    ) -> Result<u64, std::io::Error> {
+
         let buf = item.to_msgpack_bytes()?;
         let data_len = buf.len() as u64;
         // log::debug!("--add_child-- node_file {:?}", node_file);
@@ -457,15 +482,14 @@ impl MerkleNodeDB {
 
         node_file.write_all(&item.node_type().to_u8().to_le_bytes())?;
         node_file.write_all(&item.hash().to_le_bytes())?; // id of child
-        node_file.write_all(&self.data_offset.to_le_bytes())?;
+        node_file.write_all(&data_offset.to_le_bytes())?;
         node_file.write_all(&data_len.to_le_bytes())?;
 
         // log::debug!("--add_child-- children_file {:?}", children_file);
         // log::debug!("--add_child-- buf.len() {}", buf.len());
         children_file.write_all(&buf)?;
-        self.data_offset += data_len;
 
-        Ok(())
+        Ok(data_len)
     }
 
     pub(crate) fn map(&mut self) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, MerkleDbError> {

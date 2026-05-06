@@ -765,7 +765,7 @@ impl CommitMerkleTree {
         // Load the children for the vnode
         let vnode_with_children =
             CommitMerkleTree::read_depth(repo, &vnode_without_children.hash, 0)?;
-        // log::debug!("read_file vnode_with_children: {:?}", vnode_with_children);
+        log::trace!("read_file vnode_with_children: {:?}", vnode_with_children);
         let Some(vnode_with_children) = vnode_with_children else {
             return Ok(None);
         };
