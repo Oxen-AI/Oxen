@@ -604,6 +604,75 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::Conflict().json(error_json)
                     }
+                    OxenError::AssetNotFoundInSource(path) => {
+                        log::error!("Asset not found in source workspace: {path}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "asset_not_found_in_source",
+                                "title": "Asset not found in source workspace",
+                                "detail": format!("Asset '{path}' is not present in the source workspace's tree (neither staged nor committed)."),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": "asset_not_found_in_source",
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
+                    OxenError::AssetConflictOnTarget(path) => {
+                        log::error!("Asset conflict on target: {path}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "asset_conflict_on_target",
+                                "title": "Asset conflict on target",
+                                "detail": format!("Target already has a different file at '{path}'."),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": "asset_conflict_on_target",
+                        });
+                        HttpResponse::Conflict().json(error_json)
+                    }
+                    OxenError::SourcePathNotFound(path) => {
+                        log::error!("Source path not found: {path}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "source_path_not_found",
+                                "title": "Source path not found",
+                                "detail": format!("'{path}' does not exist on the source branch."),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": "source_path_not_found",
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
+                    OxenError::TargetPathNotFound(path) => {
+                        log::error!("Target path not found: {path}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "target_path_not_found",
+                                "title": "Target path not found",
+                                "detail": format!("'{path}' does not exist on the target branch."),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": "target_path_not_found",
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
+                    OxenError::UuidColumnMissing { side, schema } => {
+                        log::error!("uuid_column_missing on {side}; observed schema: {schema:?}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "uuid_column_missing",
+                                "title": "uuid column missing",
+                                "detail": format!(
+                                    "uuid column not found on {side}; observed schema: {schema:?}"
+                                ),
+                                "side": side,
+                                "schema": schema,
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": "uuid_column_missing",
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
                     err => {
                         log::error!("Internal server error: {err:?}");
                         HttpResponse::InternalServerError()

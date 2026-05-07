@@ -1,9 +1,13 @@
 use crate::core::db::data_frames::row_changes_db::get_all_data_frame_row_changes;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
+use crate::model::Commit;
 use crate::model::Workspace;
 use crate::model::data_frame::update_result::UpdateResult;
 use crate::view::data_frames::DataFrameRowChange;
+use crate::view::data_frames::{
+    SelectiveRowMergeRequest, SelectiveRowMergeWithAssetsRequest, SyncFromBranchRequest,
+};
 
 use polars::datatypes::AnyValue;
 
@@ -131,6 +135,60 @@ pub fn get_by_id(
     })?;
     log::debug!("get_row_by_id() got data: {data:?}");
     Ok(data)
+}
+
+pub async fn selective_merge(
+    repo: &LocalRepository,
+    source_workspace: &Workspace,
+    request: &SelectiveRowMergeRequest,
+) -> Result<Commit, OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
+        _ => {
+            core::v_latest::workspaces::data_frames::selective_merge::selective_merge(
+                repo,
+                source_workspace,
+                request,
+            )
+            .await
+        }
+    }
+}
+
+pub async fn selective_merge_with_assets(
+    repo: &LocalRepository,
+    source_workspace: &Workspace,
+    request: &SelectiveRowMergeWithAssetsRequest,
+) -> Result<Commit, OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
+        _ => {
+            core::v_latest::workspaces::data_frames::selective_merge::selective_merge_with_assets(
+                repo,
+                source_workspace,
+                request,
+            )
+            .await
+        }
+    }
+}
+
+pub async fn sync_from_branch(
+    repo: &LocalRepository,
+    target_workspace: &Workspace,
+    request: &SyncFromBranchRequest,
+) -> Result<core::v_latest::workspaces::data_frames::selective_merge::SyncResult, OxenError> {
+    match repo.min_version() {
+        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
+        _ => {
+            core::v_latest::workspaces::data_frames::selective_merge::sync_from_branch(
+                repo,
+                target_workspace,
+                request,
+            )
+            .await
+        }
+    }
 }
 
 pub fn get_row_id(row_df: &DataFrame) -> Result<Option<String>, OxenError> {

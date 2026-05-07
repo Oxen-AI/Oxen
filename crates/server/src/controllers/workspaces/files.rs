@@ -6,12 +6,14 @@ use liboxen::core;
 use liboxen::core::staged::get_staged_db_manager;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
+use liboxen::model::ParsedResource;
 use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::metadata::metadata_video::VideoThumbnail;
 use liboxen::repositories;
 use liboxen::util;
 use liboxen::util::hasher;
+use liboxen::view::entry_metadata::EMetadataEntryResponseView;
 use liboxen::view::workspaces::RenameRequest;
 use liboxen::view::{
     ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash, StatusMessage,
@@ -175,6 +177,77 @@ pub async fn get(
     let stream = version_store.get_version_stream(&hash_str).await?;
 
     Ok(file_stream_response(mime_type, &last_commit_id, Some(num_bytes)).streaming(stream))
+}
+
+/// Get file metadata in a workspace context
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/meta/{path}",
+    description = "Get metadata for a file at the given path resolved against the workspace's view (committed rows on the workspace's base commit + the workspace's pending changes). Returns the same `EMetadataEntryResponseView` shape as the branch-keyed `/meta/{branch}/{path}` endpoint, but works for staged-only files that have no committed counterpart.",
+    tag = "Workspace Files",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "The id of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
+        ("path" = String, Path, description = "Path to the file within the workspace", example = "data/train/image.jpg"),
+    ),
+    responses(
+        (status = 200, description = "Metadata for the entry found", body = EMetadataEntryResponseView),
+        (status = 404, description = "Workspace or entry not found"),
+    )
+)]
+pub async fn meta(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
+    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
+
+    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+        return Ok(HttpResponse::NotFound()
+            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+    };
+
+    let path_str = path_param(&req, "path")?.to_string();
+    let file_path = PathBuf::from(&path_str);
+
+    let resource = ParsedResource {
+        commit: Some(workspace.commit.clone()),
+        branch: None,
+        workspace: Some(workspace.clone()),
+        path: file_path.clone(),
+        version: PathBuf::from(&workspace.commit.id),
+        resource: PathBuf::from(&workspace.id).join(&file_path),
+    };
+
+    let entry = match repositories::entries::get_meta_entry(&repo, &workspace.commit, &file_path) {
+        Ok(entry) => {
+            let mut entry = repositories::workspaces::populate_entry_with_workspace_data(
+                &file_path, entry, &workspace,
+            )?;
+            entry.set_resource(Some(resource));
+            entry
+        }
+        Err(_) => {
+            match repositories::workspaces::get_added_entry(
+                &repo, &file_path, &workspace, &resource,
+            ) {
+                Ok(added_entry) => added_entry,
+                Err(_) => {
+                    return Ok(
+                        HttpResponse::NotFound().json(StatusMessageDescription::not_found(
+                            format!("{path_str} not found in workspace {workspace_id}"),
+                        )),
+                    );
+                }
+            }
+        }
+    };
+
+    Ok(HttpResponse::Ok().json(EMetadataEntryResponseView {
+        status: StatusMessage::resource_found(),
+        entry,
+    }))
 }
 
 /// Add files to workspace
@@ -749,6 +822,180 @@ mod tests {
                 .unwrap(),
             header::CONTENT_LENGTH.as_str()
         );
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_meta_returns_404_for_unknown_workspace() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Meta-Unknown-Workspace";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let hello_file = repo.path.join("hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file).await?;
+        let _commit = repositories::commit(&repo, "First commit")?;
+
+        let uri = format!(
+            "/oxen/{namespace}/{repo_name}/workspaces/this-workspace-does-not-exist/meta/hello.txt"
+        );
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/meta/{path:.*}",
+                    web::get().to(controllers::workspaces::files::meta),
+                ),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_meta_returns_committed_entry() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Meta-Committed";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let hello_file = repo.path.join("hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file).await?;
+        let commit = repositories::commit(&repo, "add hello.txt")?;
+
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        repositories::workspaces::create(&repo, &commit, &workspace_id, true)?;
+
+        let uri = format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/meta/hello.txt");
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/meta/{path:.*}",
+                    web::get().to(controllers::workspaces::files::meta),
+                ),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&bytes).unwrap();
+        assert!(
+            body.contains("\"filename\":\"hello.txt\"")
+                || body.contains("\"filename\": \"hello.txt\""),
+            "expected filename hello.txt in response body, got: {body}"
+        );
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_meta_returns_workspace_added_entry() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Meta-Workspace-Added";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        // Need at least one commit before creating a workspace
+        let seed_file = repo.path.join("seed.txt");
+        util::fs::write_to_path(&seed_file, "seed")?;
+        repositories::add(&repo, &seed_file).await?;
+        let commit = repositories::commit(&repo, "seed commit")?;
+
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        let workspace = repositories::workspaces::create(&repo, &commit, &workspace_id, true)?;
+
+        // Stage a NEW file in the workspace that doesn't exist on the base branch
+        let staged_dir = workspace.dir().join("data");
+        util::fs::create_dir_all(&staged_dir)?;
+        let staged_file = staged_dir.join("staged_only.txt");
+        util::fs::write_to_path(&staged_file, "workspace only")?;
+        repositories::workspaces::files::add(&workspace, &staged_file).await?;
+
+        let uri = format!(
+            "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/meta/data/staged_only.txt"
+        );
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/meta/{path:.*}",
+                    web::get().to(controllers::workspaces::files::meta),
+                ),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status(),
+            actix_web::http::StatusCode::OK,
+            "expected 200 for staged-only file"
+        );
+
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&bytes).unwrap();
+        assert!(
+            body.contains("staged_only.txt"),
+            "expected staged_only.txt in response body, got: {body}"
+        );
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_meta_returns_404_for_unknown_path() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Meta-Unknown-Path";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let hello_file = repo.path.join("hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file).await?;
+        let commit = repositories::commit(&repo, "First commit")?;
+
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        repositories::workspaces::create(&repo, &commit, &workspace_id, true)?;
+
+        let uri = format!(
+            "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/meta/does/not/exist.txt"
+        );
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/meta/{path:.*}",
+                    web::get().to(controllers::workspaces::files::meta),
+                ),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
 
         test::cleanup_sync_dir(&sync_dir)?;
         Ok(())

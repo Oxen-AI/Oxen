@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 pub mod columns;
 pub mod rows;
 pub mod schemas;
+pub mod selective_merge;
 
 pub fn is_queryable_data_frame_indexed(
     repo: &LocalRepository,

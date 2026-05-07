@@ -141,6 +141,36 @@ pub enum OxenError {
     #[error("{0}")]
     WorkspaceNameIndex(#[from] crate::core::workspaces::workspace_name_index::WsError),
 
+    /// A row referenced by a selective_merge_with_assets selection points to an asset
+    /// path that doesn't exist in the source workspace's tree (neither staged nor
+    /// committed at the workspace's base commit).
+    #[error("Asset not found in source workspace: {0}")]
+    AssetNotFoundInSource(StringError),
+
+    /// The target branch already has a file at the asset's destination path with
+    /// different bytes than the source workspace's copy. Selective merge refuses to
+    /// silently overwrite — the caller has to resolve it.
+    #[error("Asset conflict on target: {0}")]
+    AssetConflictOnTarget(StringError),
+
+    /// `sync_from_branch`: the source dataframe path doesn't exist on the source branch.
+    #[error("Source path not found on source branch: {0}")]
+    SourcePathNotFound(StringError),
+
+    /// `sync_from_branch`: the target dataframe path doesn't exist on the target branch's HEAD.
+    #[error("Target path not found on target branch: {0}")]
+    TargetPathNotFound(StringError),
+
+    /// `sync_from_branch`: one of the dataframes the server consulted doesn't have the
+    /// caller-supplied uuid column. `side` is which dataframe was missing it
+    /// (`source_branch`, `target_branch`, or `target_workspace_staged`); `schema` is the
+    /// list of columns/keys actually observed on that side, so the caller can see what
+    /// the dataframe really looked like.
+    #[error(
+        "uuid column missing on {side}: column not present in dataframe (observed schema: {schema:?})"
+    )]
+    UuidColumnMissing { side: String, schema: Vec<String> },
+
     //
     // Resources (paths, uris, etc.)
     //

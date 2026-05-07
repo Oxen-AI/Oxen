@@ -55,6 +55,10 @@ pub fn workspace() -> Scope {
                     web::get().to(controllers::workspaces::files::get),
                 )
                 .route(
+                    "/meta/{path:.*}",
+                    web::get().to(controllers::workspaces::files::meta),
+                )
+                .route(
                     "/files/{path:.*}",
                     web::post().to(controllers::workspaces::files::add),
                 )

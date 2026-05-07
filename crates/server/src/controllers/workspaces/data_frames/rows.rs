@@ -10,6 +10,11 @@ use liboxen::model::data_frame::DataFrameSchemaSize;
 use liboxen::model::data_frame::update_result::UpdateResult;
 use liboxen::opts::DFOpts;
 use liboxen::repositories;
+use liboxen::view::CommitResponse;
+use liboxen::view::data_frames::{
+    SelectiveRowMergeRequest, SelectiveRowMergeWithAssetsRequest, SyncFromBranchRequest,
+    SyncFromBranchResponse,
+};
 use liboxen::view::json_data_frame_view::{
     BatchUpdateResponse, JsonDataFrameRowResponse, VecBatchUpdateResponse,
 };
@@ -266,6 +271,159 @@ pub async fn restore(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
         resource: None,
         row_id,
         row_index,
+    }))
+}
+
+pub async fn selective_merge(
+    req: HttpRequest,
+    bytes: Bytes,
+) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let source_workspace_id = path_param(&req, "workspace_id")?.to_string();
+
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+
+    let Ok(body_str) = String::from_utf8(bytes.to_vec()) else {
+        return Err(OxenHttpError::BadRequest(
+            "Could not parse bytes as utf8".to_string().into(),
+        ));
+    };
+
+    let request: SelectiveRowMergeRequest = serde_json::from_str(&body_str).map_err(|e| {
+        OxenHttpError::BadRequest(format!("Invalid SelectiveRowMergeRequest body: {e}").into())
+    })?;
+
+    let Some(source_workspace) = repositories::workspaces::get(&repo, &source_workspace_id)? else {
+        return Ok(
+            HttpResponse::NotFound().json(StatusMessageDescription::workspace_not_found(
+                source_workspace_id,
+            )),
+        );
+    };
+
+    log::debug!(
+        "selective_merge {namespace}/{repo_name} source_workspace={source_workspace_id} request={request:?}"
+    );
+
+    let commit = repositories::workspaces::data_frames::rows::selective_merge(
+        &repo,
+        &source_workspace,
+        &request,
+    )
+    .await?;
+
+    Ok(HttpResponse::Ok().json(CommitResponse {
+        status: StatusMessage::resource_created(),
+        commit,
+    }))
+}
+
+pub async fn selective_merge_with_assets(
+    req: HttpRequest,
+    bytes: Bytes,
+) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let source_workspace_id = path_param(&req, "workspace_id")?.to_string();
+
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+
+    let Ok(body_str) = String::from_utf8(bytes.to_vec()) else {
+        return Err(OxenHttpError::BadRequest(
+            "Could not parse bytes as utf8".to_string().into(),
+        ));
+    };
+
+    let request: SelectiveRowMergeWithAssetsRequest =
+        serde_json::from_str(&body_str).map_err(|e| {
+            OxenHttpError::BadRequest(
+                format!("Invalid SelectiveRowMergeWithAssetsRequest body: {e}").into(),
+            )
+        })?;
+
+    let Some(source_workspace) = repositories::workspaces::get(&repo, &source_workspace_id)? else {
+        return Ok(
+            HttpResponse::NotFound().json(StatusMessageDescription::workspace_not_found(
+                source_workspace_id,
+            )),
+        );
+    };
+
+    log::debug!(
+        "selective_merge_with_assets {namespace}/{repo_name} source_workspace={source_workspace_id} request={request:?}"
+    );
+
+    let commit = repositories::workspaces::data_frames::rows::selective_merge_with_assets(
+        &repo,
+        &source_workspace,
+        &request,
+    )
+    .await?;
+
+    Ok(HttpResponse::Ok().json(CommitResponse {
+        status: StatusMessage::resource_created(),
+        commit,
+    }))
+}
+
+pub async fn sync_from_branch(
+    req: HttpRequest,
+    bytes: Bytes,
+) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let target_workspace_id = path_param(&req, "workspace_id")?.to_string();
+
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+
+    let Ok(body_str) = String::from_utf8(bytes.to_vec()) else {
+        return Err(OxenHttpError::BadRequest(
+            "Could not parse bytes as utf8".to_string().into(),
+        ));
+    };
+
+    let request: SyncFromBranchRequest = serde_json::from_str(&body_str).map_err(|e| {
+        OxenHttpError::BadRequest(format!("Invalid SyncFromBranchRequest body: {e}").into())
+    })?;
+
+    let Some(target_workspace) = repositories::workspaces::get(&repo, &target_workspace_id)? else {
+        return Ok(
+            HttpResponse::NotFound().json(StatusMessageDescription::workspace_not_found(
+                target_workspace_id,
+            )),
+        );
+    };
+
+    log::debug!(
+        "sync_from_branch {namespace}/{repo_name} target_workspace={target_workspace_id} request={request:?}"
+    );
+
+    let result = repositories::workspaces::data_frames::rows::sync_from_branch(
+        &repo,
+        &target_workspace,
+        &request,
+    )
+    .await?;
+
+    let already_up_to_date = result.commit.is_none();
+    let status = if already_up_to_date {
+        StatusMessage::resource_found()
+    } else {
+        StatusMessage::resource_created()
+    };
+    Ok(HttpResponse::Ok().json(SyncFromBranchResponse {
+        status,
+        already_up_to_date,
+        commit: result.commit,
+        rows_added: result.rows_added,
+        assets_added: result.assets_added,
     }))
 }
 

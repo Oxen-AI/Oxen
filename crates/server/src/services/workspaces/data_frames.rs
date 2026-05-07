@@ -41,6 +41,18 @@ pub fn data_frames() -> Scope {
             "/resource/{path:.*}",
             web::delete().to(controllers::workspaces::data_frames::delete),
         )
+        .route(
+            "/selective_merge",
+            web::post().to(controllers::workspaces::data_frames::rows::selective_merge),
+        )
+        .route(
+            "/selective_merge_with_assets",
+            web::post().to(controllers::workspaces::data_frames::rows::selective_merge_with_assets),
+        )
+        .route(
+            "/sync_from_branch",
+            web::post().to(controllers::workspaces::data_frames::rows::sync_from_branch),
+        )
         .service(rows::rows())
         .service(columns::columns())
         .service(embeddings::embeddings())
