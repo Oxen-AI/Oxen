@@ -6,6 +6,16 @@ This file provides guidance to AI agents when working with code in this reposito
 
 Oxen is a fast, unstructured data version control system written in Rust. It's designed to version large machine learning datasets efficiently and provides both a CLI tool and server implementation.
 
+# How Oxen Differs from Git
+
+Oxen's user-facing model is close to Git's (commits, branches, push, pull, status, restore), but a few non-obvious differences trip up Git intuition. Don't apply Git assumptions blindly. Expand this section when you discover a new difference.
+
+- **Empty directories are first-class, tracked content.** Git ignores empty directories; Oxen treats each directory as an entry in the merkle tree on its own. Consequences:
+  + `oxen add <empty-dir>` followed by commit puts the empty dir in the tree.
+  + `oxen rm <only-file-in-dir>` followed by commit leaves the now-empty parent directory tracked as an intentionally-empty entry. By design, not a bug.
+  + If a tracked directory is missing on disk, `oxen status` correctly reports it as `removed`, and `oxen restore <dir>` should recreate it on disk (mkdir, even if it contains no files).
+  + Files placed in a tracked-but-empty directory are still untracked relative to HEAD; `oxen clean -f` will delete them. That is correct behavior.
+
 # Project Organization
 
 The Cargo workspace lives at the repository root, with crates under `crates/`:

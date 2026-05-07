@@ -172,22 +172,46 @@ fn open_staged_db(db_path: &Path) -> Result<Option<DBWithThreadMode<SingleThread
 async fn restore_dir(
     repo: &LocalRepository,
     dir: MerkleTreeNode,
-    path: &PathBuf,
+    path: &Path,
     version_store: &Arc<dyn VersionStore>,
 ) -> Result<Vec<(PathBufError, Box<OxenError>)>, OxenError> {
     log::debug!("restore::restore_dir: start");
-    let file_nodes_with_paths = repositories::tree::dir_entries_with_paths(&dir, path)?;
+    let entries = repositories::tree::dir_entries_with_paths(&dir, path);
     log::debug!(
-        "restore::restore_dir: got {} entries",
-        file_nodes_with_paths.len()
+        "restore::restore_dir: got {} file entries, {} directory entries",
+        entries.files.len(),
+        entries.dirs.len()
     );
 
-    let msg = format!("Restoring Directory: {path:?}");
-    let bar =
-        util::progress_bar::oxen_progress_bar_with_msg(file_nodes_with_paths.len() as u64, &msg);
-
     let mut failures: Vec<(PathBufError, Box<OxenError>)> = Vec::new();
-    for (file_node, file_path) in file_nodes_with_paths.iter() {
+
+    // `path` is "" when the user ran `oxen restore .` (path_relative_to_dir collapses "."
+    // to ""). Render it as "." instead of blank.
+    let label = if path.as_os_str().is_empty() {
+        ".".to_string()
+    } else {
+        path.display().to_string()
+    };
+    let msg = format!("Restoring {label}");
+    let total = (entries.dirs.len() + entries.files.len()) as u64;
+    let bar = util::progress_bar::oxen_progress_bar_with_msg(total, &msg);
+
+    // Materialize every tracked directory in the subtree first. Files inside non-empty
+    // dirs would otherwise rely on `restore_file`'s `create_dir_all(parent)` side-effect,
+    // but empty dirs (first-class in Oxen — see CLAUDE.md "How Oxen Differs from Git")
+    // have no files to drive that, and would be silently skipped (ENG-1003).
+    for dir_path in &entries.dirs {
+        let working_dir_path = repo.path.join(dir_path);
+        if let Err(e) = tokio::fs::create_dir_all(&working_dir_path).await {
+            log::error!(
+                "restore::restore_dir: error creating directory {working_dir_path:?}: {e:?}"
+            );
+            failures.push((dir_path.clone().into(), Box::new(OxenError::IO(e))));
+        }
+        bar.inc(1);
+    }
+
+    for (file_node, file_path) in entries.files.iter() {
         match restore_file(repo, file_node, file_path, version_store).await {
             Ok(_) => log::debug!("restore::restore_dir: entry restored successfully"),
             Err(e) => {

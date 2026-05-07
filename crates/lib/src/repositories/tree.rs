@@ -548,41 +548,50 @@ pub async fn list_missing_file_hashes_from_commits(
     list_missing_file_hashes_from_hashes(repo, &candidate_hashes).await
 }
 
-pub fn dir_entries_with_paths(
-    node: &MerkleTreeNode,
-    base_path: &PathBuf,
-) -> Result<HashSet<(FileNode, PathBuf)>, OxenError> {
-    let mut entries = HashSet::new();
+/// Files and directories collected from a merkle subtree walk. `oxen restore <dir>` needs
+/// both: file entries to call `restore_file` on, and directory paths so it can `mkdir -p`
+/// every tracked directory (including empty ones, which are first-class in Oxen — see
+/// CLAUDE.md "How Oxen Differs from Git"). Empty dirs have no files to drive
+/// `restore_file`'s `create_dir_all(parent)` side-effect, so without an explicit dir list
+/// they'd be silently skipped (ENG-1003).
+#[derive(Debug, Default)]
+pub struct DirEntries {
+    pub files: HashSet<(FileNode, PathBuf)>,
+    pub dirs: HashSet<PathBuf>,
+}
 
-    match &node.node {
-        EMerkleTreeNode::Directory(_) | EMerkleTreeNode::VNode(_) | EMerkleTreeNode::Commit(_) => {
-            for child in &node.children {
-                match &child.node {
-                    EMerkleTreeNode::File(file_node) => {
-                        let file_path = base_path.join(file_node.name());
-                        entries.insert((file_node.clone(), file_path));
-                    }
-                    EMerkleTreeNode::Directory(dir_node) => {
-                        let new_base_path = base_path.join(dir_node.name());
-                        entries.extend(dir_entries_with_paths(child, &new_base_path)?);
-                    }
-                    EMerkleTreeNode::VNode(_vnode) => {
-                        entries.extend(dir_entries_with_paths(child, base_path)?);
-                    }
-                    _ => {}
-                }
+/// Walk `node`'s merkle subtree and collect every File entry and every Directory path,
+/// with `base_path` interpreted as the path of `node` itself. Infallible: unexpected node
+/// types contribute nothing.
+pub fn dir_entries_with_paths(node: &MerkleTreeNode, base_path: &Path) -> DirEntries {
+    let mut out = DirEntries::default();
+
+    if matches!(&node.node, EMerkleTreeNode::Directory(_)) {
+        out.dirs.insert(base_path.to_path_buf());
+    }
+
+    for child in &node.children {
+        match &child.node {
+            EMerkleTreeNode::File(file_node) => {
+                let file_path = base_path.join(file_node.name());
+                out.files.insert((file_node.clone(), file_path));
             }
-        }
-        EMerkleTreeNode::File(_) => {}
-        _ => {
-            return Err(OxenError::basic_str(format!(
-                "Unexpected node type: {:?}",
-                node.node.node_type()
-            )));
+            EMerkleTreeNode::Directory(dir_node) => {
+                let new_base_path = base_path.join(dir_node.name());
+                let sub = dir_entries_with_paths(child, &new_base_path);
+                out.files.extend(sub.files);
+                out.dirs.extend(sub.dirs);
+            }
+            EMerkleTreeNode::VNode(_) => {
+                let sub = dir_entries_with_paths(child, base_path);
+                out.files.extend(sub.files);
+                out.dirs.extend(sub.dirs);
+            }
+            _ => {}
         }
     }
 
-    Ok(entries)
+    out
 }
 
 /// Get HashMap of all entries that aren't present in shared_hashes
