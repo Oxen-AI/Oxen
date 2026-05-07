@@ -190,18 +190,23 @@ async fn create_multipart_large_file_upload(
     })
 }
 
-/// Batch download
+/// Batch download.
+///
+/// `entries` is a list of `(content_hash, source_path)` pairs — only the hash is sent over the wire
+/// (the bulk endpoint identifies blobs by hash); the path is preserved purely for diagnostic
+/// surfaces (errors, logs) so end users can identify which file(s) failed.
 #[tracing::instrument(skip_all)]
 pub async fn download_data_from_version_paths(
     remote_repo: &RemoteRepository,
-    hashes: &[String],
+    entries: &[(String, PathBuf)],
     local_repo: &LocalRepository,
 ) -> Result<u64, OxenError> {
     let total_retries = max_retries().try_into().unwrap_or(max_retries() as u64);
     let mut num_retries = 0;
+    let mut last_err: Option<OxenError> = None;
 
     while num_retries < total_retries {
-        match try_download_data_from_version_paths(remote_repo, hashes, local_repo).await {
+        match try_download_data_from_version_paths(remote_repo, entries, local_repo).await {
             Ok(val) => return Ok(val),
             Err(OxenError::Authentication(val)) => return Err(OxenError::Authentication(val)),
             Err(err) => {
@@ -209,27 +214,48 @@ pub async fn download_data_from_version_paths(
                 // Exponentially back off
                 let sleep_time = num_retries * num_retries;
                 log::warn!("Could not download content {err:?} sleeping {sleep_time}");
+                last_err = Some(err);
                 tokio::time::sleep(std::time::Duration::from_secs(sleep_time)).await;
             }
         }
     }
 
-    let err = format!(
-        "Err: Failed to download {} files after {} retries",
-        hashes.len(),
-        total_retries
+    // Preserve the failing batch's entries (path + hash) and last underlying error so callers
+    // and server logs can identify which file(s) the server couldn't serve. Without this, the
+    // symptom surfaces as a bare "failed to download N files" with no way to map back to
+    // specific files.
+    let last_error = last_err
+        .as_ref()
+        .map(|e| format!("{e}"))
+        .unwrap_or_else(|| "(no attempts made)".to_string());
+    let formatted_entries = entries
+        .iter()
+        .map(|(h, p)| format!("{} (hash: {h})", p.display()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    log::error!(
+        "Bulk download exhausted {} retries for {} entries: [{}]. Last error: {}",
+        total_retries,
+        entries.len(),
+        formatted_entries,
+        last_error,
     );
-    Err(OxenError::basic_str(err))
+    Err(OxenError::DownloadBatchExhausted {
+        num_files: entries.len(),
+        num_retries: total_retries,
+        entries: entries.to_vec(),
+        last_error,
+    })
 }
 
 #[tracing::instrument(skip_all)]
 pub async fn try_download_data_from_version_paths(
     remote_repo: &RemoteRepository,
-    hashes: &[String],
+    entries: &[(String, PathBuf)],
     local_repo: &LocalRepository,
 ) -> Result<u64, OxenError> {
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    for hash in hashes.iter() {
+    for (hash, _path) in entries.iter() {
         let line = format!("{hash}\n");
         // log::debug!("download_data_from_version_paths encoding line: {} path: {:?}", line, path);
         encoder.write_all(line.as_bytes())?;

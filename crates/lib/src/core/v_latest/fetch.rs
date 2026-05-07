@@ -643,15 +643,11 @@ pub async fn pull_entries_to_versions_dir(
         (Ok(_), Ok(_)) => {
             log::debug!("Successfully synced entries!");
         }
-        (Err(err), Ok(_)) => {
-            let err = format!("Error syncing large entries: {err}");
-            return Err(OxenError::basic_str(err));
+        (Err(err), Ok(_)) | (Ok(_), Err(err)) => return Err(err),
+        (Err(large_err), Err(small_err)) => {
+            log::error!("Large entries sync also failed: {large_err}");
+            return Err(small_err);
         }
-        (Ok(_), Err(err)) => {
-            let err = format!("Error syncing small entries: {err}");
-            return Err(OxenError::basic_str(err));
-        }
-        _ => return Err(OxenError::basic_str("Unknown error syncing entries")),
     }
 
     Ok(())
@@ -759,8 +755,11 @@ async fn pull_small_entries(
         entries.len()
     );
 
-    // Split into chunks, zip up, and post to server
-    type PieceOfWork = (RemoteRepository, Vec<String>, LocalRepository);
+    // Split into chunks, zip up, and post to server. We carry `(hash, path)` pairs through
+    // the queue (rather than just hashes) so the bulk-download client can put the file paths
+    // into its retry-exhausted error message — paths are far more recognizable to end users
+    // than content hashes.
+    type PieceOfWork = (RemoteRepository, Vec<(String, PathBuf)>, LocalRepository);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
 
     log::debug!(
@@ -770,11 +769,11 @@ async fn pull_small_entries(
     let chunks: Vec<PieceOfWork> = entries
         .chunks(chunk_size)
         .map(|chunk| {
-            let hashes = chunk
+            let entries = chunk
                 .iter()
-                .map(|commit_entry| commit_entry.hash.clone())
+                .map(|commit_entry| (commit_entry.hash.clone(), commit_entry.path.clone()))
                 .collect();
-            (remote_repo.to_owned(), hashes, repo.to_owned())
+            (remote_repo.to_owned(), entries, repo.to_owned())
         })
         .collect();
 
@@ -875,15 +874,11 @@ pub async fn download_entries_to_working_dir(
         (Ok(_), Ok(_)) => {
             log::debug!("Successfully synced entries!");
         }
-        (Err(err), Ok(_)) => {
-            let err = format!("Error syncing large entries: {err}");
-            return Err(OxenError::basic_str(err));
+        (Err(err), Ok(_)) | (Ok(_), Err(err)) => return Err(err),
+        (Err(large_err), Err(small_err)) => {
+            log::error!("Large entries sync also failed: {large_err}");
+            return Err(small_err);
         }
-        (Ok(_), Err(err)) => {
-            let err = format!("Error syncing small entries: {err}");
-            return Err(OxenError::basic_str(err));
-        }
-        _ => return Err(OxenError::basic_str("Unknown error syncing entries")),
     }
     log::info!("Finished download_entries_to_working_dir");
     Ok(())

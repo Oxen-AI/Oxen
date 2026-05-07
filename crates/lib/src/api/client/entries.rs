@@ -798,6 +798,7 @@ pub async fn download_data_from_version_paths(
 ) -> Result<u64, OxenError> {
     let total_retries = constants::NUM_HTTP_RETRIES;
     let mut num_retries = 0;
+    let mut last_err: Option<OxenError> = None;
 
     while num_retries < total_retries {
         match try_download_data_from_version_paths(remote_repo, content_ids, &dst).await {
@@ -808,17 +809,34 @@ pub async fn download_data_from_version_paths(
                 // Exponentially back off
                 let sleep_time = num_retries * num_retries;
                 log::warn!("Could not download content {err:?} sleeping {sleep_time}");
+                last_err = Some(err);
                 tokio::time::sleep(std::time::Duration::from_secs(sleep_time)).await;
             }
         }
     }
 
-    let err = format!(
-        "Err: Failed to download {} files after {} retries",
+    let last_error = last_err
+        .as_ref()
+        .map(|e| format!("{e}"))
+        .unwrap_or_else(|| "(no attempts made)".to_string());
+    let formatted_entries = content_ids
+        .iter()
+        .map(|(h, p)| format!("{} (hash: {h})", p.display()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    log::error!(
+        "Bulk download exhausted {} retries for {} entries: [{}]. Last error: {}",
+        total_retries,
         content_ids.len(),
-        total_retries
+        formatted_entries,
+        last_error,
     );
-    Err(OxenError::basic_str(err))
+    Err(OxenError::DownloadBatchExhausted {
+        num_files: content_ids.len(),
+        num_retries: total_retries,
+        entries: content_ids.to_vec(),
+        last_error,
+    })
 }
 
 pub async fn try_download_data_from_version_paths(

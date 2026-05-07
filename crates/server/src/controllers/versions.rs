@@ -242,7 +242,12 @@ pub async fn stream_versions_tar_gz(
                         Ok(size) => size,
                         Err(e) => {
                             log::error!("Failed to get version file size for {file_hash}: {e}");
-                            error_tx.send(e).ok();
+                            error_tx
+                                .send(OxenError::VersionFetchFailed {
+                                    file_hash: file_hash.clone(),
+                                    source: Box::new(e),
+                                })
+                                .ok();
                             had_error = true;
                             break;
                         }
@@ -279,7 +284,16 @@ pub async fn stream_versions_tar_gz(
                 }
                 Err(e) => {
                     log::error!("Failed to get version {file_hash}: {e}");
-                    error_tx.send(e).ok();
+                    // Wrap with the hash so the streaming-response error names the specific
+                    // content blob that couldn't be served. The HTTP 200 has already been sent
+                    // by the time we reach this branch, so this is the only way the client side
+                    // (and server logs further upstream) can identify the failing object.
+                    error_tx
+                        .send(OxenError::VersionFetchFailed {
+                            file_hash: file_hash.clone(),
+                            source: Box::new(e),
+                        })
+                        .ok();
                     had_error = true;
                     break;
                 }
@@ -365,7 +379,12 @@ pub async fn stream_versions_zip(
                 Ok(size) => size,
                 Err(e) => {
                     log::error!("Failed to get version file size for {hash}: {e}");
-                    error_tx.send(e).ok();
+                    error_tx
+                        .send(OxenError::VersionFetchFailed {
+                            file_hash: hash.clone(),
+                            source: Box::new(e),
+                        })
+                        .ok();
                     had_error = true;
                     break;
                 }
@@ -413,7 +432,12 @@ pub async fn stream_versions_zip(
                 }
                 Err(e) => {
                     log::error!("Failed to get version {hash}: {e}");
-                    error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
+                    error_tx
+                        .send(OxenError::VersionFetchFailed {
+                            file_hash: hash.clone(),
+                            source: Box::new(e),
+                        })
+                        .ok();
                     had_error = true;
                     break;
                 }
