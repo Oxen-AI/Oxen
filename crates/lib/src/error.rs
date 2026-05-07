@@ -430,7 +430,7 @@ pub enum OxenError {
     /// because the file is missing on disk (or in object storage) despite the merkle tree
     /// referencing it. The hash is preserved so the failure can be tied to a specific blob
     /// during streaming downloads where HTTP 200 has already been sent.
-    #[error("Failed to fetch version {file_hash} from version store")]
+    #[error("Failed to fetch version {file_hash} from version store: {source}")]
     VersionFetchFailed {
         file_hash: String,
         #[source]
@@ -973,7 +973,7 @@ mod tests {
     }
 
     #[test]
-    fn version_fetch_failed_display_names_hash_and_chains_source() {
+    fn version_fetch_failed_display_includes_hash_and_inner_cause() {
         let inner = OxenError::Basic(StringError::from("file not found"));
         let err = OxenError::VersionFetchFailed {
             file_hash: "b30cefc4eb9ad1c6f3f61047cec5c828".to_string(),
@@ -984,8 +984,14 @@ mod tests {
             msg.contains("b30cefc4eb9ad1c6f3f61047cec5c828"),
             "missing file_hash: {msg}"
         );
-        // thiserror exposes the wrapped error via std::error::Error::source(), so the underlying
-        // message is reachable for callers that walk the chain (e.g. log::error formatters).
+        // The inner cause must appear in Display itself — many callers (e.g. format_restore_failures)
+        // render errors via to_string() without walking the source chain, so omitting it here would
+        // hide why the fetch failed.
+        assert!(
+            msg.contains("file not found"),
+            "Display should include the wrapped cause: {msg}"
+        );
+        // Source chain remains walkable for callers that prefer structured access.
         let source = std::error::Error::source(&err).expect("expected a source error");
         assert!(
             source.to_string().contains("file not found"),
