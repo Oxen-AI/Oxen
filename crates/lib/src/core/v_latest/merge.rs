@@ -35,23 +35,19 @@ use std::str;
 use super::index::restore;
 use super::index::restore::FileToRestore;
 
-// entries_to_restore: files that ought to be restored from the currently traversed tree
-// I.e., In walk_merge_commit, it contains merge commit files that are not present in or have changed from the base tree
-// cannot_overwrite_entries: files that would be restored, but are modified from the from_tree, and thus would erase work if overwritten
-
-// for walk_base_dir, the 'entries to restore' are actually entries being removed
+#[derive(Default)]
 struct MergeResult {
+    /// Files that ought to be restored from the currently traversed tree. In walk_merge_commit, it
+    /// contains merge commit files that are not present in or have changed from the base tree
+    /// For walk_base_dir, the 'entries to restore' are actually entries being removed
     pub entries_to_restore: Vec<FileToRestore>,
+    /// Files that would be restored, but are modified from the from_tree, and thus would erase work if overwritten
     pub cannot_overwrite_entries: Vec<PathBuf>,
-}
-
-impl MergeResult {
-    pub fn new() -> Self {
-        MergeResult {
-            entries_to_restore: vec![],
-            cannot_overwrite_entries: vec![],
-        }
-    }
+    /// Files in shared regions of the tree (no diff between base and merge target) whose
+    /// working copy has drifted from HEAD's expected content. The merge has nothing to apply to them,
+    /// so this is NOT an overwrite conflict — but the user should know their working tree differs from
+    /// HEAD outside the pull's diff. Surfaced as a non-fatal warning at the end of the merge.
+    pub drifted_entries: Vec<PathBuf>,
 }
 
 /// Whether a merge is attached to a local working tree.
@@ -705,6 +701,22 @@ async fn fast_forward_merge(
     // Mutation complete; the marker is no longer load-bearing.
     merge_marker::clear(repo).await?;
 
+    // Surface drift that the merge did not touch — files whose base==merge content
+    // matches but whose working copy has diverged. The merge had nothing to apply to
+    // these (so blocking the pull would have been over-strict), but the user should
+    // know their working tree differs from HEAD outside this pull's diff.
+    let drifted = &merge_tree_results.drifted_entries;
+    if !drifted.is_empty() {
+        eprintln!(
+            "\nNote: {} file(s) in your working tree differ from HEAD outside this pull's diff:",
+            drifted.len()
+        );
+        for path in drifted {
+            eprintln!("  {}", path.display());
+        }
+        eprintln!("Run `oxen status` to inspect or `oxen restore` to discard.\n");
+    }
+
     Ok(Some(merge_commit.clone()))
 }
 
@@ -713,6 +725,17 @@ async fn fast_forward_merge(
 /// stomp on. Returns the populated `MergeResult` plus the set of paths actually seen on the
 /// merge side, which `walk_base_dir` consumes to find files HEAD has but the merge target
 /// doesn't (i.e., deletions to apply).
+///
+/// The walker descends into every subtree, including ones whose root hash matches between
+/// base and merge target.
+///
+///   * Base hash differs from merge hash AND working copy is locally modified: real
+///     overwrite conflict, push to `cannot_overwrite_entries` (the merge would clobber
+///     user work; abort).
+///   * Base hash equals merge hash AND working copy differs from HEAD: drift, push to
+///     `drifted_entries`. The merge has nothing to apply to this file, so this is *not* an
+///     overwrite conflict; the merge proceeds and the caller emits a non-fatal warning so
+///     the user knows their working tree drifted outside this pull's diff.
 async fn walk_merge_commit<'a>(
     repo: &LocalRepository,
     root: &'a MerkleTreeNode,
@@ -720,52 +743,73 @@ async fn walk_merge_commit<'a>(
     shared_hashes: &HashSet<MerkleHash>,
     is_resume: bool,
 ) -> Result<(MergeResult, HashSet<PathBuf>), OxenError> {
-    let mut results = MergeResult::new();
+    let mut results = MergeResult::default();
     let mut seen_files: HashSet<PathBuf> = HashSet::new();
-    let mut stack: Vec<(PathBuf, &'a MerkleTreeNode)> = vec![(PathBuf::new(), root)];
+    // Stack tuple is (path, node, in_shared). `in_shared` is sticky: once we descend into
+    // a shared subtree all of its descendants are in_shared too. It signals "base content
+    // == merge content for this file's whole ancestor chain," so the only thing left to
+    // check at the file level is whether the working copy matches.
+    let mut stack: Vec<(PathBuf, &'a MerkleTreeNode, bool)> = vec![(PathBuf::new(), root, false)];
 
-    while let Some((path, node)) = stack.pop() {
+    while let Some((path, node, in_shared)) = stack.pop() {
         match &node.node {
             EMerkleTreeNode::File(merge_file_node) => {
                 let file_path = path.join(merge_file_node.name());
                 seen_files.insert(file_path.clone());
 
-                // If file_path is found in the base tree, look up the corresponding PartialNode —
-                // the minimal representation needed to decide whether to restore. PartialNodes are
-                // keyed by base-tree path so that a file moved between base and merge is correctly
-                // detected as "shouldn't restore".
+                // Two ways base content can equal merge content for this file:
+                //   - `in_shared`: every ancestor on the path was shared, so all
+                //     descendants are byte-identical between base and merge.
+                //   - file-level hash match against `base_files`: ancestor wasn't
+                //     shared (a sibling changed) but this file's hash didn't.
+                // Both land in the same drift-check branch — no restore work, just
+                // see whether the working copy still matches HEAD.
+                let base_match = base_files.get(&file_path);
+                let content_matches_base =
+                    in_shared || base_match.is_some_and(|b| b.hash == node.hash);
+
                 if is_resume {
-                    // Resuming an interrupted merge targeting this same commit: trust the target
-                    // and force-restore every file the merge wants, regardless of working-tree state.
+                    // Resuming an interrupted merge targeting this same commit: trust
+                    // the target and force-restore every file the merge wants,
+                    // regardless of working-tree state.
                     results.entries_to_restore.push(FileToRestore {
                         file_node: merge_file_node.clone(),
                         path: file_path.clone(),
                     });
-                } else if let Some(base_file_node) = base_files.get(&file_path) {
-                    if node.hash != base_file_node.hash {
-                        let should_restore = restore::should_restore_partial_node(
-                            repo,
-                            Some(base_file_node.clone()),
-                            merge_file_node,
-                            &file_path,
-                        )
-                        .await?;
-                        if should_restore {
-                            results.entries_to_restore.push(FileToRestore {
-                                file_node: merge_file_node.clone(),
-                                path: file_path.clone(),
-                            });
-                        } else {
-                            results.cannot_overwrite_entries.push(file_path.clone());
-                        }
+                } else if content_matches_base {
+                    // No restore needed; just surface drift if the working copy doesn't
+                    // match. `base_files` doesn't index shared subtrees (the base-tree
+                    // walker short-circuits there), so we compare against
+                    // `merge_file_node` — identical to base's file node by construction.
+                    let full_path = repo.path.join(&file_path);
+                    if repo
+                        .is_modified_from_node(&full_path, merge_file_node)
+                        .await?
+                    {
+                        results.drifted_entries.push(file_path.clone());
+                    }
+                } else if let Some(base_file_node) = base_match {
+                    // Base has this file with a different hash — decide restore vs.
+                    // overwrite-conflict.
+                    let should_restore = restore::should_restore_partial_node(
+                        repo,
+                        Some(base_file_node.clone()),
+                        merge_file_node,
+                        &file_path,
+                    )
+                    .await?;
+                    if should_restore {
+                        results.entries_to_restore.push(FileToRestore {
+                            file_node: merge_file_node.clone(),
+                            path: file_path.clone(),
+                        });
                     } else {
-                        // Merge target matches base for this path — nothing to apply, so a
-                        // locally modified working copy is not an overwrite conflict.
-                        log::debug!("Merge entry has not changed: {file_path:?}");
+                        results.cannot_overwrite_entries.push(file_path.clone());
                     }
                 } else if restore::should_restore_file(repo, None, merge_file_node, &file_path)
                     .await?
                 {
+                    // File is new in the merge target (no base counterpart).
                     results.entries_to_restore.push(FileToRestore {
                         file_node: merge_file_node.clone(),
                         path: file_path.clone(),
@@ -775,25 +819,20 @@ async fn walk_merge_commit<'a>(
                 }
             }
             EMerkleTreeNode::Directory(dir_node) => {
-                // Early exit if the directory is the same in the from and target trees.
-                if shared_hashes.contains(&node.hash) {
-                    continue;
-                }
                 let dir_path = path.join(dir_node.name());
-                // Only enqueue children of vnodes not shared between the trees.
+                let dir_in_shared = in_shared || shared_hashes.contains(&node.hash);
                 for vnode in &node.children {
-                    if !shared_hashes.contains(&vnode.hash) {
-                        for child in &vnode.children {
-                            log::debug!("walk_merge_commit child_path {child}");
-                            stack.push((dir_path.clone(), child));
-                        }
+                    let vnode_in_shared = dir_in_shared || shared_hashes.contains(&vnode.hash);
+                    for child in &vnode.children {
+                        log::debug!("walk_merge_commit child_path {child}");
+                        stack.push((dir_path.clone(), child, vnode_in_shared));
                     }
                 }
             }
             EMerkleTreeNode::Commit(_) => {
                 // Skip the commit wrapper to its root directory.
                 let root_dir = repositories::tree::get_root_dir(node)?;
-                stack.push((path, root_dir));
+                stack.push((path, root_dir, in_shared));
             }
             _ => {
                 return Err(OxenError::basic_str(
@@ -817,7 +856,7 @@ async fn walk_base_dir<'a>(
     merge_files: &HashSet<PathBuf>,
     is_resume: bool,
 ) -> Result<MergeResult, OxenError> {
-    let mut results = MergeResult::new();
+    let mut results = MergeResult::default();
     let mut stack: Vec<(PathBuf, &'a MerkleTreeNode)> = vec![(PathBuf::new(), root)];
 
     while let Some((path, node)) = stack.pop() {

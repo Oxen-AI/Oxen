@@ -1358,6 +1358,83 @@ mod tests {
     }
 
     #[tokio::test]
+    /// Regression: drift in a shared subtree used to silently survive `oxen pull` because
+    /// the merge walker short-circuited on shared dirs and never visited the files inside.
+    /// Pull now succeeds (drift in shared regions isn't an overwrite conflict), but the
+    /// drift is preserved on disk and `oxen status` flags it.
+    async fn test_pull_surfaces_drift_in_shared_subtree() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|mut repo| async move {
+            // `shared_dir` must be byte-identical between the two commits below so its
+            // merkle hash lands in `shared_hashes` during the merge — that's the
+            // short-circuit path the regression exercises.
+            let shared_dir = repo.path.join("shared_dir");
+            std::fs::create_dir(&shared_dir)?;
+            let stable = shared_dir.join("stable.txt");
+            util::fs::write_to_path(&stable, "original content")?;
+            repositories::add(&repo, &shared_dir).await?;
+            let first_commit = repositories::commit(&repo, "Add shared_dir/stable.txt")?;
+
+            let remote = test::repo_remote_url_from(&repo.dirname());
+            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
+            let remote_repo = test::create_remote_repo(&repo).await?;
+            repositories::push(&repo).await?;
+
+            let other_dir = repo.path.join("other_dir");
+            std::fs::create_dir(&other_dir)?;
+            let other_file = other_dir.join("other.txt");
+            util::fs::write_to_path(&other_file, "second commit content")?;
+            repositories::add(&repo, &other_dir).await?;
+            let second_commit = repositories::commit(&repo, "Add other_dir/other.txt")?;
+            repositories::push(&repo).await?;
+
+            test::run_empty_dir_test_async(|new_repo_dir| async move {
+                let new_repo_dir = new_repo_dir.join("clone");
+                let cloned_repo =
+                    repositories::clone_url(&remote_repo.remote.url, &new_repo_dir).await?;
+
+                // Lag HEAD so the second commit becomes a merge target with shared_dir
+                // in shared_hashes.
+                repositories::branches::update(
+                    &cloned_repo,
+                    constants::DEFAULT_BRANCH_NAME,
+                    &first_commit.id,
+                )?;
+
+                let cloned_stable = cloned_repo.path.join("shared_dir").join("stable.txt");
+                util::fs::write_to_path(&cloned_stable, "drifted content")?;
+
+                repositories::pull(&cloned_repo).await?;
+
+                let head_after = repositories::commits::head_commit(&cloned_repo)?;
+                assert_eq!(head_after.id, second_commit.id);
+                assert_eq!(util::fs::read_from_path(&cloned_stable)?, "drifted content");
+
+                let cloned_other = cloned_repo.path.join("other_dir").join("other.txt");
+                assert!(cloned_other.exists());
+                assert_eq!(
+                    util::fs::read_from_path(&cloned_other)?,
+                    "second commit content"
+                );
+
+                let status = repositories::status(&cloned_repo).await?;
+                assert!(
+                    status
+                        .modified_files
+                        .iter()
+                        .any(|p| p.ends_with("stable.txt")),
+                    "expected status to flag stable.txt as modified, got: {:?}",
+                    status.modified_files
+                );
+
+                api::client::repositories::delete(&remote_repo).await?;
+                Ok(())
+            })
+            .await
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_pull_data_frame() -> Result<(), OxenError> {
         test::run_select_data_repo_test_no_commits_async("annotations", |mut repo| async move {
             // Track a file
@@ -1819,7 +1896,10 @@ mod tests {
                 let modified_file_path = user_a_repo.path.join(modified_file);
                 test::write_txt_file_to_path(&modified_file_path, "# User A README")?;
 
-                // Pull should succeed because we did not modify README on remote
+                // Pull should succeed because we did not modify README on remote.
+                // Drift in a shared-hash file is non-fatal — the merge has nothing to
+                // apply to README, so it doesn't block the pull. (A non-fatal warning
+                // is printed to stderr listing the drifted file.)
                 let result = repositories::pull(&user_a_repo).await;
                 assert!(result.is_ok());
 
