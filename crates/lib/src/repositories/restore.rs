@@ -358,6 +358,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_restore_recreates_tracked_empty_directory() -> Result<(), OxenError> {
+        // This is a regression test for ENG-1003: `restore_dir` only iterates File children and
+        // silently no-ops on empty directories.
+        //
+        // Oxen tracks directories as first-class. After `oxen rm` removes the only file in a
+        // directory and the removal is committed, the now-empty parent directory remains
+        // tracked in the merkle tree. If the user then loses that directory on disk (e.g. manual
+        // `rmdir`), `oxen status` correctly reports it as `removed` and `oxen restore <dir>` is the
+        // documented way to bring the working tree back in line with HEAD.
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let subdir_rel = PathBuf::from("subdir");
+            let subdir = repo.path.join(&subdir_rel);
+            util::fs::create_dir_all(&subdir)?;
+            util::fs::write_to_path(subdir.join("a.txt"), "AAAA")?;
+            repositories::add(&repo, &subdir).await?;
+            repositories::commit(&repo, "Add subdir/a.txt")?;
+
+            // `oxen rm` the only file, then commit. Under Oxen's first-class-directory
+            // model the empty `subdir` remains tracked in the merkle tree.
+            let rm_opts = RmOpts {
+                path: PathBuf::from("subdir/a.txt"),
+                recursive: false,
+                staged: false,
+            };
+            repositories::rm(&repo, &rm_opts).await?;
+            repositories::commit(&repo, "Remove subdir/a.txt")?;
+
+            // Remove the empty directory to recreate the situation.
+            util::fs::remove_dir_all(&subdir)?;
+            assert!(
+                !subdir.exists(),
+                "test setup: subdir must be gone from disk"
+            );
+
+            // Sanity: status should correctly report subdir as removed (it IS missing
+            // relative to HEAD's tracked tree).
+            let status_before = repositories::status(&repo).await?;
+            assert!(
+                status_before.removed_files.contains(&subdir_rel),
+                "test setup: status should report subdir as removed before restore; \
+                 got removed_files={:?}",
+                status_before.removed_files
+            );
+
+            // The bug under test: `oxen restore <empty-dir>` should recreate the tracked
+            // empty directory on disk so the working tree matches HEAD.
+            repositories::restore::restore(&repo, RestoreOpts::from_path(&subdir_rel)).await?;
+
+            assert!(
+                subdir.exists(),
+                "oxen restore <empty-dir> must recreate the tracked empty directory on disk"
+            );
+
+            // After restore, status should be clean, and the directory should really exist again.
+            let status_after = repositories::status(&repo).await?;
+            assert!(
+                status_after.is_clean(),
+                "after restoring tracked empty dir, status should be clean; got {status_after:?}"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_restore_directory_preserves_untracked_files() -> Result<(), OxenError> {
         // `oxen restore <dir>` must not delete untracked files that happen to live
         // inside the restored directory. It only overwrites tracked files.
