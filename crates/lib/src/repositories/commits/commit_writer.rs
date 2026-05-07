@@ -26,7 +26,6 @@ use crate::model::MerkleHash;
 use crate::model::MerkleTreeNodeType;
 use crate::model::NewCommit;
 use crate::model::NewCommitBody;
-use crate::model::User;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::StagedMerkleTreeNode;
 use crate::model::merkle_tree::node::VNode;
@@ -36,6 +35,7 @@ use crate::model::merkle_tree::node::vnode::VNodeOpts;
 use crate::model::{Commit, LocalRepository, StagedEntryStatus};
 
 use crate::util::hasher;
+use crate::util::progress_bar::FinishOnDropProgressBar;
 use crate::{repositories, util};
 
 use crate::model::merkle_tree::node::MerkleTreeNode;
@@ -75,36 +75,24 @@ impl EntryVNode {
 
 pub fn commit(repo: &LocalRepository, message: impl AsRef<str>) -> Result<Commit, OxenError> {
     let cfg = UserConfig::get()?;
-    commit_with_cfg(repo, message, &cfg, None)
+    commit_with_cfg(repo, message, &cfg, None, &default_commit_progress_bar())
 }
 
-pub fn commit_with_parent_ids(
-    repo: &LocalRepository,
-    message: impl AsRef<str>,
-    parent_ids: Vec<String>,
-) -> Result<Commit, OxenError> {
-    let cfg = UserConfig::get()?;
-    commit_with_cfg(repo, message, &cfg, Some(parent_ids))
+/// A default style spinner with a 100ms tick rate. Callers must set the message.
+/// NOTE: ProgressBar uses interior mutibility.
+pub(crate) fn default_commit_progress_bar() -> FinishOnDropProgressBar {
+    let commit_progress_bar = ProgressBar::new_spinner();
+    commit_progress_bar.set_style(ProgressStyle::default_spinner());
+    commit_progress_bar.enable_steady_tick(Duration::from_millis(100));
+    FinishOnDropProgressBar(commit_progress_bar)
 }
 
-pub fn commit_with_user(
-    repo: &LocalRepository,
-    message: impl AsRef<str>,
-    user: &User,
-) -> Result<Commit, OxenError> {
-    let cfg = UserConfig {
-        name: user.name.clone(),
-        email: user.email.clone(),
-        editor: None,
-    };
-    commit_with_cfg(repo, message, &cfg, None)
-}
-
-pub fn commit_with_cfg(
+pub(crate) fn commit_with_cfg(
     repo: &LocalRepository,
     message: impl AsRef<str>,
     cfg: &UserConfig,
     parent_ids: Option<Vec<String>>,
+    commit_progress_bar: &ProgressBar,
 ) -> Result<Commit, OxenError> {
     // time the commit
     let start_time = Instant::now();
@@ -117,19 +105,15 @@ pub fn commit_with_cfg(
     let staged_db: DBWithThreadMode<SingleThreaded> =
         DBWithThreadMode::open(&opts, dunce::simplified(&staged_db_path))?;
 
-    let commit_progress_bar = ProgressBar::new_spinner();
-    commit_progress_bar.set_style(ProgressStyle::default_spinner());
-    commit_progress_bar.enable_steady_tick(Duration::from_millis(100));
-
     // Read all the staged entries
     let (dir_entries, total_changes) =
-        status::read_staged_entries(repo, &staged_db, &commit_progress_bar)?;
+        status::read_staged_entries(repo, &staged_db, commit_progress_bar)?;
     commit_progress_bar.set_message(format!("Committing {total_changes} changes"));
 
     log::debug!("got dir entries: {:?}", dir_entries.len());
 
     if dir_entries.is_empty() {
-        return Err(OxenError::basic_str("No changes to commit"));
+        return Err(OxenError::NoChanges);
     }
 
     // let mut dir_tree = entries_to_dir_tree(&dir_entries)?;
@@ -151,14 +135,13 @@ pub fn commit_with_cfg(
             parent_ids,
             dir_entries,
             &new_commit,
-            &commit_progress_bar,
             maybe_branch_name
                 .clone()
                 .unwrap_or(DEFAULT_BRANCH_NAME.to_string()),
         )?
     } else {
         log::debug!("no parent ids, committing new");
-        commit_dir_entries_new(repo, dir_entries, &new_commit, &commit_progress_bar)?
+        commit_dir_entries_new(repo, dir_entries, &new_commit)?
     };
 
     // Clear the staged db
@@ -195,12 +178,11 @@ pub fn commit_with_cfg(
     Ok(commit)
 }
 
-pub fn commit_dir_entries_with_parents(
+pub(crate) fn commit_dir_entries_with_parents(
     repo: &LocalRepository,
     parent_commits: Vec<String>,
     dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
     new_commit: &NewCommitBody,
-    commit_progress_bar: &ProgressBar,
     target_branch: impl AsRef<str>,
 ) -> Result<Commit, OxenError> {
     let message = &new_commit.message;
@@ -296,7 +278,6 @@ pub fn commit_dir_entries_with_parents(
         &dir_hashes,
         &vnode_entries,
     )?;
-    commit_progress_bar.finish_and_clear();
 
     Ok(node.to_commit())
 }
@@ -305,7 +286,6 @@ pub fn commit_dir_entries_new(
     repo: &LocalRepository,
     dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
     new_commit: &NewCommitBody,
-    commit_progress_bar: &ProgressBar,
 ) -> Result<Commit, OxenError> {
     let message = &new_commit.message;
     // if the HEAD commit exists, we have parents
@@ -393,8 +373,6 @@ pub fn commit_dir_entries_new(
         &vnode_entries,
     )?;
 
-    commit_progress_bar.finish_and_clear();
-
     // Remove all the directories that are staged for removal
     cache_invalidate_dir_hash_db(&dir_hash_db, dir_entries.values())?;
 
@@ -406,7 +384,6 @@ pub fn commit_dir_entries(
     dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
     new_commit: &NewCommitBody,
     target_branch: impl AsRef<str>,
-    commit_progress_bar: &ProgressBar,
 ) -> Result<Commit, OxenError> {
     log::debug!("commit_dir_entries got {} entries", dir_entries.len());
     if log::max_level() == log::Level::Debug {
@@ -505,7 +482,6 @@ pub fn commit_dir_entries(
         &dir_hashes,
         &vnode_entries,
     )?;
-    commit_progress_bar.finish_and_clear();
 
     // Remove all the directories that are staged for removal
     cache_invalidate_dir_hash_db(&dir_hash_db, dir_entries.values())?;

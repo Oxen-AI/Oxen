@@ -1,3 +1,4 @@
+use crate::config::UserConfig;
 use crate::constants;
 use crate::core::db;
 use crate::core::db::merkle_node::MerkleNodeDB;
@@ -340,7 +341,7 @@ async fn server_three_way_merge(
     // that initiated the merge request. If initiated from the client, the client should send it's
     // local user. If initiated from the hub, the hub should send the user/email of the user who
     // initiated the merge request.
-    let cfg = crate::config::UserConfig::get()?;
+    let cfg = UserConfig::get()?;
     let new_commit = crate::model::NewCommitBody {
         message: merge_commits.commit_message(),
         author: cfg.name.clone(),
@@ -354,13 +355,11 @@ async fn server_three_way_merge(
 
     // Pass the base commit ID as the target revision so the existing tree comes from the base
     // commit (revisions::get resolves commit IDs)
-    let progress = indicatif::ProgressBar::hidden();
     let commit = commit_writer::commit_dir_entries_with_parents(
         repo,
         parent_ids,
         dir_entries,
         &new_commit,
-        &progress,
         &merge_commits.base.id,
     )?;
 
@@ -1030,11 +1029,13 @@ async fn create_merge_commit(
         merge_commits.merge.id.to_owned(),
     ];
 
-    let commit = commit_writer::commit_with_parent_ids(repo, &commit_msg, parent_ids)?;
-
-    // rm::remove_staged(repo, &HashSet::from([PathBuf::from("/")]))?;
-
-    Ok(commit)
+    commit_writer::commit_with_cfg(
+        repo,
+        commit_msg,
+        &UserConfig::get()?,
+        Some(parent_ids),
+        &commit_writer::default_commit_progress_bar(),
+    )
 }
 
 /// Create an empty merge commit: a commit with two parents whose tree is identical to base's
@@ -1052,7 +1053,7 @@ fn create_empty_merge_commit(
     repo: &LocalRepository,
     merge_commits: &MergeCommits,
 ) -> Result<Commit, OxenError> {
-    let cfg = crate::config::UserConfig::get()?;
+    let cfg = UserConfig::get()?;
     let timestamp = time::OffsetDateTime::now_utc();
     let new_commit_data = NewCommit {
         parent_ids: vec![

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{ops::Deref, sync::Arc};
 use tokio::time::Duration;
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -60,5 +60,24 @@ pub fn progress_type_to_template(progress_type: ProgressBarType) -> String {
             "{spinner:.green} [{elapsed_precise}] [{wide_bar}] {bytes}/{total_bytes}".to_string()
         }
         ProgressBarType::None => "{spinner:.green} [{elapsed_precise}] [{wide_bar}]".to_string(),
+    }
+}
+
+/// Wraps a [`ProgressBar`] with a `Drop` impl that calls the `finish_and_clear` method.
+/// This is so that the progress bar is always finished even if it's used in a context
+/// where a function early-returns e.g. on an error.
+pub(crate) struct FinishOnDropProgressBar(pub ProgressBar);
+
+impl Drop for FinishOnDropProgressBar {
+    fn drop(&mut self) {
+        self.0.finish_and_clear();
+    }
+}
+
+impl Deref for FinishOnDropProgressBar {
+    type Target = ProgressBar;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
