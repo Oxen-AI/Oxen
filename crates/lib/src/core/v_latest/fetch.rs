@@ -643,15 +643,11 @@ pub async fn pull_entries_to_versions_dir(
         (Ok(_), Ok(_)) => {
             log::debug!("Successfully synced entries!");
         }
-        (Err(err), Ok(_)) => {
-            let err = format!("Error syncing large entries: {err}");
-            return Err(OxenError::basic_str(err));
+        (Err(err), Ok(_)) | (Ok(_), Err(err)) => return Err(err),
+        (Err(large_err), Err(small_err)) => {
+            log::error!("Large entries sync also failed: {large_err}");
+            return Err(small_err);
         }
-        (Ok(_), Err(err)) => {
-            let err = format!("Error syncing small entries: {err}");
-            return Err(OxenError::basic_str(err));
-        }
-        _ => return Err(OxenError::basic_str("Unknown error syncing entries")),
     }
 
     Ok(())
@@ -878,15 +874,11 @@ pub async fn download_entries_to_working_dir(
         (Ok(_), Ok(_)) => {
             log::debug!("Successfully synced entries!");
         }
-        (Err(err), Ok(_)) => {
-            let err = format!("Error syncing large entries: {err}");
-            return Err(OxenError::basic_str(err));
+        (Err(err), Ok(_)) | (Ok(_), Err(err)) => return Err(err),
+        (Err(large_err), Err(small_err)) => {
+            log::error!("Large entries sync also failed: {large_err}");
+            return Err(small_err);
         }
-        (Ok(_), Err(err)) => {
-            let err = format!("Error syncing small entries: {err}");
-            return Err(OxenError::basic_str(err));
-        }
-        _ => return Err(OxenError::basic_str("Unknown error syncing entries")),
     }
     log::info!("Finished download_entries_to_working_dir");
     Ok(())
