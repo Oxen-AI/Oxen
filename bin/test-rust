@@ -2,13 +2,14 @@
 #
 # Build, configure, and run the Oxen test suite.
 #
-# Usage: test-rust [--ffmpeg] [--keep] [--install-deps] [-p|--python] [extra args...]
+# Usage: test-rust [--ffmpeg] [--keep] [--install-deps] [--no-ramdisk] [-p|--python] [extra args...]
 #
 #   --ffmpeg        Enable the "ffmpeg" cargo feature for build and test commands.
 #   --keep          Do not remove test data (in data/ox and data/test/runs) on cleanup — useful for
 #                   debugging failed tests.
 #   --install-deps  Check and install prerequisites (install-prereqs) before running tests.
 #                   By default, prereqs are not checked.
+#   --no-ramdisk    Skip ramdisk setup and run tests against the regular filesystem.
 #   -p|--python     Run the oxen-python test suite (via pytest) instead of the Rust test suite.
 #                   Builds the native extension with maturin.
 #   All remaining arguments are forwarded to `cargo nextest run` or `pytest` (with -p).
@@ -24,11 +25,13 @@ FEATURE_ARGS=""
 KEEP_DATA=false
 INSTALL_DEPS=false
 RUN_PYTHON=false
+USE_RAMDISK=true
 while true; do
     case "${1:-}" in
         --ffmpeg)        FEATURE_ARGS="-F ffmpeg"; shift ;;
         --keep)          KEEP_DATA=true; shift ;;
         --install-deps)  INSTALL_DEPS=true; shift ;;
+        --no-ramdisk)    USE_RAMDISK=false; shift ;;
         -p|--python)     RUN_PYTHON=true; shift ;;
         *) break ;;
     esac
@@ -113,8 +116,12 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Set up ramdisk for test data
-if ! setup_ramdisk; then
-    echo "==> Ramdisk setup failed, using regular filesystem."
+if [ "$USE_RAMDISK" = true ]; then
+    if ! setup_ramdisk; then
+        echo "==> Ramdisk setup failed, using regular filesystem."
+    fi
+else
+    echo "==> Skipping ramdisk setup (--no-ramdisk), using regular filesystem."
 fi
 
 # Ensure all prerequisites are installed (opt-in via --install-deps)
