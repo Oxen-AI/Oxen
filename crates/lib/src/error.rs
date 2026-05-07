@@ -211,8 +211,13 @@ pub enum OxenError {
     #[error("{0}")]
     MerkleTreeError(#[from] InvalidMerkleTreeNodeType),
 
+    /// An error from the [`FileBackend`] implementation of a [`MerkleStore`].
     #[error("{0}")]
     MerkleDbError(#[from] MerkleDbError),
+
+    // Attempting to make a commit with no changes from its parent is an error.
+    #[error("No changes to commit")]
+    NoChanges,
 
     //
     // Schema (dataframes)
