@@ -356,7 +356,7 @@ pub async fn process_add_dir(
     let repo = Arc::new(repo.clone());
     let repo_path = Arc::new(repo_path.to_path_buf());
     let conflicts = Arc::new(conflicts);
-    let version_store = Arc::new(version_store.clone());
+    let version_store = version_store.clone();
     let start = Arc::new(start);
 
     let progress_1_clone = Arc::clone(&progress_1);
