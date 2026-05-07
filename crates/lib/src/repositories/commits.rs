@@ -176,16 +176,6 @@ pub fn list_all(repo: &LocalRepository) -> Result<HashSet<Commit>, OxenError> {
     }
 }
 
-/// List unsynced commits from a specific revision
-pub fn list_unsynced_from(
-    repo: &LocalRepository,
-    revision: impl AsRef<str>,
-) -> Result<HashSet<Commit>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("list_unsynced_from not supported in v0.10.0"),
-        _ => core::v_latest::commits::list_unsynced_from(repo, revision),
-    }
-}
 // Source
 pub fn get_commit_or_head<S: AsRef<str> + Clone>(
     repo: &LocalRepository,
@@ -358,38 +348,6 @@ pub fn count_from(
         MinOxenVersion::V0_10_0 => Err(OxenError::basic_str("count_from not supported in v0.10.0")),
         _ => core::v_latest::commits::count_from(repo, revision),
     }
-}
-
-pub fn commit_history_is_complete(
-    repo: &LocalRepository,
-    commit: &Commit,
-) -> Result<bool, OxenError> {
-    // Get full commit history from this head backwards
-    let history = list_from(repo, &commit.id)?;
-
-    // Ensure traces back to base commit
-    let maybe_initial_commit = history.last().unwrap();
-    if !maybe_initial_commit.parent_ids.is_empty() {
-        // If it has parents, it isn't an initial commit
-        log::debug!(
-            "commit_history_is_complete ❌ last commit has parents: {maybe_initial_commit}"
-        );
-        return Ok(false);
-    }
-
-    // Ensure all commits and their parents are synced
-    // Initialize commit reader
-    for c in &history {
-        log::debug!("commit_history_is_complete checking if commit is synced: {c}");
-
-        if !core::commit_sync_status::commit_is_synced(repo, &c.id.parse()?) {
-            log::debug!("commit_history_is_complete ❌ commit is not synced: {c}");
-            return Ok(false);
-        } else {
-            log::debug!("commit_history_is_complete ✅ commit is synced: {c}");
-        }
-    }
-    Ok(true)
 }
 
 #[cfg(test)]
@@ -763,52 +721,6 @@ mod tests {
             assert_eq!(dirs.len(), 0);
 
             Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_commit_history_is_complete() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
-            let cloned_remote = remote_repo.clone();
-
-            // Clone with the --all flag
-            test::run_empty_dir_test_async(|new_repo_dir| async move {
-                let new_repo_dir = new_repo_dir.join("repoo");
-                let deep_clone =
-                    repositories::deep_clone_url(&remote_repo.remote.url, &new_repo_dir).await?;
-                // Get head commit of deep_clone repo
-                let head_commit = repositories::commits::head_commit(&deep_clone)?;
-                assert!(commit_history_is_complete(&deep_clone, &head_commit)?);
-                Ok(())
-            })
-            .await?;
-
-            Ok(cloned_remote)
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_commit_history_is_not_complete_standard_repo() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
-            let cloned_remote = remote_repo.clone();
-
-            // Clone with the --all flag
-            test::run_empty_dir_test_async(|new_repo_dir| async move {
-                let clone = repositories::clone_url(
-                    &remote_repo.remote.url,
-                    &new_repo_dir.join("new_repo"),
-                )
-                .await?;
-                // Get head commit of deep_clone repo
-                let head_commit = repositories::commits::head_commit(&clone)?;
-                assert!(!commit_history_is_complete(&clone, &head_commit)?);
-                Ok(())
-            })
-            .await?;
-
-            Ok(cloned_remote)
         })
         .await
     }

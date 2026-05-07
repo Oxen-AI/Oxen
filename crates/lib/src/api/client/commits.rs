@@ -1083,33 +1083,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_unsynced_commit_hashes() -> Result<(), OxenError> {
+    async fn test_list_missing_hashes_filters_via_merkle_tree() -> Result<(), OxenError> {
+        // The server filters requested commit hashes by checking which merkle-tree
+        // nodes actually exist.
         test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
+            // A commit pushed by the fixture is present in the server's node store, so not reported
+            // as missing by the server.
             let commit = repositories::commits::head_commit(&local_repo)?;
-            let missing_commit_hashes =
+            let missing =
                 api::client::commits::list_missing_hashes(&remote_repo, vec![commit]).await?;
+            assert_eq!(missing.len(), 0);
 
-            for hash in missing_commit_hashes.iter() {
-                println!("missing commit hash: {hash}");
-            }
-
-            assert_eq!(missing_commit_hashes.len(), 0);
-
-            // Add and commit a new file
+            // A locally-created-but-not-pushed commit isn't in the server's tree DB, so the server
+            // reports it as missing.
             let file_path = local_repo.path.join("test.txt");
             let file_path = test::write_txt_file_to_path(file_path, "image,label\n1,2\n3,4\n5,6")?;
             repositories::add(&local_repo, &file_path).await?;
-            let commit = repositories::commit(&local_repo, "test")?;
-            let missing_commit_nodes =
-                api::client::commits::list_missing_hashes(&remote_repo, vec![commit.clone()])
+            let new_commit = repositories::commit(&local_repo, "test")?;
+            let missing =
+                api::client::commits::list_missing_hashes(&remote_repo, vec![new_commit.clone()])
                     .await?;
-
-            for hash in missing_commit_nodes.iter() {
-                println!("missing commit hash: {hash}",);
-            }
-
-            assert_eq!(missing_commit_nodes.len(), 1);
-            assert!(missing_commit_nodes.contains(&commit));
+            assert_eq!(missing.len(), 1);
+            assert!(missing.contains(&new_commit));
 
             Ok(remote_repo)
         })
