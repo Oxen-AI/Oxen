@@ -99,6 +99,12 @@ pub struct StagedData {
     pub modified_files: HashSet<PathBuf>,
     pub moved_files: Vec<(PathBuf, PathBuf, String)>,
     pub removed_files: HashSet<PathBuf>,
+    /// Files whose working copy differs from HEAD AND whose HEAD-expected blob is missing
+    /// from the local version store. The user can't fix these with `oxen restore` alone —
+    /// they'd hit `RestoreFailed` / `VersionStoreDataMissing` because there's nothing to
+    /// restore from. Surfaced separately so the user knows to run `oxen fetch
+    /// --missing-files` first.
+    pub unrestorable_files: HashSet<PathBuf>,
     pub merge_conflicts: Vec<EntryMergeConflict>,
 }
 
@@ -114,6 +120,7 @@ impl StagedData {
             unsynced_files: vec![],
             modified_files: HashSet::new(),
             removed_files: HashSet::new(),
+            unrestorable_files: HashSet::new(),
             moved_files: vec![],
             merge_conflicts: vec![],
         }
@@ -128,12 +135,13 @@ impl StagedData {
             && self.untracked_dirs.is_empty()
             && self.modified_files.is_empty()
             && self.removed_files.is_empty()
+            && self.unrestorable_files.is_empty()
             && self.merge_conflicts.is_empty()
             && self.moved_files.is_empty()
     }
 
     pub fn has_modified_entries(&self) -> bool {
-        !self.modified_files.is_empty()
+        !self.modified_files.is_empty() || !self.unrestorable_files.is_empty()
     }
 
     pub fn has_merge_conflicts(&self) -> bool {
@@ -167,6 +175,7 @@ impl StagedData {
         self.staged_files(&mut outputs, opts);
         self.staged_schemas(&mut outputs, opts);
         self.__collect_modified_files(&mut outputs, opts);
+        self.collect_unrestorable_files(&mut outputs, opts);
         self.__collect_merge_conflicts(&mut outputs, opts);
         self.__collect_unsynced_dirs(&mut outputs, opts);
         self.__collect_unsynced_files(&mut outputs, opts);
@@ -464,6 +473,35 @@ impl StagedData {
                 vec![
                     "  modified: ".to_string().yellow(),
                     format!("{}\n", file.to_str().unwrap()).yellow().bold(),
+                ]
+            },
+            outputs,
+            opts,
+        );
+        outputs.push("\n".normal());
+    }
+
+    fn collect_unrestorable_files(&self, outputs: &mut Vec<ColoredString>, opts: &StagedDataOpts) {
+        if self.unrestorable_files.is_empty() {
+            return;
+        }
+
+        outputs.push("Unrestorable files:".to_string().normal());
+        outputs.push(
+            "  (run \"oxen fetch --missing-files\" to re-fetch HEAD's expected blobs, then \"oxen restore\")\n"
+                .to_string()
+                .normal(),
+        );
+
+        let mut files: Vec<PathBuf> = self.unrestorable_files.iter().cloned().collect();
+        files.sort();
+
+        self.__collapse_outputs(
+            &files,
+            |file| {
+                vec![
+                    "  unrestorable: ".to_string().red(),
+                    format!("{}\n", file.to_str().unwrap()).red().bold(),
                 ]
             },
             outputs,

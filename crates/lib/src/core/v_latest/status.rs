@@ -11,6 +11,7 @@ use crate::model::{
     Commit, LocalRepository, MerkleHash, StagedData, StagedDirStats, StagedEntry,
     StagedEntryStatus, StagedSchema, SummarizedStagedDirStats,
 };
+use crate::storage::VersionStore;
 use crate::{repositories, util};
 
 use ignore::gitignore::Gitignore;
@@ -22,6 +23,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::core::v_latest::index::CommitMerkleTree;
@@ -74,6 +76,7 @@ pub async fn status_from_opts(
     staged_data.untracked_dirs = out.untracked.dirs.into_iter().collect();
     staged_data.untracked_files = out.untracked.files;
     staged_data.modified_files = out.modified;
+    staged_data.unrestorable_files = out.unrestorable;
     staged_data.removed_files = out.removed;
 
     // Find merge conflicts
@@ -149,6 +152,7 @@ pub async fn status_from_opts_and_staged_data(
     staged_data.unsynced_dirs = out.unsynced.dirs.into_iter().collect();
     staged_data.unsynced_files = out.unsynced.files;
     staged_data.modified_files = out.modified;
+    staged_data.unrestorable_files = out.unrestorable;
     staged_data.removed_files = out.removed;
 
     // Find merge conflicts
@@ -494,6 +498,11 @@ struct WalkOutput {
     untracked: UntrackedData,
     unsynced: UnsyncedData,
     modified: HashSet<PathBuf>,
+    /// Subset of "modified" semantics: working copy differs from HEAD AND HEAD's expected blob is
+    /// missing from the local version store. The user can't fix these with `oxen restore` alone;
+    /// status surfaces them separately so the user knows to run `oxen fetch --missing-files` first.
+    /// Mutually exclusive with `modified` for the same path.
+    unrestorable: HashSet<PathBuf>,
     removed: HashSet<PathBuf>,
 }
 
@@ -503,6 +512,7 @@ impl WalkOutput {
             untracked: UntrackedData::new(),
             unsynced: UnsyncedData::new(),
             modified: HashSet::new(),
+            unrestorable: HashSet::new(),
             removed: HashSet::new(),
         }
     }
@@ -511,6 +521,7 @@ impl WalkOutput {
         self.untracked.merge(other.untracked);
         self.unsynced.merge(other.unsynced);
         self.modified.extend(other.modified);
+        self.unrestorable.extend(other.unrestorable);
         self.removed.extend(other.removed);
     }
 }
@@ -574,6 +585,8 @@ struct DirState {
     untracked: UntrackedData,
     unsynced: UnsyncedData,
     modified: HashSet<PathBuf>,
+    /// See [`WalkOutput::unrestorable`].
+    unrestorable: HashSet<PathBuf>,
     removed: HashSet<PathBuf>,
     untracked_count: usize,
     /// The merkle node this path resolves to, if any. Read at FinalizeDir time both to
@@ -607,6 +620,7 @@ async fn walk_status(
     missing: MissingClassification,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
     gitignore: &Option<Gitignore>,
+    version_store: &Arc<dyn VersionStore>,
     progress: &ProgressBar,
     total_entries: &mut usize,
 ) -> Result<WalkOutput, OxenError> {
@@ -646,6 +660,7 @@ async fn walk_status(
                     untracked: UntrackedData::new(),
                     unsynced: UnsyncedData::new(),
                     modified: HashSet::new(),
+                    unrestorable: HashSet::new(),
                     removed: HashSet::new(),
                     untracked_count: 0,
                     search_node: search_node.clone(),
@@ -696,7 +711,15 @@ async fn walk_status(
                                 .await?;
                             log::debug!("is_modified {is_modified} {relative_path:?}");
                             if is_modified {
-                                current.modified.insert(relative_path.clone());
+                                // Modified working copy: distinguish "user can fix with restore"
+                                // from "HEAD's blob is missing locally, so user must fetch first"
+                                // — different remediation paths.
+                                let blob_hash = file_node.hash().to_string();
+                                if version_store.version_exists(&blob_hash).await? {
+                                    current.modified.insert(relative_path.clone());
+                                } else {
+                                    current.unrestorable.insert(relative_path.clone());
+                                }
                             }
                         }
                     } else {
@@ -711,7 +734,12 @@ async fn walk_status(
                                 .is_modified_from_node_with_metadata(&path, file_node, &metadata)
                                 .await?
                             {
-                                current.modified.insert(relative_path.clone());
+                                let blob_hash = file_node.hash().to_string();
+                                if version_store.version_exists(&blob_hash).await? {
+                                    current.modified.insert(relative_path.clone());
+                                } else {
+                                    current.unrestorable.insert(relative_path.clone());
+                                }
                             }
                         }
                         log::debug!("walk_status found_file {found_file:?} {path:?}");
@@ -872,12 +900,14 @@ async fn walk_status(
                     parent.untracked.merge(dir_state.untracked);
                     parent.unsynced.merge(dir_state.unsynced);
                     parent.modified.extend(dir_state.modified);
+                    parent.unrestorable.extend(dir_state.unrestorable);
                     parent.removed.extend(dir_state.removed);
                 } else {
                     return Ok(WalkOutput {
                         untracked: dir_state.untracked,
                         unsynced: dir_state.unsynced,
                         modified: dir_state.modified,
+                        unrestorable: dir_state.unrestorable,
                         removed: dir_state.removed,
                     });
                 }
@@ -902,6 +932,8 @@ async fn walk_paths(
     progress: &ProgressBar,
 ) -> Result<WalkOutput, OxenError> {
     let gitignore: Option<Gitignore> = oxenignore::create(repo);
+    // Get the version-store handle so walk_status can check existence of version files.
+    let version_store = repo.version_store()?;
     let mut total_entries = 0;
     let mut out = WalkOutput::empty();
     for dir in opts.paths.iter() {
@@ -914,6 +946,7 @@ async fn walk_paths(
             missing,
             dir_hashes,
             &gitignore,
+            &version_store,
             progress,
             &mut total_entries,
         )
