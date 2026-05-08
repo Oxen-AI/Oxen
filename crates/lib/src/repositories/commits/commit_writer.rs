@@ -16,6 +16,7 @@ use crate::constants::MERGE_HEAD_FILE;
 use crate::constants::ORIG_HEAD_FILE;
 use crate::constants::{HEAD_FILE, STAGED_DIR};
 use crate::core::db;
+use crate::core::db::dir_hashes::dir_hashes_db::with_dir_hash_db_writer;
 use crate::core::db::key_val::str_val_db;
 use crate::core::db::merkle_node::MerkleNodeDB;
 use crate::core::refs::with_ref_manager;
@@ -246,12 +247,7 @@ pub(crate) fn commit_dir_entries_with_parents(
         },
     )?;
 
-    let opts = db::key_val::opts::default();
-    let commit_id_string = format!("{commit_id}").to_string();
-    let dir_hash_db_path =
-        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
-    let dir_hash_db: DBWithThreadMode<SingleThreaded> =
-        DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
+    let commit_id_string = commit_id.to_string();
 
     let (dir_hashes, parent_id) = match &maybe_head_commit {
         Some(commit) => (
@@ -261,23 +257,25 @@ pub(crate) fn commit_dir_entries_with_parents(
         None => (HashMap::new(), None),
     };
 
-    for (path, hash) in &dir_hashes {
-        if let Some(path_str) = path.to_str() {
-            str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
-        } else {
-            log::error!("Failed to convert path to string: {path:?}");
+    with_dir_hash_db_writer(repo, &commit_id_string, |dir_hash_db| {
+        for (path, hash) in &dir_hashes {
+            if let Some(path_str) = path.to_str() {
+                str_val_db::put(dir_hash_db, path_str, &hash.to_string())?;
+            } else {
+                log::error!("Failed to convert path to string: {path:?}");
+            }
         }
-    }
 
-    let mut commit_db = MerkleNodeDB::open_read_write(&repo.path, &node, parent_id)?;
-    write_commit_entries(
-        repo,
-        commit_id,
-        &mut commit_db,
-        &dir_hash_db,
-        &dir_hashes,
-        &vnode_entries,
-    )?;
+        let mut commit_db = MerkleNodeDB::open_read_write(&repo.path, &node, parent_id)?;
+        write_commit_entries(
+            repo,
+            commit_id,
+            &mut commit_db,
+            dir_hash_db,
+            &dir_hashes,
+            &vnode_entries,
+        )
+    })?;
 
     Ok(node.to_commit())
 }
@@ -339,12 +337,7 @@ pub fn commit_dir_entries_new(
         },
     )?;
 
-    let opts = db::key_val::opts::default();
-    let commit_id_string = format!("{commit_id}").to_string();
-    let dir_hash_db_path =
-        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
-    let dir_hash_db: DBWithThreadMode<SingleThreaded> =
-        DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
+    let commit_id_string = commit_id.to_string();
 
     let (dir_hashes, parent_id) = match &maybe_head_commit {
         Some(commit) => (
@@ -354,27 +347,29 @@ pub fn commit_dir_entries_new(
         None => (HashMap::new(), None),
     };
 
-    for (path, hash) in &dir_hashes {
-        if let Some(path_str) = path.to_str() {
-            str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
-        } else {
-            log::error!("Failed to convert path to string: {path:?}");
+    with_dir_hash_db_writer(repo, &commit_id_string, |dir_hash_db| {
+        for (path, hash) in &dir_hashes {
+            if let Some(path_str) = path.to_str() {
+                str_val_db::put(dir_hash_db, path_str, &hash.to_string())?;
+            } else {
+                log::error!("Failed to convert path to string: {path:?}");
+            }
         }
-    }
 
-    let mut commit_db = MerkleNodeDB::open_read_write(&repo.path, &node, parent_id)?;
+        let mut commit_db = MerkleNodeDB::open_read_write(&repo.path, &node, parent_id)?;
 
-    write_commit_entries(
-        repo,
-        commit_id,
-        &mut commit_db,
-        &dir_hash_db,
-        &dir_hashes,
-        &vnode_entries,
-    )?;
+        write_commit_entries(
+            repo,
+            commit_id,
+            &mut commit_db,
+            dir_hash_db,
+            &dir_hashes,
+            &vnode_entries,
+        )?;
 
-    // Remove all the directories that are staged for removal
-    cache_invalidate_dir_hash_db(&dir_hash_db, dir_entries.values())?;
+        // Remove all the directories that are staged for removal
+        cache_invalidate_dir_hash_db(dir_hash_db, dir_entries.values())
+    })?;
 
     Ok(node.to_commit())
 }
@@ -453,38 +448,35 @@ pub fn commit_dir_entries(
         },
     )?;
 
-    let opts = db::key_val::opts::default();
-    let commit_id_string = format!("{commit_id}").to_string();
-    let dir_hash_db_path =
-        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
-    let dir_hash_db: DBWithThreadMode<SingleThreaded> =
-        DBWithThreadMode::open(&opts, dunce::simplified(&dir_hash_db_path))?;
+    let commit_id_string = commit_id.to_string();
 
     let dir_hashes = match &maybe_head_commit {
         Some(commit) => CommitMerkleTree::dir_hashes(repo, commit)?,
         None => HashMap::new(),
     };
 
-    for (path, hash) in &dir_hashes {
-        if let Some(path_str) = path.to_str() {
-            str_val_db::put(&dir_hash_db, path_str, &hash.to_owned().to_string())?;
-        } else {
-            log::error!("Failed to convert path to string: {path:?}");
+    with_dir_hash_db_writer(repo, &commit_id_string, |dir_hash_db| {
+        for (path, hash) in &dir_hashes {
+            if let Some(path_str) = path.to_str() {
+                str_val_db::put(dir_hash_db, path_str, &hash.to_owned().to_string())?;
+            } else {
+                log::error!("Failed to convert path to string: {path:?}");
+            }
         }
-    }
 
-    let mut commit_db = MerkleNodeDB::open_read_write(&repo.path, &node, None)?;
-    write_commit_entries(
-        repo,
-        commit_id,
-        &mut commit_db,
-        &dir_hash_db,
-        &dir_hashes,
-        &vnode_entries,
-    )?;
+        let mut commit_db = MerkleNodeDB::open_read_write(&repo.path, &node, None)?;
+        write_commit_entries(
+            repo,
+            commit_id,
+            &mut commit_db,
+            dir_hash_db,
+            &dir_hashes,
+            &vnode_entries,
+        )?;
 
-    // Remove all the directories that are staged for removal
-    cache_invalidate_dir_hash_db(&dir_hash_db, dir_entries.values())?;
+        // Remove all the directories that are staged for removal
+        cache_invalidate_dir_hash_db(dir_hash_db, dir_entries.values())
+    })?;
 
     Ok(node.to_commit())
 }

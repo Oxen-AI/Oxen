@@ -5,7 +5,7 @@ use crate::model::{Commit, LocalRepository};
 use crate::util;
 
 use lru::LruCache;
-use rocksdb::{DBWithThreadMode, MultiThreaded};
+use rocksdb::{DBWithThreadMode, MultiThreaded, SingleThreaded};
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
@@ -13,15 +13,24 @@ use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
 const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 
-/// Paired-lock cache for per-commit `dir_hash_db` RocksDB handles. The two fields solve
-/// disjoint problems — see each field. A single process-global instance ([`CACHE`]) is used;
+/// Paired-lock cache for per-commit `dir_hash_db` RocksDB handles. Each field solves a
+/// disjoint problem — see each field. A single process-global instance ([`CACHE`]) is used;
 /// the public free functions below just delegate into it.
 struct DirHashDbCache {
-    /// LRU of open RocksDB handles. Every access takes `.write()` briefly — `get` on a hit
-    /// (which bumps LRU recency and so requires `&mut`) or `put` on a miss. The inner
+    /// LRU of read-only RocksDB handles. Every access takes `.write()` briefly — `get` on
+    /// a hit (which bumps LRU recency and so requires `&mut`) or `put` on a miss. The inner
     /// `Arc<DB>` lets the caller clone-and-release the lock quickly so the actual RocksDB
-    /// operation runs outside the cache lock.
+    /// operation runs outside the cache lock. Read-only opens don't touch RocksDB's `LOCK`
+    /// file, so multiple readers and a writer can hold separate handles to the same path
+    /// without conflicting at the OS level.
     handles: RwLock<LruCache<PathBuf, Arc<DBWithThreadMode<MultiThreaded>>>>,
+
+    /// LRU of writable RocksDB handles, each behind its own `RwLock`. RocksDB's on-disk
+    /// `LOCK` file is exclusive, so opening the same path writable twice in one process
+    /// fails with "lock hold by current process". Caching one handle per path and serving
+    /// callers via `RwLock::write()` keeps in-process writers sequential without ever
+    /// racing on the OS lock. Reads via [`Self::handles`] are unaffected.
+    writers: RwLock<LruCache<PathBuf, Arc<RwLock<DBWithThreadMode<SingleThreaded>>>>>,
 
     /// Per-repo rebuild barriers. Readers of a repo's dir_hash_db hold `.read()` across
     /// their whole operation; rebuilders take `.write()`. When the rebuilder gets the write
@@ -38,6 +47,7 @@ struct DirHashDbCache {
 
 static CACHE: LazyLock<DirHashDbCache> = LazyLock::new(|| DirHashDbCache {
     handles: RwLock::new(LruCache::new(DB_CACHE_SIZE)),
+    writers: RwLock::new(LruCache::new(DB_CACHE_SIZE)),
     rebuild_barriers: Mutex::new(HashMap::new()),
 });
 
@@ -61,7 +71,7 @@ impl DirHashDbCache {
     fn with_reader<F, T>(
         &self,
         repository: &LocalRepository,
-        commit_id: &String,
+        commit_id: &str,
         operation: F,
     ) -> Result<T, OxenError>
     where
@@ -104,6 +114,50 @@ impl DirHashDbCache {
         operation(&dir_hashes_db)
     }
 
+    /// Run `operation` against the cached writable RocksDB for a commit, opening it on
+    /// first access. Holds this repo's rebuild barrier as a reader (so a concurrent
+    /// rebuilder waits) and takes the per-handle `RwLock::write()` so multiple writers
+    /// targeting the same commit's dir_hashes serialize in-process instead of racing on
+    /// RocksDB's on-disk `LOCK` file.
+    fn with_writer<F, T>(
+        &self,
+        repository: &LocalRepository,
+        commit_id: &str,
+        operation: F,
+    ) -> Result<T, OxenError>
+    where
+        F: FnOnce(&DBWithThreadMode<SingleThreaded>) -> Result<T, OxenError>,
+    {
+        let barrier = self.barrier_for(&repository.path)?;
+        let _barrier_guard = barrier
+            .read()
+            .map_err(|e| OxenError::LockPoisoned(format!("dir_hash_db access: {e}").into()))?;
+
+        let path = dir_hash_db_path_from_commit_id(repository, commit_id);
+
+        let db_lock = {
+            let mut cache_w = self.writers.write().map_err(|e| {
+                OxenError::LockPoisoned(format!("dir_hash_db writer LRU: {e}").into())
+            })?;
+
+            if let Some(db) = cache_w.get(&path) {
+                Arc::clone(db)
+            } else {
+                let opts = db::key_val::opts::default();
+                let db: DBWithThreadMode<SingleThreaded> =
+                    DBWithThreadMode::open(&opts, dunce::simplified(&path))?;
+                let arc = Arc::new(RwLock::new(db));
+                cache_w.put(path, Arc::clone(&arc));
+                arc
+            }
+        };
+
+        let db = db_lock
+            .write()
+            .map_err(|e| OxenError::LockPoisoned(format!("dir_hash_db writer: {e}").into()))?;
+        operation(&db)
+    }
+
     /// Take this repo's rebuild barrier exclusively, pop the cache entry for `commit_id`,
     /// and run `operation`. The write-guard wait ensures no reader of *this repo* holds a
     /// cloned `Arc<DB>`, so popping drops the last reference and closes the RocksDB —
@@ -131,31 +185,46 @@ impl DirHashDbCache {
                 .map_err(|e| OxenError::LockPoisoned(format!("dir_hash_db LRU: {e}").into()))?;
             handles.pop(&path);
         }
+        {
+            let mut writers = self.writers.write().map_err(|e| {
+                OxenError::LockPoisoned(format!("dir_hash_db writer LRU: {e}").into())
+            })?;
+            writers.pop(&path);
+        }
 
         operation()
     }
 
-    /// Remove any cached handles whose on-disk path starts with `prefix`. Takes only the LRU's
-    /// write lock — does not take `rebuild_barrier`. Callers that need the rebuild guarantee
-    /// should go through [`Self::with_entry_evicted`] instead.
+    /// Remove any cached handles (read-only and writable) whose on-disk path starts with
+    /// `prefix`. Takes only the LRU write locks — does not take `rebuild_barrier`. Callers
+    /// that need the rebuild guarantee should go through [`Self::with_entry_evicted`].
     fn evict_prefix(&self, prefix: &Path) -> Result<(), OxenError> {
-        let mut instances = self
-            .handles
-            .write()
-            .map_err(|e| OxenError::LockPoisoned(format!("dir_hash_db LRU: {e}").into()))?;
-
-        let dbs_to_remove = instances
-            .iter()
-            .filter(|(key, _)| key.starts_with(prefix))
-            .map(|(key, _)| key.clone())
-            .collect::<Vec<_>>();
-
-        for db in dbs_to_remove {
-            let _ = instances.pop(&db);
-        }
-
+        evict_prefix_from(&self.handles, prefix, "dir_hash_db LRU")?;
+        evict_prefix_from(&self.writers, prefix, "dir_hash_db writer LRU")?;
         Ok(())
     }
+}
+
+fn evict_prefix_from<V>(
+    cache: &RwLock<LruCache<PathBuf, V>>,
+    prefix: &Path,
+    label: &str,
+) -> Result<(), OxenError> {
+    let mut instances = cache
+        .write()
+        .map_err(|e| OxenError::LockPoisoned(format!("{label}: {e}").into()))?;
+
+    let dbs_to_remove = instances
+        .iter()
+        .filter(|(key, _)| key.starts_with(prefix))
+        .map(|(key, _)| key.clone())
+        .collect::<Vec<_>>();
+
+    for db in dbs_to_remove {
+        let _ = instances.pop(&db);
+    }
+
+    Ok(())
 }
 
 // Commit db is the directories per commit
@@ -185,13 +254,29 @@ pub fn remove_from_cache_with_children(db_path_prefix: impl AsRef<Path>) -> Resu
 
 pub fn with_dir_hash_db_manager<F, T>(
     repository: &LocalRepository,
-    commit_id: &String,
+    commit_id: &str,
     operation: F,
 ) -> Result<T, OxenError>
 where
     F: FnOnce(&DBWithThreadMode<MultiThreaded>) -> Result<T, OxenError>,
 {
     CACHE.with_reader(repository, commit_id, operation)
+}
+
+/// Run `operation` against a cached writable dir_hash_db handle for `commit_id`.
+///
+/// Concurrent in-process callers serialize on the inner `RwLock`, so multiple writers
+/// targeting the same commit never collide on RocksDB's on-disk `LOCK` file. Writers
+/// targeting different commits or different repos are not blocked.
+pub fn with_dir_hash_db_writer<F, T>(
+    repository: &LocalRepository,
+    commit_id: &str,
+    operation: F,
+) -> Result<T, OxenError>
+where
+    F: FnOnce(&DBWithThreadMode<SingleThreaded>) -> Result<T, OxenError>,
+{
+    CACHE.with_writer(repository, commit_id, operation)
 }
 
 /// Run `operation` with `commit_id`'s entry evicted from the dir_hash_db cache.
@@ -211,4 +296,57 @@ where
     F: FnOnce() -> Result<R, OxenError>,
 {
     CACHE.with_entry_evicted(repo, commit_id, operation)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
+    use crate::core::db::key_val::str_val_db;
+    use crate::error::OxenError;
+    use crate::repositories;
+    use crate::test;
+
+    /// Regression for the "lock hold by current process" RocksDB error: concurrent in-process
+    /// writers targeting the same commit's `dir_hash_db` must not race on the on-disk `LOCK`.
+    /// `with_dir_hash_db_writer` serializes them via the cached handle's inner `RwLock`. If a
+    /// future change goes back to opening the DB directly, simultaneous opens collide and at
+    /// least one of these threads errors out.
+    #[tokio::test]
+    async fn test_concurrent_writers_share_cached_handle() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let commit_id = repositories::commits::head_commit(&repo)?.id;
+
+            const N: usize = 8;
+            let start = Arc::new(Barrier::new(N));
+            let handles: Vec<_> = (0..N)
+                .map(|i| {
+                    let repo = repo.clone();
+                    let commit_id = commit_id.clone();
+                    let start = Arc::clone(&start);
+                    thread::spawn(move || -> Result<(), OxenError> {
+                        start.wait();
+                        super::with_dir_hash_db_writer(&repo, &commit_id, |db| {
+                            str_val_db::put(db, format!("k{i}"), &format!("v{i}"))
+                        })
+                    })
+                })
+                .collect();
+
+            for h in handles {
+                h.join().expect("writer thread panicked")?;
+            }
+
+            // Confirm every writer's value actually landed.
+            super::with_dir_hash_db_manager(&repo, &commit_id, |db| {
+                for i in 0..N {
+                    let got: Option<String> = str_val_db::get(db, format!("k{i}"))?;
+                    assert_eq!(got.as_deref(), Some(&*format!("v{i}")));
+                }
+                Ok(())
+            })
+        })
+        .await
+    }
 }

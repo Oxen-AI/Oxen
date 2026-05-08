@@ -4,16 +4,16 @@ use std::path::{Path, PathBuf};
 use std::str;
 
 use glob::Pattern;
-use rocksdb::{DBWithThreadMode, MultiThreaded, SingleThreaded};
+use rocksdb::{DBWithThreadMode, MultiThreaded};
 use time::OffsetDateTime;
 
 use crate::config::UserConfig;
 use crate::constants::COMMIT_COUNT_DIR;
 use crate::core;
-use crate::core::db::key_val::{opts, str_val_db};
+use crate::core::db::dir_hashes::dir_hashes_db::with_dir_hash_db_writer;
+use crate::core::db::key_val::str_val_db;
 use crate::core::db::merkle_node::MerkleNodeDB;
 use crate::core::refs::with_ref_manager;
-use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::commit_node::CommitNodeOpts;
 use crate::model::merkle_tree::node::dir_node::DirNodeOpts;
@@ -376,11 +376,9 @@ pub fn create_initial_commit(
 
     // Initialize the dir_hash_db with the root directory hash
     let commit_id_string = commit_id.to_string();
-    let dir_hash_db_path =
-        CommitMerkleTree::dir_hash_db_path_from_commit_id(repo, &commit_id_string);
-    let dir_hash_db: DBWithThreadMode<SingleThreaded> =
-        DBWithThreadMode::open(&opts::default(), dunce::simplified(&dir_hash_db_path))?;
-    str_val_db::put(&dir_hash_db, "", &dir_node.hash().to_string())?;
+    with_dir_hash_db_writer(repo, &commit_id_string, |dir_hash_db| {
+        str_val_db::put(dir_hash_db, "", &dir_node.hash().to_string())
+    })?;
 
     // Create the branch pointing to this commit
     with_ref_manager(repo, |manager| {
