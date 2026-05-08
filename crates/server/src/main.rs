@@ -540,7 +540,13 @@ async fn start(
     }
     log::info!("Syncing to directory: {}", sync_dir.display());
 
-    HttpServer::new(move || {
+    // Actix handles SIGTERM/SIGINT/SIGQUIT by default and drains in-flight
+    // requests within `shutdown_timeout`. We cap that here so that, after
+    // `.run().await` returns, there is still time to perform other cleanup
+    // operations before a supervisor force-kills the process.
+    const ACTIX_SHUTDOWN_TIMEOUT_SECS: u64 = 30;
+
+    let server_result = HttpServer::new(move || {
         App::new()
             .app_data(data.clone())
             .route(
@@ -583,8 +589,15 @@ async fn start(
             .wrap(TracingLogger::default())
     })
     .bind((host.to_owned(), port))?
+    .shutdown_timeout(ACTIX_SHUTDOWN_TIMEOUT_SECS)
     .run()
-    .await
+    .await;
+
+    log::info!("HTTP server stopped — flushing DuckDB connection cache");
+    liboxen::core::db::data_frames::df_db::flush_all_df_db_connections();
+    log::info!("DuckDB connection cache flushed — exiting");
+
+    server_result
 }
 
 /// Creates the user and returns their auth token.
