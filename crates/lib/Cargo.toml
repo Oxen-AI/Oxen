@@ -156,6 +156,10 @@ name = "add"
 harness = false
 
 [[bench]]
+name = "df_db_flush"
+harness = false
+
+[[bench]]
 name = "download"
 harness = false
 required-features = ["test-utils"]
