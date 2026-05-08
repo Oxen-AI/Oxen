@@ -10,7 +10,7 @@ use utoipa::ToSchema;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, ToSchema)]
 pub struct StorageOpts {
-    pub type_: String,
+    pub kind: String,
     pub local_storage_opts: Option<LocalStorageOpts>,
     pub s3_opts: Option<S3Opts>,
 }
@@ -20,12 +20,12 @@ impl StorageOpts {
         repo: &LocalRepository,
         config: &StorageConfig,
     ) -> Result<StorageOpts, OxenError> {
-        match config.type_.as_str() {
+        match config.kind.as_str() {
             "local" => {
                 // Take the version store path from the config if specified
                 // Otherwise, default to the repo hidden dir
-                let version_path = if let Some(path) = config.settings.get("path") {
-                    PathBuf::from(path)
+                let version_path = if let Some(path) = &config.versions_path {
+                    path.clone()
                 } else {
                     let repo_path = util::fs::oxen_hidden_dir(&repo.path);
                     repo_path
@@ -38,39 +38,17 @@ impl StorageOpts {
                 };
 
                 Ok(StorageOpts {
-                    type_: "local".to_string(),
+                    kind: "local".to_string(),
                     local_storage_opts: Some(local_storage_opts),
                     s3_opts: None,
                 })
             }
-            "s3" => {
-                let bucket = config
-                    .settings
-                    .get("bucket")
-                    .ok_or_else(|| OxenError::basic_str("S3 bucket not specified"))?;
-
-                let prefix = config
-                    .settings
-                    .get("prefix")
-                    .cloned()
-                    .unwrap_or_else(|| String::from("versions"));
-
-                log::debug!("Storage backend is in S3 Bucket: {bucket}, Prefix: {prefix}",);
-
-                let s3_opts = S3Opts {
-                    bucket: bucket.to_string(),
-                    prefix: Some(prefix),
-                };
-
-                Ok(StorageOpts {
-                    type_: "s3".to_string(),
-                    local_storage_opts: None,
-                    s3_opts: Some(s3_opts),
-                })
-            }
+            "s3" => Err(OxenError::basic_str(
+                "S3 storage backend cannot be configured via repo config; use server-side configuration",
+            )),
             _ => Err(OxenError::basic_str(format!(
                 "Unsupported async storage type: {}",
-                config.type_
+                config.kind
             ))),
         }
     }
@@ -91,7 +69,7 @@ impl StorageOpts {
         };
 
         StorageOpts {
-            type_: "local".to_string(),
+            kind: "local".to_string(),
             local_storage_opts: Some(local_storage_opts),
             s3_opts: None,
         }
@@ -116,7 +94,7 @@ impl StorageOpts {
                             path: Some(PathBuf::from(storage_path)),
                         });
                         Ok(Some(StorageOpts {
-                            type_: "local".to_string(),
+                            kind: "local".to_string(),
                             local_storage_opts,
                             s3_opts: None,
                         }))
@@ -138,7 +116,7 @@ impl StorageOpts {
                     })?;
 
                     Ok(Some(StorageOpts {
-                        type_: "s3".to_string(),
+                        kind: "s3".to_string(),
                         local_storage_opts: None,
                         s3_opts: Some(S3Opts {
                             bucket: bucket.clone(),

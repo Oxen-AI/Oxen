@@ -70,3 +70,138 @@ impl RepositoryConfig {
         self.vnode_size.unwrap_or(DEFAULT_VNODE_SIZE)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn parse(toml_str: &str) -> RepositoryConfig {
+        toml::from_str(toml_str).expect("test fixture must parse")
+    }
+
+    #[test]
+    fn parses_canonical_storage_section() {
+        let toml = r#"
+            remotes = []
+
+            [storage]
+            kind = "local"
+            versions_path = "/mnt/nfs/customer/.oxen/versions/files"
+        "#;
+        let config = parse(toml);
+        let storage = config.storage.expect("storage section parsed");
+        assert_eq!(storage.kind, "local");
+        assert_eq!(
+            storage.versions_path,
+            Some(PathBuf::from("/mnt/nfs/customer/.oxen/versions/files"))
+        );
+    }
+
+    #[test]
+    fn promotes_legacy_settings_path_to_versions_path() {
+        // The pre-rename TOML shape that customers could have on disk:
+        // `[storage] type = "local"` plus `[storage.settings] path = "..."`.
+        // The custom Deserialize ignores the legacy `type` key (kind defaults
+        // to "local") and promotes `settings.path` into `versions_path`.
+        let toml = r#"
+            remotes = []
+
+            [storage]
+            type = "local"
+
+            [storage.settings]
+            path = "/mnt/nfs/customer/.oxen/versions/files"
+        "#;
+        let config = parse(toml);
+        let storage = config.storage.expect("legacy storage section parsed");
+        assert_eq!(storage.kind, "local");
+        assert_eq!(
+            storage.versions_path,
+            Some(PathBuf::from("/mnt/nfs/customer/.oxen/versions/files"))
+        );
+    }
+
+    #[test]
+    fn legacy_config_round_trips_into_canonical_shape() {
+        // After load+save, the legacy `[storage.settings]` subtable disappears
+        // and `versions_path` shows up in `[storage]`.
+        let legacy = r#"
+            remotes = []
+
+            [storage]
+            type = "local"
+
+            [storage.settings]
+            path = "/mnt/nfs/customer/.oxen/versions/files"
+        "#;
+        let config = parse(legacy);
+        let serialized = toml::to_string(&config).expect("re-serialize");
+
+        assert!(
+            serialized.contains("kind = \"local\""),
+            "expected canonical `kind` key in:\n{serialized}"
+        );
+        assert!(
+            serialized.contains("versions_path = \"/mnt/nfs/customer/.oxen/versions/files\""),
+            "expected promoted `versions_path` in:\n{serialized}"
+        );
+        assert!(
+            !serialized.contains("[storage.settings]"),
+            "legacy subtable must not be re-emitted; got:\n{serialized}"
+        );
+        assert!(
+            !serialized.contains("type ="),
+            "legacy `type` key must not be re-emitted; got:\n{serialized}"
+        );
+    }
+
+    #[test]
+    fn top_level_versions_path_wins_over_legacy_settings_path() {
+        let toml = r#"
+            remotes = []
+
+            [storage]
+            kind = "local"
+            versions_path = "/preferred/path"
+
+            [storage.settings]
+            path = "/should/be/ignored"
+        "#;
+        let config = parse(toml);
+        let storage = config.storage.expect("storage section parsed");
+        assert_eq!(
+            storage.versions_path,
+            Some(PathBuf::from("/preferred/path"))
+        );
+    }
+
+    #[test]
+    fn missing_storage_section_stays_none() {
+        let toml = r#"
+            remotes = []
+        "#;
+        let config = parse(toml);
+        assert!(config.storage.is_none());
+    }
+
+    #[test]
+    fn storage_section_without_versions_path_serializes_kind_only() {
+        let toml = r#"
+            remotes = []
+
+            [storage]
+            kind = "local"
+        "#;
+        let config = parse(toml);
+        let serialized = toml::to_string(&config).expect("re-serialize");
+        assert!(
+            serialized.contains("kind = \"local\""),
+            "expected `kind` in:\n{serialized}"
+        );
+        assert!(
+            !serialized.contains("versions_path"),
+            "absent versions_path must be skipped on serialize; got:\n{serialized}"
+        );
+    }
+}

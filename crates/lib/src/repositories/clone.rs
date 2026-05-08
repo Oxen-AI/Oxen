@@ -62,7 +62,7 @@ async fn clone_remote(opts: &CloneOpts) -> Result<LocalRepository, OxenError> {
         opts.fetch_opts.subtree_paths,
         opts.fetch_opts.depth,
         opts.fetch_opts.all,
-        opts.storage_opts.type_,
+        opts.storage_opts.kind,
         opts.is_vfs,
         opts.is_remote,
     );

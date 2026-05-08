@@ -310,7 +310,7 @@ impl LocalRepository {
     pub fn save(&self) -> Result<(), OxenError> {
         let config_path = util::fs::config_filepath(&self.path);
 
-        // Determine the current storage type and settings using the trait methods
+        // Determine the current storage kind and versions_path using the trait methods
         let storage = self
             .version_store
             .as_ref()
@@ -321,28 +321,25 @@ impl LocalRepository {
                         let path = settings.get("path").ok_or_else(|| {
                             OxenError::basic_str("Storage settings missing 'path' key")
                         })?;
-                        let storage_path = if util::fs::is_relative_to_dir(
+                        let versions_path = if util::fs::is_relative_to_dir(
                             path,
                             util::fs::oxen_hidden_dir(&self.path),
                         ) {
                             // If path is within .oxen (default location), use the relative path in case the repo was moved
-                            util::fs::path_relative_to_dir(path, &self.path)
-                                .unwrap()
-                                .to_string_lossy()
-                                .into_owned()
+                            util::fs::path_relative_to_dir(path, &self.path).unwrap()
                         } else {
                             // Otherwise, use the absolute path
-                            path.clone()
+                            PathBuf::from(path)
                         };
 
                         Ok(StorageConfig {
-                            type_: store.storage_type().to_string(),
-                            settings: HashMap::from([("path".to_string(), storage_path)]),
+                            kind: store.storage_type().to_string(),
+                            versions_path: Some(versions_path),
                         })
                     }
                     _ => Ok(StorageConfig {
-                        type_: store.storage_type().to_string(),
-                        settings,
+                        kind: store.storage_type().to_string(),
+                        versions_path: None,
                     }),
                 }
             })
