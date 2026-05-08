@@ -191,6 +191,15 @@ pub enum OxenError {
         target_path: PathBufError,
     },
 
+    /// A caller supplied a storage backend kind that isn't recognized.
+    #[error("Unsupported storage kind: {0}")]
+    UnsupportedStorageKind(String),
+
+    /// The S3 version store backend is not yet implemented; admin/server wiring lands in a later
+    /// step of the storage-policy work.
+    #[error("S3 storage backend not yet implemented")]
+    S3BackendNotImplemented,
+
     /// `oxen restore` finished with one or more file-restore failures. Aggregated rather than
     /// fail-fast so the rest of the files can still be restored. The vector should be non-empty.
     #[error("{}", format_restore_failures(failures))]

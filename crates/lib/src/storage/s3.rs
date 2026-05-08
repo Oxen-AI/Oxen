@@ -916,8 +916,8 @@ impl VersionStore for S3VersionStore {
         ))
     }
 
-    fn storage_type(&self) -> &str {
-        "s3"
+    fn storage_kind(&self) -> crate::storage::StorageKind {
+        crate::storage::StorageKind::S3
     }
 
     fn storage_settings(&self) -> HashMap<String, String> {
