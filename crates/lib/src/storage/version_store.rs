@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use tokio::io::AsyncRead;
 use tokio_stream::Stream;
 
@@ -74,15 +74,76 @@ impl LocalFilePath {
     }
 }
 
-/// Configuration for version storage backend
-#[derive(Serialize, Deserialize, Debug, Clone)]
+/// Configuration for version storage backend.
+///
+/// Persisted in each repo's `config.toml` under `[storage]`. On-disk shape:
+///
+/// ```toml
+/// [storage]
+/// kind = "local"
+/// versions_path = "/mnt/nfs/..."   # only when set
+/// ```
+///
+/// A custom [`Deserialize`] impl also accepts the pre-rename layout
+/// (`[storage.settings] path = "..."`) for backwards compatibility: the legacy
+/// value is promoted into `versions_path` on load. Any path — new or legacy — is
+/// re-emitted as `versions_path` in `[storage]`; `[storage.settings]` goes away on
+/// the first save after upgrade.
+#[derive(Serialize, Debug, Clone)]
 pub struct StorageConfig {
-    /// Storage type: "local" or "s3"
-    #[serde(rename = "type")]
-    pub type_: String,
-    /// Backend-specific settings
-    #[serde(default)]
-    pub settings: HashMap<String, String>,
+    pub kind: String,
+    /// For the "local" backend, the directory where version files are stored. If `None`,
+    /// defaults to `<repo>/.oxen/versions/files`. A `.oxen`-prefixed relative path is
+    /// joined with the repo directory at runtime, so repos stay portable if moved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub versions_path: Option<PathBuf>,
+}
+
+fn default_storage_kind() -> String {
+    "local".to_string()
+}
+
+impl<'de> Deserialize<'de> for StorageConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct LegacySettings {
+            #[serde(default)]
+            path: Option<PathBuf>,
+        }
+
+        #[derive(Deserialize)]
+        struct Raw {
+            #[serde(default = "default_storage_kind")]
+            kind: String,
+            #[serde(default)]
+            versions_path: Option<PathBuf>,
+            // Pre-rename location; consumed on load for backwards compatibility,
+            // never re-emitted.
+            #[serde(default)]
+            settings: Option<LegacySettings>,
+        }
+
+        let raw = Raw::deserialize(deserializer)?;
+        let versions_path = raw
+            .versions_path
+            .or_else(|| raw.settings.and_then(|s| s.path));
+        Ok(StorageConfig {
+            kind: raw.kind,
+            versions_path,
+        })
+    }
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            kind: default_storage_kind(),
+            versions_path: None,
+        }
+    }
 }
 
 /// Trait defining operations for version file storage backends
@@ -285,7 +346,7 @@ pub fn create_version_store(
     repo_dir: &Path,
     storage_opts: &StorageOpts,
 ) -> Result<Arc<dyn VersionStore>, OxenError> {
-    match storage_opts.type_.as_str() {
+    match storage_opts.kind.as_str() {
         "local" => {
             let Some(ref local_storage_opts) = storage_opts.local_storage_opts else {
                 return Err(OxenError::basic_str("local storage opts not found"));
@@ -321,7 +382,7 @@ pub fn create_version_store(
         }
         _ => Err(OxenError::basic_str(format!(
             "Unsupported async storage type: {}",
-            storage_opts.type_
+            storage_opts.kind
         ))),
     }
 }

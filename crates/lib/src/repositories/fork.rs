@@ -281,18 +281,13 @@ mod tests {
 
                 let forked_config = RepositoryConfig::from_file(&forked_config_path)?;
                 if let Some(storage) = forked_config.storage {
-                    let storage_path = storage
-                        .settings
-                        .get("path")
-                        .expect("Storage path should exist");
+                    let storage_path = storage.versions_path.expect("Storage path should exist");
                     let expected_path = PathBuf::from(OXEN_HIDDEN_DIR)
                         .join("versions")
-                        .join("files")
-                        .to_string_lossy()
-                        .to_string();
+                        .join("files");
 
                     assert_eq!(
-                        storage_path, &expected_path,
+                        storage_path, expected_path,
                         "Storage path should be default to relative path"
                     );
                 }
