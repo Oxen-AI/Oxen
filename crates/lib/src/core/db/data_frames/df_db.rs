@@ -74,8 +74,7 @@ pub fn remove_df_db_from_cache_with_children(
 /// The cache is held in a `static LazyLock`. Rust does not drop statics at
 /// process exit, so without this call the cached connections never run their
 /// drop-time `close()` and DuckDB's default end-of-session CHECKPOINT never
-/// fires — uncheckpointed work stays in WAL files until the next open, where
-/// it must go through the WAL-recovery path in `get_connection`.
+/// fires — uncheckpointed work stays in WAL files until the next open.
 ///
 /// Skips (with a warning) any connection whose mutex is currently held. The
 /// caller is expected to have stopped its own use of the cache before
@@ -198,13 +197,6 @@ impl DfDBManager {
 }
 
 /// Get a connection to a duckdb database.
-///
-/// If the database has a stale or corrupt WAL file (e.g. from a prior crash or
-/// unclean LRU eviction), this function will attempt to recover by removing the
-/// WAL and retrying. If that still fails the database and WAL files are both
-/// deleted so the caller can re-index from scratch. This is safe because these
-/// DuckDB databases are derived data — they are always re-indexed from the
-/// versioned source files stored in the Oxen version store.
 pub fn get_connection(path: impl AsRef<Path>) -> Result<duckdb::Connection, OxenError> {
     let path = path.as_ref();
     log::debug!("get_connection: Opening new DuckDB connection for path: {path:?}");
@@ -214,52 +206,13 @@ pub fn get_connection(path: impl AsRef<Path>) -> Result<duckdb::Connection, Oxen
         util::fs::create_dir_all(parent)?;
     }
 
-    let wal_path = wal_path_for(path);
-
-    // Happy path — open succeeds on the first try.
-    let initial_err = match duckdb::Connection::open(path) {
-        Ok(conn) => return open_success(conn, path),
-        Err(e) => e,
-    };
-
-    // Only attempt destructive recovery when a WAL file is present on disk.
-    // A WAL file signals a prior unclean shutdown (killed container, OOM, etc.)
-    // where stale or corrupt WAL data is the likely cause of the open failure.
-    // Without a WAL file the failure is something else (permissions, lock held
-    // by another process, etc.) and deleting files would risk data loss.
-    if !wal_path.exists() {
-        log::error!(
-            "get_connection: Failed to open DuckDB at {path:?}: {initial_err}. \
-             No WAL file present — skipping recovery."
-        );
-        return Err(OxenError::from(initial_err));
+    match duckdb::Connection::open(path) {
+        Ok(conn) => open_success(conn, path),
+        Err(e) => {
+            log::error!("get_connection: Failed to open DuckDB at {path:?}: {e}.");
+            Err(OxenError::from(e))
+        }
     }
-
-    // First recovery: remove only the WAL file and retry. A stale or corrupt
-    // WAL (e.g. from a killed container) is the most common failure mode.
-    log::warn!(
-        "get_connection: Failed to open DuckDB at {path:?}: {initial_err}. \
-         WAL file present — attempting recovery by removing it."
-    );
-    remove_file_if_exists(&wal_path);
-
-    if let Ok(conn) = duckdb::Connection::open(path) {
-        log::info!("get_connection: Recovery succeeded after WAL removal for {path:?}");
-        return open_success(conn, path);
-    }
-
-    // Second recovery: WAL removal wasn't enough — the db file is likely
-    // corrupt too. Remove both so the caller can re-index from scratch. This
-    // is safe because these databases are derived from versioned source files
-    // stored in the Oxen version store.
-    log::error!(
-        "get_connection: Retry after WAL removal still failed for {path:?}. \
-         Removing database files so the workspace can be re-indexed."
-    );
-    remove_file_if_exists(path);
-    remove_file_if_exists(&wal_path);
-
-    Err(OxenError::from(initial_err))
 }
 
 /// Flush any leftover WAL from a prior session so it cannot cause replay
@@ -270,22 +223,6 @@ fn open_success(conn: duckdb::Connection, path: &Path) -> Result<duckdb::Connect
     }
     log::info!("get_connection: Successfully opened DuckDB connection for path: {path:?}");
     Ok(conn)
-}
-
-/// Best-effort file removal with error logging.
-fn remove_file_if_exists(path: &Path) {
-    if path.exists()
-        && let Err(e) = std::fs::remove_file(path)
-    {
-        log::error!("get_connection: Failed to remove {path:?}: {e}");
-    }
-}
-
-/// Returns the WAL file path for a given DuckDB database path.
-fn wal_path_for(db_path: &Path) -> PathBuf {
-    let mut wal = db_path.as_os_str().to_owned();
-    wal.push(".wal");
-    PathBuf::from(wal)
 }
 
 /// Create a table in a duckdb database based on an oxen schema.
@@ -1017,10 +954,9 @@ mod tests {
     }
 
     #[test]
-    fn test_get_connection_wal_recovery_removes_wal_and_retries() -> Result<(), OxenError> {
-        // Directly tests the WAL recovery path: create a valid db, plant a WAL
-        // file that makes open() fail, and verify get_connection removes the WAL
-        // and returns a working connection to the original data.
+    fn test_get_connection_preserves_db_and_wal_when_wal_blocks_open() -> Result<(), OxenError> {
+        // A valid database can fail to open for reasons adjacent to WAL
+        // handling. get_connection must not guess that file mutation is safe.
         test::run_empty_dir_test(|data_dir| {
             let db_file = data_dir.join("data.db");
             let wal_file = data_dir.join("data.db.wal");
@@ -1033,51 +969,27 @@ mod tests {
                 conn.execute_batch("CHECKPOINT")?;
             }
 
-            // Disable auto-checkpoint-on-shutdown so DuckDB leaves a real WAL
-            // from database A that we can transplant onto B.
-            let donor_dir = data_dir.join("donor");
-            std::fs::create_dir_all(&donor_dir).expect("create donor dir");
-            let donor_db = donor_dir.join("donor.db");
-            {
-                let conn = duckdb::Connection::open(&donor_db)?;
-                conn.execute_batch("PRAGMA disable_checkpoint_on_shutdown")?;
-                conn.execute("CREATE TABLE donor (x INT)", [])?;
-                conn.execute("INSERT INTO donor VALUES (1)", [])?;
-                // Drop — pragma ensures WAL persists on disk.
-            }
+            // Plant a bad WAL path so this test deterministically exercises
+            // the open-failure path instead of relying on DuckDB's WAL parser
+            // rejecting a particular byte pattern.
+            std::fs::create_dir(&wal_file).expect("create bad WAL path");
+            assert!(
+                wal_file.exists(),
+                "WAL should be planted before get_connection"
+            );
 
-            let donor_wal = donor_dir.join("donor.db.wal");
-            // Plant the donor's WAL onto our target database. This WAL
-            // references a different catalog, which can cause open() to fail
-            // with a WAL replay error. If DuckDB handles it gracefully instead,
-            // get_connection still succeeds — either way the contract holds.
-            if donor_wal.exists() {
-                std::fs::copy(&donor_wal, &wal_file).expect("plant donor WAL");
-                assert!(
-                    wal_file.exists(),
-                    "WAL should be planted before get_connection"
-                );
-            } else {
-                // DuckDB checkpointed despite the pragma — force the scenario
-                // by writing a WAL with enough structure to be attempted.
-                // A 64-byte header that doesn't match the db will cause failure.
-                let fake_wal = vec![0u8; 64];
-                std::fs::write(&wal_file, &fake_wal).expect("write synthetic WAL");
-            }
+            let result = get_connection(&db_file);
+            assert!(result.is_err(), "bad WAL path should fail open");
 
-            let conn = get_connection(&db_file)?;
-
-            // The checkpointed data should survive recovery.
-            let mut stmt = conn.prepare("SELECT val FROM t")?;
-            let val: i64 = stmt.query_row([], |row| row.get(0))?;
-            assert_eq!(val, 99, "checkpointed data should survive WAL recovery");
+            assert!(db_file.exists(), "db file should be preserved");
+            assert!(wal_file.exists(), "WAL path should be preserved");
 
             Ok(())
         })
     }
 
     #[test]
-    fn test_get_connection_removes_db_when_both_corrupt() -> Result<(), OxenError> {
+    fn test_get_connection_preserves_db_and_wal_when_open_fails() -> Result<(), OxenError> {
         test::run_empty_dir_test(|data_dir| {
             let db_file = data_dir.join("data.db");
             let wal_file = data_dir.join("data.db.wal");
@@ -1086,17 +998,16 @@ mod tests {
             std::fs::write(&db_file, b"not a duckdb file").expect("failed to write corrupt db");
             std::fs::write(&wal_file, b"not a wal file").expect("failed to write corrupt WAL");
 
-            // get_connection should fail but clean up both files so the caller
-            // can re-index from scratch.
+            // get_connection should fail and preserve both files. Only callers
+            // with re-index context should decide whether to rebuild.
             let result = get_connection(&db_file);
             assert!(
                 result.is_err(),
                 "should fail when both db and WAL are corrupt"
             );
 
-            // Both files should be cleaned up.
-            assert!(!db_file.exists(), "corrupt db file should be removed");
-            assert!(!wal_file.exists(), "corrupt WAL file should be removed");
+            assert!(db_file.exists(), "corrupt db file should be preserved");
+            assert!(wal_file.exists(), "corrupt WAL file should be preserved");
 
             Ok(())
         })
@@ -1106,8 +1017,7 @@ mod tests {
     fn test_get_connection_does_not_delete_db_without_wal() -> Result<(), OxenError> {
         // P1 regression test: when open() fails for a non-WAL reason (e.g.
         // corrupt db file with no WAL present), get_connection must NOT delete
-        // the database file. Destructive recovery is only appropriate when a
-        // WAL file is present, signaling a prior unclean shutdown.
+        // the database file.
         test::run_empty_dir_test(|data_dir| {
             let db_file = data_dir.join("data.db");
             let wal_file = data_dir.join("data.db.wal");
@@ -1183,13 +1093,6 @@ mod tests {
     }
 
     #[test]
-    fn test_wal_path_for() {
-        let db_path = Path::new("/some/dir/db");
-        let wal = wal_path_for(db_path);
-        assert_eq!(wal, PathBuf::from("/some/dir/db.wal"));
-    }
-
-    #[test]
     fn test_flush_all_df_db_connections_drains_cache_and_checkpoints() -> Result<(), OxenError> {
         // Simulates the server-shutdown path: cached connection has uncheckpointed
         // work, we call flush_all_df_db_connections, and the data must be in the
@@ -1232,8 +1135,7 @@ mod tests {
                 "cache should be empty after flush"
             );
 
-            // Reopen WITHOUT going through recovery (no stale-WAL handling needed
-            // because flush already CHECKPOINTed): data must still be present.
+            // Reopen after flush: data must still be present.
             let conn = duckdb::Connection::open(&db_file)?;
             let count: i64 =
                 conn.query_row(&format!("SELECT COUNT(*) FROM {TABLE_NAME}"), [], |r| {
@@ -1256,7 +1158,7 @@ mod tests {
     }
 
     #[test]
-    fn test_with_df_db_manager_recovers_after_corrupt_wal() -> Result<(), OxenError> {
+    fn test_with_df_db_manager_preserves_files_when_open_fails() -> Result<(), OxenError> {
         test::run_empty_dir_test(|data_dir| {
             let db_file = data_dir.join("data.db");
             let wal_file = data_dir.join("data.db.wal");
@@ -1275,19 +1177,17 @@ mod tests {
             // Evict from cache so the next access creates a fresh connection.
             remove_df_db_from_cache(&db_file)?;
 
-            // Write a corrupt WAL to simulate a container kill.
-            std::fs::write(&wal_file, b"corrupt WAL data").expect("failed to write corrupt WAL");
+            // Use a bad WAL path to force open failure without making
+            // get_connection guess that file mutation is safe.
+            std::fs::create_dir(&wal_file).expect("create bad WAL path");
 
-            // with_df_db_manager should open a new connection (triggering
-            // recovery in get_connection) and the operation should succeed.
-            let exists = with_df_db_manager(&db_file, |manager| {
+            let result = with_df_db_manager(&db_file, |manager| {
                 manager.with_conn(|conn| table_exists(conn, TABLE_NAME))
-            })?;
+            });
 
-            assert!(
-                exists,
-                "table should exist after WAL recovery through with_df_db_manager"
-            );
+            assert!(result.is_err(), "open failure should propagate");
+            assert!(db_file.exists(), "db file should be preserved");
+            assert!(wal_file.exists(), "WAL path should be preserved");
 
             // Clean up cache for other tests.
             remove_df_db_from_cache(&db_file)?;

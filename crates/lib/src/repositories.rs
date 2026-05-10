@@ -337,6 +337,7 @@ pub fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenError> {
     merkle_tree::merkle_tree_node_cache::remove_from_cache(&repo.path)?;
     core::staged::remove_from_cache_with_children(&repo.path)?;
     core::refs::ref_manager::remove_from_cache(&repo.path)?;
+    core::db::data_frames::df_db::remove_df_db_from_cache_with_children(&repo.path)?;
 
     log::debug!("Deleting repo directory: {repo:?}");
     util::fs::remove_dir_all(&repo.path)?;

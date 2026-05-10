@@ -431,6 +431,7 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
     // Clean up caches before deleting the workspace
     merkle_tree::merkle_tree_node_cache::remove_from_cache(&workspace.workspace_repo.path)?;
     core::staged::remove_from_cache(&workspace.workspace_repo.path)?;
+    core::db::data_frames::df_db::remove_df_db_from_cache_with_children(&workspace_dir)?;
     match util::fs::remove_dir_all(&workspace_dir) {
         Ok(_) => log::debug!("workspace::delete removed workspace dir: {workspace_dir:?}"),
         Err(e) => log::error!("workspace::delete error removing workspace dir: {e:?}"),
@@ -447,6 +448,7 @@ pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
 
     // Evict the name index DB handle from cache before removing the directory
     workspace_name_index::remove_from_cache(repo);
+    core::db::data_frames::df_db::remove_df_db_from_cache_with_children(&workspaces_dir)?;
 
     util::fs::remove_dir_all(&workspaces_dir)?;
     Ok(())
@@ -935,6 +937,52 @@ mod tests {
                 "Workspace directory should have no workspace dirs after cleanup"
             );
 
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_workspace_delete_evicts_duckdb_cache() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let test_file = repo.path.join("test.txt");
+            util::fs::write_to_path(&test_file, "Hello")?;
+            repositories::add(&repo, &test_file).await?;
+            let commit = repositories::commit(&repo, "Adding test file")?;
+
+            let workspace = create(&repo, &commit, "cache-test-workspace", true)?;
+            let db_path = workspace
+                .dir()
+                .join(".oxen")
+                .join("mods")
+                .join("duckdb")
+                .join("cached")
+                .join("db");
+
+            crate::core::db::data_frames::df_db::with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| {
+                    conn.execute("CREATE TABLE cache_test (id INTEGER)", [])?;
+                    Ok(())
+                })
+            })?;
+
+            delete(&workspace)?;
+
+            let parent = db_path.parent().expect("db path should have parent");
+            util::fs::create_dir_all(parent)?;
+            let table_exists =
+                crate::core::db::data_frames::df_db::with_df_db_manager(&db_path, |manager| {
+                    manager.with_conn(|conn| {
+                        crate::core::db::data_frames::df_db::table_exists(conn, "cache_test")
+                    })
+                })?;
+
+            assert!(
+                !table_exists,
+                "delete should evict stale DuckDB handles before removing workspace files"
+            );
+
+            crate::core::db::data_frames::df_db::remove_df_db_from_cache(&db_path)?;
             Ok(())
         })
         .await
