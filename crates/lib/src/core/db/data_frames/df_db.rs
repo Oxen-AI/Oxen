@@ -201,10 +201,10 @@ impl DfDBManager {
 ///
 /// If the database has a stale or corrupt WAL file (e.g. from a prior crash or
 /// unclean LRU eviction), this function will attempt to recover by removing the
-/// WAL and retrying. If that still fails the database and WAL files are both
-/// deleted so the caller can re-index from scratch. This is safe because these
-/// DuckDB databases are derived data — they are always re-indexed from the
-/// versioned source files stored in the Oxen version store.
+/// WAL and retrying. If the retry still fails, the error is returned without
+/// touching the database file — open() can fail for reasons unrelated to the
+/// WAL (permissions, lock held by another process, etc.) and the caller is in
+/// a better position to decide whether re-indexing is appropriate.
 pub fn get_connection(path: impl AsRef<Path>) -> Result<duckdb::Connection, OxenError> {
     let path = path.as_ref();
     log::debug!("get_connection: Opening new DuckDB connection for path: {path:?}");
@@ -248,16 +248,10 @@ pub fn get_connection(path: impl AsRef<Path>) -> Result<duckdb::Connection, Oxen
         return open_success(conn, path);
     }
 
-    // Second recovery: WAL removal wasn't enough — the db file is likely
-    // corrupt too. Remove both so the caller can re-index from scratch. This
-    // is safe because these databases are derived from versioned source files
-    // stored in the Oxen version store.
-    log::error!(
-        "get_connection: Retry after WAL removal still failed for {path:?}. \
-         Removing database files so the workspace can be re-indexed."
-    );
-    remove_file_if_exists(path);
-    remove_file_if_exists(&wal_path);
+    // Retry after WAL removal still failed. Don't touch the db file — open()
+    // can fail for reasons unrelated to the WAL (permissions, lock held by
+    // another process, etc.), so leave it intact for the caller to decide.
+    log::error!("get_connection: Retry after WAL removal still failed for {path:?}: {initial_err}");
 
     Err(OxenError::from(initial_err))
 }
@@ -1077,7 +1071,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_connection_removes_db_when_both_corrupt() -> Result<(), OxenError> {
+    fn test_get_connection_preserves_db_when_both_corrupt() -> Result<(), OxenError> {
         test::run_empty_dir_test(|data_dir| {
             let db_file = data_dir.join("data.db");
             let wal_file = data_dir.join("data.db.wal");
@@ -1086,17 +1080,20 @@ mod tests {
             std::fs::write(&db_file, b"not a duckdb file").expect("failed to write corrupt db");
             std::fs::write(&wal_file, b"not a wal file").expect("failed to write corrupt WAL");
 
-            // get_connection should fail but clean up both files so the caller
-            // can re-index from scratch.
+            // get_connection should fail. The WAL is removed as part of the
+            // recovery attempt, but the db file itself must be preserved so
+            // the caller can decide whether to re-index.
             let result = get_connection(&db_file);
             assert!(
                 result.is_err(),
                 "should fail when both db and WAL are corrupt"
             );
 
-            // Both files should be cleaned up.
-            assert!(!db_file.exists(), "corrupt db file should be removed");
-            assert!(!wal_file.exists(), "corrupt WAL file should be removed");
+            assert!(db_file.exists(), "corrupt db file should be preserved");
+            assert!(
+                !wal_file.exists(),
+                "WAL file should have been removed during recovery attempt"
+            );
 
             Ok(())
         })
