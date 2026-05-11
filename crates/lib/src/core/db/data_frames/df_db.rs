@@ -1255,6 +1255,88 @@ mod tests {
         flush_all_df_db_connections();
     }
 
+    /// Proof-of-concept for the LRU-eviction pre-deploy flush trick.
+    ///
+    /// The premise: a cached connection holding uncheckpointed WAL data, when
+    /// evicted by LRU pressure (e.g. inserting `DF_DB_CACHE_SIZE` fresh paths),
+    /// has its last `Arc` dropped → the `Connection` drops → DuckDB's default
+    /// close-time CHECKPOINT runs → WAL contents land in the main db file.
+    ///
+    /// This is what makes the production trick safe: hit `is_indexed` for 100
+    /// fabricated paths against a running server (which has no shutdown-flush
+    /// yet) and every original cached connection gets CHECKPOINTed before the
+    /// deploy SIGTERMs the process.
+    #[test]
+    fn test_lru_eviction_checkpoints_evicted_connection() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|data_dir| {
+            let real_db = data_dir.join("real.db");
+            let real_wal = data_dir.join("real.db.wal");
+
+            // Open via cache and write data. We do NOT set
+            // `disable_checkpoint_on_shutdown` — that would also suppress the
+            // close-time CHECKPOINT we're trying to prove fires on
+            // eviction-drop. DuckDB's WAL auto-checkpoint threshold (default
+            // 16MB) is well above this small insert, so the data lives in WAL
+            // alone after the closure returns.
+            with_df_db_manager(&real_db, |manager| {
+                manager.with_conn(|conn| {
+                    conn.execute(
+                        &format!("CREATE TABLE {TABLE_NAME} (id INTEGER, name VARCHAR)"),
+                        [],
+                    )?;
+                    conn.execute(
+                        &format!("INSERT INTO {TABLE_NAME} VALUES (1, 'data_in_wal')"),
+                        [],
+                    )?;
+                    Ok(())
+                })
+            })?;
+            assert!(
+                real_wal.exists(),
+                "WAL must exist before eviction — small inserts shouldn't trip auto-checkpoint"
+            );
+
+            // Spam `DF_DB_CACHE_SIZE` fresh paths to evict the real entry. The
+            // cap is the LRU bound, so this many unique inserts saturates the
+            // cache regardless of starting occupancy.
+            let dummy_dir = data_dir.join("dummies");
+            std::fs::create_dir_all(&dummy_dir)?;
+            for i in 0..DF_DB_CACHE_SIZE.get() {
+                let dummy = dummy_dir.join(format!("dummy_{i}.db"));
+                with_df_db_manager(&dummy, |_manager| Ok(()))?;
+            }
+
+            // The real entry should have been evicted by now — confirm.
+            assert!(
+                DF_DB_INSTANCES.read().peek(&real_db).is_none(),
+                "real entry should be evicted after saturating the LRU"
+            );
+
+            // If the eviction's drop-time CHECKPOINT did its job, the data is
+            // in the main db file and not just the WAL. Prove it by deleting
+            // any remaining WAL (DuckDB usually cleans it up itself after
+            // CHECKPOINT, but be defensive) and reopening with the raw API
+            // — `duckdb::Connection::open`, NOT our `get_connection` (which
+            // would run its own CHECKPOINT-on-open and mask the result).
+            if real_wal.exists() {
+                std::fs::remove_file(&real_wal)?;
+            }
+            let conn = duckdb::Connection::open(&real_db)?;
+            let val: String = conn.query_row(
+                &format!("SELECT name FROM {TABLE_NAME} WHERE id = 1"),
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(
+                val, "data_in_wal",
+                "row must be readable from main db file alone — proves CHECKPOINT \
+                 ran during eviction-drop"
+            );
+
+            Ok(())
+        })
+    }
+
     #[test]
     fn test_with_df_db_manager_recovers_after_corrupt_wal() -> Result<(), OxenError> {
         test::run_empty_dir_test(|data_dir| {
