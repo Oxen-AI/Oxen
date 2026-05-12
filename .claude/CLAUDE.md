@@ -119,6 +119,8 @@ oxen push origin main               # Push to remote
 - Make sure there's an `OxenError` variant for every error type. Be liberal in wrapping other modules error types, or other specific error types, in a new variant. Use a `Box<>` wrapper for it and have a `#[from]` to derive.
 - `OxenError` is the top-level type for everything. If you need to unify different error types into one, use `OxenError`. These kinds of functions should return `Result<T, OxenError>`
 - Implement proper error propagation through the `?` operator.
+- Never write code that uses `OxenError::Basic` or `OxenError::InternalError`. Do not use their constructor methods either (`OxenError::basic_str` and `OxenError::internal_error`, respectively). These variants are deprecated and will be removed. As a general principle, never encode an error as a string: it throws away valuable structured information about the error, which makes it impossible for a caller to handle the error programmatically. Instead, make a structured error variant of an appropriate error `enum` that describes the error. Include a `#[error("...")]` on the variant to provide a helpful user-facing error message describing the problem and, if applicable, a possible command or procedure the user can perform to fix the error.
+- If making logically related code that all share the same kind of errors, then strongly consider making a unique error `enum` _for that code only_. If that code is called by other code that has a different error enum, then define an explicit `impl From<SourceError> for TargetError` conversion to convert. If that makes the code messy, then make a conversion into `OxenError` and upgrade the calling function to return `OxenError` instead.
 
 # Making Changes
 
