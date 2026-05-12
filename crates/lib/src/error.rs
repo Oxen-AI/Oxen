@@ -292,6 +292,21 @@ pub enum OxenError {
     #[error("{0}")]
     IO(#[from] io::Error),
 
+    /// A `create`-shaped filesystem syscall failed at the given path (e.g. opening with
+    /// `O_CREAT`, creating a directory tree). Carries the underlying [`io::Error`] so
+    /// callers can match on `ErrorKind` (e.g. `AlreadyExists` for `O_EXCL` writers).
+    #[error("Could not create file: {0:?}: {1}")]
+    FileCreate(PathBuf, #[source] io::Error),
+
+    /// A rename syscall failed when moving `src` to `dst`.
+    #[error("Could not rename file from {src:?} to {dst:?}: {source}")]
+    FileRename {
+        src: PathBuf,
+        dst: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+
     /// Encountered when authentication fails. Contains the authentication error message.
     #[error("Authentication failed: {0}")]
     Authentication(StringError),
@@ -770,11 +785,7 @@ impl OxenError {
     }
 
     pub fn file_create_error(path: impl AsRef<Path>, error: std::io::Error) -> OxenError {
-        OxenError::basic_str(format!(
-            "Could not create file: {:?} error {:?}",
-            path.as_ref(),
-            error
-        ))
+        OxenError::FileCreate(path.as_ref().to_path_buf(), error)
     }
 
     pub fn file_open_error(path: impl AsRef<Path>, error: std::io::Error) -> OxenError {
@@ -816,13 +827,13 @@ impl OxenError {
     pub fn file_rename_error(
         src: impl AsRef<Path>,
         dst: impl AsRef<Path>,
-        err: impl std::fmt::Debug,
+        source: std::io::Error,
     ) -> OxenError {
-        OxenError::basic_str(format!(
-            "File rename error: {err:?}\nCould not move from `{:?}` to `{:?}`",
-            src.as_ref(),
-            dst.as_ref()
-        ))
+        OxenError::FileRename {
+            src: src.as_ref().to_path_buf(),
+            dst: dst.as_ref().to_path_buf(),
+            source,
+        }
     }
 
     pub fn cannot_overwrite_files(paths: &[PathBuf]) -> OxenError {
