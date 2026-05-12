@@ -652,9 +652,11 @@ impl OxenError {
     }
 
     /// Returns true for errors that won't change on retry: authentication failures,
-    /// most 4xx HTTP responses, server-confirmed missing version blobs, and resource-
-    /// not-found variants. Retry loops use this to bail out immediately rather than
-    /// paying exponential backoff for a fixed outcome.
+    /// most 4xx HTTP responses, server-confirmed missing version blobs, resource-
+    /// not-found variants, and unrecognized remote response shapes (which signal
+    /// protocol mismatch or a server bug, neither of which retry resolves). Retry
+    /// loops use this to bail out immediately rather than paying exponential
+    /// backoff for a fixed outcome.
     ///
     /// Returns false for 5xx responses, connection errors, and the retryable 4xx
     /// cases (408 Request Timeout, 429 Too Many Requests), all of which can reflect
@@ -669,6 +671,7 @@ impl OxenError {
             OxenError::HTTP(req_err) => req_err.status().is_some_and(is_fatal_http_status),
             OxenError::VersionsMissingOnServer { .. } => true,
             OxenError::VersionStoreDataMissing { .. } => true,
+            OxenError::UnknownRemoteResponseStatus(_) => true,
             _ => false,
         }
     }
@@ -1187,6 +1190,14 @@ mod tests {
         let err = OxenError::VersionsMissingOnServer {
             hashes: vec!["abc".to_string()],
         };
+        assert!(err.is_fatal_for_retry());
+    }
+
+    #[test]
+    fn is_fatal_for_retry_short_circuits_on_unknown_remote_response_status() {
+        // Unrecognized status field indicates protocol mismatch or a server bug —
+        // retrying won't change either.
+        let err = OxenError::UnknownRemoteResponseStatus("not-a-real-status".into());
         assert!(err.is_fatal_for_retry());
     }
 
