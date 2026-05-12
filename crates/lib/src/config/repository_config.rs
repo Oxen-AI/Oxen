@@ -74,6 +74,7 @@ impl RepositoryConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::StorageKind;
     use std::path::PathBuf;
 
     fn parse(toml_str: &str) -> RepositoryConfig {
@@ -91,7 +92,7 @@ mod tests {
         "#;
         let config = parse(toml);
         let storage = config.storage.expect("storage section parsed");
-        assert_eq!(storage.kind, "local");
+        assert_eq!(storage.kind, StorageKind::Local);
         assert_eq!(
             storage.versions_path,
             Some(PathBuf::from("/mnt/nfs/customer/.oxen/versions/files"))
@@ -115,7 +116,7 @@ mod tests {
         "#;
         let config = parse(toml);
         let storage = config.storage.expect("legacy storage section parsed");
-        assert_eq!(storage.kind, "local");
+        assert_eq!(storage.kind, StorageKind::Local);
         assert_eq!(
             storage.versions_path,
             Some(PathBuf::from("/mnt/nfs/customer/.oxen/versions/files"))

@@ -5,8 +5,7 @@ use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
-use crate::opts::StorageOpts;
-use crate::storage::{StorageConfig, VersionStore, create_version_store};
+use crate::storage::{StorageConfig, StorageKind, VersionStore, create_version_store};
 use crate::util;
 use crate::view::RepositoryView;
 
@@ -74,13 +73,9 @@ impl LocalRepository {
             workspaces: config.workspaces,
         };
 
-        // Initialize the version store based on config
-        let storage_opts = if let Some(storage_config) = config.storage {
-            StorageOpts::from_repo_config(&repo, &storage_config)?
-        } else {
-            StorageOpts::from_path(&repo.path, true)
-        };
-        let store = create_version_store(&repo.path, &storage_opts)?;
+        // Initialize the version store from the persisted config (or defaults)
+        let storage_config = config.storage.unwrap_or_default();
+        let store = create_version_store(&repo.path, &storage_config)?;
         repo.version_store = Some(store);
         Ok(repo)
     }
@@ -93,8 +88,8 @@ impl LocalRepository {
         }
     }
 
-    pub fn init_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
-        let store = create_version_store(&self.path, storage_opts)?;
+    pub fn init_version_store(&mut self, config: &StorageConfig) -> Result<(), OxenError> {
+        let store = create_version_store(&self.path, config)?;
         self.version_store = Some(store);
         Ok(())
     }
@@ -102,17 +97,14 @@ impl LocalRepository {
     /// Initialize the default version store
     /// this will be a local storage backend
     pub fn init_default_version_store(&mut self) -> Result<(), OxenError> {
-        let storage_opts = StorageOpts::from_path(&self.path, true);
-
-        // Create and initialize the store
-        let store = create_version_store(&self.path, &storage_opts)?;
+        let store = create_version_store(&self.path, &StorageConfig::default())?;
         self.version_store = Some(store);
         Ok(())
     }
 
     /// Initialize local version store at a new location
-    pub async fn set_version_store(&mut self, storage_opts: &StorageOpts) -> Result<(), OxenError> {
-        let version_store = create_version_store(&self.path, storage_opts)?;
+    pub async fn set_version_store(&mut self, config: &StorageConfig) -> Result<(), OxenError> {
+        let version_store = create_version_store(&self.path, config)?;
         version_store.init().await?;
         self.version_store = Some(version_store);
 
@@ -134,7 +126,7 @@ impl LocalRepository {
     /// To load the repository, use `LocalRepository::from_dir` or `LocalRepository::from_current_dir`
     pub fn new(
         path: impl AsRef<Path>,
-        storage_opts: Option<StorageOpts>,
+        storage_config: Option<StorageConfig>,
     ) -> Result<LocalRepository, OxenError> {
         let mut repo = LocalRepository {
             path: path.as_ref().to_path_buf(),
@@ -153,8 +145,8 @@ impl LocalRepository {
             workspaces: None,
         };
 
-        if let Some(storage_opts) = storage_opts {
-            repo.init_version_store(&storage_opts)?;
+        if let Some(storage_config) = storage_config {
+            repo.init_version_store(&storage_config)?;
         } else {
             repo.init_default_version_store()?;
         }
@@ -165,7 +157,7 @@ impl LocalRepository {
     pub fn new_from_version(
         path: impl AsRef<Path>,
         min_version: impl AsRef<str>,
-        storage_opts: Option<StorageOpts>,
+        storage_config: Option<StorageConfig>,
     ) -> Result<LocalRepository, OxenError> {
         let mut repo = LocalRepository {
             path: path.as_ref().to_path_buf(),
@@ -182,8 +174,8 @@ impl LocalRepository {
             workspaces: None,
         };
 
-        if let Some(storage_opts) = storage_opts {
-            repo.init_version_store(&storage_opts)?;
+        if let Some(storage_config) = storage_config {
+            repo.init_version_store(&storage_config)?;
         } else {
             repo.init_default_version_store()?;
         }
@@ -315,9 +307,10 @@ impl LocalRepository {
             .version_store
             .as_ref()
             .map(|store| -> Result<StorageConfig, OxenError> {
+                let kind = store.storage_kind();
                 let settings = store.storage_settings();
-                match store.storage_type() {
-                    "local" => {
+                match kind {
+                    StorageKind::Local => {
                         let path = settings.get("path").ok_or_else(|| {
                             OxenError::basic_str("Storage settings missing 'path' key")
                         })?;
@@ -333,12 +326,12 @@ impl LocalRepository {
                         };
 
                         Ok(StorageConfig {
-                            kind: store.storage_type().to_string(),
+                            kind,
                             versions_path: Some(versions_path),
                         })
                     }
-                    _ => Ok(StorageConfig {
-                        kind: store.storage_type().to_string(),
+                    StorageKind::S3 => Ok(StorageConfig {
+                        kind,
                         versions_path: None,
                     }),
                 }

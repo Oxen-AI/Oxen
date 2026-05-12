@@ -551,8 +551,8 @@ impl VersionStore for LocalVersionStore {
         Ok(result)
     }
 
-    fn storage_type(&self) -> &str {
-        "local"
+    fn storage_kind(&self) -> crate::storage::StorageKind {
+        crate::storage::StorageKind::Local
     }
 
     fn storage_settings(&self) -> HashMap<String, String> {

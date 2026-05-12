@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
-use crate::opts::StorageOpts;
+use crate::storage::StorageConfig;
 use crate::util;
 
 pub fn init(path: &Path) -> Result<LocalRepository, OxenError> {
@@ -42,10 +42,10 @@ pub fn init_with_version_default(
     Ok(repo)
 }
 
-pub async fn init_with_version_and_storage_opts(
+pub async fn init_with_version_and_storage_config(
     path: &Path,
     version: MinOxenVersion,
-    storage_opts: Option<StorageOpts>,
+    storage_config: Option<StorageConfig>,
 ) -> Result<LocalRepository, OxenError> {
     let hidden_dir = util::fs::oxen_hidden_dir(path);
 
@@ -55,7 +55,7 @@ pub async fn init_with_version_and_storage_opts(
         return Err(OxenError::basic_str(err));
     }
 
-    let repo = LocalRepository::new_from_version(path, version.to_string(), storage_opts)?;
+    let repo = LocalRepository::new_from_version(path, version.to_string(), storage_config)?;
     repo.save()?;
 
     let version_store = repo.version_store()?;
