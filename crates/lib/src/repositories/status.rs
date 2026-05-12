@@ -138,7 +138,7 @@ mod tests {
             let head_node = repositories::tree::get_node_by_path(&repo, &commit, "hello.txt")?
                 .expect("hello.txt must be in HEAD's tree");
             let blob_hash = head_node.hash.to_string();
-            let version_store = repo.version_store()?;
+            let version_store = repo.version_store();
             let blob_path = version_store.get_version_path(&blob_hash).await?;
             assert!(blob_path.exists());
             util::fs::remove_file(&*blob_path)?;

@@ -26,7 +26,7 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
     }
 
     // Get the version store from the repository
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
 
     let paths = opts.paths;
     log::debug!("restore::restore got {:?} paths", paths.len());

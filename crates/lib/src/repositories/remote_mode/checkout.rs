@@ -50,7 +50,7 @@ pub async fn create_checkout(
     )?
     .unwrap();
 
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     for (path, node) in partial_nodes {
         let full_path = repo.path.join(&path);
 

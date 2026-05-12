@@ -102,7 +102,7 @@ pub async fn add_with_opts(
         expanded_paths,
         local_repo
             .clone()
-            .map(|local| LocalOrBase::Local(local.clone()))
+            .map(|local| LocalOrBase::Local(Box::new(local.clone())))
             .as_ref(),
         update_timestamp,
     )

@@ -240,7 +240,7 @@ pub async fn checkout_subtrees(
 
         let parent_path = subtree_path.parent().unwrap_or(Path::new(""));
         let mut hashes = CheckoutHashes::from_hashes(shared_hashes);
-        let version_store = repo.version_store()?;
+        let version_store = repo.version_store();
 
         let results = walk_target_tree(
             repo,
@@ -380,7 +380,7 @@ pub async fn set_working_repo_to_commit(
     };
 
     let mut hashes = CheckoutHashes::from_hashes(shared_hashes);
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
 
     log::debug!("walk_target_tree");
     // Restore files present in the target commit
@@ -443,7 +443,7 @@ async fn cleanup_removed_files(
 
     // If in remote mode, need to store committed paths before removal
     if repo.is_remote_mode() {
-        let version_store = repo.version_store()?;
+        let version_store = repo.version_store();
         for (hash, full_path) in candidates.files_to_store {
             log::debug!("Storing hash {hash:?} and path {full_path:?}");
             let file = tokio::fs::File::open(&full_path).await?;
@@ -599,7 +599,7 @@ async fn apply_dir_replacements(
         return Ok(());
     }
     let version_store = if repo.is_remote_mode() {
-        Some(repo.version_store()?)
+        Some(repo.version_store())
     } else {
         None
     };

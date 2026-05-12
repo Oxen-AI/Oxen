@@ -933,7 +933,7 @@ async fn walk_paths(
 ) -> Result<WalkOutput, OxenError> {
     let gitignore: Option<Gitignore> = oxenignore::create(repo);
     // Get the version-store handle so walk_status can check existence of version files.
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     let mut total_entries = 0;
     let mut out = WalkOutput::empty();
     for dir in opts.paths.iter() {

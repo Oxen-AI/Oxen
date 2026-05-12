@@ -17,7 +17,7 @@ pub async fn get_version_file_from_commit_id(
     let file_node = repositories::tree::get_file_by_path(repo, &commit, path)?
         .ok_or_else(|| OxenError::entry_does_not_exist_in_commit(path, commit_id))?;
 
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     let hash = file_node.hash().to_string();
     let version_path = version_store.get_version_path(&hash).await?;
     Ok(version_path)

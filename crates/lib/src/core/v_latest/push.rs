@@ -256,7 +256,7 @@ async fn list_and_push_missing_files(
         api::client::commits::list_missing_files(remote_repo, base_commit, &head_commit.id).await?;
 
     if let Some(commit_entry) = missing_files.first() {
-        let version_store = repo.version_store()?;
+        let version_store = repo.version_store();
         if !version_store.version_exists(&commit_entry.hash).await? {
             return Err(OxenError::CannotPushShallowClone {
                 commit_id: head_commit.id.clone(),
@@ -436,7 +436,7 @@ async fn push_commits(
     // for the commits that were fetched. Checking one file per commit is enough:
     // fetch operates at the commit level, so either all or none of a commit's
     // unique files will be present.
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     for (commit, info) in &commits_with_info {
         if let Some(commit_entry) = info.unique_file_hashes.first()
             && !version_store.version_exists(&commit_entry.hash).await?
@@ -618,7 +618,7 @@ async fn chunk_and_send_large_entries(
     for entry in entries.iter() {
         queue.try_push(entry.to_owned()).unwrap();
     }
-    let version_store = local_repo.version_store()?;
+    let version_store = local_repo.version_store();
 
     let worker_count = concurrency::num_threads_for_items(entries.len());
     log::debug!(

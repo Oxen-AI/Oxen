@@ -253,7 +253,7 @@ pub async fn create(
     local_repo.save()?;
 
     // Initialize version store
-    let version_store = local_repo.version_store()?;
+    let version_store = local_repo.version_store();
     version_store.init().await?;
 
     // Create history dir

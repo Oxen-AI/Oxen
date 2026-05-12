@@ -148,7 +148,7 @@ pub async fn checkout_combine<P: AsRef<Path>>(
         .find(|c| c.merge_entry.path == path.as_ref())
     {
         if util::fs::is_tabular(&conflict.base_entry.path) {
-            let version_store = repo.version_store()?;
+            let version_store = repo.version_store();
             let df_base_path = version_store
                 .get_version_path(&conflict.base_entry.hash)
                 .await?;

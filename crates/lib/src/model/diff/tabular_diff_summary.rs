@@ -140,9 +140,7 @@ impl TabularDiffWrapper {
     ) -> Option<DataFrame> {
         match node {
             Some(node) => {
-                let version_store = repo.version_store().expect(
-                    "invariant violation: version store not found in maybe_get_df_from_file_node",
-                );
+                let version_store = repo.version_store();
                 let version_path = version_store
                     .get_version_path(&node.hash().to_string())
                     .await

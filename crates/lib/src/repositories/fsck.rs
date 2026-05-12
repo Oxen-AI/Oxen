@@ -172,7 +172,7 @@ mod tests {
             repositories::add(&repo, &file_path).await?;
             repositories::commit(&repo, "Adding hello.txt")?;
 
-            let version_store = repo.version_store()?;
+            let version_store = repo.version_store();
             let versions = version_store.list_versions().await?;
             assert!(!versions.is_empty());
 
@@ -208,7 +208,7 @@ mod tests {
             repositories::add(&repo, &file_path).await?;
             repositories::commit(&repo, "Adding hello.txt")?;
 
-            let version_store = repo.version_store()?;
+            let version_store = repo.version_store();
             let versions = version_store.list_versions().await?;
             assert!(!versions.is_empty());
 
@@ -244,7 +244,7 @@ mod tests {
             repositories::add(&repo, &file_path).await?;
             repositories::commit(&repo, "Adding hello.txt")?;
 
-            let version_store = repo.version_store()?;
+            let version_store = repo.version_store();
 
             // No corruption on a clean repo
             let result = version_store.clean_corrupted_versions(true).await?;

@@ -1219,7 +1219,7 @@ async fn unpack_entry_tarball_async(
     compressed_data: Vec<u8>,
 ) -> Result<(), OxenError> {
     let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
 
     // Create async gzip decoder and tar archive
     let reader = Cursor::new(compressed_data);

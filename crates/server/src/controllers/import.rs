@@ -536,7 +536,7 @@ mod tests {
 
         let entry =
             repositories::entries::get_file(&repo, &resp.commit, "data/cats_vs_dogs.tsv")?.unwrap();
-        let version_store = repo.version_store()?;
+        let version_store = repo.version_store();
         assert!(
             version_store
                 .version_exists(&entry.hash().to_string())
@@ -603,7 +603,7 @@ mod tests {
             PathBuf::from("notebooks/chat.py"),
         )?
         .unwrap();
-        let version_store = repo.version_store()?;
+        let version_store = repo.version_store();
         assert!(
             version_store
                 .version_exists(&entry.hash().to_string())

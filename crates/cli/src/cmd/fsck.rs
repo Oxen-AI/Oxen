@@ -80,7 +80,7 @@ async fn run_clean(repository: &LocalRepository, args: &ArgMatches) -> Result<()
         println!("Scanning and cleaning corrupted version files...");
     }
 
-    let version_store = repository.version_store()?;
+    let version_store = repository.version_store();
     let result = version_store.clean_corrupted_versions(dry_run).await?;
 
     println!("\nResults:");
