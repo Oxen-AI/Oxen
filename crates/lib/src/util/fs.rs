@@ -240,6 +240,13 @@ impl AtomicTempFile {
     /// filesystem (POSIX `rename` is only atomic when src and dst share a filesystem).
     /// Scratch filename: `<target_basename>.oxentmp.<uuid>`.
     async fn create(target: &Path) -> Result<Self, OxenError> {
+        let target_name = target.file_name().ok_or_else(|| {
+            OxenError::file_create_error(
+                target,
+                std::io::Error::other("target path has no filename component"),
+            )
+        })?;
+
         let parent = target.parent().filter(|p| !p.as_os_str().is_empty());
         if let Some(parent) = parent {
             tokio::fs::create_dir_all(parent)
@@ -248,12 +255,6 @@ impl AtomicTempFile {
         }
         let temp_dir = parent.unwrap_or_else(|| Path::new("."));
 
-        let target_name = target.file_name().ok_or_else(|| {
-            OxenError::file_create_error(
-                target,
-                std::io::Error::other("target path has no filename component"),
-            )
-        })?;
         // `to_string_lossy` only loses information for non-UTF-8 filenames; the UUID
         // suffix keeps the temp name unique regardless of how the prefix renders.
         let temp_name = format!(
@@ -299,11 +300,24 @@ impl AtomicTempFile {
             .await
             .map_err(|err| OxenError::file_rename_error(temp_path, &self.target, err))?;
 
-        if let Some(parent) = self.target.parent().filter(|p| !p.as_os_str().is_empty())
-            && let Ok(dir) = tokio::fs::File::open(parent).await
-            && let Err(err) = dir.sync_all().await
-        {
-            log::warn!("AtomicTempFile::commit: parent fsync failed for {parent:?}: {err}");
+        // Attempt to fsync the parent directory, but don't propagate errors because this is just
+        // an extra precaution, and there are platforms that we know this won't work on.
+        if let Some(parent) = self.target.parent().filter(|p| !p.as_os_str().is_empty()) {
+            match tokio::fs::File::open(parent).await {
+                Ok(dir) => {
+                    // For platforms that don't support fsync on directories, log but don't propagate errors.
+                    if let Err(err) = dir.sync_all().await {
+                        log::warn!(
+                            "AtomicTempFile::commit: parent fsync failed for {parent:?}: {err}"
+                        );
+                    }
+                }
+                // Some platforms (notably Windows) won't even open a directory as a regular
+                // file without special flags. Log but don't propagate errors.
+                Err(err) => log::warn!(
+                    "AtomicTempFile::commit: could not open parent {parent:?} for fsync: {err}"
+                ),
+            }
         }
 
         // Explicit post-rename unlink. We expect `NotFound` (the rename consumed the
