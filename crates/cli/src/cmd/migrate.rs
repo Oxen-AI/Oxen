@@ -2,6 +2,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use clap::{Arg, Command};
+use liboxen::command::migrate::set_zero_pad_hash_dirs_skip_collision_check;
 use liboxen::{error::OxenError, model::LocalRepository};
 
 use crate::cmd::RunCmd;
@@ -22,6 +23,15 @@ pub fn migrate_args(name: &'static str, desc: &'static str) -> Command {
                 .long("all")
                 .short('a')
                 .help("Run the migration for all oxen repositories in this directory")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("skip-collision-check")
+                .long("skip-collision-check")
+                .help(
+                    "Skip the pre-flight collision scan before renaming (zero_pad_hash_dirs only). \
+                     The per-rename safety guard still runs and will hard-fail on any collision.",
+                )
                 .action(clap::ArgAction::SetTrue),
         )
 }
@@ -69,6 +79,8 @@ impl RunCmd for MigrateCmd {
             let path = Path::new(path_str);
 
             let all = sub_matches.get_flag("all");
+            let skip_collision_check = sub_matches.get_flag("skip-collision-check");
+            set_zero_pad_hash_dirs_skip_collision_check(skip_collision_check);
 
             if direction == "up" {
                 let repo = LocalRepository::from_dir(path)?;

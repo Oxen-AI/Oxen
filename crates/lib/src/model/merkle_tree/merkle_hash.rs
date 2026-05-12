@@ -69,10 +69,10 @@ impl TryFrom<String> for MerkleHash {
     }
 }
 
-/// Writes the hash value in hexadecimal format.
+/// Writes the hash value in hexadecimal format. Always writes as a 32-character string.
 impl fmt::Display for MerkleHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:x}", self.0)
+        write!(f, "{:032x}", self.0)
     }
 }
 
@@ -186,5 +186,15 @@ mod tests {
             assert_eq!(prefix.len(), 3);
             assert_eq!(format!("{prefix}{suffix}"), hex.to_string());
         }
+    }
+
+    #[test]
+    fn test_hex_encoding_no_precision_loss() {
+        let max_hex_str = format!("{:x}", u128::MAX);
+        assert_eq!(max_hex_str.len(), 32);
+        assert_eq!(
+            max_hex_str,
+            HexHash::new(&MerkleHash::new(u128::MAX)).to_string()
+        )
     }
 }
