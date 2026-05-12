@@ -501,6 +501,17 @@ fn format_download_entries(entries: &[(String, PathBuf)]) -> String {
     out
 }
 
+/// Whether an HTTP status code, if seen on a failed request, indicates the request
+/// won't succeed on retry. 4xx is fatal *except* for 408 (Request Timeout) and 429
+/// (Too Many Requests) — both are conventionally retryable per HTTP semantics.
+fn is_fatal_http_status(status: http::StatusCode) -> bool {
+    if status == http::StatusCode::REQUEST_TIMEOUT || status == http::StatusCode::TOO_MANY_REQUESTS
+    {
+        return false;
+    }
+    status.is_client_error()
+}
+
 /// Multi-line render for [`OxenError::VersionsMissingOnServer`]. Lists each missing hash
 /// so the user can map the failure back to specific blobs.
 fn format_versions_missing_on_server(hashes: &[String]) -> String {
@@ -641,23 +652,21 @@ impl OxenError {
     }
 
     /// Returns true for errors that won't change on retry: authentication failures,
-    /// 4xx HTTP responses, server-confirmed missing version blobs, and resource-
+    /// most 4xx HTTP responses, server-confirmed missing version blobs, and resource-
     /// not-found variants. Retry loops use this to bail out immediately rather than
     /// paying exponential backoff for a fixed outcome.
     ///
-    /// Returns false for 5xx responses and connection errors, which can reflect
-    /// transient infrastructure conditions that resolve on retry.
+    /// Returns false for 5xx responses, connection errors, and the retryable 4xx
+    /// cases (408 Request Timeout, 429 Too Many Requests), all of which can reflect
+    /// transient conditions that resolve on retry.
     pub fn is_fatal_for_retry(&self) -> bool {
         if self.is_auth_error() || self.is_not_found() {
             return true;
         }
         match self {
             OxenError::HttpStatusError { status, .. }
-            | OxenError::HttpDeserializeError { status, .. } => status.is_client_error(),
-            OxenError::HTTP(req_err) => req_err
-                .status()
-                .map(|s| s.is_client_error())
-                .unwrap_or(false),
+            | OxenError::HttpDeserializeError { status, .. } => is_fatal_http_status(*status),
+            OxenError::HTTP(req_err) => req_err.status().is_some_and(is_fatal_http_status),
             OxenError::VersionsMissingOnServer { .. } => true,
             OxenError::VersionStoreDataMissing { .. } => true,
             _ => false,
@@ -1117,12 +1126,25 @@ mod tests {
 
     #[test]
     fn is_fatal_for_retry_short_circuits_on_4xx_http_status_error() {
-        let err = OxenError::HttpStatusError {
+        let make = |status| OxenError::HttpStatusError {
             url: "u".to_string(),
-            status: http::StatusCode::NOT_FOUND,
+            status,
             message: "nope".to_string(),
         };
-        assert!(err.is_fatal_for_retry(), "4xx should be fatal");
+        assert!(
+            make(http::StatusCode::NOT_FOUND).is_fatal_for_retry(),
+            "404 should be fatal"
+        );
+        // 408 (timeout) and 429 (rate limit) are 4xx but retryable per HTTP semantics —
+        // a timed-out request can be re-sent and a rate-limited one should back off.
+        assert!(
+            !make(http::StatusCode::REQUEST_TIMEOUT).is_fatal_for_retry(),
+            "408 should be retryable"
+        );
+        assert!(
+            !make(http::StatusCode::TOO_MANY_REQUESTS).is_fatal_for_retry(),
+            "429 should be retryable"
+        );
     }
 
     #[test]
@@ -1137,21 +1159,26 @@ mod tests {
 
     #[test]
     fn is_fatal_for_retry_classifies_deserialize_error_by_status() {
-        let four_xx = OxenError::HttpDeserializeError {
+        let make = |status| OxenError::HttpDeserializeError {
             url: "u".to_string(),
-            status: http::StatusCode::NOT_FOUND,
+            status,
         };
         assert!(
-            four_xx.is_fatal_for_retry(),
-            "4xx deserialize fail is fatal"
+            make(http::StatusCode::NOT_FOUND).is_fatal_for_retry(),
+            "404 deserialize fail is fatal"
         );
-        let five_xx = OxenError::HttpDeserializeError {
-            url: "u".to_string(),
-            status: http::StatusCode::BAD_GATEWAY,
-        };
         assert!(
-            !five_xx.is_fatal_for_retry(),
+            !make(http::StatusCode::BAD_GATEWAY).is_fatal_for_retry(),
             "5xx deserialize fail (HTML proxy page) is retryable"
+        );
+        // 408 and 429 stay retryable even when the body fails to parse.
+        assert!(
+            !make(http::StatusCode::REQUEST_TIMEOUT).is_fatal_for_retry(),
+            "408 deserialize fail should be retryable"
+        );
+        assert!(
+            !make(http::StatusCode::TOO_MANY_REQUESTS).is_fatal_for_retry(),
+            "429 deserialize fail should be retryable"
         );
     }
 
