@@ -35,12 +35,21 @@ impl RemoteStagedStatus {
         page_num: usize,
         page_size: usize,
     ) -> RemoteStagedStatus {
-        let added_entries: Vec<MetadataEntry> =
-            RemoteStagedStatus::added_to_meta_entry(repo, &staged.staged_files);
-        let modified_entries: Vec<MetadataEntry> =
-            RemoteStagedStatus::modified_to_meta_entry(repo, &staged.staged_files);
-        let removed_entries: Vec<MetadataEntry> =
-            RemoteStagedStatus::removed_to_meta_entry(repo, &staged.staged_files);
+        let added_entries = RemoteStagedStatus::filter_to_meta_entry(
+            repo,
+            &staged.staged_files,
+            StagedEntryStatus::Added,
+        );
+        let modified_entries = RemoteStagedStatus::filter_to_meta_entry(
+            repo,
+            &staged.staged_files,
+            StagedEntryStatus::Modified,
+        );
+        let removed_entries = RemoteStagedStatus::filter_to_meta_entry(
+            repo,
+            &staged.staged_files,
+            StagedEntryStatus::Removed,
+        );
 
         let added_paginated =
             RemoteStagedStatus::paginate_entries(added_entries, page_num, page_size);
@@ -57,41 +66,16 @@ impl RemoteStagedStatus {
         }
     }
 
-    // TODO: These 3 can be consolidated to one function
-    fn added_to_meta_entry(
+    fn filter_to_meta_entry(
         repo: &LocalRepository,
         entries: &HashMap<PathBuf, StagedEntry>,
+        status: StagedEntryStatus,
     ) -> Vec<MetadataEntry> {
-        let filtered_entries: HashMap<PathBuf, StagedEntry> = entries
+        let paths = entries
             .iter()
-            .filter(|(_, entry)| entry.status == StagedEntryStatus::Added)
-            .map(|(path, entry)| (path.clone(), entry.clone()))
-            .collect();
-        RemoteStagedStatus::iter_to_meta_entry(repo, filtered_entries.keys())
-    }
-
-    fn modified_to_meta_entry(
-        repo: &LocalRepository,
-        entries: &HashMap<PathBuf, StagedEntry>,
-    ) -> Vec<MetadataEntry> {
-        let filtered_entries: HashMap<PathBuf, StagedEntry> = entries
-            .iter()
-            .filter(|(_, entry)| entry.status == StagedEntryStatus::Modified)
-            .map(|(path, entry)| (path.clone(), entry.clone()))
-            .collect();
-        RemoteStagedStatus::iter_to_meta_entry(repo, filtered_entries.keys())
-    }
-
-    fn removed_to_meta_entry(
-        repo: &LocalRepository,
-        entries: &HashMap<PathBuf, StagedEntry>,
-    ) -> Vec<MetadataEntry> {
-        let filtered_entries: HashMap<PathBuf, StagedEntry> = entries
-            .iter()
-            .filter(|(_, entry)| entry.status == StagedEntryStatus::Removed)
-            .map(|(path, entry)| (path.clone(), entry.clone()))
-            .collect();
-        RemoteStagedStatus::iter_to_meta_entry(repo, filtered_entries.keys())
+            .filter(|(_, entry)| entry.status == status)
+            .map(|(path, _)| path);
+        RemoteStagedStatus::iter_to_meta_entry(repo, paths)
     }
 
     fn iter_to_meta_entry<'a, I: Iterator<Item = &'a PathBuf>>(
