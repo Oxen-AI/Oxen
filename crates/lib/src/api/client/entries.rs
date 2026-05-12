@@ -803,7 +803,10 @@ pub async fn download_data_from_version_paths(
     while num_retries < total_retries {
         match try_download_data_from_version_paths(remote_repo, content_ids, &dst).await {
             Ok(val) => return Ok(val),
-            Err(OxenError::Authentication(val)) => return Err(OxenError::Authentication(val)),
+            // Short-circuit on errors that won't change on retry (auth failures, 4xx
+            // responses, server-confirmed missing blobs). Without this, a doomed pull
+            // pays the full exponential backoff before surfacing the diagnostic.
+            Err(err) if err.is_fatal_for_retry() => return Err(err),
             Err(err) => {
                 num_retries += 1;
                 // Exponentially back off

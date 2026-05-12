@@ -6,11 +6,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use futures_util::StreamExt;
 use serde::{Deserialize, Deserializer, Serialize};
 use tokio::io::AsyncRead;
 use tokio_stream::Stream;
 
 use crate::constants;
+use crate::constants::MAX_CONCURRENT_VERSION_PROBES;
 use crate::error::OxenError;
 use crate::opts::StorageOpts;
 use crate::storage::{LocalVersionStore, S3VersionStore};
@@ -312,6 +314,39 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// # Arguments
     /// * `hash` - The content hash to check
     async fn version_exists(&self, hash: &str) -> Result<bool, OxenError>;
+
+    /// Returns the subset of `hashes` whose blobs are absent from this store. Used by
+    /// bulk endpoints that need to fail fast on missing content before committing to
+    /// a streaming response.
+    ///
+    /// The default implementation probes each hash with `version_exists` in parallel,
+    /// bounded by `MAX_CONCURRENT_VERSION_PROBES`. Backends with cheaper batch-existence
+    /// primitives (e.g. a future inventory-backed store) may override.
+    ///
+    /// # Arguments
+    /// * `hashes` - The content hashes to check
+    async fn find_missing_versions(&self, hashes: &[String]) -> Result<Vec<String>, OxenError> {
+        if hashes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let max_concurrent = MAX_CONCURRENT_VERSION_PROBES.min(hashes.len());
+
+        let mut probes = futures_util::stream::iter(hashes.iter().cloned())
+            .map(|hash| async move {
+                let exists = self.version_exists(&hash).await?;
+                Ok::<_, OxenError>((hash, exists))
+            })
+            .buffer_unordered(max_concurrent);
+
+        let mut missing = Vec::new();
+        while let Some(result) = probes.next().await {
+            let (hash, exists) = result?;
+            if !exists {
+                missing.push(hash);
+            }
+        }
+        Ok(missing)
+    }
 
     /// Delete a version
     ///

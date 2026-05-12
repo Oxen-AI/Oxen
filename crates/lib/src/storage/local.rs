@@ -643,6 +643,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_find_missing_versions_returns_only_absent_hashes() {
+        let (_temp_dir, store) = setup().await;
+        let present = "aaaa1111aaaa1111";
+        let also_present = "bbbb2222bbbb2222";
+        let absent = "cccc3333cccc3333";
+        store.store_version(present, b"x").await.unwrap();
+        store.store_version(also_present, b"y").await.unwrap();
+
+        let missing = store
+            .find_missing_versions(&[
+                present.to_string(),
+                absent.to_string(),
+                also_present.to_string(),
+            ])
+            .await
+            .unwrap();
+        assert_eq!(missing, vec![absent.to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_find_missing_versions_empty_input_returns_empty() {
+        let (_temp_dir, store) = setup().await;
+        let missing = store.find_missing_versions(&[]).await.unwrap();
+        assert!(missing.is_empty());
+    }
+
+    #[tokio::test]
     async fn test_delete_version() {
         let (_temp_dir, store) = setup().await;
         let hash = "abcdef1234567890";

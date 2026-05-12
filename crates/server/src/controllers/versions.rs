@@ -223,6 +223,24 @@ pub async fn stream_versions_tar_gz(
     file_hashes: Vec<String>,
 ) -> Result<HttpResponse, OxenHttpError> {
     let version_store = repo.version_store()?;
+
+    // Pre-flight existence check before sending response headers. Once we commit to a
+    // 200 streaming response, a missing blob mid-stream truncates the connection and
+    // upstream proxies surface that as a 502 — masking the real cause and triggering
+    // client retries. Verifying every hash up front lets us return a structured 404
+    // listing the missing hashes so the client can fail fast.
+    let missing = version_store.find_missing_versions(&file_hashes).await?;
+    if !missing.is_empty() {
+        log::warn!(
+            "batch_download: {} of {} requested version blob(s) missing on server",
+            missing.len(),
+            file_hashes.len()
+        );
+        return Err(OxenHttpError::InternalOxenError(
+            OxenError::VersionsMissingOnServer { hashes: missing },
+        ));
+    }
+
     let (writer, reader) = tokio::io::duplex(DOWNLOAD_BUFFER_SIZE);
 
     let version_store_clone = version_store.clone();
