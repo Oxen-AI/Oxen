@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::config::repository_config::MerkleStoreKind;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
@@ -28,6 +29,16 @@ pub fn init_with_version_default(
     version: MinOxenVersion,
     is_vfs: bool,
 ) -> Result<LocalRepository, OxenError> {
+    init_with_version_and_merkle_store(path, version, is_vfs, MerkleStoreKind::default())
+}
+
+/// Sync init variant that lets the caller pick the [`MerkleStoreKind`].
+pub fn init_with_version_and_merkle_store(
+    path: &Path,
+    version: MinOxenVersion,
+    is_vfs: bool,
+    merkle_store_kind: MerkleStoreKind,
+) -> Result<LocalRepository, OxenError> {
     let hidden_dir = util::fs::oxen_hidden_dir(path);
 
     util::fs::create_dir_all(hidden_dir)?;
@@ -35,7 +46,13 @@ pub fn init_with_version_default(
         return Err(OxenError::RepoAlreadyExistsAtPath(path.to_path_buf()));
     }
 
-    let repo = LocalRepository::new_from_version(path, version.to_string(), None, is_vfs)?;
+    let repo = LocalRepository::new_from_version_with_merkle_store_kind(
+        path,
+        version.to_string(),
+        None,
+        is_vfs,
+        merkle_store_kind,
+    )?;
     repo.save()?;
 
     Ok(repo)
@@ -47,6 +64,25 @@ pub async fn init_with_version_and_storage_config(
     storage_config: Option<StorageConfig>,
     is_vfs: bool,
 ) -> Result<LocalRepository, OxenError> {
+    init_with_version_storage_and_merkle_store(
+        path,
+        version,
+        storage_config,
+        is_vfs,
+        MerkleStoreKind::default(),
+    )
+    .await
+}
+
+/// Async init variant that lets the caller pick both the [`StorageConfig`] and the
+/// [`MerkleStoreKind`]. Source of truth for the CLI's `oxen init` plumbing.
+pub async fn init_with_version_storage_and_merkle_store(
+    path: &Path,
+    version: MinOxenVersion,
+    storage_config: Option<StorageConfig>,
+    is_vfs: bool,
+    merkle_store_kind: MerkleStoreKind,
+) -> Result<LocalRepository, OxenError> {
     let hidden_dir = util::fs::oxen_hidden_dir(path);
 
     util::fs::create_dir_all(hidden_dir)?;
@@ -54,8 +90,13 @@ pub async fn init_with_version_and_storage_config(
         return Err(OxenError::RepoAlreadyExistsAtPath(path.to_path_buf()));
     }
 
-    let repo =
-        LocalRepository::new_from_version(path, version.to_string(), storage_config, is_vfs)?;
+    let repo = LocalRepository::new_from_version_with_merkle_store_kind(
+        path,
+        version.to_string(),
+        storage_config,
+        is_vfs,
+        merkle_store_kind,
+    )?;
     repo.save()?;
 
     let version_store = repo.version_store();

@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use strum::{Display, EnumIter, EnumString, IntoStaticStr, VariantArray, VariantNames};
+use thiserror::Error;
 use utoipa::ToSchema;
 
 use crate::constants::DEFAULT_VNODE_SIZE;
@@ -8,15 +10,51 @@ use crate::model::{LocalRepository, Remote};
 use crate::storage::StorageConfig;
 use crate::util;
 
+#[derive(Debug, Error)]
+pub enum RepoConfigError {
+    #[error("[RepositoryConfig] Failed to read config: {0}")]
+    Read(Box<OxenError>),
+
+    #[error("[RepositoryConfig] TOML read error: {0}")]
+    TomlDe(#[from] toml::de::Error),
+
+    #[error("[RepositoryConfig] TOML write error: {0}")]
+    TomlSer(#[from] toml::ser::Error),
+
+    #[error("[RepositoryConfig] Failed to write config: {0}")]
+    Write(Box<OxenError>),
+
+    #[error("[RepositoryConfig] Unsupported Merkle store kind: {kind}. Expected one of {tokens:?}.", kind=.0, tokens=<MerkleStoreKind as VariantNames>::VARIANTS)]
+    UnknownMerkeKind(#[from] strum::ParseError),
+}
+
 /// A sort of registry for known [`MerkleStore`] implementations that can be used by [`LocalRepository`].
 /// This enum serves as a configuration option in a repository's `config.toml`
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, ToSchema)]
+#[derive(
+    Serialize,
+    Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    ToSchema,
+    EnumString,
+    EnumIter,
+    VariantNames,
+    VariantArray,
+    Display,
+    IntoStaticStr,
+)]
 // TODO: remove Serialize + Deserialize derives. These are only necessary because `LocalRepository`
 //       requires them. Those bounds will eventually be dropped.
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")] // WARNING!! must mirror serde's `rename_all`
 pub enum MerkleStoreKind {
     /// The [`FileBackend`] store.
     File,
+    /// The [`LmdbBackend`] store.
+    Lmdb,
 }
 
 /// The default is the original custom file format based Merkle tree node storage.
@@ -72,23 +110,38 @@ impl Default for RepositoryConfig {
 }
 
 impl RepositoryConfig {
-    pub fn from_repo(repo: &LocalRepository) -> Result<Self, OxenError> {
-        let path = util::fs::config_filepath(&repo.path);
-        Self::from_file(&path)
+    /// Serialize a repository config as a TOML formatted string.
+    pub fn to_toml(&self) -> Result<String, RepoConfigError> {
+        let toml = toml::to_string(&self)?;
+        Ok(toml)
     }
 
-    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, OxenError> {
-        let contents = util::fs::read_from_path(&path)?;
-        let remote_config: RepositoryConfig = toml::from_str(&contents)?;
+    /// Parse the TOML string as a repository config.
+    pub fn from_toml(toml: &str) -> Result<Self, RepoConfigError> {
+        let remote_config: RepositoryConfig = toml::from_str(toml)?;
         Ok(remote_config)
     }
 
-    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), OxenError> {
-        let toml = toml::to_string(&self)?;
-        util::fs::write_to_path(&path, toml)?;
+    /// Load the repository's config.
+    pub fn from_repo(repo: &LocalRepository) -> Result<Self, RepoConfigError> {
+        Self::from_file(util::fs::config_filepath(&repo.path))
+    }
+
+    /// Load a repository config from a specific file.
+    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, RepoConfigError> {
+        let contents =
+            util::fs::read_from_path(&path).map_err(|e| RepoConfigError::Read(Box::from(e)))?;
+        Self::from_toml(&contents)
+    }
+
+    /// Save a repository config to the specified file.
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), RepoConfigError> {
+        let toml = self.to_toml()?;
+        util::fs::write_to_path(&path, toml).map_err(|e| RepoConfigError::Write(Box::from(e)))?;
         Ok(())
     }
 
+    /// The repository config's virtual node size.
     pub fn vnode_size(&self) -> u64 {
         self.vnode_size.unwrap_or(DEFAULT_VNODE_SIZE)
     }
@@ -226,6 +279,46 @@ mod tests {
         assert!(
             !serialized.contains("versions_path"),
             "absent versions_path must be skipped on serialize; got:\n{serialized}"
+        );
+    }
+
+    macro_rules! toml_merkle {
+        ($kind:expr) => {
+            format!(
+                r#"
+                      remotes = []
+
+                      merkle_store_kind = "{}"
+
+                      [storage]
+                      kind = "local"
+                      versions_path = "/mnt/nfs/customer/.oxen/versions/files"
+                  "#,
+                $kind
+            )
+        };
+    }
+
+    #[test]
+    fn parse_ok_merkle_store() {
+        for kind in <MerkleStoreKind as VariantArray>::VARIANTS {
+            let config = RepositoryConfig::from_toml(&toml_merkle!(kind.to_string()));
+            assert!(
+                config.is_ok(),
+                "Could not handle known Merkle tree store kind ({kind}): {config:?}"
+            );
+            let config = config.unwrap();
+            assert_eq!(&config.merkle_store_kind, kind);
+        }
+    }
+
+    #[test]
+    fn parse_reject_unknown_merkle() {
+        let expect_fail =
+            RepositoryConfig::from_toml(&toml_merkle!("what_is_this_a_center_for_ants"));
+        assert!(
+            expect_fail.is_err(),
+            "expecting to not be able to parse an invalid merkle tree store value"
         );
     }
 }

@@ -14,6 +14,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use tokio::task::JoinError;
 
+use crate::config::repository_config::RepoConfigError;
 use crate::core::db::merkle_node::lmdb::LmdbError;
 use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
 use crate::model::ParsedResource;
@@ -73,6 +74,20 @@ pub enum OxenError {
     /// The [`MerkleStore`] or [`TransportMerkle`] for a [`LocalRepository`] was not initialized before access.
     #[error("Merkle store not initialized")]
     MerkleStoreNotInitialized,
+
+    /// LMDB-backed Merkle store was requested on a repository configured for a
+    /// virtual file system. LMDB requires a real, byte-addressable mmap target
+    /// and does not work on VFS mounts.
+    #[error(
+        "LMDB-backed Merkle store is not supported on virtual file systems. \
+         Either use the file-backed store (the default) or initialize the \
+         repository without --vfs."
+    )]
+    MerkleStoreLmdbNotSupportedOnVfs,
+
+    /// An error stemming from an invalid [`RepositoryConfig`] value encountered during parsing or saving.
+    #[error("{0}")]
+    RepoConfig(#[from] RepoConfigError),
 
     //
     // Remotes
