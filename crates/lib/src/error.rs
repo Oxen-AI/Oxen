@@ -442,6 +442,45 @@ pub enum OxenError {
         source: Box<OxenError>,
     },
 
+    /// An HTTP response from oxen-server arrived with a non-success status and a body
+    /// that parsed as a structured `OxenResponse`. The HTTP status, request URL, and
+    /// human-readable message from the response body are all carried on the variant
+    /// so callers can classify the failure (e.g. 4xx as fatal, 5xx as retryable).
+    #[error("Err status [{status}] from url {url} [{message}]")]
+    HttpStatusError {
+        url: String,
+        status: http::StatusCode,
+        message: String,
+    },
+
+    /// An HTTP response arrived with a non-success status but its body wasn't a
+    /// structured `OxenResponse` — typically because an intermediate proxy returned
+    /// an HTML error page (e.g. a gateway-level 502). Carries the request URL and
+    /// HTTP status so callers can classify the failure even though the body is opaque.
+    #[error("Could not deserialize response from [{url}]\n{status}")]
+    HttpDeserializeError {
+        url: String,
+        status: http::StatusCode,
+    },
+
+    /// The bulk versions download endpoint reported that one or more requested content
+    /// blobs are absent from the server's version store. The full list of missing
+    /// hashes is carried on the variant so the client can surface every missing blob
+    /// to the user in a single error.
+    #[error("{}", format_versions_missing_on_server(hashes))]
+    VersionsMissingOnServer { hashes: Vec<String> },
+
+    /// An `OxenResponse` arrived with `status == "warning"`: the request succeeded but
+    /// the server attached an advisory message.
+    #[error("Remote Warning: {0}")]
+    RemoteWarning(StringError),
+
+    /// An `OxenResponse` arrived with a `status` field that's neither "success",
+    /// "warning", nor "error" — indicating a protocol mismatch between client and
+    /// server, or a server-side bug.
+    #[error("Unknown status [{0}]")]
+    UnknownRemoteResponseStatus(StringError),
+
     // Fallback
     // TODO: remove all uses of `Basic` and replace with specific errors.
     #[error("{0}")]
@@ -458,6 +497,30 @@ fn format_download_entries(entries: &[(String, PathBuf)]) -> String {
     let mut out = format!("Failing batch ({} files):", entries.len());
     for (hash, path) in entries {
         let _ = write!(out, "\n  {} (hash: {hash})", path.display());
+    }
+    out
+}
+
+/// Whether an HTTP status code, if seen on a failed request, indicates the request
+/// won't succeed on retry. 4xx is fatal *except* for 408 (Request Timeout) and 429
+/// (Too Many Requests) — both are conventionally retryable per HTTP semantics.
+fn is_fatal_http_status(status: http::StatusCode) -> bool {
+    if status == http::StatusCode::REQUEST_TIMEOUT || status == http::StatusCode::TOO_MANY_REQUESTS
+    {
+        return false;
+    }
+    status.is_client_error()
+}
+
+/// Multi-line render for [`OxenError::VersionsMissingOnServer`]. Lists each missing hash
+/// so the user can map the failure back to specific blobs.
+fn format_versions_missing_on_server(hashes: &[String]) -> String {
+    let mut out = format!(
+        "Server is missing {} version blob(s) requested in this batch:",
+        hashes.len()
+    );
+    for hash in hashes {
+        let _ = write!(out, "\n  {hash}");
     }
     out
 }
@@ -553,7 +616,7 @@ impl OxenError {
             WorkspaceStagedDbCorrupted { .. } => {
                 "Recreate the workspace: `oxen workspace delete <id>` then re-create it."
             }
-            DownloadBatchExhausted { .. } => {
+            DownloadBatchExhausted { .. } | VersionsMissingOnServer { .. } => {
                 "If a content blob is missing on the server, run `oxen push --missing-files` from a clone with the full local history to repair it."
             }
             _ => return None,
@@ -586,6 +649,31 @@ impl OxenError {
                 | OxenError::WorkspaceNotFound(_)
                 | OxenError::QueryableWorkspaceNotFound
         )
+    }
+
+    /// Returns true for errors that won't change on retry: authentication failures,
+    /// most 4xx HTTP responses, server-confirmed missing version blobs, resource-
+    /// not-found variants, and unrecognized remote response shapes (which signal
+    /// protocol mismatch or a server bug, neither of which retry resolves). Retry
+    /// loops use this to bail out immediately rather than paying exponential
+    /// backoff for a fixed outcome.
+    ///
+    /// Returns false for 5xx responses, connection errors, and the retryable 4xx
+    /// cases (408 Request Timeout, 429 Too Many Requests), all of which can reflect
+    /// transient conditions that resolve on retry.
+    pub fn is_fatal_for_retry(&self) -> bool {
+        if self.is_auth_error() || self.is_not_found() {
+            return true;
+        }
+        match self {
+            OxenError::HttpStatusError { status, .. }
+            | OxenError::HttpDeserializeError { status, .. } => is_fatal_http_status(*status),
+            OxenError::HTTP(req_err) => req_err.status().is_some_and(is_fatal_http_status),
+            OxenError::VersionsMissingOnServer { .. } => true,
+            OxenError::VersionStoreDataMissing { .. } => true,
+            OxenError::UnknownRemoteResponseStatus(_) => true,
+            _ => false,
+        }
     }
 
     //
@@ -1002,5 +1090,129 @@ mod tests {
             source.to_string().contains("file not found"),
             "source chain missing inner message: {source}"
         );
+    }
+
+    #[test]
+    fn http_status_error_display_includes_url_status_and_message() {
+        let err = OxenError::HttpStatusError {
+            url: "https://hub.example.com/api/repos/x/y/versions".to_string(),
+            status: http::StatusCode::NOT_FOUND,
+            message: "Resource not found".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("404"), "missing status: {msg}");
+        assert!(msg.contains("/versions"), "missing url: {msg}");
+        assert!(msg.contains("Resource not found"), "missing message: {msg}");
+    }
+
+    #[test]
+    fn http_deserialize_error_display_includes_url_and_status() {
+        let err = OxenError::HttpDeserializeError {
+            url: "https://hub.example.com/api/repos/x/y/versions".to_string(),
+            status: http::StatusCode::BAD_GATEWAY,
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("502"), "missing status: {msg}");
+        assert!(msg.contains("/versions"), "missing url: {msg}");
+    }
+
+    #[test]
+    fn versions_missing_on_server_display_lists_each_hash() {
+        let err = OxenError::VersionsMissingOnServer {
+            hashes: vec!["abc".to_string(), "def".to_string()],
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("2 version blob"), "missing count: {msg}");
+        assert!(msg.contains("abc"), "missing first hash: {msg}");
+        assert!(msg.contains("def"), "missing second hash: {msg}");
+    }
+
+    #[test]
+    fn is_fatal_for_retry_short_circuits_on_4xx_http_status_error() {
+        let make = |status| OxenError::HttpStatusError {
+            url: "u".to_string(),
+            status,
+            message: "nope".to_string(),
+        };
+        assert!(
+            make(http::StatusCode::NOT_FOUND).is_fatal_for_retry(),
+            "404 should be fatal"
+        );
+        // 408 (timeout) and 429 (rate limit) are 4xx but retryable per HTTP semantics —
+        // a timed-out request can be re-sent and a rate-limited one should back off.
+        assert!(
+            !make(http::StatusCode::REQUEST_TIMEOUT).is_fatal_for_retry(),
+            "408 should be retryable"
+        );
+        assert!(
+            !make(http::StatusCode::TOO_MANY_REQUESTS).is_fatal_for_retry(),
+            "429 should be retryable"
+        );
+    }
+
+    #[test]
+    fn is_fatal_for_retry_retries_on_5xx_http_status_error() {
+        let err = OxenError::HttpStatusError {
+            url: "u".to_string(),
+            status: http::StatusCode::INTERNAL_SERVER_ERROR,
+            message: "blip".to_string(),
+        };
+        assert!(!err.is_fatal_for_retry(), "5xx should be retryable");
+    }
+
+    #[test]
+    fn is_fatal_for_retry_classifies_deserialize_error_by_status() {
+        let make = |status| OxenError::HttpDeserializeError {
+            url: "u".to_string(),
+            status,
+        };
+        assert!(
+            make(http::StatusCode::NOT_FOUND).is_fatal_for_retry(),
+            "404 deserialize fail is fatal"
+        );
+        assert!(
+            !make(http::StatusCode::BAD_GATEWAY).is_fatal_for_retry(),
+            "5xx deserialize fail (HTML proxy page) is retryable"
+        );
+        // 408 and 429 stay retryable even when the body fails to parse.
+        assert!(
+            !make(http::StatusCode::REQUEST_TIMEOUT).is_fatal_for_retry(),
+            "408 deserialize fail should be retryable"
+        );
+        assert!(
+            !make(http::StatusCode::TOO_MANY_REQUESTS).is_fatal_for_retry(),
+            "429 deserialize fail should be retryable"
+        );
+    }
+
+    #[test]
+    fn is_fatal_for_retry_short_circuits_on_versions_missing_on_server() {
+        let err = OxenError::VersionsMissingOnServer {
+            hashes: vec!["abc".to_string()],
+        };
+        assert!(err.is_fatal_for_retry());
+    }
+
+    #[test]
+    fn is_fatal_for_retry_short_circuits_on_unknown_remote_response_status() {
+        // Unrecognized status field indicates protocol mismatch or a server bug —
+        // retrying won't change either.
+        let err = OxenError::UnknownRemoteResponseStatus("not-a-real-status".into());
+        assert!(err.is_fatal_for_retry());
+    }
+
+    #[test]
+    fn is_fatal_for_retry_short_circuits_on_auth_and_not_found() {
+        assert!(OxenError::authentication("nope").is_fatal_for_retry());
+        assert!(OxenError::resource_not_found("path").is_fatal_for_retry());
+    }
+
+    #[test]
+    fn is_fatal_for_retry_keeps_retrying_on_generic_basic_error() {
+        // Untyped errors (e.g. a network timeout flattened to Basic) shouldn't poison
+        // the retry loop — we only short-circuit when we have positive evidence the
+        // request can't succeed.
+        let err = OxenError::Basic(StringError::from("connection reset"));
+        assert!(!err.is_fatal_for_retry());
     }
 }

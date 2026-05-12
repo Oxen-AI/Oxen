@@ -173,6 +173,10 @@ pub const AVG_CHUNK_SIZE: u64 = 1024 * 1024 * 10;
 // Allow up to N concurrent upload tasks
 /// Allow up to N concurrent upload tasks
 pub const MAX_CONCURRENT_UPLOADS: usize = 30;
+/// Cap on parallel `version_exists` probes used when bulk operations need to
+/// check many hashes at once. Sized for network HEAD operations rather than
+/// CPU work, so it's higher than `DEFAULT_NUM_WORKERS`.
+pub const MAX_CONCURRENT_VERSION_PROBES: usize = 32;
 // Limit zip file downloads to batches of size N
 /// Limit zip file downloads to batches of size N
 pub const MAX_ZIP_DOWNLOAD_SIZE: u64 = 1024 * 1024 * 1024; // 1 GB

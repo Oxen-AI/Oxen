@@ -208,7 +208,10 @@ pub async fn download_data_from_version_paths(
     while num_retries < total_retries {
         match try_download_data_from_version_paths(remote_repo, entries, local_repo).await {
             Ok(val) => return Ok(val),
-            Err(OxenError::Authentication(val)) => return Err(OxenError::Authentication(val)),
+            // Short-circuit on errors that won't change on retry (auth failures, 4xx
+            // responses, server-confirmed missing blobs). Without this, a doomed pull
+            // pays the full exponential backoff before surfacing the diagnostic.
+            Err(err) if err.is_fatal_for_retry() => return Err(err),
             Err(err) => {
                 num_retries += 1;
                 // Exponentially back off
@@ -865,6 +868,53 @@ mod tests {
             let version = api::client::versions::get(&remote_repo, result.unwrap().hash).await?;
             assert!(version.is_some());
             assert_eq!(version.unwrap().size, original_file_size);
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    /// When the bulk versions download endpoint is asked for hashes that don't exist
+    /// on the server, the server's pre-flight check returns a structured 404 and the
+    /// client's retry loop short-circuits — instead of paying multiple rounds of
+    /// exponential backoff that won't change the outcome.
+    #[tokio::test]
+    async fn test_bulk_download_short_circuits_on_missing_blob_on_server() -> Result<(), OxenError>
+    {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+            // A well-formed 32-char hex string that can't possibly exist on the server.
+            let bogus_hash = "deadbeefdeadbeefdeadbeefdeadbeef".to_string();
+            let entries = vec![(bogus_hash.clone(), PathBuf::from("does-not-exist.txt"))];
+
+            let result = api::client::versions::download_data_from_version_paths(
+                &remote_repo,
+                &entries,
+                &local_repo,
+            )
+            .await;
+
+            let err = result.expect_err("expected error for missing hash");
+            // The short-circuit returns the underlying fatal error directly — *not*
+            // DownloadBatchExhausted, which is only emitted after the retry loop runs
+            // out of attempts. Seeing DownloadBatchExhausted here would mean the loop
+            // retried on a 4xx and slept its way through backoff.
+            assert!(
+                !matches!(&err, OxenError::DownloadBatchExhausted { .. }),
+                "should have short-circuited on the 4xx instead of exhausting retries: {err:?}"
+            );
+            assert!(
+                err.is_fatal_for_retry(),
+                "missing-blob error should classify as fatal: {err:?}"
+            );
+
+            // The rendered error names the missing hash so the user can map it back to
+            // the broken blob. We assert on the surface message rather than the variant
+            // shape since the server's wire-format may evolve.
+            let rendered = err.to_string();
+            assert!(
+                rendered.contains(&bogus_hash),
+                "error should name the missing hash; got: {rendered}"
+            );
 
             Ok(remote_repo)
         })
