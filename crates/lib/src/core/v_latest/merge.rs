@@ -683,7 +683,7 @@ async fn fast_forward_merge(
         // earlier for an unrelated reason.
         merge_marker::write(repo, &merge_commit.id).await?;
 
-        let version_store = repo.version_store()?;
+        let version_store = repo.version_store();
         for entry in merge_tree_results.entries_to_restore.iter() {
             restore::restore_file(repo, &entry.file_node, &entry.path, &version_store).await?;
         }
@@ -1425,7 +1425,7 @@ pub async fn find_merge_conflicts(
             merge_marker::write(repo, &merge_commits.merge.id).await?;
         }
 
-        let version_store = repo.version_store()?;
+        let version_store = repo.version_store();
         for entry in entries_to_restore.iter() {
             restore::restore_file(repo, &entry.file_node, &entry.path, &version_store).await?;
 

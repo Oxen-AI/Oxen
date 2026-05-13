@@ -396,7 +396,7 @@ impl ChunkShardManager {
 //         entry: &CommitEntry,
 //         csm: &mut ChunkShardManager,
 //     ) -> Result<Vec<u128>, OxenError> {
-//         let version_store = &self.repo.version_store()?;
+//         let version_store = &self.repo.version_store();
 //         let mut read_file = version_store.open_version(&entry.hash)?;
 
 //         // Create a progress bar for larger files

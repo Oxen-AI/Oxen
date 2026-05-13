@@ -592,7 +592,7 @@ pub async fn pull_entries_to_versions_dir(
         return Ok(());
     }
 
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     let missing_entries = get_missing_entries_for_pull(&version_store, entries).await?;
     log::debug!("Pulling {} missing entries", missing_entries.len());
 

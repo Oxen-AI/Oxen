@@ -5,7 +5,7 @@ use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
-use crate::storage::{StorageConfig, StorageKind, VersionStore, create_version_store};
+use crate::storage::{NoopVersionStore, StorageConfig, VersionStore, create_version_store};
 use crate::util;
 use crate::view::RepositoryView;
 
@@ -21,6 +21,16 @@ use utoipa::ToSchema;
 /// once per repo per process via `probe_mtime_drift`.
 static MTIME_TOLERANCE_CACHE: LazyLock<Mutex<HashMap<PathBuf, Duration>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Build the placeholder `version_store` used when a `LocalRepository` arrives via
+/// `Deserialize` (e.g. as part of `Workspace` embedded in a wire response). Real,
+/// constructor-built repositories never use this — they get a `create_version_store`
+/// result wired off `storage_config`. The placeholder errors on every call so a caller
+/// that accidentally reaches for the store on a wire-shape stub gets a loud failure
+/// instead of silent wrong-path operations.
+fn placeholder_version_store() -> Arc<dyn VersionStore> {
+    Arc::new(NoopVersionStore)
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct LocalRepository {
@@ -39,10 +49,19 @@ pub struct LocalRepository {
     pub workspace_name: Option<String>, // ID of the associated workspace for remote mode
     workspaces: Option<Vec<String>>, // List of workspaces for remote mode
 
-    // Skip this field during serialization/deserialization
+    /// Storage backend configuration. Set once at construction and never mutated for the life
+    /// of this `LocalRepository` — the source of truth for which backend `version_store` is.
+    /// Excluded from serde/utoipa so the wire shape isn't a second source of truth (the
+    /// on-disk `config.toml` is). Deserialized stubs get `StorageConfig::default()`.
     #[serde(skip)]
     #[schema(ignore)]
-    version_store: Option<Arc<dyn VersionStore>>,
+    storage_config: StorageConfig,
+    /// Built from `storage_config` at construction. Never replaced. On deserialize this is a
+    /// `NoopVersionStore` placeholder — wire-shape stubs aren't expected to perform real
+    /// storage ops; if a caller reaches for the store anyway, every method errors loudly.
+    #[serde(skip, default = "placeholder_version_store")]
+    #[schema(ignore)]
+    version_store: Arc<dyn VersionStore>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -58,57 +77,33 @@ impl LocalRepository {
         let config_path = util::fs::config_filepath(&path);
         let config = RepositoryConfig::from_file(&config_path)?;
 
-        let mut repo = LocalRepository {
+        let storage_config = config.storage.unwrap_or_default();
+        let version_store = create_version_store(&path, &storage_config)?;
+        Ok(LocalRepository {
             path,
             remote_name: config.remote_name,
             min_version: config.min_version,
             remotes: config.remotes,
             vnode_size: config.vnode_size,
-            subtree_paths: config.subtree_paths.clone(),
+            subtree_paths: config.subtree_paths,
             depth: config.depth,
-            version_store: None,
             vfs: config.vfs,
             remote_mode: config.remote_mode,
             workspace_name: config.workspace_name,
             workspaces: config.workspaces,
-        };
-
-        // Initialize the version store from the persisted config (or defaults)
-        let storage_config = config.storage.unwrap_or_default();
-        let store = create_version_store(&repo.path, &storage_config)?;
-        repo.version_store = Some(store);
-        Ok(repo)
+            storage_config,
+            version_store,
+        })
     }
 
-    /// Get a reference to the version store
-    pub fn version_store(&self) -> Result<Arc<dyn VersionStore>, OxenError> {
-        match &self.version_store {
-            Some(store) => Ok(Arc::clone(store)),
-            None => Err(OxenError::basic_str("Version store not initialized")),
-        }
+    /// Get a reference to the storage configuration this repository was constructed with.
+    pub fn storage_config(&self) -> &StorageConfig {
+        &self.storage_config
     }
 
-    pub fn init_version_store(&mut self, config: &StorageConfig) -> Result<(), OxenError> {
-        let store = create_version_store(&self.path, config)?;
-        self.version_store = Some(store);
-        Ok(())
-    }
-
-    /// Initialize the default version store
-    /// this will be a local storage backend
-    pub fn init_default_version_store(&mut self) -> Result<(), OxenError> {
-        let store = create_version_store(&self.path, &StorageConfig::default())?;
-        self.version_store = Some(store);
-        Ok(())
-    }
-
-    /// Initialize local version store at a new location
-    pub async fn set_version_store(&mut self, config: &StorageConfig) -> Result<(), OxenError> {
-        let version_store = create_version_store(&self.path, config)?;
-        version_store.init().await?;
-        self.version_store = Some(version_store);
-
-        Ok(())
+    /// Get a reference to the version store.
+    pub fn version_store(&self) -> Arc<dyn VersionStore> {
+        Arc::clone(&self.version_store)
     }
 
     /// Load a repository from the current directory
@@ -128,9 +123,11 @@ impl LocalRepository {
         path: impl AsRef<Path>,
         storage_config: Option<StorageConfig>,
     ) -> Result<LocalRepository, OxenError> {
-        let mut repo = LocalRepository {
-            path: path.as_ref().to_path_buf(),
-            // No remotes are set yet
+        let path = path.as_ref().to_path_buf();
+        let storage_config = storage_config.unwrap_or_default();
+        let version_store = create_version_store(&path, &storage_config)?;
+        Ok(LocalRepository {
+            path,
             remotes: vec![],
             remote_name: None,
             // New with a path should default to our current MIN_OXEN_VERSION
@@ -138,19 +135,13 @@ impl LocalRepository {
             vnode_size: None,
             subtree_paths: None,
             depth: None,
-            version_store: None,
             vfs: None,
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
-        };
-
-        if let Some(storage_config) = storage_config {
-            repo.init_version_store(&storage_config)?;
-        } else {
-            repo.init_default_version_store()?;
-        }
-        Ok(repo)
+            storage_config,
+            version_store,
+        })
     }
 
     /// Load an older version of a repository with older oxen core logic
@@ -159,67 +150,66 @@ impl LocalRepository {
         min_version: impl AsRef<str>,
         storage_config: Option<StorageConfig>,
     ) -> Result<LocalRepository, OxenError> {
-        let mut repo = LocalRepository {
-            path: path.as_ref().to_path_buf(),
+        let path = path.as_ref().to_path_buf();
+        let storage_config = storage_config.unwrap_or_default();
+        let version_store = create_version_store(&path, &storage_config)?;
+        Ok(LocalRepository {
+            path,
             remotes: vec![],
             remote_name: None,
             min_version: Some(min_version.as_ref().to_string()),
             vnode_size: None,
             subtree_paths: None,
             depth: None,
-            version_store: None,
             vfs: None,
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
-        };
-
-        if let Some(storage_config) = storage_config {
-            repo.init_version_store(&storage_config)?;
-        } else {
-            repo.init_default_version_store()?;
-        }
-        Ok(repo)
+            storage_config,
+            version_store,
+        })
     }
 
     pub fn from_view(view: RepositoryView) -> Result<LocalRepository, OxenError> {
-        let mut repo = LocalRepository {
-            path: std::env::current_dir()?.join(view.name),
+        let path = std::env::current_dir()?.join(view.name);
+        let storage_config = StorageConfig::default();
+        let version_store = create_version_store(&path, &storage_config)?;
+        Ok(LocalRepository {
+            path,
             remotes: vec![],
             remote_name: None,
             min_version: None,
             vnode_size: None,
             subtree_paths: None,
             depth: None,
-            version_store: None,
             vfs: None,
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
-        };
-
-        repo.init_default_version_store()?;
-        Ok(repo)
+            storage_config,
+            version_store,
+        })
     }
 
     pub fn from_remote(repo: RemoteRepository, path: &Path) -> Result<LocalRepository, OxenError> {
-        let mut local_repo = LocalRepository {
-            path: path.to_owned(),
+        let path = path.to_owned();
+        let storage_config = StorageConfig::default();
+        let version_store = create_version_store(&path, &storage_config)?;
+        Ok(LocalRepository {
+            path,
             remotes: vec![repo.remote],
             remote_name: Some(String::from(constants::DEFAULT_REMOTE_NAME)),
             min_version: None,
             vnode_size: None,
             subtree_paths: None,
             depth: None,
-            version_store: None,
             vfs: None,
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
-        };
-
-        local_repo.init_default_version_store()?;
-        Ok(local_repo)
+            storage_config,
+            version_store,
+        })
     }
 
     pub fn min_version(&self) -> MinOxenVersion {
@@ -302,42 +292,6 @@ impl LocalRepository {
     pub fn save(&self) -> Result<(), OxenError> {
         let config_path = util::fs::config_filepath(&self.path);
 
-        // Determine the current storage kind and versions_path using the trait methods
-        let storage = self
-            .version_store
-            .as_ref()
-            .map(|store| -> Result<StorageConfig, OxenError> {
-                let kind = store.storage_kind();
-                let settings = store.storage_settings();
-                match kind {
-                    StorageKind::Local => {
-                        let path = settings.get("path").ok_or_else(|| {
-                            OxenError::basic_str("Storage settings missing 'path' key")
-                        })?;
-                        let versions_path = if util::fs::is_relative_to_dir(
-                            path,
-                            util::fs::oxen_hidden_dir(&self.path),
-                        ) {
-                            // If path is within .oxen (default location), use the relative path in case the repo was moved
-                            util::fs::path_relative_to_dir(path, &self.path).unwrap()
-                        } else {
-                            // Otherwise, use the absolute path
-                            PathBuf::from(path)
-                        };
-
-                        Ok(StorageConfig {
-                            kind,
-                            versions_path: Some(versions_path),
-                        })
-                    }
-                    StorageKind::S3 => Ok(StorageConfig {
-                        kind,
-                        versions_path: None,
-                    }),
-                }
-            })
-            .transpose()?;
-
         let config = RepositoryConfig {
             remote_name: self.remote_name.clone(),
             remotes: self.remotes.clone(),
@@ -345,7 +299,7 @@ impl LocalRepository {
             depth: self.depth,
             min_version: self.min_version.clone(),
             vnode_size: self.vnode_size,
-            storage,
+            storage: Some(self.storage_config.clone()),
             vfs: self.vfs,
             remote_mode: self.remote_mode,
             workspace_name: self.workspace_name.clone(),
@@ -651,6 +605,7 @@ async fn probe_mtime_drift(probe_dir: &Path) -> Duration {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::time::Duration;
 
     use filetime::FileTime;
@@ -798,6 +753,32 @@ mod tests {
 
         // Can delete previous workspace_name
         repo.delete_workspace(sample_name)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_storage_config_custom_path_round_trip() -> Result<(), OxenError> {
+        // A custom `versions_path` survives save → from_dir. The `.oxen`-prefix join semantics
+        // (relative paths get joined with the repo dir at construction time) preserve the
+        // *configured* value verbatim — only the runtime path passed to `LocalVersionStore`
+        // is joined.
+        use crate::storage::{StorageConfig, StorageKind};
+        let temp_dir = TempDir::new()?;
+        let repo_path = temp_dir.path().to_path_buf();
+        let custom = StorageConfig {
+            kind: StorageKind::Local,
+            versions_path: Some(PathBuf::from("/mnt/nfs/customer/.oxen/versions/files")),
+        };
+        let repo = LocalRepository::new(&repo_path, Some(custom.clone()))?;
+        repo.save()?;
+
+        let reloaded = LocalRepository::from_dir(&repo_path)?;
+        assert_eq!(reloaded.storage_config().kind, StorageKind::Local);
+        assert_eq!(
+            reloaded.storage_config().versions_path,
+            custom.versions_path
+        );
 
         Ok(())
     }

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
@@ -388,9 +387,6 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
 
     /// Which storage backend kind this is.
     fn storage_kind(&self) -> StorageKind;
-
-    /// Get the storage-specific settings
-    fn storage_settings(&self) -> HashMap<String, String>;
 }
 
 /// This only creates a version store struct, it does not initialize it

@@ -1320,7 +1320,7 @@ mod tests {
                 )?
                 .expect("second.txt must be reachable from the second commit's tree");
                 let blob_hash = second_node.hash.to_string();
-                let version_store = cloned_repo.version_store()?;
+                let version_store = cloned_repo.version_store();
                 let blob_path = version_store.get_version_path(&blob_hash).await?;
                 assert!(blob_path.exists(), "blob should be present after clone");
                 util::fs::remove_file(&*blob_path)?;
@@ -2042,7 +2042,7 @@ mod tests {
                     repositories::clone_url(&remote_repo.remote.url, &repo_dir).await?;
 
                 // Verify the clone has version files
-                let version_store = cloned_repo.version_store()?;
+                let version_store = cloned_repo.version_store();
                 let versions = version_store.list_versions().await?;
                 assert!(
                     !versions.is_empty(),

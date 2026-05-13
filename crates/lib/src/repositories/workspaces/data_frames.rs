@@ -1327,7 +1327,7 @@ mod tests {
 
             // Make sure version file is updated
             let entry = repositories::entries::get_commit_entry(&repo, &commit, &path)?.unwrap();
-            let version_store = repo.version_store()?;
+            let version_store = repo.version_store();
             let version_file = version_store.get_version_path(&entry.hash).await?;
             let extension = entry.path.extension().unwrap().to_str().unwrap();
             let data_frame =

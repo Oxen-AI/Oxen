@@ -278,7 +278,7 @@ async fn prune_versions(
     stats: &mut PruneStats,
     dry_run: bool,
 ) -> Result<(), OxenError> {
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
 
     let all_versions = version_store.list_versions().await?;
     stats.versions_scanned = all_versions.len();

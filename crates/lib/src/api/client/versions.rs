@@ -280,7 +280,7 @@ pub async fn try_download_data_from_version_paths(
         let decoder = GzipDecoder::new(buf_reader);
         let mut archive = Archive::new(decoder);
 
-        let version_store = local_repo.version_store()?;
+        let version_store = local_repo.version_store();
         let mut size: u64 = 0;
 
         // Iterate over archive entries and stream them to version store
@@ -546,7 +546,7 @@ pub async fn multipart_batch_upload(
     client: &reqwest::Client,
     files_to_retry: Vec<ErrorFileInfo>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
-    let version_store = local_repo.version_store()?;
+    let version_store = local_repo.version_store();
     let mut form = reqwest::multipart::Form::new();
     let mut err_files: Vec<ErrorFileInfo> = vec![];
 

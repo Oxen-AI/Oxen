@@ -92,7 +92,7 @@ pub async fn get_slice(
         return Ok(response);
     }
     // Read the data frame from the version path
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     let version_path = version_store
         .get_version_path(&file_node.hash().to_string())
         .await?;

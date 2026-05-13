@@ -9,7 +9,6 @@ use aws_sdk_s3::{Client, config::Region, primitives::ByteStream};
 use bytes::Bytes;
 use futures::StreamExt;
 use log;
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::fs::{File, create_dir_all};
@@ -918,13 +917,6 @@ impl VersionStore for S3VersionStore {
 
     fn storage_kind(&self) -> crate::storage::StorageKind {
         crate::storage::StorageKind::S3
-    }
-
-    fn storage_settings(&self) -> HashMap<String, String> {
-        let mut settings = HashMap::new();
-        settings.insert("bucket".to_string(), self.bucket.clone());
-        settings.insert("prefix".to_string(), self.prefix.clone());
-        settings
     }
 }
 

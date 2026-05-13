@@ -58,7 +58,7 @@ pub async fn init_with_version_and_storage_config(
     let repo = LocalRepository::new_from_version(path, version.to_string(), storage_config)?;
     repo.save()?;
 
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     version_store.init().await?;
 
     Ok(repo)

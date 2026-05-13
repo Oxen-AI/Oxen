@@ -237,7 +237,7 @@ pub async fn download_entries_to_repo(
             download_file(remote_repo, &entry, &remote_path, &local_path, revision).await?;
 
             // Save contents to version store
-            let version_store = local_repo.version_store()?;
+            let version_store = local_repo.version_store();
 
             let file_bytes = tokio::fs::read(local_path).await?;
             let hash = util::hasher::hash_buffer(&file_bytes);
@@ -336,7 +336,7 @@ pub async fn pull_large_entry(
     let num_chunks = total_size.div_ceil(chunk_size) as usize;
     let hash = commit_entry.hash.clone();
     let revision = commit_entry.commit_id.clone();
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
 
     let remote_path = remote_path.as_ref();
 

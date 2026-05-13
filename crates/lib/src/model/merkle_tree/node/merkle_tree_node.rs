@@ -475,7 +475,7 @@ impl MerkleTreeNode {
         repo: &LocalRepository,
     ) -> Result<HashSet<MerkleHash>, OxenError> {
         let mut missing_hashes = HashSet::new();
-        let version_store = repo.version_store()?;
+        let version_store = repo.version_store();
         // Todo: parallelize for S3
         for child in &self.children {
             if let EMerkleTreeNode::File(_) = &child.node {

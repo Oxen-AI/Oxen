@@ -114,7 +114,7 @@ pub async fn add<T: AsRef<Path>>(
     }
 
     // Get the version store from the repository
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
 
     // Open the staged db once at the beginning and reuse the connection
     let opts = db::key_val::opts::default();
@@ -288,7 +288,7 @@ pub async fn add_dir_except(
         DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?;
 
     // Get the version store from the repository
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     let gitignore = None;
 
     let repo_path = &repo.path;

@@ -30,7 +30,7 @@ pub async fn clone_repo(
 
     // save LocalRepository in .oxen directory
     let mut local_repo = LocalRepository::from_remote(remote_repo.clone(), repo_path)?;
-    local_repo.version_store()?.init().await?;
+    local_repo.version_store().init().await?;
     repo_path.clone_into(&mut local_repo.path);
     local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
     local_repo.set_min_version(remote_repo.min_version());
@@ -93,7 +93,7 @@ pub async fn clone_repo_remote_mode(
 
     // Save LocalRepository in .oxen directory
     let mut local_repo = LocalRepository::from_remote(remote_repo.clone(), repo_path)?;
-    local_repo.version_store()?.init().await?;
+    local_repo.version_store().init().await?;
     repo_path.clone_into(&mut local_repo.path);
     local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
     local_repo.set_min_version(remote_repo.min_version());
