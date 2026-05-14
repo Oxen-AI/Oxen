@@ -1,11 +1,15 @@
 pub mod merkle_hash;
 pub mod merkle_reader;
+pub mod merkle_transport;
 pub mod merkle_writer;
 pub mod node;
 pub mod node_type;
 
 pub use crate::model::merkle_tree::merkle_hash::MerkleHash;
 pub use crate::model::merkle_tree::merkle_reader::MerkleReader;
+pub use crate::model::merkle_tree::merkle_transport::{
+    MerklePacker, MerkleTransport, MerkleUnpacker, PackOptions, UnpackOptions,
+};
 pub use crate::model::merkle_tree::merkle_writer::MerkleWriter;
 pub use crate::model::merkle_tree::node::merkle_tree_node_cache;
 pub use crate::model::merkle_tree::node_type::{
@@ -25,3 +29,11 @@ pub trait MerkleStore: MerkleReader + MerkleWriter {}
 /// automatically a [`MerkleStore`]. The `?Sized` bound lets the marker apply
 /// to `dyn MerkleStore` itself.
 impl<T: MerkleReader + MerkleWriter + ?Sized> MerkleStore for T {}
+
+/// A [`MerkleStore`] that can also pack and unpack Merkle tree nodes for transport.
+pub trait TransportableMerkleStore: MerkleStore + MerkleTransport {}
+
+/// Any type that is a [`MerkleStore`] and a [`MerkleTransport`] is automatically a
+/// [`TransportableMerkleStore`]. The `?Sized` bound lets the marker apply to
+/// `dyn TransportableMerkleStore` itself.
+impl<T: MerkleStore + MerkleTransport + ?Sized> TransportableMerkleStore for T {}
