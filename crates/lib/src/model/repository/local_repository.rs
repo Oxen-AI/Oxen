@@ -1,8 +1,10 @@
 use crate::config::RepositoryConfig;
 use crate::constants::SHALLOW_FLAG;
 use crate::constants::{self, DEFAULT_VNODE_SIZE, MIN_OXEN_VERSION};
+use crate::core::db::merkle_node::file_backend::FileBackend;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
+use crate::model::merkle_tree::MerkleStore;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
 use crate::storage::{NoopVersionStore, StorageConfig, VersionStore, create_version_store};
@@ -32,6 +34,10 @@ fn placeholder_version_store() -> Arc<dyn VersionStore> {
     Arc::new(NoopVersionStore)
 }
 
+// TODO: A `LocalRepository` shouldn't require serialization.
+// TODO: The `merkle}store` fields should **NOT** be Option. It should be impossible to create a
+//       `LocalRepository` without a `version_store` and `merkle_store`. They're only `Option` beacuse of
+//       the serialization derives, which is unused.
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct LocalRepository {
     #[schema(value_type = String)]
@@ -73,14 +79,14 @@ pub struct LocalRepositoryWithEntries {
 impl LocalRepository {
     /// Create a LocalRepository from a directory
     pub fn from_dir(path: impl AsRef<Path>) -> Result<Self, OxenError> {
-        let path = path.as_ref().to_path_buf();
-        let config_path = util::fs::config_filepath(&path);
+        let path = path.as_ref();
+        let config_path = util::fs::config_filepath(path);
         let config = RepositoryConfig::from_file(&config_path)?;
 
         let storage_config = config.storage.unwrap_or_default();
-        let version_store = create_version_store(&path, &storage_config)?;
+        let version_store = create_version_store(path, &storage_config)?;
         Ok(LocalRepository {
-            path,
+            path: path.to_path_buf(),
             remote_name: config.remote_name,
             min_version: config.min_version,
             remotes: config.remotes,
@@ -99,6 +105,30 @@ impl LocalRepository {
     /// Get a reference to the storage configuration this repository was constructed with.
     pub fn storage_config(&self) -> &StorageConfig {
         &self.storage_config
+    }
+
+    /// Loads the Merkle store for the repository at the specified root path.
+    // NOTE: When new backends (e.g. LMDB) are added, branch on the appropriate config
+    // here and return a `Box::new(<that new backend>)`.
+    #[inline]
+    fn load_merkle_store(repo_path: PathBuf) -> Box<dyn MerkleStore> {
+        // TODO: Add reading config to select Merkle store implementation that
+        //       the repository uses.
+        //       => Right now, the only option is the FileBackend.
+        Box::new(FileBackend { repo_path })
+    }
+
+    /// Obtain the Merkle tree store for this repository.
+    ///
+    /// All operations with the repository's Merkle tree store **MUST** go through its
+    /// `MerkleStore` implementation.
+    ///
+    /// Returns a boxed trait object so the trait surface stays simple and dyn-dispatch
+    /// handles backend selection. Callers use it purely through the trait surface
+    /// (read, write); backend selection is an implementation detail of this method.
+    pub fn merkle_store(&self) -> Box<dyn MerkleStore> {
+        // **self.merkle_store
+        Self::load_merkle_store(self.path.clone())
     }
 
     /// Get a reference to the version store.
