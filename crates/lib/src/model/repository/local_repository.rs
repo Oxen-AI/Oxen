@@ -111,7 +111,7 @@ impl LocalRepository {
     // NOTE: When new backends (e.g. LMDB) are added, branch on the appropriate config
     // here and return a `Box::new(<that new backend>)`.
     #[inline]
-    fn load_merkle_store(repo_path: PathBuf) -> Box<dyn MerkleStore> {
+    fn load_merkle_store(repo_path: PathBuf, _is_vfs: bool) -> Box<dyn MerkleStore> {
         // TODO: Add reading config to select Merkle store implementation that
         //       the repository uses.
         //       => Right now, the only option is the FileBackend.
@@ -128,7 +128,7 @@ impl LocalRepository {
     /// (read, write); backend selection is an implementation detail of this method.
     pub fn merkle_store(&self) -> Box<dyn MerkleStore> {
         // **self.merkle_store
-        Self::load_merkle_store(self.path.clone())
+        Self::load_merkle_store(self.path.clone(), self.is_vfs())
     }
 
     /// Get a reference to the version store.
