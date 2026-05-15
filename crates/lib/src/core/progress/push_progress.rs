@@ -41,6 +41,12 @@ impl PushProgress {
         self.sync_progress.add_bytes(bytes);
     }
 
+    /// Extend the underlying progress bar's total length by `delta`. See
+    /// [`SyncProgress::inc_total_bytes`] for usage notes.
+    pub fn inc_total_bytes(&self, delta: u64) {
+        self.sync_progress.inc_total_bytes(delta);
+    }
+
     pub fn get_num_files(&self) -> u64 {
         self.sync_progress.get_num_files()
     }
