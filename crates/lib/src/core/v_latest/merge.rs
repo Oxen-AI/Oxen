@@ -82,6 +82,9 @@ pub struct MergeConflictAnalysis {
     /// Files added, modified, or deleted on the merge branch (relative to LCA) that should be
     /// applied to the base tree. Each entry carries its `StagedEntryStatus`.
     pub entries: Vec<(PathBuf, FileNode, StagedEntryStatus)>,
+    /// Dir/vnode hashes shared between all three trees (LCA, base, merge). Callers building a
+    /// merge commit use this to skip re-scanning unchanged subtrees.
+    pub shared_hashes: HashSet<MerkleHash>,
 }
 
 pub async fn has_conflicts(
@@ -132,9 +135,7 @@ pub async fn can_merge_commits(
         return Ok(true);
     }
 
-    let mut _hashes = HashSet::new();
-    let analysis =
-        find_merge_conflicts(repo, &merge_commits, LocalCheckout::Absent, &mut _hashes).await?;
+    let analysis = find_merge_conflicts(repo, &merge_commits, LocalCheckout::Absent).await?;
     Ok(analysis.conflicts.is_empty())
 }
 
@@ -203,9 +204,7 @@ pub async fn list_conflicts_between_commits(
         base: base_commit.clone(),
         merge: merge_commit.clone(),
     };
-    let mut _hashes = HashSet::new();
-    let analysis =
-        find_merge_conflicts(repo, &merge_commits, LocalCheckout::Absent, &mut _hashes).await?;
+    let analysis = find_merge_conflicts(repo, &merge_commits, LocalCheckout::Absent).await?;
     Ok(analysis
         .conflicts
         .iter()
@@ -276,14 +275,7 @@ async fn server_three_way_merge(
     );
 
     // 1. Find conflicts and collect merge entries in a single tree traversal
-    let mut shared_hashes = HashSet::new();
-    let analysis = find_merge_conflicts(
-        repo,
-        merge_commits,
-        LocalCheckout::Absent,
-        &mut shared_hashes,
-    )
-    .await?;
+    let analysis = find_merge_conflicts(repo, merge_commits, LocalCheckout::Absent).await?;
 
     if !analysis.conflicts.is_empty() {
         return Err(OxenError::UpstreamMergeConflict(
@@ -959,9 +951,7 @@ async fn merge_commits(
             return server_three_way_merge(repo, merge_commits).await.map(Some);
         }
 
-        let mut shared_hashes = HashSet::new();
-        let analysis =
-            find_merge_conflicts(repo, merge_commits, checkout, &mut shared_hashes).await?;
+        let analysis = find_merge_conflicts(repo, merge_commits, checkout).await?;
 
         if !analysis.conflicts.is_empty() {
             println!(
@@ -991,7 +981,7 @@ Found {} conflicts, please resolve them before merging.
                 with_ref_manager(repo, |manager| manager.set_head_commit_id(&commit.id))?;
                 commit
             } else {
-                create_merge_commit(repo, merge_commits, shared_hashes).await?
+                create_merge_commit(repo, merge_commits, analysis.shared_hashes).await?
             };
             Ok(Some(commit))
         } else {
@@ -1162,7 +1152,6 @@ pub async fn find_merge_conflicts(
     repo: &LocalRepository,
     merge_commits: &MergeCommits,
     checkout: LocalCheckout,
-    shared_hashes: &mut HashSet<MerkleHash>,
 ) -> Result<MergeConflictAnalysis, OxenError> {
     log::debug!("finding merge conflicts");
     let write_to_disk = checkout.writes_to_disk();
@@ -1200,6 +1189,7 @@ pub async fn find_merge_conflicts(
     // Read all the entries from each commit into sets we can compare to one another
     let mut lca_hashes = HashSet::new();
     let mut base_hashes = HashSet::new();
+    let mut shared_hashes = HashSet::new();
 
     // Load in every node from the LCA tree (if there is one)
     let lca_commit_tree = if let Some(lca) = &merge_commits.lca {
@@ -1220,7 +1210,7 @@ pub async fn find_merge_conflicts(
         &merge_commits.base,
         Some(&lca_hashes),
         Some(&mut base_hashes),
-        Some(shared_hashes),
+        Some(&mut shared_hashes),
     )?
     .unwrap();
 
@@ -1233,7 +1223,7 @@ pub async fn find_merge_conflicts(
         &merge_commits.merge,
         Some(&base_hashes),
         None,
-        Some(shared_hashes),
+        Some(&mut shared_hashes),
     )?
     .unwrap();
 
@@ -1256,9 +1246,9 @@ pub async fn find_merge_conflicts(
         HashMap::new()
     };
     let base_entries =
-        repositories::tree::unique_dir_entries(&starting_path, &base_commit_tree, shared_hashes)?;
+        repositories::tree::unique_dir_entries(&starting_path, &base_commit_tree, &shared_hashes)?;
     let merge_tree_entries =
-        repositories::tree::unique_dir_entries(&starting_path, &merge_commit_tree, shared_hashes)?;
+        repositories::tree::unique_dir_entries(&starting_path, &merge_commit_tree, &shared_hashes)?;
 
     log::debug!("lca_entries.len() {}", lca_entries.len());
     log::debug!("base_entries.len() {}", base_entries.len());
@@ -1469,5 +1459,9 @@ pub async fn find_merge_conflicts(
         return Err(OxenError::cannot_overwrite_files(&cannot_overwrite_entries));
     }
 
-    Ok(MergeConflictAnalysis { conflicts, entries })
+    Ok(MergeConflictAnalysis {
+        conflicts,
+        entries,
+        shared_hashes,
+    })
 }
