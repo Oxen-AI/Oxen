@@ -85,7 +85,7 @@ pub async fn create_nodes(
     // Extend the progress bar's total length by the uncompressed bytes on disk for
     // these Merkle tree nodes. The [`CountingWriter`] will update the progress bar
     // each time we write the uncompressed bytes of a Merkle tree node.
-    let estimated_upload_bytes = local_repo.merkle_store().raw_byte_count(&nodes);
+    let estimated_upload_bytes = local_repo.merkle_transport()?.raw_byte_count(&nodes);
     progress.inc_total_bytes(estimated_upload_bytes);
 
     // Pack -> duplex writer (sync) -> duplex reader (async) -> HTTP body stream.
@@ -99,7 +99,7 @@ pub async fn create_nodes(
             inner: SyncIoBridge::new(async_writer),
             progress: progress_for_pack,
         };
-        repo.merkle_store().pack_nodes(
+        repo.merkle_transport()?.pack_nodes(
             &nodes,
             // Legacy client-push wire format: required so older `oxen-server` deployments
             // (which pre-pend `tree/nodes/` server-side at install time) install entries
@@ -387,7 +387,7 @@ async fn node_download_request(
 
     let repo = local_repo.clone();
     tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
-        repo.merkle_store()
+        repo.merkle_transport()?
             // Download path: overwrite existing files on disk
             .unpack(&mut sync_reader, UnpackOptions::Overwrite)?;
         Ok(())
