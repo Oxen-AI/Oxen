@@ -119,6 +119,8 @@ oxen push origin main               # Push to remote
 - Make sure there's an `OxenError` variant for every error type. Be liberal in wrapping other modules error types, or other specific error types, in a new variant. Use a `Box<>` wrapper for it and have a `#[from]` to derive.
 - `OxenError` is the top-level type for everything. If you need to unify different error types into one, use `OxenError`. These kinds of functions should return `Result<T, OxenError>`
 - Implement proper error propagation through the `?` operator.
+- Never write code that uses `OxenError::Basic` or `OxenError::InternalError`. Do not use their constructor methods either (`OxenError::basic_str` and `OxenError::internal_error`, respectively). These variants are deprecated and will be removed. As a general principle, never encode an error as a string: it throws away valuable structured information about the error, which makes it impossible for a caller to handle the error programmatically. Instead, make a structured error variant of an appropriate error `enum` that describes the error. Include a `#[error("...")]` on the variant to provide a helpful user-facing error message describing the problem and, if applicable, a possible command or procedure the user can perform to fix the error.
+- If making logically related code that all share the same kind of errors, then strongly consider making a unique error `enum` _for that code only_. If that code is called by other code that has a different error enum, then define an explicit `impl From<SourceError> for TargetError` conversion to convert. If that makes the code messy, then make a conversion into `OxenError` and upgrade the calling function to return `OxenError` instead.
 
 # Making Changes
 
@@ -127,6 +129,7 @@ oxen push origin main               # Push to remote
 - When calling `get_staged_db_manager`, follow the doc comment on that function: drop the returned `StagedDBManager` as soon as possible (via a block scope or explicit `drop()`) to avoid holding the shared database handle longer than necessary.
 - When altering the `OxenError` enum, consider whether a hint needs to be added or updated in the `hint` method.
 - Instead of using `cargo test` to test Rust code, use the `bin/test-rust` script. The script usage is documented in a comment at the top of its file.
+- If the ram disk is not able to be mounted in `bin/test-rust`, then use the `--no-ramdisk` option.
 - The `bin/test-rust` script does not install prerequisites by default. If any dependencies turn out to be missing, prompt the user to run `bin/install-prereqs` (or re-run `bin/test-rust --install-deps`).
 - Prefer using inline code over creating a new function when the function would only be called once and the function body would be less than 15 lines.
 - Do not use "out parameters" (functions that take an `&mut Vec` / `&mut HashMap` / etc. for the callee to fill). Return the value directly instead. Exceptions: the user explicitly asks for an out parameter, or the caller genuinely needs to reuse a pre-allocated buffer across many calls to avoid allocation churn in a measured hot path.
@@ -135,6 +138,7 @@ oxen push origin main               # Push to remote
 - After changing any Rust or Python code, verify that Rust tests pass with `bin/test-rust` and Python tests pass with `bin/test-rust -p`
 - When updating a dependency, prefer updating to the latest stable version.
 - Any new or changed Rust code that touches IO (file system, network, etc.) should be async code. Instead of std::io or std::fs, use equivalents from tokio. When an external dependency doesn't support async, use tokio's spawn_blocking functionality.
+- Streamed IO (anything reading or writing through an `AsyncRead`/`AsyncWrite` whose total length isn't bounded ahead of time) must use a large buffer rather than rely on `tokio::io::copy`'s 8 KB default. Wrap the write side in `tokio::io::BufWriter::with_capacity(10 * 1024 * 1024, ...)` (and the read side in `BufReader` if the source isn't already buffered), and remember to explicitly `flush().await?` the `BufWriter` before any downstream `sync_all`/rename/checksum step — `BufWriter`'s `Drop` does **not** auto-flush, so unflushed bytes are silently dropped. The canonical example is the S3 store's local-cache path in `crates/lib/src/storage/s3.rs` (`store_version_to_path`).
 - oxen-server operations should never touch a local checkout on disk when doing operations initiated by its API.
 - Always use `metadata.is_dir()` instead of `path.is_dir()`. `path.is_dir()` follows symlinks, which Oxen does not track — using it risks descending into directories outside the working tree (or into cycles via cyclic links).
 - Oxen does not track symlinks. New code that traverses the working tree should check `metadata.is_symlink()` and skip rather than resolve, follow, or record symlinks.

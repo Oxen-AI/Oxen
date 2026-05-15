@@ -5,7 +5,6 @@ use liboxen::constants::DIRS_DIR;
 use liboxen::constants::HISTORY_DIR;
 use liboxen::constants::VERSION_FILE_NAME;
 
-use liboxen::core::commit_sync_status;
 use liboxen::error::OxenError;
 use liboxen::model::{Commit, LocalRepository};
 use liboxen::opts::PaginateOpts;
@@ -36,6 +35,7 @@ use flate2::Compression;
 use flate2::write::GzEncoder;
 use futures_util::stream::StreamExt as _;
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::Cursor;
 use std::io::Read;
@@ -251,21 +251,34 @@ pub async fn list_missing(
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
-    // Parse commit ids from a body and return the missing ids
     let data: Result<MerkleHashes, serde_json::Error> = serde_json::from_str(&body);
     let Ok(merkle_hashes) = data else {
         log::error!("list_missing invalid JSON: {body:?}");
         return Ok(HttpResponse::BadRequest().json(StatusMessage::error("Invalid JSON")));
     };
 
+    // Treat a commit as fully present iff BOTH the commit's merkle-tree node is on disk under
+    // `.oxen/tree/nodes/<prefix>/<rest>/` AND the commit's dir-hashes directory exists at
+    // `.oxen/history/<commit_id>/dir_hashes/`. The dir-hashes directory is uploaded as the last
+    // data step of `push` (right before the now-no-op marker write), so requiring both files is a
+    // stronger proxy for "the push got all the way to the end" than node-existence alone — and
+    // avoids regressing the `create_nodes`-without-push pattern, which uploads non-leaf nodes
+    // directly without ever populating the dir-hashes DB.
+    let history_dir = util::fs::oxen_hidden_dir(&repo.path).join(HISTORY_DIR);
+    let mut missing_commits = HashSet::new();
+    for hash in &merkle_hashes.hashes {
+        let node_present = repositories::tree::get_node_by_id(&repo, hash)?.is_some();
+        let dir_hashes_present = history_dir
+            .join(hash.to_string())
+            .join(DIR_HASHES_DIR)
+            .exists();
+        if !node_present || !dir_hashes_present {
+            missing_commits.insert(*hash);
+        }
+    }
     log::debug!(
-        "list_missing checking {} commit hashes",
-        merkle_hashes.hashes.len()
-    );
-    let missing_commits =
-        repositories::tree::list_unsynced_commit_hashes(&repo, &merkle_hashes.hashes)?;
-    log::debug!(
-        "list_missing found {} missing commits",
+        "list_missing checked {} commit hashes, {} missing",
+        merkle_hashes.hashes.len(),
         missing_commits.len()
     );
     let response = MerkleHashesResponse {
@@ -325,34 +338,28 @@ pub async fn list_missing_files(
 /// Mark commits as synced
 #[utoipa::path(
     post,
-    path = "/api/repos/{namespace}/{repo_name}/commits/synced",
+    path = "/api/repos/{namespace}/{repo_name}/commits/mark_commits_as_synced",
     tag = "Commits",
-    description = "Mark a list of commit hashes as successfully synchronized to the server.",
+    description = "DEPRECATED - This operation is a no-op that echoes the hashes from the request, and will be removed in a future release.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
     ),
     request_body(
         content = MerkleHashes,
-        description = "List of commit hashes successfully synced to the server.",
+        description = "DEPRECATED - Deprecated no-op response echoing the submitted hashes",
         example = json!({
             "hashes": ["abc1234567890def1234567890fedcba", "84c76a5b2e9a2637f9091991475c404d"]
         })
     ),
     responses(
-        (status = 200, description = "Commits marked as synced", body = MerkleHashesResponse),
+        (status = 200, description = "Deprecated no-op response echoing the submitted hashes", body = MerkleHashesResponse),
         (status = 404, description = "Repository not found")
     )
 )]
 pub async fn mark_commits_as_synced(
-    req: HttpRequest,
     mut body: web::Payload,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repository = get_repo(&app_data.path, namespace, repo_name)?;
-
     let mut bytes = web::BytesMut::new();
     while let Some(item) = body.next().await {
         bytes.extend_from_slice(&item.map_err(|_| OxenHttpError::FailedToReadRequestPayload)?);
@@ -360,16 +367,17 @@ pub async fn mark_commits_as_synced(
 
     let request: MerkleHashes = serde_json::from_slice(&bytes)?;
     let hashes = request.hashes;
+
+    // We removed the commit-level synced-marker mechanism: this endpoint used to write a per-commit
+    // `IS_SYNCED` marker file that `list_missing` would later consult to skip re-uploading commit
+    // metadata. The marker was load-bearing for skipping duplicate metadata uploads but became a
+    // silent-data-loss vector when stale (see sibling no-op note on `list_missing`). It now accepts
+    // the request and returns OK without writing anything, preserving protocol compatibility with
+    // until we delete this endpoint entirely in the near future as part of ENG-994
     log::debug!(
-        "mark_commits_as_synced marking {} commit hashes",
+        "mark_commits_as_synced received {} commit hashes (no-op)",
         &hashes.len()
     );
-
-    for hash in &hashes {
-        commit_sync_status::mark_commit_as_synced(&repository, hash)?;
-    }
-
-    log::debug!("successfully marked {} commit hashes", &hashes.len());
     Ok(HttpResponse::Ok().json(MerkleHashesResponse {
         status: StatusMessage::resource_found(),
         hashes,
@@ -1211,7 +1219,7 @@ async fn unpack_entry_tarball_async(
     compressed_data: Vec<u8>,
 ) -> Result<(), OxenError> {
     let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
 
     // Create async gzip decoder and tar archive
     let reader = Cursor::new(compressed_data);

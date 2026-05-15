@@ -19,6 +19,7 @@ use crate::model::{
 };
 use crate::repositories;
 use crate::util;
+use crate::util::progress_bar::FinishOnDropProgressBar;
 use crate::view::merge::{MergeConflictFile, Mergeable};
 
 use filetime::FileTime;
@@ -47,7 +48,7 @@ pub async fn commit(
 
     log::debug!("workspaces::commit staged db path: {staged_db_path:?}");
     let commit = {
-        let commit_progress_bar = ProgressBar::new_spinner();
+        let commit_progress_bar = FinishOnDropProgressBar(ProgressBar::new_spinner());
 
         // Read all the staged entries
         let (dir_entries, _) = core::v_latest::status::read_staged_entries_with_staged_db_manager(
@@ -67,7 +68,6 @@ pub async fn commit(
             dir_entries,
             new_commit,
             branch_name,
-            &commit_progress_bar,
         )?
     };
 
@@ -357,7 +357,7 @@ async fn compute_staged_merkle_tree_node(
     let file_size = tokio::fs::metadata(path).await?.len();
     let file = File::open(path).await?;
     let reader = BufReader::new(file);
-    let version_store = workspace.base_repo.version_store()?;
+    let version_store = workspace.base_repo.version_store();
     version_store
         .store_version_from_reader(&hash.to_string(), Box::new(reader), file_size)
         .await?;

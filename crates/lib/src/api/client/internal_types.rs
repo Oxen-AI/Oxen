@@ -4,6 +4,6 @@ use crate::model::LocalRepository;
 
 #[derive(Debug, Clone)]
 pub(crate) enum LocalOrBase {
-    Local(LocalRepository),
+    Local(Box<LocalRepository>),
     Base(PathBuf),
 }

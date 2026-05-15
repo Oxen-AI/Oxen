@@ -57,12 +57,12 @@ pub async fn metadata(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
-    let exists = repo.version_store()?.version_exists(&version_id).await?;
+    let exists = repo.version_store().version_exists(&version_id).await?;
     if !exists {
         return Err(OxenHttpError::NotFound);
     }
 
-    let file_size = repo.version_store()?.get_version_size(&version_id).await?;
+    let file_size = repo.version_store().get_version_size(&version_id).await?;
     Ok(HttpResponse::Ok().json(VersionFileResponse {
         status: StatusMessage::resource_found(),
         version: VersionFile {
@@ -78,7 +78,7 @@ pub async fn clean(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, &repo_name)?;
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     let result = version_store.clean_corrupted_versions(false).await?;
 
     Ok(HttpResponse::Ok().json(CleanCorruptedVersionsResponse {
@@ -119,7 +119,7 @@ pub async fn download(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     let resource = parse_resource(&req, &repo)?;
     let commit = resource.commit.clone().ok_or(OxenHttpError::NotFound)?;
     let path = resource.path.clone();
@@ -222,7 +222,25 @@ pub async fn stream_versions_tar_gz(
     repo: &LocalRepository,
     file_hashes: Vec<String>,
 ) -> Result<HttpResponse, OxenHttpError> {
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
+
+    // Pre-flight existence check before sending response headers. Once we commit to a
+    // 200 streaming response, a missing blob mid-stream truncates the connection and
+    // upstream proxies surface that as a 502 — masking the real cause and triggering
+    // client retries. Verifying every hash up front lets us return a structured 404
+    // listing the missing hashes so the client can fail fast.
+    let missing = version_store.find_missing_versions(&file_hashes).await?;
+    if !missing.is_empty() {
+        log::warn!(
+            "batch_download: {} of {} requested version blob(s) missing on server",
+            missing.len(),
+            file_hashes.len()
+        );
+        return Err(OxenHttpError::InternalOxenError(
+            OxenError::VersionsMissingOnServer { hashes: missing },
+        ));
+    }
+
     let (writer, reader) = tokio::io::duplex(DOWNLOAD_BUFFER_SIZE);
 
     let version_store_clone = version_store.clone();
@@ -242,7 +260,12 @@ pub async fn stream_versions_tar_gz(
                         Ok(size) => size,
                         Err(e) => {
                             log::error!("Failed to get version file size for {file_hash}: {e}");
-                            error_tx.send(e).ok();
+                            error_tx
+                                .send(OxenError::VersionFetchFailed {
+                                    file_hash: file_hash.clone(),
+                                    source: Box::new(e),
+                                })
+                                .ok();
                             had_error = true;
                             break;
                         }
@@ -279,7 +302,16 @@ pub async fn stream_versions_tar_gz(
                 }
                 Err(e) => {
                     log::error!("Failed to get version {file_hash}: {e}");
-                    error_tx.send(e).ok();
+                    // Wrap with the hash so the streaming-response error names the specific
+                    // content blob that couldn't be served. The HTTP 200 has already been sent
+                    // by the time we reach this branch, so this is the only way the client side
+                    // (and server logs further upstream) can identify the failing object.
+                    error_tx
+                        .send(OxenError::VersionFetchFailed {
+                            file_hash: file_hash.clone(),
+                            source: Box::new(e),
+                        })
+                        .ok();
                     had_error = true;
                     break;
                 }
@@ -334,7 +366,7 @@ pub async fn stream_versions_zip(
     repo: &LocalRepository,
     files: Vec<FileWithHash>,
 ) -> Result<HttpResponse, OxenHttpError> {
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     let (writer, reader) = tokio::io::duplex(DOWNLOAD_BUFFER_SIZE);
 
     let version_store_clone = version_store.clone();
@@ -365,7 +397,12 @@ pub async fn stream_versions_zip(
                 Ok(size) => size,
                 Err(e) => {
                     log::error!("Failed to get version file size for {hash}: {e}");
-                    error_tx.send(e).ok();
+                    error_tx
+                        .send(OxenError::VersionFetchFailed {
+                            file_hash: hash.clone(),
+                            source: Box::new(e),
+                        })
+                        .ok();
                     had_error = true;
                     break;
                 }
@@ -413,7 +450,12 @@ pub async fn stream_versions_zip(
                 }
                 Err(e) => {
                     log::error!("Failed to get version {hash}: {e}");
-                    error_tx.send(OxenError::IO(std::io::Error::other(e))).ok();
+                    error_tx
+                        .send(OxenError::VersionFetchFailed {
+                            file_hash: hash.clone(),
+                            source: Box::new(e),
+                        })
+                        .ok();
                     had_error = true;
                     break;
                 }
@@ -503,10 +545,7 @@ pub async fn save_multiparts(
     repo: &LocalRepository,
 ) -> Result<Vec<ErrorFileInfo>, Error> {
     // Receive a multipart request and save the files to the version store
-    let version_store = repo.version_store().map_err(|oxen_err: OxenError| {
-        log::error!("Failed to get version store: {oxen_err:?}");
-        actix_web::error::ErrorInternalServerError(oxen_err.to_string())
-    })?;
+    let version_store = repo.version_store();
     let gzip_mime: mime::Mime = "application/gzip".parse().unwrap();
 
     let mut err_files: Vec<ErrorFileInfo> = vec![];
@@ -826,7 +865,7 @@ mod tests {
         assert!(response.err_files.is_empty());
 
         // verify file is stored correctly
-        let version_store = repo.version_store()?;
+        let version_store = repo.version_store();
         let stored_data = version_store.get_version(&file_hash).await?;
         assert_eq!(stored_data, file_content.as_bytes());
 

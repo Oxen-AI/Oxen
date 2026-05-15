@@ -40,7 +40,7 @@ pub async fn upload(
         repo.path
     );
 
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
 
     // Read the chunk from the payload. Chunks are <= 10MB (AVG_CHUNK_SIZE)
     let mut chunk = web::BytesMut::new();
@@ -87,7 +87,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
                 )
             })?;
         log::debug!("Client uploaded {num_chunks} chunks");
-        let version_store = repo.version_store()?;
+        let version_store = repo.version_store();
 
         let chunks = version_store.list_version_chunks(&version_id).await?;
         log::debug!("Found {} chunks on server", chunks.len());
@@ -158,7 +158,7 @@ pub async fn download(
         size
     );
 
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
 
     let chunk_data = version_store
         .get_version_chunk(&version_id, offset, size)

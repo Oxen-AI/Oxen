@@ -2,7 +2,6 @@ use crate::config::RepositoryConfig;
 use crate::constants;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
-use crate::opts::StorageOpts;
 use crate::util;
 use std::path::Path;
 
@@ -29,10 +28,5 @@ pub fn init_workspace_repo(
 
     // Read the storage config from the config file
     let config = RepositoryConfig::from_file(&target_config_file)?;
-    let storage_opts = config
-        .storage
-        .map(|s| StorageOpts::from_repo_config(repo, &s))
-        .transpose()?;
-
-    LocalRepository::new(workspace_dir, storage_opts)
+    LocalRepository::new(workspace_dir, config.storage)
 }

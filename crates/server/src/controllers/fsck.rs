@@ -104,7 +104,7 @@ pub async fn clean(
     let dry_run = query.dry_run;
     log::info!("fsck clean: {namespace}/{repo_name} dry_run={dry_run}");
 
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     let result = version_store.clean_corrupted_versions(dry_run).await?;
 
     let status_message = if dry_run {

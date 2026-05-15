@@ -237,7 +237,7 @@ pub async fn download_entries_to_repo(
             download_file(remote_repo, &entry, &remote_path, &local_path, revision).await?;
 
             // Save contents to version store
-            let version_store = local_repo.version_store()?;
+            let version_store = local_repo.version_store();
 
             let file_bytes = tokio::fs::read(local_path).await?;
             let hash = util::hasher::hash_buffer(&file_bytes);
@@ -336,7 +336,7 @@ pub async fn pull_large_entry(
     let num_chunks = total_size.div_ceil(chunk_size) as usize;
     let hash = commit_entry.hash.clone();
     let revision = commit_entry.commit_id.clone();
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
 
     let remote_path = remote_path.as_ref();
 
@@ -798,27 +798,48 @@ pub async fn download_data_from_version_paths(
 ) -> Result<u64, OxenError> {
     let total_retries = constants::NUM_HTTP_RETRIES;
     let mut num_retries = 0;
+    let mut last_err: Option<OxenError> = None;
 
     while num_retries < total_retries {
         match try_download_data_from_version_paths(remote_repo, content_ids, &dst).await {
             Ok(val) => return Ok(val),
-            Err(OxenError::Authentication(val)) => return Err(OxenError::Authentication(val)),
+            // Short-circuit on errors that won't change on retry (auth failures, 4xx
+            // responses, server-confirmed missing blobs). Without this, a doomed pull
+            // pays the full exponential backoff before surfacing the diagnostic.
+            Err(err) if err.is_fatal_for_retry() => return Err(err),
             Err(err) => {
                 num_retries += 1;
                 // Exponentially back off
                 let sleep_time = num_retries * num_retries;
                 log::warn!("Could not download content {err:?} sleeping {sleep_time}");
+                last_err = Some(err);
                 tokio::time::sleep(std::time::Duration::from_secs(sleep_time)).await;
             }
         }
     }
 
-    let err = format!(
-        "Err: Failed to download {} files after {} retries",
+    let last_error = last_err
+        .as_ref()
+        .map(|e| format!("{e}"))
+        .unwrap_or_else(|| "(no attempts made)".to_string());
+    let formatted_entries = content_ids
+        .iter()
+        .map(|(h, p)| format!("{} (hash: {h})", p.display()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    log::error!(
+        "Bulk download exhausted {} retries for {} entries: [{}]. Last error: {}",
+        total_retries,
         content_ids.len(),
-        total_retries
+        formatted_entries,
+        last_error,
     );
-    Err(OxenError::basic_str(err))
+    Err(OxenError::DownloadBatchExhausted {
+        num_files: content_ids.len(),
+        num_retries: total_retries,
+        entries: content_ids.to_vec(),
+        last_error,
+    })
 }
 
 pub async fn try_download_data_from_version_paths(

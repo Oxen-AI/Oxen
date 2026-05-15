@@ -243,11 +243,17 @@ pub async fn create(
     util::fs::create_dir_all(&hidden_dir)?;
 
     // Create config file
-    let local_repo = LocalRepository::new(&repo_dir, new_repo.storage_opts)?;
+    let storage_config = new_repo
+        .storage_kind
+        .map(|kind| crate::storage::StorageConfig {
+            kind,
+            versions_path: None,
+        });
+    let local_repo = LocalRepository::new(&repo_dir, storage_config)?;
     local_repo.save()?;
 
     // Initialize version store
-    let version_store = local_repo.version_store()?;
+    let version_store = local_repo.version_store();
     version_store.init().await?;
 
     // Create history dir

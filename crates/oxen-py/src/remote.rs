@@ -8,7 +8,8 @@ use liboxen::config::UserConfig;
 use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::error::OxenError;
 use liboxen::model::{RepoNew, file::FileNew};
-use liboxen::opts::StorageOpts;
+use liboxen::storage::StorageKind;
+use std::str::FromStr;
 
 #[pyfunction]
 #[pyo3(signature = (name, host, scheme="https"))]
@@ -46,10 +47,8 @@ pub fn get_repo(
 #[allow(clippy::too_many_arguments)]
 #[pyo3(signature = (
     name, description, is_public, host,
-    scheme, files, storage_backend=None,
-    storage_backend_path=None, storage_backend_bucket=None
+    scheme, files, storage_backend=None
 ))]
-// TODO: create a python class for storage opts to reduce the number of arguments
 pub fn create_repo(
     name: String,
     description: String,
@@ -58,8 +57,6 @@ pub fn create_repo(
     scheme: String,
     files: Vec<(String, String)>,
     storage_backend: Option<String>,
-    storage_backend_path: Option<String>,
-    storage_backend_bucket: Option<String>,
 ) -> Result<PyRemoteRepo, PyOxenError> {
     // Check that name is valid ex: :namespace/:repo_name
     if !name.contains("/") {
@@ -69,17 +66,16 @@ pub fn create_repo(
     let namespace = name.split("/").collect::<Vec<&str>>()[0].to_string();
     let repo_name = name.split("/").collect::<Vec<&str>>()[1].to_string();
 
+    let storage_kind = storage_backend
+        .map(|s| StorageKind::from_str(&s))
+        .transpose()?;
+
     pyo3_async_runtimes::tokio::get_runtime().block_on(async {
         let config = UserConfig::get()?;
         let user = config.to_user();
-        let storage_opts = StorageOpts::from_args(
-            storage_backend,
-            storage_backend_path,
-            storage_backend_bucket,
-        )?;
         if files.is_empty() {
             let mut repo =
-                RepoNew::from_namespace_name_host(namespace, repo_name, host.clone(), storage_opts);
+                RepoNew::from_namespace_name_host(namespace, repo_name, host.clone(), storage_kind);
             if !description.is_empty() {
                 repo.description = Some(description);
             }
@@ -104,7 +100,7 @@ pub fn create_repo(
                     user: user.clone(),
                 })
                 .collect();
-            let mut repo = RepoNew::from_files(&namespace, &repo_name, files, storage_opts);
+            let mut repo = RepoNew::from_files(&namespace, &repo_name, files, storage_kind);
             if !description.is_empty() {
                 repo.description = Some(description);
             }

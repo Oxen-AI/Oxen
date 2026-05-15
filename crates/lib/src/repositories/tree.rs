@@ -1,22 +1,16 @@
 use bytesize::ByteSize;
-use flate2::Compression;
-use flate2::read::GzDecoder;
-use flate2::write::GzEncoder;
+use std::any::type_name_of_val;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::str;
-use tar::Archive;
 
-use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
-use crate::core::commit_sync_status;
-use crate::core::db::merkle_node::MerkleNodeDB;
-use crate::core::db::merkle_node::merkle_node_db::node_db_path;
 use crate::core::node_sync_status;
 use crate::core::v_latest::index::CommitMerkleTree as CommitMerkleTreeLatest;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_old::v0_19_0::index::CommitMerkleTree as CommitMerkleTreeV0_19_0;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
+use crate::model::merkle_tree::merkle_transport::UnpackOptions;
+use crate::model::merkle_tree::merkle_writer::MerkleWriteSession;
 use crate::model::merkle_tree::node::{
     CommitNode, DirNodeWithPath, EMerkleTreeNode, FileNode, FileNodeWithDir, MerkleTreeNode,
 };
@@ -548,41 +542,50 @@ pub async fn list_missing_file_hashes_from_commits(
     list_missing_file_hashes_from_hashes(repo, &candidate_hashes).await
 }
 
-pub fn dir_entries_with_paths(
-    node: &MerkleTreeNode,
-    base_path: &PathBuf,
-) -> Result<HashSet<(FileNode, PathBuf)>, OxenError> {
-    let mut entries = HashSet::new();
+/// Files and directories collected from a merkle subtree walk. `oxen restore <dir>` needs
+/// both: file entries to call `restore_file` on, and directory paths so it can `mkdir -p`
+/// every tracked directory (including empty ones, which are first-class in Oxen — see
+/// CLAUDE.md "How Oxen Differs from Git"). Empty dirs have no files to drive
+/// `restore_file`'s `create_dir_all(parent)` side-effect, so without an explicit dir list
+/// they'd be silently skipped (ENG-1003).
+#[derive(Debug, Default)]
+pub struct DirEntries {
+    pub files: HashSet<(FileNode, PathBuf)>,
+    pub dirs: HashSet<PathBuf>,
+}
 
-    match &node.node {
-        EMerkleTreeNode::Directory(_) | EMerkleTreeNode::VNode(_) | EMerkleTreeNode::Commit(_) => {
-            for child in &node.children {
-                match &child.node {
-                    EMerkleTreeNode::File(file_node) => {
-                        let file_path = base_path.join(file_node.name());
-                        entries.insert((file_node.clone(), file_path));
-                    }
-                    EMerkleTreeNode::Directory(dir_node) => {
-                        let new_base_path = base_path.join(dir_node.name());
-                        entries.extend(dir_entries_with_paths(child, &new_base_path)?);
-                    }
-                    EMerkleTreeNode::VNode(_vnode) => {
-                        entries.extend(dir_entries_with_paths(child, base_path)?);
-                    }
-                    _ => {}
-                }
+/// Walk `node`'s merkle subtree and collect every File entry and every Directory path,
+/// with `base_path` interpreted as the path of `node` itself. Infallible: unexpected node
+/// types contribute nothing.
+pub fn dir_entries_with_paths(node: &MerkleTreeNode, base_path: &Path) -> DirEntries {
+    let mut out = DirEntries::default();
+
+    if matches!(&node.node, EMerkleTreeNode::Directory(_)) {
+        out.dirs.insert(base_path.to_path_buf());
+    }
+
+    for child in &node.children {
+        match &child.node {
+            EMerkleTreeNode::File(file_node) => {
+                let file_path = base_path.join(file_node.name());
+                out.files.insert((file_node.clone(), file_path));
             }
-        }
-        EMerkleTreeNode::File(_) => {}
-        _ => {
-            return Err(OxenError::basic_str(format!(
-                "Unexpected node type: {:?}",
-                node.node.node_type()
-            )));
+            EMerkleTreeNode::Directory(dir_node) => {
+                let new_base_path = base_path.join(dir_node.name());
+                let sub = dir_entries_with_paths(child, &new_base_path);
+                out.files.extend(sub.files);
+                out.dirs.extend(sub.dirs);
+            }
+            EMerkleTreeNode::VNode(_) => {
+                let sub = dir_entries_with_paths(child, base_path);
+                out.files.extend(sub.files);
+                out.dirs.extend(sub.dirs);
+            }
+            _ => {}
         }
     }
 
-    Ok(entries)
+    out
 }
 
 /// Get HashMap of all entries that aren't present in shared_hashes
@@ -629,27 +632,12 @@ pub fn unique_dir_entries(
     Ok(entries)
 }
 
-// Given a set of commit hashes, return the hashes that are unsynced
-pub fn list_unsynced_commit_hashes(
-    repo: &LocalRepository,
-    hashes: &HashSet<MerkleHash>,
-) -> Result<HashSet<MerkleHash>, OxenError> {
-    let mut results = HashSet::new();
-    for hash in hashes {
-        if !commit_sync_status::commit_is_synced(repo, hash) {
-            results.insert(*hash);
-        }
-    }
-
-    Ok(results)
-}
-
 async fn list_missing_file_hashes_from_hashes(
     repo: &LocalRepository,
     hashes: &HashSet<MerkleHash>,
 ) -> Result<HashSet<MerkleHash>, OxenError> {
     let mut results = HashSet::new();
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     // Todo: Parallelize for S3
     for hash in hashes {
         if !version_store.version_exists(&hash.to_string()).await? {
@@ -847,189 +835,37 @@ pub fn cp_dir_hashes_to(
 }
 
 pub fn compress_tree(repository: &LocalRepository) -> Result<Vec<u8>, OxenError> {
-    let enc = GzEncoder::new(Vec::new(), Compression::fast());
-    let mut tar = tar::Builder::new(enc);
-    compress_full_tree(repository, &mut tar)?;
-    tar.finish()?;
-
-    let buffer: Vec<u8> = tar.into_inner()?.finish()?;
-    let total_size: u64 = u64::try_from(buffer.len()).unwrap_or(u64::MAX);
-
+    let mut buf = Vec::new();
+    repository.merkle_transport()?.pack_all(&mut buf)?;
+    let total_size: u64 = u64::try_from(buf.len()).unwrap_or(u64::MAX);
     log::debug!("Compressed entire tree size is {}", ByteSize::b(total_size));
-
-    Ok(buffer)
-}
-
-pub fn compress_full_tree(
-    repository: &LocalRepository,
-    tar: &mut tar::Builder<GzEncoder<Vec<u8>>>,
-) -> Result<(), OxenError> {
-    // This will be the subdir within the tarball,
-    // so when we untar it, all the subdirs will be extracted to
-    // tree/nodes/...
-    let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR);
-    let nodes_dir = repository
-        .path
-        .join(OXEN_HIDDEN_DIR)
-        .join(TREE_DIR)
-        .join(NODES_DIR);
-
-    log::debug!("Compressing tree in dir {nodes_dir:?}");
-
-    if nodes_dir.exists() {
-        tar.append_dir_all(&tar_subdir, nodes_dir)?;
-    }
-
-    Ok(())
-}
-
-pub fn compress_nodes(
-    repository: &LocalRepository,
-    hashes: &HashSet<MerkleHash>,
-) -> Result<Vec<u8>, OxenError> {
-    // zip up the node directories for each commit tree
-    let enc = GzEncoder::new(Vec::new(), Compression::fast());
-    let mut tar = tar::Builder::new(enc);
-
-    log::debug!("Compressing {} unique nodes...", hashes.len());
-    for hash in hashes {
-        // This will be the subdir within the tarball
-        // so when we untar it, all the subdirs will be extracted to
-        // tree/nodes/...
-        let dir_prefix = hash.to_hex_hash().node_db_prefix();
-        let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR).join(dir_prefix);
-
-        let node_dir = node_db_path(repository, hash);
-        // log::debug!("Compressing node from dir {:?}", node_dir);
-        if node_dir.exists() {
-            tar.append_dir_all(&tar_subdir, node_dir)?;
-        }
-    }
-    tar.finish()?;
-
-    let buffer: Vec<u8> = tar.into_inner()?.finish()?;
-    Ok(buffer)
-}
-
-pub fn compress_node(
-    repository: &LocalRepository,
-    hash: &MerkleHash,
-) -> Result<Vec<u8>, OxenError> {
-    // This will be the subdir within the tarball
-    // so when we untar it, all the subdirs will be extracted to
-    // tree/nodes/...
-    let dir_prefix = hash.to_hex_hash().node_db_prefix();
-    let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR).join(dir_prefix);
-
-    // zip up the node directory
-    let enc = GzEncoder::new(Vec::new(), Compression::fast());
-    let mut tar = tar::Builder::new(enc);
-    let node_dir = node_db_path(repository, hash);
-
-    // log::debug!("Compressing node {} from dir {:?}", hash, node_dir);
-    if node_dir.exists() {
-        tar.append_dir_all(&tar_subdir, node_dir)?;
-    }
-    tar.finish()?;
-
-    let buffer: Vec<u8> = tar.into_inner()?.finish()?;
-    let total_size: u64 = u64::try_from(buffer.len()).unwrap_or(u64::MAX);
-    log::debug!(
-        "Compressed node {} size is {}",
-        hash,
-        ByteSize::b(total_size)
-    );
-
-    Ok(buffer)
-}
-
-pub fn compress_commits(
-    repository: &LocalRepository,
-    commits: &Vec<Commit>,
-) -> Result<Vec<u8>, OxenError> {
-    // zip up the node directory
-    let enc = GzEncoder::new(Vec::new(), Compression::fast());
-    let mut tar = tar::Builder::new(enc);
-
-    for commit in commits {
-        let hash = commit.hash()?;
-        // This will be the subdir within the tarball
-        // so when we untar it, all the subdirs will be extracted to
-        // tree/nodes/...
-        let dir_prefix = hash.to_hex_hash().node_db_prefix();
-        let tar_subdir = Path::new(TREE_DIR).join(NODES_DIR).join(dir_prefix);
-
-        let node_dir = node_db_path(repository, &hash);
-        log::debug!("Compressing commit from dir {node_dir:?}");
-        if node_dir.exists() {
-            tar.append_dir_all(&tar_subdir, node_dir)?;
-        }
-    }
-    tar.finish()?;
-
-    let buffer: Vec<u8> = tar.into_inner()?.finish()?;
-    Ok(buffer)
+    Ok(buf)
 }
 
 pub fn unpack_nodes(
     repository: &LocalRepository,
     buffer: &[u8],
 ) -> Result<HashSet<MerkleHash>, OxenError> {
-    let mut hashes: HashSet<MerkleHash> = HashSet::new();
-    log::debug!("Unpacking nodes from buffer...");
-    let decoder = GzDecoder::new(buffer);
-    log::debug!("Decoder created");
-    let mut archive = Archive::new(decoder);
-    log::debug!("Archive created");
-    let Ok(entries) = archive.entries() else {
-        return Err(OxenError::basic_str(
-            "Could not unpack tree database from archive",
-        ));
-    };
-    log::debug!("Extracting entries...");
-    for file in entries {
-        let Ok(mut file) = file else {
-            log::error!("Could not unpack file in archive...");
-            continue;
-        };
-        let path = file.path().unwrap();
-        let oxen_hidden_path = repository.path.join(OXEN_HIDDEN_DIR);
-        let dst_path = oxen_hidden_path.join(TREE_DIR).join(NODES_DIR).join(path);
-
-        if let Some(parent) = dst_path.parent() {
-            util::fs::create_dir_all(parent).expect("Could not create parent dir");
-        }
-        // log::debug!("create_node writing {:?}", dst_path);
-        if dst_path.exists() {
-            log::debug!("Node already exists at {dst_path:?}");
-            continue;
-        }
-        file.unpack(&dst_path)?;
-
-        // the hash is the last two path components combined
-        if !dst_path.ends_with("node") && !dst_path.ends_with("children") {
-            let id = dst_path
-                .components()
-                .rev()
-                .take(2)
-                .map(|c| c.as_os_str().to_str().unwrap())
-                .collect::<Vec<&str>>()
-                .into_iter()
-                .rev()
-                .collect::<String>();
-            hashes.insert(id.parse()?);
-        }
-    }
-    Ok(hashes)
+    log::debug!("Unpacking nodes from buffer ({} bytes)", buffer.len());
+    // `&[u8]` doesn't auto-coerce to `&mut dyn Read`, so we hand the unpacker
+    // a `&mut` over a fresh slice cursor that advances as bytes are consumed.
+    let mut reader: &[u8] = buffer;
+    repository
+        .merkle_transport()?
+        .unpack(&mut reader, UnpackOptions::SkipExisting)
 }
 
 /// Write a node to disk
+// TODO: this should just accept `&CommitNode`
 pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), OxenError> {
     let EMerkleTreeNode::Commit(commit_node) = &node.node else {
         return Err(OxenError::basic_str("Expected commit node"));
     };
     let commit_node = CommitNode::new(repo, commit_node.get_opts())?;
-    p_write_tree(repo, node, &commit_node)?;
+    let store = repo.merkle_store()?;
+    let session = store.begin()?;
+    p_write_tree(&*session, node, &commit_node)?;
+    session.finish()?;
     Ok(())
 }
 
@@ -1037,35 +873,33 @@ pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), O
 ///
 /// Recursively writes the node and all its children to disk. To write a full tree, the node
 /// (`node_impl`) **MUST** be the root of the tree -- i.e. a `Commit` node.
-///
-/// [1] https://github.com/rust-lang/rust/issues/20041)
-fn p_write_tree<N: TMerkleTreeNode>(
-    repo: &LocalRepository,
+fn p_write_tree(
+    session: &dyn MerkleWriteSession,
     node: &MerkleTreeNode,
-    node_impl: &N,
+    node_impl: &dyn TMerkleTreeNode,
 ) -> Result<(), OxenError> {
     let parent_id = node.parent_id;
 
-    let mut db = MerkleNodeDB::open_read_write(repo, node_impl, parent_id)?;
+    let mut ns = session.create_node(node_impl, parent_id)?;
     for child in &node.children {
         match &child.node {
             EMerkleTreeNode::VNode(vnode) => {
-                db.add_child(vnode)?;
-                p_write_tree(repo, child, vnode)?;
+                ns.add_child(vnode)?;
+                p_write_tree(session, child, vnode)?;
             }
             EMerkleTreeNode::Directory(dir_node) => {
-                db.add_child(dir_node)?;
-                p_write_tree(repo, child, dir_node)?;
+                ns.add_child(dir_node)?;
+                p_write_tree(session, child, dir_node)?;
             }
             EMerkleTreeNode::File(file_node) => {
-                db.add_child(file_node)?;
+                ns.add_child(file_node)?;
             }
-            node => {
-                panic!("p_write_tree Unexpected node type: {node:?}");
+            n => {
+                return Err(OxenError::DisallowedNodeWrite(type_name_of_val(n)));
             }
         }
     }
-    db.close()?;
+    ns.finish()?;
     Ok(())
 }
 

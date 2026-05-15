@@ -138,7 +138,7 @@ pub async fn get(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     let resource = parse_resource(&req, &repo)?;
     let workspace = resource.workspace.as_ref();
     let path = resource.path.clone();
@@ -848,7 +848,7 @@ mod tests {
         let entry =
             repositories::entries::get_file(&repo, &resp.commit, PathBuf::from("data/hello.txt"))?
                 .unwrap();
-        let version_store = repo.version_store()?;
+        let version_store = repo.version_store();
         let uploaded_content = version_store.get_version(&entry.hash().to_string()).await?;
         assert_eq!(
             String::from_utf8(uploaded_content).unwrap(),

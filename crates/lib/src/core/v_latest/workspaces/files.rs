@@ -117,7 +117,7 @@ pub async fn add_version_files(
     directory: impl AsRef<str>,
     update_timestamp: bool,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
 
     let directory = directory.as_ref();
     let workspace_repo = &workspace.workspace_repo;
@@ -867,7 +867,7 @@ async fn p_add_file(
     path: &Path,
     update_timestamp: bool,
 ) -> Result<(), OxenError> {
-    let version_store = base_repo.version_store()?;
+    let version_store = base_repo.version_store();
     let mut maybe_dir_node = None;
     if let Some(head_commit) = maybe_head_commit {
         let path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;

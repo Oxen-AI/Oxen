@@ -261,7 +261,7 @@ pub async fn list_missing_files_in_commit_range(
     base_commit: &Option<Commit>,
     head_commit: &Commit,
 ) -> Result<Vec<CommitEntry>, OxenError> {
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
 
     match base_commit {
         Some(base_commit) => {

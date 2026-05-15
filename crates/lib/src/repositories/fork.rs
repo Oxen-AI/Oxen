@@ -281,20 +281,20 @@ mod tests {
 
                 let forked_config = RepositoryConfig::from_file(&forked_config_path)?;
                 if let Some(storage) = forked_config.storage {
-                    let storage_path = storage
-                        .settings
-                        .get("path")
-                        .expect("Storage path should exist");
-                    let expected_path = PathBuf::from(OXEN_HIDDEN_DIR)
-                        .join("versions")
-                        .join("files")
-                        .to_string_lossy()
-                        .to_string();
+                    // `versions_path: None` is the canonical "use the default location" shape:
+                    // `LocalRepository::storage_config` round-trips, and `create_version_store`
+                    // resolves `None` to `.oxen/versions/files`. If the legacy explicit-path
+                    // shape is present, it must match the default.
+                    if let Some(storage_path) = storage.versions_path {
+                        let expected_path = PathBuf::from(OXEN_HIDDEN_DIR)
+                            .join("versions")
+                            .join("files");
 
-                    assert_eq!(
-                        storage_path, &expected_path,
-                        "Storage path should be default to relative path"
-                    );
+                        assert_eq!(
+                            storage_path, expected_path,
+                            "Storage path should default to the relative path"
+                        );
+                    }
                 }
 
                 // Fork fails if repo exists

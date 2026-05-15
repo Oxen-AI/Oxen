@@ -68,6 +68,58 @@ pub fn remove_df_db_from_cache_with_children(
     Ok(())
 }
 
+/// Drain the connection cache, running CHECKPOINT on each connection before
+/// dropping it. Intended to be called once during graceful shutdown.
+///
+/// The cache is held in a `static LazyLock`. Rust does not drop statics at
+/// process exit, so without this call the cached connections never run their
+/// drop-time `close()` and DuckDB's default end-of-session CHECKPOINT never
+/// fires — uncheckpointed work stays in WAL files until the next open, where
+/// it must go through the WAL-recovery path in `get_connection`.
+///
+/// Skips (with a warning) any connection whose mutex is currently held. The
+/// caller is expected to have stopped its own use of the cache before
+/// calling — anything still locked is a safety-net case, not the norm.
+pub fn flush_all_df_db_connections() {
+    let entries: Vec<(PathBuf, Arc<Mutex<duckdb::Connection>>)> = {
+        let mut instances = DF_DB_INSTANCES.write();
+        std::iter::from_fn(|| instances.pop_lru()).collect()
+    };
+
+    let total = entries.len();
+    if total == 0 {
+        log::info!("flush_all_df_db_connections: cache empty, nothing to flush");
+        return;
+    }
+    log::info!("flush_all_df_db_connections: flushing {total} cached DuckDB connection(s)");
+
+    let mut checkpointed = 0usize;
+    let mut failed = 0usize;
+    let mut skipped = 0usize;
+    for (path, conn_lock) in entries {
+        match conn_lock.try_lock() {
+            Some(conn) => match conn.execute_batch("CHECKPOINT") {
+                Ok(()) => checkpointed += 1,
+                Err(e) => {
+                    failed += 1;
+                    log::warn!("flush_all_df_db_connections: CHECKPOINT failed for {path:?}: {e}");
+                }
+            },
+            None => {
+                skipped += 1;
+                log::warn!(
+                    "flush_all_df_db_connections: connection for {path:?} still in use — skipping CHECKPOINT"
+                );
+            }
+        }
+        // Connection drops here once the guard is released, releasing the
+        // file lock so subsequent processes can open the db cleanly.
+    }
+    log::info!(
+        "flush_all_df_db_connections: checkpointed={checkpointed} failed={failed} skipped={skipped}"
+    );
+}
+
 #[derive(Clone)]
 pub struct DfDBManager {
     df_db: Arc<Mutex<duckdb::Connection>>,
@@ -149,10 +201,10 @@ impl DfDBManager {
 ///
 /// If the database has a stale or corrupt WAL file (e.g. from a prior crash or
 /// unclean LRU eviction), this function will attempt to recover by removing the
-/// WAL and retrying. If that still fails the database and WAL files are both
-/// deleted so the caller can re-index from scratch. This is safe because these
-/// DuckDB databases are derived data — they are always re-indexed from the
-/// versioned source files stored in the Oxen version store.
+/// WAL and retrying. If the retry still fails, the error is returned without
+/// touching the database file — open() can fail for reasons unrelated to the
+/// WAL (permissions, lock held by another process, etc.) and the caller is in
+/// a better position to decide whether re-indexing is appropriate.
 pub fn get_connection(path: impl AsRef<Path>) -> Result<duckdb::Connection, OxenError> {
     let path = path.as_ref();
     log::debug!("get_connection: Opening new DuckDB connection for path: {path:?}");
@@ -196,16 +248,10 @@ pub fn get_connection(path: impl AsRef<Path>) -> Result<duckdb::Connection, Oxen
         return open_success(conn, path);
     }
 
-    // Second recovery: WAL removal wasn't enough — the db file is likely
-    // corrupt too. Remove both so the caller can re-index from scratch. This
-    // is safe because these databases are derived from versioned source files
-    // stored in the Oxen version store.
-    log::error!(
-        "get_connection: Retry after WAL removal still failed for {path:?}. \
-         Removing database files so the workspace can be re-indexed."
-    );
-    remove_file_if_exists(path);
-    remove_file_if_exists(&wal_path);
+    // Retry after WAL removal still failed. Don't touch the db file — open()
+    // can fail for reasons unrelated to the WAL (permissions, lock held by
+    // another process, etc.), so leave it intact for the caller to decide.
+    log::error!("get_connection: Retry after WAL removal still failed for {path:?}: {initial_err}");
 
     Err(OxenError::from(initial_err))
 }
@@ -1025,7 +1071,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_connection_removes_db_when_both_corrupt() -> Result<(), OxenError> {
+    fn test_get_connection_preserves_db_when_both_corrupt() -> Result<(), OxenError> {
         test::run_empty_dir_test(|data_dir| {
             let db_file = data_dir.join("data.db");
             let wal_file = data_dir.join("data.db.wal");
@@ -1034,17 +1080,20 @@ mod tests {
             std::fs::write(&db_file, b"not a duckdb file").expect("failed to write corrupt db");
             std::fs::write(&wal_file, b"not a wal file").expect("failed to write corrupt WAL");
 
-            // get_connection should fail but clean up both files so the caller
-            // can re-index from scratch.
+            // get_connection should fail. The WAL is removed as part of the
+            // recovery attempt, but the db file itself must be preserved so
+            // the caller can decide whether to re-index.
             let result = get_connection(&db_file);
             assert!(
                 result.is_err(),
                 "should fail when both db and WAL are corrupt"
             );
 
-            // Both files should be cleaned up.
-            assert!(!db_file.exists(), "corrupt db file should be removed");
-            assert!(!wal_file.exists(), "corrupt WAL file should be removed");
+            assert!(db_file.exists(), "corrupt db file should be preserved");
+            assert!(
+                !wal_file.exists(),
+                "WAL file should have been removed during recovery attempt"
+            );
 
             Ok(())
         })
@@ -1135,6 +1184,72 @@ mod tests {
         let db_path = Path::new("/some/dir/db");
         let wal = wal_path_for(db_path);
         assert_eq!(wal, PathBuf::from("/some/dir/db.wal"));
+    }
+
+    #[test]
+    fn test_flush_all_df_db_connections_drains_cache_and_checkpoints() -> Result<(), OxenError> {
+        // Simulates the server-shutdown path: cached connection has uncheckpointed
+        // work, we call flush_all_df_db_connections, and the data must be in the
+        // main db file (not just the WAL) by the time we reopen.
+        test::run_empty_dir_test(|data_dir| {
+            let db_file = data_dir.join("flush_test.db");
+            let wal_file = data_dir.join("flush_test.db.wal");
+
+            // Open through the cache so the connection lands in DF_DB_INSTANCES.
+            with_df_db_manager(&db_file, |manager| {
+                manager.with_conn(|conn| {
+                    // Disable DuckDB's drop-time CHECKPOINT so the only way the
+                    // WAL gets flushed in this test is via our explicit flush.
+                    conn.execute_batch("PRAGMA disable_checkpoint_on_shutdown")?;
+                    conn.execute(
+                        &format!("CREATE TABLE {TABLE_NAME} (id INTEGER, name VARCHAR)"),
+                        [],
+                    )?;
+                    conn.execute(&format!("INSERT INTO {TABLE_NAME} VALUES (1, 'test')"), [])?;
+                    Ok(())
+                })
+            })?;
+
+            assert!(
+                wal_file.exists(),
+                "WAL should exist before flush — disable_checkpoint_on_shutdown is set"
+            );
+            let cache_len_before = DF_DB_INSTANCES.read().len();
+            assert!(
+                cache_len_before > 0,
+                "cache should have the entry we just opened"
+            );
+
+            flush_all_df_db_connections();
+
+            // Cache must be drained — every Arc removed, every connection dropped.
+            assert_eq!(
+                DF_DB_INSTANCES.read().len(),
+                0,
+                "cache should be empty after flush"
+            );
+
+            // Reopen WITHOUT going through recovery (no stale-WAL handling needed
+            // because flush already CHECKPOINTed): data must still be present.
+            let conn = duckdb::Connection::open(&db_file)?;
+            let count: i64 =
+                conn.query_row(&format!("SELECT COUNT(*) FROM {TABLE_NAME}"), [], |r| {
+                    r.get(0)
+                })?;
+            assert_eq!(
+                count, 1,
+                "row inserted before flush should still be readable"
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_flush_all_df_db_connections_on_empty_cache_is_noop() {
+        // Empty cache should not panic, error, or log a warning loudly. Just
+        // exercises the early-return branch.
+        flush_all_df_db_connections();
     }
 
     #[test]

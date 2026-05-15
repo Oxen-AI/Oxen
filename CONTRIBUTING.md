@@ -2,6 +2,8 @@
 
 Thanks for your interest in contributing to Oxen! 🐂 This document describes what kinds of contributions we accept, how to structure them, and what to expect from the review process.
 
+Anyone interested in contributing should review the Oxen developer documentation that lives under [`docs/`](./docs/README.md).
+
 Oxen is an actively developed project with a dedicated maintainer team. External contributions are welcome, but every PR costs maintainer time to review, test, and support long-term.
 We apply the guidelines below to keep that cost sustainable and the project focused.
 

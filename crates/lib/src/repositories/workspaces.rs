@@ -7,7 +7,6 @@ use crate::core::workspaces::workspace_name_index;
 use crate::error::OxenError;
 use crate::model::entry::metadata_entry::{WorkspaceChanges, WorkspaceMetadataEntry};
 use crate::model::{MetadataEntry, ParsedResource, StagedData, StagedEntryStatus, merkle_tree};
-use crate::opts::StorageOpts;
 use crate::repositories;
 use crate::repositories::merkle_tree::node::EMerkleTreeNode;
 use crate::util;
@@ -89,16 +88,12 @@ pub fn get_by_dir(
     // Read repo config file for the storage config
     let config_file = repo.path.join(OXEN_HIDDEN_DIR).join(REPO_CONFIG_FILENAME);
     let repo_config = RepositoryConfig::from_file(&config_file)?;
-    let storage_opts = repo_config
-        .storage
-        .map(|s| StorageOpts::from_repo_config(repo, &s))
-        .transpose()?;
 
     Ok(Some(Workspace {
         id: config.workspace_id.unwrap_or(workspace_id.to_owned()),
         name: config.workspace_name,
         base_repo: repo.clone(),
-        workspace_repo: LocalRepository::new(workspace_dir, storage_opts)?,
+        workspace_repo: LocalRepository::new(workspace_dir, repo_config.storage)?,
         commit,
         is_editable: config.is_editable,
     }))

@@ -1,29 +1,26 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::str;
 
 use glob::Pattern;
+use rocksdb::{DBWithThreadMode, MultiThreaded, SingleThreaded};
 use time::OffsetDateTime;
 
-use crate::core;
+use crate::config::UserConfig;
+use crate::constants::COMMIT_COUNT_DIR;
+use crate::core::db::key_val::{opts, str_val_db};
 use crate::core::refs::with_ref_manager;
+use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::commit_node::CommitNodeOpts;
 use crate::model::merkle_tree::node::dir_node::DirNodeOpts;
 use crate::model::merkle_tree::node::{CommitNode, DirNode, EMerkleTreeNode};
 use crate::model::{Commit, LocalRepository, MerkleHash, User};
 use crate::opts::PaginateOpts;
+use crate::repositories::commits::commit_writer;
 use crate::view::{PaginatedCommits, StatusMessage};
 use crate::{repositories, util};
-
-use std::path::PathBuf;
-use std::str;
-
-use crate::constants::COMMIT_COUNT_DIR;
-use crate::core::db::key_val::{opts, str_val_db};
-use crate::core::db::merkle_node::MerkleNodeDB;
-use crate::core::v_latest::index::CommitMerkleTree;
-use rocksdb::{DBWithThreadMode, MultiThreaded, SingleThreaded};
 
 /// Configuration for commit traversal operations
 struct CommitTraversalConfig<'a> {
@@ -46,7 +43,7 @@ struct CommitTraversalConfig<'a> {
 }
 
 pub fn commit(repo: &LocalRepository, message: impl AsRef<str>) -> Result<Commit, OxenError> {
-    repositories::commits::commit_writer::commit(repo, message)
+    commit_writer::commit(repo, message)
 }
 
 pub fn commit_with_user(
@@ -54,7 +51,17 @@ pub fn commit_with_user(
     message: impl AsRef<str>,
     user: &User,
 ) -> Result<Commit, OxenError> {
-    repositories::commits::commit_writer::commit_with_user(repo, message, user)
+    commit_writer::commit_with_cfg(
+        repo,
+        message,
+        &UserConfig {
+            name: user.name.clone(),
+            email: user.email.clone(),
+            editor: None,
+        },
+        None,
+        &commit_writer::default_commit_progress_bar(),
+    )
 }
 
 pub async fn commit_allow_empty(
@@ -69,7 +76,7 @@ pub async fn commit_allow_empty(
 
     if has_changes {
         // If there are changes, commit normally
-        repositories::commits::commit_writer::commit(repo, message)
+        commit_writer::commit(repo, message)
     } else {
         // No changes, create an empty commit
         let cfg = crate::config::UserConfig::get()?;
@@ -89,8 +96,7 @@ pub async fn commit_allow_empty(
         };
 
         // Compute the commit hash
-        let commit_hash =
-            repositories::commits::commit_writer::compute_commit_id(&new_commit_data)?;
+        let commit_hash = commit_writer::compute_commit_id(&new_commit_data)?;
 
         let new_commit = Commit::from_new_and_id(&new_commit_data, commit_hash.to_string());
 
@@ -283,10 +289,14 @@ pub fn create_empty_commit(
     )?;
 
     let parent_id = Some(existing_node.hash);
-    let mut commit_db = MerkleNodeDB::open_read_write(repo, &commit_node, parent_id)?;
+    let store = repo.merkle_store()?;
+    let session = store.begin()?;
+    let mut commit_ns = session.create_node(&commit_node, parent_id)?;
     // There should always be one child, the root directory
     let dir_node = existing_node.children.first().unwrap().dir()?;
-    commit_db.add_child(&dir_node)?;
+    commit_ns.add_child(&dir_node)?;
+    commit_ns.finish()?;
+    session.finish()?;
 
     // Copy the dir hashes db to the new commit
     repositories::tree::cp_dir_hashes_to(repo, &existing_commit_id, commit_node.hash())?;
@@ -330,7 +340,7 @@ pub fn create_initial_commit(
     };
 
     // Compute the commit hash
-    let commit_id = repositories::commits::commit_writer::compute_commit_id(&new_commit)?;
+    let commit_id = commit_writer::compute_commit_id(&new_commit)?;
 
     // Create the commit node
     let commit_node = CommitNode::new(
@@ -362,9 +372,13 @@ pub fn create_initial_commit(
         },
     )?;
 
-    // Open the commit database and add the root directory
-    let mut commit_db = MerkleNodeDB::open_read_write(repo, &commit_node, None)?;
-    commit_db.add_child(&dir_node)?;
+    // Open the commit write session and add the root directory
+    let store = repo.merkle_store()?;
+    let session = store.begin()?;
+    let mut commit_ns = session.create_node(&commit_node, None)?;
+    commit_ns.add_child(&dir_node)?;
+    commit_ns.finish()?;
+    session.finish()?;
 
     // Initialize the dir_hash_db with the root directory hash
     let commit_id_string = commit_id.to_string();
@@ -617,30 +631,6 @@ pub fn list_all(repo: &LocalRepository) -> Result<HashSet<Commit>, OxenError> {
         }
     }
     Ok(commits)
-}
-
-pub fn list_unsynced_from(
-    repo: &LocalRepository,
-    revision: impl AsRef<str>,
-) -> Result<HashSet<Commit>, OxenError> {
-    let revision = revision.as_ref();
-    let all_commits: HashSet<Commit> = list_from(repo, revision)?.into_iter().collect();
-    filter_unsynced(repo, all_commits)
-}
-
-fn filter_unsynced(
-    repo: &LocalRepository,
-    commits: HashSet<Commit>,
-) -> Result<HashSet<Commit>, OxenError> {
-    log::debug!("filter_unsynced filtering down from {}", commits.len());
-    let mut unsynced_commits = HashSet::new();
-    for commit in commits {
-        if !core::commit_sync_status::commit_is_synced(repo, &commit.id.parse()?) {
-            unsynced_commits.insert(commit);
-        }
-    }
-    log::debug!("list_unsynced filtered down to {}", unsynced_commits.len());
-    Ok(unsynced_commits)
 }
 
 fn list_all_recursive(
