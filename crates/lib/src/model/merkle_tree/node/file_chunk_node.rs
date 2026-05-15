@@ -16,6 +16,7 @@ pub struct FileChunkNode {
 }
 
 impl FileChunkNode {
+    #[inline(always)]
     pub fn deserialize(data: &[u8]) -> Result<FileChunkNode, rmp_serde::decode::Error> {
         rmp_serde::from_slice(data)
     }

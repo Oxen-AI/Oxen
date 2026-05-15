@@ -74,6 +74,7 @@ futures = { workspace = true }
 futures-util = { workspace = true }
 glob = { workspace = true }
 glob-match = { workspace = true }
+heed = { workspace = true }
 http = { workspace = true }
 humantime = { workspace = true }
 ignore = { workspace = true }
@@ -137,6 +138,7 @@ utoipa = { workspace = true }
 uuid = { workspace = true }
 walkdir = { workspace = true }
 xxhash-rust = { workspace = true }
+zerocopy = { workspace = true }
 zip = { workspace = true }
 
 [dev-dependencies]

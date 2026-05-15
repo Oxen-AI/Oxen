@@ -354,12 +354,9 @@ fn extract_tar_under<R: Read>(
         // we have the hex-encoded hash as the `{prefix}/{suffix}` dirs.
         if let Some(hash) = extract_hash_from_entry_path(&dst_path, oxen_hidden)? {
             hashes.insert(hash);
-        } else {
-            log::warn!(
-                "Skipping non-merkle entry in tarball: {}",
-                dst_path.display()
-            );
         }
+        // If we can't extract a path, it's because we're looking at a node or children file.
+        // We will have already obtained the hash from the directory, so this is ok!
     }
     Ok(hashes)
 }
