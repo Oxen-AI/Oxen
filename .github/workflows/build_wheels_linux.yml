@@ -120,7 +120,7 @@ jobs:
           workspaces: "."
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8
 
       - name: Build Python wheels
         run: |
