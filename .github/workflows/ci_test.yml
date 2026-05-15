@@ -27,7 +27,18 @@ jobs:
             shell: bash -leo pipefail {0}
           - os: macos-latest
             platform: macos
-            shell: bash -leo pipefail {0}
+            # Non-login shell (no `-l`) on macOS. A login shell sources /etc/profile
+            # and ~/.profile, which on macOS runs /usr/libexec/path_helper and
+            # Homebrew's shellenv hooks. Those can reorder PATH so that `cargo`
+            # resolves to the Homebrew `rustup` formula's keg, where `cargo` is a
+            # symlink to an env-script wrapper that does
+            # `exec "/path/to/libexec/bin/rustup-init" "$@"`. The wrapper makes
+            # argv[0] end in "rustup-init", so rustup's argv[0]-based dispatcher
+            # picks setup_mode (the installer) instead of proxy_mode and rejects
+            # `build` as an "unexpected argument". Linux is left as a login shell
+            # because it isn't affected (no path_helper) and changing it would
+            # broaden the blast radius unnecessarily.
+            shell: bash -eo pipefail {0}
           - os: windows-x64-8cpu-32ram-300ssd
             platform: windows
             shell: powershell
@@ -77,6 +88,17 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }} # Only save cache on main; always restore.
           cache-all-crates: true
           cache-on-failure: true
+          # Don't cache ~/.cargo/bin. rustup ≥1.28 installs the proxy binaries
+          # (cargo, rustc, …) as symlinks to the `rustup` regular file. The
+          # action's cleanBin step skips symlinks via dirent.isFile() but can
+          # delete the `rustup` target (it isn't tracked in .crates2.json), which
+          # leaves the proxies pointing at nothing. With save-if restricted to
+          # main, a poisoned cache from one main run persists across PR runs
+          # until something changes the cache key — that's the proximal cause of
+          # the intermittent rustup-init failure described on the shell setting
+          # above. cargo-nextest is the only bin we'd otherwise cache here and
+          # it's already installed by taiki-e/install-action, so the cost is nil.
+          cache-bin: false
 
       - name: Install Python
         uses: actions/setup-python@v6
@@ -177,7 +199,9 @@ jobs:
             shell: bash -leo pipefail {0}
           - os: macos-latest
             platform: macos
-            shell: bash -leo pipefail {0}
+            # Non-login shell on macOS; see rust-test job for the rustup-init
+            # dispatch bug this avoids.
+            shell: bash -eo pipefail {0}
           - os: windows-x64-8cpu-32ram-300ssd
             platform: windows
             shell: powershell
@@ -227,6 +251,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }} # Only save cache on main; always restore.
           cache-all-crates: true
           cache-on-failure: true
+          cache-bin: false # See rust-test job for rationale.
 
       - name: Install uv
         uses: astral-sh/setup-uv@v8.0.0
