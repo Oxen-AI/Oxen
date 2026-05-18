@@ -20,6 +20,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use tokio::io::AsyncReadExt;
 use tokio_stream::Stream;
 
 use crate::constants::CHUNKS_DIR;
@@ -353,22 +354,19 @@ pub fn atomic_write_to_path(target: &Path, contents: &[u8]) -> Result<(), OxenEr
 ///
 /// Used for files whose size is unknown ahead of time or known to be large (e.g. version-store
 /// blobs streamed from S3 or a push request body).
-/// Internal protocol for the async-reader → sync-writer hand-off used by
-/// `atomic_write_from_reader`. The explicit `Eof` variant is what distinguishes "reader
-/// finished cleanly" from "reader's future was dropped mid-stream" — without it, a cancelled
-/// caller would close the channel and the writer would interpret that as a clean EOF and
-/// commit a truncated file.
-enum StreamMsg {
-    Chunk(bytes::Bytes),
-    Err(std::io::Error),
-    Eof,
-}
-
 pub async fn atomic_write_from_reader<R>(target: &Path, reader: &mut R) -> Result<(), OxenError>
 where
     R: tokio::io::AsyncRead + Unpin + ?Sized,
 {
-    use tokio::io::AsyncReadExt;
+    /// Internal protocol for the async-reader → sync-writer hand-off. The explicit `Eof` variant is
+    /// what distinguishes "reader finished cleanly" from "reader's future was dropped mid-stream".
+    /// Without it, a cancelled caller would close the channel and the writer would interpret that
+    /// as a clean EOF and commit a truncated file.
+    enum StreamMsg {
+        Chunk(bytes::Bytes),
+        Err(std::io::Error),
+        Eof,
+    }
 
     let mut reader = tokio::io::BufReader::with_capacity(constants::STREAMING_BUF_SIZE, reader);
 
