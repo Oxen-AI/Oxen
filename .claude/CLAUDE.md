@@ -142,6 +142,8 @@ oxen push origin main               # Push to remote
 - oxen-server operations should never touch a local checkout on disk when doing operations initiated by its API.
 - Always use `metadata.is_dir()` instead of `path.is_dir()`. `path.is_dir()` follows symlinks, which Oxen does not track — using it risks descending into directories outside the working tree (or into cycles via cyclic links).
 - Oxen does not track symlinks. New code that traverses the working tree should check `metadata.is_symlink()` and skip rather than resolve, follow, or record symlinks.
+- Never use `unsafe` code when a safe alternative would meet our needs. Reach for `unsafe` only when there is a concrete reason no safe construct will do (e.g. FFI, a measured performance requirement that safe code cannot satisfy, no clear alternative); in that case, justify the choice in a comment at the `unsafe` site.
+- Any `unsafe` block or `unsafe fn` must be preceded by a `// SAFETY:` comment that explains why the operation is sound — which invariants the caller relies on, why they hold here, and what would break if they didn't. Follow the Rust style guide: <https://std-dev-guide.rust-lang.org/policy/safety-comments.html>. For an `unsafe fn`, document the caller's obligations with a `# Safety` section in the doc comment, and pair each call site with its own `// SAFETY:` comment justifying that those obligations are met.
 
 # Testing Rules
 - Use the test helpers in `crates/lib/src/test.rs` (e.g., `run_empty_local_repo_test`) for unit tests in the lib code.
