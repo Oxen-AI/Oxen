@@ -75,6 +75,7 @@ pub struct RepositoryDataTypesView {
     pub data_types: Vec<DataTypeCount>,
     pub min_version: Option<String>,
     pub is_empty: bool,
+    #[serde(default)]
     pub branch_count: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_resource: Option<ParsedResourceView>,
