@@ -354,6 +354,17 @@ pub fn atomic_write_to_path(target: &Path, contents: &[u8]) -> Result<(), OxenEr
 ///
 /// Used for files whose size is unknown ahead of time or known to be large (e.g. version-store
 /// blobs streamed from S3 or a push request body).
+/// Internal protocol for the async-reader → sync-writer hand-off used by
+/// `atomic_write_from_reader`. The explicit `Eof` variant is what distinguishes "reader
+/// finished cleanly" from "reader's future was dropped mid-stream" — without it, a cancelled
+/// caller would close the channel and the writer would interpret that as a clean EOF and
+/// commit a truncated file.
+enum StreamMsg {
+    Chunk(Vec<u8>),
+    Err(std::io::Error),
+    Eof,
+}
+
 pub async fn atomic_write_from_reader<R>(target: &Path, reader: &mut R) -> Result<(), OxenError>
 where
     R: tokio::io::AsyncRead + Unpin + ?Sized,
@@ -361,36 +372,56 @@ where
     let mut reader = tokio::io::BufReader::with_capacity(constants::STREAMING_BUF_SIZE, reader);
 
     let target = target.to_path_buf();
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<std::io::Result<Vec<u8>>>(2);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamMsg>(2);
 
-    // Sync writer side: pull chunks off the channel into an `AtomicTempFile` and commit when the
-    // channel closes. A read-side error arrives as `Err(_)`, propagates via `?`, and lets `tmp`
-    // drop without commit so the scratch file is reclaimed.
+    // Sync writer side: pull messages off the channel into an `AtomicTempFile`. Commit *only*
+    // after seeing an explicit `StreamMsg::Eof`. Anything else — channel-closed before Eof,
+    // or `StreamMsg::Err` — means the reader didn't finish cleanly (cancellation, panic, IO
+    // failure), so we return an error and let `tmp` drop without committing so the partial
+    // scratch is unlinked.
     let writer = tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
         let mut tmp = AtomicTempFile::create(&target)?;
-        while let Some(chunk_result) = rx.blocking_recv() {
-            let chunk = chunk_result?;
-            tmp.as_writer().write_all(&chunk)?;
+        let mut saw_eof = false;
+        while let Some(msg) = rx.blocking_recv() {
+            match msg {
+                StreamMsg::Chunk(chunk) => tmp.as_writer().write_all(&chunk)?,
+                StreamMsg::Err(err) => return Err(err.into()),
+                StreamMsg::Eof => {
+                    saw_eof = true;
+                    break;
+                }
+            }
+        }
+        if !saw_eof {
+            return Err(std::io::Error::other(format!(
+                "atomic_write_from_reader: stream to {target:?} ended before EOF; \
+                 partial write discarded"
+            ))
+            .into());
         }
         tmp.commit()
     });
 
-    // Async reader side: 1 MB reads into a reusable scratch buffer, copied onto the channel as
-    // freshly-sized `Vec<u8>`s. Read errors are forwarded so the writer can surface them;
-    // `drop(tx)` closes the channel and signals clean EOF.
+    // Async reader side: 10 MB reads into a reusable scratch buffer, forwarded as `Chunk`s.
+    // After a clean `Ok(0)` we send an explicit `Eof` so the writer knows the stream completed
+    // — a cancelled future never reaches this branch, so the channel just drops, the writer's
+    // `saw_eof` stays false, and `tmp` drops without committing.
     let mut buf = vec![0u8; constants::STREAMING_BUF_SIZE];
     loop {
         match reader.read(&mut buf).await {
-            Ok(0) => break,
+            Ok(0) => {
+                let _ = tx.send(StreamMsg::Eof).await;
+                break;
+            }
             Ok(n) => {
-                if tx.send(Ok(buf[..n].to_vec())).await.is_err() {
+                if tx.send(StreamMsg::Chunk(buf[..n].to_vec())).await.is_err() {
                     // Writer dropped (errored or panicked). The error surfaces via the
                     // `writer.await` below; nothing useful to do here.
                     break;
                 }
             }
             Err(err) => {
-                let _ = tx.send(Err(err)).await;
+                let _ = tx.send(StreamMsg::Err(err)).await;
                 break;
             }
         }
