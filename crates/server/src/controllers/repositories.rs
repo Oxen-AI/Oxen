@@ -7,7 +7,9 @@ use futures_util::TryStreamExt;
 use futures_util::stream::StreamExt; // Import StreamExt for the next() method
 use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::error::OxenError;
+use liboxen::model::ParsedResource;
 use liboxen::model::file::{FileContents, FileNew};
+use liboxen::model::parsed_resource::ParsedResourceView;
 use liboxen::repositories;
 use liboxen::view::http::{MSG_RESOURCE_FOUND, MSG_RESOURCE_UPDATED, STATUS_SUCCESS};
 use liboxen::view::repository::{
@@ -86,22 +88,36 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     let repository = get_repo(&app_data.path, &namespace, &name)?;
     let mut size: u64 = 0;
     let mut data_types: Vec<DataTypeCount> = vec![];
+    let mut default_resource: Option<ParsedResourceView> = None;
 
     // If we have a commit on the main branch, we can get the size and data types from the commit
-    if let Ok(Some(commit)) = repositories::revisions::get(&repository, DEFAULT_BRANCH_NAME)
-        && let Some(dir_node) =
+    if let Ok(Some(commit)) = repositories::revisions::get(&repository, DEFAULT_BRANCH_NAME) {
+        if let Some(dir_node) =
             repositories::entries::get_directory(&repository, &commit, PathBuf::from(""))?
-    {
-        size = dir_node.num_bytes();
-        data_types = dir_node
-            .data_type_counts()
-            .iter()
-            .map(|(data_type, count)| DataTypeCount {
-                data_type: data_type.to_string(),
-                count: *count as usize,
-            })
-            .collect();
+        {
+            size = dir_node.num_bytes();
+            data_types = dir_node
+                .data_type_counts()
+                .iter()
+                .map(|(data_type, count)| DataTypeCount {
+                    data_type: data_type.to_string(),
+                    count: *count as usize,
+                })
+                .collect();
+        }
+
+        let branch = repositories::branches::get_by_name(&repository, DEFAULT_BRANCH_NAME).ok();
+        default_resource = Some(ParsedResourceView::from(ParsedResource {
+            commit: Some(commit),
+            branch,
+            workspace: None,
+            path: PathBuf::from(""),
+            version: PathBuf::from(DEFAULT_BRANCH_NAME),
+            resource: PathBuf::from(DEFAULT_BRANCH_NAME),
+        }));
     }
+
+    let branch_count = repositories::branches::list(&repository)?.len();
 
     // Return the repository view
     Ok(HttpResponse::Ok().json(RepositoryDataTypesResponse {
@@ -114,6 +130,8 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
             data_types,
             min_version: Some(repository.min_version().to_string()),
             is_empty: repositories::is_empty(&repository)?,
+            branch_count,
+            default_resource,
         },
     }))
 }
