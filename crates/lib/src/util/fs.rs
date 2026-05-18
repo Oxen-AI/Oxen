@@ -20,7 +20,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
-use tokio::io::AsyncReadExt;
 use tokio_stream::Stream;
 
 use crate::constants::CHUNKS_DIR;
@@ -360,7 +359,7 @@ pub fn atomic_write_to_path(target: &Path, contents: &[u8]) -> Result<(), OxenEr
 /// caller would close the channel and the writer would interpret that as a clean EOF and
 /// commit a truncated file.
 enum StreamMsg {
-    Chunk(Vec<u8>),
+    Chunk(bytes::Bytes),
     Err(std::io::Error),
     Eof,
 }
@@ -369,6 +368,8 @@ pub async fn atomic_write_from_reader<R>(target: &Path, reader: &mut R) -> Resul
 where
     R: tokio::io::AsyncRead + Unpin + ?Sized,
 {
+    use tokio::io::AsyncReadExt;
+
     let mut reader = tokio::io::BufReader::with_capacity(constants::STREAMING_BUF_SIZE, reader);
 
     let target = target.to_path_buf();
@@ -402,19 +403,22 @@ where
         tmp.commit()
     });
 
-    // Async reader side: 10 MB reads into a reusable scratch buffer, forwarded as `Chunk`s.
-    // After a clean `Ok(0)` we send an explicit `Eof` so the writer knows the stream completed
-    // — a cancelled future never reaches this branch, so the channel just drops, the writer's
-    // `saw_eof` stays false, and `tmp` drops without committing.
-    let mut buf = vec![0u8; constants::STREAMING_BUF_SIZE];
+    // Async reader side: read straight into a `BytesMut`'s uninitialized capacity via
+    // `read_buf`, then `split().freeze()` hands the filled bytes off to the channel as a
+    // refcounted `Bytes`, which avoids a zero-init memset and intermediate `to_vec()` copy.
+    let mut buf = bytes::BytesMut::with_capacity(constants::STREAMING_BUF_SIZE);
     loop {
-        match reader.read(&mut buf).await {
+        if buf.capacity() == 0 {
+            buf.reserve(constants::STREAMING_BUF_SIZE);
+        }
+        match reader.read_buf(&mut buf).await {
             Ok(0) => {
                 let _ = tx.send(StreamMsg::Eof).await;
                 break;
             }
-            Ok(n) => {
-                if tx.send(StreamMsg::Chunk(buf[..n].to_vec())).await.is_err() {
+            Ok(_) => {
+                let chunk = buf.split().freeze();
+                if tx.send(StreamMsg::Chunk(chunk)).await.is_err() {
                     // Writer dropped (errored or panicked). The error surfaces via the
                     // `writer.await` below; nothing useful to do here.
                     break;
