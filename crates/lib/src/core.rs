@@ -1,7 +1,6 @@
 //! Core functionality for Oxen
 //!
 
-pub mod commit_sync_status;
 pub mod db;
 pub mod df;
 pub mod merge;

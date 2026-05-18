@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::constants::{AVG_CHUNK_SIZE, OXEN_HIDDEN_DIR};
-use crate::core;
 use crate::core::refs::with_ref_manager;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
@@ -102,27 +101,22 @@ pub async fn fetch_remote_branch(
         return Ok(remote_branch);
     }
 
-    // If all, fetch all the missing entries from all the commits
-    // Otherwise, fetch the missing entries from the head commit
-    // If missing_files, skip sync status check so we re-scan for missing version files
-    let commits = if fetch_opts.all {
-        if fetch_opts.missing_files {
-            repositories::commits::list_from(repo, &remote_branch.commit_id)?
-                .into_iter()
-                .collect()
-        } else {
-            repositories::commits::list_unsynced_from(repo, &remote_branch.commit_id)?
-        }
+    // Scan for missing commits. `collect_missing_entries` walks the target commit's
+    // merkle tree but prunes any subtree whose root-hash matches one we already have
+    // from HEAD's tree (its `shared_hashes` set is seeded from HEAD), so it only
+    // descends into the parts of the tree that actually changed between HEAD and the
+    // target. `get_missing_entries_for_pull` then stats each remaining entry's blob
+    // and only re-downloads the ones that aren't already in the local version store.
+    // Cost is proportional to the HEAD-target diff, not repo size.
+    let commits: HashSet<Commit> = if fetch_opts.all {
+        repositories::commits::list_from(repo, &remote_branch.commit_id)?
+            .into_iter()
+            .collect()
     } else {
         let hash = remote_branch.commit_id.parse()?;
         let commit_node = repositories::tree::get_node_by_id(repo, &hash)?
             .ok_or_else(|| OxenError::basic_str("Commit node not found"))?;
-
-        if !fetch_opts.missing_files && core::commit_sync_status::commit_is_synced(repo, &hash) {
-            HashSet::new()
-        } else {
-            HashSet::from([commit_node.commit()?.to_commit()])
-        }
+        HashSet::from([commit_node.commit()?.to_commit()])
     };
 
     log::debug!("Fetch got {} commits", commits.len());
@@ -150,11 +144,6 @@ pub async fn fetch_remote_branch(
 
     // If we fetched the data, we're no longer shallow
     repo.write_is_shallow(false)?;
-
-    // Mark the commits as synced
-    for commit in commits {
-        core::commit_sync_status::mark_commit_as_synced(repo, &commit.id.parse()?)?;
-    }
 
     // Write the new branch commit id to the local repo
     if fetch_opts.should_update_branch_head {
@@ -587,13 +576,6 @@ async fn r_download_entries(
         pull_entries_to_versions_dir(repo, remote_repo, &missing_entries, pull_progress).await?;
     }
 
-    if let EMerkleTreeNode::Commit(commit_node) = &node.node {
-        // Mark the commit as synced
-        let commit_id = commit_node.hash().to_string();
-        let commit = repositories::commits::get_by_id(repo, &commit_id)?.unwrap();
-        core::commit_sync_status::mark_commit_as_synced(repo, &commit.id.parse()?)?;
-    }
-
     Ok(())
 }
 
@@ -610,7 +592,7 @@ pub async fn pull_entries_to_versions_dir(
         return Ok(());
     }
 
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     let missing_entries = get_missing_entries_for_pull(&version_store, entries).await?;
     log::debug!("Pulling {} missing entries", missing_entries.len());
 
@@ -643,15 +625,11 @@ pub async fn pull_entries_to_versions_dir(
         (Ok(_), Ok(_)) => {
             log::debug!("Successfully synced entries!");
         }
-        (Err(err), Ok(_)) => {
-            let err = format!("Error syncing large entries: {err}");
-            return Err(OxenError::basic_str(err));
+        (Err(err), Ok(_)) | (Ok(_), Err(err)) => return Err(err),
+        (Err(large_err), Err(small_err)) => {
+            log::error!("Large entries sync also failed: {large_err}");
+            return Err(small_err);
         }
-        (Ok(_), Err(err)) => {
-            let err = format!("Error syncing small entries: {err}");
-            return Err(OxenError::basic_str(err));
-        }
-        _ => return Err(OxenError::basic_str("Unknown error syncing entries")),
     }
 
     Ok(())
@@ -759,8 +737,11 @@ async fn pull_small_entries(
         entries.len()
     );
 
-    // Split into chunks, zip up, and post to server
-    type PieceOfWork = (RemoteRepository, Vec<String>, LocalRepository);
+    // Split into chunks, zip up, and post to server. We carry `(hash, path)` pairs through
+    // the queue (rather than just hashes) so the bulk-download client can put the file paths
+    // into its retry-exhausted error message — paths are far more recognizable to end users
+    // than content hashes.
+    type PieceOfWork = (RemoteRepository, Vec<(String, PathBuf)>, LocalRepository);
     type TaskQueue = deadqueue::limited::Queue<PieceOfWork>;
 
     log::debug!(
@@ -770,11 +751,11 @@ async fn pull_small_entries(
     let chunks: Vec<PieceOfWork> = entries
         .chunks(chunk_size)
         .map(|chunk| {
-            let hashes = chunk
+            let entries = chunk
                 .iter()
-                .map(|commit_entry| commit_entry.hash.clone())
+                .map(|commit_entry| (commit_entry.hash.clone(), commit_entry.path.clone()))
                 .collect();
-            (remote_repo.to_owned(), hashes, repo.to_owned())
+            (remote_repo.to_owned(), entries, repo.to_owned())
         })
         .collect();
 
@@ -875,15 +856,11 @@ pub async fn download_entries_to_working_dir(
         (Ok(_), Ok(_)) => {
             log::debug!("Successfully synced entries!");
         }
-        (Err(err), Ok(_)) => {
-            let err = format!("Error syncing large entries: {err}");
-            return Err(OxenError::basic_str(err));
+        (Err(err), Ok(_)) | (Ok(_), Err(err)) => return Err(err),
+        (Err(large_err), Err(small_err)) => {
+            log::error!("Large entries sync also failed: {large_err}");
+            return Err(small_err);
         }
-        (Ok(_), Err(err)) => {
-            let err = format!("Error syncing small entries: {err}");
-            return Err(OxenError::basic_str(err));
-        }
-        _ => return Err(OxenError::basic_str("Unknown error syncing entries")),
     }
     log::info!("Finished download_entries_to_working_dir");
     Ok(())

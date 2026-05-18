@@ -5,7 +5,6 @@
 
 use crate::error::OxenError;
 use crate::model::{LocalRepository, Remote};
-use crate::opts::StorageOpts;
 
 /// # Set the remote for a repository
 /// Tells the CLI where to push the changes to
@@ -36,17 +35,5 @@ pub fn delete_remote(repo: &mut LocalRepository, name: &str) -> Result<(), OxenE
 
     repo.delete_remote(name);
     repo.save()?;
-    Ok(())
-}
-
-/// # Set the version store location for a repository
-/// Tells the CLI where to save version files
-pub async fn set_version_store(
-    repo: &mut LocalRepository,
-    opts: &StorageOpts,
-) -> Result<(), OxenError> {
-    repo.set_version_store(opts).await?;
-    repo.save()?;
-
     Ok(())
 }

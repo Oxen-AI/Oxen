@@ -115,7 +115,7 @@ pub async fn download_chunk(
         resource
     );
 
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     let chunk_start: u64 = query.chunk_start.unwrap_or(0);
     let chunk_size: u64 = query.chunk_size.unwrap_or(AVG_CHUNK_SIZE);
 

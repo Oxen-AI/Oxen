@@ -661,7 +661,7 @@ pub async fn diff_tabular_file_and_file_node(
 ) -> Result<TabularDiff, OxenError> {
     let (df_1, df_2) = match file_node {
         Some(file_node) => {
-            let version_store = repo.version_store()?;
+            let version_store = repo.version_store();
             let file_node_path = version_store
                 .get_version_path(&file_node.hash().to_string())
                 .await?;
@@ -699,7 +699,7 @@ pub async fn diff_tabular_file_nodes(
 ) -> Result<TabularDiff, OxenError> {
     match (file_1, file_2) {
         (Some(file_1), Some(file_2)) => {
-            let version_store = repo.version_store()?;
+            let version_store = repo.version_store();
             let version_path_1 = version_store
                 .get_version_path(&file_1.hash().to_string())
                 .await?;
@@ -724,7 +724,7 @@ pub async fn diff_tabular_file_nodes(
             diff_dfs(&df_1, &df_2, keys, targets, display)
         }
         (Some(file_1), None) => {
-            let version_store = repo.version_store()?;
+            let version_store = repo.version_store();
             let version_path_1 = version_store
                 .get_version_path(&file_1.hash().to_string())
                 .await?;
@@ -741,7 +741,7 @@ pub async fn diff_tabular_file_nodes(
             diff_dfs(&df_1, &df_2, keys, targets, display)
         }
         (None, Some(file_2)) => {
-            let version_store = repo.version_store()?;
+            let version_store = repo.version_store();
             let version_path_2 = version_store
                 .get_version_path(&file_2.hash().to_string())
                 .await?;
@@ -767,7 +767,7 @@ pub async fn diff_text_file_and_node(
     file_node: Option<&FileNode>,
     file_path: impl AsRef<Path>,
 ) -> Result<DiffResult, OxenError> {
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     let file_node_content = if let Some(node) = file_node {
         let file_hash = node.hash().to_string();
         Some(read_version_file_to_string(&version_store, &file_hash).await?)
@@ -790,7 +790,7 @@ pub async fn diff_text_file_nodes(
     file_1: Option<&FileNode>,
     file_2: Option<&FileNode>,
 ) -> Result<TextDiff, OxenError> {
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     match (file_1, file_2) {
         (Some(file_1), Some(file_2)) => {
             let file_content_1 =

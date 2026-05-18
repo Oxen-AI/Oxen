@@ -72,4 +72,22 @@ impl EMerkleTreeNode {
             EMerkleTreeNode::File(_) | EMerkleTreeNode::FileChunk(_)
         )
     }
+
+    /// Deserialize a Merkle tree node from its on-disk type marker and msgpack-encoded body.
+    pub fn from_type_and_bytes(
+        dtype: MerkleTreeNodeType,
+        data: &[u8],
+    ) -> Result<Self, rmp_serde::decode::Error> {
+        match dtype {
+            MerkleTreeNodeType::Commit => {
+                Ok(EMerkleTreeNode::Commit(CommitNode::deserialize(data)?))
+            }
+            MerkleTreeNodeType::Dir => Ok(EMerkleTreeNode::Directory(DirNode::deserialize(data)?)),
+            MerkleTreeNodeType::File => Ok(EMerkleTreeNode::File(FileNode::deserialize(data)?)),
+            MerkleTreeNodeType::VNode => Ok(EMerkleTreeNode::VNode(VNode::deserialize(data)?)),
+            MerkleTreeNodeType::FileChunk => Ok(EMerkleTreeNode::FileChunk(
+                FileChunkNode::deserialize(data)?,
+            )),
+        }
+    }
 }

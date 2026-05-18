@@ -190,46 +190,75 @@ async fn create_multipart_large_file_upload(
     })
 }
 
-/// Batch download
+/// Batch download.
+///
+/// `entries` is a list of `(content_hash, source_path)` pairs — only the hash is sent over the wire
+/// (the bulk endpoint identifies blobs by hash); the path is preserved purely for diagnostic
+/// surfaces (errors, logs) so end users can identify which file(s) failed.
 #[tracing::instrument(skip_all)]
 pub async fn download_data_from_version_paths(
     remote_repo: &RemoteRepository,
-    hashes: &[String],
+    entries: &[(String, PathBuf)],
     local_repo: &LocalRepository,
 ) -> Result<u64, OxenError> {
     let total_retries = max_retries().try_into().unwrap_or(max_retries() as u64);
     let mut num_retries = 0;
+    let mut last_err: Option<OxenError> = None;
 
     while num_retries < total_retries {
-        match try_download_data_from_version_paths(remote_repo, hashes, local_repo).await {
+        match try_download_data_from_version_paths(remote_repo, entries, local_repo).await {
             Ok(val) => return Ok(val),
-            Err(OxenError::Authentication(val)) => return Err(OxenError::Authentication(val)),
+            // Short-circuit on errors that won't change on retry (auth failures, 4xx
+            // responses, server-confirmed missing blobs). Without this, a doomed pull
+            // pays the full exponential backoff before surfacing the diagnostic.
+            Err(err) if err.is_fatal_for_retry() => return Err(err),
             Err(err) => {
                 num_retries += 1;
                 // Exponentially back off
                 let sleep_time = num_retries * num_retries;
                 log::warn!("Could not download content {err:?} sleeping {sleep_time}");
+                last_err = Some(err);
                 tokio::time::sleep(std::time::Duration::from_secs(sleep_time)).await;
             }
         }
     }
 
-    let err = format!(
-        "Err: Failed to download {} files after {} retries",
-        hashes.len(),
-        total_retries
+    // Preserve the failing batch's entries (path + hash) and last underlying error so callers
+    // and server logs can identify which file(s) the server couldn't serve. Without this, the
+    // symptom surfaces as a bare "failed to download N files" with no way to map back to
+    // specific files.
+    let last_error = last_err
+        .as_ref()
+        .map(|e| format!("{e}"))
+        .unwrap_or_else(|| "(no attempts made)".to_string());
+    let formatted_entries = entries
+        .iter()
+        .map(|(h, p)| format!("{} (hash: {h})", p.display()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    log::error!(
+        "Bulk download exhausted {} retries for {} entries: [{}]. Last error: {}",
+        total_retries,
+        entries.len(),
+        formatted_entries,
+        last_error,
     );
-    Err(OxenError::basic_str(err))
+    Err(OxenError::DownloadBatchExhausted {
+        num_files: entries.len(),
+        num_retries: total_retries,
+        entries: entries.to_vec(),
+        last_error,
+    })
 }
 
 #[tracing::instrument(skip_all)]
 pub async fn try_download_data_from_version_paths(
     remote_repo: &RemoteRepository,
-    hashes: &[String],
+    entries: &[(String, PathBuf)],
     local_repo: &LocalRepository,
 ) -> Result<u64, OxenError> {
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    for hash in hashes.iter() {
+    for (hash, _path) in entries.iter() {
         let line = format!("{hash}\n");
         // log::debug!("download_data_from_version_paths encoding line: {} path: {:?}", line, path);
         encoder.write_all(line.as_bytes())?;
@@ -251,7 +280,7 @@ pub async fn try_download_data_from_version_paths(
         let decoder = GzipDecoder::new(buf_reader);
         let mut archive = Archive::new(decoder);
 
-        let version_store = local_repo.version_store()?;
+        let version_store = local_repo.version_store();
         let mut size: u64 = 0;
 
         // Iterate over archive entries and stream them to version store
@@ -517,7 +546,7 @@ pub async fn multipart_batch_upload(
     client: &reqwest::Client,
     files_to_retry: Vec<ErrorFileInfo>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
-    let version_store = local_repo.version_store()?;
+    let version_store = local_repo.version_store();
     let mut form = reqwest::multipart::Form::new();
     let mut err_files: Vec<ErrorFileInfo> = vec![];
 
@@ -839,6 +868,53 @@ mod tests {
             let version = api::client::versions::get(&remote_repo, result.unwrap().hash).await?;
             assert!(version.is_some());
             assert_eq!(version.unwrap().size, original_file_size);
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    /// When the bulk versions download endpoint is asked for hashes that don't exist
+    /// on the server, the server's pre-flight check returns a structured 404 and the
+    /// client's retry loop short-circuits — instead of paying multiple rounds of
+    /// exponential backoff that won't change the outcome.
+    #[tokio::test]
+    async fn test_bulk_download_short_circuits_on_missing_blob_on_server() -> Result<(), OxenError>
+    {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+            // A well-formed 32-char hex string that can't possibly exist on the server.
+            let bogus_hash = "deadbeefdeadbeefdeadbeefdeadbeef".to_string();
+            let entries = vec![(bogus_hash.clone(), PathBuf::from("does-not-exist.txt"))];
+
+            let result = api::client::versions::download_data_from_version_paths(
+                &remote_repo,
+                &entries,
+                &local_repo,
+            )
+            .await;
+
+            let err = result.expect_err("expected error for missing hash");
+            // The short-circuit returns the underlying fatal error directly — *not*
+            // DownloadBatchExhausted, which is only emitted after the retry loop runs
+            // out of attempts. Seeing DownloadBatchExhausted here would mean the loop
+            // retried on a 4xx and slept its way through backoff.
+            assert!(
+                !matches!(&err, OxenError::DownloadBatchExhausted { .. }),
+                "should have short-circuited on the 4xx instead of exhausting retries: {err:?}"
+            );
+            assert!(
+                err.is_fatal_for_retry(),
+                "missing-blob error should classify as fatal: {err:?}"
+            );
+
+            // The rendered error names the missing hash so the user can map it back to
+            // the broken blob. We assert on the surface message rather than the variant
+            // shape since the server's wire-format may evolve.
+            let rendered = err.to_string();
+            assert!(
+                rendered.contains(&bogus_hash),
+                "error should name the missing hash; got: {rendered}"
+            );
 
             Ok(remote_repo)
         })

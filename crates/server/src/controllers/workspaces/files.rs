@@ -87,7 +87,7 @@ pub async fn get(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Err(OxenHttpError::NotFound);
@@ -213,7 +213,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
 
     let (upload_files, err_files, update_timestamp) = save_parts(payload, &repo).await?;
     log::debug!("Save multiparts found {} err_files", err_files.len());
@@ -481,10 +481,7 @@ pub async fn save_parts(
     repo: &LocalRepository,
 ) -> Result<(Vec<FileWithHash>, Vec<ErrorFileInfo>, bool), Error> {
     // Receive a multipart request and save the files to the version store
-    let version_store = repo.version_store().map_err(|oxen_err: OxenError| {
-        log::error!("Failed to get version store: {oxen_err:?}");
-        actix_web::error::ErrorInternalServerError(oxen_err.to_string())
-    })?;
+    let version_store = repo.version_store();
     let gzip_mime: mime::Mime = "application/gzip".parse().unwrap();
 
     let mut upload_files: Vec<FileWithHash> = vec![];

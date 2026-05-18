@@ -114,7 +114,7 @@ pub async fn add<T: AsRef<Path>>(
     }
 
     // Get the version store from the repository
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
 
     // Open the staged db once at the beginning and reuse the connection
     let opts = db::key_val::opts::default();
@@ -288,7 +288,7 @@ pub async fn add_dir_except(
         DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?;
 
     // Get the version store from the repository
-    let version_store = repo.version_store()?;
+    let version_store = repo.version_store();
     let gitignore = None;
 
     let repo_path = &repo.path;
@@ -356,7 +356,7 @@ pub async fn process_add_dir(
     let repo = Arc::new(repo.clone());
     let repo_path = Arc::new(repo_path.to_path_buf());
     let conflicts = Arc::new(conflicts);
-    let version_store = Arc::new(version_store.clone());
+    let version_store = version_store.clone();
     let start = Arc::new(start);
 
     let progress_1_clone = Arc::clone(&progress_1);

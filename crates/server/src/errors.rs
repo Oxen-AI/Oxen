@@ -604,6 +604,31 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::Conflict().json(error_json)
                     }
+                    OxenError::VersionsMissingOnServer { hashes } => {
+                        log::warn!(
+                            "Versions missing on server: {} hash(es) absent from version store",
+                            hashes.len()
+                        );
+                        // Embed the missing hashes both in `detail` (so existing clients
+                        // see them in the rendered error) and as a typed `missing_hashes`
+                        // field (so future clients can parse them programmatically without
+                        // string-extracting from `detail`).
+                        let error_json = json!({
+                            "error": {
+                                "type": "version_blobs_missing",
+                                "title": "Version blobs missing on server",
+                                "detail": format!(
+                                    "Server is missing {} content blob(s) for this batch download. Missing hashes: {}",
+                                    hashes.len(),
+                                    hashes.join(", ")
+                                ),
+                                "missing_hashes": hashes,
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_RESOURCE_NOT_FOUND,
+                        });
+                        HttpResponse::NotFound().json(error_json)
+                    }
                     err => {
                         log::error!("Internal server error: {err:?}");
                         HttpResponse::InternalServerError()

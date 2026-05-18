@@ -111,7 +111,7 @@ serde_with::serde_conv!(
 ///
 /// Is a zero-sized struct around an owned `String`. Can only be created from a [`MerkleHash`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct HexHash(String);
+pub struct HexHash(String);
 
 impl HexHash {
     #[inline(always)]
@@ -122,7 +122,7 @@ impl HexHash {
     /// Produces a relative path for the 2-level directory structure used to store Merkle nodes.
     /// The first directory name is the first 3 characters of the hex-encoded hash. The second
     /// is the remaining characters.
-    pub fn node_db_prefix(&self) -> PathBuf {
+    pub(crate) fn node_db_prefix(&self) -> PathBuf {
         let hash_str = &self.0;
         const DIR_PREFIX_LEN: usize = 3;
         let dir_prefix = hash_str.chars().take(DIR_PREFIX_LEN).collect::<String>();

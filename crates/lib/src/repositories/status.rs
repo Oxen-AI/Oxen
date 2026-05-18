@@ -106,6 +106,71 @@ mod tests {
     }
 
     #[tokio::test]
+    /// Regression: a file whose working copy differs from HEAD AND whose HEAD-expected
+    /// blob is missing from the local version store should be reported as "unrestorable",
+    /// not "modified". The two have different remediation paths (`oxen restore` vs.
+    /// `oxen fetch --missing-files`); status used to lump them together, leaving users
+    /// (Kaga, in the Nex stuck-pull saga) running restore in a loop while it silently
+    /// no-op'd.
+    async fn test_status_distinguishes_unrestorable_from_modified() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let path = repo.path.join("hello.txt");
+            util::fs::write_to_path(&path, "Hello World")?;
+            repositories::add(&repo, &path).await?;
+            let commit = repositories::commit(&repo, "Add hello.txt")?;
+
+            // Drift the working copy.
+            util::fs::write_to_path(&path, "drifted")?;
+
+            // Sanity: status flags it as plain `modified` while the blob is still in
+            // the local version store.
+            let status_before = repositories::status(&repo).await?;
+            assert!(
+                status_before
+                    .modified_files
+                    .iter()
+                    .any(|p| p.ends_with("hello.txt"))
+            );
+            assert!(status_before.unrestorable_files.is_empty());
+
+            // Wipe the blob HEAD expects for hello.txt. After this, `oxen restore` would
+            // hit `RestoreFailed` / `VersionStoreDataMissing`.
+            let head_node = repositories::tree::get_node_by_path(&repo, &commit, "hello.txt")?
+                .expect("hello.txt must be in HEAD's tree");
+            let blob_hash = head_node.hash.to_string();
+            let version_store = repo.version_store();
+            let blob_path = version_store.get_version_path(&blob_hash).await?;
+            assert!(blob_path.exists());
+            util::fs::remove_file(&*blob_path)?;
+
+            let status_after = repositories::status(&repo).await?;
+            assert!(
+                status_after
+                    .unrestorable_files
+                    .iter()
+                    .any(|p| p.ends_with("hello.txt")),
+                "expected hello.txt under unrestorable_files, got: {:?}",
+                status_after.unrestorable_files
+            );
+            assert!(
+                !status_after
+                    .modified_files
+                    .iter()
+                    .any(|p| p.ends_with("hello.txt")),
+                "expected hello.txt NOT under modified_files (it's unrestorable), got: {:?}",
+                status_after.modified_files
+            );
+            // is_clean and has_modified_entries should account for unrestorable files
+            // the same as modified ones.
+            assert!(!status_after.is_clean());
+            assert!(status_after.has_modified_entries());
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_command_status_nothing_staged_full_directory() -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let repo_status = repositories::status(&repo).await?;

@@ -6,12 +6,13 @@ use liboxen::error::OxenError;
 use liboxen::model::commit::NewCommitBody;
 use liboxen::model::file::{FileContents, FileNew};
 use liboxen::model::{Remote, RemoteRepository, RepoNew};
-use liboxen::opts::StorageOpts;
 use liboxen::opts::{PaginateOpts, SortOpts};
+use liboxen::storage::StorageKind;
 use liboxen::{api, repositories};
 
 use std::borrow::Cow;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use crate::error::PyOxenError;
 use crate::py_branch::PyBranch;
@@ -131,35 +132,23 @@ impl PyRemoteRepo {
             .collect())
     }
 
-    #[pyo3(signature = (empty, is_public, storage_backend=None, storage_backend_path=None, storage_backend_bucket=None))]
+    #[pyo3(signature = (empty, is_public, storage_backend=None))]
     fn create(
         &mut self,
         empty: bool,
         is_public: bool,
         storage_backend: Option<String>,
-        storage_backend_path: Option<String>,
-        storage_backend_bucket: Option<String>,
     ) -> Result<PyRemoteRepo, PyOxenError> {
+        let storage_kind = storage_backend
+            .map(|s| StorageKind::from_str(&s))
+            .transpose()?;
         let result = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            // parse storage backend options
-            if storage_backend.is_none() && (storage_backend_path.is_some() || storage_backend_bucket.is_some()) {
-                return Err(OxenError::basic_str(
-                    "storage_backend must be specified when storage_backend_path or storage_backend_bucket is provided"
-                ));
-            }
-
-            let storage_opts = StorageOpts::from_args(
-                storage_backend,
-                storage_backend_path,
-                storage_backend_bucket,
-            )?;
-
             if empty {
                 let mut repo = RepoNew::from_namespace_name_host(
                     self.repo.namespace.clone(),
                     self.repo.name.clone(),
                     self.host.clone(),
-                    storage_opts,
+                    storage_kind,
                 );
                 repo.is_public = Some(is_public);
                 repo.scheme = Some(self.scheme.clone());
@@ -173,7 +162,7 @@ impl PyRemoteRepo {
                     user: user.clone(),
                 }];
                 let mut repo =
-                    RepoNew::from_files(&self.repo.namespace, &self.repo.name, files, storage_opts);
+                    RepoNew::from_files(&self.repo.namespace, &self.repo.name, files, storage_kind);
                 repo.host = Some(self.host.clone());
                 repo.is_public = Some(is_public);
                 repo.scheme = Some(self.scheme.clone());

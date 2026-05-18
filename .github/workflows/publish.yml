@@ -56,7 +56,36 @@ jobs:
       id-token: write # Required for OIDC token exchange
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+      - name: Package and verify crates
+        run: |
+          # Package and verify the workspace before getting the temporary API key.
+          #
+          # `cargo package` does what `cargo publish` does minus the upload: for each publishable
+          # crate it produces a .crate tarball, extracts it to target/package/<crate>-<version>/,
+          # and runs a verify build in that isolated directory. This catches packaging-level
+          # failures that a plain `cargo build --workspace` silently misses — files referenced
+          # in code but not included in the package, path-only dependencies that lack a version
+          # required for crates.io, files outside the crate dir that wouldn't make it into the
+          # tarball, etc.
+          #
+          # We do this BEFORE acquiring the temporary API key because the verify builds take
+          # longer than the 30 minute token expiration. Each crate's verify runs in its own
+          # extracted source tree with a different target dir, so cargo can't share fingerprints
+          # across them — every dependency gets rebuilt once per publishable crate. By doing the
+          # verification here and then using `cargo publish --no-verify` below, the actual upload
+          # step is fast enough to fit comfortably within the token's lifetime.
+          #
+          # ************************************************************************************************
+          # **WARNING** YOU MUST MAKE SURE THAT THE EXACT SAME PACKAGES THAT ARE PUBLISHED IN THE UPCOMING *
+          #             PUBLISH STEP ARE PACKAGED HERE!!! OTHERWISE THIS PUBLISH WORKFLOW IS NOT PROPERLY  *
+          #             VERIFYING THAT ALL OF THE CRATES PACKAGE AND LINK CORRECTLY!!!! THIS CAN LEAD TO A *
+          #             BROKEN crates.io PUBLISH IN THE WORST CASE!!!!!                                    *
+          #                                                                                                *
+          #             IF YOU EDIT THIS LINE'S --exclude YOU MUST UPDATE IT IN THE cargo publish STEP!!!  *
+          # ************************************************************************************************
+          cargo package --workspace --exclude oxen-py
+
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
       - name: Upload to crates.io
@@ -64,8 +93,15 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           cd ${{ github.workspace }}
-          # NOTE: oxen-py is listed as publish=false, but we want defense in depth so we explicitly exclude it here too
-          cargo publish --workspace --exclude oxen-py
+          # NOTE: KEEP --no-verify HERE !
+          #   --no-verify: skip cargo's per-crate post-package compile check. The "Package and
+          #   verify crates" step above already packaged and verified each publishable crate
+          #   the same way cargo publish would. The verification process that cargo publish
+          #   does takes longer than the API token lasts, so we do it before acquiring the token.
+          # ************************************************************************************************
+          # **WARNING** ENSURE THE --exclude LINE HERE MATCHES EXACTLY IN THE PACKAGE STEP ABOVE!!!!!!     *
+          # ************************************************************************************************
+          cargo publish --workspace --exclude oxen-py --no-verify
 
   publish_homebrew_oxen:
     name: 🍺 Update oxen formula on homebrew-core
@@ -91,7 +127,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: Oxen-AI/homebrew-oxen-server
           path: homebrew-oxen-server

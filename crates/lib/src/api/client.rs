@@ -245,9 +245,12 @@ async fn parse_json_body_with_err_msg(
         ),
         Err(err) => {
             log::debug!("Err: {err}");
-            Err(OxenError::basic_str(format!(
-                "Could not deserialize response from [{url}]\n{status}"
-            )))
+            // Preserve the HTTP status so retry loops can classify the failure even
+            // though the body is opaque (e.g. an HTML 502 page from a proxy).
+            Err(OxenError::HttpDeserializeError {
+                url: url.to_string(),
+                status,
+            })
         }
     }
 }
@@ -264,22 +267,19 @@ fn parse_status_and_message(
         http::STATUS_SUCCESS => {
             log::debug!("Status success: {status}");
             if !status.is_success() {
-                return Err(OxenError::basic_str(format!(
-                    "Err status [{}] from url {} [{}]",
+                // Preserve the HTTP status so retry loops can classify the failure.
+                return Err(OxenError::HttpStatusError {
+                    url: url.to_string(),
                     status,
-                    url,
-                    response.desc_or_msg()
-                )));
+                    message: response.desc_or_msg(),
+                });
             }
 
             Ok(body)
         }
         http::STATUS_WARNING => {
             log::debug!("Status warning: {status}");
-            Err(OxenError::basic_str(format!(
-                "Remote Warning: {}",
-                response.desc_or_msg()
-            )))
+            Err(OxenError::RemoteWarning(response.desc_or_msg().into()))
         }
         http::STATUS_ERROR => {
             log::debug!("Status error: {status}");
@@ -288,12 +288,18 @@ fn parse_status_and_message(
                 && let Some(response_type) = response_type
                 && response.desc_or_msg() == response_type
             {
-                return Err(OxenError::basic_str(msg));
+                return Err(OxenError::authentication(msg));
             }
 
-            Err(OxenError::basic_str(response.full_err_msg()))
+            // Preserve the HTTP status so retry loops can classify the failure
+            // (4xx => fatal, 5xx => retryable) without string-matching the message.
+            Err(OxenError::HttpStatusError {
+                url: url.to_string(),
+                status,
+                message: response.full_err_msg(),
+            })
         }
-        status => Err(OxenError::basic_str(format!("Unknown status [{status}]"))),
+        status => Err(OxenError::UnknownRemoteResponseStatus(status.into())),
     }
 }
 

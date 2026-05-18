@@ -171,7 +171,8 @@ pub fn download_benchmark(c: &mut Criterion) {
 
                         // create a clean local repo ready for the fetch
                         let mut local_repo =
-                            LocalRepository::from_remote(remote_repo.clone(), &iter_dir).unwrap();
+                            LocalRepository::from_remote(remote_repo.clone(), &iter_dir, false)
+                                .unwrap();
                         iter_dir.clone_into(&mut local_repo.path);
                         local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
                         local_repo.set_min_version(repo.min_version());

@@ -79,7 +79,7 @@ jobs:
           cache-on-failure: true
 
       - name: Install Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11" # Test against the earliest supported Python version
 

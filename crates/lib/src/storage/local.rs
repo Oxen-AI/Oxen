@@ -1,5 +1,4 @@
 use std;
-use std::collections::HashMap;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 
@@ -198,6 +197,19 @@ impl VersionStore for LocalVersionStore {
     async fn copy_version_to_path(&self, hash: &str, dest_path: &Path) -> Result<(), OxenError> {
         let version_path = self.version_path(hash);
         log::debug!("copying version path: {version_path:?} to {dest_path:?}");
+        // Distinguish "the version-store blob is missing" from generic copy errors so the
+        // caller (oxen restore / merge / etc.) can surface a useful hint pointing the user
+        // at `oxen fetch --missing-files`. Real IO errors from the existence check (e.g.
+        // permission denied on `.oxen/versions/`) propagate as-is.
+        match fs::try_exists(&version_path).await? {
+            true => {}
+            false => {
+                return Err(OxenError::VersionStoreDataMissing {
+                    hash: hash.to_string(),
+                    target_path: dest_path.to_path_buf().into(),
+                });
+            }
+        }
         util::fs::copy_mkdir(&version_path, dest_path).await?;
         Ok(())
     }
@@ -538,17 +550,8 @@ impl VersionStore for LocalVersionStore {
         Ok(result)
     }
 
-    fn storage_type(&self) -> &str {
-        "local"
-    }
-
-    fn storage_settings(&self) -> HashMap<String, String> {
-        let mut settings = HashMap::new();
-
-        let root_path_str = self.root_path.to_str().unwrap_or("").to_string();
-        settings.insert("path".to_string(), root_path_str);
-
-        settings
+    fn storage_kind(&self) -> crate::storage::StorageKind {
+        crate::storage::StorageKind::Local
     }
 }
 
@@ -627,6 +630,33 @@ mod tests {
         // Store and check again
         store.store_version(hash, data).await.unwrap();
         assert!(store.version_exists(hash).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_find_missing_versions_returns_only_absent_hashes() {
+        let (_temp_dir, store) = setup().await;
+        let present = "aaaa1111aaaa1111";
+        let also_present = "bbbb2222bbbb2222";
+        let absent = "cccc3333cccc3333";
+        store.store_version(present, b"x").await.unwrap();
+        store.store_version(also_present, b"y").await.unwrap();
+
+        let missing = store
+            .find_missing_versions(&[
+                present.to_string(),
+                absent.to_string(),
+                also_present.to_string(),
+            ])
+            .await
+            .unwrap();
+        assert_eq!(missing, vec![absent.to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_find_missing_versions_empty_input_returns_empty() {
+        let (_temp_dir, store) = setup().await;
+        let missing = store.find_missing_versions(&[]).await.unwrap();
+        assert!(missing.is_empty());
     }
 
     #[tokio::test]
