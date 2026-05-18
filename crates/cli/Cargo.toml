@@ -8,12 +8,7 @@ homepage = { workspace = true }
 repository = { workspace = true }
 readme = { workspace = true }
 keywords = { workspace = true }
-categories = [
-    "command-line-utilities",
-    "science",
-    "multimedia",
-    "database",
-]
+categories = ["command-line-utilities", "science", "multimedia", "database"]
 
 [[bin]]
 name = "oxen"
