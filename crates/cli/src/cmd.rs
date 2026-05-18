@@ -123,6 +123,8 @@ pub use prune::PruneCmd;
 pub mod fsck;
 pub use fsck::FsckCmd;
 
+/// Trait for that any oxen CLI comand must implement.
+/// NOTE: Must keep this trait dyn-compatible.
 #[async_trait]
 pub trait RunCmd {
     fn name(&self) -> &str;

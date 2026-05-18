@@ -1,13 +1,18 @@
 /// The [`LmdbBackend`] struct.
 mod lmdb_backend;
+/// The [`MerklePacker`] implementation.
+mod pack;
 /// The [`MerkleReader`] implementation.
 mod reader;
+/// The [`MerkleUnpacker`] implementation.
+mod unpack;
 /// The structures stored as values.
 mod value_structs;
 /// The [`MerkleWriter`] implementation.
 mod writer;
 
 pub use lmdb_backend::LmdbBackend;
+pub(crate) use lmdb_backend::lmdb_dir_location;
 
 use thiserror::Error;
 
