@@ -292,42 +292,21 @@ impl AtomicTempFile {
 
         tmp.as_file().sync_all()?;
 
-        // `persist` consumes the `NamedTempFile` on success. On success, `persist` renames the
-        // temp file to `target`; on failure, `PersistError` carries the original `NamedTempFile`,
-        // whose `Drop` unlinks the temp when the error value goes out of scope — so we don't need
-        // an explicit cleanup branch.
-        //
-        // On Windows, `MoveFileEx(MOVEFILE_REPLACE_EXISTING)` can transiently return
-        // `ERROR_ACCESS_DENIED` (5) or `ERROR_SHARING_VIOLATION` (32) when another process or
-        // thread momentarily holds the target — antivirus, search indexers, or concurrent
-        // writers racing for the same path. Linux's `rename(2)` is atomic and doesn't see this.
-        // Retry the publish with short backoff so transient contention doesn't surface as a
-        // hard failure to the caller.
-        const MAX_PERSIST_ATTEMPTS: u32 = 5;
-        let mut current_tmp = tmp;
-        for attempt in 0..MAX_PERSIST_ATTEMPTS {
-            match current_tmp.persist(&target) {
-                Ok(_) => break,
-                Err(err) => {
-                    let retryable =
-                        cfg!(windows) && matches!(err.error.raw_os_error(), Some(5) | Some(32));
-                    if !retryable || attempt + 1 == MAX_PERSIST_ATTEMPTS {
-                        return Err(OxenError::file_rename_error(
-                            err.file.path(),
-                            &target,
-                            err.error,
-                        ));
-                    }
-                    log::debug!(
-                        "AtomicTempFile::commit: retrying transient rename failure \
-                         (attempt {}/{MAX_PERSIST_ATTEMPTS}) for {target:?}: {}",
-                        attempt + 1,
-                        err.error,
-                    );
-                    current_tmp = err.file;
-                    std::thread::sleep(std::time::Duration::from_millis(10 * 2_u64.pow(attempt)));
-                }
-            }
+        // Route around `tempfile::NamedTempFile::persist`, which calls `MoveFileExW` directly on
+        // Windows and hits transient `ERROR_ACCESS_DENIED` / `ERROR_SHARING_VIOLATION` failures
+        // when another process or thread momentarily holds the target (antivirus, search
+        // indexers, concurrent writers racing for the same path). `keep()` consumes the handle
+        // and disables `NamedTempFile`'s auto-deletion, handing back the path; we then call
+        // `std::fs::rename`, which since Rust 1.85 (rust-lang/rust#131072) uses
+        // `SetFileInformationByHandle(FileRenameInfoEx)` with POSIX semantics on Windows 10
+        // 1607+ — atomic and immune to that contention. On Linux it's just `rename(2)`.
+        let (_file, temp_path) = tmp
+            .keep()
+            .map_err(|err| OxenError::file_rename_error(err.file.path(), &target, err.error))?;
+        if let Err(err) = std::fs::rename(&temp_path, &target) {
+            // Auto-cleanup is disabled now, so we unlink the orphaned temp ourselves.
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(OxenError::file_rename_error(&temp_path, &target, err));
         }
 
         // Best-effort fsync the parent directory. It's okay if it fails. This operation isn't
