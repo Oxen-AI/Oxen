@@ -16,7 +16,10 @@ pub struct WorkspaceConfig {
     pub workspace_id: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+/// In-process model. Not part of any API wire shape — use `WorkspaceView`
+/// (`{id, name, commit}`) when crossing the wire; the embedded `LocalRepository`s here
+/// would bloat the response and leak server-internal storage state.
+#[derive(Debug, Clone)]
 pub struct Workspace {
     pub id: String,
     pub name: Option<String>,
