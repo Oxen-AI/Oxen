@@ -143,6 +143,27 @@ impl MerkleDbError {
     }
 }
 
+impl From<crate::util::tar_stream::TarStreamError> for MerkleDbError {
+    fn from(err: crate::util::tar_stream::TarStreamError) -> Self {
+        use crate::util::tar_stream::TarStreamError;
+        match err {
+            TarStreamError::Io(io) => MerkleDbError::Io(io),
+            TarStreamError::PathTraversal { path } => MerkleDbError::PathTraversal(path),
+            TarStreamError::UnsupportedEntry { path } => {
+                MerkleDbError::UnsupportedTarEntry { path }
+            }
+        }
+    }
+}
+
+/// Composed conversion so the streaming tar helpers can be used inside
+/// functions that return [`OxenError`] without intermediate `.map_err`.
+impl From<crate::util::tar_stream::TarStreamError> for OxenError {
+    fn from(err: crate::util::tar_stream::TarStreamError) -> Self {
+        OxenError::from(MerkleDbError::from(err))
+    }
+}
+
 struct MerkleNodeLookup {
     data_type: u8,
     parent_id: u128,

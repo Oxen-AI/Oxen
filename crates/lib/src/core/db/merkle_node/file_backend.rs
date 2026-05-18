@@ -3,9 +3,7 @@ use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 
 use flate2::Compression;
-use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use tar::Archive;
 
 use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
 use crate::core::db::merkle_node::merkle_node_db::{MerkleDbError, MerkleNodeDB, node_db_path};
@@ -20,6 +18,7 @@ use crate::model::merkle_tree::merkle_writer::{
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::{LocalRepository, MerkleHash, TMerkleTreeNode};
 use crate::util;
+use crate::util::tar_stream::{EntryKind, stream_unpack};
 
 /// File-based Merkle node store backend. Implements the [`MerkleStore`] trait.
 ///
@@ -199,6 +198,20 @@ impl NodeWriteSession for FileNodeSession {
 /// `skip_missing_node_dir` is `true`: this matches the existing oxen behavior
 /// of `compress_nodes` / `compress_node` / `compress_commits`. If `false`,
 /// missing node directories result in an `Err(MerkleDbError::MissingNodeDir)`.
+///
+/// **Design note:** unlike the LMDB pack side, this function uses
+/// `tar::Builder::append_dir_all` directly instead of routing through
+/// [`crate::util::tar_stream::stream_pack`]. The file backend's pack already
+/// streams (the archive is never materialized in memory — `append_dir_all`
+/// opens files lazily and pipes them through gzip+tar one chunk at a time), so
+/// the only thing centralizing into `stream_pack` would buy us is a uniform
+/// abstraction. Against that: the byte-compat tests in this file pin the exact
+/// `path → body` map of the emitted archive, and `append_dir_all`'s emission
+/// shape (which intermediate dirs it includes, the order of entries within a
+/// dir) is non-trivial to replicate with a hand-rolled walker. We get the
+/// memory-profile improvement on the LMDB side — where it actually matters,
+/// because that backend used to fully buffer — and leave the already-streaming
+/// file side alone.
 fn write_hashes_tar<W: Write>(
     repo_path: &Path,
     hashes: &HashSet<MerkleHash>,
@@ -303,62 +316,52 @@ fn extract_tar_under<R: Read>(
     oxen_hidden: &Path,
     overwrite_existing: bool,
 ) -> Result<HashSet<MerkleHash>, MerkleDbError> {
-    let mut hashes: HashSet<MerkleHash> = HashSet::new();
-    let decoder = GzDecoder::new(reader);
-    let mut archive = Archive::new(decoder);
-    let entries = archive.entries().map_err(MerkleDbError::CannotReadMerkle)?;
-
-    let tree_nodes_prefix = Path::new(TREE_DIR).join(NODES_DIR);
-
-    for entry in entries {
-        let Ok(mut file) = entry else {
-            log::error!("Could not unpack file in merkle tar archive");
-            // TODO: raise this error to the caller instead!?
-            continue;
-        };
-        let path = file.path()?.into_owned();
-        // Path-traversal guard: refuse any entry whose path resolves above its container.
-        if path.components().any(|c| matches!(c, Component::ParentDir)) {
-            return Err(MerkleDbError::PathTraversal(path.display().to_string()));
-        }
-        // Entry-type validation: only regular files and directories are allowed.
-        let entry_type = file.header().entry_type();
-        if !entry_type.is_file() && !entry_type.is_dir() {
-            return Err(MerkleDbError::UnsupportedTarEntry {
-                path: path.display().to_string(),
-            });
-        }
+    // Streaming variant: path-traversal and unsupported-entry-type guards live
+    // inside [`stream_unpack`] now, so we only handle the file-backend-specific
+    // bits (server-canonical vs legacy-client-push prefix, skip-existing policy,
+    // atomic writes, hash extraction).
+    struct St {
+        hashes: HashSet<MerkleHash>,
+        oxen_hidden: PathBuf,
+        tree_nodes_prefix: PathBuf,
+        overwrite_existing: bool,
+    }
+    let state = St {
+        hashes: HashSet::new(),
+        oxen_hidden: oxen_hidden.to_path_buf(),
+        tree_nodes_prefix: Path::new(TREE_DIR).join(NODES_DIR),
+        overwrite_existing,
+    };
+    let state = stream_unpack::<_, _, _, MerkleDbError>(reader, state, |entry, st| {
         // Server-style entries already contain `tree/nodes/...`; join directly.
         // Legacy client-push entries begin at `{prefix}/{suffix}/...`; prepend `tree/nodes/`.
-        let dst_path = if path.starts_with(&tree_nodes_prefix) {
-            oxen_hidden.join(&path)
+        let dst_path = if entry.path.starts_with(&st.tree_nodes_prefix) {
+            st.oxen_hidden.join(entry.path)
         } else {
-            oxen_hidden.join(&tree_nodes_prefix).join(&path)
+            st.oxen_hidden.join(&st.tree_nodes_prefix).join(entry.path)
         };
-        if dst_path.exists() && !overwrite_existing {
+        if dst_path.exists() && !st.overwrite_existing {
             log::info!("Node already exists at {dst_path:?}, skipping");
-            continue;
-        }
-        if entry_type.is_dir() {
-            std::fs::create_dir_all(&dst_path)?;
         } else {
-            util::fs::atomic_write_from_reader_sync(&dst_path, &mut file)
-                .map_err(|err| MerkleDbError::FsTransport(Box::new(err)))?;
+            match entry.kind {
+                EntryKind::Directory => {
+                    std::fs::create_dir_all(&dst_path)?;
+                }
+                EntryKind::File => {
+                    util::fs::atomic_write_from_reader_sync(&dst_path, entry.body)
+                        .map_err(|err| MerkleDbError::FsTransport(Box::new(err)))?;
+                }
+            }
         }
-
         // Extract the merkle hash from this entry's path, if it identifies one.
-        //
-        // After the path-resolution above, `dst_path` is of the form
-        // `<oxen_hidden>/tree/nodes/<rest>`. We classify entries by the SHAPE
-        // of `<rest>`, never by whether components happen to be hex. We assume that
-        // we have the hex-encoded hash as the `{prefix}/{suffix}` dirs.
-        if let Some(hash) = extract_hash_from_entry_path(&dst_path, oxen_hidden)? {
-            hashes.insert(hash);
+        // `dst_path` is `<oxen_hidden>/tree/nodes/<rest>`; classification is by
+        // the SHAPE of `<rest>`, never by whether components happen to be hex.
+        if let Some(hash) = extract_hash_from_entry_path(&dst_path, &st.oxen_hidden)? {
+            st.hashes.insert(hash);
         }
-        // If we can't extract a path, it's because we're looking at a node or children file.
-        // We will have already obtained the hash from the directory, so this is ok!
-    }
-    Ok(hashes)
+        Ok(())
+    })?;
+    Ok(state.hashes)
 }
 
 /// Classification of a tar entry's path under `tree/nodes/`.
@@ -573,6 +576,8 @@ mod tests {
     use std::path::PathBuf;
 
     use bytesize::ByteSize;
+    use flate2::read::GzDecoder;
+    use tar::Archive;
 
     use super::*;
     use crate::error::OxenError;

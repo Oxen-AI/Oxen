@@ -12,6 +12,7 @@ pub mod paginate;
 pub mod perf;
 pub mod progress_bar;
 pub mod str;
+pub mod tar_stream;
 pub mod telemetry;
 
 pub use paginate::{paginate, paginate_with_total};
