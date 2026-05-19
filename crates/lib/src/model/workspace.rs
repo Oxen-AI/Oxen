@@ -16,9 +16,8 @@ pub struct WorkspaceConfig {
     pub workspace_id: Option<String>,
 }
 
-/// In-process model. Not part of any API wire shape — use `WorkspaceView`
-/// (`{id, name, commit}`) when crossing the wire; the embedded `LocalRepository`s here
-/// would bloat the response and leak server-internal storage state.
+/// In-process model for workspace state. Not part of any API wire shape — use `WorkspaceView` to
+/// send workspace state across the wire.
 #[derive(Debug, Clone)]
 pub struct Workspace {
     pub id: String,
@@ -80,6 +79,8 @@ impl From<Workspace> for WorkspaceView {
     }
 }
 
+/// Used to send workspace state across the wire. The `Workspace`'s other fields (like
+/// `LocalRepository`) would bloat the response and leak internal state.
 #[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct WorkspaceView {
     pub name: Option<String>,

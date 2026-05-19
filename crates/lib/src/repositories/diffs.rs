@@ -415,7 +415,7 @@ pub async fn diff_path(
                 head_resource: Some(ParsedResourceView {
                     commit: Some(head_commit.clone()),
                     path: head_path.as_ref().to_path_buf(),
-                    ..ParsedResourceView::default() //TODO: Fill in other fields as well
+                    ..ParsedResourceView::default()
                 }),
                 base_resource: Some(ParsedResourceView {
                     commit: Some(base_commit.clone()),
