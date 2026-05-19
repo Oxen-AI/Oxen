@@ -229,16 +229,6 @@ pub enum OxenError {
     #[error("S3 storage backend not yet implemented")]
     S3BackendNotImplemented,
 
-    /// A storage operation was attempted on a placeholder `VersionStore` — see
-    /// `NoopVersionStore` in `storage::noop`. The placeholder only exists to satisfy the
-    /// `LocalRepository::version_store` field on `Deserialize` (e.g. for wire-shape stubs
-    /// inside `Workspace` payloads). Constructor-built `LocalRepository`s always carry a
-    /// real backend; reaching for the store on a deserialized stub is a logic bug.
-    #[error(
-        "VersionStore placeholder reached for {operation} — deserialized LocalRepositories are wire-shape stubs and have no real backend"
-    )]
-    VersionStorePlaceholderUsed { operation: &'static str },
-
     /// `oxen restore` finished with one or more file-restore failures. Aggregated rather than
     /// fail-fast so the rest of the files can still be restored. The vector should be non-empty.
     #[error("{}", format_restore_failures(failures))]

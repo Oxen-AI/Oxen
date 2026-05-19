@@ -4,17 +4,16 @@ use utoipa::ToSchema;
 
 use super::{Branch, Commit, Workspace, workspace::WorkspaceView};
 
-/// Internal model
-#[derive(Default, Deserialize, Serialize, Debug, Clone, ToSchema)]
+/// In-process model. Not part of any API wire shape — `ParsedResourceView` is what
+/// crosses the wire, and `From<ParsedResource> for ParsedResourceView` converts at the
+/// response-construction boundary.
+#[derive(Default, Debug, Clone)]
 pub struct ParsedResource {
     pub commit: Option<Commit>,
     pub branch: Option<Branch>,
     pub workspace: Option<Workspace>,
-    #[schema(value_type = String)]
     pub path: PathBuf,
-    #[schema(value_type = String)]
     pub version: PathBuf,
-    #[schema(value_type = String)]
     pub resource: PathBuf,
 }
 
@@ -30,7 +29,7 @@ impl std::fmt::Display for ParsedResource {
 }
 
 /// External (view) model that is returned to the client with fewer fields.
-#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
+#[derive(Default, Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct ParsedResourceView {
     pub workspace: Option<WorkspaceView>,
     pub commit: Option<Commit>,

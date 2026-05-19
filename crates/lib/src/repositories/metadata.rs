@@ -9,7 +9,8 @@ use crate::model::entry::metadata_entry::CLIMetadataEntry;
 use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::model::metadata::MetadataDir;
 use crate::model::metadata::generic_metadata::GenericMetadata;
-use crate::model::{Commit, LocalRepository, MetadataEntry, ParsedResource};
+use crate::model::parsed_resource::ParsedResourceView;
+use crate::model::{Commit, LocalRepository, MetadataEntry};
 use crate::util;
 
 use std::path::{Path, PathBuf};
@@ -58,7 +59,7 @@ pub fn from_file_node(
         hash: node.hash().to_string(),
         is_dir: false,
         latest_commit: Some(commit.to_owned()),
-        resource: Some(ParsedResource {
+        resource: Some(ParsedResourceView {
             commit: Some(commit.to_owned()),
             branch: None,
             workspace: None,
