@@ -342,7 +342,7 @@ fn extract_tar_under<R: Read>(
         if entry_type.is_dir() {
             std::fs::create_dir_all(&dst_path)?;
         } else {
-            util::fs::atomic_write_from_reader_sync(&dst_path, &mut file)
+            util::fs::atomic_write_from_reader(&dst_path, &mut file)
                 .map_err(|err| MerkleDbError::FsTransport(Box::new(err)))?;
         }
 
