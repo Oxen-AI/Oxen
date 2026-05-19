@@ -11,6 +11,7 @@ use liboxen::util;
 
 pub mod app_data;
 pub mod auth;
+pub mod config;
 pub mod controllers;
 pub mod errors;
 pub mod helpers;
@@ -79,6 +80,7 @@ use clap::{Parser, Subcommand};
 use std::env;
 use std::path::{Path, PathBuf};
 
+use crate::config::Config;
 use crate::metrics::MetricsGuard;
 
 const VERSION: &str = liboxen::constants::OXEN_VERSION;
@@ -332,6 +334,14 @@ enum ServerCommand {
             help = "Start the server with token-based authentication enforced"
         )]
         auth: bool,
+
+        /// Optional path to a TOML config file controlling server-wide settings.
+        #[arg(
+            long = "config",
+            help = "Path to a TOML config file controlling server-wide settings \
+                    (currently: storage policy). When omitted, built-in defaults apply."
+        )]
+        config: Option<PathBuf>,
     },
 
     /// Create a new user in the server and output the config file for that user
@@ -381,12 +391,39 @@ enum ServerError {
     Io(#[from] std::io::Error),
     #[error("{0}")]
     Oxen(#[from] OxenError),
+    #[error("Failed to read config file {path}: {source}")]
+    ConfigRead {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("Failed to parse config file {path}: {source}")]
+    ConfigParse {
+        path: PathBuf,
+        #[source]
+        source: toml::de::Error,
+    },
     #[cfg(feature = "metrics")]
     #[error("Invalid OXEN_METRICS_PORT value: {0} (parsing error: {1})")]
     InvalidPort(String, std::num::ParseIntError),
     #[cfg(feature = "metrics")]
     #[error("Failed to start Prometheus metrics server: {0}")]
     Metrics(#[from] metrics_exporter_prometheus::BuildError),
+}
+
+/// Load the server's TOML config file. Missing path → built-in defaults.
+fn load_server_config(path: Option<&Path>) -> Result<Config, ServerError> {
+    let Some(path) = path else {
+        return Ok(Config::default());
+    };
+    let contents = std::fs::read_to_string(path).map_err(|source| ServerError::ConfigRead {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    toml::from_str(&contents).map_err(|source| ServerError::ConfigParse {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 /// The actual main oxen-server loop.
@@ -411,8 +448,14 @@ async fn server() -> Result<(), ServerError> {
     }
 
     match cli.command {
-        ServerCommand::Start { ip, port, auth } => {
+        ServerCommand::Start {
+            ip,
+            port,
+            auth,
+            config,
+        } => {
             let _metrics_guard = init_metrics()?;
+            let server_config = load_server_config(config.as_deref())?;
 
             // KEEP as println! -- do not log!
             println!("🐂 v{VERSION}");
@@ -421,12 +464,13 @@ async fn server() -> Result<(), ServerError> {
             start(
                 &ip,
                 port,
-                &ServerConfig {
+                &ServerOpts {
                     // TODO: why is this not checking the value of the env var?
                     disable_merkle_cache: env::var("OXEN_DISABLE_MERKLE_CACHE").is_ok(),
                     enable_auth: auth,
                 },
                 &sync_dir,
+                server_config,
             )
             .await?;
             Ok(())
@@ -502,8 +546,10 @@ fn init_metrics() -> Result<Option<MetricsGuard>, ServerError> {
     Ok(None)
 }
 
+/// CLI/env-derived flags collected at startup, distinct from the TOML-loaded
+/// [`config::Config`] (which carries settings from disk).
 #[derive(Debug, Clone)]
-struct ServerConfig {
+struct ServerOpts {
     disable_merkle_cache: bool,
     enable_auth: bool,
 }
@@ -511,13 +557,14 @@ struct ServerConfig {
 async fn start(
     host: &str,
     port: u16,
-    config: &ServerConfig,
+    opts: &ServerOpts,
     sync_dir: &Path,
+    server_config: Config,
 ) -> Result<(), std::io::Error> {
-    let ServerConfig {
+    let ServerOpts {
         disable_merkle_cache,
         enable_auth,
-    } = *config;
+    } = *opts;
 
     // Configure merkle tree node caching
     if disable_merkle_cache {
@@ -531,7 +578,7 @@ async fn start(
         );
     }
 
-    let data = app_data::OxenAppData::new(PathBuf::from(sync_dir));
+    let data = app_data::OxenAppData::with_config(PathBuf::from(sync_dir), server_config);
 
     {
         let running = format!("Running on {host}:{port}");
@@ -612,4 +659,64 @@ fn add_user(email: &str, name: &str, output: &Path, sync_dir: &Path) -> Result<S
     cfg.save(output)?;
 
     Ok(token)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::storage_policy::StoragePolicy;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn load_server_config_returns_default_when_no_path() {
+        let file = load_server_config(None).unwrap();
+        assert_eq!(file.storage, StoragePolicy::default());
+    }
+
+    #[test]
+    fn load_server_config_reads_real_file() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            r#"
+            [storage]
+            backends = ["local", "s3"]
+            s3_bucket = "my-bucket"
+            "#
+        )
+        .unwrap();
+        let file = load_server_config(Some(f.path())).unwrap();
+        let expected: StoragePolicy = toml::from_str(
+            r#"
+            backends = ["local", "s3"]
+            s3_bucket = "my-bucket"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(file.storage, expected);
+    }
+
+    #[test]
+    fn load_server_config_surfaces_io_error() {
+        let missing = std::path::Path::new("/no/such/file/oxen-server.toml");
+        let err = load_server_config(Some(missing)).unwrap_err();
+        assert!(matches!(err, ServerError::ConfigRead { .. }));
+    }
+
+    #[test]
+    fn load_server_config_surfaces_parse_error() {
+        let mut f = NamedTempFile::new().unwrap();
+        // Validation failure (S3 without bucket) surfaces as a parse error because the
+        // `TryFrom` impl fires during `toml::from_str`.
+        writeln!(f, "[storage]\nbackends = [\"s3\"]\n").unwrap();
+        let err = load_server_config(Some(f.path())).unwrap_err();
+        let ServerError::ConfigParse { source, .. } = &err else {
+            panic!("expected ConfigParse, got {err:?}");
+        };
+        assert!(
+            source.to_string().contains("s3 bucket cannot be empty"),
+            "expected EmptyS3Bucket message, got: {source}",
+        );
+    }
 }
