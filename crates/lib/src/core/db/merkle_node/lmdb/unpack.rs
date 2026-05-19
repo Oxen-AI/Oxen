@@ -1,28 +1,27 @@
-//! [`MerklePacker`] + [`MerkleUnpacker`] implementations for the [`LmdbBackend`].
+//! [`MerkleUnpacker`] implementation for the [`LmdbBackend`].
 //!
-//! The wire format produced/consumed is identical to the one [`super::super::file_backend::FileBackend`]
+//! The wire format consumed is identical to the one [`super::super::file_backend::FileBackend`]
 //! emits: tar-gz of `tree/nodes/{prefix}/{suffix}/{node,children}` entries, where
 //! `node` & `children` follow the [`super::super::merkle_node_db::MerkleNodeDB`]
-//! on-disk byte layout. Cross-backend interop is the requirement — an LMDB-backed
-//! local repo must be able to push to a File-backed server and pull from one.
+//! on-disk byte layout.
 //!
-//! Pack: for each requested hash (or all hashes in [`MerklePacker::pack_all`]),
-//! the LMDB-side node + link rows are recombined into the file backend's
-//! `node` + `children` byte format and appended to the tar archive.
+//! Unpack is **streaming**: we drive [`crate::util::tar_stream::stream_unpack`] and
+//! pair `node` / `children` entries by hash on the fly. As soon as both members of
+//! a pair are available we parse and commit the parent's node + link rows; the
+//! raw bytes get released immediately. Embedded children whose own `{prefix}/
+//! {suffix}/` pair hasn't shown up are deferred and seeded at end-of-stream — same
+//! semantics as the old buffered loop, but without holding every blob in RAM
+//! simultaneously.
 //!
-//! Unpack: tar entries are first buffered in-memory and paired up by hash, then
-//! the parent's `node` byte format is decoded to recover {kind, parent_id,
-//! data, children-lookup}; the corresponding `children` blob is sliced via the
-//! lookup to recover each child's full node data; everything is committed in
-//! one [`heed::RwTxn`].
+//! Memory profile: O(currently-unpaired entries + embedded-children-without-own-
+//! pair). For a well-formed archive whose `node` / `children` entries are
+//! contiguous per hash (file backend's `append_dir_all` and LMDB's pack both
+//! emit them this way), the unpaired set is ~1 hash at any time. Compare with
+//! the old approach which buffered the full archive.
 
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-
-use flate2::read::GzDecoder;
-use tar::Archive;
 
 use crate::constants::{NODES_DIR, TREE_DIR};
 use crate::core::db::merkle_node::file_backend::{TarEntryKind, classify_tar_entry_path};
@@ -33,6 +32,7 @@ use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
 use crate::error::OxenError;
 use crate::model::merkle_tree::merkle_transport::{MerkleUnpacker, UnpackOptions};
 use crate::model::{MerkleHash, MerkleTreeNodeType};
+use crate::util::tar_stream::{StreamedEntry, stream_unpack};
 
 impl MerkleUnpacker for LmdbBackend {
     /// Unpack a tar-gz wire stream into the LMDB store.
@@ -41,97 +41,274 @@ impl MerkleUnpacker for LmdbBackend {
     /// and the legacy client-push (`{prefix}/{suffix}/...`) layouts — same
     /// behaviour as [`super::super::file_backend::FileBackend::unpack`].
     ///
-    /// `UnpackOptions::SkipExisting` doesn't write entries whose hashes are
+    /// `UnpackOptions::SkipExisting` doesn't overwrite entries whose hashes are
     /// already in the LMDB store; `UnpackOptions::Overwrite` writes everything.
     fn unpack(
         &self,
         reader: &mut dyn Read,
         opts: UnpackOptions,
     ) -> Result<HashSet<MerkleHash>, OxenError> {
-        let buffered = collect_tar_entries(reader)?;
-        write_unpacked_into_lmdb(self, buffered, opts)
-    }
-}
-
-/// Hashes whose `node` + `children` payload bytes have been read out of the tar.
-/// Either side may be absent if the tar archive is incomplete — handled when
-/// we pair them up.
-#[derive(Default)]
-struct BufferedTarPayloads {
-    node_files: HashMap<MerkleHash, Vec<u8>>,
-    children_files: HashMap<MerkleHash, Vec<u8>>,
-    /// Hashes we observed at any path component. Returned to the caller even
-    /// if the entry's bytes were skipped (mirrors the file backend's reporting
-    /// of every parsed hash from the tarball).
-    seen_hashes: HashSet<MerkleHash>,
-}
-
-/// Read every `node` / `children` entry out of the tar archive into memory,
-/// keyed by hash. Path validation (path-traversal, allowed entry types,
-/// well-formed hash dirs) matches [`super::super::file_backend::FileBackend::unpack`].
-fn collect_tar_entries(reader: &mut dyn Read) -> Result<BufferedTarPayloads, OxenError> {
-    let decoder = GzDecoder::new(reader);
-    let mut archive = Archive::new(decoder);
-    let entries = archive.entries().map_err(MerkleDbError::CannotReadMerkle)?;
-
-    let mut buffered = BufferedTarPayloads::default();
-
-    // We classify with the synthetic oxen-hidden root + tree-nodes prefix; the
-    // helper already strips both off. Two virtual roots cover the two layouts
-    // a tar archive can arrive in.
-    let virtual_oxen_hidden = PathBuf::from(".");
-    let server_canonical_root = virtual_oxen_hidden.clone();
-    let legacy_client_push_root = virtual_oxen_hidden.join(TREE_DIR).join(NODES_DIR);
-
-    for entry in entries {
-        let mut entry = entry.map_err(MerkleDbError::CannotReadMerkle)?;
-        let path = entry
-            .path()
-            .map_err(MerkleDbError::CannotReadMerkle)?
-            .into_owned();
-
-        // Mirror file_backend's path-traversal guard.
-        if path
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir))
-        {
-            return Err(MerkleDbError::PathTraversal(path.display().to_string()).into());
-        }
-        let entry_type = entry.header().entry_type();
-        if !entry_type.is_file() && !entry_type.is_dir() {
-            return Err(MerkleDbError::UnsupportedTarEntry {
-                path: path.display().to_string(),
-            }
-            .into());
-        }
-
-        // Classify under both layouts; whichever path validates wins.
-        let classified = if path.starts_with(Path::new(TREE_DIR).join(NODES_DIR)) {
-            classify_tar_entry_path(&server_canonical_root.join(&path), &virtual_oxen_hidden)?
-        } else {
-            classify_tar_entry_path(&legacy_client_push_root.join(&path), &virtual_oxen_hidden)?
+        let wtxn = LmdbBackend::write_txn(&self.lmdb_env)?;
+        let state = UnpackState {
+            backend: self,
+            wtxn,
+            pending_nodes: HashMap::new(),
+            pending_children: HashMap::new(),
+            own_pair_committed: HashSet::new(),
+            deferred_embedded: HashMap::new(),
+            seen: HashSet::new(),
+            overwrite: matches!(opts, UnpackOptions::Overwrite),
         };
 
-        match classified {
-            TarEntryKind::Intermediate => continue,
-            TarEntryKind::HashDir(hash) => {
-                buffered.seen_hashes.insert(hash);
+        let mut state =
+            stream_unpack::<_, _, _, OxenError>(reader, state, |entry, st| on_entry(entry, st))?;
+        flush_partials(&mut state)?;
+        state.wtxn.commit().map_err(LmdbError::Write)?;
+        Ok(state.seen)
+    }
+}
+
+/// Streaming state for [`MerkleUnpacker::unpack`].
+///
+/// Carries the open write transaction, currently-unpaired raw bytes, and the
+/// deferred set of embedded children seen so far without their own pair.
+struct UnpackState<'env> {
+    backend: &'env LmdbBackend,
+    wtxn: heed::RwTxn<'env>,
+    /// `{prefix}/{suffix}/node` raw bytes for hashes whose matching
+    /// `children` entry hasn't yet arrived in the tar stream.
+    pending_nodes: HashMap<MerkleHash, Vec<u8>>,
+    /// `{prefix}/{suffix}/children` raw bytes for hashes whose matching
+    /// `node` entry hasn't yet arrived in the tar stream.
+    pending_children: HashMap<MerkleHash, Vec<u8>>,
+    /// Hashes whose `(node, children)` pair has been parsed and committed to
+    /// LMDB. Embedded-child seeding skips any hash already in this set, since
+    /// the own-pair commit wrote its node + full link.
+    own_pair_committed: HashSet<MerkleHash>,
+    /// Embedded children observed under some parent's `children` blob whose
+    /// own `{prefix}/{suffix}/` pair we haven't (yet) seen. At end-of-stream,
+    /// children still in this map get seeded with a minimal link row pointing
+    /// back at their first-observed parent — matching the file backend's
+    /// "node present, link minimal" tolerance.
+    deferred_embedded: HashMap<MerkleHash, DeferredEmbedded>,
+    /// Hashes parsed out of the tarball — returned to the caller verbatim,
+    /// mirroring [`super::super::file_backend::FileBackend::unpack`]'s contract.
+    seen: HashSet<MerkleHash>,
+    /// `true` for [`UnpackOptions::Overwrite`], `false` for
+    /// [`UnpackOptions::SkipExisting`].
+    overwrite: bool,
+}
+
+/// One embedded child waiting to be seeded if its own pair never shows up.
+struct DeferredEmbedded {
+    parent_hash: MerkleHash,
+    kind: MerkleTreeNodeType,
+    data: Vec<u8>,
+}
+
+/// Drive a single tar entry through the streaming state machine.
+fn on_entry(entry: StreamedEntry<'_>, st: &mut UnpackState<'_>) -> Result<(), OxenError> {
+    let classified = classify_streaming_entry(entry.path)?;
+    match classified {
+        StreamingKind::Intermediate => {
+            // `tree/nodes` / `tree/nodes/{prefix}` directory entries — no body
+            // to read, no hash to record.
+        }
+        StreamingKind::HashDir(hash) => {
+            st.seen.insert(hash);
+        }
+        StreamingKind::Node(hash) => {
+            st.seen.insert(hash);
+            let mut buf = Vec::with_capacity(entry.size as usize);
+            entry.body.read_to_end(&mut buf)?;
+            st.pending_nodes.insert(hash, buf);
+            if st.pending_children.contains_key(&hash) {
+                commit_pair(st, hash)?;
             }
-            TarEntryKind::NodeFile(hash) => {
-                buffered.seen_hashes.insert(hash);
-                let mut bytes = Vec::new();
-                entry.read_to_end(&mut bytes).map_err(MerkleDbError::Io)?;
-                buffered.node_files.insert(hash, bytes);
-            }
-            TarEntryKind::ChildrenFile(hash) => {
-                buffered.seen_hashes.insert(hash);
-                let mut bytes = Vec::new();
-                entry.read_to_end(&mut bytes).map_err(MerkleDbError::Io)?;
-                buffered.children_files.insert(hash, bytes);
+        }
+        StreamingKind::Children(hash) => {
+            st.seen.insert(hash);
+            let mut buf = Vec::with_capacity(entry.size as usize);
+            entry.body.read_to_end(&mut buf)?;
+            st.pending_children.insert(hash, buf);
+            if st.pending_nodes.contains_key(&hash) {
+                commit_pair(st, hash)?;
             }
         }
     }
-    Ok(buffered)
+    Ok(())
+}
+
+/// Both pieces of a hash's `(node, children)` pair are present in the pending
+/// buffers — parse them, commit the parent row, and record any embedded
+/// children that don't yet have their own pair as deferred.
+fn commit_pair(st: &mut UnpackState<'_>, hash: MerkleHash) -> Result<(), OxenError> {
+    let node_bytes = st
+        .pending_nodes
+        .remove(&hash)
+        .expect("commit_pair: pending node bytes must exist");
+    let children_bytes = st
+        .pending_children
+        .remove(&hash)
+        .expect("commit_pair: pending children bytes must exist");
+    let parsed = parse_pair(&node_bytes, &children_bytes)?;
+    finalize_parsed(st, hash, parsed)
+}
+
+/// Write the parent's node + link rows, then update the embedded-children
+/// tracking. Used by both [`commit_pair`] (full pair) and [`flush_partials`]
+/// (node-only pair with empty children blob).
+fn finalize_parsed(
+    st: &mut UnpackState<'_>,
+    hash: MerkleHash,
+    parsed: ParsedEntry,
+) -> Result<(), OxenError> {
+    put_node(st, &hash, parsed.parent_kind, parsed.parent_data)?;
+    let child_hashes: Vec<MerkleHash> = parsed.children.iter().map(|c| c.hash).collect();
+    put_link(st, &hash, parsed.parent_id, child_hashes)?;
+    st.own_pair_committed.insert(hash);
+    // A child whose own pair just arrived (this call) overrides any earlier
+    // deferred-embedded record — drop the stale one so we don't seed twice.
+    st.deferred_embedded.remove(&hash);
+
+    for child in parsed.children {
+        if st.own_pair_committed.contains(&child.hash) {
+            // Own pair already processed for this child — nothing to defer.
+            continue;
+        }
+        // First observation wins: if another parent already deferred this
+        // child, keep that earlier record. Matches the buffered loop's
+        // "key_present guard" behaviour for minimal-link seeding.
+        st.deferred_embedded
+            .entry(child.hash)
+            .or_insert(DeferredEmbedded {
+                parent_hash: hash,
+                kind: child.kind,
+                data: child.data,
+            });
+    }
+    Ok(())
+}
+
+/// End-of-stream housekeeping:
+///   1. Any `node` entry with no matching `children` becomes
+///      `parse_pair(node, &[])` — matches the file backend's "node present,
+///      children absent" tolerance.
+///   2. Any `children` entry with no matching `node` is dropped (can't parse
+///      without the node's lookup table). The hash is still in `seen`.
+///   3. Deferred embedded children that never got an own pair get their
+///      minimal link row seeded.
+fn flush_partials(st: &mut UnpackState<'_>) -> Result<(), OxenError> {
+    let pending_nodes = std::mem::take(&mut st.pending_nodes);
+    for (hash, node_bytes) in pending_nodes {
+        let parsed = parse_pair(&node_bytes, &[])?;
+        finalize_parsed(st, hash, parsed)?;
+    }
+    // `children`-only entries aren't decodable without a node; matches the
+    // buffered loop's behaviour (it built `parsed` keyed on node-present hashes
+    // and ignored orphan `children`).
+    st.pending_children.clear();
+
+    let deferred = std::mem::take(&mut st.deferred_embedded);
+    for (child_hash, dc) in deferred {
+        if st.own_pair_committed.contains(&child_hash) {
+            // Child's own pair already wrote node + link.
+            continue;
+        }
+        put_node(st, &child_hash, dc.kind, dc.data)?;
+        // Minimal-link seeding: only if the link row isn't already there.
+        // Matches the buffered loop's unconditional key-present guard for
+        // embedded children regardless of `opts`.
+        if !LmdbBackend::key_present(&st.wtxn, &st.backend.merkle_links, &child_hash)? {
+            LmdbBackend::put_serialized(
+                &mut st.wtxn,
+                &st.backend.merkle_links,
+                &child_hash,
+                LmdbLink::encode,
+                LmdbLink {
+                    parent_id: Some(dc.parent_hash),
+                    children: Vec::new(),
+                },
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Put a node row into `merkle_tree_nodes`, honouring the `overwrite` flag.
+fn put_node(
+    st: &mut UnpackState<'_>,
+    hash: &MerkleHash,
+    kind: MerkleTreeNodeType,
+    data: Vec<u8>,
+) -> Result<(), LmdbError> {
+    if !st.overwrite && LmdbBackend::key_present(&st.wtxn, &st.backend.merkle_tree_nodes, hash)? {
+        return Ok(());
+    }
+    LmdbBackend::put_serialized(
+        &mut st.wtxn,
+        &st.backend.merkle_tree_nodes,
+        hash,
+        LmdbNode::encode,
+        LmdbNode { kind, data },
+    )
+}
+
+/// Put a link row into `merkle_links`, honouring the `overwrite` flag.
+fn put_link(
+    st: &mut UnpackState<'_>,
+    hash: &MerkleHash,
+    parent_id: Option<MerkleHash>,
+    children: Vec<MerkleHash>,
+) -> Result<(), LmdbError> {
+    if !st.overwrite && LmdbBackend::key_present(&st.wtxn, &st.backend.merkle_links, hash)? {
+        return Ok(());
+    }
+    LmdbBackend::put_serialized(
+        &mut st.wtxn,
+        &st.backend.merkle_links,
+        hash,
+        LmdbLink::encode,
+        LmdbLink {
+            parent_id,
+            children,
+        },
+    )
+}
+
+/// Classification of a tar entry's path under either of the two wire layouts.
+enum StreamingKind {
+    /// `tree/nodes` itself, or `tree/nodes/{prefix}` — intermediate dirs.
+    Intermediate,
+    /// `tree/nodes/{prefix}/{suffix}` — the hash-bearing dir.
+    HashDir(MerkleHash),
+    /// `tree/nodes/{prefix}/{suffix}/node`.
+    Node(MerkleHash),
+    /// `tree/nodes/{prefix}/{suffix}/children`.
+    Children(MerkleHash),
+}
+
+/// Wrap [`super::super::file_backend::classify_tar_entry_path`] so it works for
+/// both the server-canonical (`tree/nodes/...`) and the legacy client-push
+/// (`{prefix}/{suffix}/...`) layouts. The classifier is path-shape-driven, so
+/// we just synthesize a virtual `.oxen/` prefix and pick a layout based on
+/// whether the entry starts with `tree/nodes/`.
+fn classify_streaming_entry(path: &Path) -> Result<StreamingKind, OxenError> {
+    let virtual_oxen_hidden = PathBuf::from(".");
+    let tree_nodes_prefix = Path::new(TREE_DIR).join(NODES_DIR);
+    let synth = if path.starts_with(&tree_nodes_prefix) {
+        virtual_oxen_hidden.join(path)
+    } else {
+        virtual_oxen_hidden.join(&tree_nodes_prefix).join(path)
+    };
+    Ok(
+        match classify_tar_entry_path(&synth, &virtual_oxen_hidden)? {
+            TarEntryKind::Intermediate => StreamingKind::Intermediate,
+            TarEntryKind::HashDir(h) => StreamingKind::HashDir(h),
+            TarEntryKind::NodeFile(h) => StreamingKind::Node(h),
+            TarEntryKind::ChildrenFile(h) => StreamingKind::Children(h),
+        },
+    )
 }
 
 /// Parsed contents of one `tree/nodes/{prefix}/{suffix}/{node,children}` pair.
@@ -240,122 +417,6 @@ fn parse_pair(node_bytes: &[u8], children_bytes: &[u8]) -> Result<ParsedEntry, O
         parent_data,
         children,
     })
-}
-
-/// Drive the LMDB write side of unpack.
-///
-/// For every `{prefix}/{suffix}` pair we have both a `node` and `children`
-/// file for, the parent's row in `merkle_tree_nodes` and `merkle_links` is
-/// written. For every embedded child of such a parent that doesn't itself
-/// have its own pair in the tar, a node row is written and a minimal link
-/// row (parent_id = embedding parent, no children of its own) is written —
-/// so [`super::super::lmdb::lmdb_backend::LmdbBackend::get_node`]'s
-/// "node + link must both exist" invariant is preserved.
-///
-/// `UnpackOptions::SkipExisting` causes hashes already present in the
-/// `merkle_tree_nodes` table to be left untouched (matches the
-/// `repositories::tree::unpack_nodes` use-case in the file backend).
-fn write_unpacked_into_lmdb(
-    backend: &LmdbBackend,
-    buffered: BufferedTarPayloads,
-    opts: UnpackOptions,
-) -> Result<HashSet<MerkleHash>, OxenError> {
-    let BufferedTarPayloads {
-        node_files,
-        children_files,
-        seen_hashes,
-    } = buffered;
-    let overwrite = matches!(opts, UnpackOptions::Overwrite);
-
-    // Pair up hashes that have both a node and children file.
-    let mut parsed: HashMap<MerkleHash, ParsedEntry> = HashMap::with_capacity(node_files.len());
-    for (hash, node_bytes) in &node_files {
-        let empty_children: Vec<u8> = Vec::new();
-        let children_bytes = children_files.get(hash).unwrap_or(&empty_children);
-        let entry = parse_pair(node_bytes, children_bytes)?;
-        parsed.insert(*hash, entry);
-    }
-
-    let mut wtxn = LmdbBackend::write_txn(&backend.lmdb_env)?;
-    let put_node = |wtxn: &mut heed::RwTxn<'_>,
-                    hash: &MerkleHash,
-                    kind: MerkleTreeNodeType,
-                    data: Vec<u8>|
-     -> Result<(), LmdbError> {
-        if !overwrite && LmdbBackend::key_present(wtxn, &backend.merkle_tree_nodes, hash)? {
-            return Ok(());
-        }
-        LmdbBackend::put_serialized(
-            wtxn,
-            &backend.merkle_tree_nodes,
-            hash,
-            LmdbNode::encode,
-            LmdbNode { kind, data },
-        )
-    };
-    let put_link = |wtxn: &mut heed::RwTxn<'_>,
-                    hash: &MerkleHash,
-                    parent_id: Option<MerkleHash>,
-                    children: Vec<MerkleHash>|
-     -> Result<(), LmdbError> {
-        if !overwrite && LmdbBackend::key_present(wtxn, &backend.merkle_links, hash)? {
-            return Ok(());
-        }
-        LmdbBackend::put_serialized(
-            wtxn,
-            &backend.merkle_links,
-            hash,
-            LmdbLink::encode,
-            LmdbLink {
-                parent_id,
-                children,
-            },
-        )
-    };
-
-    for (parent_hash, entry) in &parsed {
-        put_node(
-            &mut wtxn,
-            parent_hash,
-            entry.parent_kind,
-            entry.parent_data.clone(),
-        )?;
-        let child_hashes: Vec<MerkleHash> = entry.children.iter().map(|c| c.hash).collect();
-        put_link(&mut wtxn, parent_hash, entry.parent_id, child_hashes)?;
-
-        // Embedded children: their `node` row is observable through this parent
-        // entry alone. If they don't have a full entry of their own in the tar,
-        // write a node + minimal-link pair so `get_node` doesn't trip its
-        // "node present but no link" integrity check.
-        for child in &entry.children {
-            if parsed.contains_key(&child.hash) {
-                // Will be handled by its own iteration of this loop.
-                continue;
-            }
-            put_node(&mut wtxn, &child.hash, child.kind, child.data.clone())?;
-            // Only seed a minimal link if the link row doesn't already exist —
-            // skip-existing semantics for embedded-only children regardless of
-            // `opts`, so a child observed via two different parents doesn't
-            // get its link clobbered.
-            if !LmdbBackend::key_present(&wtxn, &backend.merkle_links, &child.hash)? {
-                LmdbBackend::put_serialized(
-                    &mut wtxn,
-                    &backend.merkle_links,
-                    &child.hash,
-                    LmdbLink::encode,
-                    LmdbLink {
-                        parent_id: Some(*parent_hash),
-                        children: Vec::new(),
-                    },
-                )?;
-            }
-        }
-    }
-    wtxn.commit().map_err(LmdbError::Write)?;
-
-    // Honour the file backend's contract: return every hash parsed out of the
-    // tarball, even ones whose payloads we skipped via SkipExisting.
-    Ok(seen_hashes)
 }
 
 // ────────────────────────────────────────────────────────────────────────────

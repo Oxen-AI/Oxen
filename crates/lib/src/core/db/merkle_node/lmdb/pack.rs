@@ -1,4 +1,4 @@
-//! [`MerklePacker`] + [`MerkleUnpacker`] implementations for the [`LmdbBackend`].
+//! [`MerklePacker`] implementation for the [`LmdbBackend`].
 //!
 //! The wire format produced/consumed is identical to the one [`super::super::file_backend::FileBackend`]
 //! emits: tar-gz of `tree/nodes/{prefix}/{suffix}/{node,children}` entries, where
@@ -8,28 +8,26 @@
 //!
 //! Pack: for each requested hash (or all hashes in [`MerklePacker::pack_all`]),
 //! the LMDB-side node + link rows are recombined into the file backend's
-//! `node` + `children` byte format and appended to the tar archive.
-//!
-//! Unpack: tar entries are first buffered in-memory and paired up by hash, then
-//! the parent's `node` byte format is decoded to recover {kind, parent_id,
-//! data, children-lookup}; the corresponding `children` blob is sliced via the
-//! lookup to recover each child's full node data; everything is committed in
-//! one [`heed::RwTxn`].
+//! `node` + `children` byte format and streamed through the shared
+//! [`crate::util::tar_stream::stream_pack`] helper. Per-hash work still buffers
+//! that single hash's `node` and `children` blobs (the lookup table's child
+//! offsets need to be known up front), but the archive as a whole is never
+//! materialized — each `PackEntry` flows through gzip+tar one body chunk at a
+//! time.
 
 use std::collections::HashSet;
-use std::io::Write;
+use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 
 use flate2::Compression;
-use flate2::write::GzEncoder;
 
 use crate::constants::{NODES_DIR, TREE_DIR};
 use crate::core::db::merkle_node::lmdb::LmdbError;
 use crate::core::db::merkle_node::lmdb::lmdb_backend::LmdbBackend;
-use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
 use crate::error::OxenError;
 use crate::model::merkle_tree::merkle_transport::{MerklePacker, PackOptions};
 use crate::model::{MerkleHash, MerkleTreeNodeType};
+use crate::util::tar_stream::{EntryKind, PackEntry, stream_pack};
 
 impl MerklePacker for LmdbBackend {
     /// Pack the given node `hashes` into `out`. Layout (and gzip level) follow
@@ -41,33 +39,22 @@ impl MerklePacker for LmdbBackend {
         opts: PackOptions,
         out: &mut dyn Write,
     ) -> Result<(), OxenError> {
-        let enc = GzEncoder::new(out, pack_options_compression(opts));
-        let mut tar = tar::Builder::new(enc);
-        for hash in hashes {
-            append_one_node(self, &mut tar, hash, &opts)?;
-        }
-        tar.finish().map_err(MerkleDbError::Io)?;
-        tar.into_inner()
-            .map_err(MerkleDbError::Io)?
-            .finish()
-            .map_err(MerkleDbError::Io)?;
-        Ok(())
+        let entries = hashes
+            .iter()
+            .copied()
+            .flat_map(|hash| entries_for_hash(self, hash, opts));
+        stream_pack::<_, _, OxenError>(out, pack_options_compression(opts), entries)
     }
 
     /// Pack every node currently in the LMDB store into `out` using the
     /// server-canonical layout — same as [`super::super::file_backend::FileBackend::pack_all`].
     fn pack_all(&self, out: &mut dyn Write) -> Result<(), OxenError> {
-        let enc = GzEncoder::new(out, Compression::fast());
-        let mut tar = tar::Builder::new(enc);
-        for hash in all_node_hashes(self)? {
-            append_one_node(self, &mut tar, &hash, &PackOptions::ServerCanonical)?;
-        }
-        tar.finish().map_err(MerkleDbError::Io)?;
-        tar.into_inner()
-            .map_err(MerkleDbError::Io)?
-            .finish()
-            .map_err(MerkleDbError::Io)?;
-        Ok(())
+        let opts = PackOptions::ServerCanonical;
+        let hashes = all_node_hashes(self)?;
+        let entries = hashes
+            .into_iter()
+            .flat_map(|hash| entries_for_hash(self, hash, opts));
+        stream_pack::<_, _, OxenError>(out, pack_options_compression(opts), entries)
     }
 
     /// Estimate the **uncompressed** packed node tar payload for the LMDB backend.
@@ -77,7 +64,7 @@ impl MerklePacker for LmdbBackend {
     /// since `node` and `children` blobs are hash-dense and compress to ~1.0×.
     ///
     /// Hashes not present in LMDB contribute 0, matching `pack_nodes`'s silent-skip
-    /// behaviour. File / FileChunk nodes also contribute 0 because [`append_one_node`]
+    /// behaviour. File / FileChunk nodes also contribute 0 because [`entries_for_hash`]
     /// skips them — they ride inside a parent's `children` blob, not their own dir.
     fn raw_byte_count(&self, hashes: &HashSet<MerkleHash>) -> u64 {
         const TAR_HEADER_BYTES: u64 = 512;
@@ -154,33 +141,48 @@ fn all_node_hashes(lmdb: &LmdbBackend) -> Result<Vec<MerkleHash>, LmdbError> {
     Ok(hashes)
 }
 
-/// Append `hash`'s `node` + `children` byte payloads to `tar`. Missing
-/// hashes are silently skipped to match the file backend's behaviour.
-/// File / file-chunk hashes are also skipped because the file backend
-/// stores those embedded inside a parent's `children` file, not as their
-/// own `{prefix}/{suffix}/` dir entries.
-fn append_one_node<W: Write>(
+/// Produce the lazy per-hash entry sequence (dir + node-file + children-file)
+/// for the streaming pack pipeline.
+///
+/// Returns an empty Vec for hashes that should be skipped silently (missing
+/// from LMDB, or file-level kinds that don't get their own `{prefix}/{suffix}/`
+/// directory). On any LMDB read error, returns a single `Err` item so the error
+/// surfaces through `stream_pack` without aborting the iterator at panic
+/// boundaries.
+fn entries_for_hash(
     lmdb: &LmdbBackend,
-    tar: &mut tar::Builder<GzEncoder<W>>,
-    hash: &MerkleHash,
-    opts: &PackOptions,
-) -> Result<(), OxenError> {
-    let Some(stored_node) = lmdb.full_get_node(hash)? else {
-        return Ok(());
+    hash: MerkleHash,
+    opts: PackOptions,
+) -> Vec<Result<PackEntry, OxenError>> {
+    match build_entries_for_hash(lmdb, hash, opts) {
+        Ok(entries) => entries.into_iter().map(Ok).collect(),
+        Err(err) => vec![Err(err.into())],
+    }
+}
+
+/// Build the (dir, node, children) tar entries for one hash. Returns an empty
+/// Vec for the silent-skip cases (missing node, file/file-chunk kinds, missing
+/// link row).
+fn build_entries_for_hash(
+    lmdb: &LmdbBackend,
+    hash: MerkleHash,
+    opts: PackOptions,
+) -> Result<Vec<PackEntry>, LmdbError> {
+    let Some(stored_node) = lmdb.full_get_node(&hash)? else {
+        return Ok(Vec::new());
     };
     // File-level nodes don't get their own dir in the file backend's wire
     // format; they only appear embedded in a parent's `children` blob.
-    // Skip here so the LMDB pack stays bit-shape-compatible.
     if matches!(
         stored_node.kind(),
         MerkleTreeNodeType::File | MerkleTreeNodeType::FileChunk
     ) {
-        return Ok(());
+        return Ok(Vec::new());
     }
-    let Some(link) = lmdb.get_links(hash)? else {
+    let Some(link) = lmdb.get_links(&hash)? else {
         // Node row exists but link row doesn't — should be impossible per
         // the writer's invariants. Skip rather than fail the whole pack.
-        return Ok(());
+        return Ok(Vec::new());
     };
 
     let mut children_blob: Vec<u8> = Vec::new();
@@ -217,11 +219,32 @@ fn append_one_node<W: Write>(
         PackOptions::ServerCanonical => Path::new(TREE_DIR).join(NODES_DIR).join(&dir_prefix),
         PackOptions::LegacyClientPush => PathBuf::from(&dir_prefix),
     };
-    // Directory entry first, then `node` & `children` file entries under it.
-    append_tar_dir(tar, &tar_subdir)?;
-    append_tar_file(tar, &tar_subdir.join("node"), &node_blob)?;
-    append_tar_file(tar, &tar_subdir.join("children"), &children_blob)?;
-    Ok(())
+    let node_path = tar_subdir.join("node");
+    let children_path = tar_subdir.join("children");
+
+    Ok(vec![
+        PackEntry {
+            path: tar_subdir,
+            kind: EntryKind::Directory,
+            size: 0,
+            mode: 0o755,
+            body: Box::new(Cursor::new(Vec::new())),
+        },
+        PackEntry {
+            path: node_path,
+            kind: EntryKind::File,
+            size: node_blob.len() as u64,
+            mode: 0o644,
+            body: Box::new(Cursor::new(node_blob)),
+        },
+        PackEntry {
+            path: children_path,
+            kind: EntryKind::File,
+            size: children_blob.len() as u64,
+            mode: 0o644,
+            body: Box::new(Cursor::new(children_blob)),
+        },
+    ])
 }
 
 /// One entry of the parent's `node`-file child lookup table — mirrors the
@@ -259,36 +282,6 @@ fn encode_node_file(
     buf
 }
 
-/// Append a directory entry into a tar builder. Mirrors what `tar::Builder::append_dir_all`
-/// does for a `{prefix}/{suffix}` dir when the file backend builds its tar.
-fn append_tar_dir<W: Write>(
-    tar: &mut tar::Builder<GzEncoder<W>>,
-    path: &Path,
-) -> Result<(), MerkleDbError> {
-    let mut header = tar::Header::new_gnu();
-    header.set_size(0);
-    header.set_mode(0o755);
-    header.set_entry_type(tar::EntryType::Directory);
-    header.set_cksum();
-    tar.append_data(&mut header, path, std::io::Cursor::new(Vec::new()))
-        .map_err(MerkleDbError::Io)
-}
-
-/// Append a regular file entry into a tar builder.
-fn append_tar_file<W: Write>(
-    tar: &mut tar::Builder<GzEncoder<W>>,
-    path: &Path,
-    data: &[u8],
-) -> Result<(), MerkleDbError> {
-    let mut header = tar::Header::new_gnu();
-    header.set_size(data.len() as u64);
-    header.set_mode(0o644);
-    header.set_entry_type(tar::EntryType::Regular);
-    header.set_cksum();
-    tar.append_data(&mut header, path, std::io::Cursor::new(data.to_vec()))
-        .map_err(MerkleDbError::Io)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,10 +289,13 @@ mod tests {
     use crate::core::db::merkle_node::lmdb::tests::commit_with_hash;
     use crate::core::db::merkle_node::lmdb::tests::h;
     use crate::core::db::merkle_node::lmdb::tests::with_test_backend;
+    use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
     use crate::model::merkle_tree::UnpackOptions;
     use crate::model::merkle_tree::merkle_writer::MerkleWriter;
     use crate::repositories;
     use crate::test;
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
     use std::collections::HashSet;
 
     /// Pack just a parent commit (with one embedded child commit), unpack into
@@ -514,6 +510,260 @@ mod tests {
             let store = target_repo.merkle_store()?;
             assert!(store.exists(&a_h)?);
             assert!(store.exists(&b_h)?);
+            Ok(())
+        })
+    }
+
+    /// Rebuild a tar-gz archive with its entries in a caller-controlled order.
+    ///
+    /// Used to construct streaming-edge-case tarballs (out-of-order pair
+    /// arrival, lone-node, lone-children) without having to hand-build the
+    /// LMDB-encoded node/children blobs from scratch.
+    fn rebuild_tar_with_filter<F>(original: &[u8], keep_and_order: F) -> Vec<u8>
+    where
+        F: Fn(&std::path::Path) -> Option<u32>,
+    {
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        use tar::Archive;
+
+        let decoder = GzDecoder::new(original);
+        let mut archive = Archive::new(decoder);
+        let mut entries: Vec<(std::path::PathBuf, tar::EntryType, Vec<u8>, u32)> = Vec::new();
+        for entry in archive
+            .entries()
+            .expect("rebuild: cannot iterate archive entries")
+        {
+            let mut entry = entry.expect("rebuild: cannot read entry");
+            let path = entry
+                .path()
+                .expect("rebuild: cannot read path")
+                .into_owned();
+            let entry_type = entry.header().entry_type();
+            let mut body = Vec::new();
+            entry
+                .read_to_end(&mut body)
+                .expect("rebuild: cannot read body");
+            if let Some(rank) = keep_and_order(&path) {
+                entries.push((path, entry_type, body, rank));
+            }
+        }
+        entries.sort_by_key(|(_, _, _, rank)| *rank);
+
+        let mut buf = Vec::new();
+        {
+            let enc = GzEncoder::new(&mut buf, Compression::fast());
+            let mut tar = tar::Builder::new(enc);
+            for (path, entry_type, body, _) in &entries {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(body.len() as u64);
+                header.set_mode(if entry_type.is_dir() { 0o755 } else { 0o644 });
+                header.set_entry_type(*entry_type);
+                header.set_cksum();
+                tar.append_data(&mut header, path, std::io::Cursor::new(body.clone()))
+                    .expect("rebuild: cannot append entry");
+            }
+            tar.finish().expect("rebuild: tar finish");
+            tar.into_inner()
+                .expect("rebuild: tar inner")
+                .finish()
+                .expect("rebuild: gz finish");
+        }
+        buf
+    }
+
+    /// Streaming unpack must handle pairs whose `node` and `children` entries
+    /// are interleaved with other pairs' entries in the tar (the natural
+    /// outcome when iteration order varies across packers). We hand-build an
+    /// archive with `a.children, b.node, a.node, b.children` and verify both
+    /// hashes round-trip correctly.
+    #[test]
+    fn test_lmdb_unpack_handles_out_of_order_pairs() -> Result<(), OxenError> {
+        with_test_backend(|repo, backend| {
+            let a_h = h("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+            let b_h = h("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+            let a = commit_with_hash(repo, a_h);
+            let b = commit_with_hash(repo, b_h);
+            let session = backend.begin()?;
+            session.create_node(&a, None)?.finish()?;
+            session.create_node(&b, None)?.finish()?;
+            session.finish()?;
+
+            let mut buf = Vec::new();
+            backend.pack_nodes(
+                &HashSet::from_iter([a_h, b_h]),
+                PackOptions::ServerCanonical,
+                &mut buf,
+            )?;
+
+            // Score entries so a-children comes first, then b-node, then
+            // a-node, then b-children, with dirs and anything else trailing.
+            let a_prefix = a_h.to_hex_hash().node_db_prefix();
+            let b_prefix = b_h.to_hex_hash().node_db_prefix();
+            let a_prefix_str = a_prefix.to_string_lossy().replace('\\', "/");
+            let b_prefix_str = b_prefix.to_string_lossy().replace('\\', "/");
+            let reordered = rebuild_tar_with_filter(&buf, |path| {
+                let p = path.to_string_lossy().replace('\\', "/");
+                let in_a = p.contains(&a_prefix_str);
+                let in_b = p.contains(&b_prefix_str);
+                if in_a && p.ends_with("/children") {
+                    Some(0)
+                } else if in_b && p.ends_with("/node") {
+                    Some(1)
+                } else if in_a && p.ends_with("/node") {
+                    Some(2)
+                } else if in_b && p.ends_with("/children") {
+                    Some(3)
+                } else {
+                    Some(4)
+                }
+            });
+
+            let target_repo = test::init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
+            let installed = target_repo
+                .merkle_transport()?
+                .unpack(&mut &reordered[..], UnpackOptions::Overwrite)?;
+            assert!(installed.contains(&a_h));
+            assert!(installed.contains(&b_h));
+            let store = target_repo.merkle_store()?;
+            assert!(store.exists(&a_h)?);
+            assert!(store.exists(&b_h)?);
+            Ok(())
+        })
+    }
+
+    /// A tarball with only a `node` entry for a hash (no matching `children`)
+    /// is valid per the file-backend contract: `parse_pair(node, &[])` decodes
+    /// it as a leaf node. The streaming unpack flushes lone-node partials at
+    /// end-of-stream.
+    #[test]
+    fn test_lmdb_unpack_tolerates_node_without_children() -> Result<(), OxenError> {
+        with_test_backend(|repo, backend| {
+            let parent_h = h("11111111111111111111111111111111");
+            let parent = commit_with_hash(repo, parent_h);
+            let session = backend.begin()?;
+            session.create_node(&parent, None)?.finish()?;
+            session.finish()?;
+
+            let mut buf = Vec::new();
+            backend.pack_nodes(
+                &HashSet::from_iter([parent_h]),
+                PackOptions::ServerCanonical,
+                &mut buf,
+            )?;
+
+            // Strip the `children` entry — keep everything else.
+            let stripped = rebuild_tar_with_filter(&buf, |path| {
+                let p = path.to_string_lossy().replace('\\', "/");
+                if p.ends_with("/children") {
+                    None
+                } else {
+                    Some(0)
+                }
+            });
+
+            let target_repo = test::init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
+            let installed = target_repo
+                .merkle_transport()?
+                .unpack(&mut &stripped[..], UnpackOptions::Overwrite)?;
+            assert!(
+                installed.contains(&parent_h),
+                "lone-node entry's hash must still be reported: {installed:?}"
+            );
+            let store = target_repo.merkle_store()?;
+            assert!(
+                store.exists(&parent_h)?,
+                "parent commit must be readable after lone-node unpack"
+            );
+            Ok(())
+        })
+    }
+
+    /// A tarball with only a `children` entry for a hash (no matching `node`)
+    /// can't be decoded — `parse_pair` needs the node's lookup table to slice
+    /// the children blob. The streaming unpack drops orphan-children bytes
+    /// silently but still reports the hash through `seen` (matches the
+    /// buffered loop's contract).
+    #[test]
+    fn test_lmdb_unpack_drops_orphan_children_but_reports_hash() -> Result<(), OxenError> {
+        with_test_backend(|repo, backend| {
+            let parent_h = h("22222222222222222222222222222222");
+            let parent = commit_with_hash(repo, parent_h);
+            let session = backend.begin()?;
+            session.create_node(&parent, None)?.finish()?;
+            session.finish()?;
+
+            let mut buf = Vec::new();
+            backend.pack_nodes(
+                &HashSet::from_iter([parent_h]),
+                PackOptions::ServerCanonical,
+                &mut buf,
+            )?;
+
+            // Strip the `node` entry; keep `children` and dirs.
+            let stripped = rebuild_tar_with_filter(&buf, |path| {
+                let p = path.to_string_lossy().replace('\\', "/");
+                if p.ends_with("/node") { None } else { Some(0) }
+            });
+
+            let target_repo = test::init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
+            let installed = target_repo
+                .merkle_transport()?
+                .unpack(&mut &stripped[..], UnpackOptions::Overwrite)?;
+            assert!(
+                installed.contains(&parent_h),
+                "orphan-children entry's hash must still be reported: {installed:?}"
+            );
+            // The parent's row was NOT written (no node bytes to decode).
+            let store = target_repo.merkle_store()?;
+            assert!(
+                !store.exists(&parent_h)?,
+                "no row should be written for an orphan-children-only hash"
+            );
+            Ok(())
+        })
+    }
+
+    /// `UnpackOptions::SkipExisting` must not clobber a pre-existing row when
+    /// the same hash arrives in the tarball.
+    #[test]
+    fn test_lmdb_unpack_skip_existing_preserves_existing_row() -> Result<(), OxenError> {
+        with_test_backend(|repo, backend| {
+            let hash = h("33333333333333333333333333333333");
+            let commit = commit_with_hash(repo, hash);
+            let session = backend.begin()?;
+            session.create_node(&commit, None)?.finish()?;
+            session.finish()?;
+
+            // Pack the source.
+            let mut buf = Vec::new();
+            backend.pack_nodes(
+                &HashSet::from_iter([hash]),
+                PackOptions::ServerCanonical,
+                &mut buf,
+            )?;
+
+            // Set up a target with a pre-existing row for the same hash.
+            let target_repo = test::init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
+            let target_store = target_repo.merkle_store()?;
+            {
+                let session = target_store.begin()?;
+                session.create_node(&commit, None)?.finish()?;
+                session.finish()?;
+            }
+            let pre_existing = target_store
+                .get_node(&hash)?
+                .expect("pre-existing row should be readable");
+
+            // SkipExisting unpack — must not overwrite.
+            let installed = target_repo
+                .merkle_transport()?
+                .unpack(&mut &buf[..], UnpackOptions::SkipExisting)?;
+            assert!(installed.contains(&hash));
+            let after = target_store
+                .get_node(&hash)?
+                .expect("hash should still exist");
+            assert_eq!(pre_existing.parent_id, after.parent_id);
             Ok(())
         })
     }
