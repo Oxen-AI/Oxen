@@ -13,13 +13,14 @@ use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::BufReader;
 use std::io::Cursor;
+use std::io::Write;
 use std::io::prelude::*;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
-use tokio::io::AsyncWriteExt;
+use tokio::io::AsyncReadExt;
 use tokio_stream::Stream;
 
 use crate::constants::CHUNKS_DIR;
@@ -199,222 +200,46 @@ pub fn write_to_path(path: impl AsRef<Path>, value: impl AsRef<str>) -> Result<(
     }
 }
 
-/// Infix used in `AtomicTempFile` scratch file names: `<target_basename>.oxentmp.<uuid>`.
-/// Private to keep all knowledge of the pattern in this module — when fsck (or any other
-/// sweeper) needs to recognize these temp files, the right move is to add a helper here
-/// that does the matching, rather than re-export this constant.
+/// Infix used in `AtomicTempFile` scratch file names: `<target_basename>.oxentmp.<random>`. Private
+/// to keep all knowledge of the pattern in this module — when fsck (or any other sweeper) needs to
+/// recognize these temp files, the right move is to add a helper here that does the matching,
+/// rather than re-export this constant.
 const ATOMIC_TEMP_INFIX: &str = ".oxentmp.";
 
-/// A temp file opened in `target`'s parent directory, ready to be written into and then
-/// atomically renamed over `target` via `commit`.
+/// A temp file opened in `target`'s parent directory, ready to be written into and then atomically
+/// renamed over `target` via `commit`.
 ///
-/// Private on purpose: the type carries a "you must call `commit` to publish, or the
-/// write is silently discarded" invariant, and it's safer to keep the type and that
-/// invariant inside this module. External callers use the wrappers below
-/// ([`atomic_write_to_path`] for bytes-in-memory, [`atomic_write_from_reader`] for
-/// streamed payloads), which take care of the commit step.
+/// **Sync** per `docs/async_policy.md`. Async callers run this inside a `tokio::task::spawn_blocking`
+/// closure (directly, or via the **Channel hand-off** pattern for streaming sources — see
+/// [`atomic_write_from_reader`]).
 ///
-/// The scratch filename is `<target_basename>.oxentmp.<uuid>`. The target-basename
-/// prefix associates the temp with what it'll become; the `.oxentmp.` infix is a
-/// deterministic shape fsck can match on (via a future helper here) for orphans left
-/// behind by hard-kills, even when atomic writes start landing under the working tree
-/// where third-party files live.
+/// Private on purpose: the type carries a "you must call `commit` to publish, or the write is
+/// silently discarded" invariant. External callers use the wrappers below ([`atomic_write_to_path`]
+/// for bytes-in-memory, [`atomic_write_from_reader`] for streamed payloads), which take care of the
+/// commit step.
 ///
-/// Drop semantics: if the handle is dropped without `commit` (cancellation, panic, error
-/// return), `async_tempfile` cleans up the temp file. After a successful `commit`, the
-/// temp path no longer exists on disk; `commit` explicitly unlinks it and asserts the
-/// expected `NotFound`, so the redundant remove inside async-tempfile's `Drop` (which
-/// silently swallows any error) is no longer doing meaningful work but also can't hide
-/// a surprise.
+/// The scratch filename is `<target_basename>.oxentmp.<random>` so the `.oxentmp.` infix is a
+/// deterministic shape fsck can match on (via a future helper here) for orphans left behind by
+/// hard-kills, even when atomic writes start landing under the working tree where third-party files
+/// live.
 ///
-/// On Linux (the deploy target) the rename happens while the temp file's fd is still
-/// open; that's fine since the fd tracks the inode rather than the path.
+/// Drop semantics: if the handle is dropped without `commit` (panic, error return),
+/// `tempfile::NamedTempFile`'s Drop unlinks the scratch file. After a successful `commit`, the temp
+/// path has been renamed away, so the handle is consumed and there is nothing to unlink.
 struct AtomicTempFile {
-    temp: async_tempfile::TempFile,
+    tmp: tempfile::NamedTempFile,
     target: PathBuf,
 }
 
 impl AtomicTempFile {
-    /// Open a new temp file as a sibling of `target`. Creates `target`'s parent directory
-    /// if needed. The temp lives in that parent so the eventual rename stays on one
-    /// filesystem (POSIX `rename` is only atomic when src and dst share a filesystem).
-    /// Scratch filename: `<target_basename>.oxentmp.<uuid>`.
-    async fn create(target: &Path) -> Result<Self, OxenError> {
-        let target_name = target.file_name().ok_or_else(|| {
-            OxenError::file_create_error(
-                target,
-                std::io::Error::other("target path has no filename component"),
-            )
-        })?;
-
-        let parent = target.parent().filter(|p| !p.as_os_str().is_empty());
-        if let Some(parent) = parent {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|err| OxenError::file_create_error(parent, err))?;
-        }
-        let temp_dir = parent.unwrap_or_else(|| Path::new("."));
-
-        // `to_string_lossy` only loses information for non-UTF-8 filenames; the UUID
-        // suffix keeps the temp name unique regardless of how the prefix renders.
-        let temp_name = format!(
-            "{}{}{}",
-            target_name.to_string_lossy(),
-            ATOMIC_TEMP_INFIX,
-            uuid::Uuid::new_v4(),
-        );
-
-        let temp = async_tempfile::TempFile::new_with_name_in(&temp_name, temp_dir)
-            .await
-            .map_err(|err| match err {
-                async_tempfile::Error::Io(e) => OxenError::file_create_error(temp_dir, e),
-                other => {
-                    OxenError::file_create_error(temp_dir, std::io::Error::other(other.to_string()))
-                }
-            })?;
-        Ok(Self {
-            temp,
-            target: target.to_path_buf(),
-        })
-    }
-
-    /// Mutable reference to the underlying async writer. Use with `write_all`, or pass to
-    /// `tokio::io::copy(&mut reader, tmp.as_writer())` for streamed payloads.
-    fn as_writer(&mut self) -> &mut async_tempfile::TempFile {
-        &mut self.temp
-    }
-
-    /// fsync the data, rename the temp file over `target`, then best-effort fsync the
-    /// parent directory so the rename itself survives a crash. The parent fsync may fail
-    /// on platforms that don't support fsync-on-directory; that only weakens crash
-    /// durability — the data and rename are already on disk.
-    async fn commit(self) -> Result<(), OxenError> {
-        let temp_path = self.temp.file_path();
-
-        self.temp
-            .sync_all()
-            .await
-            .map_err(|err| OxenError::file_create_error(temp_path, err))?;
-
-        tokio::fs::rename(temp_path, &self.target)
-            .await
-            .map_err(|err| OxenError::file_rename_error(temp_path, &self.target, err))?;
-
-        // Attempt to fsync the parent directory, but don't propagate errors because this is just
-        // an extra precaution, and there are platforms that we know this won't work on.
-        if let Some(parent) = self.target.parent().filter(|p| !p.as_os_str().is_empty()) {
-            match tokio::fs::File::open(parent).await {
-                Ok(dir) => {
-                    // For platforms that don't support fsync on directories, log but don't propagate errors.
-                    if let Err(err) = dir.sync_all().await {
-                        log::warn!(
-                            "AtomicTempFile::commit: parent fsync failed for {parent:?}: {err}"
-                        );
-                    }
-                }
-                // Some platforms (notably Windows) won't even open a directory as a regular
-                // file without special flags. Log but don't propagate errors.
-                Err(err) => log::warn!(
-                    "AtomicTempFile::commit: could not open parent {parent:?} for fsync: {err}"
-                ),
-            }
-        }
-
-        // Explicit post-rename unlink. We expect `NotFound` (the rename consumed the
-        // temp). Anything else is unexpected: `Ok(())` means something else recreated a
-        // file at `temp_path` between rename and now — surprising but recoverable, so
-        // log and continue. A different `Err` (EACCES, EIO, etc.) means the temp
-        // directory itself is in a bad state, which the caller deserves to know about.
-        // `self.temp`'s Drop will run a second `remove_file` after this returns; on the
-        // expected path it'll see `NotFound` and silently swallow.
-        match tokio::fs::remove_file(temp_path).await {
-            Ok(()) => log::warn!(
-                "AtomicTempFile::commit: temp path {temp_path:?} unexpectedly existed \
-                 after rename — concurrent recreation? Continuing."
-            ),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => {
-                log::error!(
-                    "AtomicTempFile::commit: cleanup unlink failed for {temp_path:?}: {err}"
-                );
-                return Err(err.into());
-            }
-        }
-
-        Ok(())
-    }
-}
-
-/// Atomically write `contents` to `target` via the write-temp-then-rename pattern.
-///
-/// Use for small, fixed-size, in-memory payloads (HEAD, TOML config, small refs files). For large
-/// or streamed payloads, use [`atomic_write_from_reader`] so the bytes don't have to be buffered in
-/// memory.
-///
-/// On the happy path: writes the bytes to a sibling temp file, fsyncs it, renames it over `target`,
-///  and best-effort fsyncs the parent directory. A crash before the rename leaves the prior
-/// contents at `target` intact; a crash after leaves the new contents in place. Concurrent writers
-/// to the same `target` are safe — each gets its own uniquely-named temp file; whichever rename
-/// lands last is what observers see.
-///
-/// Cancellation or panic before commit leaves a temp file on disk that is cleaned up automatically
-/// (by the temp file's Drop impl, or by fsck for the small window where the process itself dies
-/// between create and Drop).
-pub async fn atomic_write_to_path(target: &Path, contents: &[u8]) -> Result<(), OxenError> {
-    let mut tmp = AtomicTempFile::create(target).await?;
-    tmp.as_writer().write_all(contents).await?;
-    tmp.commit().await
-}
-
-/// Atomically write everything yielded by `reader` to `target` via the write-temp-then- rename
-/// pattern. Same guarantees as [`atomic_write_to_path`], without holding the whole payload in
-/// memory — bytes stream from `reader` into a 10 MB `BufWriter` and out to disk in large chunks.
-///
-/// Used for files whose size is unknown, or are known to be large (e.g. version-store files).
-pub async fn atomic_write_from_reader<R>(target: &Path, reader: &mut R) -> Result<(), OxenError>
-where
-    R: tokio::io::AsyncRead + Unpin + ?Sized,
-{
-    const STREAMING_WRITE_BUF_SIZE: usize = 10 * 1024 * 1024;
-    let mut tmp = AtomicTempFile::create(target).await?;
-    {
-        let mut buf_writer =
-            tokio::io::BufWriter::with_capacity(STREAMING_WRITE_BUF_SIZE, tmp.as_writer());
-        tokio::io::copy(reader, &mut buf_writer).await?;
-        // BufWriter's Drop does NOT flush — explicit flush is required so any bytes
-        // still in the 10 MB buffer make it to the underlying file before commit's
-        // fsync. Skipping this would silently truncate writes that fit entirely
-        // inside the buffer.
-        buf_writer.flush().await?;
-    }
-    tmp.commit().await
-}
-
-/// Sync analog of [`AtomicTempFile`]. Mirrors the same write-temp-then-rename pattern
-/// (sibling scratch file → fsync → rename → best-effort parent fsync → post-rename unlink
-/// check), but uses `std::fs` so it can be driven from sync code paths that can't easily
-/// host a tokio runtime (e.g. impls of sync traits like [`MerkleUnpacker`]).
-///
-/// Private for the same reasons [`AtomicTempFile`] is private: callers go through the
-/// wrapper helper ([`atomic_write_from_reader_sync`]), which takes care of `commit`. A
-/// dropped-without-commit instance is best-effort cleaned up by `Drop`.
-///
-/// Naming: `<target_basename>.oxentmp.<uuid>`, matching [`AtomicTempFile`] so the same
-/// fsck-recognizable shape applies to both sync and async writers.
-///
-struct AtomicTempFileSync {
-    file: File,
-    temp_path: PathBuf,
-    target: PathBuf,
-    /// Cleared at the top of `commit`; once cleared, `Drop` skips the cleanup unlink
-    /// because the temp path has either been renamed or already explicitly unlinked.
-    cleanup_on_drop: bool,
-}
-
-impl AtomicTempFileSync {
-    /// Open a new scratch file as a sibling of `target`. Creates `target`'s parent
-    /// directory if needed so the eventual rename stays on one filesystem.
+    /// Open a new temp file as a sibling of `target`. Creates `target`'s parent directory if
+    /// needed. The temp lives in that parent so the eventual rename stays on one filesystem (POSIX
+    /// `rename` is only atomic when src and dst share a filesystem). Scratch filename:
+    /// `<target_basename>.oxentmp.<random>`.
     fn create(target: &Path) -> Result<Self, OxenError> {
+        // Validate the target shape before any on-disk side effects, so a malformed input (e.g.
+        // a trailing-slash path with no filename component) doesn't leave behind a freshly-created
+        // parent directory.
         let target_name = target.file_name().ok_or_else(|| {
             OxenError::file_create_error(
                 target,
@@ -429,99 +254,75 @@ impl AtomicTempFileSync {
         }
         let temp_dir = parent.unwrap_or_else(|| Path::new("."));
 
-        let temp_name = format!(
-            "{}{}{}",
-            target_name.to_string_lossy(),
-            ATOMIC_TEMP_INFIX,
-            uuid::Uuid::new_v4(),
-        );
-        let temp_path = temp_dir.join(&temp_name);
-
-        // `create_new` (O_CREAT|O_EXCL) rules out colliding with an existing temp on
-        // the astronomically unlikely UUID collision.
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp_path)
-            .map_err(|err| OxenError::file_create_error(&temp_path, err))?;
+        // `tempfile::Builder` produces `<prefix><random><suffix>`, so emitting the `.oxentmp.`
+        // infix as part of the prefix yields `<target>.oxentmp.<random>`. The random part is
+        // short alphanumeric (~6 chars), unique per directory.
+        let temp_prefix = format!("{}{}", target_name.to_string_lossy(), ATOMIC_TEMP_INFIX);
+        let tmp = tempfile::Builder::new()
+            .prefix(&temp_prefix)
+            .suffix("")
+            .tempfile_in(temp_dir)
+            .map_err(|err| {
+                // `tempfile::Builder` generates the random suffix internally, so we don't
+                // know the exact path it tried to create. Report the pattern instead, with
+                // `<random>` standing in for the unknown alphanumeric tail — directionally
+                // honest about what failed (the tempfile, not `temp_dir` itself).
+                OxenError::file_create_error(temp_dir.join(format!("{temp_prefix}<random>")), err)
+            })?;
 
         Ok(Self {
-            file,
-            temp_path,
+            tmp,
             target: target.to_path_buf(),
-            cleanup_on_drop: true,
         })
     }
 
-    /// Mutable reference to the underlying file handle. Wrap in a `BufWriter` to
-    /// stream large payloads; the file is opened in write-only mode.
-    fn as_writer(&mut self) -> &mut File {
-        &mut self.file
+    /// Mutable reference to the underlying sync writer. Use with `write_all`, or pass to
+    /// `std::io::copy(&mut reader, tmp.as_writer())` for streamed payloads. The reference derefs
+    /// to `std::fs::File`, so `.sync_all()` and other `File` methods are also available when
+    /// needed by the caller.
+    fn as_writer(&mut self) -> &mut tempfile::NamedTempFile {
+        &mut self.tmp
     }
 
-    /// fsync the data, rename the temp file over `target`, then best-effort fsync the
-    /// parent directory so the rename itself survives a crash. See
-    /// [`AtomicTempFile::commit`] for the async-side counterpart and the rationale
-    /// behind each step.
-    fn commit(mut self) -> Result<(), OxenError> {
-        // Mark cleanup-skipped before doing any work that mutates the filesystem.
-        // From here on, either the rename succeeds and the temp path is gone, or we
-        // return an Err and explicitly unlink below — `Drop`'s cleanup would be
-        // redundant in the success case and could race with our explicit unlink in
-        // the failure case.
-        self.cleanup_on_drop = false;
+    /// fsync the data, rename the temp file over `target`, then best-effort fsync the parent
+    /// directory so the rename itself survives a crash. The parent fsync may fail on platforms
+    /// that don't support fsync-on-directory (notably Windows), which is fine.
+    fn commit(self) -> Result<(), OxenError> {
+        let Self { tmp, target } = self;
 
-        if let Err(err) = self.file.sync_all() {
-            // Surface the data-fsync error to the caller AND clean up the temp,
-            // since we never made it to the rename.
-            let _ = std::fs::remove_file(&self.temp_path);
-            return Err(OxenError::file_create_error(&self.temp_path, err));
+        tmp.as_file().sync_all()?;
+
+        // Route around `tempfile::NamedTempFile::persist`, which calls `MoveFileExW` directly on
+        // Windows and hits transient `ERROR_ACCESS_DENIED` / `ERROR_SHARING_VIOLATION` failures
+        // when another process or thread momentarily holds the target (antivirus, search
+        // indexers, concurrent writers racing for the same path). `keep()` consumes the handle
+        // and disables `NamedTempFile`'s auto-deletion, handing back the path; we then call
+        // `std::fs::rename`, which since Rust 1.85 (rust-lang/rust#131072) uses
+        // `SetFileInformationByHandle(FileRenameInfoEx)` with POSIX semantics on Windows 10
+        // 1607+ — atomic and immune to that contention. On Linux it's just `rename(2)`.
+        let (_file, temp_path) = tmp
+            .keep()
+            .map_err(|err| OxenError::file_rename_error(err.file.path(), &target, err.error))?;
+        if let Err(err) = std::fs::rename(&temp_path, &target) {
+            // Auto-cleanup is disabled now, so we unlink the orphaned temp ourselves.
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(OxenError::file_rename_error(&temp_path, &target, err));
         }
 
-        if let Err(err) = std::fs::rename(&self.temp_path, &self.target) {
-            let _ = std::fs::remove_file(&self.temp_path);
-            return Err(OxenError::file_rename_error(
-                &self.temp_path,
-                &self.target,
-                err,
-            ));
-        }
-
-        // Best-effort fsync of the parent directory; mirrors the async version. Not
-        // fatal because some platforms (notably Windows) don't even let us open a
-        // directory as a regular file without special flags.
-        if let Some(parent) = self.target.parent().filter(|p| !p.as_os_str().is_empty()) {
-            match File::open(parent) {
+        // Best-effort fsync the parent directory. It's okay if it fails. This operation isn't
+        // critical, and we know it isn't supported on Windows at all.
+        if let Some(parent) = target.parent().filter(|p| !p.as_os_str().is_empty()) {
+            match std::fs::File::open(parent) {
                 Ok(dir) => {
                     if let Err(err) = dir.sync_all() {
-                        log::warn!(
-                            "AtomicTempFileSync::commit: parent fsync failed for {parent:?}: {err}"
+                        log::debug!(
+                            "AtomicTempFile::commit: parent fsync failed for {parent:?}: {err}"
                         );
                     }
                 }
-                Err(err) => log::warn!(
-                    "AtomicTempFileSync::commit: could not open parent {parent:?} for fsync: {err}"
+                Err(err) => log::debug!(
+                    "AtomicTempFile::commit: could not open parent {parent:?} for fsync: {err}"
                 ),
-            }
-        }
-
-        // Same post-rename consistency check as `AtomicTempFile::commit`: we expect
-        // `NotFound` here; anything else means something recreated the temp path
-        // (surprising but recoverable) or the temp directory is in a bad state
-        // (caller deserves the error).
-        match std::fs::remove_file(&self.temp_path) {
-            Ok(()) => log::warn!(
-                "AtomicTempFileSync::commit: temp path {:?} unexpectedly existed \
-                 after rename — concurrent recreation? Continuing.",
-                self.temp_path
-            ),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => {
-                log::error!(
-                    "AtomicTempFileSync::commit: cleanup unlink failed for {:?}: {err}",
-                    self.temp_path
-                );
-                return Err(err.into());
             }
         }
 
@@ -529,35 +330,123 @@ impl AtomicTempFileSync {
     }
 }
 
-impl Drop for AtomicTempFileSync {
-    fn drop(&mut self) {
-        // Only fires for the dropped-without-commit path (cancellation, panic, early
-        // `?` return before `commit`). Errors are intentionally swallowed here —
-        // there's no caller to report them to, and the file may already be gone.
-        if self.cleanup_on_drop {
-            let _ = std::fs::remove_file(&self.temp_path);
-        }
-    }
+/// Atomically write `contents` to `target` via the write-temp-then-rename pattern.
+///
+/// Use for in-memory payloads (small files, HEAD, TOML config, other refs files). For payloads that
+/// arrive via an async source, use [`atomic_write_from_reader`].
+///
+/// Sync on purpose: per `docs/async_policy.md`, most leaf filesystem utilities use `std::fs` and
+/// run inside a `tokio::task::spawn_blocking` provided by the calling operation.
+pub fn atomic_write_to_path(target: &Path, contents: &[u8]) -> Result<(), OxenError> {
+    let mut tmp = AtomicTempFile::create(target)?;
+    tmp.as_writer().write_all(contents)?;
+    tmp.commit()
 }
 
-/// Sync counterpart to [`atomic_write_from_reader`]. Same write-temp-then-rename
-/// guarantees, same 10 MB streaming buffer — but driven by `std::io` so it's callable
-/// from sync code paths that can't host a tokio runtime.
+/// Atomically write everything yielded by async `reader` to `target` via the write-temp-then-rename
+/// pattern. Same disk-side guarantees as [`atomic_write_to_path`], but pulled from an `AsyncRead`
+/// source instead of an in-memory slice.
 ///
-/// Use this from sync functions where the work needs to be atomic per-target-file. Async callers
-/// should keep using [`atomic_write_from_reader`] to avoid blocking the runtime thread.
-pub(crate) fn atomic_write_from_reader_sync<R>(
+/// Uses the **Channel hand-off** pattern from `docs/async_policy.md`: the async reader runs on the
+/// Tokio runtime, the sync writer runs on the blocking pool inside a `spawn_blocking`, and a
+/// bounded `tokio::sync::mpsc` channel bridges them. The bound (2 in-flight chunks × 10 MB each)
+/// keeps memory bounded by exerting backpressure on the reader when the writer is slow.
+///
+/// Used for files whose size is unknown ahead of time or known to be large (e.g. version-store
+/// blobs streamed from S3 or a push request body).
+pub async fn atomic_write_from_async_reader<R>(
     target: &Path,
     reader: &mut R,
 ) -> Result<(), OxenError>
 where
+    R: tokio::io::AsyncRead + Unpin + ?Sized,
+{
+    /// Internal protocol for the async-reader → sync-writer hand-off. The explicit `Eof` variant is
+    /// what distinguishes "reader finished cleanly" from "reader's future was dropped mid-stream".
+    /// Without it, a cancelled caller would close the channel and the writer would interpret that
+    /// as a clean EOF and commit a truncated file.
+    enum StreamMsg {
+        Chunk(bytes::Bytes),
+        Err(std::io::Error),
+        Eof,
+    }
+
+    let mut reader = tokio::io::BufReader::with_capacity(constants::STREAMING_BUF_SIZE, reader);
+
+    let target = target.to_path_buf();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamMsg>(2);
+
+    // Sync writer side: pull messages off the channel into an `AtomicTempFile`. Commit *only*
+    // after seeing an explicit `StreamMsg::Eof`. Anything else — channel-closed before Eof,
+    // or `StreamMsg::Err` — means the reader didn't finish cleanly (cancellation, panic, IO
+    // failure), so we return an error and let `tmp` drop without committing so the partial
+    // scratch is unlinked.
+    let writer = tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
+        let mut tmp = AtomicTempFile::create(&target)?;
+        let mut saw_eof = false;
+        while let Some(msg) = rx.blocking_recv() {
+            match msg {
+                StreamMsg::Chunk(chunk) => tmp.as_writer().write_all(&chunk)?,
+                StreamMsg::Err(err) => return Err(err.into()),
+                StreamMsg::Eof => {
+                    saw_eof = true;
+                    break;
+                }
+            }
+        }
+        if !saw_eof {
+            return Err(std::io::Error::other(format!(
+                "atomic_write_from_reader: stream to {target:?} ended before EOF; \
+                 partial write discarded"
+            ))
+            .into());
+        }
+        tmp.commit()
+    });
+
+    // Async reader side: read straight into a `BytesMut`'s uninitialized capacity via
+    // `read_buf`, then `split().freeze()` hands the filled bytes off to the channel as a
+    // refcounted `Bytes`, which avoids a zero-init memset and intermediate `to_vec()` copy.
+    let mut buf = bytes::BytesMut::with_capacity(constants::STREAMING_BUF_SIZE);
+    loop {
+        if buf.capacity() == 0 {
+            buf.reserve(constants::STREAMING_BUF_SIZE);
+        }
+        match reader.read_buf(&mut buf).await {
+            Ok(0) => {
+                let _ = tx.send(StreamMsg::Eof).await;
+                break;
+            }
+            Ok(_) => {
+                let chunk = buf.split().freeze();
+                if tx.send(StreamMsg::Chunk(chunk)).await.is_err() {
+                    // Writer dropped (errored or panicked). The error surfaces via the
+                    // `writer.await` below; nothing useful to do here.
+                    break;
+                }
+            }
+            Err(err) => {
+                let _ = tx.send(StreamMsg::Err(err)).await;
+                break;
+            }
+        }
+    }
+    drop(tx);
+
+    writer.await?
+}
+
+/// Sync counterpart to [`atomic_write_from_reader`]. Same write-temp-then-rename guarantees,
+/// driven by `std::io` so it's callable from sync code paths that can't host a tokio runtime
+/// (e.g. impls of sync traits like [`MerkleUnpacker`]).
+pub(crate) fn atomic_write_from_reader<R>(target: &Path, reader: &mut R) -> Result<(), OxenError>
+where
     R: std::io::Read + ?Sized,
 {
-    const STREAMING_WRITE_BUF_SIZE: usize = 10 * 1024 * 1024;
-    let mut tmp = AtomicTempFileSync::create(target)?;
+    let mut tmp = AtomicTempFile::create(target)?;
     {
         let mut buf_writer =
-            std::io::BufWriter::with_capacity(STREAMING_WRITE_BUF_SIZE, tmp.as_writer());
+            std::io::BufWriter::with_capacity(constants::STREAMING_BUF_SIZE, tmp.as_writer());
         std::io::copy(reader, &mut buf_writer)?;
         // `std::io::BufWriter::Drop` attempts to flush but silently swallows errors.
         // Flush explicitly so any IO error propagates before `commit` does the rename.
@@ -2388,7 +2277,7 @@ def add(a, b):
     async fn test_atomic_write_to_path_round_trip() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|dir| async move {
             let target = dir.join("file.txt");
-            util::fs::atomic_write_to_path(&target, b"hello world").await?;
+            util::fs::atomic_write_to_path(&target, b"hello world")?;
 
             let contents = tokio::fs::read(&target).await?;
             assert_eq!(contents, b"hello world");
@@ -2403,7 +2292,7 @@ def add(a, b):
             let target = dir.join("file.txt");
             tokio::fs::write(&target, b"old contents").await?;
 
-            util::fs::atomic_write_to_path(&target, b"new contents").await?;
+            util::fs::atomic_write_to_path(&target, b"new contents")?;
 
             let contents = tokio::fs::read(&target).await?;
             assert_eq!(contents, b"new contents");
@@ -2416,7 +2305,7 @@ def add(a, b):
     async fn test_atomic_write_to_path_creates_parent_dir() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|dir| async move {
             let target = dir.join("nested").join("deeper").join("file.txt");
-            util::fs::atomic_write_to_path(&target, b"x").await?;
+            util::fs::atomic_write_to_path(&target, b"x")?;
 
             let contents = tokio::fs::read(&target).await?;
             assert_eq!(contents, b"x");
@@ -2429,7 +2318,7 @@ def add(a, b):
     async fn test_atomic_write_to_path_empty_contents() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|dir| async move {
             let target = dir.join("file.txt");
-            util::fs::atomic_write_to_path(&target, b"").await?;
+            util::fs::atomic_write_to_path(&target, b"")?;
 
             let contents = tokio::fs::read(&target).await?;
             assert!(contents.is_empty());
@@ -2440,13 +2329,13 @@ def add(a, b):
 
     #[tokio::test]
     async fn test_atomic_temp_file_name_pattern() -> Result<(), OxenError> {
-        // Verify scratch files follow `<target_basename>.oxentmp.<uuid>` so fsck can
-        // match them later. The `tests` module is a child of `util::fs`, so it can
-        // construct `AtomicTempFile` directly to observe the on-disk name.
+        // Verify scratch files follow `<target_basename>.oxentmp.<random>` so fsck can match them
+        // later. The `tests` module is a child of `util::fs`, so it can construct `AtomicTempFile`
+        // directly to observe the on-disk name.
         test::run_empty_dir_test_async(|dir| async move {
             let target = dir.join("HEAD");
-            let tmp = super::AtomicTempFile::create(&target).await?;
-            let temp_path = tmp.temp.file_path().clone();
+            let tmp = super::AtomicTempFile::create(&target)?;
+            let temp_path = tmp.tmp.path().to_path_buf();
             let temp_name = temp_path
                 .file_name()
                 .expect("temp path has a filename")
@@ -2463,7 +2352,7 @@ def add(a, b):
             );
             assert_eq!(temp_path.parent(), Some(dir.as_path()));
 
-            drop(tmp); // async_tempfile Drop cleans up since we never committed.
+            drop(tmp); // NamedTempFile's Drop cleans up since we never committed.
             assert!(!tokio::fs::try_exists(temp_path).await?);
             Ok(())
         })
@@ -2473,13 +2362,13 @@ def add(a, b):
     #[tokio::test]
     async fn test_atomic_write_from_reader_streams() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|dir| async move {
-            // Stream a payload through `atomic_write_from_reader` from an in-memory
-            // Cursor — this is the shape the version store will use for large blobs.
+            // Stream a payload through `atomic_write_from_reader` from an in-memory `Cursor` —
+            // this is the shape the version store will use for large blobs.
             let target = dir.join("blob.bin");
             let payload: Vec<u8> = (0..50_000u32).flat_map(u32::to_le_bytes).collect();
             let mut reader = std::io::Cursor::new(payload.clone());
 
-            util::fs::atomic_write_from_reader(&target, &mut reader).await?;
+            util::fs::atomic_write_from_async_reader(&target, &mut reader).await?;
 
             let written = tokio::fs::read(&target).await?;
             assert_eq!(written, payload);
@@ -2498,10 +2387,11 @@ def add(a, b):
 
     #[tokio::test]
     async fn test_atomic_write_from_reader_cleans_up_on_read_failure() -> Result<(), OxenError> {
-        // A reader that succeeds for one read then errors. This exercises the error
-        // path through `atomic_write_from_reader`: tokio::io::copy returns Err, the
-        // temp file's Drop unlinks the scratch, and `commit` is never reached. The
-        // user-visible invariant is "no orphans on failure" — which is what we assert.
+        // A reader that succeeds for one read then errors. This exercises the error path through
+        // `atomic_write_from_reader`: the read failure is forwarded through the channel, the
+        // writer's `?` propagates it, `tmp` drops without commit, and `NamedTempFile`'s Drop
+        // unlinks the scratch. The user-visible invariant is "no orphans on failure" — which is
+        // what we assert.
         use std::pin::Pin;
         use std::task::{Context, Poll};
         use tokio::io::{AsyncRead, ReadBuf};
@@ -2529,7 +2419,7 @@ def add(a, b):
             let target = dir.join("blob.bin");
             let mut reader = FailingReader { served_once: false };
 
-            let result = util::fs::atomic_write_from_reader(&target, &mut reader).await;
+            let result = util::fs::atomic_write_from_async_reader(&target, &mut reader).await;
             assert!(result.is_err(), "expected the streaming write to fail");
 
             // Nothing at the target; nothing left behind as scratch.
@@ -2554,7 +2444,7 @@ def add(a, b):
             let payload: Vec<u8> = (0..50_000u32).flat_map(u32::to_le_bytes).collect();
             let mut reader = std::io::Cursor::new(payload.clone());
 
-            util::fs::atomic_write_from_reader_sync(&target, &mut reader)?;
+            util::fs::atomic_write_from_reader(&target, &mut reader)?;
 
             let written = std::fs::read(&target)?;
             assert_eq!(written, payload);
@@ -2573,8 +2463,8 @@ def add(a, b):
     fn test_atomic_write_from_reader_sync_cleans_up_on_read_failure() -> Result<(), OxenError> {
         // A reader that succeeds for one read then errors. Drives the helper down the
         // error path: `std::io::copy` returns Err, `commit` is never reached, and the
-        // `AtomicTempFileSync` Drop unlinks the scratch. The user-visible invariant is
-        // "no orphans on failure" — which is what we assert.
+        // `AtomicTempFile`'s inner `NamedTempFile` Drop unlinks the scratch. The
+        // user-visible invariant is "no orphans on failure" — which is what we assert.
         struct FailingReader {
             served_once: bool,
         }
@@ -2596,11 +2486,11 @@ def add(a, b):
             let target = dir.join("blob.bin");
             let mut reader = FailingReader { served_once: false };
 
-            let result = util::fs::atomic_write_from_reader_sync(&target, &mut reader);
+            let result = util::fs::atomic_write_from_reader(&target, &mut reader);
             assert!(result.is_err(), "expected the streaming write to fail");
 
-            // Nothing at the target; nothing left behind as scratch (the Drop on the
-            // `AtomicTempFileSync` must have unlinked the temp).
+            // Nothing at the target; nothing left behind as scratch (the `NamedTempFile`
+            // inside `AtomicTempFile` must have unlinked the temp on drop).
             assert!(
                 !target.exists(),
                 "target should not exist after failed write"
@@ -2620,16 +2510,17 @@ def add(a, b):
         test::run_empty_dir_test_async(|dir| async move {
             let target = dir.join("file.txt");
 
-            // Spawn N concurrent writes with distinguishable contents. Every one must
-            // succeed; the final file must equal exactly one of the writers' payloads;
-            // no temp files may be left behind.
+            // Spawn N genuinely-concurrent writes via spawn_blocking (so they run on real OS
+            // threads, not serialized on a current-thread runtime). Every one must succeed; the
+            // final file must equal exactly one of the writers' payloads; no temp files may be
+            // left behind.
             let n: usize = 32;
             let mut handles = Vec::with_capacity(n);
             for i in 0..n {
                 let target = target.clone();
                 let payload = format!("writer-{i}").into_bytes();
-                handles.push(tokio::spawn(async move {
-                    util::fs::atomic_write_to_path(&target, &payload).await
+                handles.push(tokio::task::spawn_blocking(move || {
+                    util::fs::atomic_write_to_path(&target, &payload)
                 }));
             }
             for h in handles {

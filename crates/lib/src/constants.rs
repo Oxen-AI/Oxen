@@ -170,6 +170,9 @@ pub const EVAL_DURATION_COL: &str = "_oxen_eval_duration";
 // Average chunk size of ~10mb
 /// Average chunk size of ~10mb when chunking and sending data
 pub const AVG_CHUNK_SIZE: u64 = 1024 * 1024 * 10;
+/// Standard buffer size for streaming I/O across the codebase — `BufReader` / `BufWriter`
+/// capacities, per-chunk sizes in Channel hand-off pipelines, and similar.
+pub const STREAMING_BUF_SIZE: usize = 10 * 1024 * 1024;
 // Allow up to N concurrent upload tasks
 /// Allow up to N concurrent upload tasks
 pub const MAX_CONCURRENT_UPLOADS: usize = 30;

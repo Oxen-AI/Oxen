@@ -18,7 +18,7 @@ use tokio_stream::Stream;
 use tokio_util::io::StreamReader;
 
 use super::version_store::{LocalFilePath, VersionStore};
-use crate::constants::VERSION_FILE_NAME;
+use crate::constants::{STREAMING_BUF_SIZE, VERSION_FILE_NAME};
 use crate::util::hasher;
 use crate::view::versions::CleanCorruptedVersionsResult;
 use xxhash_rust::xxh3::Xxh3;
@@ -615,7 +615,7 @@ impl VersionStore for S3VersionStore {
         let file = File::create(dest_path)
             .await
             .map_err(|e| OxenError::basic_str(format!("Failed to create file: {e}")))?;
-        let mut writer = tokio::io::BufWriter::with_capacity(10 * 1024 * 1024, file);
+        let mut writer = tokio::io::BufWriter::with_capacity(STREAMING_BUF_SIZE, file);
 
         let mut stream = StreamReader::new(self.get_version_stream(hash).await?);
         tokio::io::copy_buf(&mut stream, &mut writer)
