@@ -2,6 +2,8 @@
 
 This document defines how Oxen Rust code should approach the boundary between async (Tokio) and sync (std + sync C/C++ bindings) IO.
 
+To jump ahead into the core guidelines, see [The Core Philosophy](#the-core-philosophy).
+
 As Oxen is a rapidly developing pre-1.0 codebase, not all of the code adheres to these principles. New code, however, should adhere to them, and old code should be brought in line on a best-effort basis as it is touched.
 
 ## Why we have a policy
@@ -32,11 +34,17 @@ The policy below threads this needle.
 
 6. **Streaming IO that interleaves sync local work with async network work uses one long-lived `spawn_blocking` task on the sync side, paired with an async task on the network side, bridged by a bounded `tokio::sync::mpsc` channel.** The bound throttles a fast producer to the consumer's pace, keeping memory in check; the long-lived task means one blocking-pool worker for the whole stream rather than a fresh dispatch per chunk.
 
-## The core rule
+## The core philosophy
 
-> **Public APIs are async. The sync core (filesystem, RocksDB, LMDB, DuckDB) runs inside `spawn_blocking` closures sized to a coherent unit of work. Network IO stays in the async sections between and around those closures.**
+Oxen uses a **sync core, async edge** philosophy: a popular Rust philosophy used by `cargo`, `sccache`, and other heavy Rust tools that mix network and disk IO. Async is reserved for what genuinely benefits from it (concurrent network round trips, HTTP serving). Sync is used for logic and for operations that are implemented synchronously.
 
-This is "sync core, async edge" — the same shape used by cargo, sccache, and other heavy Rust tools that mix network and disk IO. Async is reserved for what genuinely benefits from it (concurrent network round trips, HTTP serving). Sync is used for what is sync underneath anyway.
+> **Public APIs are async code. The sync core runs inside `spawn_blocking` closures sized to a coherent unit of work. Network IO stays in the async sections between and around those closures.**
+
+Avoid situations where sync code calls async code. Public sync functions should not call async functions (e.g. via `handle.block_on`) if it can be avoided.
+
+All **network IO** code must be async. This encompasses all communication over a socket (e.g. HTTP, gRPC, S3, etc.).
+
+Not all Oxen code should be async. All filesystem operations should be sync. Most logic should be sync. As much as possible, logic should be factored out into sync functions and used in `async fn` when the logic needs to be used in some specific async context.
 
 ## Implementation patterns
 
