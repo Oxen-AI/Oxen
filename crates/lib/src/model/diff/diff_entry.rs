@@ -5,7 +5,8 @@ use utoipa::ToSchema;
 
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{DirNode, FileNode};
-use crate::model::{Commit, EntryDataType, MetadataEntry, ParsedResource};
+use crate::model::parsed_resource::ParsedResourceView;
+use crate::model::{Commit, EntryDataType, MetadataEntry};
 use crate::opts::DFOpts;
 use crate::view::TabularDiffView;
 use crate::{model::LocalRepository, repositories};
@@ -25,8 +26,8 @@ pub struct DiffEntry {
     pub size: u64,
 
     // Resource
-    pub head_resource: Option<ParsedResource>,
-    pub base_resource: Option<ParsedResource>,
+    pub head_resource: Option<ParsedResourceView>,
+    pub base_resource: Option<ParsedResourceView>,
 
     // Entry
     pub head_entry: Option<MetadataEntry>,
@@ -273,41 +274,36 @@ impl DiffEntry {
         node: Option<FileNode>,
         file_path: impl AsRef<Path>,
         version: impl AsRef<str>,
-    ) -> Option<ParsedResource> {
+    ) -> Option<ParsedResourceView> {
         let path = file_path.as_ref().to_path_buf();
-        node.map(|_| ParsedResource {
-            commit: None,
-            branch: None,
-            workspace: None,
+        node.map(|_| ParsedResourceView {
             version: PathBuf::from(version.as_ref()),
             path: path.clone(),
             resource: PathBuf::from(version.as_ref()).join(path),
+            ..Default::default()
         })
     }
 
     fn resource_from_dir_node(
         node: Option<DirNode>,
         dir_path: impl AsRef<Path>,
-    ) -> Option<ParsedResource> {
+    ) -> Option<ParsedResourceView> {
         let path = dir_path.as_ref().to_path_buf();
-        node.map(|node| ParsedResource {
-            commit: None,
-            branch: None,
-            workspace: None,
+        node.map(|node| ParsedResourceView {
             version: PathBuf::from(node.last_commit_id().to_string()),
             path: path.clone(),
             resource: PathBuf::from(node.last_commit_id().to_string()).join(path),
+            ..Default::default()
         })
     }
 
-    fn resource_from_dir(dir: Option<&PathBuf>, commit: &Commit) -> Option<ParsedResource> {
-        dir.map(|dir| ParsedResource {
+    fn resource_from_dir(dir: Option<&PathBuf>, commit: &Commit) -> Option<ParsedResourceView> {
+        dir.map(|dir| ParsedResourceView {
             commit: Some(commit.to_owned()),
-            branch: None,
-            workspace: None,
             version: PathBuf::from(commit.id.to_string()),
             path: dir.clone(),
             resource: PathBuf::from(commit.id.to_string()).join(dir),
+            ..Default::default()
         })
     }
 

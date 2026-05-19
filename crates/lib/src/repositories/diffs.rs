@@ -23,10 +23,10 @@ use crate::model::diff::tabular_diff::{
     TabularDiffSummary, TabularSchemaDiff,
 };
 
+use crate::model::parsed_resource::ParsedResourceView;
 use crate::model::staged_data::StagedDataOpts;
 use crate::model::{
-    Commit, CommitEntry, DataFrameDiff, DiffEntry, EntryDataType, LocalRepository, ParsedResource,
-    Schema,
+    Commit, CommitEntry, DataFrameDiff, DiffEntry, EntryDataType, LocalRepository, Schema,
 };
 use crate::storage::version_store::VersionStore;
 use crate::view::Pagination;
@@ -412,15 +412,15 @@ pub async fn diff_path(
         (true, true) => {
             let diff_entry = DiffEntry {
                 filename: head_path.as_ref().to_string_lossy().to_string(),
-                head_resource: Some(ParsedResource {
+                head_resource: Some(ParsedResourceView {
                     commit: Some(head_commit.clone()),
                     path: head_path.as_ref().to_path_buf(),
-                    ..ParsedResource::default() //TODO: Fill in other fields as well
+                    ..ParsedResourceView::default()
                 }),
-                base_resource: Some(ParsedResource {
+                base_resource: Some(ParsedResourceView {
                     commit: Some(base_commit.clone()),
                     path: base_path.as_ref().to_path_buf(),
-                    ..ParsedResource::default() //TODO: Fill in other fields as well
+                    ..ParsedResourceView::default() //TODO: Fill in other fields as well
                 }),
                 ..DiffEntry::default()
             };
