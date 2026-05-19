@@ -710,7 +710,7 @@ async fn probe_mtime_drift(probe_dir: &Path) -> Duration {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::Duration;
 
     use filetime::FileTime;
@@ -719,6 +719,9 @@ mod tests {
     use crate::error::OxenError;
     use crate::model::{LocalRepository, RepoNew};
     use crate::test;
+    use crate::test::repo_prep::{
+        init_test_repo_merkle_init_version_store_async, init_test_repo_with_merkle_store,
+    };
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -962,14 +965,13 @@ mod tests {
     /// the path, drop the original repo to close its env, then reload.
     #[test]
     fn test_lmdb_merkle_store_kind_round_trips_through_config_toml() -> Result<(), OxenError> {
-        let mut repo = test::init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
+        let repo = init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
         assert_eq!(repo.merkle_store_kind(), MerkleStoreKind::Lmdb);
-        let repo_path = repo.path.clone();
         // Release the inner LocalRepository (closing its LMDB env) without
         // tearing down the on-disk dir, so we can reload from the same path.
-        repo.drop_inner();
+        let repo_path = repo.drop_local_repo();
 
-        let reloaded = LocalRepository::from_dir(&repo_path)?;
+        let reloaded = LocalRepository::from_dir(&repo_path as &Path)?;
         assert_eq!(reloaded.merkle_store_kind(), MerkleStoreKind::Lmdb);
         Ok(())
     }
@@ -978,7 +980,7 @@ mod tests {
     /// with the LMDB merkle store — proves the dispatch hits the LMDB load arm.
     #[test]
     fn test_lmdb_init_creates_env_directory_under_oxen_hidden() -> Result<(), OxenError> {
-        let repo = test::init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
+        let repo = init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
         let env_dir = crate::core::db::merkle_node::lmdb::lmdb_dir_location(&repo.path);
         assert!(
             env_dir.exists(),
@@ -995,8 +997,7 @@ mod tests {
     async fn test_lmdb_add_commit_status_roundtrip() -> Result<(), OxenError> {
         use crate::repositories;
         use crate::util;
-        let repo =
-            test::init_test_repo_merkle_init_version_store_async(MerkleStoreKind::Lmdb).await?;
+        let repo = init_test_repo_merkle_init_version_store_async(MerkleStoreKind::Lmdb).await?;
         let text_path = repo.path.join("hello.txt");
         util::fs::write_to_path(&text_path, "Hello LMDB")?;
 
@@ -1021,8 +1022,7 @@ mod tests {
     async fn test_file_add_commit_status_roundtrip() -> Result<(), OxenError> {
         use crate::repositories;
         use crate::util;
-        let repo =
-            test::init_test_repo_merkle_init_version_store_async(MerkleStoreKind::File).await?;
+        let repo = init_test_repo_merkle_init_version_store_async(MerkleStoreKind::File).await?;
         let text_path = repo.path.join("hello.txt");
         util::fs::write_to_path(&text_path, "Hello File")?;
 
@@ -1045,8 +1045,7 @@ mod tests {
     async fn test_lmdb_two_commits_history() -> Result<(), OxenError> {
         use crate::repositories;
         use crate::util;
-        let repo =
-            test::init_test_repo_merkle_init_version_store_async(MerkleStoreKind::Lmdb).await?;
+        let repo = init_test_repo_merkle_init_version_store_async(MerkleStoreKind::Lmdb).await?;
         let dir = repo.path.join("files");
         util::fs::create_dir_all(&dir)?;
         for i in 0..5 {

@@ -22,6 +22,9 @@ pub use m20260408_add_workspace_name_index::AddWorkspaceNameIndexMigration;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString, IntoStaticStr, VariantNames};
 
+pub mod m20260512000000_switch_merkle_store_to_lmdb;
+pub use m20260512000000_switch_merkle_store_to_lmdb::SwitchMerkleStoreToLmdbMigration;
+
 /// Migration direction. Passed to [`Migrate::is_applicable`] so reversible migrations
 /// (like the file ↔ LMDB merkle store transcode) can report applicability separately
 /// for each direction.
