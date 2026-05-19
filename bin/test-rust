@@ -78,7 +78,11 @@ setup_ramdisk() {
 
     export OXEN_TEST_RUN_DIR="$RAMDISK_PATH/test"
     export SYNC_DIR="$RAMDISK_PATH/sync"
-    mkdir -p "$OXEN_TEST_RUN_DIR" "$SYNC_DIR"
+    # Route every default temp file (and anything else that resolves through `std::env::temp_dir()`)
+    # onto the ramdisk too. Without this, direct tempdir calls in tests and in the spawned
+    # oxen-server silently land on the system tempdir and skip the ramdisk.
+    export TMPDIR="$RAMDISK_PATH/tmp"
+    mkdir -p "$OXEN_TEST_RUN_DIR" "$SYNC_DIR" "$TMPDIR"
     echo "==> Ramdisk at $RAMDISK_PATH"
 }
 
