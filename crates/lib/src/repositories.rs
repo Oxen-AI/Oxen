@@ -130,36 +130,30 @@ fn is_namespace_dir(path: &Path) -> bool {
         // Make sure it is a directory, that doesn't start with .oxen and has repositories in it
         return path.is_dir()
             && !name.starts_with(constants::OXEN_HIDDEN_DIR)
-            && !list_repos_in_namespace(path).is_empty();
+            && list_repos_in_namespace(path).next().is_some();
     }
     false
 }
 
-pub fn list_repos_in_namespace(namespace_path: &Path) -> Vec<LocalRepository> {
+/// Lazily-load each repository in a namespace's directory.
+///
+/// Skips sub-directories that either don't have an `.oxen/` dir within them or that
+/// fail to load via [`LocalRepository::from_dir`].
+pub fn list_repos_in_namespace(namespace_path: &Path) -> impl Iterator<Item = LocalRepository> {
     log::debug!(
         "repositories::entries::list_repos_in_namespace repositories for dir: {namespace_path:?}"
     );
-    let mut repos: Vec<LocalRepository> = vec![];
-    for entry in WalkDir::new(namespace_path)
+    WalkDir::new(namespace_path)
         .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        // if the directory has a .oxen dir, let's add it, otherwise ignore
-        let local_dir = entry.path();
-        let oxen_dir = util::fs::oxen_hidden_dir(&local_dir);
-        // log::debug!(
-        //     "repositories::entries::list_repos_in_namespace got local dir {:?}",
-        //     local_dir
-        // );
-
-        if oxen_dir.exists()
-            && let Ok(repository) = LocalRepository::from_dir(&local_dir)
-        {
-            repos.push(repository);
-        }
-    }
-
-    repos
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let local_dir = entry.path();
+            let oxen_dir = util::fs::oxen_hidden_dir(&local_dir);
+            if !oxen_dir.exists() {
+                return None;
+            }
+            LocalRepository::from_dir(&local_dir).ok()
+        })
 }
 
 pub fn transfer_namespace(
@@ -569,7 +563,7 @@ mod tests {
             let _ = repositories::init(namespace_dir.join("testing3"))?;
 
             let repos = repositories::list_repos_in_namespace(&namespace_dir);
-            assert_eq!(repos.len(), 3);
+            assert_eq!(repos.count(), 3);
 
             Ok(())
         })
@@ -620,8 +614,8 @@ mod tests {
             let old_namespace_repos = repositories::list_repos_in_namespace(&old_namespace_dir);
             let new_namespace_repos = repositories::list_repos_in_namespace(&new_namespace_dir);
 
-            assert_eq!(old_namespace_repos.len(), 1);
-            assert_eq!(new_namespace_repos.len(), 0);
+            assert_eq!(old_namespace_repos.count(), 1);
+            assert_eq!(new_namespace_repos.count(), 0);
 
             // Transfer to new namespace
             let updated_repo =
@@ -637,8 +631,8 @@ mod tests {
             let old_namespace_repos = repositories::list_repos_in_namespace(&old_namespace_dir);
             let new_namespace_repos = repositories::list_repos_in_namespace(&new_namespace_dir);
 
-            assert_eq!(old_namespace_repos.len(), 0);
-            assert_eq!(new_namespace_repos.len(), 1);
+            assert_eq!(old_namespace_repos.count(), 0);
+            assert_eq!(new_namespace_repos.count(), 1);
 
             Ok(())
         })

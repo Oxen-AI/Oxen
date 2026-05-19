@@ -2,6 +2,7 @@ use std::path::Path;
 
 use super::Migrate;
 
+use crate::command::migrate::Direction;
 use crate::config::RepositoryConfig;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
@@ -14,11 +15,9 @@ use crate::model::merkle_tree::node::{
 use crate::model::{Commit, LocalRepository, MerkleHash};
 
 use crate::util::hasher;
-use crate::util::progress_bar::{ProgressBarType, oxen_progress_bar};
 use crate::{repositories, util};
 
 pub struct AddChildCountsToNodesMigration;
-impl AddChildCountsToNodesMigration {}
 
 impl Migrate for AddChildCountsToNodesMigration {
     fn name(&self) -> &'static str {
@@ -29,18 +28,20 @@ impl Migrate for AddChildCountsToNodesMigration {
         "Re-writes merkle tree with child counts for all directories and vnode nodes"
     }
 
-    fn up(&self, path: &Path, all: bool) -> Result<(), OxenError> {
-        if all {
-            run_on_all_repos(path)?;
-        } else {
-            let repo = LocalRepository::from_dir(path)?;
-            run_on_one_repo(&repo)?;
-        }
-        Ok(())
+    fn up(&self, repo: LocalRepository) -> Result<(), OxenError> {
+        let commits = repositories::commits::list_all(&repo)?;
+
+        merkle_tree_node_cache::with_cache_disabled(|| -> Result<(), OxenError> {
+            for commit in commits {
+                run_on_commit(&repo, &commit)?;
+            }
+
+            Ok(())
+        })
     }
 
-    fn down(&self, _path: &Path, _all: bool) -> Result<(), OxenError> {
-        panic!("Not implemented");
+    fn down(&self, _: LocalRepository) -> Result<(), OxenError> {
+        Err(OxenError::MigrationUnimplemented(Direction::Down))
     }
 
     fn is_needed(&self, repo: &LocalRepository) -> Result<bool, OxenError> {
@@ -52,49 +53,6 @@ impl Migrate for AddChildCountsToNodesMigration {
         );
         Ok(min_version == MinOxenVersion::V0_19_0)
     }
-}
-
-pub fn run_on_all_repos(path: &Path) -> Result<(), OxenError> {
-    println!("🐂 Collecting namespaces to migrate...");
-    let namespaces = repositories::list_namespaces(path)?;
-    let bar = oxen_progress_bar(namespaces.len() as u64, ProgressBarType::Counter);
-    println!("🐂 Migrating {} namespaces", namespaces.len());
-    for namespace in namespaces {
-        let namespace_path = path.join(namespace);
-        // Show the canonical namespace path
-        log::debug!(
-            "This is the namespace path we're walking: {:?}",
-            util::fs::canonicalize(&namespace_path)?
-        );
-        let repos = repositories::list_repos_in_namespace(&namespace_path);
-        for repo in repos {
-            match run_on_one_repo(&repo) {
-                Ok(_) => {}
-                Err(err) => {
-                    log::error!(
-                        "Could not migrate version files for repo {:?}\nErr: {}",
-                        util::fs::canonicalize(&repo.path),
-                        err
-                    )
-                }
-            }
-        }
-        bar.inc(1);
-    }
-
-    Ok(())
-}
-
-fn run_on_one_repo(repo: &LocalRepository) -> Result<(), OxenError> {
-    let commits = repositories::commits::list_all(repo)?;
-
-    merkle_tree_node_cache::with_cache_disabled(|| -> Result<(), OxenError> {
-        for commit in commits {
-            run_on_commit(repo, &commit)?;
-        }
-
-        Ok(())
-    })
 }
 
 fn run_on_commit(repository: &LocalRepository, commit: &Commit) -> Result<(), OxenError> {
@@ -361,12 +319,13 @@ mod tests {
             });
 
             // Run the migration
-            run_on_one_repo(&repo)?;
+            let repo_path = repo.path.clone();
+            AddChildCountsToNodesMigration.up(repo)?;
 
             // Clear the cache after the migration
-            merkle_tree_node_cache::remove_from_cache(&repo.path)?;
+            merkle_tree_node_cache::remove_from_cache(&repo_path)?;
 
-            let repo = LocalRepository::from_dir(&repo.path)?;
+            let repo = LocalRepository::from_dir(&repo_path)?;
             let latest_commit = repositories::commits::latest_commit(&repo)?;
             let commit_node_version =
                 repositories::tree::get_commit_node_version(&repo, &latest_commit)?;
@@ -460,12 +419,13 @@ mod tests {
             });
 
             // Run the migration
-            run_on_one_repo(&repo)?;
+            let repo_path = repo.path.clone();
+            AddChildCountsToNodesMigration.up(repo)?;
 
             // Clear the cache after the migration
-            merkle_tree_node_cache::remove_from_cache(&repo.path)?;
+            merkle_tree_node_cache::remove_from_cache(&repo_path)?;
 
-            let mut repo = LocalRepository::from_dir(&repo.path)?;
+            let mut repo = LocalRepository::from_dir(&repo_path)?;
             repo.set_vnode_size(3);
 
             let latest_commit = repositories::commits::latest_commit(&repo)?;

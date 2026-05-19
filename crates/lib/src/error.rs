@@ -14,6 +14,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use tokio::task::JoinError;
 
+use crate::command::migrate::Direction;
 use crate::config::repository_config::RepoConfigError;
 use crate::core::db::merkle_node::lmdb::LmdbError;
 use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
@@ -26,6 +27,7 @@ use crate::model::merkle_tree::node_type::InvalidMerkleTreeNodeType;
 
 pub mod path_buf_error;
 pub mod string_error;
+pub mod strum_ext;
 
 pub use crate::error::path_buf_error::PathBufError;
 pub use crate::error::string_error::StringError;
@@ -203,6 +205,15 @@ pub enum OxenError {
     /// The version is invalid or unsupported.
     #[error("Invalid version: {0}")]
     InvalidVersion(StringError),
+
+    #[error("Unknown migration: {0}")]
+    UnknownMigration(String),
+
+    #[error("Migration unimplemented for direction: {0}")]
+    MigrationUnimplemented(Direction),
+
+    #[error("Migration failed to run")]
+    MigrationFailed,
 
     //
     // Version Store
@@ -553,7 +564,12 @@ pub enum OxenError {
     #[error("Unknown status [{0}]")]
     UnknownRemoteResponseStatus(StringError),
 
+    #[error("{0}")]
+    Strum(#[from] strum::ParseError),
+
+    //
     // Fallback
+    //
     // TODO: remove all uses of `Basic` and replace with specific errors.
     #[error("{0}")]
     Basic(StringError),

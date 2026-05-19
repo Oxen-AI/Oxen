@@ -1,6 +1,6 @@
 use actix_web::{HttpRequest, HttpResponse, web};
 use liboxen::{
-    command::migrate,
+    command::migrate::{self, Direction, try_apply_migration},
     migrations,
     view::{ListRepositoryResponse, StatusMessage},
 };
@@ -29,11 +29,22 @@ pub async fn list_unmigrated(req: HttpRequest) -> Result<HttpResponse, OxenHttpE
 }
 
 /// Request body for `POST /api/repos/:namespace/:repo_name/migrations/:migration_name`.
+///
+/// `deny_unknown_fields` makes serde reject bodies with extra keys, so a typo
+/// like `{"directiom": "up"}` becomes a 400 instead of silently running with
+/// defaults.
 #[derive(Deserialize, Serialize, Default, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RunMigrationRequest {
     /// `"up"` (default) or `"down"`.
     #[serde(default)]
-    pub direction: Option<String>,
+    pub direction: Direction,
+
+    /// If true, then run the migration if it is applicable but not required.
+    /// If false, then only required up migrations are run. Down migrations are
+    /// always run. Defaults to false if unspecified.
+    #[serde(default)]
+    pub run_optional: bool,
 }
 
 /// Runs a named migration's `up` or `down` on a single repository.
@@ -43,35 +54,34 @@ pub struct RunMigrationRequest {
 /// table. OSS users can still invoke the same migrations via the existing
 /// `oxen migrate up <name> <path>` CLI.
 #[tracing::instrument(skip_all)]
-pub async fn run(
-    req: HttpRequest,
-    body: Option<web::Json<RunMigrationRequest>>,
-) -> Result<HttpResponse, OxenHttpError> {
+pub async fn run(req: HttpRequest, body: web::Bytes) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
+
+    // parse path params
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let migration_name = path_param(&req, "migration_name")?.to_string();
 
-    let direction = body
-        .and_then(|b| b.into_inner().direction)
-        .unwrap_or_else(|| "up".to_string());
+    // Parse the body ourselves rather than via `web::Json<_>` so we can tell
+    // "no body at all" (use defaults) apart from "body is present but bad"
+    // (return 400). `Option<web::Json<_>>` collapses both cases to `None`.
+    let RunMigrationRequest {
+        direction,
+        run_optional,
+    } = if body.is_empty() {
+        RunMigrationRequest::default()
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|e| OxenHttpError::BadRequest(format!("Invalid request body: {e}").into()))?
+    };
 
-    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
-
-    let migrations = migrate::all_migrations();
-    let migration = migrations.get(&migration_name).ok_or_else(|| {
+    let migration = migrate::all_migrations(&migration_name).ok_or_else(|| {
         OxenHttpError::BadRequest(format!("Unknown migration: {migration_name}").into())
     })?;
 
-    match direction.as_str() {
-        "up" => migration.up(&repo.path, false)?,
-        "down" => migration.down(&repo.path, false)?,
-        other => {
-            return Err(OxenHttpError::BadRequest(
-                format!("Unknown direction: {other} (expected \"up\" or \"down\")").into(),
-            ));
-        }
-    }
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+
+    try_apply_migration(migration, direction, run_optional, repo)?;
 
     log::info!(
         "Ran migration {migration_name} {direction} on {namespace}/{repo_name}",
@@ -87,9 +97,9 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_data::OxenAppData;
     use crate::test;
-    use actix_web::http;
-    use actix_web::web;
+    use actix_web::{App, http, web};
     use liboxen::core::workspaces::workspace_name_index;
     use liboxen::error::OxenError;
 
@@ -114,11 +124,15 @@ mod tests {
             "add_workspace_name_index",
         );
 
-        let body = web::Json(RunMigrationRequest {
-            direction: Some("up".to_string()),
-        });
+        let body = web::Bytes::from(
+            serde_json::to_vec(&RunMigrationRequest {
+                direction: Direction::Up,
+                run_optional: false,
+            })
+            .expect("RunMigrationRequest is always serializable"),
+        );
 
-        let resp = run(req, Some(body)).await.unwrap();
+        let resp = run(req, body).await.expect("run handler should succeed");
         assert_eq!(resp.status(), http::StatusCode::OK);
 
         // Index should exist after migration.
@@ -145,7 +159,7 @@ mod tests {
             "does_not_exist",
         );
 
-        let result = run(req, None).await;
+        let result = run(req, web::Bytes::new()).await;
         match result {
             Err(OxenHttpError::BadRequest(msg)) => {
                 assert!(msg.to_string().contains("Unknown migration"));
@@ -165,6 +179,43 @@ mod tests {
 
         let _repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
 
+        // Drive a real App so the `web::Json<RunMigrationRequest>` extractor
+        // runs serde on the body — `Direction` rejects unknown variants, so
+        // the handler should never be reached and the response should be 400.
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/api/repos/{namespace}/{repo_name}/migrations/{migration_name}",
+                    web::post().to(run),
+                ),
+        )
+        .await;
+
+        let uri = format!("/api/repos/{namespace}/{repo_name}/migrations/add_workspace_name_index");
+        let req = actix_web::test::TestRequest::post()
+            .uri(&uri)
+            .set_json(serde_json::json!({ "direction": "sideways" }))
+            .to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), http::StatusCode::BAD_REQUEST);
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    /// Body with an extra/unknown field must be rejected (not silently
+    /// ignored). Relies on `#[serde(deny_unknown_fields)]` on
+    /// `RunMigrationRequest`.
+    #[actix_web::test]
+    async fn test_run_rejects_unknown_field() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Repo";
+        let _repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let body = web::Bytes::from(r#"{"direction":"up","not_a_real_field":42}"#);
         let req = test::repo_request_with_param(
             &sync_dir,
             "/",
@@ -174,16 +225,82 @@ mod tests {
             "add_workspace_name_index",
         );
 
-        let body = web::Json(RunMigrationRequest {
-            direction: Some("sideways".to_string()),
-        });
-
-        let result = run(req, Some(body)).await;
-        match result {
+        match run(req, body).await {
             Err(OxenHttpError::BadRequest(msg)) => {
-                assert!(msg.to_string().contains("Unknown direction"));
+                let msg = msg.to_string();
+                assert!(
+                    msg.contains("Invalid request body") && msg.contains("not_a_real_field"),
+                    "expected error to mention the unknown field, got: {msg}"
+                );
             }
-            other => panic!("expected BadRequest, got {other:?}"),
+            other => panic!("expected BadRequest for unknown field, got {other:?}"),
+        }
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    /// Body with a correctly-named field but the wrong JSON type
+    /// (e.g. a string where a bool is expected) must be rejected.
+    #[actix_web::test]
+    async fn test_run_rejects_wrong_field_type() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Repo";
+        let _repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let body = web::Bytes::from(r#"{"run_optional":"yes"}"#);
+        let req = test::repo_request_with_param(
+            &sync_dir,
+            "/",
+            namespace,
+            repo_name,
+            "migration_name",
+            "add_workspace_name_index",
+        );
+
+        match run(req, body).await {
+            Err(OxenHttpError::BadRequest(msg)) => {
+                assert!(
+                    msg.to_string().contains("Invalid request body"),
+                    "expected \"Invalid request body\" prefix, got: {msg}"
+                );
+            }
+            other => panic!("expected BadRequest for wrong type, got {other:?}"),
+        }
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    /// Malformed JSON (not parseable at all) must be rejected. Empty body
+    /// is allowed and falls back to defaults — see
+    /// `test_run_rejects_unknown_migration` for the empty-body path.
+    #[actix_web::test]
+    async fn test_run_rejects_malformed_json() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Repo";
+        let _repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let body = web::Bytes::from_static(b"{not json");
+        let req = test::repo_request_with_param(
+            &sync_dir,
+            "/",
+            namespace,
+            repo_name,
+            "migration_name",
+            "add_workspace_name_index",
+        );
+
+        match run(req, body).await {
+            Err(OxenHttpError::BadRequest(msg)) => {
+                assert!(
+                    msg.to_string().contains("Invalid request body"),
+                    "expected \"Invalid request body\" prefix, got: {msg}"
+                );
+            }
+            other => panic!("expected BadRequest for malformed JSON, got {other:?}"),
         }
 
         test::cleanup_sync_dir(&sync_dir)?;

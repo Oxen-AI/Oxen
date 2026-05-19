@@ -50,7 +50,6 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     let namespace_path = &app_data.path.join(&namespace);
 
     let repos: Vec<RepositoryListView> = repositories::list_repos_in_namespace(namespace_path)
-        .iter()
         .map(|repo| RepositoryListView {
             name: repo.dirname(),
             namespace: namespace.to_string(),

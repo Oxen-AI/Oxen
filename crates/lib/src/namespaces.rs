@@ -40,7 +40,8 @@ pub fn get(data_dir: &Path, name: &str) -> Result<Option<Namespace>, OxenError> 
         storage_usage_gb: 0.0,
     };
 
-    let repos = repositories::list_repos_in_namespace(&namespace_path);
+    let repos: Vec<LocalRepository> =
+        repositories::list_repos_in_namespace(&namespace_path).collect();
     // Get storage per repo in parallel and sum up
     namespace.storage_usage_gb = repos
         .par_iter()

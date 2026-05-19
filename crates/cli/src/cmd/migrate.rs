@@ -1,11 +1,14 @@
 use std::path::Path;
+use std::str::FromStr;
 
 use async_trait::async_trait;
 use clap::{Arg, Command};
-use liboxen::{error::OxenError, model::LocalRepository};
+use liboxen::command::migrate::{
+    ALL_MIGRATIONS, MigrationResults, all_migrations, run_on_all_repos, try_apply_migration,
+};
+use liboxen::{command::migrate::Direction, error::OxenError, model::LocalRepository};
 
 use crate::cmd::RunCmd;
-use crate::helpers::migrations;
 
 pub const NAME: &str = "migrate";
 
@@ -14,27 +17,43 @@ pub fn migrate_args(name: &'static str, desc: &'static str) -> Command {
         .about(desc)
         .arg(
             Arg::new("PATH")
-                .help("Directory in which to apply the migration")
+                .help(
+                    "Directory in which to apply the migration. Must be the root \
+                    of the repository, unless --all is specified.",
+                )
                 .required(true),
         )
         .arg(
             Arg::new("all")
                 .long("all")
                 .short('a')
-                .help("Run the migration for all oxen repositories in this directory")
+                .help(
+                    "Run the migration for all oxen repositories in the directory. \
+                    Expects the directory to contain \"namespace/repository\" format. \
+                    The direct directories inside must be namespaces. Each directory \
+                    inside the namespace must be a repository. (Skips directories \
+                    that don't have a .oxen/ directory in them).",
+                )
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("run-optional")
+                .long("run-optional")
+                .help(
+                    "Run an optional migration that wouldn't run by default. The \
+                     migration is invoked iff it is applicable to the repo in this \
+                     direction; otherwise the command prints a notice and exits \
+                     successfully without changes.",
+                )
                 .action(clap::ArgAction::SetTrue),
         )
 }
 
 pub fn subcommands(name: &'static str, desc: &'static str) -> Command {
-    let migrations = migrations();
-
     let mut cmd = Command::new(name).about(desc).subcommand_required(true);
-
-    for (_, migration) in migrations {
+    for migration in ALL_MIGRATIONS {
         cmd = cmd.subcommand(migrate_args(migration.name(), migration.description()))
     }
-
     cmd
 }
 
@@ -57,32 +76,49 @@ impl RunCmd for MigrateCmd {
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
         // Parse Args
-        let migrations = migrations();
-
         if let Some((direction, sub_matches)) = args.subcommand()
             && let Some((migration, sub_matches)) = sub_matches.subcommand()
         {
-            let migration = migrations
-                .get(migration)
-                .ok_or_else(|| OxenError::basic_str(format!("Unknown migration: {migration}")))?;
+            let Some(migration) = all_migrations(migration) else {
+                return Err(OxenError::UnknownMigration(migration.to_string()));
+            };
+
+            let direction = Direction::from_str(direction)?;
+
             let path_str = sub_matches.get_one::<String>("PATH").expect("required");
             let path = Path::new(path_str);
 
             let all = sub_matches.get_flag("all");
+            let run_optional = sub_matches.get_flag("run-optional");
 
-            if direction == "up" {
-                let repo = LocalRepository::from_dir(path)?;
-                if migration.is_needed(&repo)? {
-                    migration.up(path, all)?;
+            if all {
+                let MigrationResults { executed, errored } =
+                    run_on_all_repos(false, migration, direction, run_optional, path)?;
+
+                if errored.is_empty() {
+                    println!(
+                        "\u{2705} Migration completed: successfully migrated {} repositories",
+                        executed.len(),
+                    );
                 } else {
-                    println!("Migration already applied: {}", migration.name());
+                    println!(
+                        "\u{274C} [ERROR] Migration completed with {} success(es) and {} failure(s):",
+                        executed.len(),
+                        errored.len(),
+                    );
+                    for (repo_path, error) in errored {
+                        println!("\t[FAIL] \"{}\" due to: {error}", repo_path.display());
+                    }
+                    return Err(OxenError::MigrationFailed);
                 }
-            } else if direction == "down" {
-                migration.down(path, all)?;
             } else {
-                return Err(OxenError::basic_str(format!(
-                    "Unknown direction: {direction}"
-                )));
+                let mr = try_apply_migration(
+                    migration,
+                    direction,
+                    run_optional,
+                    LocalRepository::from_dir(path)?,
+                )?;
+                println!("{}", mr.as_hint(false));
             }
         }
 
