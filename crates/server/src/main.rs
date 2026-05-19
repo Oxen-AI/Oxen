@@ -1,6 +1,8 @@
 use dotenvy::dotenv;
 use dotenvy::from_filename;
+use liboxen::api::requests::RepoNew;
 use liboxen::config::UserConfig;
+use liboxen::config::repository_config::MerkleStoreKind;
 use liboxen::constants::OXEN_VERSION;
 use liboxen::error::OxenError;
 use liboxen::model::User;
@@ -41,7 +43,7 @@ use liboxen::model::metadata::{
     MetadataAudio, MetadataDir, MetadataImage, MetadataTabular, MetadataText, MetadataVideo,
     generic_metadata::GenericMetadata,
 };
-use liboxen::model::{Commit, CommitStats, RepoNew};
+use liboxen::model::{Commit, CommitStats};
 use liboxen::view::commit::CommitTreeValidationResponse;
 use liboxen::view::compare::{
     CompareCommits, CompareCommitsResponse, CompareDupes, CompareEntries, CompareEntryResponse,
@@ -343,6 +345,22 @@ enum ServerCommand {
                     (currently: storage policy). When omitted, built-in defaults apply."
         )]
         config: Option<PathBuf>,
+
+        /// The default Merkle tree store to use for new repositories.
+        /// A migration can be run to change any repository's Merkle tree store implementation.
+        #[arg(
+            short = 'm',
+            long = "merkle-store",
+            help = format!(
+                "The Merkle tree store implementation to use for new repositories. \
+                 Possible values: {}. Default: {}.",
+               <MerkleStoreKind as strum::VariantNames>::VARIANTS.join(", "),
+               MerkleStoreKind::default(),
+            ),
+            default_value_t = MerkleStoreKind::default(),
+            value_parser = clap::value_parser!(MerkleStoreKind),
+        )]
+        merkle_store_kind: MerkleStoreKind,
     },
 
     /// Create a new user in the server and output the config file for that user
@@ -456,6 +474,7 @@ async fn server() -> Result<(), ServerError> {
             port,
             auth,
             config,
+            merkle_store_kind,
         } => {
             let _metrics_guard = init_metrics()?;
             let server_config = load_server_config(config.as_deref())?;
@@ -467,10 +486,11 @@ async fn server() -> Result<(), ServerError> {
             start(
                 &ip,
                 port,
-                &ServerOpts {
+                ServerOpts {
                     // TODO: why is this not checking the value of the env var?
                     disable_merkle_cache: env::var("OXEN_DISABLE_MERKLE_CACHE").is_ok(),
                     enable_auth: auth,
+                    merkle_store_kind,
                 },
                 &sync_dir,
                 server_config,
@@ -555,19 +575,21 @@ fn init_metrics() -> Result<Option<MetricsGuard>, ServerError> {
 struct ServerOpts {
     disable_merkle_cache: bool,
     enable_auth: bool,
+    merkle_store_kind: MerkleStoreKind,
 }
 
 async fn start(
     host: &str,
     port: u16,
-    opts: &ServerOpts,
+    opts: ServerOpts,
     sync_dir: &Path,
-    server_config: Config,
+    config: Config,
 ) -> Result<(), std::io::Error> {
     let ServerOpts {
         disable_merkle_cache,
         enable_auth,
-    } = *opts;
+        merkle_store_kind,
+    } = opts;
 
     // Configure merkle tree node caching
     if disable_merkle_cache {
@@ -583,7 +605,8 @@ async fn start(
 
     let data = app_data::OxenAppData {
         path: PathBuf::from(sync_dir),
-        config: server_config,
+        config,
+        merkle_store_kind,
     };
 
     {

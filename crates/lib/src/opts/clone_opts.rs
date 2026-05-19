@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use crate::config::repository_config::MerkleStoreKind;
 use crate::opts::FetchOpts;
 
 #[derive(Clone, Debug, Default)]
@@ -14,6 +15,11 @@ pub struct CloneOpts {
     pub is_vfs: bool,
     // Flag for remote mode
     pub is_remote: bool,
+    // Which Merkle tree store to use locally for the cloned repo. A per-disk choice
+    // (like the one `oxen init` lets the caller make) — independent of the remote's
+    // backend. Defaults to [`MerkleStoreKind::default()`] (File) so existing callers
+    // are byte-for-byte unchanged.
+    pub merkle_store_kind: MerkleStoreKind,
 }
 
 impl CloneOpts {
@@ -25,6 +31,7 @@ impl CloneOpts {
             fetch_opts: FetchOpts::new(),
             is_vfs: false,
             is_remote: false,
+            merkle_store_kind: MerkleStoreKind::default(),
         }
     }
 
@@ -37,7 +44,32 @@ impl CloneOpts {
             fetch_opts: FetchOpts::from_branch(branch.as_ref()),
             is_vfs: false,
             is_remote: false,
+            merkle_store_kind: MerkleStoreKind::default(),
             ..CloneOpts::new(url, dst)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `CloneOpts::default()` (also reached via `..Default::default()` from
+    /// callers like `oxen-py`) picks the type-level default for
+    /// `merkle_store_kind`, which is `File`. This preserves every existing
+    /// caller byte-for-byte after the Phase I plumbing change.
+    #[test]
+    fn test_clone_opts_default_uses_file_merkle_store() {
+        let opts = CloneOpts::default();
+        assert_eq!(opts.merkle_store_kind, MerkleStoreKind::File);
+        assert!(!opts.is_vfs);
+    }
+
+    /// `CloneOpts::new` is the most commonly used constructor — confirm it
+    /// also defaults to File so existing call sites are unchanged.
+    #[test]
+    fn test_clone_opts_new_uses_file_merkle_store() {
+        let opts = CloneOpts::new("http://example.com/ns/repo", "/tmp/dst");
+        assert_eq!(opts.merkle_store_kind, MerkleStoreKind::File);
     }
 }

@@ -85,7 +85,7 @@ macro_rules! check_cache {
 /// call — without it, two threads could observe a dead `Weak`, both call
 /// `LmdbBackend::new` on the same path, and one would hit LMDB's
 /// "already open" error.
-pub(crate) fn get_or_open(repo_root: &Path) -> Result<Arc<LmdbBackend>, LmdbError> {
+pub fn get_or_open(repo_root: &Path) -> Result<Arc<LmdbBackend>, LmdbError> {
     // ensure we always have the same key for identifical repositories
     let repo_root =
         util::fs::canonicalize(repo_root).map_err(|e| LmdbError::InitAbs(Box::new(e)))?;

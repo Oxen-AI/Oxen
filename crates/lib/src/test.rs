@@ -7,6 +7,7 @@ pub mod repo_prep;
 pub mod test_utils;
 
 use crate::api;
+use crate::api::requests::RepoNew;
 use crate::command;
 use crate::constants;
 use crate::constants::DEFAULT_REMOTE_NAME;
@@ -16,7 +17,7 @@ use crate::error::OxenError;
 use crate::model::data_frame::schema::Field;
 use crate::model::file::{FileContents, FileNew};
 use crate::model::merkle_tree::node::merkle_tree_node_cache;
-use crate::model::{LocalRepository, RemoteRepository, RepoNew, Schema, User};
+use crate::model::{LocalRepository, RemoteRepository, Schema, User};
 use crate::opts::RmOpts;
 use crate::repositories;
 use crate::util;

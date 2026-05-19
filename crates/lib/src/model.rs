@@ -29,7 +29,6 @@ pub use crate::model::namespace::Namespace;
 // Repository
 pub use crate::model::repository::local_repository::LocalRepository;
 pub use crate::model::repository::remote_repository::RemoteRepository;
-pub use crate::model::repository::repo_new::RepoNew;
 pub use crate::model::repository::repo_stats::{DataTypeStat, RepoStats};
 
 // Commit

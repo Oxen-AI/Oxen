@@ -33,7 +33,7 @@ use crate::test::{
 /// This function mirrors `lmdb_test_root` in
 /// `crates/lib/src/core/db/merkle_node/lmdb.rs`, used by the low-level [`LmdbBackend`] tests.
 #[inline(always)]
-fn lmdb_test_base() -> PathBuf {
+pub(crate) fn lmdb_test_base() -> PathBuf {
     std::env::temp_dir().join("oxen-lmdb-tests")
 }
 

@@ -80,7 +80,7 @@ impl RunCmd for InitCmd {
         // that look at enum structure.
         let merkle_store_kind = match args.get_one::<String>("merkle-store") {
             Some(token) => {
-                MerkleStoreKind::from_str(token).map_err(RepoConfigError::UnknownMerkeKind)?
+                MerkleStoreKind::from_str(token).map_err(RepoConfigError::UnknownMerkleKind)?
             }
             None => MerkleStoreKind::default(),
         };

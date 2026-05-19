@@ -4,10 +4,11 @@ use std::path::PathBuf;
 
 use crate::error::PyOxenError;
 use crate::py_remote_repo::PyRemoteRepo;
+use liboxen::api::requests::RepoNew;
 use liboxen::config::UserConfig;
 use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::error::OxenError;
-use liboxen::model::{RepoNew, file::FileNew};
+use liboxen::model::file::FileNew;
 use liboxen::storage::StorageKind;
 use std::str::FromStr;
 

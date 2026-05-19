@@ -7,6 +7,7 @@ use aws_sdk_s3::error::BuildError;
 use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
 use aws_smithy_runtime_api::client::result::SdkError;
 use duckdb::arrow::error::ArrowError;
+use http::Uri;
 use std::fmt::Write;
 use std::io;
 use std::num::ParseIntError;
@@ -14,12 +15,12 @@ use std::path::Path;
 use std::path::PathBuf;
 use tokio::task::JoinError;
 
+use crate::api::requests::RepoNew;
 use crate::command::migrate::Direction;
 use crate::config::repository_config::RepoConfigError;
 use crate::core::db::merkle_node::lmdb::LmdbError;
 use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
 use crate::model::ParsedResource;
-use crate::model::RepoNew;
 use crate::model::Schema;
 use crate::model::Workspace;
 use crate::model::merkle_tree::merkle_hash::HexHash;
@@ -67,15 +68,35 @@ pub enum OxenError {
     #[error("Invalid repository or namespace name '{0}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+")]
     InvalidRepoName(StringError),
 
+    #[error(
+        "Invalid repository URL. Expecting 3 '/' parts to extract the namespace and repository name in the path of this URL: {0}"
+    )]
+    NoNamespaceRepoInUrl(Uri),
+
     /// When `get_fork_status` cannot obtain the fork status for a repository.
     #[error("No fork status found.")]
     ForkStatusNotFound,
+
+    #[error("A file already exists at the destination path: {0}")]
+    ForkDestinationExists(PathBuf),
+
+    #[error("Could not create or find repository [{repo_id}]: {err}\n{body}")]
+    FailCreateOrFindRemoteRepo {
+        repo_id: String,
+        err: serde_json::Error,
+        body: String,
+    },
 
     // TODO: Once all serialization paths use `*View` instead of `Workspace`, which requires `LocalRepository`
     //       to implement `Serializable`, then these *StoreNotInitialized errors can be deleted.,
     /// The [`MerkleStore`] or [`TransportMerkle`] for a [`LocalRepository`] was not initialized before access.
     #[error("Merkle store not initialized")]
     MerkleStoreNotInitialized,
+
+    /// A repository is misconfigured. Its Merkle tree store setting doesn't match the on-disk state.
+    /// The inner [`PathBuf`] is the local repository's root.
+    #[error("Repository {path} is configured with LMDB Merkle store but the on-disk LMDB files are not present.", path=.0.display())]
+    MisconfiguredMerkleLmdb(PathBuf),
 
     /// LMDB-backed Merkle store was requested on a repository configured for a
     /// virtual file system. LMDB requires a real, byte-addressable mmap target
@@ -784,11 +805,6 @@ impl OxenError {
     /// Makes an OxenError::Upload error.
     pub fn upload(s: &str) -> Self {
         OxenError::Upload(StringError::from(s))
-    }
-
-    /// Make a new OxenError::RepoNotFound error.
-    pub fn repo_not_found(repo: RepoNew) -> Self {
-        OxenError::RepoNotFound(Box::new(repo))
     }
 
     /// Make a new OxenError::FileImportError error.

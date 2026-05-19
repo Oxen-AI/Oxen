@@ -15,11 +15,13 @@ mod writer;
 pub(crate) mod cache;
 
 #[cfg(test)]
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 
+pub use cache::get_or_open;
 pub(in crate::core::db::merkle_node::lmdb) use lmdb_backend::DEFAULT_LMDB_MMAP_SIZE;
 pub use lmdb_backend::LmdbBackend;
-pub(crate) use lmdb_backend::{lmdb_backend_options, lmdb_dir_location};
+pub(crate) use lmdb_backend::{OXEN_LMDB_MERKLE_DIR, lmdb_backend_options, lmdb_dir_location};
 
 use thiserror::Error;
 
@@ -79,6 +81,13 @@ pub enum LmdbError {
 
     #[error("Error writing LMDB Merkle store: {0}")]
     Write(heed::Error),
+
+    #[error("Error copying the LMDB on-disk file to {dst}: {error}")]
+    Copy {
+        dst: PathBuf,
+        #[source]
+        error: heed::Error,
+    },
 
     // ── Cross-table integrity ────────────────────────────────────────────────
     #[error("Missing node, have link for (hex) hash: {0}")]

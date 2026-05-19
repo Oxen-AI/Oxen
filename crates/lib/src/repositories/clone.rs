@@ -49,6 +49,7 @@ async fn _clone(
         fetch_opts,
         is_vfs: false,
         is_remote: false,
+        merkle_store_kind: crate::config::repository_config::MerkleStoreKind::default(),
     };
     clone(&opts).await
 }
@@ -105,12 +106,12 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::api;
+    use crate::api::requests::RepoNew;
     use crate::command;
     use crate::constants;
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::constants::DEFAULT_REMOTE_NAME;
     use crate::error::OxenError;
-    use crate::model::RepoNew;
     use crate::opts::PushOpts;
     use crate::repositories;
     use crate::test;

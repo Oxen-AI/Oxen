@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use bytesize::ByteSize;
 use heed::byteorder::LE;
 use heed::types::{Bytes, DecodeIgnore, U128};
-use heed::{AnyTls, Database, Env, EnvOpenOptions, WithTls};
+use heed::{AnyTls, CompactionOption, Database, Env, EnvOpenOptions, WithTls};
 
 use crate::constants::OXEN_HIDDEN_DIR;
 use crate::core::db::merkle_node::lmdb::LmdbError;
@@ -284,6 +284,35 @@ impl LmdbBackend {
         Ok(Some(LmdbLink::decode(bytes)?))
     }
 
+    /// Safe way to copy an LMDB database on disk. Expects the `Path` to be another repository's root.
+    ///
+    /// `opts` selects whether heed compacts while copying. Prefer
+    /// [`CompactionOption::Disabled`] unless you specifically want to reclaim
+    /// free pages: the compacting path (`mdb_env_copyfd1`) walks the B-tree and
+    /// runs an OS-page-size-dependent free-page leak check that can fail with
+    /// `MDB_INCOMPATIBLE` on envs with named sub-DBs (it does so on Windows'
+    /// 4 KiB pages for our two-sub-DB Merkle store). The non-compacting copy
+    /// does a straight used-page copy and is portable.
+    pub fn copy_on_disk(
+        &self,
+        destination_repo_root: &Path,
+        opts: CompactionOption,
+    ) -> Result<(), LmdbError> {
+        let dst_lmdb_dir = lmdb_dir_location(destination_repo_root);
+        util::fs::create_dir_all(&dst_lmdb_dir).map_err(|e| LmdbError::InitDir(Box::new(e)))?;
+
+        // When opened in directory mode (which is how we open _all_ LMDB envs), the
+        // data is expected to live in a file under the dir called "data.mdb". This
+        // file is what heed's `copy_to_file` function expects.
+        let dst = dst_lmdb_dir.join("data.mdb");
+        let _ = self
+            .lmdb_env
+            .copy_to_path(&dst, opts)
+            .map_err(|error| LmdbError::Copy { dst, error })?;
+        // the returned [`File`] is already written and synced to the OS
+        Ok(())
+    }
+
     // /// Flushes LMDB to disk and closes the underlying LMDB environment for this process.
     // pub fn close(self) -> Result<(), heed::Error> {
     //     log::info!("Preparing to close LMDB");
@@ -307,7 +336,7 @@ impl Drop for LmdbBackend {
 
 /// The name of the LMDB directory as it exists in the repository's `.oxen/` hidden directory.
 /// LMDB's actual physical contents and lock files are stored within this directory.
-const OXEN_LMDB_MERKLE_DIR: &str = "lmdb_merkle_tree_store";
+pub(crate) const OXEN_LMDB_MERKLE_DIR: &str = "lmdb_merkle_tree_store";
 
 /// The complete filepath to the LMDB file for the given repository.
 ///
