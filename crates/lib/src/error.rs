@@ -204,6 +204,9 @@ pub enum OxenError {
     #[error("Unknown migration: {0}")]
     UnknownMigration(String),
 
+    #[error("Failure applying migration.")]
+    MigrationFail,
+
     //
     // Version Store
     //
