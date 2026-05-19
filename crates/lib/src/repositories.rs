@@ -249,7 +249,9 @@ pub async fn create(
             kind,
             versions_path: None,
         });
-    let local_repo = LocalRepository::new(&repo_dir, storage_config)?;
+    let merkle_store_kind = new_repo.merkle_store_kind.unwrap_or_default();
+    let local_repo =
+        LocalRepository::new_with_merkle_store_kind(&repo_dir, storage_config, merkle_store_kind)?;
     local_repo.save()?;
 
     // Initialize version store
@@ -352,6 +354,7 @@ pub fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenError> {
 #[cfg(test)]
 mod tests {
     use crate::config::UserConfig;
+    use crate::config::repository_config::MerkleStoreKind;
     use crate::constants;
     use crate::error::OxenError;
     use crate::model::file::{FileContents, FileNew};
@@ -437,6 +440,95 @@ mod tests {
             // Test that we can successful load a repository from that dir
             let _repo = LocalRepository::from_dir(&repo_path)?;
 
+            Ok(())
+        })
+        .await
+    }
+
+    /// Default — when `RepoNew.merkle_store_kind` is `None`, the server-side
+    /// repo lands on the File backend, preserving every existing client.
+    #[tokio::test]
+    async fn test_create_defaults_to_file_merkle_store() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let namespace = "test-namespace";
+            let name = "default-merkle-repo";
+            let repo_new = RepoNew::from_namespace_name(namespace, name, None);
+            assert!(
+                repo_new.merkle_store_kind.is_none(),
+                "field defaults to None to keep older clients on the File backend",
+            );
+            let created = repositories::create(&sync_dir, repo_new).await?;
+            assert_eq!(
+                created.local_repo.merkle_store_kind(),
+                MerkleStoreKind::File,
+            );
+
+            let repo_path = Path::new(&sync_dir).join(namespace).join(name);
+            let reloaded = LocalRepository::from_dir(&repo_path)?;
+            assert_eq!(reloaded.merkle_store_kind(), MerkleStoreKind::File);
+            Ok(())
+        })
+        .await
+    }
+
+    /// Older clients send a JSON body with no `merkle_store_kind` field. The
+    /// `#[serde(default)]` on `Option<MerkleStoreKind>` keeps that
+    /// deserializing to `None`, and `repositories::create` falls through to
+    /// `File`.
+    #[tokio::test]
+    async fn test_create_deserialized_repo_new_without_field_defaults_to_file()
+    -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            // Pre-`merkle_store_kind` wire shape — old client missing the field.
+            let json = r#"{
+                "namespace": "test-namespace",
+                "name": "old-client-repo"
+            }"#;
+            let repo_new: RepoNew = serde_json::from_str(json).expect("parse RepoNew");
+            assert!(repo_new.merkle_store_kind.is_none());
+
+            let created = repositories::create(&sync_dir, repo_new).await?;
+            assert_eq!(
+                created.local_repo.merkle_store_kind(),
+                MerkleStoreKind::File,
+            );
+            Ok(())
+        })
+        .await
+    }
+
+    /// Explicit `Lmdb` selection — `repositories::create` constructs the repo
+    /// with the LMDB merkle backend, the on-disk env dir is created, and the
+    /// config round-trips through `config.toml`.
+    ///
+    /// The repo lives under [`test::lmdb_test_base`] (a real on-disk dir, not
+    /// a VFS) via `run_empty_lmdb_safe_dir_test_async`.
+    #[tokio::test]
+    async fn test_create_with_lmdb_merkle_store_kind() -> Result<(), OxenError> {
+        test::run_empty_lmdb_safe_dir_test_async(|sync_dir| async move {
+            let namespace = "test-namespace";
+            let name = "lmdb-repo";
+            let mut repo_new = RepoNew::from_namespace_name(namespace, name, None);
+            repo_new.merkle_store_kind = Some(MerkleStoreKind::Lmdb);
+
+            let created = repositories::create(&sync_dir, repo_new).await?;
+            assert_eq!(
+                created.local_repo.merkle_store_kind(),
+                MerkleStoreKind::Lmdb,
+            );
+
+            let repo_path = Path::new(&sync_dir).join(namespace).join(name);
+            let env_dir = crate::core::db::merkle_node::lmdb::lmdb_dir_location(&repo_path);
+            assert!(
+                env_dir.exists(),
+                "expected LMDB env dir to exist at {env_dir:?}",
+            );
+
+            // Drop the original repo (closes its LMDB env) before reloading from
+            // the same path — LMDB enforces "one heed::Env per path per process".
+            drop(created);
+            let reloaded = LocalRepository::from_dir(&repo_path)?;
+            assert_eq!(reloaded.merkle_store_kind(), MerkleStoreKind::Lmdb);
             Ok(())
         })
         .await

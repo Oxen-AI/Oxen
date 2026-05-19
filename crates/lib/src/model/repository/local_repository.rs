@@ -321,10 +321,23 @@ impl LocalRepository {
         path: &Path,
         is_vfs: bool,
     ) -> Result<LocalRepository, OxenError> {
+        Self::from_remote_with_merkle_store_kind(repo, path, MerkleStoreKind::default(), is_vfs)
+    }
+
+    /// [`Self::from_remote`] but with an explicit [`MerkleStoreKind`] selection.
+    ///
+    /// The Merkle store choice is a per-disk decision (like the choice an `oxen init`
+    /// caller makes), not a part of the cloned repo's logical state — so a clone is
+    /// free to pick its own backend regardless of what the remote server uses.
+    pub fn from_remote_with_merkle_store_kind(
+        repo: RemoteRepository,
+        path: &Path,
+        merkle_store_kind: MerkleStoreKind,
+        is_vfs: bool,
+    ) -> Result<LocalRepository, OxenError> {
         let path = path.to_owned();
         let storage_config = StorageConfig::default();
         let version_store = create_version_store(&path, &storage_config)?;
-        let merkle_store_kind = MerkleStoreKind::default();
         let m_store = Self::load_merkle_store(path.clone(), merkle_store_kind, is_vfs)?;
         Ok(LocalRepository {
             path,

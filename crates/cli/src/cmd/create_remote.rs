@@ -7,11 +7,13 @@ use std::str::FromStr;
 
 use liboxen::api;
 use liboxen::config::UserConfig;
+use liboxen::config::repository_config::{MerkleStoreKind, RepoConfigError};
 use liboxen::constants::{DEFAULT_HOST, DEFAULT_SCHEME};
 use liboxen::error::OxenError;
 use liboxen::model::RepoNew;
 use liboxen::model::file::{FileContents, FileNew};
 use liboxen::storage::StorageKind;
+use strum::VariantNames;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "create-remote";
@@ -67,6 +69,18 @@ impl RunCmd for CreateRemoteCmd {
                 .value_parser(["local", "s3"])
                 .action(clap::ArgAction::Set),
         )
+        .arg(
+            Arg::new("merkle-store")
+                .long("merkle-store")
+                .help(
+                    "Which Merkle tree store the server should use for this repo. \
+                     'file' is the original on-disk format (default, backwards-compatible). \
+                     'lmdb' uses an LMDB database for the tree store — not supported on \
+                     virtual file systems."
+                )
+                .value_parser(<MerkleStoreKind as VariantNames>::VARIANTS.to_vec())
+                .action(clap::ArgAction::Set),
+        )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
@@ -80,6 +94,11 @@ impl RunCmd for CreateRemoteCmd {
         let storage_kind = args
             .get_one::<String>("storage-backend")
             .map(|s| StorageKind::from_str(s))
+            .transpose()?;
+
+        let merkle_store_kind = args
+            .get_one::<String>("merkle-store")
+            .map(|s| MerkleStoreKind::from_str(s).map_err(RepoConfigError::UnknownMerkeKind))
             .transpose()?;
 
         // Default the host to the oxen.ai hub
@@ -111,6 +130,7 @@ impl RunCmd for CreateRemoteCmd {
             repo_new.host = Some(host);
             repo_new.is_public = Some(is_public);
             repo_new.scheme = Some(scheme);
+            repo_new.merkle_store_kind = merkle_store_kind;
             let remote_repo = api::client::repositories::create_empty(repo_new).await?;
             println!(
                 "🎉 Remote successfully created for '{}/{}'\n\nIf this is a brand new repository:\n\n  oxen clone {}\n\nTo push an existing local repository to a new remote:\n\n  oxen config --set-remote origin {}\n",
@@ -171,6 +191,7 @@ Happy Mooooooving of data 🐂
             repo.host = Some(host);
             repo.is_public = Some(is_public);
             repo.scheme = Some(scheme);
+            repo.merkle_store_kind = merkle_store_kind;
 
             let remote_repo = api::client::repositories::create(repo).await?;
             println!(

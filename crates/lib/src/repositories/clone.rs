@@ -49,6 +49,7 @@ async fn _clone(
         fetch_opts,
         is_vfs: false,
         is_remote: false,
+        merkle_store_kind: crate::config::repository_config::MerkleStoreKind::default(),
     };
     clone(&opts).await
 }
