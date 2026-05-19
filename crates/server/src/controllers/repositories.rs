@@ -309,8 +309,10 @@ pub async fn create(
 
 async fn handle_json_creation(
     app_data: &OxenAppData,
-    data: RepoNew,
+    mut data: RepoNew,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    data.storage_kind = Some(app_data.config.storage.resolve(data.storage_kind)?);
+
     let repo_new_clone = data.clone();
     match repositories::create(&app_data.path, data).await {
         Ok(repo) => match repositories::commits::latest_commit(&repo.local_repo) {
@@ -455,6 +457,8 @@ async fn handle_multipart_creation(
     };
 
     repo_data.files = if !files.is_empty() { Some(files) } else { None };
+    repo_data.storage_kind = Some(app_data.config.storage.resolve(repo_data.storage_kind)?);
+
     let repo_data_clone = repo_data.clone();
 
     // Create repository
