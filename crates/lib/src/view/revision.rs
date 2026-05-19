@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::model::ParsedResource;
+use crate::model::parsed_resource::ParsedResourceView;
 
 use super::StatusMessage;
 
@@ -9,5 +9,5 @@ use super::StatusMessage;
 pub struct ParseResourceResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
-    pub resource: ParsedResource,
+    pub resource: ParsedResourceView,
 }

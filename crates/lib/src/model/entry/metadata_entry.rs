@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::parsed_resource::ParsedResourceView;
-use crate::model::{Commit, EntryDataType, LocalRepository, ParsedResource, StagedEntryStatus};
+use crate::model::{Commit, EntryDataType, LocalRepository, StagedEntryStatus};
 use crate::repositories;
 
 use utoipa::ToSchema;
@@ -24,13 +24,17 @@ pub struct CLIMetadataEntry {
     pub extension: String,
 }
 
+/// `deny_unknown_fields` is the discriminator for the untagged `EMetadataEntry` enum:
+/// payloads with a `changes` field (i.e. `WorkspaceMetadataEntry`) fail to deserialize here
+/// and fall through to the workspace variant.
 #[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MetadataEntry {
     pub filename: String,
     pub hash: String,
     pub is_dir: bool,
     pub latest_commit: Option<Commit>,
-    pub resource: Option<ParsedResource>,
+    pub resource: Option<ParsedResourceView>,
     // size of the file in bytes
     pub size: u64,
     // high level type of "image", "text", "video", "audio", "tabular"
@@ -68,7 +72,10 @@ pub struct WorkspaceMetadataEntry {
     pub metadata: Option<GenericMetadata>,
     // If it's a tabular file, is it indexed for querying?
     pub is_queryable: Option<bool>,
-    // Workspace changes if the entry is part of a workspace
+    // Workspace changes if the entry is part of a workspace. Skipped when None so the wire
+    // shape collapses back to a plain `MetadataEntry` — the presence of this field is the
+    // discriminator the untagged `EMetadataEntry` enum uses on the client side.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub changes: Option<WorkspaceChanges>,
     // Nested children entries when depth > 0
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -109,8 +116,7 @@ impl WorkspaceMetadataEntry {
             hash: metadata.hash,
             is_dir: metadata.is_dir,
             latest_commit: metadata.latest_commit,
-            // Convert ParsedResource to ParsedResourceView using the From trait.
-            resource: metadata.resource.map(ParsedResourceView::from),
+            resource: metadata.resource,
             size: metadata.size,
             data_type: metadata.data_type,
             mime_type: metadata.mime_type,
