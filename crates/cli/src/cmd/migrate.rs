@@ -1,8 +1,10 @@
 use std::path::Path;
+use std::str::FromStr;
 
 use async_trait::async_trait;
 use clap::{Arg, Command};
-use liboxen::{error::OxenError, model::LocalRepository};
+use liboxen::command::migrate::Migrate;
+use liboxen::{command::migrate::Direction, error::OxenError, model::LocalRepository};
 
 use crate::cmd::RunCmd;
 use crate::helpers::migrations;
@@ -22,6 +24,17 @@ pub fn migrate_args(name: &'static str, desc: &'static str) -> Command {
                 .long("all")
                 .short('a')
                 .help("Run the migration for all oxen repositories in this directory")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("run-optional")
+                .long("run-optional")
+                .help(
+                    "Run an optional migration that wouldn't run by default. The \
+                     migration is invoked iff it is applicable to the repo in this \
+                     direction; otherwise the command prints a notice and exits \
+                     successfully without changes.",
+                )
                 .action(clap::ArgAction::SetTrue),
         )
 }
@@ -62,30 +75,85 @@ impl RunCmd for MigrateCmd {
         if let Some((direction, sub_matches)) = args.subcommand()
             && let Some((migration, sub_matches)) = sub_matches.subcommand()
         {
-            let migration = migrations
-                .get(migration)
-                .ok_or_else(|| OxenError::basic_str(format!("Unknown migration: {migration}")))?;
+            let Some(migration) = migrations.get(migration) else {
+                return Err(OxenError::UnknownMigration(migration.to_string()));
+            };
+
+            let direction = Direction::from_str(direction)?;
+
             let path_str = sub_matches.get_one::<String>("PATH").expect("required");
             let path = Path::new(path_str);
 
             let all = sub_matches.get_flag("all");
+            let run_optional = sub_matches.get_flag("run-optional");
 
-            if direction == "up" {
-                let repo = LocalRepository::from_dir(path)?;
-                if migration.is_needed(&repo)? {
-                    migration.up(path, all)?;
-                } else {
-                    println!("Migration already applied: {}", migration.name());
-                }
-            } else if direction == "down" {
-                migration.down(path, all)?;
-            } else {
-                return Err(OxenError::basic_str(format!(
-                    "Unknown direction: {direction}"
-                )));
-            }
+            try_apply_migration(
+                &**migration,
+                MigrationOptions {
+                    path,
+                    all,
+                    direction,
+                    run_optional,
+                },
+            )?;
         }
 
         Ok(())
+    }
+}
+
+struct MigrationOptions<'a> {
+    path: &'a Path,
+    all: bool,
+    direction: Direction,
+    run_optional: bool,
+}
+
+/// Attempt to apply the specified migration to the repository in the options.
+///
+/// Returns:
+///     - Ok(true): Migration applied successfully.
+///     - Ok(false): Not applied and no error was encountered.
+///     - Err(...): Not applied and an error was encountered that prevented it from being applied.
+fn try_apply_migration<'a>(
+    migration: &dyn Migrate,
+    opts: MigrationOptions<'a>,
+) -> Result<bool, OxenError> {
+    let MigrationOptions {
+        path,
+        all,
+        direction,
+        run_optional,
+    } = opts;
+    match direction {
+        Direction::Up => {
+            let repo = LocalRepository::from_dir(path)?;
+            if migration.is_needed(&repo)? {
+                migration.up(path, all)?;
+                Ok(true)
+            } else if migration.is_applicable(Direction::Up, &repo)? {
+                if run_optional {
+                    migration.up(path, all)?;
+                    Ok(true)
+                } else {
+                    println!(
+                        "Nothing to do: '{}' (up) is applicable, but not needed. You must run with --run-optional to apply it.",
+                        migration.name()
+                    );
+                    Ok(false)
+                }
+            } else {
+                println!(
+                    "Nothing to do: '{}' (up) is not needed nor is it applicable.",
+                    migration.name()
+                );
+                Ok(false)
+            }
+        }
+        Direction::Down => {
+            // down migrations are run unconditionally
+            migration.down(path, all)?;
+            Ok(true)
+        }
     }
 }

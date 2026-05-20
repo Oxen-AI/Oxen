@@ -201,6 +201,9 @@ pub enum OxenError {
     #[error("Invalid version: {0}")]
     InvalidVersion(StringError),
 
+    #[error("Unknown migration: {0}")]
+    UnknownMigration(String),
+
     //
     // Version Store
     //
@@ -560,7 +563,12 @@ pub enum OxenError {
     #[error("Unknown status [{0}]")]
     UnknownRemoteResponseStatus(StringError),
 
+    #[error("{0}")]
+    Strum(#[from] strum::ParseError),
+
+    //
     // Fallback
+    //
     // TODO: remove all uses of `Basic` and replace with specific errors.
     #[error("{0}")]
     Basic(StringError),
