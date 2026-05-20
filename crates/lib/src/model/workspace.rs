@@ -16,7 +16,9 @@ pub struct WorkspaceConfig {
     pub workspace_id: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+/// In-process model for workspace state. Not part of any API wire shape — use `WorkspaceView` to
+/// send workspace state across the wire.
+#[derive(Debug, Clone)]
 pub struct Workspace {
     pub id: String,
     pub name: Option<String>,
@@ -77,6 +79,8 @@ impl From<Workspace> for WorkspaceView {
     }
 }
 
+/// Used to send workspace state across the wire. The `Workspace`'s other fields (like
+/// `LocalRepository`) would bloat the response and leak internal state.
 #[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 pub struct WorkspaceView {
     pub name: Option<String>,

@@ -10,47 +10,32 @@ use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::merkle_tree::{MerkleStore, MerkleTransport, TransportableMerkleStore};
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
-use crate::storage::{NoopVersionStore, StorageConfig, VersionStore, create_version_store};
+use crate::storage::{StorageConfig, VersionStore, create_version_store};
 use crate::util;
 use crate::view::RepositoryView;
 
-use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, SystemTime};
-use utoipa::ToSchema;
 
 /// Per-process cache of mtime round-trip tolerance, keyed by repo path. Probed at most
 /// once per repo per process via `probe_mtime_drift`.
 static MTIME_TOLERANCE_CACHE: LazyLock<Mutex<HashMap<PathBuf, Duration>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Build the placeholder `version_store` used when a `LocalRepository` arrives via
-/// `Deserialize` (e.g. as part of `Workspace` embedded in a wire response). Real,
-/// constructor-built repositories never use this — they get a `create_version_store`
-/// result wired off `storage_config`. The placeholder errors on every call so a caller
-/// that accidentally reaches for the store on a wire-shape stub gets a loud failure
-/// instead of silent wrong-path operations.
-fn placeholder_version_store() -> Arc<dyn VersionStore> {
-    Arc::new(NoopVersionStore)
-}
-
-// TODO: A `LocalRepository` shouldn't require serialization.
-// TODO: The `merkle_store` fields should **NOT** be Option. It should be impossible to create a
-//       `LocalRepository` without a `version_store` and `merkle_store`. They're only `Option` beacuse of
-//       the serialization derives, which is unused.
-#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+/// In-process model of a local working tree (CLI) or a server-side repo directory.
+/// Not part of any API wire shape — `RepositoryView` is what crosses the wire. Held by
+/// `Workspace` and `LocalRepositoryWithEntries`, both of which are likewise in-process.
+#[derive(Debug, Clone)]
 pub struct LocalRepository {
-    #[schema(value_type = String)]
     pub path: PathBuf,
     // Optional remotes to sync the data to
     remote_name: Option<String>, // name of the current remote ("origin" by default)
     min_version: Option<String>, // write the version if it is past v0.18.4
     remotes: Vec<Remote>,        // List of possible remotes
     vnode_size: Option<u64>,     // Size of the vnodes
-    #[schema(value_type = Option<Vec<String>>)]
     subtree_paths: Option<Vec<PathBuf>>, // If the user clones a subtree, we store the paths here so that we know we don't have the full tree
     pub depth: Option<i32>, // If the user clones with a depth, we store the depth here so that we know we don't have the full tree
     vfs: Option<bool>,      // Flag for repositories stored on virtual file systems
@@ -60,29 +45,15 @@ pub struct LocalRepository {
 
     /// Storage backend configuration. Set once at construction and never mutated for the life
     /// of this `LocalRepository` — the source of truth for which backend `version_store` is.
-    /// Excluded from serde/utoipa so the wire shape isn't a second source of truth (the
-    /// on-disk `config.toml` is). Deserialized stubs get `StorageConfig::default()`.
-    #[serde(skip)]
-    #[schema(ignore)]
     storage_config: StorageConfig,
-    /// Built from `storage_config` at construction. Never replaced. On deserialize this is a
-    /// `NoopVersionStore` placeholder — wire-shape stubs aren't expected to perform real
-    /// storage ops; if a caller reaches for the store anyway, every method errors loudly.
-    #[serde(skip, default = "placeholder_version_store")]
-    #[schema(ignore)]
+    /// Built from `storage_config` at construction. Never replaced.
     version_store: Arc<dyn VersionStore>,
 
-    // Skip this field during serialization/deserialization as it relates to on-disk repo state.
-    #[serde(skip)]
-    #[schema(ignore)]
     merkle_store: Option<Arc<dyn TransportableMerkleStore>>,
-    #[serde(default)]
-    merkle_store_kind: MerkleStoreKind, // it's a little awkward to have both, but the `Serialize` trait
-                                        // means we can't always have the `merkle_store`, so we can't
-                                        // rely on it to always provide the MerkleStoreKind
+    merkle_store_kind: MerkleStoreKind, // This field can be removed when merkle_store is no longer Option
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct LocalRepositoryWithEntries {
     pub local_repo: LocalRepository,
     pub entries: Option<Vec<MetadataEntry>>,

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::model::{
-    Branch, Commit, CommitEntry, EntryDataType, ParsedResource,
+    Branch, Commit, CommitEntry, EntryDataType,
     entry::metadata_entry::{MetadataEntry, WorkspaceMetadataEntry},
     metadata::MetadataDir,
     parsed_resource::ParsedResourceView,
@@ -89,22 +89,18 @@ impl EMetadataEntry {
         }
     }
 
-    /// Returns an optional reference to the parsed resource.
+    /// Returns an owned clone of the parsed resource, if any.
     pub fn resource(&self) -> Option<ParsedResourceView> {
         match self {
-            EMetadataEntry::MetadataEntry(entry) => {
-                entry.resource.clone().map(ParsedResourceView::from)
-            }
+            EMetadataEntry::MetadataEntry(entry) => entry.resource.clone(),
             EMetadataEntry::WorkspaceMetadataEntry(entry) => entry.resource.clone(),
         }
     }
 
-    pub fn set_resource(&mut self, resource: Option<ParsedResource>) {
+    pub fn set_resource(&mut self, resource: Option<ParsedResourceView>) {
         match self {
             EMetadataEntry::MetadataEntry(entry) => entry.resource = resource,
-            EMetadataEntry::WorkspaceMetadataEntry(entry) => {
-                entry.resource = resource.map(ParsedResourceView::from)
-            }
+            EMetadataEntry::WorkspaceMetadataEntry(entry) => entry.resource = resource,
         }
     }
 

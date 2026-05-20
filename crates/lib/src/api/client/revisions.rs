@@ -1,13 +1,14 @@
 use crate::api;
 use crate::api::client;
 use crate::error::OxenError;
-use crate::model::{ParsedResource, RemoteRepository};
+use crate::model::RemoteRepository;
+use crate::model::parsed_resource::ParsedResourceView;
 use crate::view::ParseResourceResponse;
 
 pub async fn get(
     repository: &RemoteRepository,
     revision: impl AsRef<str>,
-) -> Result<Option<ParsedResource>, OxenError> {
+) -> Result<Option<ParsedResourceView>, OxenError> {
     let revision = revision.as_ref();
     let uri = format!("/revisions/{revision}");
     let url = api::endpoint::url_from_repo(repository, &uri)?;

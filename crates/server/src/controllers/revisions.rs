@@ -35,7 +35,7 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let resource = parse_resource(&req, &repository)?;
     let response = ParseResourceResponse {
         status: StatusMessage::resource_found(),
-        resource,
+        resource: resource.into(),
     };
 
     log::debug!("Response: {response:?}");
