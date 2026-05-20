@@ -11,6 +11,7 @@ pub struct WorkspaceDeleteCmd;
 
 #[async_trait]
 impl RunCmd for WorkspaceDeleteCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

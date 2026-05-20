@@ -12,6 +12,7 @@ pub struct TreeCmd;
 
 #[async_trait]
 impl RunCmd for TreeCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

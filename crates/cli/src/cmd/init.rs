@@ -27,6 +27,7 @@ pub struct InitCmd;
 
 #[async_trait]
 impl RunCmd for InitCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         INIT
     }

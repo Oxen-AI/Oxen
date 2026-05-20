@@ -46,6 +46,7 @@ pub struct WorkspaceCmd;
 
 #[async_trait]
 impl RunCmd for WorkspaceCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

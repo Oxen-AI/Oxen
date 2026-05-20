@@ -10,6 +10,7 @@ pub struct RemoteCmd;
 
 #[async_trait]
 impl RunCmd for RemoteCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

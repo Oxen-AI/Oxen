@@ -17,6 +17,7 @@ pub struct StatusCmd;
 
 #[async_trait]
 impl RunCmd for StatusCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

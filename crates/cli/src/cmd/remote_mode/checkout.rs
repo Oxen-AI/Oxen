@@ -12,6 +12,7 @@ pub struct RemoteModeCheckoutCmd;
 
 #[async_trait]
 impl RunCmd for RemoteModeCheckoutCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

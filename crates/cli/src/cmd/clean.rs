@@ -16,6 +16,7 @@ pub struct CleanCmd;
 
 #[async_trait]
 impl RunCmd for CleanCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

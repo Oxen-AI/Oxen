@@ -14,6 +14,7 @@ pub struct RemoteModeRestoreCmd;
 
 #[async_trait]
 impl RunCmd for RemoteModeRestoreCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

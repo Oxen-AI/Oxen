@@ -17,6 +17,7 @@ pub struct WorkspaceRestoreCmd;
 
 #[async_trait]
 impl RunCmd for WorkspaceRestoreCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

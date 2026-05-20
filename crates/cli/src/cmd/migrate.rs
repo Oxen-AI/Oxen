@@ -55,6 +55,7 @@ pub struct MigrateCmd;
 
 #[async_trait]
 impl RunCmd for MigrateCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

@@ -10,6 +10,7 @@ pub struct CheckoutCmd;
 
 #[async_trait]
 impl RunCmd for CheckoutCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

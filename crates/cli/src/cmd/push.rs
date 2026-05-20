@@ -19,6 +19,7 @@ pub struct PushCmd;
 
 #[async_trait]
 impl RunCmd for PushCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

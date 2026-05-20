@@ -190,8 +190,8 @@ pub enum OxenError {
     /// The repository must be migrated before it can be used.
     /// This is due to the repository being at an older version than the oxen server or client
     /// being used on it.
-    #[error("{0}")]
-    MigrationRequired(StringError),
+    #[error("Error: Migration required.")]
+    MigrationRequired,
 
     /// The oxen client or server must be updated before it can be used.
     #[error("{0}")]

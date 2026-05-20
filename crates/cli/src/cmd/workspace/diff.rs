@@ -17,6 +17,7 @@ pub struct WorkspaceDiffCmd;
 
 #[async_trait]
 impl RunCmd for WorkspaceDiffCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

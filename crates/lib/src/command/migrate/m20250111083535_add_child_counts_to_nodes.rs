@@ -17,14 +17,16 @@ use crate::util::hasher;
 use crate::util::progress_bar::{ProgressBarType, oxen_progress_bar};
 use crate::{repositories, util};
 
+// Re-writes merkle tree with child counts for all directories and vnode nodes.
 pub struct AddChildCountsToNodesMigration;
-impl AddChildCountsToNodesMigration {}
 
 impl Migrate for AddChildCountsToNodesMigration {
+    #[inline(always)]
     fn name(&self) -> &'static str {
         "add_child_counts_to_nodes"
     }
 
+    #[inline(always)]
     fn description(&self) -> &'static str {
         "Re-writes merkle tree with child counts for all directories and vnode nodes"
     }

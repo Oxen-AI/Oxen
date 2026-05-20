@@ -12,6 +12,7 @@ pub struct SchemasRmCmd;
 
 #[async_trait]
 impl RunCmd for SchemasRmCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

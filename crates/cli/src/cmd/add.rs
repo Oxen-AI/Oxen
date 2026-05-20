@@ -29,6 +29,7 @@ pub fn add_args() -> Command {
 
 #[async_trait]
 impl RunCmd for AddCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         ADD
     }

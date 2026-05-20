@@ -15,6 +15,7 @@ pub struct FetchCmd;
 
 #[async_trait]
 impl RunCmd for FetchCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

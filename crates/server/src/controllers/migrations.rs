@@ -58,10 +58,11 @@ pub async fn run(
 
     let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
 
-    let migrations = migrate::all_migrations();
-    let migration = migrations.get(&migration_name).ok_or_else(|| {
-        OxenHttpError::BadRequest(format!("Unknown migration: {migration_name}").into())
-    })?;
+    let migration = migrate::ALL_MIGRATIONS
+        .get(&migration_name)
+        .ok_or_else(|| {
+            OxenHttpError::BadRequest(format!("Unknown migration: {migration_name}").into())
+        })?;
 
     match direction.as_str() {
         "up" => migration.up(&repo.path, false)?,

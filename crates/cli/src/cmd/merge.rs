@@ -13,6 +13,7 @@ pub struct MergeCmd;
 
 #[async_trait]
 impl RunCmd for MergeCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

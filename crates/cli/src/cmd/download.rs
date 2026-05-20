@@ -18,6 +18,7 @@ pub struct DownloadCmd;
 
 #[async_trait]
 impl RunCmd for DownloadCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

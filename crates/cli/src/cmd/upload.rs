@@ -19,6 +19,7 @@ pub struct UploadCmd;
 
 #[async_trait]
 impl RunCmd for UploadCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

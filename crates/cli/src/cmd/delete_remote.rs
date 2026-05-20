@@ -12,6 +12,7 @@ pub struct DeleteRemoteCmd;
 
 #[async_trait]
 impl RunCmd for DeleteRemoteCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

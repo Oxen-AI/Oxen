@@ -14,6 +14,7 @@ pub struct DFCmd;
 
 #[async_trait]
 impl RunCmd for DFCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

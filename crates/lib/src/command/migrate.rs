@@ -4,6 +4,7 @@ use std::path::Path;
 use crate::{error::OxenError, model::LocalRepository};
 
 pub mod m20250111083535_add_child_counts_to_nodes;
+use lazy_static::lazy_static;
 pub use m20250111083535_add_child_counts_to_nodes::AddChildCountsToNodesMigration;
 
 pub mod m20260408_add_workspace_name_index;
@@ -23,7 +24,7 @@ pub enum Direction {
     Down,
 }
 
-pub trait Migrate {
+pub trait Migrate: Sync + Send {
     /// Apply the migration.
     fn up(&self, path: &Path, all: bool) -> Result<(), OxenError>;
 
@@ -54,24 +55,26 @@ pub trait Migrate {
     fn description(&self) -> &'static str;
 }
 
-/// Returns every registered migration keyed by its `name()`.
-///
-/// Used by both the CLI (`oxen migrate up/down`) and the server
-/// (`POST /api/repos/:ns/:name/migrations/:migration_name`) to look up a
-/// migration by name at runtime. New migrations must be appended here.
-pub fn all_migrations() -> HashMap<String, Box<dyn Migrate>> {
-    let mut map: HashMap<String, Box<dyn Migrate>> = HashMap::new();
-    map.insert(
-        AddChildCountsToNodesMigration.name().to_string(),
-        Box::new(AddChildCountsToNodesMigration),
-    );
-    map.insert(
-        AddWorkspaceNameIndexMigration.name().to_string(),
-        Box::new(AddWorkspaceNameIndexMigration),
-    );
-    map.insert(
-        SwitchMerkleStoreToLmdbMigration.name().to_string(),
-        Box::new(SwitchMerkleStoreToLmdbMigration),
-    );
-    map
+lazy_static! {
+    /// Returns every registered migration keyed by its `name()`.
+    ///
+    /// Used by both the CLI (`oxen migrate up/down`) and the server
+    /// (`POST /api/repos/:ns/:name/migrations/:migration_name`) to look up a
+    /// migration by name at runtime. New migrations must be appended here.
+    pub static ref ALL_MIGRATIONS: HashMap<String, Box<dyn Migrate>> = {
+        let mut map: HashMap<String, Box<dyn Migrate>> = HashMap::new();
+        map.insert(
+            AddChildCountsToNodesMigration.name().to_string(),
+            Box::new(AddChildCountsToNodesMigration),
+        );
+        map.insert(
+            AddWorkspaceNameIndexMigration.name().to_string(),
+            Box::new(AddWorkspaceNameIndexMigration),
+        );
+        map.insert(
+            SwitchMerkleStoreToLmdbMigration.name().to_string(),
+            Box::new(SwitchMerkleStoreToLmdbMigration),
+        );
+        map
+    };
 }

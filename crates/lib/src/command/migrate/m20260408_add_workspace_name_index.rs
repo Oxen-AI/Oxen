@@ -10,13 +10,16 @@ use crate::repositories;
 use crate::util;
 use crate::util::progress_bar::{ProgressBarType, oxen_progress_bar};
 
+// Creates a RocksDB index mapping workspace names to IDs for O(1) lookup.
 pub struct AddWorkspaceNameIndexMigration;
 
 impl Migrate for AddWorkspaceNameIndexMigration {
+    #[inline(always)]
     fn name(&self) -> &'static str {
         "add_workspace_name_index"
     }
 
+    #[inline(always)]
     fn description(&self) -> &'static str {
         "Creates a RocksDB index mapping workspace names to IDs for O(1) lookup"
     }

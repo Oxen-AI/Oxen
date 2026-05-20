@@ -14,6 +14,7 @@ pub struct RemoteModeCommitCmd;
 
 #[async_trait]
 impl RunCmd for RemoteModeCommitCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

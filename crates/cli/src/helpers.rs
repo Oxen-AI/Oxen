@@ -11,7 +11,7 @@ use colored::Colorize;
 use std::collections::HashMap;
 use std::str::FromStr;
 
-pub fn get_scheme_and_host_or_default() -> Result<(String, String), OxenError> {
+pub(crate) fn get_scheme_and_host_or_default() -> Result<(String, String), OxenError> {
     let config = AuthConfig::get_or_create()?;
     let mut default_host = (
         constants::DEFAULT_SCHEME.to_string(),
@@ -25,7 +25,7 @@ pub fn get_scheme_and_host_or_default() -> Result<(String, String), OxenError> {
     Ok(default_host)
 }
 
-pub fn get_scheme_and_host_from_repo(
+pub(crate) fn get_scheme_and_host_from_repo(
     repo: &LocalRepository,
 ) -> Result<(String, String), OxenError> {
     if let Some(remote) = repo.remote() {
@@ -36,7 +36,7 @@ pub fn get_scheme_and_host_from_repo(
     get_scheme_and_host_or_default()
 }
 
-pub async fn check_remote_version(
+pub(crate) async fn check_remote_version(
     scheme: impl AsRef<str>,
     host: impl AsRef<str>,
 ) -> Result<(), OxenError> {
@@ -58,7 +58,7 @@ pub async fn check_remote_version(
     Ok(())
 }
 
-pub async fn check_remote_version_blocking(
+pub(crate) async fn check_remote_version_blocking(
     scheme: impl AsRef<str>,
     host: impl AsRef<str>,
 ) -> Result<(), OxenError> {
@@ -81,24 +81,25 @@ pub async fn check_remote_version_blocking(
     Ok(())
 }
 
-pub fn migrations() -> HashMap<String, Box<dyn Migrate>> {
-    liboxen::command::migrate::all_migrations()
+pub(crate) fn migrations() -> &'static HashMap<String, Box<dyn Migrate>> {
+    &liboxen::command::migrate::ALL_MIGRATIONS
 }
 
-pub fn check_repo_migration_needed(repo: &LocalRepository) -> Result<(), OxenError> {
-    let migrations = migrations();
-
-    let mut migrations_needed: Vec<Box<dyn Migrate>> = Vec::new();
-
-    for (_, migration) in migrations {
-        if migration.is_needed(repo)? {
-            migrations_needed.push(migration);
+pub(crate) fn check_repo_migration_needed(repo: &LocalRepository) -> Result<(), OxenError> {
+    let migrations_needed = {
+        let mut migrations_needed: Vec<&dyn Migrate> = Vec::new();
+        for (_, migration) in migrations() {
+            if migration.is_needed(repo)? {
+                migrations_needed.push(&**migration);
+            }
         }
-    }
+        migrations_needed
+    };
 
     if migrations_needed.is_empty() {
         return Ok(());
     }
+
     let warning = "\nWarning: 🐂 This repo requires a migration to the latest Oxen version. \n\nPlease run the following to update:".to_string().yellow();
     eprintln!("{warning}\n");
     for migration in migrations_needed {
@@ -107,9 +108,7 @@ pub fn check_repo_migration_needed(repo: &LocalRepository) -> Result<(), OxenErr
             format!("  oxen migrate up {} .\n", migration.name()).yellow()
         );
     }
-    Err(OxenError::MigrationRequired(
-        "Error: Migration required".to_string().into(),
-    ))
+    Err(OxenError::MigrationRequired)
 }
 
 #[cfg(test)]

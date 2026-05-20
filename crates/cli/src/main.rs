@@ -9,11 +9,10 @@ use clap::{Arg, Command};
 use liboxen::model::LocalRepository;
 use liboxen::util;
 use tracing::level_filters::LevelFilter;
-// use env_logger::Env;
 
-pub mod cli_error;
+mod cli_error;
 pub mod cmd;
-pub mod helpers;
+mod helpers;
 
 const SHORT_ABOUT: &str = "🐂 is the AI and machine learning data management toolchain";
 

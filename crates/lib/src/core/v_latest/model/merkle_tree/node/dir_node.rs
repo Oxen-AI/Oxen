@@ -47,6 +47,7 @@ impl TDirNode for DirNodeData {
         &self.hash
     }
 
+    #[inline(always)]
     fn name(&self) -> &str {
         &self.name
     }

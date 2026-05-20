@@ -13,6 +13,7 @@ pub struct DbListCmd;
 
 #[async_trait]
 impl RunCmd for DbListCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

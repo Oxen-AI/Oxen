@@ -17,6 +17,7 @@ pub struct EmbeddingsCmd;
 
 #[async_trait]
 impl RunCmd for EmbeddingsCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }
