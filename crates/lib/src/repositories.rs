@@ -191,16 +191,16 @@ pub fn transfer_namespace(
     util::fs::rename(&repo_dir, &new_repo_dir)?;
 
     // Update path in config
-    let repo = LocalRepository::from_dir(&new_repo_dir)?;
-    repo.save()?;
+    {
+        let repo = LocalRepository::from_dir(&new_repo_dir)?;
+        repo.save()?;
+        // ensure drop(repo)
+    }
 
     let updated_repo = get_by_namespace_and_name(sync_dir, to_namespace, repo_name)?;
-
     match updated_repo {
         Some(new_repo) => Ok(new_repo),
-        None => Err(OxenError::basic_str(
-            "Repository not found after attempted transfer",
-        )),
+        None => Err(OxenError::FailedTransfer),
     }
 }
 

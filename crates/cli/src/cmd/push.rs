@@ -114,7 +114,7 @@ impl RunCmd for PushCmd {
             println!("Deleted remote branch: {}/{}", opts.remote, opts.branch);
             Ok(())
         } else {
-            let mut repo = LocalRepository::from_current_dir()?;
+            let mut repo = repo;
             repo.set_remote_name(remote);
 
             let (scheme, host) = get_scheme_and_host_from_repo(&repo)?;
