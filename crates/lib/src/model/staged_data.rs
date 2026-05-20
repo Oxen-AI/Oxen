@@ -3,12 +3,11 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use crate::config::RepositoryConfig;
 use crate::model::{
     StagedEntry, StagedEntryStatus, StagedSchema, SummarizedStagedDirStats,
     merge_conflict::EntryMergeConflict,
 };
-
-use crate::model::LocalRepository;
 
 // TODO: Display if in Remote mode repo;
 
@@ -161,8 +160,8 @@ impl StagedData {
 
         if self.is_clean() {
             // If in remote-mode repo, check for unsynced files
-            if let Ok(repo) = LocalRepository::from_current_dir()
-                && repo.is_remote_mode()
+            if let Ok(repo) = RepositoryConfig::from_current_dir()
+                && repo.remote_mode.unwrap_or(false)
             {
                 self.__collect_unsynced_dirs(&mut outputs, opts);
                 self.__collect_unsynced_files(&mut outputs, opts);

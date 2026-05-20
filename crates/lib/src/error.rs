@@ -89,6 +89,9 @@ pub enum OxenError {
     #[error("{0}")]
     RepoConfig(#[from] RepoConfigError),
 
+    #[error("Repository not found after attempted transfer")]
+    FailedTransfer,
+
     //
     // Remotes
     //

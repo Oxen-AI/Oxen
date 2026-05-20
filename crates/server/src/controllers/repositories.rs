@@ -576,9 +576,8 @@ pub async fn transfer_namespace(
 
     log::debug!("transfer_namespace from: {from_namespace} to: {to_namespace}");
 
-    repositories::transfer_namespace(&app_data.path, &name, &from_namespace, &to_namespace)?;
     let repo =
-        repositories::get_by_namespace_and_name(&app_data.path, &to_namespace, &name)?.unwrap();
+        repositories::transfer_namespace(&app_data.path, &name, &from_namespace, &to_namespace)?;
 
     // Return repository view under new namespace
     Ok(HttpResponse::Ok().json(RepositoryResponse {

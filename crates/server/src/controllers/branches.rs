@@ -386,12 +386,10 @@ pub async fn list_entry_versions(
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let branch_name = path_param(&req, "branch_name")?.to_string();
 
-    // Get branch
-    let repo = get_repo(&app_data.path, namespace.clone(), &repo_name)?;
+    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
     let branch = repositories::branches::get_by_name(&repo, &branch_name)?;
 
     let path = PathBuf::from(path_param(&req, "path")?);
-    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
 
     let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
