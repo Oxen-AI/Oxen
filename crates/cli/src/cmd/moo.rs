@@ -8,6 +8,7 @@ pub struct MooCmd;
 
 #[async_trait]
 impl RunCmd for MooCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

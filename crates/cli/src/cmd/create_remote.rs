@@ -19,6 +19,7 @@ pub struct CreateRemoteCmd;
 
 #[async_trait]
 impl RunCmd for CreateRemoteCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

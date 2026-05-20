@@ -13,6 +13,7 @@ pub struct InfoCmd;
 
 #[async_trait]
 impl RunCmd for InfoCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

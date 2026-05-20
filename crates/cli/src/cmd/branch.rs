@@ -18,6 +18,7 @@ pub struct BranchCmd;
 
 #[async_trait]
 impl RunCmd for BranchCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

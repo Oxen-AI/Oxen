@@ -19,6 +19,7 @@ pub struct UnpackCmd;
 
 #[async_trait]
 impl RunCmd for UnpackCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

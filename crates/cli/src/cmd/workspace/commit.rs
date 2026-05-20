@@ -15,6 +15,7 @@ pub struct WorkspaceCommitCmd;
 
 #[async_trait]
 impl RunCmd for WorkspaceCommitCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

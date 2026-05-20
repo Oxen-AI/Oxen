@@ -39,6 +39,7 @@ pub fn rm_args() -> Command {
 
 #[async_trait]
 impl RunCmd for RmCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

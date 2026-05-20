@@ -17,6 +17,7 @@ pub struct PullCmd;
 
 #[async_trait]
 impl RunCmd for PullCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

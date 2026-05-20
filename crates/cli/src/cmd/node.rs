@@ -12,6 +12,7 @@ pub struct NodeCmd;
 
 #[async_trait]
 impl RunCmd for NodeCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

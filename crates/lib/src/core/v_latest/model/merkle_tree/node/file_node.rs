@@ -59,6 +59,7 @@ impl TFileNode for FileNodeData {
         &self.hash
     }
 
+    #[inline(always)]
     fn name(&self) -> &str {
         &self.name
     }

@@ -13,6 +13,7 @@ pub struct SaveCmd;
 
 #[async_trait]
 impl RunCmd for SaveCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

@@ -40,10 +40,12 @@ const LMDB_MIGRATION_MAP_SIZE_BYTES: usize = 64 * 1024 * 1024 * 1024;
 pub struct SwitchMerkleStoreToLmdbMigration;
 
 impl Migrate for SwitchMerkleStoreToLmdbMigration {
+    #[inline(always)]
     fn name(&self) -> &'static str {
         "switch_merkle_store_to_lmdb"
     }
 
+    #[inline(always)]
     fn description(&self) -> &'static str {
         "Transcode the repository's Merkle tree node store from the file-based \
          backend to LMDB. `down` reverts to the file-based backend."

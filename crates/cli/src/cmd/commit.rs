@@ -16,6 +16,7 @@ pub struct CommitCmd;
 
 #[async_trait]
 impl RunCmd for CommitCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

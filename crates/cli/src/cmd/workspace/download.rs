@@ -14,6 +14,7 @@ pub struct WorkspaceDownloadCmd;
 
 #[async_trait]
 impl RunCmd for WorkspaceDownloadCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

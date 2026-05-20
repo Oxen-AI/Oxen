@@ -18,6 +18,7 @@ pub struct LsCmd;
 // TODO: Support options besides the base 'ls' functionality -- file stats, etc;
 #[async_trait]
 impl RunCmd for LsCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

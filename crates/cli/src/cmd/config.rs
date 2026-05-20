@@ -12,6 +12,7 @@ pub struct ConfigCmd;
 
 #[async_trait]
 impl RunCmd for ConfigCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

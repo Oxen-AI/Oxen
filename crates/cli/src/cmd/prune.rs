@@ -36,6 +36,7 @@ pub fn prune_args() -> Command {
 
 #[async_trait]
 impl RunCmd for PruneCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

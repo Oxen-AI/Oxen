@@ -8,6 +8,7 @@ pub struct DbGetCmd;
 
 #[async_trait]
 impl RunCmd for DbGetCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

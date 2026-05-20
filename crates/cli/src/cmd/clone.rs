@@ -17,6 +17,7 @@ pub struct CloneCmd;
 
 #[async_trait]
 impl RunCmd for CloneCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

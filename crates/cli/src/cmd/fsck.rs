@@ -51,6 +51,7 @@ pub fn fsck_args() -> Command {
 
 #[async_trait]
 impl RunCmd for FsckCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

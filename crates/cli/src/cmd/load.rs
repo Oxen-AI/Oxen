@@ -11,6 +11,7 @@ pub struct LoadCmd;
 
 #[async_trait]
 impl RunCmd for LoadCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

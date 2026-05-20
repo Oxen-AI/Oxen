@@ -20,6 +20,7 @@ fn write_to_pager(output: &mut Pager, text: &str) -> Result<(), OxenError> {
 
 #[async_trait]
 impl RunCmd for LogCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

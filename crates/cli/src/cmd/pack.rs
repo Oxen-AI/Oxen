@@ -10,6 +10,7 @@ pub struct PackCmd;
 
 #[async_trait]
 impl RunCmd for PackCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

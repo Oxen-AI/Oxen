@@ -21,6 +21,7 @@ pub struct DbCmd;
 
 #[async_trait]
 impl RunCmd for DbCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }

@@ -42,6 +42,7 @@ pub fn restore_args() -> Command {
 
 #[async_trait]
 impl RunCmd for RestoreCmd {
+    #[inline(always)]
     fn name(&self) -> &str {
         NAME
     }
