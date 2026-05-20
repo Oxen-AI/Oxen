@@ -2,6 +2,7 @@ use http::Uri;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::config::repository_config::MerkleStoreKind;
 use crate::constants::DEFAULT_HOST;
 use crate::error::OxenError;
 use crate::model::commit::Commit;
@@ -28,6 +29,11 @@ pub struct RepoNew {
     // Which storage backend the server should use for this repo (e.g. "local", "s3")
     #[serde(default)]
     pub storage_kind: Option<StorageKind>,
+    // Which Merkle tree store the server should use for this repo (e.g. "file", "lmdb").
+    // `None` → server uses `MerkleStoreKind::default()` (File). `#[serde(default)]` keeps
+    // older clients (no field on the wire) deserializing to `None`.
+    #[serde(default)]
+    pub merkle_store_kind: Option<MerkleStoreKind>,
 }
 
 impl std::fmt::Display for RepoNew {
@@ -76,6 +82,7 @@ impl RepoNew {
             description: None,
             files: None,
             storage_kind,
+            merkle_store_kind: None,
         })
     }
 
@@ -103,6 +110,7 @@ impl RepoNew {
             description: None,
             files: None,
             storage_kind,
+            merkle_store_kind: None,
         }
     }
 
@@ -122,6 +130,7 @@ impl RepoNew {
             description: None,
             files: None,
             storage_kind,
+            merkle_store_kind: None,
         }
     }
 
@@ -140,6 +149,7 @@ impl RepoNew {
             description: None,
             files: None,
             storage_kind: None,
+            merkle_store_kind: None,
         }
     }
 
@@ -159,6 +169,7 @@ impl RepoNew {
             description: None,
             files: Some(files),
             storage_kind,
+            merkle_store_kind: None,
         }
     }
 
@@ -183,6 +194,50 @@ impl RepoNew {
             description: None,
             files: None,
             storage_kind: None,
+            merkle_store_kind: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::repository_config::MerkleStoreKind;
+
+    /// Old clients send a JSON body that omits `merkle_store_kind` entirely;
+    /// `#[serde(default)]` on `Option<MerkleStoreKind>` keeps that
+    /// deserializing to `None`, which the server then maps to
+    /// [`MerkleStoreKind::default()`] (File).
+    #[test]
+    fn test_repo_new_deserialize_without_merkle_store_kind_field() {
+        let json = r#"{"namespace":"ns","name":"repo"}"#;
+        let parsed: RepoNew = serde_json::from_str(json).expect("parse RepoNew");
+        assert_eq!(parsed.namespace, "ns");
+        assert_eq!(parsed.name, "repo");
+        assert!(parsed.merkle_store_kind.is_none());
+    }
+
+    /// New clients send `"merkle_store_kind":"lmdb"`; serde parses it back to
+    /// `Some(Lmdb)`. Symmetric serialize → deserialize round-trip.
+    #[test]
+    fn test_repo_new_serde_round_trip_with_lmdb() {
+        let mut repo = RepoNew::from_namespace_name("ns", "repo", None);
+        repo.merkle_store_kind = Some(MerkleStoreKind::Lmdb);
+
+        let json = serde_json::to_string(&repo).expect("serialize");
+        assert!(
+            json.contains("\"merkle_store_kind\":\"lmdb\""),
+            "expected lmdb in serialized json, got: {json}"
+        );
+        let parsed: RepoNew = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.merkle_store_kind, Some(MerkleStoreKind::Lmdb));
+    }
+
+    /// Explicit `"merkle_store_kind":"file"` also round-trips.
+    #[test]
+    fn test_repo_new_deserialize_with_explicit_file_value() {
+        let json = r#"{"namespace":"ns","name":"repo","merkle_store_kind":"file"}"#;
+        let parsed: RepoNew = serde_json::from_str(json).expect("parse RepoNew");
+        assert_eq!(parsed.merkle_store_kind, Some(MerkleStoreKind::File));
     }
 }

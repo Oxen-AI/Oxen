@@ -278,6 +278,38 @@ where
     Ok(())
 }
 
+/// Like [`run_empty_dir_test_async`], but routes the directory under
+/// [`lmdb_test_base`] so LMDB-backed repos created inside the closure land on a
+/// real filesystem (not a Windows ImDisk VFS). Use whenever a test plans to
+/// instantiate a repository with [`crate::config::repository_config::MerkleStoreKind::Lmdb`].
+#[cfg(test)]
+pub async fn run_empty_lmdb_safe_dir_test_async<T, Fut>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(PathBuf) -> Fut,
+    Fut: Future<Output = Result<(), OxenError>>,
+{
+    init_test_env();
+    log::info!("<<<<< run_empty_lmdb_safe_dir_test_async start");
+    let repo_dir = create_empty_dir(lmdb_test_base())?;
+
+    log::info!(">>>>> run_empty_lmdb_safe_dir_test_async running test");
+    let result = match test(repo_dir.clone()).await {
+        Ok(_) => true,
+        Err(err) => {
+            eprintln!("Error running test. Err: {err:?}");
+            false
+        }
+    };
+
+    // Best-effort cleanup. LMDB envs may keep mmap handles alive past the
+    // closure, so a `remove_dir_all` failure here is non-fatal for the test;
+    // the OS temp dir handles eventual cleanup.
+    let _ = std::fs::remove_dir_all(&repo_dir);
+
+    assert!(result);
+    Ok(())
+}
+
 pub fn run_empty_local_repo_test<T>(test: T) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,

@@ -339,27 +339,12 @@ async fn handle_json_creation(
                 }))
             }
             Err(err) => {
-                println!("Err repositories::create: {err:?}");
                 log::error!("Err repositories::commits::latest_commit: {err:?}");
                 Ok(HttpResponse::InternalServerError()
                     .json(StatusMessage::error("Failed to get latest commit.")))
             }
         },
-        Err(OxenError::RepoAlreadyExists(path)) => {
-            log::debug!("Repo already exists: {path:?}");
-            Ok(HttpResponse::Conflict().json(StatusMessage::error("Repo already exists.")))
-        }
-        Err(OxenError::InvalidRepoName(name)) => {
-            log::debug!("Invalid repo name: {name}");
-            Ok(HttpResponse::BadRequest().json(StatusMessage::error(format!(
-                "Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"
-            ))))
-        }
-        Err(err) => {
-            println!("Err repositories::create: {err:?}");
-            log::error!("Err repositories::create: {err:?}");
-            Ok(HttpResponse::InternalServerError().json(StatusMessage::error("Invalid body.")))
-        }
+        Err(err) => Ok(map_create_error_to_response(err)),
     }
 }
 
@@ -490,19 +475,40 @@ async fn handle_multipart_creation(
                     .json(StatusMessage::error("Failed to get latest commit.")))
             }
         },
-        Err(OxenError::RepoAlreadyExists(path)) => {
+        Err(err) => Ok(map_create_error_to_response(err)),
+    }
+}
+
+/// Map an [`OxenError`] returned by [`repositories::create`] to the HTTP
+/// response that both creation routes (JSON and multipart) send back.
+///
+/// Kept as a free function so both handlers stay byte-identical on the error
+/// path; any new variant only needs to be added here.
+fn map_create_error_to_response(err: OxenError) -> HttpResponse {
+    match err {
+        OxenError::RepoAlreadyExists(path) => {
             log::debug!("Repo already exists: {path:?}");
-            Ok(HttpResponse::Conflict().json(StatusMessage::error("Repo already exists.")))
+            HttpResponse::Conflict().json(StatusMessage::error("Repo already exists."))
         }
-        Err(OxenError::InvalidRepoName(name)) => {
+        OxenError::InvalidRepoName(name) => {
             log::debug!("Invalid repo name: {name}");
-            Ok(HttpResponse::BadRequest().json(StatusMessage::error(format!(
+            HttpResponse::BadRequest().json(StatusMessage::error(format!(
                 "Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"
-            ))))
+            )))
         }
-        Err(err) => {
+        OxenError::MerkleStoreLmdbNotSupportedOnVfs => {
+            log::debug!(
+                "Rejecting LMDB merkle store request: server sync dir is on a virtual file system"
+            );
+            HttpResponse::BadRequest().json(StatusMessage::error(
+                "Cannot create an LMDB-backed repository on a virtual file system. \
+                 Either retarget the server's sync directory at a real filesystem \
+                 or omit `merkle_store_kind` (defaults to file-backend).",
+            ))
+        }
+        err => {
             log::error!("Err repositories::create: {err:?}");
-            Ok(HttpResponse::InternalServerError().json(StatusMessage::error("Invalid body.")))
+            HttpResponse::InternalServerError().json(StatusMessage::error("Invalid body."))
         }
     }
 }

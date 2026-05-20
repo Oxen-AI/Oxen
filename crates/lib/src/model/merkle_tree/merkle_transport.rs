@@ -108,6 +108,16 @@ pub trait MerkleUnpacker: Send + Sync {
 }
 
 /// Marker super-trait: a type that can both pack and unpack Merkle tree nodes for transport.
+///
+/// # Backend-independent wire format invariant
+///
+/// The byte format produced by [`MerklePacker`] and consumed by [`MerkleUnpacker`] **MUST**
+/// be independent of the underlying [`crate::model::merkle_tree::MerkleStore`] implementation.
+/// Clients and servers may use different stores (e.g., a file-backend client cloning from
+/// an LMDB-backend server); correctness depends on every backend producing and consuming
+/// the same canonical bytes for the same logical Merkle subtree. A future backend that
+/// ships a non-canonical, backend-specific transport format would silently break
+/// cross-backend interop.
 pub trait MerkleTransport: MerklePacker + MerkleUnpacker {}
 
 /// This blanket impl makes any type that implements [`MerklePacker`] and
