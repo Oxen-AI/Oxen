@@ -13,7 +13,6 @@
 
 use std::collections::HashSet;
 
-use liboxen::error::OxenError;
 use liboxen::storage::StorageKind;
 use serde::Deserialize;
 
@@ -37,23 +36,40 @@ struct StoragePolicyRaw {
     s3_bucket: String,
 }
 
-impl TryFrom<StoragePolicyRaw> for StoragePolicy {
-    type Error = OxenError;
+#[derive(Debug, thiserror::Error)]
+pub enum StoragePolicyError {
+    /// `StoragePolicy` rejected an admin config with an empty `[storage] backends` list.
+    #[error("Storage policy: at least one backend must be configured under [storage] backends")]
+    StoragePolicyNoBackends,
 
-    fn try_from(raw: StoragePolicyRaw) -> Result<Self, OxenError> {
+    /// `StoragePolicy` rejected an admin config that lists the same backend twice under
+    /// `[storage] backends`.
+    #[error("Storage policy: backend '{0}' appears multiple times in [storage] backends")]
+    StoragePolicyDuplicateBackend(liboxen::storage::StorageKind),
+
+    /// `StoragePolicy` rejected an admin config that includes the S3 backend without a
+    /// bucket name (or with an empty one).
+    #[error("Storage policy: s3 bucket cannot be empty when the s3 backend is allowed")]
+    StoragePolicyEmptyS3Bucket,
+}
+
+impl TryFrom<StoragePolicyRaw> for StoragePolicy {
+    type Error = StoragePolicyError;
+
+    fn try_from(raw: StoragePolicyRaw) -> Result<Self, StoragePolicyError> {
         if raw.backends.is_empty() {
-            return Err(OxenError::StoragePolicyNoBackends);
+            return Err(StoragePolicyError::StoragePolicyNoBackends);
         }
         let mut seen = HashSet::new();
         for kind in &raw.backends {
             if !seen.insert(*kind) {
-                return Err(OxenError::StoragePolicyDuplicateBackend(*kind));
+                return Err(StoragePolicyError::StoragePolicyDuplicateBackend(*kind));
             }
         }
         // Orphan bucket (set when S3 isn't in backends) is silently allowed so admins
         // toggling backends on/off during config iteration don't trip a validation error.
         if raw.backends.contains(&StorageKind::S3) && raw.s3_bucket.is_empty() {
-            return Err(OxenError::StoragePolicyEmptyS3Bucket);
+            return Err(StoragePolicyError::StoragePolicyEmptyS3Bucket);
         }
         Ok(Self {
             backends: raw.backends,
@@ -157,7 +173,7 @@ mod tests {
     #[test]
     fn try_from_rejects_empty_backends() {
         let err = StoragePolicy::try_from(raw(vec![], "")).unwrap_err();
-        assert!(matches!(err, OxenError::StoragePolicyNoBackends));
+        assert!(matches!(err, StoragePolicyError::StoragePolicyNoBackends));
     }
 
     #[test]
@@ -166,14 +182,17 @@ mod tests {
             .unwrap_err();
         assert!(matches!(
             err,
-            OxenError::StoragePolicyDuplicateBackend(StorageKind::Local)
+            StoragePolicyError::StoragePolicyDuplicateBackend(StorageKind::Local)
         ));
     }
 
     #[test]
     fn try_from_rejects_s3_in_backends_with_empty_bucket() {
         let err = StoragePolicy::try_from(raw(vec![StorageKind::S3], "")).unwrap_err();
-        assert!(matches!(err, OxenError::StoragePolicyEmptyS3Bucket));
+        assert!(matches!(
+            err,
+            StoragePolicyError::StoragePolicyEmptyS3Bucket
+        ));
     }
 
     #[test]
