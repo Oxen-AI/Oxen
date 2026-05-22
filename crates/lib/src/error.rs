@@ -229,20 +229,6 @@ pub enum OxenError {
     #[error("S3 storage backend not yet implemented")]
     S3BackendNotImplemented,
 
-    /// `StoragePolicy` rejected an admin config with an empty `[storage] backends` list.
-    #[error("Storage policy: at least one backend must be configured under [storage] backends")]
-    StoragePolicyNoBackends,
-
-    /// `StoragePolicy` rejected an admin config that lists the same backend twice under
-    /// `[storage] backends`.
-    #[error("Storage policy: backend '{0}' appears multiple times in [storage] backends")]
-    StoragePolicyDuplicateBackend(crate::storage::StorageKind),
-
-    /// `StoragePolicy` rejected an admin config that includes the S3 backend without a
-    /// bucket name (or with an empty one).
-    #[error("Storage policy: s3 bucket cannot be empty when the s3 backend is allowed")]
-    StoragePolicyEmptyS3Bucket,
-
     /// `oxen restore` finished with one or more file-restore failures. Aggregated rather than
     /// fail-fast so the rest of the files can still be restored. The vector should be non-empty.
     #[error("{}", format_restore_failures(failures))]

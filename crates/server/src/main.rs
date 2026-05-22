@@ -81,6 +81,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use crate::config::Config;
+use crate::config::storage_policy::StoragePolicyError;
 use crate::metrics::MetricsGuard;
 
 const VERSION: &str = liboxen::constants::OXEN_VERSION;
@@ -403,6 +404,8 @@ enum ServerError {
         #[source]
         source: toml::de::Error,
     },
+    #[error("{0}")]
+    StoragePolicy(#[from] StoragePolicyError),
     #[cfg(feature = "metrics")]
     #[error("Invalid OXEN_METRICS_PORT value: {0} (parsing error: {1})")]
     InvalidPort(String, std::num::ParseIntError),
