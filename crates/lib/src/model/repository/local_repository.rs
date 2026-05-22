@@ -2,9 +2,8 @@ use crate::config::RepositoryConfig;
 use crate::config::repository_config::MerkleStoreKind;
 use crate::constants::SHALLOW_FLAG;
 use crate::constants::{self, DEFAULT_VNODE_SIZE, MIN_OXEN_VERSION};
-use crate::core::db::merkle_node::LmdbBackend;
 use crate::core::db::merkle_node::file_backend::FileBackend;
-use crate::core::db::merkle_node::lmdb::lmdb_dir_location;
+use crate::core::db::merkle_node::lmdb;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
@@ -99,7 +98,10 @@ impl LocalRepository {
     ///
     /// Dispatches on `merkle_store_kind`:
     ///   - [`MerkleStoreKind::File`] → [`FileBackend`], honouring `is_vfs`.
-    ///   - [`MerkleStoreKind::Lmdb`] → [`LmdbBackend`], rejecting `is_vfs == true`
+    ///   - [`MerkleStoreKind::Lmdb`] → [`LmdbBackend`] via the process-wide
+    ///     cache at [`lmdb::cache::get_or_open`], which serializes opens and
+    ///     shares one `Arc<LmdbBackend>` across overlapping `LocalRepository`
+    ///     instances for the same canonical path. Rejects `is_vfs == true`
     ///     because LMDB's memory-mapped storage isn't safe on virtual file
     ///     systems (the mmap pages may not back to a real, byte-addressable
     ///     file). VFS-on-LMDB returns [`OxenError::MerkleStoreLmdbNotSupportedOnVfs`].
@@ -114,21 +116,7 @@ impl LocalRepository {
                 if is_vfs {
                     return Err(OxenError::MerkleStoreLmdbNotSupportedOnVfs);
                 }
-                // Canonicalize so two `LocalRepository`s opened with different
-                // path shapes for the same physical repo (e.g. `./repo` vs
-                // `/abs/repo`, trailing slash, symlinked parent) end up at the
-                // same `heed::Env`. heed/LMDB does not deduplicate `Env`
-                // handles, and two envs on one database directory is
-                // undefined behavior per LMDB.
-                let repo_path = util::fs::canonicalize(&repo_path)?;
-                let env_dir = lmdb_dir_location(&repo_path);
-                util::fs::create_dir_all(&env_dir)?;
-                let mut options = heed::EnvOpenOptions::new();
-                // 1 GiB ceiling — large enough for typical Merkle trees,
-                // small enough to keep sparse-file disk usage in check. Can
-                // be revisited if/when we have repos that exceed it.
-                options.map_size(1024 * 1024 * 1024);
-                Arc::new(LmdbBackend::new(repo_path, options)?)
+                lmdb::cache::get_or_open(&repo_path)?
             }
         };
         Ok(store)
