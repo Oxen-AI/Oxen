@@ -15,9 +15,4 @@ impl OxenAppData {
             config: Config::default(),
         }
     }
-
-    /// Construct with an explicit server config.
-    pub fn with_config(path: PathBuf, config: Config) -> OxenAppData {
-        OxenAppData { path, config }
-    }
 }

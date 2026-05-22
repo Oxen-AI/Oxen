@@ -578,7 +578,10 @@ async fn start(
         );
     }
 
-    let data = app_data::OxenAppData::with_config(PathBuf::from(sync_dir), server_config);
+    let data = app_data::OxenAppData {
+        path: PathBuf::from(sync_dir),
+        config: server_config,
+    };
 
     {
         let running = format!("Running on {host}:{port}");

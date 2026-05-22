@@ -1,7 +1,7 @@
 //! Server-side configuration.
 //!
 //! - [`Config`] — the TOML deserialize target for `--config`.
-//! - [`storage::StoragePolicy`] — the
+//! - [`storage::StoragePolicy`] — the version store storage policy for the server.
 
 pub mod storage_policy;
 
