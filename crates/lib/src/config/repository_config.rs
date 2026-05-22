@@ -26,6 +26,9 @@ pub enum RepoConfigError {
 
     #[error("[RepositoryConfig] Unsupported Merkle store kind: {kind}. Expected one of {tokens:?}.", kind=.0, tokens=<MerkleStoreKind as VariantNames>::VARIANTS)]
     UnknownMerkeKind(#[from] strum::ParseError),
+
+    #[error("Cannot obtain current directory.")]
+    CurDir,
 }
 
 /// A sort of registry for known [`MerkleStore`] implementations that can be used by [`LocalRepository`].
@@ -144,6 +147,15 @@ impl RepositoryConfig {
     /// The repository config's virtual node size.
     pub fn vnode_size(&self) -> u64 {
         self.vnode_size.unwrap_or(DEFAULT_VNODE_SIZE)
+    }
+
+    /// Loads a repository config from the current active working directory.
+    pub(crate) fn from_current_dir() -> Result<Self, RepoConfigError> {
+        let Some(repo_dir) = util::fs::get_repo_root_from_current_dir() else {
+            return Err(RepoConfigError::CurDir);
+        };
+        let config_path = util::fs::config_filepath(&repo_dir);
+        RepositoryConfig::from_file(&config_path)
     }
 }
 
