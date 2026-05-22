@@ -9,6 +9,7 @@ pub struct OxenAppData {
 }
 
 impl OxenAppData {
+    #[cfg(test)]
     pub fn new(path: PathBuf) -> OxenAppData {
         OxenAppData {
             path,
