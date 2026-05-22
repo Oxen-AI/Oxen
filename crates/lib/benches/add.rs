@@ -1,5 +1,7 @@
 use criterion::{BenchmarkId, Criterion, black_box};
 use criterion::{criterion_group, criterion_main};
+use liboxen::config::repository_config::MerkleStoreKind;
+use liboxen::constants::MIN_OXEN_VERSION;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
@@ -8,6 +10,10 @@ use rand::distributions::Alphanumeric;
 use rand::{Rng, RngCore};
 use std::path::{Path, PathBuf};
 use std::{env, fs};
+
+#[path = "bench_support.rs"]
+mod bench_support;
+use bench_support::backend_kinds_from_env;
 
 fn generate_random_string(len: usize) -> String {
     rand::thread_rng()
@@ -39,13 +45,18 @@ async fn setup_repo_for_add_benchmark(
     num_files_to_add_in_benchmark: usize,
     dir_size: usize,
     data_path: Option<String>,
+    kind: MerkleStoreKind,
+    backend_name: &str,
 ) -> Result<(LocalRepository, PathBuf), OxenError> {
-    let repo_dir = base_dir.join(format!("repo_{num_files_to_add_in_benchmark}"));
+    let repo_dir = base_dir.join(format!(
+        "repo_{backend_name}_{num_files_to_add_in_benchmark}"
+    ));
     if repo_dir.exists() {
         util::fs::remove_dir_all(&repo_dir)?;
     }
 
-    let repo = repositories::init(&repo_dir)?;
+    let repo =
+        repositories::init::init_with_version_and_merkle_store(&repo_dir, MIN_OXEN_VERSION, kind)?;
 
     let files_dir = if let Some(data_path) = data_path {
         PathBuf::from(data_path)
@@ -141,34 +152,39 @@ pub fn add_benchmark(c: &mut Criterion) {
         // (100000, 1000),
         // (1000000, 1000),
     ];
-    for &(repo_size, dir_size) in params.iter() {
-        let num_files_to_add = repo_size / 1000;
-        let (repo, file_dir) = rt
-            .block_on(setup_repo_for_add_benchmark(
-                &base_dir,
-                repo_size,
-                num_files_to_add,
-                dir_size,
-                data_path.clone(),
-            ))
-            .unwrap();
+    let backends = backend_kinds_from_env();
+    for &(kind, name) in &backends {
+        for &(repo_size, dir_size) in params.iter() {
+            let num_files_to_add = repo_size / 1000;
+            let (repo, file_dir) = rt
+                .block_on(setup_repo_for_add_benchmark(
+                    &base_dir,
+                    repo_size,
+                    num_files_to_add,
+                    dir_size,
+                    data_path.clone(),
+                    kind,
+                    name,
+                ))
+                .unwrap();
 
-        group.bench_with_input(
-            BenchmarkId::new(
-                format!("{num_files_to_add}k_files_in_{dir_size}dirs"),
-                format!("{:?}", (num_files_to_add, dir_size)),
-            ),
-            &(num_files_to_add, dir_size),
-            |b, _| {
-                b.to_async(&rt).iter(|| async {
-                    repositories::add(&repo, black_box(&file_dir))
-                        .await
-                        .unwrap();
+            group.bench_with_input(
+                BenchmarkId::new(
+                    format!("{name}_{num_files_to_add}k_files_in_{dir_size}dirs"),
+                    format!("{:?}", (name, num_files_to_add, dir_size)),
+                ),
+                &(num_files_to_add, dir_size),
+                |b, _| {
+                    b.to_async(&rt).iter(|| async {
+                        repositories::add(&repo, black_box(&file_dir))
+                            .await
+                            .unwrap();
 
-                    let _ = util::fs::remove_dir_all(repo.path.join(".oxen/staging"));
-                })
-            },
-        );
+                        let _ = util::fs::remove_dir_all(repo.path.join(".oxen/staging"));
+                    })
+                },
+            );
+        }
     }
     group.finish();
 

@@ -1,6 +1,7 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use liboxen::api::requests::RepoNew;
-use liboxen::constants::{DEFAULT_NAMESPACE, DEFAULT_REMOTE_NAME};
+use liboxen::config::repository_config::MerkleStoreKind;
+use liboxen::constants::{DEFAULT_NAMESPACE, DEFAULT_REMOTE_NAME, MIN_OXEN_VERSION};
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
@@ -11,6 +12,10 @@ use rand::distributions::Alphanumeric;
 use rand::{Rng, RngCore};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+#[path = "bench_support.rs"]
+mod bench_support;
+use bench_support::backend_kinds_from_env;
 
 fn generate_random_string(len: usize) -> String {
     rand::thread_rng()
@@ -46,16 +51,21 @@ async fn setup_repo_for_push_benchmark(
     num_files_to_push_in_benchmark: usize,
     dir_size: usize,
     data_path: Option<String>,
+    kind: MerkleStoreKind,
+    backend_name: &str,
 ) -> Result<LocalRepository, OxenError> {
     println!(
-        "setup_repo_for_push_benchmark got repo_size {repo_size}, num_files_to_push {num_files_to_push_in_benchmark}, and dir_size {dir_size}",
+        "setup_repo_for_push_benchmark got repo_size {repo_size}, num_files_to_push {num_files_to_push_in_benchmark}, dir_size {dir_size}, backend {backend_name}",
     );
-    let repo_dir = base_dir.join(format!("repo_{num_files_to_push_in_benchmark}_{dir_size}"));
+    let repo_dir = base_dir.join(format!(
+        "repo_{backend_name}_{num_files_to_push_in_benchmark}_{dir_size}"
+    ));
     if repo_dir.exists() {
         util::fs::remove_dir_all(&repo_dir)?;
     }
 
-    let repo = repositories::init(&repo_dir)?;
+    let repo =
+        repositories::init::init_with_version_and_merkle_store(&repo_dir, MIN_OXEN_VERSION, kind)?;
 
     let mut rng = rand::thread_rng();
     let files_dir = if let Some(data_path) = data_path {
@@ -158,76 +168,81 @@ pub fn push_benchmark(c: &mut Criterion) {
         // (100000, 1000),
         // (1000000, 1000),
     ];
-    for &(repo_size, dir_size) in params.iter() {
-        let num_files_to_push = repo_size / 1000;
-        let mut repo = rt
-            .block_on(setup_repo_for_push_benchmark(
-                &base_dir,
-                repo_size,
-                num_files_to_push,
-                dir_size,
-                data_path.clone(),
-            ))
-            .unwrap();
+    let backends = backend_kinds_from_env();
+    for &(kind, name) in &backends {
+        for &(repo_size, dir_size) in params.iter() {
+            let num_files_to_push = repo_size / 1000;
+            let mut repo = rt
+                .block_on(setup_repo_for_push_benchmark(
+                    &base_dir,
+                    repo_size,
+                    num_files_to_push,
+                    dir_size,
+                    data_path.clone(),
+                    kind,
+                    name,
+                ))
+                .unwrap();
 
-        group.bench_with_input(
-            BenchmarkId::new(
-                format!("{num_files_to_push}k_files_in_{dir_size}dirs"),
-                format!("{:?}", (num_files_to_push, dir_size)),
-            ),
-            &(num_files_to_push, dir_size),
-            |b, _| {
-                b.to_async(&rt).iter_batched(
-                    || {
-                        // Create a new remote for each iteration
-                        let iter_dirname =
-                            format!("push-run-{}", rand::thread_rng().r#gen::<u64>());
+            group.bench_with_input(
+                BenchmarkId::new(
+                    format!("{name}_{num_files_to_push}k_files_in_{dir_size}dirs"),
+                    format!("{:?}", (name, num_files_to_push, dir_size)),
+                ),
+                &(num_files_to_push, dir_size),
+                |b, _| {
+                    b.to_async(&rt).iter_batched(
+                        || {
+                            // Create a new remote for each iteration
+                            let iter_dirname =
+                                format!("push-run-{}", rand::thread_rng().r#gen::<u64>());
 
-                        let repo_new = RepoNew::from_namespace_name_host(
-                            DEFAULT_NAMESPACE,
-                            iter_dirname,
-                            test_host(),
-                            None,
-                        );
+                            let repo_new = RepoNew::from_namespace_name_host(
+                                DEFAULT_NAMESPACE,
+                                iter_dirname,
+                                test_host(),
+                                None,
+                            );
 
-                        // Spawn a new thread to escape the tokio runtime
-                        // context — the setup closure runs on a runtime
-                        // thread, so block_on would panic with a nested
-                        // runtime error.
-                        let repo_ref = &repo;
-                        let remote_repo = std::thread::scope(|s| {
-                            s.spawn(|| {
-                                let setup_rt = tokio::runtime::Runtime::new().unwrap();
-                                setup_rt
-                                    .block_on(api::client::repositories::create_from_local(
-                                        repo_ref, repo_new,
-                                    ))
-                                    .unwrap()
-                            })
-                            .join()
-                            .unwrap()
-                        });
-                        std::thread::sleep(std::time::Duration::from_millis(500));
-                        let _ = command::config::set_remote(
-                            &mut repo,
-                            DEFAULT_REMOTE_NAME,
-                            &remote_repo.remote.url,
-                        );
+                            // Spawn a new thread to escape the tokio runtime
+                            // context — the setup closure runs on a runtime
+                            // thread, so block_on would panic with a nested
+                            // runtime error.
+                            let repo_ref = &repo;
+                            let remote_repo = std::thread::scope(|s| {
+                                s.spawn(|| {
+                                    let setup_rt = tokio::runtime::Runtime::new().unwrap();
+                                    setup_rt
+                                        .block_on(api::client::repositories::create_from_local(
+                                            repo_ref, repo_new,
+                                        ))
+                                        .unwrap()
+                                })
+                                .join()
+                                .unwrap()
+                            });
+                            std::thread::sleep(std::time::Duration::from_millis(500));
+                            let _ = command::config::set_remote(
+                                &mut repo,
+                                DEFAULT_REMOTE_NAME,
+                                &remote_repo.remote.url,
+                            );
 
-                        (repo.clone(), remote_repo)
-                    },
-                    |(repo, remote_repo)| async move {
-                        repositories::push(&repo).await.unwrap();
-                        // cleanup the remote repo for push
-                        api::client::repositories::delete(&remote_repo)
-                            .await
-                            .unwrap();
-                    },
-                    criterion::BatchSize::PerIteration,
-                );
-            },
-        );
-    }
+                            (repo.clone(), remote_repo)
+                        },
+                        |(repo, remote_repo)| async move {
+                            repositories::push(&repo).await.unwrap();
+                            // cleanup the remote repo for push
+                            api::client::repositories::delete(&remote_repo)
+                                .await
+                                .unwrap();
+                        },
+                        criterion::BatchSize::PerIteration,
+                    );
+                },
+            );
+        } // end params loop
+    } // end backends loop
     group.finish();
 
     util::fs::remove_dir_all(base_dir).unwrap();
