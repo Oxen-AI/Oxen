@@ -139,7 +139,6 @@ sqlparser = "0.53.0"
 strum = { version = "0.28.0", features = ["derive"] }
 sysinfo = "0.33.0"
 tar = "0.4.44"
-# TODO: Replace all tempfile use with async-tempfile
 tempfile = "3.8.0"
 thiserror = "2.0.18"
 thumbnails = "0.2.1"
