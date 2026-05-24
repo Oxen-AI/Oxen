@@ -57,6 +57,7 @@ tar = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
+toml = { workspace = true }
 tracing = { workspace = true }
 tracing-actix-web = { workspace = true }
 tracing-opentelemetry = { workspace = true, optional = true }
@@ -68,6 +69,7 @@ uuid = { workspace = true }
 [dev-dependencies]
 actix-multipart-test = { workspace = true }
 liboxen = { workspace = true, features = ["test-utils"] }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

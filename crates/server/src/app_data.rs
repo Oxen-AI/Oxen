@@ -1,19 +1,19 @@
 use std::path::PathBuf;
 
+use crate::config::Config;
+
+#[derive(Debug, Clone)]
 pub struct OxenAppData {
     pub path: PathBuf,
+    pub config: Config,
 }
 
 impl OxenAppData {
+    #[cfg(test)]
     pub fn new(path: PathBuf) -> OxenAppData {
-        OxenAppData { path }
-    }
-}
-
-impl Clone for OxenAppData {
-    fn clone(&self) -> Self {
         OxenAppData {
-            path: self.path.clone(),
+            path,
+            config: Config::default(),
         }
     }
 }
