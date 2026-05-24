@@ -256,7 +256,7 @@ pub async fn create(
 
     // Create HEAD file and point it to DEFAULT_BRANCH_NAME
     with_ref_manager(&local_repo, |manager| {
-        manager.set_head(constants::DEFAULT_BRANCH_NAME);
+        manager.set_head(constants::DEFAULT_BRANCH_NAME)?;
         Ok(())
     })?;
 
