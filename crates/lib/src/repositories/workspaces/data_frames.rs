@@ -10,7 +10,7 @@ use crate::constants::{OXEN_COLS, TABLE_NAME};
 use crate::core;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::db::data_frames::workspace_df_db::select_cols_from_schema;
-use crate::core::db::data_frames::{df_db, workspace_df_db};
+use crate::core::db::data_frames::{DataFrameError, df_db, workspace_df_db};
 use crate::core::df::sql;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
@@ -39,13 +39,12 @@ pub fn is_behind(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool, 
     Ok(commit_id != workspace.commit.id)
 }
 
-pub fn is_indexed(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool, OxenError> {
-    let path = path.as_ref();
+pub fn is_indexed(workspace: &Workspace, path: &Path) -> Result<bool, DataFrameError> {
     log::debug!("checking dataset is indexed for {path:?}");
     let db_path = duckdb_path(workspace, path);
     log::debug!("getting conn at path {db_path:?}");
 
-    with_df_db_manager(db_path, |manager| {
+    with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             let table_exists = df_db::table_exists(conn, TABLE_NAME)?;
             log::debug!("dataset_is_indexed() got table_exists: {table_exists:?}");
@@ -106,11 +105,11 @@ pub async fn rename(
     }
 }
 
-pub fn unindex(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), OxenError> {
+pub fn unindex(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), DataFrameError> {
     let path = path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
 
-    with_df_db_manager(db_path, |manager| {
+    with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             df_db::drop_table(conn, TABLE_NAME)?;
             Ok(())
@@ -132,10 +131,10 @@ pub async fn restore(
     Ok(())
 }
 
-pub fn count(workspace: &Workspace, path: impl AsRef<Path>) -> Result<usize, OxenError> {
+pub fn count(workspace: &Workspace, path: &Path) -> Result<usize, DataFrameError> {
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
 
-    with_df_db_manager(db_path, |manager| {
+    with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             let count = df_db::count(conn, TABLE_NAME)?;
             Ok(count)
@@ -145,20 +144,19 @@ pub fn count(workspace: &Workspace, path: impl AsRef<Path>) -> Result<usize, Oxe
 
 pub fn query(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
+    path: &Path,
     opts: &DFOpts,
-) -> Result<DataFrame, OxenError> {
-    let path = path.as_ref();
+) -> Result<DataFrame, DataFrameError> {
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     log::debug!("query_staged_df() got db_path: {db_path:?}");
     log::debug!("query() opts: {opts:?}");
 
-    with_df_db_manager(db_path, |manager| {
+    with_df_db_manager(&db_path, |manager| {
         manager.with_conn_mut(|conn| {
             // Get the schema of this commit entry
             let schema = df_db::get_schema(conn, TABLE_NAME)?;
 
-            let col_names = select_cols_from_schema(&schema)?;
+            let col_names = select_cols_from_schema(&schema);
 
             // Right now embeddings and sql are mutually exclusive
             let df = if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
@@ -184,15 +182,14 @@ pub fn query(
 
 pub fn export(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
+    path: &Path,
     opts: &DFOpts,
-    temp_file: impl AsRef<Path>,
-) -> Result<(), OxenError> {
-    let path = path.as_ref();
+    temp_file: &Path,
+) -> Result<(), DataFrameError> {
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     log::debug!("export() got db_path: {db_path:?}");
 
-    with_df_db_manager(db_path, |manager| {
+    with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             let sql = if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
                 let exclude_cols = true;
@@ -218,11 +215,10 @@ pub fn export(
     })
 }
 
-pub fn diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DataFrame, OxenError> {
-    let file_path = path.as_ref();
+pub fn diff(workspace: &Workspace, file_path: &Path) -> Result<DataFrame, DataFrameError> {
     let staged_db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
 
-    with_df_db_manager(staged_db_path, |manager| {
+    with_df_db_manager(&staged_db_path, |manager| {
         manager.with_conn(|conn| {
             let diff_df = workspace_df_db::df_diff(conn)?;
             Ok(diff_df)
@@ -230,19 +226,18 @@ pub fn diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DataFrame, 
     })
 }
 
-pub fn full_diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DiffResult, OxenError> {
+pub fn full_diff(workspace: &Workspace, path: &Path) -> Result<DiffResult, DataFrameError> {
     let repo = &workspace.base_repo;
-    let path = path.as_ref();
     // Get commit for the branch head
     log::debug!("diff_workspace_df got repo at path {:?}", repo.path);
 
     if !is_indexed(workspace, path)? {
-        return Err(OxenError::basic_str("Dataset is not indexed"));
+        return Err(DataFrameError::NotIndexed);
     };
 
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
 
-    with_df_db_manager(db_path, |manager| {
+    with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             let diff_df = workspace_df_db::df_diff(conn)?;
             log::debug!("full_diff() diff_df: {diff_df:?}");
@@ -463,8 +458,8 @@ pub async fn set_media_render_metadata_if_applicable(
     Ok(())
 }
 
-pub fn duckdb_path(workspace: &Workspace, path: impl AsRef<Path>) -> PathBuf {
-    let path = util::fs::linux_path(path.as_ref());
+pub fn duckdb_path(workspace: &Workspace, path: &Path) -> PathBuf {
+    let path = util::fs::linux_path(path);
     log::debug!(
         "duckdb_path path: {:?} workspace: {:?}",
         path,
@@ -514,7 +509,7 @@ pub fn row_changes_path(workspace: &Workspace, path: impl AsRef<Path>) -> PathBu
 }
 
 // Add this function after the existing imports
-fn add_exclude_to_sql(sql: &str) -> Result<String, OxenError> {
+fn add_exclude_to_sql(sql: &str) -> Result<String, DataFrameError> {
     // Create the EXCLUDE clause
     let excluded_cols = OXEN_COLS
         .iter()
@@ -526,13 +521,13 @@ fn add_exclude_to_sql(sql: &str) -> Result<String, OxenError> {
     let select_idx = sql
         .to_lowercase()
         .find("select")
-        .ok_or_else(|| OxenError::basic_str("No SELECT found in query"))?;
+        .ok_or_else(|| DataFrameError::NoSelectInQuery)?;
 
     // Find the first FROM after SELECT (case insensitive)
     let from_idx = sql[select_idx..]
         .to_lowercase()
         .find("from")
-        .ok_or_else(|| OxenError::basic_str("No FROM found in query"))?;
+        .ok_or_else(|| DataFrameError::NoFromInQuery)?;
 
     // Split into parts
     let before_from = &sql[..select_idx + from_idx];

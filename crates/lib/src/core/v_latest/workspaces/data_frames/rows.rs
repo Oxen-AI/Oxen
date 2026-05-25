@@ -40,7 +40,7 @@ pub fn add(
     let df = tabular::parse_json_to_df(data)?;
     log::debug!("add() df: {df:?}");
 
-    let mut result = with_df_db_manager(db_path, |manager| {
+    let mut result = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| rows::append_row(conn, &df))
     })?;
     let oxen_id_col = result
@@ -95,7 +95,7 @@ pub fn delete(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
-    let mut deleted_row = with_df_db_manager(db_path, |manager| {
+    let mut deleted_row = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| rows::delete_row(conn, row_id))
     })?;
     log::debug!("delete() deleted_row: {deleted_row:?}");
@@ -149,7 +149,7 @@ pub fn update(
         return Err(OxenError::resource_not_found("row not found"));
     }
 
-    let mut result = with_df_db_manager(db_path, |manager| {
+    let mut result = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| rows::modify_row(conn, &mut df, row_id))
     })?;
 
@@ -215,7 +215,7 @@ pub fn batch_update(
         })
         .collect::<Result<_, OxenError>>()?;
 
-    with_df_db_manager(db_path, |manager| {
+    with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| rows::modify_rows(conn, row_map))
     })?;
 

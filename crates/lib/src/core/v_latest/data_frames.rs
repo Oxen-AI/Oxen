@@ -153,7 +153,7 @@ async fn handle_sql_querying(
 
     if let (Some(sql), Some(workspace)) = (opts.sql.clone(), workspace) {
         let db_path = repositories::workspaces::data_frames::duckdb_path(&workspace, path);
-        let df = with_df_db_manager(db_path, |manager| {
+        let df = with_df_db_manager(&db_path, |manager| {
             manager.with_conn_mut(|conn| sql::query_df(conn, sql, None))
         })?;
         log::debug!("handle_sql_querying got df {df:?}");

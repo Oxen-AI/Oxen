@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::{app_data, path_param};
@@ -22,7 +24,7 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    let file_path = path_param(&req, "path")?.to_string();
+    let file_path = Path::new(path_param(&req, "path")?);
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
@@ -47,14 +49,14 @@ pub async fn neighbors(req: HttpRequest, body: String) -> Result<HttpResponse, O
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    let file_path = path_param(&req, "path")?.to_string();
+    let file_path = Path::new(path_param(&req, "path")?);
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    let is_indexed = repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)?;
+    let is_indexed = repositories::workspaces::data_frames::is_indexed(&workspace, file_path)?;
     log::debug!("neighbors is_indexed: {is_indexed}");
     if !is_indexed {
         let response = WorkspaceJsonDataFrameViewResponse {
@@ -71,15 +73,18 @@ pub async fn neighbors(req: HttpRequest, body: String) -> Result<HttpResponse, O
 
     log::debug!("neighbors: Embedding query: {body:?}");
     let request: EmbeddingQuery = serde_json::from_str(&body)?;
-    let count = repositories::workspaces::data_frames::count(&workspace, &file_path)?;
+    let count = repositories::workspaces::data_frames::count(&workspace, file_path)?;
 
-    let mut opts = DFOpts::empty();
-    opts.page = Some(request.page_num);
-    opts.page_size = Some(request.page_size);
+    let opts = {
+        let mut opts = DFOpts::empty();
+        opts.page = Some(request.page_num);
+        opts.page_size = Some(request.page_size);
+        opts
+    };
 
     let df = repositories::workspaces::data_frames::embeddings::nearest_neighbors(
         &workspace,
-        &file_path,
+        file_path,
         &request.column,
         request.embedding,
         &PaginateOpts {
@@ -90,14 +95,14 @@ pub async fn neighbors(req: HttpRequest, body: String) -> Result<HttpResponse, O
     )?;
 
     let Some(mut df_schema) =
-        repositories::data_frames::schemas::get_by_path(&repo, &workspace.commit, &file_path)?
+        repositories::data_frames::schemas::get_by_path(&repo, &workspace.commit, file_path)?
     else {
         log::error!("Failed to get schema for data frame {file_path:?}");
         return Err(OxenHttpError::NotFound);
     };
 
     let resource = ResourceVersion {
-        path: file_path.clone(),
+        path: file_path.to_string_lossy().to_string(),
         version: workspace.commit.id.to_string(),
     };
 
@@ -116,13 +121,13 @@ pub async fn neighbors(req: HttpRequest, body: String) -> Result<HttpResponse, O
 
     repositories::workspaces::data_frames::columns::decorate_fields_with_column_diffs(
         &workspace,
-        &file_path,
+        file_path,
         &mut df_views,
     )?;
 
     let new_schema = repositories::data_frames::schemas::get_staged_schema_with_staged_db_manager(
         &workspace.workspace_repo,
-        &file_path,
+        file_path,
     )?;
     repositories::workspaces::data_frames::columns::update_column_schemas(
         new_schema,
@@ -150,7 +155,7 @@ pub async fn post(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, OxenHt
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
 
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
-    let file_path = path_param(&req, "path")?.to_string();
+    let file_path = Path::new(path_param(&req, "path")?);
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
@@ -168,7 +173,7 @@ pub async fn post(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, OxenHt
 
     repositories::workspaces::data_frames::embeddings::index(
         &workspace,
-        &file_path,
+        file_path,
         &column,
         use_background_thread,
     )?;

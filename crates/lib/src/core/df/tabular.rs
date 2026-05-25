@@ -894,7 +894,7 @@ pub fn df_hash_rows_on_cols(
     df: DataFrame,
     hash_fields: &[String],
     out_col_name: &str,
-) -> Result<DataFrame, OxenError> {
+) -> Result<DataFrame, PolarsError> {
     let num_rows = df.height() as i64;
 
     log::debug!("df_hash_rows_on_cols df is {df:?}");
@@ -902,19 +902,23 @@ pub fn df_hash_rows_on_cols(
     log::debug!("df_hash_rows_on_cols out_col_name is {out_col_name:?}");
 
     // Create a vector to store columns to be hashed
-    let mut col_names = vec![];
-    let schema = df.schema();
-    for field in schema.iter_fields() {
-        let field_name = field.name().to_string();
-        if hash_fields.contains(&field_name) {
-            col_names.push(col(field.name().clone()));
-        }
-    }
+    let col_names = df
+        .schema()
+        .iter_fields()
+        .filter_map(|field| {
+            let field_name = field.name();
+            if hash_fields.contains(&field_name.to_string()) {
+                Some(col(field_name.clone()))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
 
     // This is to allow asymmetric target hashing for added / removed cols in default behavior
     if col_names.is_empty() {
         let null_string_col = lit(Null {}).alias(out_col_name);
-        return Ok(df.lazy().with_column(null_string_col).collect()?);
+        return df.lazy().with_column(null_string_col).collect();
     }
 
     // Continue as before
@@ -955,8 +959,7 @@ pub fn df_hash_rows_on_cols(
                 )
                 .alias(out_col_name),
         ])
-        .collect()
-        .unwrap();
+        .collect()?;
     log::debug!("Hashed rows: {df}");
     Ok(df)
 }

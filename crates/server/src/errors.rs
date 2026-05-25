@@ -2,6 +2,7 @@ use actix_multipart::MultipartError;
 use actix_web::{HttpResponse, error};
 use derive_more::{Display, Error};
 use liboxen::constants;
+use liboxen::core::db::data_frames::DataFrameError;
 use liboxen::error::{OxenError, PathBufError, StringError};
 use liboxen::model::{Branch, Workspace};
 use liboxen::view::http::{
@@ -57,12 +58,20 @@ pub enum OxenHttpError {
     SerdeError(serde_json::Error),
 }
 
+// Convert into its [`OxenError`] wrapper and treat it as an [`OxenHttpError::InternalOxenError`].
+impl From<DataFrameError> for OxenHttpError {
+    fn from(error: DataFrameError) -> Self {
+        Self::InternalOxenError(error.into())
+    }
+}
+
 impl From<OxenError> for OxenHttpError {
     fn from(error: OxenError) -> Self {
         OxenHttpError::InternalOxenError(error)
     }
 }
 
+// Convert into its [`OxenError`] wrapper and treat it as an [`OxenHttpError::InternalOxenError`].
 impl From<io::Error> for OxenHttpError {
     fn from(error: io::Error) -> Self {
         OxenHttpError::InternalOxenError(OxenError::IO(error))
@@ -207,9 +216,7 @@ impl error::ResponseError for OxenHttpError {
             OxenHttpError::ActixError(_) => {
                 HttpResponse::InternalServerError().json(StatusMessage::internal_server_error())
             }
-            OxenHttpError::SerdeError(_) => {
-                HttpResponse::BadRequest().json(StatusMessage::bad_request())
-            }
+            OxenHttpError::SerdeError(_) => handle_serde(),
             OxenHttpError::UpdateRequired(version) => {
                 let version_str = version.to_string();
                 let error_json = json!({
@@ -376,7 +383,6 @@ impl error::ResponseError for OxenHttpError {
                             format!("Schema is invalid: '{schema}'"),
                         ))
                     }
-
                     OxenError::IncompatibleSchemas(schema) => {
                         log::error!("Incompatible schemas: {schema}");
 
@@ -395,36 +401,6 @@ impl error::ResponseError for OxenHttpError {
                                     "Incompatible Schemas",
                                 "detail":
                                     format!("{}", error)
-                            },
-                            "status": STATUS_ERROR,
-                            "status_message": MSG_BAD_REQUEST,
-                        });
-                        HttpResponse::BadRequest().json(error_json)
-                    }
-                    OxenError::ColumnNameAlreadyExists(column_name) => {
-                        log::error!("Column Name Already Exists: {column_name}");
-                        let error_json = json!({
-                            "error": {
-                                "type": "column_error",
-                                "title":
-                                    "Column Name Already Exists",
-                                "detail":
-                                    format!("Column name '{}' already exists in schema", column_name)
-                            },
-                            "status": STATUS_ERROR,
-                            "status_message": MSG_BAD_REQUEST,
-                        });
-                        HttpResponse::BadRequest().json(error_json)
-                    }
-                    OxenError::ColumnNameNotFound(column_name) => {
-                        log::error!("Column Name Not Found: {column_name}");
-                        let error_json = json!({
-                            "error": {
-                                "type": "column_error",
-                                "title":
-                                    "Column Name Not Found",
-                                "detail":
-                                    format!("Column name '{}' not found in schema", column_name)
                             },
                             "status": STATUS_ERROR,
                             "status_message": MSG_BAD_REQUEST,
@@ -460,48 +436,69 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::BadRequest().json(error_json)
                     }
-                    OxenError::DUCKDB(error) => {
-                        log::error!("DuckDB error: {error}");
-                        let error_json = json!({
-                            "error": {
-                                "type": "query_error",
-                                "title":
-                                    "Could not execute query on Data",
-                                "detail":
-                                    format!("{}", error)
-                            },
-                            "status": STATUS_ERROR,
-                            "status_message": MSG_BAD_REQUEST,
-                        });
-                        HttpResponse::BadRequest().json(error_json)
-                    }
-                    OxenError::PolarsError(error) => {
-                        log::error!("Polars error: {error:?}");
-                        let error_json = json!({
-                            "error": {
-                                "type": "data_frame_error",
-                                "title": "Error Reading DataFrame",
-                                "detail":
-                                    format!("{}", error),
-                            },
-                            "status": STATUS_ERROR,
-                            "status_message": MSG_BAD_REQUEST,
-                        });
-                        HttpResponse::InternalServerError().json(error_json)
-                    }
-                    OxenError::DataFrameError(error) => {
-                        log::error!("DataFrame error: {error}");
-                        let error_json = json!({
-                            "error": {
-                                "type": "data_frame_error",
-                                "title": "Error Reading DataFrame",
-                                "detail": format!("{}", error),
-                            },
-                            "status": STATUS_ERROR,
-                            "status_message": MSG_INTERNAL_SERVER_ERROR,
-                        });
-                        HttpResponse::InternalServerError().json(error_json)
-                    }
+                    OxenError::DUCKDB(error) => handle_duckdb(error),
+                    OxenError::PolarsError(error) => handle_polars(error),
+                    OxenError::DataFrameError(error) => match error {
+                        DataFrameError::DuckDb(error) => handle_duckdb(error),
+                        DataFrameError::Polars(error) => handle_polars(error),
+                        DataFrameError::SerdeJson(_) => handle_serde(),
+                        DataFrameError::ColumnNameAlreadyExists(column_name) => {
+                            log::error!("Column Name Already Exists: {column_name}");
+                            let error_json = json!({
+                                "error": {
+                                    "type": "column_error",
+                                    "title":
+                                        "Column Name Already Exists",
+                                    "detail":
+                                        format!("Column name '{}' already exists in schema", column_name)
+                                },
+                                "status": STATUS_ERROR,
+                                "status_message": MSG_BAD_REQUEST,
+                            });
+                            HttpResponse::BadRequest().json(error_json)
+                        }
+                        DataFrameError::ColumnNameNotFound(column_name) => {
+                            log::error!("Column Name Not Found: {column_name}");
+                            let error_json = json!({
+                                "error": {
+                                    "type": "column_error",
+                                    "title":
+                                        "Column Name Not Found",
+                                    "detail":
+                                        format!("Column name '{}' not found in schema", column_name)
+                                },
+                                "status": STATUS_ERROR,
+                                "status_message": MSG_BAD_REQUEST,
+                            });
+                            HttpResponse::BadRequest().json(error_json)
+                        }
+                        e @ DataFrameError::NoRowsFound => {
+                            log::error!("No rows found: {e}");
+                            let error_json = json!({
+                                "error": {
+                                    "type": "no_rows_found",
+                                    "title": "No rows found",
+                                    "detail": format!("{e}"),
+                                },
+                                "status": STATUS_ERROR,
+                                "status_message": MSG_INTERNAL_SERVER_ERROR,
+                            });
+                            HttpResponse::NotFound().json(error_json)
+                        }
+                        _ => {
+                            log::error!("DataFrame error: {error}");
+                            let error_json = json!({
+                                "error": {
+                                    "type": "data_frame_error",
+                                    "title": "Error Reading DataFrame",
+                                    "detail": format!("{}", error),
+                                },
+                                "status": STATUS_ERROR,
+                                "status_message": MSG_INTERNAL_SERVER_ERROR,
+                            });
+                            HttpResponse::InternalServerError().json(error_json)
+                        }
+                    },
                     thumbnail_error @ OxenError::ThumbnailingNotEnabled => {
                         log::error!("Thumbnailing not enabled: {thumbnail_error}");
                         let error_json = json!({
@@ -525,19 +522,6 @@ impl error::ResponseError for OxenHttpError {
                             "status_message": MSG_INTERNAL_SERVER_ERROR,
                         });
                         HttpResponse::InternalServerError().json(error_json)
-                    }
-                    e @ OxenError::NoRowsFound => {
-                        log::error!("No rows found: {e}");
-                        let error_json = json!({
-                            "error": {
-                                "type": "no_rows_found",
-                                "title": "No rows found",
-                                "detail": format!("{e}"),
-                            },
-                            "status": STATUS_ERROR,
-                            "status_message": MSG_INTERNAL_SERVER_ERROR,
-                        });
-                        HttpResponse::NotFound().json(error_json)
                     }
                     OxenError::LocalRepoNotFound(path) => {
                         log::debug!("Local repo not found: {path}");
@@ -638,4 +622,39 @@ impl error::ResponseError for OxenHttpError {
             }
         }
     }
+}
+
+/// Convert a [`duckdb::Error`] into a HTTP bad request error.
+fn handle_duckdb(error: &impl std::error::Error) -> HttpResponse {
+    log::error!("DuckDB error: {error}");
+    let error_json = json!({
+        "error": {
+            "type": "query_error",
+            "title": "Could not execute query on Data",
+            "detail": format!("{}", error),
+        },
+        "status": STATUS_ERROR,
+        "status_message": MSG_BAD_REQUEST,
+    });
+    HttpResponse::BadRequest().json(error_json)
+}
+
+/// Convert a [`polars::error::PolarsError`] into a HTTP 500 error.
+fn handle_polars(error: &impl std::error::Error) -> HttpResponse {
+    log::error!("Polars error: {error:?}");
+    let error_json = json!({
+        "error": {
+            "type": "data_frame_error",
+            "title": "Error Reading DataFrame",
+            "detail": format!("{}", error),
+        },
+        "status": STATUS_ERROR,
+        "status_message": MSG_BAD_REQUEST,
+    });
+    HttpResponse::InternalServerError().json(error_json)
+}
+
+/// Convert a [`serde_json::Error`] into a HTTP bad request error.
+fn handle_serde() -> HttpResponse {
+    HttpResponse::BadRequest().json(StatusMessage::bad_request())
 }

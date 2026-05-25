@@ -35,7 +35,7 @@ pub fn diff(workspace: &Workspace, path: impl AsRef<Path>) -> Result<DiffResult,
 
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
 
-    let (diff_df, schema) = with_df_db_manager(db_path, |manager| {
+    let (diff_df, schema) = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             let diff_df = workspace_df_db::df_diff(conn)?;
             let schema = workspace_df_db::schema_without_oxen_cols(conn, TABLE_NAME)?;
@@ -79,8 +79,8 @@ pub fn is_indexed(workspace: &Workspace, path: &Path) -> Result<bool, OxenError>
     log::debug!("checking dataset is indexed for {path:?}");
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     log::debug!("getting conn at path {db_path:?}");
-    let table_exists = with_df_db_manager(db_path, |manager| {
-        manager.with_conn(|conn| df_db::table_exists(conn, TABLE_NAME))
+    let table_exists = with_df_db_manager(&db_path, |manager| {
+        manager.with_conn(|conn| Ok(df_db::table_exists(conn, TABLE_NAME)?))
     })?;
     log::debug!("dataset_is_indexed() got table_exists: {table_exists:?}");
     Ok(table_exists)

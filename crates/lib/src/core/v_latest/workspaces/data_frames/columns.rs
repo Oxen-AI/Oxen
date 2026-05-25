@@ -3,6 +3,7 @@ use rocksdb::DB;
 
 use crate::constants::TABLE_NAME;
 use crate::core::db;
+use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
 use crate::core::db::data_frames::{column_changes_db, columns, df_db::with_df_db_manager};
 use crate::core::staged::staged_db_manager::get_staged_db_manager;
@@ -72,7 +73,7 @@ pub fn delete(
                 table_schema
                     .get_field(&column_to_delete.name)
                     .ok_or_else(|| {
-                        OxenError::Basic("A column with the given name does not exist".into())
+                        DataFrameError::ColumnNameNotFound(column_to_delete.name.to_string())
                     })?;
 
             let result = columns::delete_column(conn, column_to_delete)?;
@@ -359,9 +360,9 @@ pub async fn restore(
             )),
         }
     } else {
-        Err(OxenError::ColumnNameNotFound(
-            format!("Column to restore not found: {}", column_to_restore.name).into(),
-        ))
+        Err(DataFrameError::ColumnNameNotFound(
+            column_to_restore.name.to_string(),
+        ))?
     }
 }
 
@@ -446,7 +447,7 @@ pub fn add_column_metadata(
                     }
                 }
                 if !column_found {
-                    return Err(OxenError::ColumnNameNotFound(column.to_string().into()));
+                    Err(DataFrameError::ColumnNameNotFound(column.to_string()))?;
                 }
                 results.insert(path.clone(), m.tabular.schema.clone());
             }

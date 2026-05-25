@@ -11,7 +11,7 @@ pub fn get_by_path(workspace: &Workspace, path: impl AsRef<Path>) -> Result<Sche
     let file_path = path.as_ref();
     let staged_db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
     let df_schema = with_df_db_manager(&staged_db_path, |manager| {
-        manager.with_conn(|conn| df_db::get_schema(conn, TABLE_NAME))
+        manager.with_conn(|conn| Ok(df_db::get_schema(conn, TABLE_NAME)?))
     })?;
     Ok(df_schema)
 }

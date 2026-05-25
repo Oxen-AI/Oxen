@@ -155,7 +155,7 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
         }
     };
 
-    with_df_db_manager(db_path, |manager| {
+    with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             if df_db::table_exists(conn, TABLE_NAME)? {
                 df_db::drop_table(conn, TABLE_NAME)?;
@@ -292,7 +292,7 @@ pub async fn rename(
     Ok(relative_path)
 }
 
-fn add_row_status_cols(conn: &Connection) -> Result<(), OxenError> {
+fn add_row_status_cols(conn: &Connection) -> Result<(), duckdb::Error> {
     let query_status = format!(
         "ALTER TABLE \"{}\" ADD COLUMN \"{}\" VARCHAR DEFAULT '{}'",
         TABLE_NAME,
@@ -309,10 +309,9 @@ fn add_row_status_cols(conn: &Connection) -> Result<(), OxenError> {
 
 pub fn extract_file_node_to_working_dir(
     workspace: &Workspace,
-    dir_path: impl AsRef<Path>,
+    dir_path: &Path,
     file_node: &FileNode,
 ) -> Result<PathBuf, OxenError> {
-    let dir_path = dir_path.as_ref();
     log::debug!("extract_file_node_to_working_dir dir_path: {dir_path:?} file_node: {file_node}");
     let workspace_repo = &workspace.workspace_repo;
     let path = PathBuf::from(file_node.name());
@@ -330,7 +329,7 @@ pub fn extract_file_node_to_working_dir(
         )?;
     }
 
-    with_df_db_manager(db_path, |manager| {
+    with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             let delete = Delete::new().delete_from(TABLE_NAME).where_clause(&format!(
                 "\"{}\" = '{}'",
@@ -352,22 +351,18 @@ pub fn extract_file_node_to_working_dir(
     Ok(working_path)
 }
 
-pub fn valid_export_extensions() -> Vec<&'static str> {
-    vec!["csv", "tsv", "parquet", "jsonl", "json", "ndjson"]
-}
+pub const VALID_EXPORT_EXTENSIONS: [&str; 6] = ["csv", "tsv", "parquet", "jsonl", "json", "ndjson"];
 
-pub fn is_valid_export_extension(path: impl AsRef<Path>) -> bool {
-    let path = path.as_ref();
+pub fn is_valid_export_extension(path: &Path) -> bool {
     let extension = path
         .extension()
         .unwrap_or_default()
         .to_str()
         .unwrap_or_default();
-    valid_export_extensions().contains(&extension)
+    VALID_EXPORT_EXTENSIONS.contains(&extension)
 }
 
-pub fn wrap_sql_for_export(sql: &str, path: impl AsRef<Path>) -> String {
-    let path = path.as_ref();
+pub fn wrap_sql_for_export(sql: &str, path: &Path) -> String {
     let extension = path
         .extension()
         .unwrap_or_default()
@@ -403,17 +398,21 @@ pub fn wrap_sql_for_export(sql: &str, path: impl AsRef<Path>) -> String {
     }
 }
 
-fn get_existing_excluded_columns(conn: &Connection, table_name: &str) -> Result<String, OxenError> {
+fn get_existing_excluded_columns(
+    conn: &Connection,
+    table_name: &str,
+) -> Result<String, duckdb::Error> {
     // Query to get existing columns in the table
     let existing_cols_query = format!(
         "SELECT column_name FROM information_schema.columns WHERE table_name = '{table_name}'"
     );
 
-    let mut stmt = conn.prepare(&existing_cols_query)?;
-    let existing_cols: Vec<String> = stmt
-        .query_map([], |row| row.get(0))?
-        .filter_map(Result::ok)
-        .collect();
+    let existing_cols: Vec<String> = {
+        let mut stmt = conn.prepare(&existing_cols_query)?;
+        stmt.query_map([], |row| row.get(0))?
+            .filter_map(Result::ok)
+            .collect()
+    };
 
     // Filter excluded columns to only those that exist in the table
     let filtered_excluded_cols: Vec<String> = EXCLUDE_OXEN_COLS

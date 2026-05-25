@@ -1,3 +1,4 @@
+use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::row_changes_db::get_all_data_frame_row_changes;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
@@ -22,6 +23,7 @@ use crate::model::LocalRepository;
 use crate::model::staged_row_status::StagedRowStatus;
 
 use std::path::Path;
+use std::str::FromStr;
 
 pub fn add(
     repo: &LocalRepository,
@@ -40,7 +42,7 @@ pub fn add(
 pub fn get_row_diff(
     workspace: &Workspace,
     file_path: impl AsRef<Path>,
-) -> Result<Vec<DataFrameRowChange>, OxenError> {
+) -> Result<Vec<DataFrameRowChange>, DataFrameError> {
     let row_changes_path =
         repositories::workspaces::data_frames::row_changes_path(workspace, file_path);
     let opts = db::key_val::opts::default();
@@ -147,14 +149,15 @@ pub fn get_row_id(row_df: &DataFrame) -> Result<Option<String>, OxenError> {
     }
 }
 
-pub fn get_row_status(row_df: &DataFrame) -> Result<Option<StagedRowStatus>, OxenError> {
+pub fn get_row_status(row_df: &DataFrame) -> Result<Option<StagedRowStatus>, DataFrameError> {
     let diff_status_col = PlSmallStr::from_str(DIFF_STATUS_COL);
     if row_df.height() == 1 && row_df.get_column_names().contains(&&diff_status_col) {
         let anyval_status = row_df.column(DIFF_STATUS_COL).unwrap().get(0)?;
         let str_status = anyval_status
             .get_str()
-            .ok_or_else(|| OxenError::basic_str("Row status not found"))?;
-        let status = StagedRowStatus::from_string(str_status)?;
+            .ok_or_else(|| DataFrameError::RowStatusNotFound)?;
+        let status = StagedRowStatus::from_str(str_status)
+            .map_err(|_| DataFrameError::InvalidRowStatus(str_status.to_string()))?;
         Ok(Some(status))
     } else {
         Ok(None)

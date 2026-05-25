@@ -1,8 +1,8 @@
-use polars::frame::DataFrame;
+use polars::{error::PolarsError, frame::DataFrame};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::{constants::DIFF_STATUS_COL, error::OxenError};
+use crate::constants::DIFF_STATUS_COL;
 
 #[derive(Default, Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct AddRemoveModifyCounts {
@@ -12,7 +12,7 @@ pub struct AddRemoveModifyCounts {
 }
 
 impl AddRemoveModifyCounts {
-    pub fn from_diff_df(df: &DataFrame) -> Result<AddRemoveModifyCounts, OxenError> {
+    pub fn from_diff_df(df: &DataFrame) -> Result<AddRemoveModifyCounts, PolarsError> {
         let added_rows = df
             .column(DIFF_STATUS_COL)?
             .str()?
