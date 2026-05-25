@@ -140,7 +140,8 @@ impl RepositoryConfig {
     /// Save a repository config to the specified file.
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), RepoConfigError> {
         let toml = self.to_toml()?;
-        util::fs::write_to_path(&path, toml).map_err(|e| RepoConfigError::Write(Box::from(e)))?;
+        util::fs::atomic_write_to_path(path.as_ref(), toml.as_bytes())
+            .map_err(|e| RepoConfigError::Write(Box::from(e)))?;
         Ok(())
     }
 

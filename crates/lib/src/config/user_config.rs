@@ -92,7 +92,7 @@ impl UserConfig {
 
     pub fn save(&self, path: &Path) -> Result<(), OxenError> {
         let toml = toml::to_string(&self)?;
-        util::fs::write_to_path(path, toml)?;
+        util::fs::atomic_write_to_path(path, toml.as_bytes())?;
         Ok(())
     }
 }

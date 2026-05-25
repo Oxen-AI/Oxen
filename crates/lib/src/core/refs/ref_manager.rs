@@ -226,7 +226,8 @@ impl RefManager {
 
     pub fn set_head(&self, name: impl AsRef<str>) {
         let name = name.as_ref();
-        util::fs::write_to_path(&self.head_file, name).expect("Could not write to head");
+        util::fs::atomic_write_to_path(&self.head_file, name.as_bytes())
+            .expect("Could not write to head");
     }
 
     pub fn create_branch(

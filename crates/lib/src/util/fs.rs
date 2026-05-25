@@ -178,6 +178,13 @@ pub fn read_from_path(path: impl AsRef<Path>) -> Result<String, OxenError> {
     }
 }
 
+/// Non-atomic write helper, available only in test / `test-utils` builds.
+///
+/// Production code must use [`atomic_write_to_path`] (or [`atomic_write_from_reader`] for
+/// streamed payloads) so a crash mid-write can't leave the target half-written. Tests use this
+/// for fixture setup where the atomic dance (temp file + fsync + rename) is wasted compute and
+/// the test reruns anyway if the process dies.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn write_to_path(path: impl AsRef<Path>, value: impl AsRef<str>) -> Result<(), OxenError> {
     let path = path.as_ref();
     let value = value.as_ref();
