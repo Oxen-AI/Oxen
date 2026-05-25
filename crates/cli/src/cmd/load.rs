@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
-use liboxen::error::OxenError;
 use std::path::Path;
 
 use liboxen::repositories;
@@ -34,7 +33,7 @@ impl RunCmd for LoadCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Match on both SRC_PATH and DEST_PATH
         let src_path_str = args.get_one::<String>("SRC_PATH").expect("required");
         let dest_path_str = args.get_one::<String>("DEST_PATH").expect("required");

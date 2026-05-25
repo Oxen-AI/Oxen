@@ -4,7 +4,6 @@ use async_trait::async_trait;
 use clap::{Arg, ArgMatches, Command};
 
 use colored::Colorize;
-use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::{api, repositories};
 use uuid::Uuid;
@@ -36,7 +35,7 @@ impl RunCmd for WorkspaceCreateCmd {
             )
     }
 
-    async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &ArgMatches) -> Result<(), anyhow::Error> {
         let repo = LocalRepository::from_current_dir()?;
 
         let branch_name = match args.get_one::<String>("branch") {
@@ -46,7 +45,7 @@ impl RunCmd for WorkspaceCreateCmd {
                 match repositories::branches::current_branch(&repo)? {
                     Some(branch) => branch.name,
                     None => {
-                        return Err(OxenError::basic_str(
+                        return Err(anyhow::anyhow!(
                             "No current branch. Use --branch to specify a branch name.",
                         ));
                     }

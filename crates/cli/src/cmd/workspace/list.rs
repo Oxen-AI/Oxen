@@ -24,7 +24,7 @@ impl RunCmd for WorkspaceListCmd {
         )
     }
 
-    async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &ArgMatches) -> Result<(), anyhow::Error> {
         let repository = LocalRepository::from_current_dir()?;
         let remote_name = args.get_one::<String>("remote");
         let remote_repo = match remote_name {

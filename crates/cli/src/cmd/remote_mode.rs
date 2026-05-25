@@ -13,10 +13,9 @@ pub use status::RemoteModeStatusCmd;
 use async_trait::async_trait;
 use clap::Command;
 
-use liboxen::error::OxenError;
 use std::collections::HashMap;
 
-use crate::cmd::RunCmd;
+use crate::{Runners, cli_error::UnknownSubcommand, cmd::RunCmd};
 pub const NAME: &str = "remote_mode";
 pub struct RemoteModeCmd;
 
@@ -42,11 +41,14 @@ impl RunCmd for RemoteModeCmd {
 
     // Note: Currently, you can't run `oxen remote-mode status` or other subcommand from the command line
     // They're only accessible via their aliases in remote-mode repos
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         let sub_commands = Self::get_subcommands();
         if let Some((name, sub_matches)) = args.subcommand() {
             let Some(cmd) = sub_commands.get(name) else {
-                return Err(OxenError::unknown_subcommand("remote mode", name));
+                return Err(UnknownSubcommand {
+                    parent: "remote mode",
+                    name: name.to_string(),
+                })?;
             };
 
             // Calling await within an await is making it complain?
@@ -59,14 +61,14 @@ impl RunCmd for RemoteModeCmd {
 }
 
 impl RemoteModeCmd {
-    fn get_subcommands() -> HashMap<String, Box<dyn RunCmd>> {
-        let commands: Vec<Box<dyn RunCmd>> = vec![
+    fn get_subcommands() -> Runners {
+        let commands: [Box<dyn RunCmd>; 4] = [
             Box::new(RemoteModeCheckoutCmd),
             Box::new(RemoteModeCommitCmd),
             Box::new(RemoteModeRestoreCmd),
             Box::new(RemoteModeStatusCmd),
         ];
-        let mut runners: HashMap<String, Box<dyn RunCmd>> = HashMap::new();
+        let mut runners = HashMap::new();
         for cmd in commands {
             runners.insert(cmd.name().to_string(), cmd);
         }
@@ -76,10 +78,13 @@ impl RemoteModeCmd {
     pub async fn run_subcommands(
         name: &str,
         sub_matches: &clap::ArgMatches,
-    ) -> Result<(), OxenError> {
+    ) -> Result<(), anyhow::Error> {
         let sub_commands = Self::get_subcommands();
         let Some(cmd) = sub_commands.get(name) else {
-            return Err(OxenError::unknown_subcommand("remote mode", name));
+            return Err(UnknownSubcommand {
+                parent: "remote mode",
+                name: name.to_string(),
+            })?;
         };
 
         tokio::task::block_in_place(|| {

@@ -2,9 +2,10 @@ use async_trait::async_trait;
 use clap::Command;
 use std::collections::HashMap;
 
-use liboxen::error::OxenError;
-
-use crate::cmd::RunCmd;
+use crate::{
+    cli_error::UnknownSubcommand,
+    cmd::{RunCmd, Runners},
+};
 pub const NAME: &str = "embeddings";
 
 pub mod index;
@@ -34,11 +35,14 @@ impl RunCmd for EmbeddingsCmd {
         command
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         let sub_commands = self.get_subcommands();
         if let Some((name, sub_matches)) = args.subcommand() {
             let Some(cmd) = sub_commands.get(name) else {
-                return Err(OxenError::unknown_subcommand("embeddings", name));
+                return Err(UnknownSubcommand {
+                    parent: "embeddings",
+                    name: name.to_string(),
+                })?;
             };
 
             // Calling await within an await is making it complain?
@@ -51,10 +55,10 @@ impl RunCmd for EmbeddingsCmd {
 }
 
 impl EmbeddingsCmd {
-    fn get_subcommands(&self) -> HashMap<String, Box<dyn RunCmd>> {
-        let commands: Vec<Box<dyn RunCmd>> =
-            vec![Box::new(EmbeddingsIndexCmd), Box::new(EmbeddingsQueryCmd)];
-        let mut runners: HashMap<String, Box<dyn RunCmd>> = HashMap::new();
+    fn get_subcommands(&self) -> Runners {
+        let commands: [Box<dyn RunCmd>; 2] =
+            [Box::new(EmbeddingsIndexCmd), Box::new(EmbeddingsQueryCmd)];
+        let mut runners = HashMap::new();
         for cmd in commands {
             runners.insert(cmd.name().to_string(), cmd);
         }

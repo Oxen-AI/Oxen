@@ -63,7 +63,7 @@ impl RunCmd for PushCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse args
         let remote = args
             .get_one::<String>("REMOTE")
@@ -91,7 +91,7 @@ impl RunCmd for PushCmd {
         } else if let Some(branch) = current_branch {
             branch.name
         } else {
-            return Err(OxenError::must_be_on_valid_branch());
+            return Err(OxenError::must_be_on_valid_branch())?;
         };
 
         let opts = PushOpts {

@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use clap::{Arg, ArgMatches, Command};
 
 use liboxen::api;
-use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 
 use crate::cmd::RunCmd;
@@ -37,7 +36,7 @@ impl RunCmd for WorkspaceDeleteCmd {
             .arg_required_else_help(true)
     }
 
-    async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &ArgMatches) -> Result<(), anyhow::Error> {
         let repo = LocalRepository::from_current_dir()?;
         let remote_repo = api::client::repositories::get_default_remote(&repo).await?;
         let workspace_name = args.get_one::<String>("workspace-name");
@@ -50,7 +49,7 @@ impl RunCmd for WorkspaceDeleteCmd {
                 if let Some(name) = workspace_name {
                     name
                 } else {
-                    return Err(OxenError::basic_str(
+                    return Err(anyhow::anyhow!(
                         "Either workspace-id or workspace-name must be provided.",
                     ));
                 }

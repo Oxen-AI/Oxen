@@ -70,7 +70,7 @@ impl RunCmd for UnpackCmd {
             .expect("Must supply output path");
 
         if paths.len() != 1 {
-            return Err(OxenError::basic_str("Must supply exactly one file"));
+            return Err(anyhow::anyhow!("Must supply exactly one file"));
         }
 
         let path = &paths[0];
@@ -93,7 +93,7 @@ impl RunCmd for UnpackCmd {
         // Get the entry to reconstruct
         let commit_entry_reader = CommitEntryReader::new(&repo, commit)?;
         let Some(entry) = commit_entry_reader.get_entry(path)? else {
-            return Err(OxenError::basic_str("File not found in commit"));
+            return Err(anyhow::anyhow!("File not found in commit"));
         };
         let file_hash = entry.hash;
         println!("Reconstructing file hash: {:?}", file_hash);
@@ -118,7 +118,7 @@ impl RunCmd for UnpackCmd {
                     let v = usize::from_be_bytes((*v).try_into().unwrap());
                     indices.push((v, k));
                 }
-                Err(_) => return Err(OxenError::basic_str("Error iterating over indices")),
+                Err(_) => return Err(anyhow::anyhow!("Error iterating over indices")),
             }
         }
 

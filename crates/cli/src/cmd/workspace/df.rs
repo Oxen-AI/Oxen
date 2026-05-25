@@ -3,8 +3,6 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use clap::Command;
 
-use liboxen::error::OxenError;
-
 // subcommands
 pub mod get;
 use get::WorkspaceDFGetCmd;
@@ -12,7 +10,10 @@ use get::WorkspaceDFGetCmd;
 pub mod index;
 use index::WorkspaceDFIndexCmd;
 
-use crate::cmd::RunCmd;
+use crate::{
+    cli_error::UnknownSubcommand,
+    cmd::{RunCmd, Runners},
+};
 
 pub const NAME: &str = "df";
 pub struct WorkspaceDfCmd;
@@ -36,12 +37,15 @@ impl RunCmd for WorkspaceDfCmd {
         command
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let sub_commands = self.get_subcommands();
         if let Some((name, sub_matches)) = args.subcommand() {
             let Some(cmd) = sub_commands.get(name) else {
-                return Err(OxenError::unknown_subcommand("df", name));
+                return Err(UnknownSubcommand {
+                    parent: "df",
+                    name: name.to_string(),
+                })?;
             };
 
             // Calling await within an await is making it complain?
@@ -54,10 +58,10 @@ impl RunCmd for WorkspaceDfCmd {
 }
 
 impl WorkspaceDfCmd {
-    fn get_subcommands(&self) -> HashMap<String, Box<dyn RunCmd>> {
-        let commands: Vec<Box<dyn RunCmd>> =
-            vec![Box::new(WorkspaceDFIndexCmd), Box::new(WorkspaceDFGetCmd)];
-        let mut runners: HashMap<String, Box<dyn RunCmd>> = HashMap::new();
+    fn get_subcommands(&self) -> Runners {
+        let commands: [Box<dyn RunCmd>; 2] =
+            [Box::new(WorkspaceDFIndexCmd), Box::new(WorkspaceDFGetCmd)];
+        let mut runners = HashMap::new();
         for cmd in commands {
             runners.insert(cmd.name().to_string(), cmd);
         }

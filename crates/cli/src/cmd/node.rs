@@ -55,7 +55,7 @@ impl RunCmd for NodeCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Find the repository
         let repository = LocalRepository::from_current_dir()?;
 
@@ -70,7 +70,7 @@ impl RunCmd for NodeCmd {
             let path = Path::new(path);
             let Some(node) = repositories::tree::get_node_by_path(&repository, &commit, path)?
             else {
-                return Err(OxenError::entry_does_not_exist_in_commit(path, &commit.id));
+                return Err(OxenError::entry_does_not_exist_in_commit(path, &commit.id))?;
             };
 
             println!("{node:?}");
@@ -88,7 +88,7 @@ impl RunCmd for NodeCmd {
             let Some(node) = repositories::tree::get_node_by_id(&repository, &node_hash)? else {
                 return Err(OxenError::resource_not_found(format!(
                     "Node {node_hash} not found in repo"
-                )));
+                )))?;
             };
 
             println!("{node:?}");
@@ -99,7 +99,7 @@ impl RunCmd for NodeCmd {
                 }
             }
         } else {
-            return Err(OxenError::basic_str("Must supply file path or node hash"));
+            return Err(anyhow::anyhow!("Must supply file path or node hash"));
         }
 
         Ok(())

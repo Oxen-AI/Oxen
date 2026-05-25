@@ -4,7 +4,6 @@ use std::io::Write;
 use tempfile::TempDir;
 
 use liboxen::config::UserConfig;
-use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
 
@@ -40,7 +39,7 @@ impl RunCmd for CommitCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         let message = match args.get_one::<String>("message") {
             Some(msg) => msg.clone(),
             None => get_message_from_editor(UserConfig::get().ok().as_ref())?,
@@ -89,9 +88,9 @@ fn resolve_editor(maybe_config: Option<&UserConfig>) -> Option<String> {
     None
 }
 
-fn get_message_from_editor(maybe_config: Option<&UserConfig>) -> Result<String, OxenError> {
+fn get_message_from_editor(maybe_config: Option<&UserConfig>) -> Result<String, anyhow::Error> {
     let editor = resolve_editor(maybe_config).ok_or_else(|| {
-        OxenError::basic_str(
+        anyhow::anyhow!(
             "No editor is configured and no commit message was provided via -m.\n\n\
              To set your preferred editor, run:\n    \
              oxen config --editor <EDITOR>\n\n\
@@ -124,7 +123,7 @@ fn get_message_from_editor(maybe_config: Option<&UserConfig>) -> Result<String, 
     // Split the editor string to support commands like "code --wait"
     let parts: Vec<&str> = editor.split_whitespace().collect();
     if parts.is_empty() {
-        return Err(OxenError::basic_str(
+        return Err(anyhow::anyhow!(
             "Must supply valid editor path, not an empty/whitespace-only string.",
         ));
     }
@@ -134,9 +133,9 @@ fn get_message_from_editor(maybe_config: Option<&UserConfig>) -> Result<String, 
         .status()?;
 
     if !status.success() {
-        return Err(OxenError::basic_str(format!(
+        return Err(anyhow::anyhow!(
             "Editor '{editor}' exited with non-zero status."
-        )));
+        ));
     }
 
     // Read the file and strip comments
@@ -151,7 +150,7 @@ fn get_message_from_editor(maybe_config: Option<&UserConfig>) -> Result<String, 
     let message = message.trim().to_string();
 
     if message.is_empty() {
-        return Err(OxenError::basic_str(
+        return Err(anyhow::anyhow!(
             "Aborting commit due to empty commit message.",
         ));
     }

@@ -29,7 +29,7 @@ impl RunCmd for SchemasListCmd {
         )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let staged = args.get_flag("staged");
 

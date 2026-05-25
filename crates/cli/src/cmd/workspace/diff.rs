@@ -5,7 +5,6 @@ use clap::Command;
 use liboxen::api;
 use liboxen::constants::DEFAULT_PAGE_NUM;
 use liboxen::constants::DEFAULT_PAGE_SIZE;
-use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 
 use crate::cmd::DiffCmd;
@@ -32,7 +31,7 @@ impl RunCmd for WorkspaceDiffCmd {
         )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let opts = DiffCmd::parse_args(args);
         let repo = LocalRepository::from_current_dir()?;
@@ -42,7 +41,7 @@ impl RunCmd for WorkspaceDiffCmd {
         } else if let Some(id) = args.get_one::<String>("workspace-id") {
             Some(id.to_string())
         } else {
-            return Err(OxenError::basic_str("Must supply a workspace id."));
+            return Err(anyhow::anyhow!("Must supply a workspace id."));
         }
         .unwrap();
 

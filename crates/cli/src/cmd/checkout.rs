@@ -41,7 +41,7 @@ impl RunCmd for CheckoutCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Find the repository
         let repo = LocalRepository::from_current_dir()?;
 
@@ -50,15 +50,13 @@ impl RunCmd for CheckoutCmd {
             self.create_checkout_branch(&repo, name)?
         } else if args.get_flag("ours") {
             let Some(name) = args.get_one::<String>("name") else {
-                return Err(OxenError::basic_str(
-                    "Err: Usage `oxen checkout --ours <name>`",
-                ));
+                return Err(anyhow::anyhow!("Err: Usage `oxen checkout --ours <name>`",));
             };
 
             self.checkout_ours(&repo, name).await?
         } else if args.get_flag("theirs") {
             let Some(name) = args.get_one::<String>("name") else {
-                return Err(OxenError::basic_str(
+                return Err(anyhow::anyhow!(
                     "Err: Usage `oxen checkout --theirs <name>`",
                 ));
             };

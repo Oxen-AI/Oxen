@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
-use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::opts::fetch_opts::FetchOpts;
 use liboxen::repositories;
@@ -43,7 +42,7 @@ impl RunCmd for FetchCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         let repository = LocalRepository::from_current_dir()?;
         let (scheme, host) = get_scheme_and_host_from_repo(&repository)?;
 

@@ -211,6 +211,12 @@ pub enum OxenError {
     #[error("{0}")]
     WorkspaceNameIndex(#[from] crate::core::workspaces::workspace_name_index::WsError),
 
+    #[error("Not a real directory: {0}")]
+    NotADirectory(PathBuf),
+
+    #[error("No paths to add!")]
+    NoPathsToAdd,
+
     //
     // Resources (paths, uris, etc.)
     //
@@ -1056,14 +1062,6 @@ impl OxenError {
 
     pub fn parse_error(value: impl AsRef<str>) -> OxenError {
         OxenError::basic_str(format!("Parse error: {:?}", value.as_ref()))
-    }
-
-    pub fn unknown_subcommand(parent: impl AsRef<str>, name: impl AsRef<str>) -> OxenError {
-        OxenError::basic_str(format!(
-            "Unknown {} subcommand '{}'",
-            parent.as_ref(),
-            name.as_ref()
-        ))
     }
 }
 

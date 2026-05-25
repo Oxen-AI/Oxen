@@ -23,7 +23,7 @@ impl RunCmd for RemoteModeRestoreCmd {
     }
 
     // TODO: Support multiple paths
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         let paths: Vec<PathBuf> = args
             .get_many::<String>("paths")
             .expect("Must supply paths")

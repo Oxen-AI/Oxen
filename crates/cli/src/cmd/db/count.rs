@@ -4,7 +4,6 @@ use async_trait::async_trait;
 use clap::{Arg, Command};
 
 use liboxen::command;
-use liboxen::error::OxenError;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "count";
@@ -24,10 +23,10 @@ impl RunCmd for DbCountCmd {
             .arg(Arg::new("PATH").help("The path of the database."))
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let Some(path) = args.get_one::<String>("PATH") else {
-            return Err(OxenError::basic_str("Must supply path"));
+            return Err(anyhow::anyhow!("Must supply path"));
         };
 
         let count = command::db::count(PathBuf::from(path))?;

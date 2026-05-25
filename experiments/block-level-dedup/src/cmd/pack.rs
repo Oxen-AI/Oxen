@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use clap::{Arg, Command};
-use liboxen::error::OxenError;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "pack";
@@ -43,7 +42,7 @@ impl RunCmd for PackCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let _paths: Vec<PathBuf> = args
             .get_many::<String>("files")
@@ -64,7 +63,7 @@ impl RunCmd for PackCmd {
             .expect("Chunk size must be a valid integer.");
 
         if _paths.len() != 1 {
-            return Err(OxenError::basic_str("Must supply exactly one file"));
+            return Err(anyhow::anyhow!("Must supply exactly one file"));
         }
         Ok(())
     }

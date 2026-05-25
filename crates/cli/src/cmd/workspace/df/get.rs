@@ -80,15 +80,15 @@ impl RunCmd for WorkspaceDFGetCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let Some(path) = args.get_one::<String>("path") else {
-            return Err(OxenError::basic_str(
+            return Err(anyhow::anyhow!(
                 "Must supply a path to the data frame you want to get.",
             ));
         };
         let Some(workspace_id) = args.get_one::<String>("workspace-id") else {
-            return Err(OxenError::basic_str("Must supply a workspace id."));
+            return Err(anyhow::anyhow!("Must supply a workspace id."));
         };
 
         let repository = LocalRepository::from_current_dir()?;
@@ -120,13 +120,13 @@ impl RunCmd for WorkspaceDFGetCmd {
                     println!("{df:?}");
                     println!("Query took: {:?}", start.elapsed());
                 } else {
-                    return Err(OxenError::basic_str(format!(
+                    return Err(anyhow::anyhow!(
                         "No data frame found. Index the data frame before querying.\n\n  oxen workspace df index {path} -w {workspace_id}\n"
-                    )));
+                    ));
                 }
             }
             Err(e) => {
-                return Err(e);
+                return Err(e)?;
             }
         }
 

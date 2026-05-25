@@ -25,7 +25,7 @@ impl RunCmd for WorkspaceRestoreCmd {
         restore_args()
     }
 
-    async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &ArgMatches) -> Result<(), anyhow::Error> {
         let paths: Vec<PathBuf> = args
             .get_many::<String>("paths")
             .expect("Must supply paths")

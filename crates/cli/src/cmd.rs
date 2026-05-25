@@ -1,5 +1,4 @@
-use clap;
-use liboxen::error::OxenError;
+use std::collections::HashMap;
 
 use async_trait::async_trait;
 
@@ -117,11 +116,21 @@ pub use prune::PruneCmd;
 pub mod fsck;
 pub use fsck::FsckCmd;
 
+/// Maps the name of a [`RunCmd`] to its implementation.
+pub type Runners = HashMap<String, Box<dyn RunCmd>>;
+
 /// Trait for that any oxen CLI comand must implement.
+///
+/// Oxen CLI programs have a human-readable name, CLI arguments, and a method to trigger the program's
+/// main logic given parsed CLI arguments.
+///
 /// NOTE: Must keep this trait dyn-compatible.
 #[async_trait]
 pub trait RunCmd {
+    /// The name of the CLI program. Used to identify it and display in user-facing messages.
     fn name(&self) -> &str;
+    /// The CLI arguments for this program.
     fn args(&self) -> clap::Command;
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError>;
+    /// Execute the CLI program's logic.
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error>;
 }

@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
-use liboxen::error::OxenError;
 use liboxen::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
 use liboxen::model::staged_data::StagedDataOpts;
 use liboxen::model::{LocalRepository, StagedData, StagedEntry, StagedEntryStatus};
@@ -43,7 +42,7 @@ impl RunCmd for LsCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         let repo = LocalRepository::from_current_dir()?;
 
         // Early exit for non-remote-mode repositories
@@ -62,9 +61,7 @@ impl RunCmd for LsCmd {
             repositories::commits::head_commit(&repo)?
         } else {
             let Some(commit) = repositories::commits::get_by_id(&repo, commit_id)? else {
-                return Err(OxenError::basic_str(format!(
-                    "Commit {commit_id} not found"
-                )));
+                return Err(anyhow::anyhow!("Commit {commit_id} not found"));
             };
             commit
         };
