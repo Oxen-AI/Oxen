@@ -411,12 +411,12 @@ impl VersionStore for S3VersionStore {
         }
     }
 
-    async fn store_version(&self, hash: &str, data: &[u8]) -> Result<(), OxenError> {
+    async fn store_version(&self, hash: &str, data: Bytes) -> Result<(), OxenError> {
         let client = self.client().await?;
         log::debug!("Storing version to S3");
         let key = self.generate_key(hash);
 
-        let body = ByteStream::from(data.to_vec());
+        let body = ByteStream::from(data);
         client
             .put_object()
             .bucket(&self.bucket)
@@ -433,7 +433,7 @@ impl VersionStore for S3VersionStore {
         &self,
         orig_hash: &str,
         derived_filename: &str,
-        derived_data: &[u8],
+        derived_data: Bytes,
     ) -> Result<(), OxenError> {
         let client = self.client().await?;
         let key = format!("{}/{}", self.version_dir(orig_hash), derived_filename);
@@ -442,7 +442,7 @@ impl VersionStore for S3VersionStore {
             .put_object()
             .bucket(&self.bucket)
             .key(&key)
-            .body(ByteStream::from(derived_data.to_vec()))
+            .body(ByteStream::from(derived_data))
             .send()
             .await
             .map_err(|e| {
@@ -1137,7 +1137,10 @@ mod tests {
         let (store, _tmp, _server) = setup().await;
         let data = b"streamed to destination";
 
-        store.store_version("eeedef1234567890", data).await.unwrap();
+        store
+            .store_version("eeedef1234567890", Bytes::from_static(data))
+            .await
+            .unwrap();
 
         let dest_dir = async_tempfile::TempDir::new().await.unwrap();
         let dest_path = dest_dir.dir_path().join("subdir/output.bin");
@@ -1232,7 +1235,10 @@ mod tests {
         let hash = "abcdef1234567890abcdef1234567890";
 
         // Store main data + two chunks
-        store.store_version(hash, b"main data").await.unwrap();
+        store
+            .store_version(hash, Bytes::from_static(b"main data"))
+            .await
+            .unwrap();
         store
             .store_version_chunk(hash, 0, Bytes::from_static(b"chunk-0"))
             .await
@@ -1337,8 +1343,14 @@ mod tests {
         let hash_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let hash_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
-        store.store_version(hash_a, b"a data").await.unwrap();
-        store.store_version(hash_b, b"b data").await.unwrap();
+        store
+            .store_version(hash_a, Bytes::from_static(b"a data"))
+            .await
+            .unwrap();
+        store
+            .store_version(hash_b, Bytes::from_static(b"b data"))
+            .await
+            .unwrap();
 
         store.delete_version(hash_a).await.unwrap();
 
@@ -1351,7 +1363,10 @@ mod tests {
         let (store, _tmp, _server) = setup().await;
         let hash = "abcdef1234567890abcdef1234567890";
         let data: Vec<u8> = (0..100u8).collect();
-        store.store_version(hash, &data).await.unwrap();
+        store
+            .store_version(hash, Bytes::copy_from_slice(&data))
+            .await
+            .unwrap();
 
         let chunk = store.get_version_chunk(hash, 10, 20).await.unwrap();
         assert_eq!(chunk, data[10..30]);
@@ -1362,7 +1377,10 @@ mod tests {
         let (store, _tmp, _server) = setup().await;
         let hash = "abcdef1234567890abcdef1234567890";
         let data = b"hello world!";
-        store.store_version(hash, data).await.unwrap();
+        store
+            .store_version(hash, Bytes::from_static(data))
+            .await
+            .unwrap();
 
         let chunk = store.get_version_chunk(hash, 0, 5).await.unwrap();
         assert_eq!(&chunk[..], b"hello");
@@ -1381,7 +1399,10 @@ mod tests {
     async fn test_get_version_chunk_past_eof_errors() {
         let (store, _tmp, _server) = setup().await;
         let hash = "abcdef1234567890abcdef1234567890";
-        store.store_version(hash, b"small").await.unwrap();
+        store
+            .store_version(hash, Bytes::from_static(b"small"))
+            .await
+            .unwrap();
 
         let result = store.get_version_chunk(hash, 1000, 10).await;
         assert!(
@@ -1499,9 +1520,18 @@ mod tests {
         let (store, _tmp, _server) = setup().await;
 
         // Insert out of order; list_versions is documented to return sorted results.
-        store.store_version("cccc", b"c data").await.unwrap();
-        store.store_version("aaaa", b"a data").await.unwrap();
-        store.store_version("bbbb", b"b data").await.unwrap();
+        store
+            .store_version("cccc", Bytes::from_static(b"c data"))
+            .await
+            .unwrap();
+        store
+            .store_version("aaaa", Bytes::from_static(b"a data"))
+            .await
+            .unwrap();
+        store
+            .store_version("bbbb", Bytes::from_static(b"b data"))
+            .await
+            .unwrap();
 
         let versions = store.list_versions().await.unwrap();
         assert_eq!(versions, vec!["aaaa", "bbbb", "cccc"]);
@@ -1522,7 +1552,10 @@ mod tests {
         let (store, _tmp, _server) = setup().await;
 
         let hash = "abcdef1234567890abcdef1234567890";
-        store.store_version(hash, b"main").await.unwrap();
+        store
+            .store_version(hash, Bytes::from_static(b"main"))
+            .await
+            .unwrap();
         store
             .store_version_chunk(hash, 0, Bytes::from_static(b"chunk-0"))
             .await
@@ -1532,7 +1565,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .store_version_derived(hash, "thumb.jpg", b"thumbnail bytes")
+            .store_version_derived(hash, "thumb.jpg", Bytes::from_static(b"thumbnail bytes"))
             .await
             .unwrap();
 

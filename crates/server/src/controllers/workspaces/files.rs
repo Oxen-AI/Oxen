@@ -587,7 +587,7 @@ pub async fn save_parts(
                 };
 
             match version_store
-                .store_version(&upload_filehash, &data_to_store)
+                .store_version(&upload_filehash, data_to_store.into())
                 .await
             {
                 Ok(_) => {

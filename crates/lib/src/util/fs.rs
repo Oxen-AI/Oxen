@@ -1695,13 +1695,16 @@ pub async fn resize_cache_image_version_store(
     let image_format = ImageFormat::from_path(derived_filename)?;
     let mut buf = Vec::new();
     resized_img.write_to(&mut Cursor::new(&mut buf), image_format)?;
+    // Pre-`Bytes::from` once so we can share the same allocation between the version-store write
+    // and the streamed response without copying. `Bytes::clone` is an atomic refcount bump.
+    let bytes = Bytes::from(buf);
+    let content_length = bytes.len() as u64;
     version_store
-        .store_version_derived(img_hash, derived_filename, &buf)
+        .store_version_derived(img_hash, derived_filename, bytes.clone())
         .await?;
-    let content_length = buf.len() as u64;
 
     let stream: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>> =
-        futures::stream::once(async move { Ok(Bytes::from(buf)) }).boxed();
+        futures::stream::once(async move { Ok(bytes) }).boxed();
 
     Ok((stream, content_length))
 }
@@ -1762,7 +1765,7 @@ async fn generate_video_thumbnail_version_store(
 
     // Save the thumbnail image
     version_store
-        .store_version_derived(video_hash, derived_filename, &buf)
+        .store_version_derived(video_hash, derived_filename, buf.into())
         .await?;
 
     log::debug!("saved thumbnail {derived_filename}");
