@@ -441,6 +441,8 @@ pub fn r_collect_removed_paths(
 
 #[cfg(test)]
 mod tests {
+    use crate::config::repository_config::MerkleStoreKind;
+    use rstest::rstest;
 
     use crate::error::OxenError;
     use crate::opts::GlobOpts;
@@ -450,9 +452,12 @@ mod tests {
     use std::collections::HashSet;
     use std::path::PathBuf;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_glob_parse_working_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+    async fn test_glob_parse_working_dir(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
             let repo_path = repo.clone().path;
 
             // Test glob in root
@@ -509,9 +514,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_glob_parse_working_dir_walk_dirs() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+    async fn test_glob_parse_working_dir_walk_dirs(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
             let repo_path = repo.clone().path;
 
             // Test glob path with walk
@@ -565,9 +575,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_glob_parse_staged_db() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+    async fn test_glob_parse_staged_db(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
             // Stage some specific files and a directory
             repositories::add(&repo, "train/dog_1.jpg").await?;
             repositories::add(&repo, "annotations/train/*").await?;
@@ -624,9 +637,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_glob_parse_merkle_tree() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_glob_parse_merkle_tree(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             // Test glob in sub-directory
             let opts = GlobOpts {
                 paths: vec![PathBuf::from("nlp/classification/annotations/*")],

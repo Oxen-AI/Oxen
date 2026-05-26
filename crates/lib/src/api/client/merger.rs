@@ -44,6 +44,8 @@ pub async fn merge(
 
 #[cfg(test)]
 mod tests {
+    use crate::config::repository_config::MerkleStoreKind;
+    use rstest::rstest;
 
     use crate::api;
     use crate::constants::DEFAULT_REMOTE_NAME;
@@ -53,9 +55,12 @@ mod tests {
     use crate::repositories;
     use crate::test;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_merger_no_commits() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+    async fn test_remote_merger_no_commits(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(kind, |local_repo, remote_repo| async move {
             let base = "main";
             let head = "add-data";
 
@@ -79,9 +84,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_merger_base_is_ahead() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+    async fn test_remote_merger_base_is_ahead(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(kind, |local_repo, remote_repo| async move {
             let base = "main";
             let head = "add-data";
 
@@ -117,9 +127,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_merger_mergeable_multiple_commits() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+    async fn test_remote_merger_mergeable_multiple_commits(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(kind, |local_repo, remote_repo| async move {
             let base = "main";
             let head = "add-data";
 
@@ -170,9 +185,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_merger_multiple_commits_conflict_head_is_ahead() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+    async fn test_remote_merger_multiple_commits_conflict_head_is_ahead(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(kind, |local_repo, remote_repo| async move {
             let base = "main";
             let head = "add-data";
 
@@ -234,9 +254,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_merger_merge_unique() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+    async fn test_remote_merger_merge_unique(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(kind, |local_repo, remote_repo| async move {
             let base = "main";
             let head = "add-data";
 

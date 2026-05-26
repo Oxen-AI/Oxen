@@ -64,8 +64,10 @@ pub async fn download_dir_as_zip(
 #[cfg(test)]
 mod tests {
     use crate::api;
+    use crate::config::repository_config::MerkleStoreKind;
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
+    use rstest::rstest;
 
     use crate::test;
     use crate::util;
@@ -75,9 +77,12 @@ mod tests {
     use std::path::PathBuf;
     use zip::ZipArchive;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_download_dir_as_zip() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+    async fn test_download_dir_as_zip(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(kind, |local_repo, remote_repo| async move {
             let remote_dir = "annotations";
             let output_dir = local_repo.path.clone().join("zip_download");
 

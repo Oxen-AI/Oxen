@@ -52,7 +52,9 @@ pub async fn add_all_with_version<T: AsRef<Path>>(
 
 #[cfg(test)]
 mod tests {
+    use crate::config::repository_config::MerkleStoreKind;
     use futures::StreamExt;
+    use rstest::rstest;
 
     use crate::model::LocalRepository;
     use crate::model::StagedData;
@@ -69,9 +71,14 @@ mod tests {
 
     use crate::util;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_clone_root_subtree_depth_1_add_file() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+    async fn test_clone_root_subtree_depth_1_add_file(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(kind, |_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
@@ -104,9 +111,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_clone_annotations_test_subtree_add_file() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+    async fn test_clone_annotations_test_subtree_add_file(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(kind, |_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
@@ -147,9 +159,12 @@ A: Oxen.ai
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_add_file() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_command_add_file(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Write to file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello World")?;
@@ -170,9 +185,14 @@ A: Oxen.ai
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_add_modified_file_in_subdirectory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_command_add_modified_file_in_subdirectory(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             // Modify and add the file deep in a sub dir
             let one_shot_path = repo.path.join("annotations/train/one_shot.csv");
             let file_contents = "file,label\ntrain/cat_1.jpg,0";
@@ -196,9 +216,12 @@ A: Oxen.ai
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_add_removed_file() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+    async fn test_command_add_removed_file(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
             // (file already created in helper)
             let file_to_remove = repo.path.join("labels.txt");
 
@@ -219,9 +242,14 @@ A: Oxen.ai
     }
 
     // At some point we were adding rocksdb inside the working dir...def should not do that
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_add_dot_should_not_add_new_files() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+    async fn test_command_add_dot_should_not_add_new_files(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
             let num_files = util::fs::count_files_in_dir(&repo.path);
 
             repositories::add(&repo, &repo.path).await?;
@@ -236,9 +264,14 @@ A: Oxen.ai
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_add_dot_can_add_removed_files() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_command_add_dot_can_add_removed_files(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Track a new file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello World")?;
@@ -261,9 +294,14 @@ A: Oxen.ai
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_add_dot_only_adds_changed_files() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_command_add_dot_only_adds_changed_files(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Track 3 new files
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello")?;
@@ -299,9 +337,12 @@ A: Oxen.ai
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_can_add_merge_conflict() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
+    async fn test_can_add_merge_conflict(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async(kind, "labels", |repo| async move {
             let labels_path = repo.path.join("labels.txt");
             repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "adding initial labels file")?;
@@ -347,9 +388,12 @@ A: Oxen.ai
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_add_nested_nlp_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+    async fn test_add_nested_nlp_dir(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
             let dir = Path::new("nlp");
             let repo_dir = repo.path.join(dir);
             repositories::add(&repo, repo_dir).await?;
@@ -371,9 +415,14 @@ A: Oxen.ai
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_add_stage_with_wildcard() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_command_add_stage_with_wildcard(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let _objects_dir = repo.path.join(".oxen/objects");
 
             // Modify and add the file deep in a sub dir
@@ -397,9 +446,14 @@ A: Oxen.ai
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_wildcard_add_remove_nested_nlp_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+    async fn test_wildcard_add_remove_nested_nlp_dir(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
             let dir = Path::new("nlp");
             let repo_dir = repo.path.join(dir);
             repositories::add(&repo, repo_dir).await?;
@@ -443,9 +497,14 @@ A: Oxen.ai
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_wildcard_add_nested_nlp_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+    async fn test_wildcard_add_nested_nlp_dir(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
             let dir = Path::new("nlp/*");
             let repo_dir = repo.path.join(dir);
             repositories::add(&repo, repo_dir).await?;
@@ -467,9 +526,12 @@ A: Oxen.ai
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_add_empty_dir() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_add_empty_dir(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Make an empty dir
             let empty_dir = repo.path.join("empty_dir");
             util::fs::create_dir_all(&empty_dir)?;
@@ -512,9 +574,12 @@ A: Oxen.ai
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_add_all_files_in_sub_dir() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_add_all_files_in_sub_dir(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Write two files to a sub directory
             let repo_path = &repo.path;
             let training_data_dir = PathBuf::from("training_data");
@@ -553,9 +618,12 @@ A: Oxen.ai
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_stager_add_dir_recursive() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+    async fn test_stager_add_dir_recursive(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
             // Write two files to a sub directory
             let annotations_dir = repo.path.join("annotations");
 
@@ -584,9 +652,14 @@ A: Oxen.ai
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_cannot_add_if_not_modified() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_cannot_add_if_not_modified(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Make sure we have a valid file
             let repo_path = &repo.path;
             let hello_file = test::add_txt_file_to_dir(repo_path, "Hello World")?;
@@ -609,9 +682,14 @@ A: Oxen.ai
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_add_after_modified_file_in_subdirectory() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
+    async fn test_command_add_after_modified_file_in_subdirectory(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async(kind, "annotations", |repo| async move {
             // Track & commit all the data
             let one_shot_path = repo.path.join("annotations/train/one_shot.csv");
             repositories::add(&repo, &repo.path).await?;
@@ -647,9 +725,14 @@ A: Oxen.ai
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_add_wildcard_prefix_match() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+    async fn test_add_wildcard_prefix_match(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
             // Data from populate_train_dir:
             // train/cat_1.jpg, train/cat_2.jpg, train/cat_3.jpg
             // train/dog_1.jpg, train/dog_2.jpg, train/dog_3.jpg, train/dog_4.jpg
@@ -881,9 +964,12 @@ A: Oxen.ai
     }
 
     /// Test removal of a single file at the root.
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remove_file() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_remove_file(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             let file = Path::new("file.txt");
 
             create_and_stage(&repo, file, "hello").await;
@@ -917,9 +1003,12 @@ A: Oxen.ai
     }
 
     /// Test removal of a single directory at the root containing a single file.
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remove_dir_depth_1() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_remove_dir_depth_1(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             let dir = repo.path.join("1");
             let file = dir.join("file.txt");
 
@@ -955,9 +1044,12 @@ A: Oxen.ai
     }
 
     /// Tests removal of nested directories and their contents.
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remove_dir_depth_3() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_remove_dir_depth_3(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             let dir_1 = repo.path.join("1");
             let dir_2 = dir_1.join("2");
             let dir_3 = dir_2.join("3");

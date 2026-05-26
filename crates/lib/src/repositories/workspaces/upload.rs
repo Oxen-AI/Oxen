@@ -19,6 +19,8 @@ pub async fn upload(repo: &RemoteRepository, opts: &UploadOpts) -> Result<(), Ox
 
 #[cfg(test)]
 mod tests {
+    use crate::config::repository_config::MerkleStoreKind;
+    use rstest::rstest;
     use std::path::Path;
 
     use super::*;
@@ -31,9 +33,14 @@ mod tests {
 
     use crate::constants;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_upload_file_to_root_dir() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut repo| async move {
+    async fn test_remote_upload_file_to_root_dir(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |mut repo| async move {
             // write text files to dir
             let dir = repo.path.join("train");
             util::fs::create_dir_all(&dir)?;
@@ -90,9 +97,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_upload_file_to_sub_dir() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut repo| async move {
+    async fn test_remote_upload_file_to_sub_dir(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |mut repo| async move {
             // write text files to dir
             let dir = repo.path.join("train");
             util::fs::create_dir_all(&dir)?;
@@ -152,9 +164,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_upload_file_to_new_branch() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut repo| async move {
+    async fn test_remote_upload_file_to_new_branch(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |mut repo| async move {
             // write text files to dir
             let dir = repo.path.join("train");
             util::fs::create_dir_all(&dir)?;

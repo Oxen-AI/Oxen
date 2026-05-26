@@ -101,6 +101,8 @@ pub async fn index(
 
 #[cfg(test)]
 mod tests {
+    use crate::config::repository_config::MerkleStoreKind;
+    use rstest::rstest;
     use serde_json::json;
     use tokio::time::sleep;
 
@@ -115,56 +117,71 @@ mod tests {
 
     use std::path::Path;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_no_embeddings_in_dataframe() -> Result<(), OxenError> {
+    async fn test_no_embeddings_in_dataframe(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
-            let branch_name = "add-images";
-            let branch = api::client::branches::create_from_branch(
-                &remote_repo,
-                branch_name,
-                DEFAULT_BRANCH_NAME,
-            )
-            .await?;
-            assert_eq!(branch.name, branch_name);
-            let workspace_id = UserConfig::identifier()?;
-            let workspace =
-                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
-            assert_eq!(workspace.id, workspace_id);
+        test::run_remote_repo_test_bounding_box_csv_pushed(
+            kind,
+            |_local_repo, remote_repo| async move {
+                let branch_name = "add-images";
+                let branch = api::client::branches::create_from_branch(
+                    &remote_repo,
+                    branch_name,
+                    DEFAULT_BRANCH_NAME,
+                )
+                .await?;
+                assert_eq!(branch.name, branch_name);
+                let workspace_id = UserConfig::identifier()?;
+                let workspace =
+                    api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id)
+                        .await?;
+                assert_eq!(workspace.id, workspace_id);
 
-            // train/dog_1.jpg,dog,101.5,32.0,385,330
-            let path = Path::new("annotations")
-                .join("train")
-                .join("bounding_box.csv");
-            api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path).await?;
-            let result = api::client::workspaces::data_frames::embeddings::get(
-                &remote_repo,
-                &workspace_id,
-                &path,
-            )
-            .await;
+                // train/dog_1.jpg,dog,101.5,32.0,385,330
+                let path = Path::new("annotations")
+                    .join("train")
+                    .join("bounding_box.csv");
+                api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path)
+                    .await?;
+                let result = api::client::workspaces::data_frames::embeddings::get(
+                    &remote_repo,
+                    &workspace_id,
+                    &path,
+                )
+                .await;
 
-            assert!(result.is_ok());
-            let response = result.unwrap();
-            assert_eq!(response.columns.len(), 0);
+                assert!(result.is_ok());
+                let response = result.unwrap();
+                assert_eq!(response.columns.len(), 0);
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_index_embeddings_in_dataframe() -> Result<(), OxenError> {
+    async fn test_index_embeddings_in_dataframe(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
+        test::run_remote_repo_test_embeddings_jsonl_pushed(kind, |remote_repo| async move {
             let branch_name = DEFAULT_BRANCH_NAME;
             let workspace_id = UserConfig::identifier()?;
             let workspace =
@@ -216,14 +233,17 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_query_embeddings_by_id() -> Result<(), OxenError> {
+    async fn test_query_embeddings_by_id(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
+        test::run_remote_repo_test_embeddings_jsonl_pushed(kind, |remote_repo| async move {
             let branch_name = DEFAULT_BRANCH_NAME;
             let workspace_id = UserConfig::identifier()?;
             let workspace =
@@ -284,9 +304,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_query_embeddings_by_embedding() -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
+    async fn test_query_embeddings_by_embedding(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_readme_remote_repo_test(kind, |local_repo, remote_repo| async move {
             let branch_name = DEFAULT_BRANCH_NAME;
 
             // Write a small embeddings.json file
@@ -355,14 +380,19 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_download_embeddings_by_id() -> Result<(), OxenError> {
+    async fn test_download_embeddings_by_id(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
+        test::run_remote_repo_test_embeddings_jsonl_pushed(kind, |remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             let branch_name = DEFAULT_BRANCH_NAME;
             let workspace_id = UserConfig::identifier()?;
@@ -440,14 +470,19 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_query_embeddings_invalid_query() -> Result<(), OxenError> {
+    async fn test_query_embeddings_invalid_query(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_remote_repo_test_embeddings_jsonl_pushed(|remote_repo| async move {
+        test::run_remote_repo_test_embeddings_jsonl_pushed(kind, |remote_repo| async move {
             let branch_name = DEFAULT_BRANCH_NAME;
             let workspace_id = UserConfig::identifier()?;
             let workspace =

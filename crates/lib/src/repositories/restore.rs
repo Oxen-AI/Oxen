@@ -46,6 +46,8 @@ pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), Ox
 
 #[cfg(test)]
 mod tests {
+    use crate::config::repository_config::MerkleStoreKind;
+    use rstest::rstest;
     use std::collections::HashSet;
     use std::path::Path;
     use std::path::PathBuf;
@@ -60,9 +62,14 @@ mod tests {
     use crate::test::append_line_txt_file;
     use crate::util;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_restore_removed_file_from_head() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_command_restore_removed_file_from_head(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Write to file
             let hello_filename = "hello.txt";
             let hello_file = repo.path.join(hello_filename);
@@ -88,9 +95,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_restore_file_from_commit_id() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_command_restore_file_from_commit_id(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Write to file
             let hello_filename = "hello.txt";
             let hello_file = repo.path.join(hello_filename);
@@ -128,10 +140,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_restore_removed_file_from_branch_with_commits_between()
-    -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+    async fn test_command_restore_removed_file_from_branch_with_commits_between(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
             // (file already created in helper)
             let file_to_remove = repo.path.join("labels.txt");
 
@@ -172,8 +188,13 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_restore_aggregates_per_file_failures() -> Result<(), OxenError> {
+    async fn test_restore_aggregates_per_file_failures(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         // `oxen restore .` was silently swallowing per-file failures, so when a previous
         // interrupted pull left the working tree in a state where the version store no longer had
         // the data needed to restore HEAD's expected content, the user got a misleading successful
@@ -190,7 +211,7 @@ mod tests {
         // files failed, and a successful restore in the same call must still happen) and
         // (2) the path where a RestoreFailed wraps a non-missing-data error — important
         // because the CLI hint logic must not assume every failure is a missing blob.
-        test::run_empty_local_repo_test_async(|repo| async move {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             let succeeds = repo.path.join("succeeds.txt");
             let missing_blob = repo.path.join("missing_blob.txt");
             let other_error = repo.path.join("other_error.txt");
@@ -314,9 +335,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_restore_directory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_restore_directory(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let history = repositories::commits::list(&repo)?;
             let last_commit = history.first().unwrap();
 
@@ -357,8 +381,13 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_restore_recreates_tracked_empty_directory() -> Result<(), OxenError> {
+    async fn test_restore_recreates_tracked_empty_directory(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         // This is a regression test for ENG-1003: `restore_dir` only iterates File children and
         // silently no-ops on empty directories.
         //
@@ -367,7 +396,7 @@ mod tests {
         // tracked in the merkle tree. If the user then loses that directory on disk (e.g. manual
         // `rmdir`), `oxen status` correctly reports it as `removed` and `oxen restore <dir>` is the
         // documented way to bring the working tree back in line with HEAD.
-        test::run_one_commit_local_repo_test_async(|repo| async move {
+        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
             let subdir_rel = PathBuf::from("subdir");
             let subdir = repo.path.join(&subdir_rel);
             util::fs::create_dir_all(&subdir)?;
@@ -423,11 +452,16 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_restore_directory_preserves_untracked_files() -> Result<(), OxenError> {
+    async fn test_restore_directory_preserves_untracked_files(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         // `oxen restore <dir>` must not delete untracked files that happen to live
         // inside the restored directory. It only overwrites tracked files.
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let history = repositories::commits::list(&repo)?;
             let last_commit = history.first().unwrap();
 
@@ -462,9 +496,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_restore_removed_tabular_data() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_restore_removed_tabular_data(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let history = repositories::commits::list(&repo)?;
             let last_commit = history.first().unwrap();
 
@@ -491,9 +530,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_restore_modified_tabular_data() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_restore_modified_tabular_data(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let history = repositories::commits::list(&repo)?;
             let last_commit = history.first().unwrap();
 
@@ -524,9 +568,14 @@ mod tests {
         }).await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_restore_modified_text_data() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_restore_modified_text_data(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let history = repositories::commits::list(&repo)?;
             let last_commit = history.first().unwrap();
 
@@ -556,14 +605,19 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_restore_fast_path_skips_when_mtime_and_size_match() -> Result<(), OxenError> {
+    async fn test_restore_fast_path_skips_when_mtime_and_size_match(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         // `restore_file` has a fast path that skips the copy when the on-disk file already
         // matches the target by size + mtime (within the filesystem's measured rounding
         // tolerance). We can observe that the fast path fired by setting up the state it
         // checks for (matching size + matching mtime) with deliberately different content
         // on disk, then asserting the content isn't rewritten.
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let filename = Path::new("annotations")
                 .join("train")
                 .join("annotations.txt");
@@ -597,12 +651,16 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_restore_overwrites_when_mtime_differs_but_size_matches() -> Result<(), OxenError>
-    {
+    async fn test_restore_overwrites_when_mtime_differs_but_size_matches(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         // Complement to the fast-path test above: if mtime doesn't match, restore should
         // fall through to the full copy and fix the content even when size happens to match.
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let filename = Path::new("annotations")
                 .join("train")
                 .join("annotations.txt");
@@ -642,9 +700,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_restore_staged_file() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+    async fn test_restore_staged_file(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
             let bbox_file = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
@@ -670,10 +731,15 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_restore_data_frame_with_duplicates() -> Result<(), OxenError> {
+    async fn test_restore_data_frame_with_duplicates(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         // THIS ONE FAILS BECAUSE OF THE REPOSITOROIES::COMMIT, IT DOESN'T GET TO RESTORE
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let ann_file = Path::new("nlp")
                 .join("classification")
                 .join("annotations")
@@ -708,9 +774,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_restore_bounding_box_data_frame() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_restore_bounding_box_data_frame(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let ann_file = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
@@ -749,9 +820,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_restore_staged_directory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+    async fn test_restore_staged_directory(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
             let relative_path = Path::new("annotations");
             let annotations_dir = repo.path.join(relative_path);
 
@@ -778,9 +852,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_wildcard_restore_nested_nlp_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+    async fn test_wildcard_restore_nested_nlp_dir(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
             let dir = Path::new("nlp");
             let repo_dir = repo.path.join(dir);
             repositories::add(&repo, repo_dir).await?;
@@ -828,9 +907,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_wildcard_restore_deleted_and_present() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
+    async fn test_wildcard_restore_deleted_and_present(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(kind, |repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images");
             util::fs::create_dir_all(&images_dir)?;
@@ -909,9 +993,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_restore_wildcard_prefix_staged() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_restore_wildcard_prefix_staged(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             // Repo has 7 images in train/
             let rm_opts = RmOpts {
                 path: PathBuf::from("train/*"),
@@ -944,9 +1033,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_restore_staged_schemas_with_wildcard() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_restore_staged_schemas_with_wildcard(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             // Make a new dir in the repo - new_annotations
             let new_annotations_dir = repo.path.join("new_annotations");
             // Copy over bounding_box.csv and one_shot.csv to new_annotations

@@ -43,6 +43,7 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 liboxen = { workspace = true, features = ["test-utils"] }
+rstest = { workspace = true }
 
 [lints]
 workspace = true

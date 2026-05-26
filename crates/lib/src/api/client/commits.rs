@@ -879,6 +879,8 @@ async fn upload_data_chunk_to_server(
 
 #[cfg(test)]
 mod tests {
+    use crate::config::repository_config::MerkleStoreKind;
+    use rstest::rstest;
 
     use crate::api;
     use crate::command;
@@ -889,9 +891,12 @@ mod tests {
     use crate::repositories;
     use crate::test;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_remote_commits_all() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|local_repo| async move {
+    async fn test_list_remote_commits_all(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |local_repo| async move {
             let mut local_repo = local_repo;
             let commit_history = repositories::commits::list(&local_repo)?;
             let num_local_commits = commit_history.len();
@@ -921,9 +926,12 @@ mod tests {
     }
 
     /* Commented out because it's expensive to find the initial commit id
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_commit_history_for_path() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|local_repo| async move {
+    async fn test_list_commit_history_for_path(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |local_repo| async move {
             let mut local_repo = local_repo;
             // Set the proper remote
             let name = local_repo.dirname();
@@ -982,9 +990,12 @@ mod tests {
     */
 
     /* Commented out because it's expensive to find the initial commit id
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_commit_history_for_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|local_repo| async move {
+    async fn test_list_commit_history_for_dir(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |local_repo| async move {
             let mut local_repo = local_repo;
             // Set the proper remote
             let name = local_repo.dirname();
@@ -1051,9 +1062,14 @@ mod tests {
     }
      */
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_remote_commits_base_head() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+    async fn test_list_remote_commits_base_head(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(kind, |local_repo, remote_repo| async move {
             // There should be >= 6 commits here
             let commit_history = repositories::commits::list(&local_repo)?;
             assert!(commit_history.len() >= 6);
@@ -1082,11 +1098,16 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_missing_hashes_filters_via_merkle_tree() -> Result<(), OxenError> {
+    async fn test_list_missing_hashes_filters_via_merkle_tree(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         // The server filters requested commit hashes by checking which merkle-tree
         // nodes actually exist.
-        test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
+        test::run_one_commit_sync_repo_test(kind, |local_repo, remote_repo| async move {
             // A commit pushed by the fixture is present in the server's node store, so not reported
             // as missing by the server.
             let commit = repositories::commits::head_commit(&local_repo)?;

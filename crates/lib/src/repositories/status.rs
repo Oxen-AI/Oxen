@@ -76,6 +76,7 @@ pub async fn status_from_dir(
 
 #[cfg(test)]
 mod tests {
+    use crate::config::repository_config::MerkleStoreKind;
     use crate::error::OxenError;
     use crate::model::StagedEntryStatus;
     use crate::model::staged_data::StagedDataOpts;
@@ -83,6 +84,7 @@ mod tests {
     use crate::opts::RmOpts;
     use crate::repositories;
     use crate::test;
+    use rstest::rstest;
 
     use crate::util;
 
@@ -90,9 +92,12 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_status_empty() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_command_status_empty(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             let repo_status = repositories::status(&repo).await?;
 
             assert_eq!(repo_status.staged_dirs.len(), 0);
@@ -105,15 +110,20 @@ mod tests {
         .await
     }
 
-    #[tokio::test]
     /// Regression: a file whose working copy differs from HEAD AND whose HEAD-expected
     /// blob is missing from the local version store should be reported as "unrestorable",
     /// not "modified". The two have different remediation paths (`oxen restore` vs.
     /// `oxen fetch --missing-files`); status used to lump them together, leaving users
     /// (Kaga, in the Nex stuck-pull saga) running restore in a loop while it silently
     /// no-op'd.
-    async fn test_status_distinguishes_unrestorable_from_modified() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
+    #[tokio::test]
+    async fn test_status_distinguishes_unrestorable_from_modified(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             let path = repo.path.join("hello.txt");
             util::fs::write_to_path(&path, "Hello World")?;
             repositories::add(&repo, &path).await?;
@@ -170,9 +180,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_status_nothing_staged_full_directory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+    async fn test_command_status_nothing_staged_full_directory(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
             let repo_status = repositories::status(&repo).await?;
 
             assert_eq!(repo_status.staged_dirs.len(), 0);
@@ -194,9 +209,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_add_one_file_top_level() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+    async fn test_command_add_one_file_top_level(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
             repositories::add(&repo, repo.path.join(Path::new("labels.txt"))).await?;
 
             let repo_status = repositories::status(&repo).await?;
@@ -223,10 +243,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_status_shows_intermediate_directory_if_file_added()
-    -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+    async fn test_command_status_shows_intermediate_directory_if_file_added(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
             // Add a deep file
             repositories::add(
                 &repo,
@@ -263,9 +287,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_modified_files_status_with_search_paths() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_command_modified_files_status_with_search_paths(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             // Modify a deep file
             let one_shot_relative_path = Path::new("annotations/train/one_shot.csv");
             let one_shot_path = repo.path.join(one_shot_relative_path);
@@ -300,9 +329,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_modified_files_status_with_file_search_paths() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_command_modified_files_status_with_file_search_paths(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             // Modify a deep file
             let one_shot_relative_path = Path::new("annotations/train/one_shot.csv");
             let one_shot_path = repo.path.join(one_shot_relative_path);
@@ -338,9 +372,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_ignore_directory_with_modified_files() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_command_ignore_directory_with_modified_files(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             // Modify a deep file
             let one_shot_relative_path = Path::new("annotations/train/one_shot.csv");
             let one_shot_path = repo.path.join(one_shot_relative_path);
@@ -378,9 +417,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_added_files_status_with_search_paths() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_command_added_files_status_with_search_paths(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             // Add a deep file
             let one_shot_relative_path = Path::new("annotations/train/one_shot.csv");
             let one_shot_path = repo.path.join(one_shot_relative_path);
@@ -431,9 +475,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_commit_nothing_staged() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
+    async fn test_command_commit_nothing_staged(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test(kind, |repo| {
             let commits = repositories::commits::list(&repo)?;
             let initial_len = commits.len();
             let result = repositories::commit(&repo, "Should not work");
@@ -445,9 +494,14 @@ mod tests {
         })
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_commit_nothing_staged_but_file_modified() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_command_commit_nothing_staged_but_file_modified(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let commits = repositories::commits::list(&repo)?;
             let initial_len = commits.len();
 
@@ -464,9 +518,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_status_has_txt_file() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_command_status_has_txt_file(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Write to file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(hello_file, "Hello World")?;
@@ -483,9 +542,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_conflict_shows_in_status() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
+    async fn test_merge_conflict_shows_in_status(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async(kind, "labels", |repo| async move {
             let labels_path = repo.path.join("labels.txt");
             repositories::add(&repo, &labels_path).await?;
             repositories::commit(&repo, "adding initial labels file")?;
@@ -522,9 +586,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_status_rm_regular_file() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_status_rm_regular_file(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             // Move the file to a new name
             let og_basename = PathBuf::from("README.md");
             let og_file = repo.path.join(&og_basename);
@@ -551,9 +618,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_status_rm_directory_file() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_status_rm_directory_file(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             // Move the file to a new name
             let og_basename = PathBuf::from("README.md");
             let og_file = repo.path.join(&og_basename);
@@ -580,9 +650,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_status_move_regular_file() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_status_move_regular_file(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             // Move `README.md` to `README2.md`
             let og_basename = PathBuf::from("README.md");
             let og_file = repo.path.join(&og_basename);
@@ -624,9 +697,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_status_move_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_status_move_dir(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             // Move train/ to to new_train/train2
             let og_basename = PathBuf::from("train");
             let og_dir = repo.path.join(og_basename);
@@ -667,9 +743,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_status_list_added_directories() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_status_list_added_directories(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Write two files to a sub directory
             let repo_path = &repo.path;
             let training_data_dir = PathBuf::from("training_data");
@@ -698,9 +779,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_status_remove_file_top_level() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_status_remove_file_top_level(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             // Get head commit
             // List all entries in that commit
             let repo_path = &repo.path;
@@ -734,9 +820,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_status_remove_file_in_subdirectory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_status_remove_file_in_subdirectory(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let repo_path = &repo.path;
             let one_shot_file = repo_path
                 .join("annotations")
@@ -767,9 +858,14 @@ mod tests {
     // should classify it as removed. The dir-based tree-side check in walk_status
     // only fires for directories in dir_hashes, so a missing file path was being
     // silently dropped.
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_status_remove_file_with_explicit_file_path() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_status_remove_file_with_explicit_file_path(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let repo_path = &repo.path;
             let target_file = repo_path
                 .join("annotations")
@@ -791,9 +887,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_status_modify_file_in_subdirectory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_status_modify_file_in_subdirectory(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let repo_path = &repo.path;
             let one_shot_file = repo_path
                 .join("annotations")
@@ -820,9 +921,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_status_list_untracked_directories_after_add() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_status_list_untracked_directories_after_add(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Create 2 sub directories, one with  Write two files to a sub directory
             let repo_path = &repo.path;
             let train_dir = repo_path.join("train");
@@ -900,9 +1006,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_status_list_modified_files() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_status_list_modified_files(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Create entry_reader with no commits
             let repo_path = &repo.path;
             let hello_file = test::add_txt_file_to_dir(repo_path, "Hello 1")?;
@@ -933,9 +1044,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_status_modified_file_in_subdirectory() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
+    async fn test_command_status_modified_file_in_subdirectory(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async(kind, "annotations", |repo| async move {
             // Track & commit all the data
             let one_shot_path = repo.path.join("annotations/train/one_shot.csv");
             repositories::add(&repo, &repo.path).await?;

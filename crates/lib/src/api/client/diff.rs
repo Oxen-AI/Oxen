@@ -57,6 +57,8 @@ pub async fn diff_entries(
 
 #[cfg(test)]
 mod tests {
+    use crate::config::repository_config::MerkleStoreKind;
+    use rstest::rstest;
 
     use std::path::Path;
     use std::path::PathBuf;
@@ -76,9 +78,12 @@ mod tests {
     use crate::util;
 
     // Test diff add image
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_diff_entries_add_image() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+    async fn test_diff_entries_add_image(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(kind, |mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images");
             util::fs::create_dir_all(&images_dir)?;
@@ -156,9 +161,14 @@ mod tests {
     }
 
     // Test diff modify image
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_diff_entries_modify_image_resize() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+    async fn test_diff_entries_modify_image_resize(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(kind, |mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images");
             util::fs::create_dir_all(&images_dir)?;
@@ -248,9 +258,14 @@ mod tests {
     }
 
     // Test diff add rows to a csv
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_diff_entries_modify_add_rows_csv() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+    async fn test_diff_entries_modify_add_rows_csv(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(kind, |mut repo| async move {
             // Add and commit the initial data
             let test_file = test::test_csv_file_with_name("llm_fine_tune.csv");
             let repo_filepath = repo.path.join(test_file.file_name().unwrap());
@@ -368,9 +383,14 @@ mod tests {
     }
 
     // Test diff add rows to a csv
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_diff_entries_modify_add_and_remove_rows_csv() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+    async fn test_diff_entries_modify_add_and_remove_rows_csv(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(kind, |mut repo| async move {
             // Add and commit the initial data
             let test_file = test::test_csv_file_with_name("llm_fine_tune.csv");
             let repo_filepath = repo.path.join(test_file.file_name().unwrap());
@@ -507,9 +527,14 @@ define the word,what does the word 'the' mean?,it is a stopword.,language
     }
 
     // Test diff add cols to a csv
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_diff_entries_modify_remove_columns_csv() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+    async fn test_diff_entries_modify_remove_columns_csv(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(kind, |mut repo| async move {
             // Add and commit the initial data
             let test_file = test::test_csv_file_with_name("llm_fine_tune.csv");
             let repo_filepath = repo.path.join(test_file.file_name().unwrap());
@@ -645,9 +670,14 @@ who won the game?,The packers beat up on the bears,packers
     }
 
     // Test diff modify image passing the commit ids instead of the branch names
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_diff_entries_modify_image_pass_commit_ids() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+    async fn test_diff_entries_modify_image_pass_commit_ids(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(kind, |mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images");
             util::fs::create_dir_all(&images_dir)?;
@@ -734,9 +764,14 @@ who won the game?,The packers beat up on the bears,packers
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_diff_entries_cifar_csvs() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+    async fn test_list_diff_entries_cifar_csvs(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(kind, |mut repo| async move {
             // Track test.csv file
             let test_file = test::test_csv_file_with_name("test_cifar_2x9999.csv");
             let repo_filename = "test.csv";
@@ -846,9 +881,14 @@ who won the game?,The packers beat up on the bears,packers
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_diff_entries_added_images_in_dir() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+    async fn test_list_diff_entries_added_images_in_dir(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(kind, |mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images");
             util::fs::create_dir_all(&images_dir)?;
@@ -938,9 +978,14 @@ who won the game?,The packers beat up on the bears,packers
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_diff_entries_added_images_in_subdirs() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+    async fn test_list_diff_entries_added_images_in_subdirs(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(kind, |mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images");
             let cats_dir = images_dir.join("cats");
@@ -1095,9 +1140,12 @@ who won the game?,The packers beat up on the bears,packers
     }
 
     /*
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_diff_entries_removing_images_in_subdir() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+    async fn test_list_diff_entries_removing_images_in_subdir(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(kind, |mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images").join("cats");
             util::fs::create_dir_all(&images_dir)?;
@@ -1210,10 +1258,14 @@ who won the game?,The packers beat up on the bears,packers
     }
     */
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_diff_entries_removing_images_by_rming_parent_in_subdir()
-    -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+    async fn test_list_diff_entries_removing_images_by_rming_parent_in_subdir(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(kind, |mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images").join("cats");
             util::fs::create_dir_all(&images_dir)?;
@@ -1327,10 +1379,14 @@ who won the game?,The packers beat up on the bears,packers
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_diff_entries_adding_images_in_one_subdir_two_levels() -> Result<(), OxenError>
-    {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+    async fn test_list_diff_entries_adding_images_in_one_subdir_two_levels(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(kind, |mut repo| async move {
             // create the images directory
             let cats_dir = repo.path.join("images").join("cats");
             util::fs::create_dir_all(&cats_dir)?;
@@ -1460,9 +1516,14 @@ who won the game?,The packers beat up on the bears,packers
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_diff_entries_adding_images_in_subdirs() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+    async fn test_list_diff_entries_adding_images_in_subdirs(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(kind, |mut repo| async move {
             // create the images directory
             let cats_dir = repo.path.join("images").join("cats");
             util::fs::create_dir_all(&cats_dir)?;
@@ -1601,9 +1662,12 @@ who won the game?,The packers beat up on the bears,packers
     }
 
     /*
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_diff_entries_modifying_images_in_subdir() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+    async fn test_list_diff_entries_modifying_images_in_subdir(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(kind, |mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images").join("cats");
             util::fs::create_dir_all(&images_dir)?;
@@ -1715,9 +1779,14 @@ who won the game?,The packers beat up on the bears,packers
     }
     */
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_diff_entries_removing_images_in_dir() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+    async fn test_list_diff_entries_removing_images_in_dir(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(kind, |mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images");
             util::fs::create_dir_all(&images_dir)?;
@@ -1808,9 +1877,14 @@ who won the game?,The packers beat up on the bears,packers
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_diff_entries_changed_images_in_dir() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
+    async fn test_list_diff_entries_changed_images_in_dir(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_data_repo_test_no_commits_async(kind, |mut repo| async move {
             // create the images directory
             let images_dir = repo.path.join("images");
             util::fs::create_dir_all(&images_dir)?;

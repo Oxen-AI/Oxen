@@ -469,6 +469,8 @@ async fn action_hook(
 
 #[cfg(test)]
 mod tests {
+    use crate::config::repository_config::MerkleStoreKind;
+    use rstest::rstest;
     use std::path::PathBuf;
 
     use tokio::time::sleep;
@@ -485,9 +487,12 @@ mod tests {
     use crate::test;
     use crate::view::entries::EMetadataEntry;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_repo_pre_and_post_clone() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|local_repo| async move {
+    async fn test_repo_pre_and_post_clone(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |local_repo| async move {
             let mut server = mockito::Server::new_async().await;
             let server_url = server.url();
 
@@ -519,9 +524,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_repo_pre_and_post_push() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|local_repo| async move {
+    async fn test_repo_pre_and_post_push(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(kind, |local_repo| async move {
             let mut server = mockito::Server::new_async().await;
             let server_url = server.url();
 
@@ -557,9 +565,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_create_remote_repository() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|local_repo| async move {
+    async fn test_create_remote_repository(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |local_repo| async move {
             let namespace = constants::DEFAULT_NAMESPACE;
             let name = local_repo.dirname();
             let repo_new =
@@ -576,9 +587,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_create_remote_repository_with_readme() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|local_repo| async move {
+    async fn test_create_remote_repository_with_readme(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |local_repo| async move {
             let namespace = constants::DEFAULT_NAMESPACE;
             let name = local_repo.dirname();
 
@@ -611,9 +627,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_get_by_name() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|local_repo| async move {
+    async fn test_get_by_name(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |local_repo| async move {
             let remote_repo = test::create_remote_repo(&local_repo).await?;
             let url_repo = api::client::repositories::get_by_remote_repo(&remote_repo).await?;
 
@@ -628,9 +647,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_delete_repository() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|local_repo| async move {
+    async fn test_delete_repository(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |local_repo| async move {
             // Create a remote repo
             let remote_repo = test::create_remote_repo(&local_repo).await?;
 
@@ -648,9 +670,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_transfer_remote_repository() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|local_repo| async move {
+    async fn test_transfer_remote_repository(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |local_repo| async move {
             let remote_repo = test::create_remote_repo(&local_repo).await?;
 
             let new_namespace = "new-namespace";

@@ -154,6 +154,8 @@ fn collect_dir_hashes(root: &MerkleTreeNode) -> Vec<(PathBuf, MerkleHash)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::repository_config::MerkleStoreKind;
+    use rstest::rstest;
 
     use std::path::PathBuf;
 
@@ -163,9 +165,14 @@ mod tests {
     use crate::test;
     use crate::util;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_fsck_dry_run_detects_corrupted_version() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_fsck_dry_run_detects_corrupted_version(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Add and commit a file so we have a version in the store
             let file_path = repo.path.join("hello.txt");
             test::write_txt_file_to_path(&file_path, "hello world")?;
@@ -199,9 +206,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_fsck_clean_removes_corrupted_version() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_fsck_clean_removes_corrupted_version(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Add and commit a file so we have a version in the store
             let file_path = repo.path.join("hello.txt");
             test::write_txt_file_to_path(&file_path, "hello world")?;
@@ -235,9 +247,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_fsck_no_corruption_on_clean_repo() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_fsck_no_corruption_on_clean_repo(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Add and commit a file
             let file_path = repo.path.join("hello.txt");
             test::write_txt_file_to_path(&file_path, "hello world")?;
@@ -259,9 +276,14 @@ mod tests {
     /// Regression test for the dir_hash_db ↔ merkle-tree desync bug: when a directory entry is
     /// missing from `dir_hash_db` but still present in the tree, path-based lookups miss. The
     /// rebuild must restore the entry from the tree.
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_rebuild_dir_hash_db_restores_missing_entry() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_rebuild_dir_hash_db_restores_missing_entry(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Create nested directories with at least one file so each dir shows up in the tree.
             let parent_dir = repo.path.join("features").join("fbimg");
             let child_dir = parent_dir.join("dinov3_vits16");

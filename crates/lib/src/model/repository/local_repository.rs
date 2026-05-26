@@ -710,6 +710,7 @@ async fn probe_mtime_drift(probe_dir: &Path) -> Duration {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
@@ -724,15 +725,20 @@ mod tests {
     };
     use tempfile::TempDir;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_mtime_matches_honors_tolerance() -> Result<(), OxenError> {
+    async fn test_mtime_matches_honors_tolerance(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         // Regression for ENG-94X: on coarse-mtime mounts (FAT/exFAT, HFS+, some NFS) a file's
         // disk mtime can drift inside the FS-rounding window relative to the value recorded on
         // a merkle node. `restore_file`'s fast path skips inside that window; the merge-side
         // conflict check (`should_restore_*`) must agree, or `oxen pull` after `oxen restore .`
         // surfaces a spurious `cannot_overwrite_files`. `mtime_matches` is the single point
         // they both consult, so unit-test it directly here.
-        test::run_empty_local_repo_test_async(|repo| async move {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             let a = FileTime::from_unix_time(1_000_000, 500_000_000);
             let b = FileTime::from_unix_time(1_000_000, 500_000_000);
             let one_sec_off = FileTime::from_unix_time(1_000_001, 500_000_000);
@@ -775,9 +781,11 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_get_set_has_remote() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|mut local_repo| {
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
+    fn test_get_set_has_remote(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test(kind, |mut local_repo| {
             let url = "http://0.0.0.0:3000/repositories/OxenData";
             let remote_name = "origin";
             local_repo.set_remote(remote_name, url);
@@ -789,9 +797,11 @@ mod tests {
         })
     }
 
-    #[test]
-    fn test_delete_remote() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|mut local_repo| {
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
+    fn test_delete_remote(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test(kind, |mut local_repo| {
             let origin_url = "http://0.0.0.0:3000/repositories/OxenData";
             let origin_name = "origin";
 

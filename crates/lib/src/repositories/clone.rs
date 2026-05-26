@@ -102,6 +102,8 @@ async fn clone_repo_remote_mode(
 
 #[cfg(test)]
 mod tests {
+    use crate::config::repository_config::MerkleStoreKind;
+    use rstest::rstest;
     use std::path::PathBuf;
 
     use crate::api;
@@ -118,9 +120,12 @@ mod tests {
 
     use super::*;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_clone_remote() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|local_repo| async move {
+    async fn test_clone_remote(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |local_repo| async move {
             // Create remote repo
             let remote_repo = test::create_remote_repo(&local_repo).await?;
 
@@ -153,9 +158,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_move_local_repo_path_valid() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|local_repo| async move {
+    async fn test_move_local_repo_path_valid(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |local_repo| async move {
             // Create remote repo
             let remote_repo = test::create_remote_repo(&local_repo).await?;
 
@@ -184,9 +194,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_clone_root_subtree_depth_1() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+    async fn test_clone_root_subtree_depth_1(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(kind, |_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
@@ -217,9 +232,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_clone_annotations_subtree() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+    async fn test_clone_annotations_subtree(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(kind, |_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
@@ -269,9 +289,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_clone_annotations_test_subtree() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+    async fn test_clone_annotations_test_subtree(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(kind, |_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
@@ -299,9 +324,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_clone_multiple_subtrees() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+    async fn test_clone_multiple_subtrees(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(kind, |_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
@@ -333,9 +361,12 @@ mod tests {
     }
 
     // Test for clone --all that checks to make sure we have all commits, all deleted files, etc
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_clone_dash_all() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+    async fn test_clone_dash_all(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(kind, |local_repo, remote_repo| async move {
             // Create additional branch on remote repo before clone
             let branch_name = "test-branch";
             api::client::branches::create_from_branch(
@@ -400,9 +431,14 @@ mod tests {
     }
 
     // Test for clone --all that checks to make sure we have all commits, all deleted files, etc
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_clone_all_push_all_full_commit_history() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+    async fn test_clone_all_push_all_full_commit_history(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(kind, |_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
 
             // Clone with the --all flag
@@ -444,9 +480,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_clone_all_push_all_modified_deleted_files() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+    async fn test_clone_all_push_all_modified_deleted_files(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(kind, |local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
 
             // Create a new text file
@@ -521,9 +562,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_clone_full() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|mut repo| async move {
+    async fn test_clone_full(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(kind, |mut repo| async move {
             // Track a file
             let filename = "labels.txt";
             let file_path = repo.path.join(filename);
@@ -627,9 +671,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_clone_subtree_and_checkout_branch() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+    async fn test_clone_subtree_and_checkout_branch(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(kind, |local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             let feature_branch_name = "feature/subtree-checkout-test";
@@ -739,9 +788,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_cloned_repos_not_set_as_remote_mode_by_default() -> Result<(), OxenError> {
-        test::run_one_commit_sync_repo_test(|mut _local_repo, remote_repo| async move {
+    async fn test_cloned_repos_not_set_as_remote_mode_by_default(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_one_commit_sync_repo_test(kind, |mut _local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             test::run_empty_dir_test_async(|repo_dir| async move {
                 let new_repo_dir = repo_dir.join(PathBuf::from("new"));

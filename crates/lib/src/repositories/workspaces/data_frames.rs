@@ -559,6 +559,8 @@ fn add_exclude_to_sql(sql: &str) -> Result<String, OxenError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::repository_config::MerkleStoreKind;
+    use rstest::rstest;
     use std::path::Path;
 
     use serde_json::json;
@@ -575,14 +577,17 @@ mod tests {
     use crate::test;
     use crate::{repositories, util};
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_add_row() -> Result<(), OxenError> {
+    async fn test_add_row(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -624,12 +629,17 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_delete_added_row_with_two_rows() -> Result<(), OxenError> {
+    async fn test_delete_added_row_with_two_rows(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -701,14 +711,17 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_clear_changes() -> Result<(), OxenError> {
+    async fn test_clear_changes(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -790,14 +803,17 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_delete_committed_row() -> Result<(), OxenError> {
+    async fn test_delete_committed_row(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -884,12 +900,15 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_modify_added_row() -> Result<(), OxenError> {
+    async fn test_modify_added_row(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -958,14 +977,17 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_delete_added_single_row() -> Result<(), OxenError> {
+    async fn test_delete_added_single_row(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -1024,13 +1046,18 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_modify_row_back_to_original_state() -> Result<(), OxenError> {
+    async fn test_modify_row_back_to_original_state(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -1111,12 +1138,17 @@ mod tests {
         })
         .await
     }
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_restore_row_after_modification() -> Result<(), OxenError> {
+    async fn test_restore_row_after_modification(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -1198,12 +1230,15 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_restore_row_delete() -> Result<(), OxenError> {
+    async fn test_restore_row_delete(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -1267,14 +1302,19 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_commit_tabular_append_invalid_column() -> Result<(), OxenError> {
+    async fn test_commit_tabular_append_invalid_column(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         // Skip if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             // Try stage an append
             let path = Path::new("annotations")
                 .join("train")
@@ -1296,14 +1336,19 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_commit_tabular_appends_staged() -> Result<(), OxenError> {
+    async fn test_commit_tabular_appends_staged(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         // Skip if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move{
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move{
             let path = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
@@ -1449,12 +1494,17 @@ mod tests {
             .join("bounding_box.csv")
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_add_row_with_list_i64_column() -> Result<(), OxenError> {
+    async fn test_add_row_with_list_i64_column(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let branch = repositories::branches::create_checkout(&repo, "test-list-i64")?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
             let workspace_id = UserConfig::identifier()?;
@@ -1480,12 +1530,17 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_add_row_with_list_str_column_preserves_nulls() -> Result<(), OxenError> {
+    async fn test_add_row_with_list_str_column_preserves_nulls(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let branch = repositories::branches::create_checkout(&repo, "test-list-str")?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
             let workspace_id = UserConfig::identifier()?;
@@ -1518,14 +1573,19 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_add_row_with_list_u32_column() -> Result<(), OxenError> {
+    async fn test_add_row_with_list_u32_column(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         // Regression: previously, list[u32]/list[u8]/etc. panicked in value_to_tosql
         // because only Int32/Int64/Float32/Float64/String/Boolean were handled.
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let branch = repositories::branches::create_checkout(&repo, "test-list-u32")?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
             let workspace_id = UserConfig::identifier()?;
@@ -1551,12 +1611,17 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_add_row_with_list_f64_column() -> Result<(), OxenError> {
+    async fn test_add_row_with_list_f64_column(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let branch = repositories::branches::create_checkout(&repo, "test-list-f64")?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
             let workspace_id = UserConfig::identifier()?;

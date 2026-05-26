@@ -1991,10 +1991,12 @@ pub async fn unpack_async_tar_archive<R: futures_util::AsyncRead + Unpin>(
 
 #[cfg(test)]
 mod tests {
+    use crate::config::repository_config::MerkleStoreKind;
     use crate::error::OxenError;
     use crate::model::EntryDataType;
     use crate::test;
     use crate::util;
+    use rstest::rstest;
 
     use std::path::Path;
 
@@ -2091,9 +2093,11 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn detect_file_type() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits(|repo| {
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
+    fn detect_file_type(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits(kind, |repo| {
             let python_file = "add_1.py";
             let python_with_interpreter_file = "add_2.py";
 

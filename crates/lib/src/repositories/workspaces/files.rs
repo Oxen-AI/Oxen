@@ -114,6 +114,8 @@ pub fn mv(
 
 #[cfg(test)]
 mod tests {
+    use crate::config::repository_config::MerkleStoreKind;
+    use rstest::rstest;
     use std::path::Path;
 
     use crate::config::UserConfig;
@@ -122,14 +124,17 @@ mod tests {
     use crate::repositories::{self, workspaces};
     use crate::test;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_mv_file_in_workspace() -> Result<(), OxenError> {
+    async fn test_mv_file_in_workspace(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
         // Skip workspace ops on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let branch_name = "test-mv";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -206,9 +211,14 @@ mod tests {
     }
 
     /// Workspace created with no files staged; exists() should return Ok(false).
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_exists_returns_false_when_no_files_staged() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_exists_returns_false_when_no_files_staged(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             let file = repo.path.join("hello.txt");
             crate::util::fs::write_to_path(&file, "hello")?;
             repositories::add(&repo, &file).await?;
@@ -226,9 +236,14 @@ mod tests {
     }
 
     /// exists() returns Ok(false) for an unstaged path and Ok(true) after staging it.
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_exists_false_before_staging_true_after() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_exists_false_before_staging_true_after(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             let file = repo.path.join("hello.txt");
             crate::util::fs::write_to_path(&file, "hello")?;
             repositories::add(&repo, &file).await?;
@@ -260,9 +275,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_import_rejects_private_ip() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_import_rejects_private_ip(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             let file = repo.path.join("hello.txt");
             crate::util::fs::write_to_path(&file, "hello")?;
             repositories::add(&repo, &file).await?;

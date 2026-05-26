@@ -148,6 +148,7 @@ criterion = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
 mockito = { workspace = true }
+rstest = { workspace = true }
 s3s = { workspace = true }
 s3s-fs = { workspace = true }
 serial_test = { workspace = true }

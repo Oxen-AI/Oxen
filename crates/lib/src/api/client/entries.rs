@@ -918,6 +918,8 @@ pub async fn try_download_data_from_version_paths(
 
 #[cfg(test)]
 mod tests {
+    use crate::config::repository_config::MerkleStoreKind;
+    use rstest::rstest;
 
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
@@ -927,13 +929,16 @@ mod tests {
 
     use std::path::Path;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_tabular_entries() -> Result<(), OxenError> {
+    async fn test_list_tabular_entries(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(kind, |local_repo, remote_repo| async move {
             // Add a tabular file at the root and one in a directory
             let revision = DEFAULT_BRANCH_NAME;
             let root_path = Path::new("");
@@ -1001,133 +1006,201 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_download_file_large() -> Result<(), OxenError> {
-        test::run_select_data_sync_remote("large_files", |local_repo, remote_repo| async move {
-            let remote_path = Path::new("large_files").join("test.csv");
-            let local_path = local_repo.path.join("data.csv");
-            let revision = DEFAULT_BRANCH_NAME;
-            api::client::entries::download_entry(&remote_repo, &remote_path, &local_path, revision)
+    async fn test_download_file_large(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_select_data_sync_remote(
+            kind,
+            "large_files",
+            |local_repo, remote_repo| async move {
+                let remote_path = Path::new("large_files").join("test.csv");
+                let local_path = local_repo.path.join("data.csv");
+                let revision = DEFAULT_BRANCH_NAME;
+                api::client::entries::download_entry(
+                    &remote_repo,
+                    &remote_path,
+                    &local_path,
+                    revision,
+                )
                 .await?;
 
-            assert!(local_path.exists());
+                assert!(local_path.exists());
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_download_file_large_to_dir() -> Result<(), OxenError> {
-        test::run_select_data_sync_remote("large_files", |local_repo, remote_repo| async move {
-            let remote_path = Path::new("large_files").join("test.csv");
-            let local_path = local_repo.path.join("train_data");
-            let revision = DEFAULT_BRANCH_NAME;
-            // mkdir train_data
-            util::fs::create_dir_all(&local_path)?;
-            api::client::entries::download_entry(&remote_repo, &remote_path, &local_path, revision)
+    async fn test_download_file_large_to_dir(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_select_data_sync_remote(
+            kind,
+            "large_files",
+            |local_repo, remote_repo| async move {
+                let remote_path = Path::new("large_files").join("test.csv");
+                let local_path = local_repo.path.join("train_data");
+                let revision = DEFAULT_BRANCH_NAME;
+                // mkdir train_data
+                util::fs::create_dir_all(&local_path)?;
+                api::client::entries::download_entry(
+                    &remote_repo,
+                    &remote_path,
+                    &local_path,
+                    revision,
+                )
                 .await?;
 
-            assert!(local_path.join("test.csv").exists());
+                assert!(local_path.join("test.csv").exists());
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_download_file_large_to_dir_does_not_exist() -> Result<(), OxenError> {
-        test::run_select_data_sync_remote("large_files", |local_repo, remote_repo| async move {
-            let remote_path = Path::new("large_files").join("test.csv");
-            let local_path = local_repo.path.join("I_DO_NOT_EXIST").join("put_it_here");
-            let revision = DEFAULT_BRANCH_NAME;
-            let result = api::client::entries::download_entry(
-                &remote_repo,
-                &remote_path,
-                &local_path,
-                revision,
-            )
-            .await;
+    async fn test_download_file_large_to_dir_does_not_exist(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_select_data_sync_remote(
+            kind,
+            "large_files",
+            |local_repo, remote_repo| async move {
+                let remote_path = Path::new("large_files").join("test.csv");
+                let local_path = local_repo.path.join("I_DO_NOT_EXIST").join("put_it_here");
+                let revision = DEFAULT_BRANCH_NAME;
+                let result = api::client::entries::download_entry(
+                    &remote_repo,
+                    &remote_path,
+                    &local_path,
+                    revision,
+                )
+                .await;
 
-            assert!(result.is_err());
+                assert!(result.is_err());
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_download_file_large_to_dir_does_exist() -> Result<(), OxenError> {
-        test::run_select_data_sync_remote("large_files", |local_repo, remote_repo| async move {
-            let remote_path = Path::new("large_files").join("test.csv");
-            let local_path = local_repo.path.join("I_DO_EXIST");
-            util::fs::create_dir_all(&local_path)?;
-            let revision = DEFAULT_BRANCH_NAME;
-            let result = api::client::entries::download_entry(
-                &remote_repo,
-                &remote_path,
-                &local_path,
-                revision,
-            )
-            .await;
+    async fn test_download_file_large_to_dir_does_exist(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_select_data_sync_remote(
+            kind,
+            "large_files",
+            |local_repo, remote_repo| async move {
+                let remote_path = Path::new("large_files").join("test.csv");
+                let local_path = local_repo.path.join("I_DO_EXIST");
+                util::fs::create_dir_all(&local_path)?;
+                let revision = DEFAULT_BRANCH_NAME;
+                let result = api::client::entries::download_entry(
+                    &remote_repo,
+                    &remote_path,
+                    &local_path,
+                    revision,
+                )
+                .await;
 
-            assert!(result.is_ok());
-            assert!(local_path.join("test.csv").exists());
+                assert!(result.is_ok());
+                assert!(local_path.join("test.csv").exists());
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_download_small_file_to_dir_does_exist() -> Result<(), OxenError> {
-        test::run_select_data_sync_remote("annotations", |local_repo, remote_repo| async move {
-            let remote_path = Path::new("annotations").join("README.md");
-            let local_path = local_repo.path.join("I_DO_EXIST");
-            util::fs::create_dir_all(&local_path)?;
-            let revision = DEFAULT_BRANCH_NAME;
-            let result = api::client::entries::download_entry(
-                &remote_repo,
-                &remote_path,
-                &local_path,
-                revision,
-            )
-            .await;
+    async fn test_download_small_file_to_dir_does_exist(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_select_data_sync_remote(
+            kind,
+            "annotations",
+            |local_repo, remote_repo| async move {
+                let remote_path = Path::new("annotations").join("README.md");
+                let local_path = local_repo.path.join("I_DO_EXIST");
+                util::fs::create_dir_all(&local_path)?;
+                let revision = DEFAULT_BRANCH_NAME;
+                let result = api::client::entries::download_entry(
+                    &remote_repo,
+                    &remote_path,
+                    &local_path,
+                    revision,
+                )
+                .await;
 
-            assert!(result.is_ok());
-            assert!(local_path.join("README.md").exists());
+                assert!(result.is_ok());
+                assert!(local_path.join("README.md").exists());
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_download_different_dir() -> Result<(), OxenError> {
-        test::run_select_data_sync_remote("annotations", |local_repo, remote_repo| async move {
-            let remote_path = Path::new("annotations");
-            let local_path = local_repo.path.join("data");
-            let revision = DEFAULT_BRANCH_NAME;
-            api::client::entries::download_entry(&remote_repo, &remote_path, &local_path, revision)
+    async fn test_download_different_dir(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_select_data_sync_remote(
+            kind,
+            "annotations",
+            |local_repo, remote_repo| async move {
+                let remote_path = Path::new("annotations");
+                let local_path = local_repo.path.join("data");
+                let revision = DEFAULT_BRANCH_NAME;
+                api::client::entries::download_entry(
+                    &remote_repo,
+                    &remote_path,
+                    &local_path,
+                    revision,
+                )
                 .await?;
-            assert!(local_path.exists());
-            assert!(local_path.join("annotations").join("README.md").exists());
-            assert!(
-                local_path
-                    .join("annotations")
-                    .join("train")
-                    .join("bounding_box.csv")
-                    .exists()
-            );
+                assert!(local_path.exists());
+                assert!(local_path.join("annotations").join("README.md").exists());
+                assert!(
+                    local_path
+                        .join("annotations")
+                        .join("train")
+                        .join("bounding_box.csv")
+                        .exists()
+                );
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_get_root_entry_metadata() -> Result<(), OxenError> {
-        test::run_one_commit_sync_repo_test(|_local_repo, remote_repo| async move {
+    async fn test_get_root_entry_metadata(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_one_commit_sync_repo_test(kind, |_local_repo, remote_repo| async move {
             let entry =
                 api::client::entries::get_entry(&remote_repo, Path::new(""), DEFAULT_BRANCH_NAME)
                     .await;

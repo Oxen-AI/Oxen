@@ -188,10 +188,16 @@ mod tests {
     where
         F: FnOnce(&LocalRepository, &LmdbBackend) -> Result<(), OxenError> + std::panic::UnwindSafe,
     {
-        crate::test::run_empty_local_repo_test(|repo| {
-            let backend = open_lmdb_at(&repo.path);
-            test_fn(&repo, &backend)
-        })
+        // These tests exercise the `LmdbBackend` directly via `open_lmdb_at` (a separate
+        // env under the OS temp dir), so the repo's own Merkle store kind is irrelevant —
+        // use `File` for the cheap, default setup.
+        crate::test::run_empty_local_repo_test(
+            crate::config::repository_config::MerkleStoreKind::File,
+            |repo| {
+                let backend = open_lmdb_at(&repo.path);
+                test_fn(&repo, &backend)
+            },
+        )
     }
 
     /// Helper: parse a hex-char string into a [`MerkleHash`]. Uses the `FromStr` impl.

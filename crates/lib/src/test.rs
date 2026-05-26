@@ -8,8 +8,9 @@ pub mod test_utils;
 
 use crate::api;
 use crate::command;
+use crate::config::repository_config::MerkleStoreKind;
 use crate::constants;
-use crate::constants::DEFAULT_REMOTE_NAME;
+use crate::constants::{DEFAULT_REMOTE_NAME, MIN_OXEN_VERSION};
 use crate::core;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
@@ -113,7 +114,7 @@ pub fn init_test_env() {
     }
 }
 
-fn create_prefixed_dir(
+pub(crate) fn create_prefixed_dir(
     base_dir: impl AsRef<Path>,
     prefix: impl AsRef<Path>,
 ) -> Result<PathBuf, OxenError> {
@@ -131,6 +132,42 @@ pub fn create_repo_dir(base_dir: impl AsRef<Path>) -> Result<PathBuf, OxenError>
 
 fn create_empty_dir(base_dir: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
     create_prefixed_dir(base_dir, "dir")
+}
+
+/// Base directory under which LMDB-backed test repos are rooted.
+///
+/// LMDB requires APIs that support memory-mapped file semantics. Many virtual
+/// filesystems (e.g. Windows CI's ImDisk RAMDisk at `R:\test`) don't implement
+/// the NT memory-section APIs LMDB depends on, so opening an env on a VFS
+/// fails. RAM disks on Linux/macOS do support mmap, but Windows ones don't.
+/// Routing LMDB-backed test repos to the OS temp dir keeps the env on the
+/// host's real volume (NTFS on Windows runners).
+#[inline(always)]
+pub(crate) fn lmdb_test_base() -> PathBuf {
+    std::env::temp_dir().join("oxen-lmdb-tests")
+}
+
+/// Create a fresh repo dir appropriate for a [`LocalRepository`] backed by the given
+/// [`MerkleStoreKind`]. LMDB-backed repos are routed to [`lmdb_test_base`] so the env
+/// never lands on a VFS like Windows CI's ImDisk RAMDisk; file-backed repos use the
+/// normal [`test_run_dir`].
+pub(crate) fn create_repo_dir_for_kind(kind: MerkleStoreKind) -> Result<PathBuf, OxenError> {
+    match kind {
+        MerkleStoreKind::Lmdb => create_prefixed_dir(lmdb_test_base(), "repo"),
+        MerkleStoreKind::File => create_repo_dir(test_run_dir()),
+    }
+}
+
+/// Init a [`LocalRepository`] at a fresh test dir using the given [`MerkleStoreKind`].
+/// Returns the repo and its directory path — caller is responsible for cleanup, which
+/// for LMDB must happen only after the [`LocalRepository`] is dropped.
+pub(crate) fn init_repo_for_kind(
+    kind: MerkleStoreKind,
+) -> Result<(LocalRepository, PathBuf), OxenError> {
+    let repo_dir = create_repo_dir_for_kind(kind)?;
+    let repo =
+        repositories::init::init_with_version_and_merkle_store(&repo_dir, MIN_OXEN_VERSION, kind)?;
+    Ok((repo, repo_dir))
 }
 
 pub async fn create_remote_repo(repo: &LocalRepository) -> Result<RemoteRepository, OxenError> {
@@ -281,14 +318,51 @@ where
     Ok(())
 }
 
-pub fn run_empty_local_repo_test<T>(test: T) -> Result<(), OxenError>
+/// Kind-aware variant of [`run_empty_dir_test_async`]: hands the test a fresh empty
+/// directory whose location is safe for the given [`MerkleStoreKind`] (LMDB-backed
+/// repos are routed under [`lmdb_test_base`] so the env never lands on a VFS like
+/// Windows CI's ImDisk RAMDisk). Use this for tests that build the repo themselves
+/// via `repositories::init::init_with_version_and_merkle_store(dir, .., kind)` and
+/// need the dir placed correctly for `kind`. The directory (and any repo created in
+/// it) is cleaned up after the test — the inner [`LocalRepository`] is dropped at the
+/// end of the closure, before this removal, so an LMDB env is closed first.
+pub async fn run_empty_dir_test_for_kind_async<T, Fut>(
+    kind: MerkleStoreKind,
+    test: T,
+) -> Result<(), OxenError>
+where
+    T: FnOnce(PathBuf) -> Fut,
+    Fut: Future<Output = Result<(), OxenError>>,
+{
+    init_test_env();
+    log::info!("<<<<< run_empty_dir_test_for_kind_async start ({kind:?})");
+    let repo_dir = match kind {
+        MerkleStoreKind::Lmdb => create_prefixed_dir(lmdb_test_base(), "dir")?,
+        MerkleStoreKind::File => create_empty_dir(test_run_dir())?,
+    };
+
+    log::info!(">>>>> run_empty_dir_test_for_kind_async running test");
+    let result = match test(repo_dir.clone()).await {
+        Ok(_) => true,
+        Err(err) => {
+            eprintln!("Error running test. Err: {err:?}");
+            false
+        }
+    };
+
+    maybe_cleanup_repo(&repo_dir)?;
+
+    assert!(result);
+    Ok(())
+}
+
+pub fn run_empty_local_repo_test<T>(kind: MerkleStoreKind, test: T) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
 {
     init_test_env();
-    log::info!("<<<<< run_empty_local_repo_test start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = repositories::init(&repo_dir)?;
+    log::info!("<<<<< run_empty_local_repo_test start ({kind:?})");
+    let (repo, repo_dir) = init_repo_for_kind(kind)?;
 
     log::info!(">>>>> run_empty_local_repo_test running test");
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match test(repo) {
@@ -306,15 +380,17 @@ where
     Ok(())
 }
 
-pub async fn run_empty_local_repo_test_async<T, Fut>(test: T) -> Result<(), OxenError>
+pub async fn run_empty_local_repo_test_async<T, Fut>(
+    kind: MerkleStoreKind,
+    test: T,
+) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository) -> Fut,
     Fut: Future<Output = Result<(), OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_empty_local_repo_test_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = repositories::init(&repo_dir)?;
+    log::info!("<<<<< run_empty_local_repo_test_async start ({kind:?})");
+    let (repo, repo_dir) = init_repo_for_kind(kind)?;
 
     let version_store = repo.version_store();
     version_store.init().await?;
@@ -336,14 +412,16 @@ where
     Ok(())
 }
 
-pub async fn run_one_commit_local_repo_test<T>(test: T) -> Result<(), OxenError>
+pub async fn run_one_commit_local_repo_test<T>(
+    kind: MerkleStoreKind,
+    test: T,
+) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
 {
     init_test_env();
-    log::info!("<<<<< run_one_commit_local_repo_test start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = repositories::init(&repo_dir)?;
+    log::info!("<<<<< run_one_commit_local_repo_test start ({kind:?})");
+    let (repo, repo_dir) = init_repo_for_kind(kind)?;
 
     let txt = generate_random_string(20);
     let file_path = add_txt_file_to_dir(&repo_dir, &txt)?;
@@ -366,15 +444,17 @@ where
     Ok(())
 }
 
-pub async fn run_one_commit_local_repo_test_async<T, Fut>(test: T) -> Result<(), OxenError>
+pub async fn run_one_commit_local_repo_test_async<T, Fut>(
+    kind: MerkleStoreKind,
+    test: T,
+) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository) -> Fut,
     Fut: Future<Output = Result<(), OxenError>>,
 {
     init_test_env();
-    log::debug!("run_one_commit_local_repo_test_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = repositories::init(&repo_dir)?;
+    log::debug!("run_one_commit_local_repo_test_async start ({kind:?})");
+    let (repo, repo_dir) = init_repo_for_kind(kind)?;
 
     let txt = generate_random_string(20);
     let file_path = add_txt_file_to_dir(&repo_dir, &txt)?;
@@ -398,16 +478,17 @@ where
 }
 
 /// Test syncing between local and remote, where both exist, and both are empty
-pub async fn run_one_commit_sync_repo_test<T, Fut>(test: T) -> Result<(), OxenError>
+pub async fn run_one_commit_sync_repo_test<T, Fut>(
+    kind: MerkleStoreKind,
+    test: T,
+) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository, RemoteRepository) -> Fut,
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_one_commit_sync_repo_test start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
-
-    let mut local_repo = repositories::init(&repo_dir)?;
+    log::info!("<<<<< run_one_commit_sync_repo_test start ({kind:?})");
+    let (mut local_repo, repo_dir) = init_repo_for_kind(kind)?;
 
     let txt = generate_random_string(20);
     let file_path = add_txt_file_to_dir(&repo_dir, &txt)?;
@@ -445,16 +526,17 @@ where
 }
 
 /// Test syncing between local and remote where local has high n commits and remote is empty
-pub async fn run_many_local_commits_empty_sync_remote_test<T, Fut>(test: T) -> Result<(), OxenError>
+pub async fn run_many_local_commits_empty_sync_remote_test<T, Fut>(
+    kind: MerkleStoreKind,
+    test: T,
+) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository, RemoteRepository) -> Fut,
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_many_local_commits_empty_sync_remote_test start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
-
-    let mut local_repo = repositories::init(&repo_dir)?;
+    log::info!("<<<<< run_many_local_commits_empty_sync_remote_test start ({kind:?})");
+    let (mut local_repo, repo_dir) = init_repo_for_kind(kind)?;
     let remote_repo = create_remote_repo(&local_repo).await?;
 
     // Set remote
@@ -522,15 +604,17 @@ pub async fn make_many_commits(local_repo: &LocalRepository) -> Result<(), OxenE
     Ok(())
 }
 
-pub async fn run_local_repo_training_data_committed_async<T, F>(test: T) -> Result<(), OxenError>
+pub async fn run_local_repo_training_data_committed_async<T, F>(
+    kind: MerkleStoreKind,
+    test: T,
+) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository) -> F + std::panic::UnwindSafe,
     F: std::future::Future<Output = Result<(), OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_local_repo_training_data_committed_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = repositories::init(&repo_dir)?;
+    log::info!("<<<<< run_local_repo_training_data_committed_async start ({kind:?})");
+    let (repo, repo_dir) = init_repo_for_kind(kind)?;
 
     // Write all the training data files
     populate_dir_with_training_data(&repo_dir)?;
@@ -554,15 +638,17 @@ where
 }
 
 /// Test where we synced training data to the remote
-pub async fn run_training_data_fully_sync_remote<T, Fut>(test: T) -> Result<(), OxenError>
+pub async fn run_training_data_fully_sync_remote<T, Fut>(
+    kind: MerkleStoreKind,
+    test: T,
+) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository, RemoteRepository) -> Fut,
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_training_data_fully_sync_remote start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
-    let mut local_repo = repositories::init(&repo_dir)?;
+    log::info!("<<<<< run_training_data_fully_sync_remote start ({kind:?})");
+    let (mut local_repo, repo_dir) = init_repo_for_kind(kind)?;
 
     // Write all the training data files
     populate_dir_with_training_data(&repo_dir)?;
@@ -598,15 +684,18 @@ where
     Ok(())
 }
 
-pub async fn run_select_data_sync_remote<T, Fut>(data: &str, test: T) -> Result<(), OxenError>
+pub async fn run_select_data_sync_remote<T, Fut>(
+    kind: MerkleStoreKind,
+    data: &str,
+    test: T,
+) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository, RemoteRepository) -> Fut,
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_select_data_sync_remote start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
-    let mut local_repo = repositories::init(&repo_dir)?;
+    log::info!("<<<<< run_select_data_sync_remote start ({kind:?})");
+    let (mut local_repo, repo_dir) = init_repo_for_kind(kind)?;
 
     // Write all the training data files
     populate_select_training_data(&repo_dir, data)?;
@@ -674,17 +763,24 @@ where
 }
 
 /// Test interacting with a remote repo that has nothing synced
-pub async fn run_empty_remote_repo_test<T, Fut>(test: T) -> Result<(), OxenError>
+pub async fn run_empty_remote_repo_test<T, Fut>(
+    kind: MerkleStoreKind,
+    test: T,
+) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository, RemoteRepository) -> Fut,
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_empty_remote_repo_test start");
-    let empty_dir = create_empty_dir(test_run_dir())?;
+    log::info!("<<<<< run_empty_remote_repo_test start ({kind:?})");
+    let empty_dir = match kind {
+        MerkleStoreKind::Lmdb => create_prefixed_dir(lmdb_test_base(), "dir")?,
+        MerkleStoreKind::File => create_empty_dir(test_run_dir())?,
+    };
     let name = format!("repo_{}", uuid::Uuid::new_v4());
     let path = empty_dir.join(name);
-    let local_repo = repositories::init(&path)?;
+    let local_repo =
+        repositories::init::init_with_version_and_merkle_store(&path, MIN_OXEN_VERSION, kind)?;
     let remote_repo = create_remote_repo(&local_repo).await?;
 
     println!("REMOTE REPO: {remote_repo:?}");
@@ -708,17 +804,24 @@ where
 }
 
 /// Test interacting with a remote repo that has nothing synced
-pub async fn run_empty_configured_remote_repo_test<T, Fut>(test: T) -> Result<(), OxenError>
+pub async fn run_empty_configured_remote_repo_test<T, Fut>(
+    kind: MerkleStoreKind,
+    test: T,
+) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository, RemoteRepository) -> Fut,
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_empty_remote_repo_test start");
-    let empty_dir = create_empty_dir(test_run_dir())?;
+    log::info!("<<<<< run_empty_remote_repo_test start ({kind:?})");
+    let empty_dir = match kind {
+        MerkleStoreKind::Lmdb => create_prefixed_dir(lmdb_test_base(), "dir")?,
+        MerkleStoreKind::File => create_empty_dir(test_run_dir())?,
+    };
     let name = format!("repo_{}", uuid::Uuid::new_v4());
     let path = empty_dir.join(name);
-    let mut local_repo = repositories::init(&path)?;
+    let mut local_repo =
+        repositories::init::init_with_version_and_merkle_store(&path, MIN_OXEN_VERSION, kind)?;
 
     // Set the proper remote
     let remote_repo = create_remote_repo(&local_repo).await?;
@@ -753,17 +856,24 @@ where
 }
 
 /// Test interacting with a remote repo that has nothing synced
-pub async fn run_readme_remote_repo_test<T, Fut>(test: T) -> Result<(), OxenError>
+pub async fn run_readme_remote_repo_test<T, Fut>(
+    kind: MerkleStoreKind,
+    test: T,
+) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository, RemoteRepository) -> Fut,
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_empty_remote_repo_test start");
-    let empty_dir = create_empty_dir(test_run_dir())?;
+    log::info!("<<<<< run_empty_remote_repo_test start ({kind:?})");
+    let empty_dir = match kind {
+        MerkleStoreKind::Lmdb => create_prefixed_dir(lmdb_test_base(), "dir")?,
+        MerkleStoreKind::File => create_empty_dir(test_run_dir())?,
+    };
     let name = format!("repo_{}", uuid::Uuid::new_v4());
     let path = empty_dir.join(name);
-    let mut local_repo = repositories::init(&path)?;
+    let mut local_repo =
+        repositories::init::init_with_version_and_merkle_store(&path, MIN_OXEN_VERSION, kind)?;
 
     // Add a README file
     util::fs::write_to_path(local_repo.path.join("README.md"), "Hello World")?;
@@ -849,17 +959,24 @@ where
 }
 
 /// Test interacting with a remote repo that has has the initial commit pushed
-pub async fn run_remote_repo_test_all_data_pushed<T, Fut>(test: T) -> Result<(), OxenError>
+pub async fn run_remote_repo_test_all_data_pushed<T, Fut>(
+    kind: MerkleStoreKind,
+    test: T,
+) -> Result<(), OxenError>
 where
     T: FnOnce(RemoteRepository) -> Fut,
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_remote_repo_test_all_data_pushed start");
-    let empty_dir = create_empty_dir(test_run_dir())?;
+    log::info!("<<<<< run_remote_repo_test_all_data_pushed start ({kind:?})");
+    let empty_dir = match kind {
+        MerkleStoreKind::Lmdb => create_prefixed_dir(lmdb_test_base(), "dir")?,
+        MerkleStoreKind::File => create_empty_dir(test_run_dir())?,
+    };
     let name = format!("repo_{}", uuid::Uuid::new_v4());
     let path = empty_dir.join(name);
-    let mut local_repo = repositories::init(&path)?;
+    let mut local_repo =
+        repositories::init::init_with_version_and_merkle_store(&path, MIN_OXEN_VERSION, kind)?;
 
     // Write all the files
     populate_dir_with_training_data(&local_repo.path)?;
@@ -898,17 +1015,24 @@ where
 }
 
 /// Same as run_remote_repo_test_all_data_pushed but with just one file
-pub async fn run_remote_repo_test_bounding_box_csv_pushed<T, Fut>(test: T) -> Result<(), OxenError>
+pub async fn run_remote_repo_test_bounding_box_csv_pushed<T, Fut>(
+    kind: MerkleStoreKind,
+    test: T,
+) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository, RemoteRepository) -> Fut,
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_remote_repo_test_bounding_box_csv_pushed start");
-    let empty_dir = create_empty_dir(test_run_dir())?;
+    log::info!("<<<<< run_remote_repo_test_bounding_box_csv_pushed start ({kind:?})");
+    let empty_dir = match kind {
+        MerkleStoreKind::Lmdb => create_prefixed_dir(lmdb_test_base(), "dir")?,
+        MerkleStoreKind::File => create_empty_dir(test_run_dir())?,
+    };
     let name = format!("repo_{}", uuid::Uuid::new_v4());
     let path = empty_dir.join(name);
-    let mut local_repo = repositories::init(&path)?;
+    let mut local_repo =
+        repositories::init::init_with_version_and_merkle_store(&path, MIN_OXEN_VERSION, kind)?;
 
     // Write all the files
     create_bounding_box_csv(&local_repo.path)?;
@@ -949,17 +1073,24 @@ where
 }
 
 /// Same as run_remote_repo_test_all_data_pushed but with just one file
-pub async fn run_remote_repo_test_embeddings_jsonl_pushed<T, Fut>(test: T) -> Result<(), OxenError>
+pub async fn run_remote_repo_test_embeddings_jsonl_pushed<T, Fut>(
+    kind: MerkleStoreKind,
+    test: T,
+) -> Result<(), OxenError>
 where
     T: FnOnce(RemoteRepository) -> Fut,
     Fut: Future<Output = Result<RemoteRepository, OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_remote_repo_test_embeddings_jsonl_pushed start");
-    let empty_dir = create_empty_dir(test_run_dir())?;
+    log::info!("<<<<< run_remote_repo_test_embeddings_jsonl_pushed start ({kind:?})");
+    let empty_dir = match kind {
+        MerkleStoreKind::Lmdb => create_prefixed_dir(lmdb_test_base(), "dir")?,
+        MerkleStoreKind::File => create_empty_dir(test_run_dir())?,
+    };
     let name = format!("repo_{}", uuid::Uuid::new_v4());
     let path = empty_dir.join(name);
-    let mut local_repo = repositories::init(&path)?;
+    let mut local_repo =
+        repositories::init::init_with_version_and_merkle_store(&path, MIN_OXEN_VERSION, kind)?;
 
     // Write all the files
     create_embeddings_jsonl(&local_repo.path)?;
@@ -1000,15 +1131,17 @@ where
 }
 
 /// Run a test on a repo with a bunch of files
-pub async fn run_training_data_repo_test_no_commits_async<T, Fut>(test: T) -> Result<(), OxenError>
+pub async fn run_training_data_repo_test_no_commits_async<T, Fut>(
+    kind: MerkleStoreKind,
+    test: T,
+) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository) -> Fut,
     Fut: Future<Output = Result<(), OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_training_data_repo_test_no_commits_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = repositories::init(&repo_dir)?;
+    log::info!("<<<<< run_training_data_repo_test_no_commits_async start ({kind:?})");
+    let (repo, repo_dir) = init_repo_for_kind(kind)?;
 
     let version_store = repo.version_store();
     version_store.init().await?;
@@ -1035,6 +1168,7 @@ where
 }
 
 pub async fn run_training_data_repo_test_no_commits_async_with_version<T, Fut>(
+    kind: MerkleStoreKind,
     version: MinOxenVersion,
     test: T,
 ) -> Result<(), OxenError>
@@ -1043,9 +1177,9 @@ where
     Fut: Future<Output = Result<(), OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_training_data_repo_test_no_commits_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = repositories::init::init_with_version(&repo_dir, version)?;
+    log::info!("<<<<< run_training_data_repo_test_no_commits_async start ({kind:?})");
+    let repo_dir = create_repo_dir_for_kind(kind)?;
+    let repo = repositories::init::init_with_version_and_merkle_store(&repo_dir, version, kind)?;
 
     // Write all the files
     populate_dir_with_training_data(&repo_dir)?;
@@ -1069,6 +1203,7 @@ where
 }
 
 pub async fn run_select_data_repo_test_no_commits_async<T, Fut>(
+    kind: MerkleStoreKind,
     data: &str,
     test: T,
 ) -> Result<(), OxenError>
@@ -1077,9 +1212,8 @@ where
     Fut: Future<Output = Result<(), OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_select_data_repo_test_no_commits_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = repositories::init(&repo_dir)?;
+    log::info!("<<<<< run_select_data_repo_test_no_commits_async start ({kind:?})");
+    let (repo, repo_dir) = init_repo_for_kind(kind)?;
 
     // Write all the files
     populate_select_training_data(&repo_dir, data)?;
@@ -1103,6 +1237,7 @@ where
 }
 
 pub async fn run_select_data_repo_test_committed_async<T, Fut>(
+    kind: MerkleStoreKind,
     data: &str,
     test: T,
 ) -> Result<(), OxenError>
@@ -1111,9 +1246,8 @@ where
     Fut: Future<Output = Result<(), OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_select_data_repo_test_committed_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = repositories::init(&repo_dir)?;
+    log::info!("<<<<< run_select_data_repo_test_committed_async start ({kind:?})");
+    let (repo, repo_dir) = init_repo_for_kind(kind)?;
 
     // Write all the files
     populate_select_training_data(&repo_dir, data)?;
@@ -1143,15 +1277,17 @@ where
     Ok(())
 }
 
-pub async fn run_empty_data_repo_test_no_commits_async<T, Fut>(test: T) -> Result<(), OxenError>
+pub async fn run_empty_data_repo_test_no_commits_async<T, Fut>(
+    kind: MerkleStoreKind,
+    test: T,
+) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository) -> Fut,
     Fut: Future<Output = Result<(), OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_empty_data_repo_test_no_commits_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = repositories::init(&repo_dir)?;
+    log::info!("<<<<< run_empty_data_repo_test_no_commits_async start ({kind:?})");
+    let (repo, repo_dir) = init_repo_for_kind(kind)?;
 
     // Run test to see if it panic'd
     log::info!(">>>>> run_empty_data_repo_test_no_commits_async running test");
@@ -1172,14 +1308,16 @@ where
 }
 
 /// Run a test on a repo with a bunch of files
-pub fn run_training_data_repo_test_no_commits<T>(test: T) -> Result<(), OxenError>
+pub fn run_training_data_repo_test_no_commits<T>(
+    kind: MerkleStoreKind,
+    test: T,
+) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
 {
     init_test_env();
-    log::info!("<<<<< run_training_data_repo_test_no_commits start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = repositories::init(&repo_dir)?;
+    log::info!("<<<<< run_training_data_repo_test_no_commits start ({kind:?})");
+    let (repo, repo_dir) = init_repo_for_kind(kind)?;
 
     // Write all the files
     populate_dir_with_training_data(&repo_dir)?;
@@ -1208,6 +1346,7 @@ where
 
 /// Run a test on a repo with a bunch of files
 pub async fn run_training_data_repo_test_fully_committed_async<T, Fut>(
+    kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
 where
@@ -1215,9 +1354,8 @@ where
     Fut: Future<Output = Result<(), OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_training_data_repo_test_fully_committed_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = repositories::init(&repo_dir)?;
+    log::info!("<<<<< run_training_data_repo_test_fully_committed_async start ({kind:?})");
+    let (repo, repo_dir) = init_repo_for_kind(kind)?;
 
     // Write all the files
     populate_dir_with_training_data(&repo_dir)?;
@@ -1290,6 +1428,7 @@ fn create_embeddings_jsonl(repo_path: &Path) -> Result<(), OxenError> {
 }
 
 pub async fn run_bounding_box_csv_repo_test_fully_committed_async<T, Fut>(
+    kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
 where
@@ -1297,9 +1436,10 @@ where
     Fut: Future<Output = Result<(), OxenError>>,
 {
     init_test_env();
-    log::info!("<<<<< run_bounding_box_csv_repo_test_fully_committed_async start");
-    let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = repositories::init(&repo_dir)?;
+    log::info!("<<<<< run_bounding_box_csv_repo_test_fully_committed_async start ({kind:?})");
+    // `repo_dir` is unused because this helper intentionally leaves the repo on disk
+    // (the cleanup call below is commented out, preserving pre-existing behavior).
+    let (repo, _repo_dir) = init_repo_for_kind(kind)?;
 
     // Write all the files
     create_bounding_box_csv(&repo.path)?;
@@ -2004,17 +2144,22 @@ pub fn add_img_file_to_dir(dir: &Path, file_path: &Path) -> Result<PathBuf, Oxen
 // Catch all tests for the library
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
 
     use std::path::Path;
 
+    use crate::config::repository_config::MerkleStoreKind;
     use crate::error::OxenError;
     use crate::repositories;
 
     use super::{run_training_data_repo_test_fully_committed_async, write_txt_file_to_path};
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_oxen_ignore_file() -> Result<(), OxenError> {
-        run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_oxen_ignore_file(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             // Add a file that we are going to ignore
             let ignore_filename = "ignoreme.txt";
             let ignore_path = repo.path.join(ignore_filename);
@@ -2036,9 +2181,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_oxen_ignore_dir() -> Result<(), OxenError> {
-        run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_oxen_ignore_dir(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             // Add a file that we are going to ignore
             let ignore_dir = "ignoreme/";
             let ignore_path = repo.path.join(ignore_dir);

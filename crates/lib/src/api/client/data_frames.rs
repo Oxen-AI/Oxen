@@ -101,6 +101,8 @@ pub async fn from_directory(
 
 #[cfg(test)]
 mod tests {
+    use crate::config::repository_config::MerkleStoreKind;
+    use rstest::rstest;
 
     use std::path::PathBuf;
 
@@ -119,9 +121,12 @@ mod tests {
 
     use serde_json::json;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_fetch_schema_metadata() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+    async fn test_fetch_schema_metadata(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("large_files");
             util::fs::create_dir_all(&large_dir)?;
@@ -235,9 +240,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_paginate_df_page_one() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+    async fn test_paginate_df_page_one(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("large_files");
             util::fs::create_dir_all(&large_dir)?;
@@ -283,9 +291,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_paginate_df_page_1_page_size_20() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+    async fn test_paginate_df_page_1_page_size_20(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("large_files");
             util::fs::create_dir_all(&large_dir)?;
@@ -333,13 +346,16 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_paginate_df_after_sql() -> Result<(), OxenError> {
+    async fn test_paginate_df_after_sql(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+        test::run_empty_local_repo_test_async(kind, |mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("large_files");
             util::fs::create_dir_all(&large_dir)?;
@@ -428,9 +444,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_get_schema_df_on_branch() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+    async fn test_remote_get_schema_df_on_branch(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("csvs");
             util::fs::create_dir_all(&large_dir)?;
@@ -539,9 +560,12 @@ mod tests {
     }
 
     // Tests passing in no slice or page params for data/test/parquet/wiki_1k.parquet file
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_parquet_no_params() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+    async fn test_remote_parquet_no_params(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("data");
             util::fs::create_dir_all(&large_dir)?;
@@ -605,9 +629,12 @@ mod tests {
     }
 
     // Tests page=4 page_size=6 for data/test/parquet/wiki_1k.parquet file
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_paginate_remote_parquet() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+    async fn test_paginate_remote_parquet(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("data");
             util::fs::create_dir_all(&large_dir)?;
@@ -668,9 +695,12 @@ mod tests {
     }
 
     // Test slice=330..333 for data/test/parquet/wiki_1k.parquet file
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_slice_remote_parquet() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+    async fn test_slice_remote_parquet(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("data");
             util::fs::create_dir_all(&large_dir)?;
@@ -724,9 +754,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_from_directory() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+    async fn test_from_directory(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |mut local_repo| async move {
             let repo_dir = &local_repo.path;
 
             // Create test directory structure
@@ -832,9 +865,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_from_directory_with_images_sets_metadata() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+    async fn test_from_directory_with_images_sets_metadata(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |mut local_repo| async move {
             let repo_dir = &local_repo.path;
 
             // Create test directory structure with images
@@ -932,9 +970,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_from_directory_mixed_files_no_image_metadata() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|mut local_repo| async move {
+    async fn test_from_directory_mixed_files_no_image_metadata(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |mut local_repo| async move {
             let repo_dir = &local_repo.path;
 
             // Create test directory with mixed file types

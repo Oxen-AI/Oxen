@@ -44,6 +44,8 @@ pub async fn restore(
 
 #[cfg(test)]
 mod tests {
+    use crate::config::repository_config::MerkleStoreKind;
+    use rstest::rstest;
 
     use std::path::PathBuf;
 
@@ -53,9 +55,12 @@ mod tests {
 
     use crate::{repositories, test};
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_mode_restore_file() -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(|mut _local_repo, remote_repo| async move {
+    async fn test_remote_mode_restore_file(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_readme_remote_repo_test(kind, |mut _local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -101,9 +106,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_mode_restore_file_with_full_path() -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(|mut _local_repo, remote_repo| async move {
+    async fn test_remote_mode_restore_file_with_full_path(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_readme_remote_repo_test(kind, |mut _local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -149,9 +159,15 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_mode_restore_subdirectory_file() -> Result<(), OxenError> {
+    async fn test_remote_mode_restore_subdirectory_file(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(
+            kind,
             |mut _local_repo, remote_repo| async move {
                 let remote_repo_copy = remote_repo.clone();
 
@@ -211,9 +227,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_mode_restore_dir() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|mut _local_repo, remote_repo| async move {
+    async fn test_remote_mode_restore_dir(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(kind, |mut _local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {

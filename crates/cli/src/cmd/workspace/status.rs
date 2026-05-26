@@ -214,11 +214,16 @@ impl WorkspaceStatusCmd {
 mod tests {
     use super::*;
     use liboxen::api;
+    use liboxen::config::repository_config::MerkleStoreKind;
     use liboxen::error::OxenError;
+    use rstest::rstest;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_workspace_status_by_name() -> Result<(), OxenError> {
-        liboxen::test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+    async fn test_workspace_status_by_name(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        liboxen::test::run_readme_remote_repo_test(kind, |_local_repo, remote_repo| async move {
             let w_id = "test_workspace_id";
             let w_name = "my_test_workspace_name";
             let opts = StagedDataOpts {

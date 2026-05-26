@@ -1231,17 +1231,24 @@ pub fn print_tree_depth(
 
 #[cfg(test)]
 mod tests {
+    use crate::config::repository_config::MerkleStoreKind;
     use crate::error::OxenError;
     use crate::opts::RmOpts;
     use crate::repositories;
     use crate::test;
     use crate::util;
+    use rstest::rstest;
 
     use std::path::PathBuf;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_tabular_files_in_repo() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_list_tabular_files_in_repo(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Create a deeply nested directory
             let dir_path = repo
                 .path
@@ -1317,9 +1324,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merkle_two_files_same_hash() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|local_repo| async move {
+    async fn test_merkle_two_files_same_hash(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |local_repo| async move {
             let p1 = "hi.txt";
             let p2 = "bye.txt";
             let path_1 = local_repo.path.join(p1);
@@ -1360,9 +1372,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_get_node_hashes_between_commits() -> Result<(), OxenError> {
-        test::run_local_repo_training_data_committed_async(|repo| async move {
+    async fn test_get_node_hashes_between_commits(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_local_repo_training_data_committed_async(kind, |repo| async move {
             // Get the initial commit from training data to use as baseline
             let starting_commit = repositories::commits::head_commit(&repo)?;
             println!("Starting commit: {}", starting_commit.id);

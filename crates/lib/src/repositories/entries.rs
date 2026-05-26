@@ -333,6 +333,8 @@ pub fn list_tabular_files_in_repo(
 
 #[cfg(test)]
 mod tests {
+    use crate::config::repository_config::MerkleStoreKind;
+    use rstest::rstest;
     use std::path::Path;
     use std::path::PathBuf;
 
@@ -345,9 +347,14 @@ mod tests {
     use crate::util;
     use tokio::time::sleep;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_api_local_entries_list_all() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
+    async fn test_api_local_entries_list_all(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async(kind, "labels", |repo| async move {
             // (file already created in helper)
             let file_to_add = repo.path.join("labels.txt");
 
@@ -363,9 +370,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_api_local_entries_count_one_for_commit() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
+    async fn test_api_local_entries_count_one_for_commit(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async(kind, "labels", |repo| async move {
             // (file already created in helper)
             let file_to_add = repo.path.join("labels.txt");
 
@@ -381,9 +393,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_api_local_entries_count_many_for_commit() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
+    async fn test_api_local_entries_count_many_for_commit(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async(kind, "train", |repo| async move {
             // (files already created in helper)
             let dir_to_add = repo.path.join("train");
             let num_files = util::fs::rcount_files_in_dir(&dir_to_add);
@@ -399,9 +416,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_api_local_entries_count_many_dirs() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+    async fn test_api_local_entries_count_many_dirs(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
             // (files already created in helper)
             let num_files = util::fs::rcount_files_in_dir(&repo.path);
 
@@ -417,9 +439,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_get_meta_entry_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_get_meta_entry_dir(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let commits = repositories::commits::list(&repo)?;
             let commit = commits.first().unwrap();
 
@@ -435,9 +460,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_get_meta_entry_file() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_get_meta_entry_file(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let commits = repositories::commits::list(&repo)?;
             let commit = commits.first().unwrap();
 
@@ -456,9 +484,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_directories_top_level_directory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_list_directories_top_level_directory(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let commits = repositories::commits::list(&repo)?;
             let commit = commits.first().unwrap();
 
@@ -494,9 +527,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_directories_full() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_list_directories_full(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let commits = repositories::commits::list(&repo)?;
             let commit = commits.first().unwrap();
 
@@ -520,9 +556,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_train_sub_directory_full() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_list_train_sub_directory_full(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let commits = repositories::commits::list(&repo)?;
             let commit = commits.first().unwrap();
 
@@ -546,9 +587,12 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_directories_subset() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_list_directories_subset(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
             let commits = repositories::commits::list(&repo)?;
             let commit = commits.first().unwrap();
 
@@ -577,9 +621,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_directories_1_exactly_ten() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_list_directories_1_exactly_ten(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Create 8 directories
             for n in 0..8 {
                 let dirname = format!("dir_{n}");
@@ -623,9 +672,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_directories_all_dirs_no_files() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_list_directories_all_dirs_no_files(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Create 42 directories
             for n in 0..42 {
                 let dirname = format!("dir_{n:0>3}");
@@ -669,9 +723,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_directories_101_dirs_no_files() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_list_directories_101_dirs_no_files(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Create 101 directories
             for n in 0..101 {
                 let dirname = format!("dir_{n:0>3}");
@@ -715,9 +774,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_directories_exactly_ten_page_two() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_list_directories_exactly_ten_page_two(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Create 8 directories
             for n in 0..8 {
                 let dirname = format!("dir_{n}");
@@ -761,9 +825,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_directories_nine_entries_page_size_ten() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_list_directories_nine_entries_page_size_ten(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Create 7 directories
             for n in 0..7 {
                 let dirname = format!("dir_{n}");
@@ -807,9 +876,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_directories_eleven_entries_page_size_ten() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_list_directories_eleven_entries_page_size_ten(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Create 9 directories
             for n in 0..9 {
                 let dirname = format!("dir_{n}");
@@ -853,9 +927,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_directories_many_dirs_many_files() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_list_directories_many_dirs_many_files(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Create many directories
             let num_dirs = 32;
             for n in 0..num_dirs {
@@ -900,9 +979,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_directories_one_dir_many_files_page_2() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_list_directories_one_dir_many_files_page_2(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Create one directory
             let dir_path = repo.path.join("lonely_dir");
             util::fs::create_dir_all(&dir_path)?;
@@ -944,9 +1028,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_directories_many_dir_some_files_page_2() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_list_directories_many_dir_some_files_page_2(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Create many directories
             let num_dirs = 9;
             for n in 0..num_dirs {
@@ -992,14 +1081,19 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_file_metadata_shows_is_indexed() -> Result<(), OxenError> {
+    async fn test_file_metadata_shows_is_indexed(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
         // skip on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_empty_local_repo_test_async(|repo| async move {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Create a deeply nested directory
             let dir_path = repo
                 .path
@@ -1066,9 +1160,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_directory_with_depth() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_list_directory_with_depth(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Create nested directory structure:
             // root/
             //   dir_a/

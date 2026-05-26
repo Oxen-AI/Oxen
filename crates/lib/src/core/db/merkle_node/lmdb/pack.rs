@@ -390,7 +390,7 @@ mod tests {
         )?;
 
         // File-backed target.
-        test::run_empty_local_repo_test_async(|target_repo| async move {
+        test::run_empty_local_repo_test_async(MerkleStoreKind::File, |target_repo| async move {
             let installed = target_repo
                 .merkle_transport()?
                 .unpack(&mut &buf[..], UnpackOptions::Overwrite)?;
@@ -410,37 +410,40 @@ mod tests {
     /// the LMDB unpacker accepts the canonical file backend wire format.
     #[tokio::test]
     async fn test_file_pack_unpacks_into_lmdb() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|source_repo| async move {
-            // Pack everything that's in the file-backed source.
-            let mut buf = Vec::new();
-            source_repo
-                .merkle_transport()?
-                .pack_all(&mut buf)
-                .expect("pack_all on file backend");
-            assert!(!buf.is_empty(), "expected pack_all to produce bytes");
+        test::run_one_commit_local_repo_test_async(
+            MerkleStoreKind::File,
+            |source_repo| async move {
+                // Pack everything that's in the file-backed source.
+                let mut buf = Vec::new();
+                source_repo
+                    .merkle_transport()?
+                    .pack_all(&mut buf)
+                    .expect("pack_all on file backend");
+                assert!(!buf.is_empty(), "expected pack_all to produce bytes");
 
-            let target_repo =
-                init_test_repo_merkle_init_version_store_async(MerkleStoreKind::Lmdb).await?;
-            let installed = target_repo
-                .merkle_transport()?
-                .unpack(&mut &buf[..], UnpackOptions::Overwrite)?;
-            assert!(
-                !installed.is_empty(),
-                "expected at least one installed hash"
-            );
+                let target_repo =
+                    init_test_repo_merkle_init_version_store_async(MerkleStoreKind::Lmdb).await?;
+                let installed = target_repo
+                    .merkle_transport()?
+                    .unpack(&mut &buf[..], UnpackOptions::Overwrite)?;
+                assert!(
+                    !installed.is_empty(),
+                    "expected at least one installed hash"
+                );
 
-            let store = target_repo.merkle_store()?;
-            // The head commit's hash should be readable in the LMDB target.
-            let head_hash = repositories::commits::head_commit(&source_repo)
-                .expect("source has a head commit")
-                .hash()
-                .expect("head commit's hash");
-            assert!(
-                store.exists(&head_hash)?,
-                "head commit {head_hash} not readable through LMDB target store"
-            );
-            Ok(())
-        })
+                let store = target_repo.merkle_store()?;
+                // The head commit's hash should be readable in the LMDB target.
+                let head_hash = repositories::commits::head_commit(&source_repo)
+                    .expect("source has a head commit")
+                    .hash()
+                    .expect("head commit's hash");
+                assert!(
+                    store.exists(&head_hash)?,
+                    "head commit {head_hash} not readable through LMDB target store"
+                );
+                Ok(())
+            },
+        )
         .await
     }
 

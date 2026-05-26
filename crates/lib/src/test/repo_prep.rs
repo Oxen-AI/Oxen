@@ -4,8 +4,6 @@
 //! commits within a repository.
 //!
 //!
-use std::path::PathBuf;
-
 use crate::config::repository_config::MerkleStoreKind;
 use crate::core::v_latest::init_with_version_and_merkle_store;
 use crate::core::versions::MinOxenVersion;
@@ -16,26 +14,8 @@ use crate::test::repo_guard::{RepoDirGuard, TestLocalRepo};
 use crate::test::test_utils::run_async;
 use crate::test::{
     add_txt_file_to_dir, create_prefixed_dir, create_repo_dir, generate_random_string,
-    init_test_env, test_run_dir,
+    init_test_env, lmdb_test_base, test_run_dir,
 };
-
-/// Base directory under which LMDB-backed test repos are rooted.
-///
-/// LMDB requires APIs that support the memory-mapped file semantics it requires. Many virtual
-/// filesystems don't implement these APIs, so LMDB in general cannot work on a VFS. However,
-/// RAM disks in Linux and macOS do support the mmap APIs LMDB needs.
-///
-/// On Windows, LMDB depends on NT memory-section APIs that are not implemented by RAM disks.
-/// On Windows CI `OXEN_TEST_RUN_DIR=R:\test` is an ImDisk RAMDisk (a VFS) and opening an LMDB
-/// env there fails with `Os { code: 1, .. }` → "Incorrect function." Routing LMDB-backed test
-/// repos to the OS temp dir keeps the env on the host's real volume (NTFS on Windows runners).
-///
-/// This function mirrors `lmdb_test_root` in
-/// `crates/lib/src/core/db/merkle_node/lmdb.rs`, used by the low-level [`LmdbBackend`] tests.
-#[inline(always)]
-fn lmdb_test_base() -> PathBuf {
-    std::env::temp_dir().join("oxen-lmdb-tests")
-}
 
 /// Create a fresh empty dir suitable for an LMDB-backed test repo that deletes the directory on Drop.
 /// The dir lives under [`lmdb_test_base`] rather than `OXEN_TEST_RUN_DIR`.

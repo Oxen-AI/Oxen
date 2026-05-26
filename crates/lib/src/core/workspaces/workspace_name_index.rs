@@ -247,13 +247,20 @@ impl WorkspaceNameIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::repository_config::MerkleStoreKind;
     use crate::error::OxenError;
     use crate::repositories;
     use crate::test;
+    use rstest::rstest;
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_workspace_name_index_put_and_get() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_workspace_name_index_put_and_get(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             let idx = get_index(&repo)?;
             idx.put("my-workspace", "abc-123")?;
             let result = idx.get_id_by_name("my-workspace")?;
@@ -266,9 +273,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_workspace_name_index_has_name() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_workspace_name_index_has_name(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             let idx = get_index(&repo)?;
             idx.put("exists", "id-1")?;
             assert!(idx.has_name("exists")?);
@@ -278,9 +290,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_workspace_name_index_delete() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_workspace_name_index_delete(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             let idx = get_index(&repo)?;
             idx.put("to-delete", "id-1")?;
             assert!(idx.has_name("to-delete")?);
@@ -292,9 +309,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_workspace_name_index_clear() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_workspace_name_index_clear(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             let idx = get_index(&repo)?;
             idx.put("ws-1", "id-1")?;
             idx.put("ws-2", "id-2")?;
@@ -307,9 +329,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_workspace_name_index_list() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_workspace_name_index_list(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             let idx = get_index(&repo)?;
             idx.put("alpha", "id-a")?;
             idx.put("beta", "id-b")?;
@@ -323,9 +350,14 @@ mod tests {
         .await
     }
 
+    #[rstest]
+    #[case::file(MerkleStoreKind::File)]
+    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_workspace_name_index_rebuild_from_disk() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    async fn test_workspace_name_index_rebuild_from_disk(
+        #[case] kind: MerkleStoreKind,
+    ) -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(kind, |repo| async move {
             // Create a file and commit so we have a valid commit to use
             let test_file = repo.path.join("test.txt");
             util::fs::write_to_path(&test_file, "hello")?;
