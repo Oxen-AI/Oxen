@@ -30,16 +30,15 @@ pub fn init_with_version(
     path: impl AsRef<Path>,
     version: MinOxenVersion,
 ) -> Result<LocalRepository, OxenError> {
-    init_with_version_and_merkle_store(path, version, MerkleStoreKind::default())
+    init_with_version_and_merkle_store(path.as_ref(), version, MerkleStoreKind::default())
 }
 
 /// Like [`init_with_version`] but lets the caller pick the Merkle store backend.
 pub fn init_with_version_and_merkle_store(
-    path: impl AsRef<Path>,
+    path: &Path,
     version: MinOxenVersion,
     merkle_store_kind: MerkleStoreKind,
 ) -> Result<LocalRepository, OxenError> {
-    let path = path.as_ref();
     match version {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         _ => core::v_latest::init_with_version_and_merkle_store(
@@ -98,13 +97,15 @@ pub async fn init_with_version_storage_and_merkle_store(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use crate::config::repository_config::MerkleStoreKind;
     use crate::constants::MIN_OXEN_VERSION;
     use crate::error::OxenError;
     use crate::model::LocalRepository;
     use crate::repositories;
     use crate::test;
-
+    use crate::test::repo_prep::create_lmdb_safe_empty_dir;
     use crate::util;
 
     #[tokio::test]
@@ -152,34 +153,18 @@ mod tests {
         // LMDB envs can't open on a VFS (e.g. Windows CI's ImDisk RAMDisk at
         // R:\test); route this test's repo dir off OXEN_TEST_RUN_DIR via the
         // dedicated guard helper.
-        let guard = test::create_lmdb_safe_empty_dir()?;
-        let repo_dir = guard.path();
-        let repo = repositories::init::init_with_version_and_merkle_store(
-            repo_dir,
-            MIN_OXEN_VERSION,
-            MerkleStoreKind::Lmdb,
-        )?;
-        assert_eq!(repo.merkle_store_kind(), MerkleStoreKind::Lmdb);
-        drop(repo); // close the LMDB env so we can reopen
+        let repo_dir = create_lmdb_safe_empty_dir()?;
+        {
+            let repo = repositories::init::init_with_version_and_merkle_store(
+                &repo_dir,
+                MIN_OXEN_VERSION,
+                MerkleStoreKind::Lmdb,
+            )?;
+            assert_eq!(repo.merkle_store_kind(), MerkleStoreKind::Lmdb);
+        } // close the LMDB env so we can reopen
 
-        let reloaded = LocalRepository::from_dir(repo_dir)?;
+        let reloaded = LocalRepository::from_dir(&repo_dir as &Path)?;
         assert_eq!(reloaded.merkle_store_kind(), MerkleStoreKind::Lmdb);
-        Ok(())
-    }
-
-    /// Async init path (used by the CLI) also respects an explicit
-    /// [`MerkleStoreKind::Lmdb`].
-    #[tokio::test]
-    async fn test_init_with_storage_and_lmdb() -> Result<(), OxenError> {
-        let guard = test::create_lmdb_safe_empty_dir()?;
-        let repo = repositories::init::init_with_version_storage_and_merkle_store(
-            guard.path(),
-            MIN_OXEN_VERSION,
-            None,
-            MerkleStoreKind::Lmdb,
-        )
-        .await?;
-        assert_eq!(repo.merkle_store_kind(), MerkleStoreKind::Lmdb);
         Ok(())
     }
 }

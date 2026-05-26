@@ -33,6 +33,7 @@ actix-multipart = "0.7.2"
 actix-multipart-test = "0.0.3"
 actix-web = { version = "4.9.0", features = ["rustls"] }
 actix-web-httpauth = "0.8.0"
+anyhow = "1.0.102"
 approx = "0.5.1"
 arrow = "=58.1.0"
 astral-tokio-tar = "0.5.2"
@@ -107,6 +108,7 @@ opentelemetry = "0.31"
 opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic", "http-json", "trace"] }
 opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
 os_path = "0.8.0"
+page_size = "0.6.0"
 par-stream = { version = "0.10.2", features = ["runtime-tokio"] }
 parking_lot = "0.12.1"
 pathdiff = "0.2.3"
