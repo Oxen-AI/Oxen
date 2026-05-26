@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::{self, BufReader, Read};
 use std::path::Path;
-use xxhash_rust::xxh3::{xxh3_128, Xxh3};
+use xxhash_rust::xxh3::{Xxh3, xxh3_128};
 
 pub fn hash_file_128bit(file_path: &Path) -> io::Result<u128> {
     let file = File::open(file_path)?;

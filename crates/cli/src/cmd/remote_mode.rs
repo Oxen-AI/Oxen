@@ -4,9 +4,6 @@ pub use checkout::RemoteModeCheckoutCmd;
 pub mod commit;
 pub use commit::RemoteModeCommitCmd;
 
-// pub mod pull;
-// pub use pull::RemoteModePullCmd;
-
 pub mod restore;
 pub use restore::RemoteModeRestoreCmd;
 
@@ -66,7 +63,6 @@ impl RemoteModeCmd {
         let commands: Vec<Box<dyn RunCmd>> = vec![
             Box::new(RemoteModeCheckoutCmd),
             Box::new(RemoteModeCommitCmd),
-            // Box::new(RemoteModePullCmd),
             Box::new(RemoteModeRestoreCmd),
             Box::new(RemoteModeStatusCmd),
         ];
