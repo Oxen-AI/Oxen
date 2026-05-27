@@ -664,8 +664,14 @@ mod tests {
     fn lmdb_link_round_trip_duplicate_content_distinct_hashcns() {
         // Same content hash for both, but distinct HashCN (different names).
         let content = MerkleHash::new(0x1234);
-        let cat_2 = HashCN::new(&content, Filename::new_assume_invariants("cat_2.jpg").as_ref());
-        let cat_3 = HashCN::new(&content, Filename::new_assume_invariants("cat_3.jpg").as_ref());
+        let cat_2 = HashCN::new(
+            &content,
+            Filename::new_assume_invariants("cat_2.jpg").as_ref(),
+        );
+        let cat_3 = HashCN::new(
+            &content,
+            Filename::new_assume_invariants("cat_3.jpg").as_ref(),
+        );
         assert_ne!(cat_2, cat_3, "different names must yield different HashCN");
         let children = vec![cat_2, cat_3];
         let l = LmdbLink {

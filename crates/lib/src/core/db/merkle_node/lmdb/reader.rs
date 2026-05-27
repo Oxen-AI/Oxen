@@ -1,4 +1,5 @@
 use crate::core::db::merkle_node::LmdbBackend;
+use crate::core::db::merkle_node::lmdb::value_structs::LmdbDupesRef;
 use crate::core::db::merkle_node::lmdb::{
     LmdbError,
     value_structs::{LmdbLinkRef, LmdbNodeRef},
@@ -23,15 +24,12 @@ impl MerkleReader for LmdbBackend {
     ///       This will return `Ok(false)` on a file node that exists.
     fn exists(&self, hash: &MerkleHash) -> Result<bool, OxenError> {
         let rtxn = self.read_txn()?;
-        let Some(bytes) = Self::retrieve_bytes(&rtxn, &self.merkle_tree_nodes, hash)? else {
+        let Some(node_ref) = get_non_file_node_bytes_reference(self, &rtxn, hash)? else {
             return Ok(false);
         };
-        let node_ref = LmdbNodeRef::from_bytes(bytes)?;
         use MerkleTreeNodeType::*;
-        match node_ref.kind()? {
-            File | FileChunk => Ok(false),
-            Commit | Dir | VNode => Ok(true),
-        }
+        // trait contract is to treat files & file chunks as not existing
+        Ok(!matches!(node_ref.kind()?, File | FileChunk))
     }
 
     /// Retrieves the node with the given `hash` from the store. `None` means no such node exists.
@@ -42,10 +40,9 @@ impl MerkleReader for LmdbBackend {
         let rtxn = self.read_txn()?;
 
         // ── Read the node entry (zero-copy view into mmap). ────────────────
-        let Some(node_bytes) = Self::retrieve_bytes(&rtxn, &self.merkle_tree_nodes, hash)? else {
+        let Some(node_ref) = get_non_file_node_bytes_reference(self, &rtxn, hash)? else {
             return Ok(None);
         };
-        let node_ref = LmdbNodeRef::from_bytes(node_bytes)?;
         let kind = node_ref.kind()?;
         use MerkleTreeNodeType::*;
         if matches!(kind, File | FileChunk) {
@@ -54,7 +51,9 @@ impl MerkleReader for LmdbBackend {
         }
 
         // ── Read the link entry to recover the parent_id. ──────────────────
-        let Some(link_bytes) = Self::retrieve_bytes(&rtxn, &self.merkle_links, hash)? else {
+        let Some(link_bytes) =
+            Self::retrieve_bytes(&rtxn, &self.tables.merkle_links, &hash.to_u128())?
+        else {
             // Node exists but no link row — table-cross integrity violation.
             return Err(LmdbError::IntegrityNoLink(hash.to_hex_hash()).into());
         };
@@ -77,25 +76,33 @@ impl MerkleReader for LmdbBackend {
     ) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, OxenError> {
         let rtxn = self.read_txn()?;
 
-        let Some(link_bytes) = Self::retrieve_bytes(&rtxn, &self.merkle_links, hash)? else {
+        let Some(link_bytes) =
+            Self::retrieve_bytes(&rtxn, &self.tables.merkle_links, &hash.to_u128())?
+        else {
             // Existing semantics: missing link is treated as "no children".
             return Ok(Vec::new());
         };
         let link_ref = LmdbLinkRef::from_bytes(link_bytes)?;
 
         let mut loaded = Vec::with_capacity(link_ref.num_children());
-        for child_hash in link_ref.children_iter() {
-            let Some(child_bytes) =
-                Self::retrieve_bytes(&rtxn, &self.merkle_tree_nodes, &child_hash)?
+        for child_hash_nc in link_ref.children_iter() {
+            let Some(child_bytes) = Self::retrieve_bytes(
+                &rtxn,
+                &self.tables.merkle_node_store,
+                child_hash_nc.as_u128(),
+            )?
             else {
-                return Err(LmdbError::IntegrityNoHash(child_hash.to_hex_hash()).into());
+                return Err(LmdbError::IntegrityNoHash(child_hash_nc.to_hex_hash()).into());
             };
             let child_ref = LmdbNodeRef::from_bytes(child_bytes)?;
             let child_kind = child_ref.kind()?;
+
+            let node = EMerkleTreeNode::from_type_and_bytes(child_kind, child_ref.data)?;
+            let child_hash = *node.hash();
             loaded.push((
                 child_hash,
                 MerkleTreeNode {
-                    node: EMerkleTreeNode::from_type_and_bytes(child_kind, child_ref.data)?,
+                    node,
                     hash: child_hash,
                     parent_id: Some(*hash),
                     children: vec![],
@@ -104,6 +111,46 @@ impl MerkleReader for LmdbBackend {
         }
         Ok(loaded)
     }
+}
+
+/// Get a reference to the LMDB-stored bytes for any non-file or non-file chunk node.
+///
+/// The [`MerkleReader`] trait's `exists` and `get_node` methods ignore file and file chunk nodes.
+/// This funciton looks up a node by its content hash ([`MerkleHash`]) _only_. Any duplicate-content
+/// files have an ambigious mapping for _just_ [`MerkleHash`], since this is a _content hash only_.
+/// This is why the [`LmdbBackend`] addresses nodes by their content _and name_ hash: a [`HashCN`].
+///
+/// A `Ok(Some(.))` returned from this function means that the [`LmdbBackend`] is storing one unique
+/// node for [`MerkleHash`] and that something is either a commit, directory, or virtual directory.
+#[inline(always)]
+fn get_non_file_node_bytes_reference<'a>(
+    lmdb: &LmdbBackend,
+    rtxn: &'a heed::RoTxn<'a, heed::WithTls>,
+    hash: &MerkleHash,
+) -> Result<Option<LmdbNodeRef<'a>>, LmdbError> {
+    let Some(bytes) =
+        LmdbBackend::retrieve_bytes(&rtxn, &lmdb.tables.merkle_node_dupes, &hash.to_u128())?
+    else {
+        return Ok(None);
+    };
+    let known_content_name_hashes = LmdbDupesRef::from_bytes(bytes)?;
+    if known_content_name_hashes.hash_cns.len() > 1 {
+        // only files can have duplicates: this is a list of other
+        // named files that have the same content (that's why they have
+        // the same MerkleHash!). These values are `HashCN`: hash content _and name_.
+        return Ok(None);
+    }
+
+    let Some(hash_cn) = known_content_name_hashes.hash_cns_iter().next() else {
+        return Err(LmdbError::IntegrityNoDupe(hash.to_hex_hash()));
+    };
+    let Some(bytes) =
+        LmdbBackend::retrieve_bytes(&rtxn, &lmdb.tables.merkle_node_store, hash_cn.as_u128())?
+    else {
+        return Err(LmdbError::IntegrityNoNode(hash_cn.to_hex_hash()));
+    };
+
+    Ok(Some(LmdbNodeRef::from_bytes(bytes)?))
 }
 
 #[cfg(test)]
@@ -116,13 +163,15 @@ mod tests {
     // ────────────────────────────────────────────────────────────────────────────
 
     use crate::{
-        core::db::merkle_node::lmdb::tests::{
-            commit_with_hash, dir_with_hash, file_chunk_node_with_hash, file_node_with_hash, h,
-            vnode_with_hash, with_test_backend, write_one,
+        core::db::merkle_node::lmdb::{
+            hash_content_name::hash_cn_from,
+            tests::{
+                commit_with_hash, dir_with_hash, file_chunk_node_with_hash, file_node_with_hash, h,
+                vnode_with_hash, with_test_backend, write_one,
+            },
         },
         error::OxenError,
-        model::MerkleTreeNodeType,
-        model::merkle_tree::merkle_reader::MerkleReader,
+        model::{MerkleTreeNodeType, merkle_tree::merkle_reader::MerkleReader},
     };
 
     #[test]
@@ -176,9 +225,9 @@ mod tests {
         with_test_backend(|repo, backend| {
             let f_h = h("55555555555555555555555555555555");
             let f = file_node_with_hash(repo, f_h);
-            write_one(backend, &f, None)?;
+            let f_h_cn = write_one(backend, &f, None)?;
             let stored = backend
-                .full_get_node(&f_h)?
+                .full_get_node(&f_h_cn)?
                 .expect("file node should be stored");
             assert_eq!(stored.kind, MerkleTreeNodeType::File);
             Ok(())
@@ -190,9 +239,9 @@ mod tests {
         with_test_backend(|_repo, backend| {
             let c_h = h("66666666666666666666666666666666");
             let c = file_chunk_node_with_hash(c_h);
-            write_one(backend, &c, None)?;
+            let c_h_cn = write_one(backend, &c, None)?;
             let stored = backend
-                .full_get_node(&c_h)?
+                .full_get_node(&c_h_cn)?
                 .expect("file chunk node should be stored");
             assert_eq!(stored.kind, MerkleTreeNodeType::FileChunk);
             Ok(())
@@ -206,10 +255,12 @@ mod tests {
             let c_h = h("88888888888888888888888888888888");
             let f = file_node_with_hash(repo, f_h);
             let c = file_chunk_node_with_hash(c_h);
+            let f_h_cn = hash_cn_from(&f);
+            let c_h_cn = hash_cn_from(&c);
             write_one(backend, &f, None)?;
             write_one(backend, &c, None)?;
-            assert!(backend.full_exists(&f_h)?);
-            assert!(backend.full_exists(&c_h)?);
+            assert!(backend.full_exists(&f_h_cn)?);
+            assert!(backend.full_exists(&c_h_cn)?);
             Ok(())
         })
     }
@@ -225,14 +276,20 @@ mod tests {
             let file_h = h("44444444444444444444444444444444");
             let chunk_h = h("55555555555555555555555555555555");
 
-            write_one(backend, &commit_with_hash(repo, commit_h), None)?;
-            write_one(backend, &dir_with_hash(repo, dir_h), None)?;
-            write_one(backend, &vnode_with_hash(repo, vnode_h), None)?;
-            write_one(backend, &file_node_with_hash(repo, file_h), None)?;
-            write_one(backend, &file_chunk_node_with_hash(chunk_h), None)?;
+            let commit_h_hc = write_one(backend, &commit_with_hash(repo, commit_h), None)?;
+            let dir_h_hc = write_one(backend, &dir_with_hash(repo, dir_h), None)?;
+            let vnode_h_hc = write_one(backend, &vnode_with_hash(repo, vnode_h), None)?;
+            let file_h_hc = write_one(backend, &file_node_with_hash(repo, file_h), None)?;
+            let chunk_h_hc = write_one(backend, &file_chunk_node_with_hash(chunk_h), None)?;
 
             // full_exists sees everything.
-            for hash in [&commit_h, &dir_h, &vnode_h, &file_h, &chunk_h] {
+            for hash in [
+                &commit_h_hc,
+                &dir_h_hc,
+                &vnode_h_hc,
+                &file_h_hc,
+                &chunk_h_hc,
+            ] {
                 assert!(
                     backend.full_exists(hash)?,
                     "full_exists should be true for {hash}"

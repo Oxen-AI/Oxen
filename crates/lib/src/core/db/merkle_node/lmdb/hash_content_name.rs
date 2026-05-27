@@ -1,41 +1,15 @@
-use std::ffi::OsString;
-use std::{ffi::OsStr, os::unix::ffi::OsStrExt, path::Path};
+use std::{fmt, path::Path};
 
-use std::fmt;
-use crate::model::{MerkleHash, merkle_tree::merkle_hash::HexHash};
+use crate::model::{MerkleHash, TMerkleTreeNode};
 
-/// The name of a file. Can only be constructed from a valid filepath.
-pub(crate) struct Filename(String);
-
-impl Filename {
-    /// Get the name of the file. Returns None if the path has no file name or if it is not a file.
-    pub fn new(file: &Path) -> Option<Self> {
-        if file.is_file() {
-            file.file_name()
-                .and_then(|n| n.to_str())
-                .filter(|n| !n.is_empty())
-                .map(|n| Self(n.to_string()))
-        } else {
-            None
-        }
-    }
-
-    /// The name of the file.
-    #[inline(always)]
-    pub fn name(&self) -> &str {
-        &self.0
-    }
-
-    /// LMDB package private direct constructor.
-    #[inline(always)]
-    pub (in crate::core::db::merkle_node::lmdb) fn new_assume_invariants<S: Into<String>>(filename: S) -> Option<Self> {
-        let f: String = filename.into();
-        if f.is_empty() {
-            None
-        } else {
-            Some(Self(f))
-        }
-    }
+/// Helper: create a content-name hash from a Merkle tree node.
+pub(super) fn hash_cn_from(node: &dyn TMerkleTreeNode) -> HashCN {
+    HashCN::new(
+        &node.hash(),
+        node.name()
+            .and_then(Filename::new_assume_invariants)
+            .as_ref(),
+    )
 }
 
 // A [`MerkleHash`] of a file's contents and the name of a file.
@@ -85,13 +59,78 @@ impl HashCN {
     }
 
     /// The hexidecimal representation of the name-content hash.
-    pub fn to_hex_hash(&self) -> HexHash {
-        HexHash::new(&MerkleHash::new(self.0))
+    pub fn to_hex_hash(&self) -> HexHashCN {
+        HexHashCN::new(self)
+    }
+}
+
+/// The name of a file. Can only be constructed from a valid filepath.
+pub(crate) struct Filename(String);
+
+impl Filename {
+    /// Get the name of the file. Returns None if the path has no file name or if it is not a file.
+    pub fn new(file: &Path) -> Option<Self> {
+        if file.is_file() {
+            file.file_name()
+                .and_then(|n| n.to_str())
+                .filter(|n| !n.is_empty())
+                .map(|n| Self(n.to_string()))
+        } else {
+            None
+        }
+    }
+
+    /// The name of the file.
+    #[inline(always)]
+    pub fn name(&self) -> &str {
+        &self.0
+    }
+
+    /// LMDB package private direct constructor.
+    #[inline(always)]
+    pub(in crate::core::db::merkle_node::lmdb) fn new_assume_invariants<S: Into<String>>(
+        filename: S,
+    ) -> Option<Self> {
+        let f: String = filename.into();
+        if f.is_empty() { None } else { Some(Self(f)) }
     }
 }
 
 impl fmt::Display for HashCN {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.to_hex_hash())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HexHashCN(String);
+
+impl HexHashCN {
+    /// The 32-character hex-encoded string of the [`u128`] [`HashCN`] value.
+    pub fn new(hash_nc: &HashCN) -> Self {
+        Self(format!("{:032x}", hash_nc.0))
+    }
+}
+
+impl fmt::Display for HexHashCN {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hex_hash_exactly_32_characters() {
+        for v in [810787125761027, 0, u128::MAX, 5, 6491] {
+            let hex = HexHashCN::new(&HashCN::from_raw_u128(v));
+            assert_eq!(
+                hex.to_string().len(),
+                32,
+                "{hex} is not 32 characters long!"
+            );
+        }
     }
 }

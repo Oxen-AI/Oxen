@@ -5,8 +5,10 @@ use heed::{Database, Env, WithTls};
 
 use crate::core::db::merkle_node::lmdb::LmdbError;
 use crate::core::db::merkle_node::lmdb::hash_content_name::{Filename, HashCN};
-use crate::core::db::merkle_node::lmdb::lmdb_backend::{KeyLmdb, LmdbBackend, LmdbTables, ValueLmdb};
-use crate::core::db::merkle_node::lmdb::value_structs::{LmdbLink, LmdbNode};
+use crate::core::db::merkle_node::lmdb::lmdb_backend::{
+    KeyLmdb, LmdbBackend, LmdbTables, ValueLmdb,
+};
+use crate::core::db::merkle_node::lmdb::value_structs::{LmdbDupes, LmdbLink, LmdbNode};
 use crate::error::OxenError;
 use crate::model::merkle_tree::merkle_writer::{
     MerkleWriteSession, MerkleWriter, NodeWriteSession,
@@ -101,7 +103,6 @@ impl<'env> MerkleWriteSession for LmdbWriteSession<'env> {
         }
         let mut wtxn = LmdbBackend::write_txn(self.env)?;
         for pw in pending {
-
             //
             // Perform the following writes:
             //
@@ -114,7 +115,6 @@ impl<'env> MerkleWriteSession for LmdbWriteSession<'env> {
             //  (3) write the tree links:
             //          (MerkleHash) -> Vec<(MerkleHash, XXH3(name))>
             //
-
 
             // (1) write into node store
             let hash_name_content = HashCN::new(&pw.node_hash, pw.filename.as_ref());
@@ -130,36 +130,41 @@ impl<'env> MerkleWriteSession for LmdbWriteSession<'env> {
             )?;
 
             // (2) append the node into the duplicates
-            let duplicates = match LmdbBackend::retrieve_bytes(
+            let duplicates: Vec<HashCN> = match LmdbBackend::retrieve_bytes(
                 &wtxn,
                 &self.tables.merkle_node_dupes,
                 hash_name_content.as_u128(),
             )? {
-                Some(existing) => existing,
-                None => vec![],
-            }
-
+                Some(existing) => {
+                    let mut existing = LmdbDupes::decode(existing)?.hash_cns;
+                    existing.push(hash_name_content);
+                    existing
+                }
+                None => vec![hash_name_content],
+            };
+            LmdbBackend::put_serialized(
+                &mut wtxn,
+                &self.tables.merkle_node_dupes,
+                &pw.node_hash.to_u128(),
+                LmdbDupes::encode,
+                LmdbDupes {
+                    hash_cns: duplicates,
+                },
+            )?;
 
             // (3) write the tree links
-            let children = {
+            let children: Vec<HashCN> = {
                 let mut children = Vec::with_capacity(pw.children.len());
                 for (child_hash, maybe_child_filename, child_node) in pw.children {
-                    LmdbBackend::put_serialized(
-                        &mut wtxn,
-                        self.merkle_tree_nodes,
-                        &child_hash,
-                        LmdbNode::encode,
-                        child_node,
-                    )?;
-                    children.push(child_hash);
+                    let child_hash_cn = HashCN::new(&child_hash, maybe_child_filename.as_ref());
+                    children.push(child_hash_cn);
                 }
                 children
             };
-
             LmdbBackend::put_serialized(
                 &mut wtxn,
-                self.merkle_links,
-                &pw.node_hash,
+                &self.tables.merkle_links,
+                &child_hash.to_u128(),
                 LmdbLink::encode,
                 LmdbLink {
                     parent_id: pw.parent_id,
@@ -221,12 +226,11 @@ impl NodeWriteSession for LmdbNodeWriteSession {
             kind: child.node_type(),
             data: child.to_msgpack_bytes()?,
         };
-        self.children_buffer
-            .push((
-                child.hash(),
-                child.name().map(Filename::new_assume_invariants),
-                child_as_lmdb_node,
-            ));
+        self.children_buffer.push((
+            child.hash(),
+            child.name().map(Filename::new_assume_invariants),
+            child_as_lmdb_node,
+        ));
         Ok(())
     }
 

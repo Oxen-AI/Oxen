@@ -29,6 +29,7 @@ use crate::core::db::merkle_node::lmdb::lmdb_backend::LmdbBackend;
 use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
 use crate::error::OxenError;
 use crate::model::merkle_tree::merkle_transport::{MerklePacker, PackOptions};
+use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::{MerkleHash, MerkleTreeNodeType};
 
 impl MerklePacker for LmdbBackend {
@@ -88,15 +89,9 @@ impl MerklePacker for LmdbBackend {
 
         let mut total: u64 = 0;
         for hash in hashes {
-            let Ok(Some(stored_node)) = self.full_get_node(hash) else {
+            let Ok(Some(stored_node)) = self.get_stored_non_file_node(&hash) else {
                 continue;
             };
-            if matches!(
-                stored_node.kind(),
-                MerkleTreeNodeType::File | MerkleTreeNodeType::FileChunk
-            ) {
-                continue;
-            }
             let Ok(Some(link)) = self.get_links(hash) else {
                 continue;
             };
@@ -144,7 +139,11 @@ fn all_node_hashes(lmdb: &LmdbBackend) -> Result<Vec<MerkleHash>, LmdbError> {
     let rtxn = lmdb.read_txn()?;
     let mut hashes: Vec<MerkleHash> = Vec::new();
     for entry in lmdb
-        .merkle_tree_nodes
+        .tables
+        // the dupes table maps each unique [`MerkleHash`] to all uniquely named files
+        // that have the same content (identified by their [`HashCN`] value, which is
+        // what the dupes table stores!)
+        .merkle_node_dupes
         .iter(&rtxn)
         .map_err(LmdbError::Access)?
     {
@@ -165,40 +164,43 @@ fn append_one_node<W: Write>(
     hash: &MerkleHash,
     opts: &PackOptions,
 ) -> Result<(), OxenError> {
-    let Some(stored_node) = lmdb.full_get_node(hash)? else {
-        return Ok(());
-    };
     // File-level nodes don't get their own dir in the file backend's wire
     // format; they only appear embedded in a parent's `children` blob.
     // Skip here so the LMDB pack stays bit-shape-compatible.
-    if matches!(
-        stored_node.kind(),
-        MerkleTreeNodeType::File | MerkleTreeNodeType::FileChunk
-    ) {
+    let Some(stored_node) = lmdb.get_stored_non_file_node(hash)? else {
         return Ok(());
-    }
+    };
+
     let Some(link) = lmdb.get_links(hash)? else {
         // Node row exists but link row doesn't — should be impossible per
         // the writer's invariants. Skip rather than fail the whole pack.
+        log::error!(
+            "LMDB invariant violation. Content hash {hash} should be a commit, \
+            directory, or virtual directory node but it has no links entry in the tree."
+        );
         return Ok(());
     };
 
     let mut children_blob: Vec<u8> = Vec::new();
     let mut lookup_entries: Vec<LookupEntry> = Vec::with_capacity(link.children().len());
-    for child_hash in link.children() {
-        let Some(child_node) = lmdb.full_get_node(child_hash)? else {
+    for child_hash_cn in link.children() {
+        let Some(child_node) = lmdb.full_get_node(child_hash_cn)? else {
             // Missing child node — emit an empty placeholder so the parent
             // still round-trips. Same silent-skip behaviour as the file
             // backend when its child data is missing on disk.
             continue;
         };
+
+        let child_merkle_hash =
+            *EMerkleTreeNode::from_type_and_bytes(child_node.kind, &child_node.data)?.hash();
+
         let child_data = child_node.data();
         let offset = children_blob.len() as u64;
         let len = child_data.len() as u64;
         children_blob.extend_from_slice(child_data);
         lookup_entries.push(LookupEntry {
             kind: child_node.kind(),
-            hash: *child_hash,
+            hash: child_merkle_hash,
             offset,
             len,
         });

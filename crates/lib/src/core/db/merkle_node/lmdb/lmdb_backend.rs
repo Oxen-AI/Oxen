@@ -8,8 +8,8 @@ use heed::{AnyTls, Database, Env, EnvOpenOptions, WithTls};
 use crate::constants::OXEN_HIDDEN_DIR;
 use crate::core::db::merkle_node::lmdb::LmdbError;
 use crate::core::db::merkle_node::lmdb::hash_content_name::HashCN;
-use crate::core::db::merkle_node::lmdb::value_structs::{LmdbLink, LmdbNode};
-use crate::model::MerkleHash;
+use crate::core::db::merkle_node::lmdb::value_structs::{LmdbDupes, LmdbLink, LmdbNode};
+use crate::model::{MerkleHash, MerkleTreeNodeType};
 use crate::util;
 
 /// Keys are merkle hashes, which are `u128` values.
@@ -37,10 +37,9 @@ pub struct LmdbBackend {
     pub(super) lmdb_env: Env<WithTls>,
     /// All LMDB tables in use by the backend.
     pub(super) tables: LmdbTables,
-
 }
 
-pub (in crate::core::db::merkle_node::lmdb) struct LmdbTables {
+pub(in crate::core::db::merkle_node::lmdb) struct LmdbTables {
     // Stores every kind of merkle tree node: any concrete [`MerkleTreeNode`].
     // This includes files nodes! Note that there is no other data but the Merkle
     // tree node type (u8) and the msgpack-serialized bytes of the actual node.
@@ -49,7 +48,6 @@ pub (in crate::core::db::merkle_node::lmdb) struct LmdbTables {
     // values is the [`LmdbNodeRef`].
     //
     // In the LMDB environment, this has name of the [DB_NODES] constant.
-
     /// Maps HashNC to the actual merkle tree node's bytes.
     ///
     /// -----------------------------------------------------------------------
@@ -204,7 +202,11 @@ impl LmdbBackend {
         Ok(Self {
             repo_root,
             lmdb_env,
-            tables: LmdbTables { merkle_node_store, merkle_node_dupes, merkle_links },
+            tables: LmdbTables {
+                merkle_node_store,
+                merkle_node_dupes,
+                merkle_links,
+            },
         })
     }
 
@@ -283,8 +285,7 @@ impl LmdbBackend {
         value: L,
     ) -> Result<(), LmdbError> {
         let as_bytes = serialize(value);
-        db.put(wtxn, key, &as_bytes)
-            .map_err(LmdbError::Write)
+        db.put(wtxn, key, &as_bytes).map_err(LmdbError::Write)
     }
 
     /// Checks if a node with the given `hash` exists in the store.
@@ -292,7 +293,11 @@ impl LmdbBackend {
     /// Unlike [`MerkleReader::exists`], this method will return `Ok(true)` for file nodes
     /// if the file exists in the tree.
     pub fn full_exists(&self, hash: &HashCN) -> Result<bool, LmdbError> {
-        let exists = Self::key_present(&self.read_txn()?, &self.tables.merkle_node_store, hash.as_u128())?;
+        let exists = Self::key_present(
+            &self.read_txn()?,
+            &self.tables.merkle_node_store,
+            hash.as_u128(),
+        )?;
         Ok(exists)
     }
 
@@ -306,17 +311,30 @@ impl LmdbBackend {
     /// path to validate the header before copying out the msgpack tail.
     pub fn full_get_node(&self, hash: &HashCN) -> Result<Option<LmdbNode>, LmdbError> {
         let rtxn = self.read_txn()?;
-        let Some(bytes) = Self::retrieve_bytes(&rtxn, &self.tables.merkle_node_store, hash.as_u128())? else {
+        let Some(bytes) =
+            Self::retrieve_bytes(&rtxn, &self.tables.merkle_node_store, hash.as_u128())?
+        else {
             return Ok(None);
         };
         Ok(Some(LmdbNode::decode(bytes)?))
+    }
+
+    pub fn get_duplicates(&self, hash: &MerkleHash) -> Result<Option<LmdbDupes>, LmdbError> {
+        let rtxn = self.read_txn()?;
+        let Some(bytes) =
+            Self::retrieve_bytes(&rtxn, &self.tables.merkle_node_dupes, &hash.to_u128())?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(LmdbDupes::decode(bytes)?))
     }
 
     /// Retreives the node's parent link (if present) and its children. Returns Ok(None)
     /// if there is no node for the given hash.
     pub fn get_links(&self, hash: &MerkleHash) -> Result<Option<LmdbLink>, LmdbError> {
         let rtxn = self.read_txn()?;
-        let Some(bytes) = Self::retrieve_bytes(&rtxn, &self.tables.merkle_links, &hash.to_u128())? else {
+        let Some(bytes) = Self::retrieve_bytes(&rtxn, &self.tables.merkle_links, &hash.to_u128())?
+        else {
             return Ok(None);
         };
         Ok(Some(LmdbLink::decode(bytes)?))
@@ -333,6 +351,66 @@ impl LmdbBackend {
     //     signal_event.wait();
     //     Ok(())
     // }
+
+    /// Only gets a reference to the stored node information in LMDB for non-file/file chunk nodes.
+    ///
+    /// When packing into the legacy file backend's tar-gz format, we need to make sure that
+    /// file and file chunk nodes are only transmitted in the `children` file. The [`FileBackend`]
+    /// only transmits commit, directory, and virtual directory Merkle tree nodes as `node` files.
+    ///
+    /// When packing, we skip over a file/file chunk node when "sending a node" because that's
+    /// sending a `node` file. That same file/file chunk node **WILL** be included when sending
+    /// the `children` file.
+    #[inline(always)]
+    pub(super) fn get_stored_non_file_node(
+        &self,
+        hash: &MerkleHash,
+    ) -> Result<Option<LmdbNode>, LmdbError> {
+        let rtxn = self.read_txn()?;
+
+        let hash_cns_for_content = {
+            let Some(bytes) =
+                Self::retrieve_bytes(&rtxn, &self.tables.merkle_node_dupes, &hash.to_u128())?
+            else {
+                return Ok(None);
+            };
+
+            LmdbDupes::decode(bytes)?
+        };
+
+        // Don't encode a file or file chunk node here -- it will be handled
+        // in its associated dir/vnode's children.
+        if hash_cns_for_content.hash_cns.len() != 1 {
+            // Only files will potentially have more than one `HashCN` for it.
+            return Ok(None);
+        }
+        let hash_cn = &hash_cns_for_content.hash_cns[0];
+
+        let stored_node = {
+            let Some(bytes) =
+                Self::retrieve_bytes(&rtxn, &self.tables.merkle_node_store, hash_cn.as_u128())?
+            else {
+                // we don't actually have this node -- this is an invairant violation, since
+                // we have it in the dupes table. But here we can't get anything useful.
+                log::error!(
+                    "LMDB invariant violation: have content-name hash {} listed for content hash {}, \
+                    but main node store table doesn't have this content-name hash!",
+                    hash_cn.to_hex_hash(),
+                    hash.to_hex_hash(),
+                );
+                return Ok(None);
+            };
+            LmdbNode::decode(bytes)?
+        };
+        if matches!(
+            stored_node.kind,
+            MerkleTreeNodeType::File | MerkleTreeNodeType::FileChunk
+        ) {
+            // Don't consider a unique file.
+            return Ok(None);
+        }
+        Ok(Some(stored_node))
+    }
 }
 
 impl Drop for LmdbBackend {
