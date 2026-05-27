@@ -84,10 +84,6 @@ impl DirNode {
                     data_type_sizes: opts.data_type_sizes,
                 }),
             }),
-            _ => Err(OxenError::basic_str(format!(
-                "Unsupported DirNode version: {}",
-                repo.min_version()
-            ))),
         }
     }
 

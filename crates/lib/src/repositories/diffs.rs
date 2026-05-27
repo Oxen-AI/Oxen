@@ -10,7 +10,6 @@
 
 use crate::constants::{CACHE_DIR, COMPARES_DIR, LEFT_COMPARE_COMMIT, RIGHT_COMPARE_COMMIT};
 use crate::core::merge::entry_merge_conflict_reader::EntryMergeConflictReader;
-use crate::core::versions::MinOxenVersion;
 use crate::model::entry::commit_entry::CommitPath;
 use crate::model::merkle_tree::node::FileNode;
 
@@ -1220,21 +1219,16 @@ pub async fn diff_entries(
     head_commit: &Commit,
     df_opts: DFOpts,
 ) -> Result<DiffEntry, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            core::v_latest::diff::diff_entries(
-                repo,
-                file_path,
-                base_entry,
-                base_commit,
-                head_entry,
-                head_commit,
-                df_opts,
-            )
-            .await
-        }
-    }
+    core::v_latest::diff::diff_entries(
+        repo,
+        file_path,
+        base_entry,
+        base_commit,
+        head_entry,
+        head_commit,
+        df_opts,
+    )
+    .await
 }
 
 pub fn list_changed_dirs(
@@ -1242,10 +1236,7 @@ pub fn list_changed_dirs(
     base_commit: &Commit,
     head_commit: &Commit,
 ) -> Result<Vec<(PathBuf, DiffEntryStatus)>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::diff::list_changed_dirs(repo, base_commit, head_commit),
-    }
+    core::v_latest::diff::list_changed_dirs(repo, base_commit, head_commit)
 }
 
 pub fn cache_tabular_diff(
@@ -1391,21 +1382,16 @@ pub async fn list_diff_entries(
     page: usize,
     page_size: usize,
 ) -> Result<DiffEntriesCounts, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            core::v_latest::diff::list_diff_entries(
-                repo,
-                base_commit,
-                head_commit,
-                base_dir,
-                head_dir,
-                page,
-                page_size,
-            )
-            .await
-        }
-    }
+    core::v_latest::diff::list_diff_entries(
+        repo,
+        base_commit,
+        head_commit,
+        base_dir,
+        head_dir,
+        page,
+        page_size,
+    )
+    .await
 }
 
 fn write_diff_df_cache(

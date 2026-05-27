@@ -16,7 +16,6 @@
 
 use crate::core;
 pub use crate::core::v_latest::clean::CleanResult;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::opts::CleanOpts;
@@ -25,10 +24,7 @@ use crate::opts::CleanOpts;
 ///
 /// See the module-level docs for the full behavior contract.
 pub async fn clean(repo: &LocalRepository, opts: &CleanOpts) -> Result<CleanResult, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::clean::clean(repo, opts).await,
-    }
+    core::v_latest::clean::clean(repo, opts).await
 }
 
 #[cfg(test)]

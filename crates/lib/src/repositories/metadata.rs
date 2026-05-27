@@ -2,7 +2,6 @@
 //!
 
 use crate::core;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::entry::entry_data_type::EntryDataType;
 use crate::model::entry::metadata_entry::CLIMetadataEntry;
@@ -104,10 +103,7 @@ pub fn get_cli(
     entry_path: impl AsRef<Path>,
     data_path: impl AsRef<Path>,
 ) -> Result<CLIMetadataEntry, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::metadata::get_cli(repo, entry_path, data_path),
-    }
+    core::v_latest::metadata::get_cli(repo, entry_path, data_path)
 }
 
 /// Returns the file size in bytes.

@@ -1,5 +1,4 @@
 use crate::core;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::Commit;
 use crate::model::Workspace;
@@ -10,17 +9,11 @@ use crate::view::ErrorFileInfo;
 use std::path::{Path, PathBuf};
 
 pub fn exists(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool, OxenError> {
-    match workspace.base_repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::files::exists(workspace, path),
-    }
+    core::v_latest::workspaces::files::exists(workspace, path)
 }
 
 pub async fn add(workspace: &Workspace, path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
-    match workspace.base_repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::files::add(workspace, path).await,
-    }
+    core::v_latest::workspaces::files::add(workspace, path).await
 }
 
 pub async fn add_with_opts(
@@ -28,30 +21,18 @@ pub async fn add_with_opts(
     path: impl AsRef<Path>,
     update_timestamp: bool,
 ) -> Result<PathBuf, OxenError> {
-    match workspace.base_repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            core::v_latest::workspaces::files::add_with_opts(workspace, path, update_timestamp)
-                .await
-        }
-    }
+    core::v_latest::workspaces::files::add_with_opts(workspace, path, update_timestamp).await
 }
 
 pub async fn rm(
     workspace: &Workspace,
     path: impl AsRef<Path>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
-    match workspace.base_repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::files::rm(workspace, path).await,
-    }
+    core::v_latest::workspaces::files::rm(workspace, path).await
 }
 
 pub fn unstage(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), OxenError> {
-    match workspace.base_repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::files::unstage(workspace, path),
-    }
+    core::v_latest::workspaces::files::unstage(workspace, path)
 }
 
 pub async fn import(
@@ -62,21 +43,16 @@ pub async fn import(
     workspace: &Workspace,
     update_timestamp: bool,
 ) -> Result<(), OxenError> {
-    match workspace.base_repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            core::v_latest::workspaces::files::import(
-                url,
-                auth,
-                directory,
-                filename,
-                workspace,
-                update_timestamp,
-            )
-            .await?;
-            Ok(())
-        }
-    }
+    core::v_latest::workspaces::files::import(
+        url,
+        auth,
+        directory,
+        filename,
+        workspace,
+        update_timestamp,
+    )
+    .await?;
+    Ok(())
 }
 
 pub async fn upload_zip(
@@ -86,19 +62,14 @@ pub async fn upload_zip(
     workspace: &Workspace,
     branch: &Branch,
 ) -> Result<Commit, OxenError> {
-    match workspace.base_repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            core::v_latest::workspaces::files::upload_zip(
-                commit_message,
-                user,
-                temp_files,
-                workspace,
-                branch,
-            )
-            .await
-        }
-    }
+    core::v_latest::workspaces::files::upload_zip(
+        commit_message,
+        user,
+        temp_files,
+        workspace,
+        branch,
+    )
+    .await
 }
 
 pub fn mv(
@@ -106,10 +77,7 @@ pub fn mv(
     path: impl AsRef<Path>,
     new_path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
-    match workspace.base_repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::files::mv(workspace, path, new_path),
-    }
+    core::v_latest::workspaces::files::mv(workspace, path, new_path)
 }
 
 #[cfg(test)]

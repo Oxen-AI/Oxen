@@ -7,7 +7,6 @@ use std::path::Path;
 
 use crate::api;
 use crate::core;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::MetadataEntry;
 use crate::model::RemoteRepository;
@@ -39,13 +38,7 @@ pub async fn download_dir(
     remote_path: impl AsRef<Path>,
     local_path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
-    match remote_repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            core::v_latest::download::download_dir(remote_repo, entry, remote_path, local_path)
-                .await?;
-        }
-    }
+    core::v_latest::download::download_dir(remote_repo, entry, remote_path, local_path).await?;
 
     Ok(())
 }
@@ -57,19 +50,14 @@ pub async fn download_dir_to_repo(
     remote_path: impl AsRef<Path>,
     local_path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
-    match remote_repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            core::v_latest::download::download_dir_entries(
-                local_repo,
-                remote_repo,
-                entry,
-                remote_path,
-                local_path,
-            )
-            .await?;
-        }
-    }
+    core::v_latest::download::download_dir_entries(
+        local_repo,
+        remote_repo,
+        entry,
+        remote_path,
+        local_path,
+    )
+    .await?;
 
     Ok(())
 }

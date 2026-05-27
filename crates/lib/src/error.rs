@@ -221,6 +221,10 @@ pub enum OxenError {
     #[error("Invalid version: {0}")]
     InvalidVersion(StringError),
 
+    /// The repository was created by an Oxen version this CLI no longer supports.
+    #[error("This repository was created by Oxen v{0}, which is no longer supported by this CLI.")]
+    UnsupportedRepoVersion(StringError),
+
     #[error("Unknown migration: {0}")]
     UnknownMigration(String),
 
@@ -695,6 +699,9 @@ impl OxenError {
             DownloadBatchExhausted { .. } | VersionsMissingOnServer { .. } => {
                 "If a content blob is missing on the server, run `oxen push --missing-files` from a clone with the full local history to repair it."
             }
+            UnsupportedRepoVersion(_) => {
+                "Use an older Oxen release to migrate this repository up to the current format, then retry with this CLI."
+            }
             _ => return None,
         }
         .to_string();
@@ -766,6 +773,11 @@ impl OxenError {
     /// Make a new OxenError::InvalidVersion error.
     pub fn invalid_version(s: impl AsRef<str>) -> Self {
         OxenError::InvalidVersion(StringError::from(s.as_ref()))
+    }
+
+    /// Make a new OxenError::UnsupportedRepoVersion error.
+    pub fn unsupported_repo_version(s: impl AsRef<str>) -> Self {
+        OxenError::UnsupportedRepoVersion(StringError::from(s.as_ref()))
     }
 
     /// Makes an OxenError::Upload error.

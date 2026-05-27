@@ -3,7 +3,6 @@
 use std::path::Path;
 
 use crate::core;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository};
 use crate::repositories;
@@ -30,10 +29,5 @@ pub async fn get_version_file_from_commit_id(
     commit_id: impl AsRef<str>,
     path: impl AsRef<Path>,
 ) -> Result<LocalFilePath, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            core::v_latest::revisions::get_version_file_from_commit_id(repo, commit_id, path).await
-        }
-    }
+    core::v_latest::revisions::get_version_file_from_commit_id(repo, commit_id, path).await
 }

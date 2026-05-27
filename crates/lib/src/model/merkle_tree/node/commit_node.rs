@@ -68,9 +68,6 @@ impl CommitNode {
                     node_type: MerkleTreeNodeType::Commit,
                 }),
             }),
-            _ => Err(OxenError::basic_str(
-                "CommitNode not supported in this version",
-            )),
         }
     }
 

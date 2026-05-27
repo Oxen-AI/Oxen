@@ -51,7 +51,6 @@ impl VNode {
                     num_entries: vnode_opts.num_entries,
                 }),
             }),
-            _ => Err(OxenError::basic_str("VNode not supported in this version")),
         }
     }
 

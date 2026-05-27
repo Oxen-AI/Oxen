@@ -4,7 +4,6 @@
 //!
 
 use crate::core;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::opts::fetch_opts::FetchOpts;
@@ -19,10 +18,7 @@ pub async fn pull(repo: &LocalRepository) -> Result<(), OxenError> {
     #[cfg(feature = "metrics")]
     let timer = std::time::Instant::now();
 
-    let result = match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::pull::pull(repo).await,
-    };
+    let result = core::v_latest::pull::pull(repo).await;
 
     #[cfg(feature = "metrics")]
     {
@@ -37,10 +33,7 @@ pub async fn pull(repo: &LocalRepository) -> Result<(), OxenError> {
 pub async fn pull_all(repo: &LocalRepository) -> Result<(), OxenError> {
     #[cfg(feature = "metrics")]
     metrics::counter!("oxen_pull_total").increment(1);
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::pull::pull_all(repo).await,
-    }
+    core::v_latest::pull::pull_all(repo).await
 }
 
 /// Pull a specific remote and branch
@@ -49,10 +42,7 @@ pub async fn pull_remote_branch(
     repo: &LocalRepository,
     fetch_opts: &FetchOpts,
 ) -> Result<(), OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::pull::pull_remote_branch(repo, fetch_opts).await,
-    }
+    core::v_latest::pull::pull_remote_branch(repo, fetch_opts).await
 }
 
 #[cfg(test)]

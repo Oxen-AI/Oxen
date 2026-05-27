@@ -19,10 +19,7 @@ pub fn list(
     repo: &LocalRepository,
     commit: &Commit,
 ) -> Result<HashMap<PathBuf, Schema>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::data_frames::schemas::list(repo, commit),
-    }
+    core::v_latest::data_frames::schemas::list(repo, commit)
 }
 
 pub fn get_by_path(
@@ -30,10 +27,7 @@ pub fn get_by_path(
     commit: &Commit,
     path: impl AsRef<Path>,
 ) -> Result<Option<Schema>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::data_frames::schemas::get_by_path(repo, commit, path),
-    }
+    core::v_latest::data_frames::schemas::get_by_path(repo, commit, path)
 }
 
 /// Get a staged schema
@@ -41,10 +35,7 @@ pub fn get_staged(
     repo: &LocalRepository,
     path: impl AsRef<Path>,
 ) -> Result<Option<Schema>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::data_frames::schemas::get_staged(repo, path),
-    }
+    core::v_latest::data_frames::schemas::get_staged(repo, path)
 }
 
 /// Get staged schema for workspace
@@ -52,12 +43,7 @@ pub fn get_staged_schema_with_staged_db_manager(
     repo: &LocalRepository,
     path: impl AsRef<Path>,
 ) -> Result<Option<Schema>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::data_frames::schemas::get_staged_schema_with_staged_db_manager(
-            repo, path,
-        ),
-    }
+    core::v_latest::data_frames::schemas::get_staged_schema_with_staged_db_manager(repo, path)
 }
 
 pub fn restore_schema(
@@ -67,24 +53,18 @@ pub fn restore_schema(
     before_column: &str,
     after_column: &str,
 ) -> Result<(), OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => Err(OxenError::basic_str("Not implemented for v0.10.0")),
-        _ => core::v_latest::data_frames::schemas::restore_schema(
-            repo,
-            path,
-            og_schema,
-            before_column,
-            after_column,
-        ),
-    }
+    core::v_latest::data_frames::schemas::restore_schema(
+        repo,
+        path,
+        og_schema,
+        before_column,
+        after_column,
+    )
 }
 
 /// List all the staged schemas
 pub fn list_staged(repo: &LocalRepository) -> Result<HashMap<PathBuf, Schema>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::data_frames::schemas::list_staged(repo),
-    }
+    core::v_latest::data_frames::schemas::list_staged(repo)
 }
 
 /// Get a string representation of the schema given a schema ref
@@ -131,10 +111,7 @@ pub fn show(
 
 /// Remove a schema override from the staging area, TODO: Currently undefined behavior for non-staged schemas
 pub fn rm(repo: &LocalRepository, path: impl AsRef<Path>, staged: bool) -> Result<(), OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::data_frames::schemas::rm(repo, path, staged),
-    }
+    core::v_latest::data_frames::schemas::rm(repo, path, staged)
 }
 
 /// Add metadata to the schema
@@ -143,10 +120,7 @@ pub fn add_schema_metadata(
     path: impl AsRef<Path>,
     metadata: &serde_json::Value,
 ) -> Result<HashMap<PathBuf, Schema>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::data_frames::schemas::add_schema_metadata(repo, path, metadata),
-    }
+    core::v_latest::data_frames::schemas::add_schema_metadata(repo, path, metadata)
 }
 
 /// Add metadata to a specific column
@@ -157,7 +131,6 @@ pub fn add_column_metadata(
     metadata: &serde_json::Value,
 ) -> Result<HashMap<PathBuf, Schema>, OxenError> {
     match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         MinOxenVersion::V0_19_0 => {
             core::v_latest::data_frames::schemas::add_column_metadata(repo, path, column, metadata)
         }

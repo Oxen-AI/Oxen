@@ -2,7 +2,6 @@ use crate::core;
 use crate::core::db;
 use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::column_changes_db::get_all_data_frame_column_changes;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, Schema, Workspace};
 use crate::repositories;
@@ -24,54 +23,39 @@ use crate::model::data_frame::schema::Field;
 use crate::model::data_frame::schema::field::{Changes, PreviousField};
 
 pub fn add(
-    repo: &LocalRepository,
+    _repo: &LocalRepository,
     workspace: &Workspace,
     file_path: impl AsRef<Path>,
     new_column: &NewColumn,
 ) -> Result<DataFrame, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::data_frames::columns::add(
-            workspace,
-            file_path.as_ref(),
-            new_column,
-        ),
-    }
+    core::v_latest::workspaces::data_frames::columns::add(workspace, file_path.as_ref(), new_column)
 }
 
 pub async fn update(
-    repo: &LocalRepository,
+    _repo: &LocalRepository,
     workspace: &Workspace,
     file_path: impl AsRef<Path>,
     column_to_update: &ColumnToUpdate,
 ) -> Result<DataFrame, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            core::v_latest::workspaces::data_frames::columns::update(
-                workspace,
-                file_path.as_ref(),
-                column_to_update,
-            )
-            .await
-        }
-    }
+    core::v_latest::workspaces::data_frames::columns::update(
+        workspace,
+        file_path.as_ref(),
+        column_to_update,
+    )
+    .await
 }
 
 pub fn delete(
-    repo: &LocalRepository,
+    _repo: &LocalRepository,
     workspace: &Workspace,
     file_path: impl AsRef<Path>,
     column_to_delete: &ColumnToDelete,
 ) -> Result<DataFrame, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::data_frames::columns::delete(
-            workspace,
-            file_path.as_ref(),
-            column_to_delete,
-        ),
-    }
+    core::v_latest::workspaces::data_frames::columns::delete(
+        workspace,
+        file_path.as_ref(),
+        column_to_delete,
+    )
 }
 
 pub fn add_column_metadata(
@@ -81,31 +65,23 @@ pub fn add_column_metadata(
     column: String,
     metadata: &serde_json::Value,
 ) -> Result<HashMap<PathBuf, Schema>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => Err(OxenError::basic_str("Not implemented")),
-        _ => core::v_latest::workspaces::data_frames::columns::add_column_metadata(
-            repo, workspace, file_path, column, metadata,
-        ),
-    }
+    core::v_latest::workspaces::data_frames::columns::add_column_metadata(
+        repo, workspace, file_path, column, metadata,
+    )
 }
 
 pub async fn restore(
-    repo: &LocalRepository,
+    _repo: &LocalRepository,
     workspace: &Workspace,
     file_path: impl AsRef<Path>,
     column_to_restore: &ColumnToRestore,
 ) -> Result<DataFrame, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            core::v_latest::workspaces::data_frames::columns::restore(
-                workspace,
-                file_path.as_ref(),
-                column_to_restore,
-            )
-            .await
-        }
-    }
+    core::v_latest::workspaces::data_frames::columns::restore(
+        workspace,
+        file_path.as_ref(),
+        column_to_restore,
+    )
+    .await
 }
 
 pub fn get_column_diff(

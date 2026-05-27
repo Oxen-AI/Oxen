@@ -24,10 +24,7 @@ pub fn get_directory(
     commit: &Commit,
     path: impl AsRef<Path>,
 ) -> Result<Option<DirNode>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 is no longer supported"),
-        _ => core::v_latest::entries::get_directory(repo, commit, path),
-    }
+    core::v_latest::entries::get_directory(repo, commit, path)
 }
 
 /// Get a file node for a commit
@@ -37,7 +34,6 @@ pub fn get_file(
     path: impl AsRef<Path>,
 ) -> Result<Option<FileNode>, OxenError> {
     match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 is no longer supported"),
         MinOxenVersion::V0_19_0 => core::v_old::v0_19_0::entries::get_file(repo, commit, path),
         _ => core::v_latest::entries::get_file(repo, commit, path),
     }
@@ -68,30 +64,20 @@ pub fn list_directory_w_version(
     directory: impl AsRef<Path>,
     revision: impl AsRef<str>,
     paginate_opts: &PaginateOpts,
-    version: MinOxenVersion,
+    _version: MinOxenVersion,
 ) -> Result<PaginatedDirEntries, OxenError> {
-    match version {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            let revision_str = revision.as_ref().to_string();
-            let branch = repositories::branches::get_by_name(repo, &revision_str).ok();
-            let commit = repositories::revisions::get(repo, &revision_str)?;
-            let parsed_resource = ParsedResource {
-                path: directory.as_ref().to_path_buf(),
-                commit,
-                workspace: None,
-                branch,
-                version: PathBuf::from(&revision_str),
-                resource: PathBuf::from(&revision_str).join(directory.as_ref()),
-            };
-            core::v_latest::entries::list_directory(
-                repo,
-                directory,
-                &parsed_resource,
-                paginate_opts,
-            )
-        }
-    }
+    let revision_str = revision.as_ref().to_string();
+    let branch = repositories::branches::get_by_name(repo, &revision_str).ok();
+    let commit = repositories::revisions::get(repo, &revision_str)?;
+    let parsed_resource = ParsedResource {
+        path: directory.as_ref().to_path_buf(),
+        commit,
+        workspace: None,
+        branch,
+        version: PathBuf::from(&revision_str),
+        resource: PathBuf::from(&revision_str).join(directory.as_ref()),
+    };
+    core::v_latest::entries::list_directory(repo, directory, &parsed_resource, paginate_opts)
 }
 
 pub fn list_directory_w_workspace(
@@ -122,51 +108,43 @@ pub fn list_directory_w_workspace_depth(
     workspace: Option<Workspace>,
     paginate_opts: &PaginateOpts,
     sort_opts: &SortOpts,
-    version: MinOxenVersion,
+    _version: MinOxenVersion,
     depth: usize,
 ) -> Result<PaginatedDirEntries, OxenError> {
     let _perf = crate::perf_guard!("entries::list_directory_w_workspace");
 
-    match version {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            let _perf_setup = crate::perf_guard!("entries::list_directory_w_workspace_setup");
-            let revision_str = revision.as_ref().to_string();
-            let version_str = if let Some(workspace) = workspace.clone() {
-                workspace.id.clone()
-            } else {
-                revision_str.clone()
-            };
+    let _perf_setup = crate::perf_guard!("entries::list_directory_w_workspace_setup");
+    let revision_str = revision.as_ref().to_string();
+    let version_str = if let Some(workspace) = workspace.clone() {
+        workspace.id.clone()
+    } else {
+        revision_str.clone()
+    };
 
-            let branch = repositories::branches::get_by_name(repo, &revision_str).ok();
-            let commit = repositories::revisions::get(repo, &revision_str)?;
-            let parsed_resource = ParsedResource {
-                path: directory.as_ref().to_path_buf(),
-                commit,
-                workspace,
-                branch,
-                version: PathBuf::from(&version_str),
-                resource: PathBuf::from(&version_str).join(directory.as_ref()),
-            };
-            drop(_perf_setup);
+    let branch = repositories::branches::get_by_name(repo, &revision_str).ok();
+    let commit = repositories::revisions::get(repo, &revision_str)?;
+    let parsed_resource = ParsedResource {
+        path: directory.as_ref().to_path_buf(),
+        commit,
+        workspace,
+        branch,
+        version: PathBuf::from(&version_str),
+        resource: PathBuf::from(&version_str).join(directory.as_ref()),
+    };
+    drop(_perf_setup);
 
-            core::v_latest::entries::list_directory_with_depth(
-                repo,
-                directory,
-                &parsed_resource,
-                paginate_opts,
-                sort_opts,
-                depth,
-            )
-        }
-    }
+    core::v_latest::entries::list_directory_with_depth(
+        repo,
+        directory,
+        &parsed_resource,
+        paginate_opts,
+        sort_opts,
+        depth,
+    )
 }
 
 pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<(), OxenError> {
     match repo.min_version() {
-        MinOxenVersion::V0_10_0 => {
-            panic!("update_metadata not implemented for oxen v0.10.0")
-        }
         MinOxenVersion::V0_19_0 => panic!("update_metadata not implemented for oxen v0.19.0"),
         _ => core::v_latest::entries::update_metadata(repo, revision),
     }
@@ -189,7 +167,6 @@ pub fn get_meta_entry(
         resource: PathBuf::from(&commit.id).join(path),
     };
     match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
         MinOxenVersion::V0_19_0 => {
             core::v_old::v0_19_0::entries::get_meta_entry(repo, &parsed_resource, path)
         }
@@ -199,13 +176,8 @@ pub fn get_meta_entry(
 
 /// List the paths of all the directories in a given commit
 pub fn list_dir_paths(repo: &LocalRepository, commit: &Commit) -> Result<Vec<PathBuf>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            let tree = core::v_latest::index::CommitMerkleTree::from_commit(repo, commit)?;
-            tree.list_dir_paths()
-        }
-    }
+    let tree = core::v_latest::index::CommitMerkleTree::from_commit(repo, commit)?;
+    tree.list_dir_paths()
 }
 
 /// Commit entries are always files, not directories. Will return None if the path is a directory.
@@ -214,22 +186,19 @@ pub fn get_commit_entry(
     commit: &Commit,
     path: &Path,
 ) -> Result<Option<CommitEntry>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => match core::v_latest::entries::get_file(repo, commit, path)? {
-            None => Ok(None),
-            Some(file) => {
-                let entry = CommitEntry {
-                    commit_id: commit.id.clone(),
-                    path: path.to_path_buf(),
-                    hash: file.hash().to_string(),
-                    num_bytes: file.num_bytes(),
-                    last_modified_seconds: file.last_modified_seconds(),
-                    last_modified_nanoseconds: file.last_modified_nanoseconds(),
-                };
-                Ok(Some(entry))
-            }
-        },
+    match core::v_latest::entries::get_file(repo, commit, path)? {
+        None => Ok(None),
+        Some(file) => {
+            let entry = CommitEntry {
+                commit_id: commit.id.clone(),
+                path: path.to_path_buf(),
+                hash: file.hash().to_string(),
+                num_bytes: file.num_bytes(),
+                last_modified_seconds: file.last_modified_seconds(),
+                last_modified_nanoseconds: file.last_modified_nanoseconds(),
+            };
+            Ok(Some(entry))
+        }
     }
 }
 
@@ -237,17 +206,11 @@ pub fn list_for_commit(
     repo: &LocalRepository,
     commit: &Commit,
 ) -> Result<Vec<CommitEntry>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::entries::list_for_commit(repo, commit),
-    }
+    core::v_latest::entries::list_for_commit(repo, commit)
 }
 
 pub fn count_for_commit(repo: &LocalRepository, commit: &Commit) -> Result<usize, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::entries::count_for_commit(repo, commit),
-    }
+    core::v_latest::entries::count_for_commit(repo, commit)
 }
 
 /// Given a list of entries, compute the total in bytes size of all entries.
@@ -325,10 +288,7 @@ pub fn list_tabular_files_in_repo(
     local_repo: &LocalRepository,
     commit: &Commit,
 ) -> Result<Vec<MetadataEntry>, OxenError> {
-    match local_repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::entries::list_tabular_files_in_repo(local_repo, commit),
-    }
+    core::v_latest::entries::list_tabular_files_in_repo(local_repo, commit)
 }
 
 #[cfg(test)]

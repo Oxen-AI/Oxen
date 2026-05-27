@@ -39,15 +39,7 @@ pub fn init_with_version_and_merkle_store(
     version: MinOxenVersion,
     merkle_store_kind: MerkleStoreKind,
 ) -> Result<LocalRepository, OxenError> {
-    match version {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::init_with_version_and_merkle_store(
-            path,
-            version,
-            false,
-            merkle_store_kind,
-        ),
-    }
+    core::v_latest::init_with_version_and_merkle_store(path, version, false, merkle_store_kind)
 }
 
 pub async fn init_with_storage_config(
@@ -80,19 +72,14 @@ pub async fn init_with_version_storage_and_merkle_store(
     merkle_store_kind: MerkleStoreKind,
 ) -> Result<LocalRepository, OxenError> {
     let path = path.as_ref();
-    match version {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            core::v_latest::init_with_version_storage_and_merkle_store(
-                path,
-                version,
-                storage_config,
-                false,
-                merkle_store_kind,
-            )
-            .await
-        }
-    }
+    core::v_latest::init_with_version_storage_and_merkle_store(
+        path,
+        version,
+        storage_config,
+        false,
+        merkle_store_kind,
+    )
+    .await
 }
 
 #[cfg(test)]

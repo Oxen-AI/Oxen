@@ -8,7 +8,6 @@ use crate::{error::OxenError, util::oxen_version::OxenVersion};
 
 #[derive(Debug, Clone)]
 pub enum MinOxenVersion {
-    V0_10_0,
     V0_19_0,
     V0_25_0,
     LATEST,
@@ -29,13 +28,13 @@ impl MinOxenVersion {
         if let Some(version) = s {
             MinOxenVersion::from_string(version)
         } else {
-            Ok(MinOxenVersion::V0_10_0)
+            Ok(MinOxenVersion::V0_19_0)
         }
     }
 
     pub fn from_string(s: impl AsRef<str>) -> Result<MinOxenVersion, OxenError> {
         match s.as_ref() {
-            "0.10.0" => Ok(MinOxenVersion::V0_10_0),
+            "0.10.0" => Err(OxenError::unsupported_repo_version(s.as_ref())),
             "0.19.0" => Ok(MinOxenVersion::V0_19_0),
             "0.25.0" => Ok(MinOxenVersion::V0_25_0),
             "0.36.0" => Ok(MinOxenVersion::LATEST),
@@ -45,7 +44,6 @@ impl MinOxenVersion {
 
     pub fn as_str(&self) -> &'static str {
         match self {
-            MinOxenVersion::V0_10_0 => "0.10.0",
             MinOxenVersion::V0_19_0 => "0.19.0",
             MinOxenVersion::V0_25_0 => "0.25.0",
             MinOxenVersion::LATEST => "0.36.0",

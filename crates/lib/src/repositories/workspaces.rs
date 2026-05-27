@@ -2,7 +2,6 @@ use crate::config::RepositoryConfig;
 use crate::constants::{OXEN_HIDDEN_DIR, REPO_CONFIG_FILENAME};
 use crate::core;
 use crate::core::staged::staged_db_manager::get_staged_db_manager;
-use crate::core::versions::MinOxenVersion;
 use crate::core::workspaces::workspace_name_index;
 use crate::error::OxenError;
 use crate::model::entry::metadata_entry::{WorkspaceChanges, WorkspaceMetadataEntry};
@@ -485,20 +484,14 @@ pub async fn commit(
     new_commit: &NewCommitBody,
     branch_name: impl AsRef<str>,
 ) -> Result<Commit, OxenError> {
-    match workspace.workspace_repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::commit::commit(workspace, new_commit, branch_name).await,
-    }
+    core::v_latest::workspaces::commit::commit(workspace, new_commit, branch_name).await
 }
 
 pub fn mergeability(
     workspace: &Workspace,
     branch_name: impl AsRef<str>,
 ) -> Result<Mergeable, OxenError> {
-    match workspace.workspace_repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::commit::mergeability(workspace, branch_name),
-    }
+    core::v_latest::workspaces::commit::mergeability(workspace, branch_name)
 }
 
 fn init_workspace_repo(
@@ -506,10 +499,7 @@ fn init_workspace_repo(
     workspace_dir: impl AsRef<Path>,
 ) -> Result<LocalRepository, OxenError> {
     let workspace_dir = workspace_dir.as_ref();
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::init_workspace_repo(repo, workspace_dir),
-    }
+    core::v_latest::workspaces::init_workspace_repo(repo, workspace_dir)
 }
 
 pub fn populate_entries_with_workspace_data(

@@ -42,12 +42,9 @@ pub async fn add_all<T: AsRef<Path>>(
 pub async fn add_all_with_version<T: AsRef<Path>>(
     repo: &LocalRepository,
     paths: impl IntoIterator<Item = T>,
-    version: MinOxenVersion,
+    _version: MinOxenVersion,
 ) -> Result<(), OxenError> {
-    match version {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::add::add(repo, paths).await,
-    }
+    core::v_latest::add::add(repo, paths).await
 }
 
 #[cfg(test)]
@@ -158,7 +155,6 @@ A: Oxen.ai
             repositories::add(&repo, &hello_file).await?;
             // Get status and make sure it is removed from the untracked, and added to the tracked
             let repo_status = repositories::status(&repo).await?;
-            // TODO: v0_10_0 logic should have 0 staged_dirs
             // We stage the parent dir, so should have 1 staged_dir
             assert_eq!(repo_status.staged_dirs.len(), 1);
             assert_eq!(repo_status.staged_files.len(), 1);
