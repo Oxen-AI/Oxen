@@ -4,7 +4,9 @@ use crate::helpers::get_repo;
 use crate::params::{app_data, path_param};
 
 use futures_util::TryStreamExt;
-use futures_util::stream::StreamExt; // Import StreamExt for the next() method
+use futures_util::stream::StreamExt;
+use liboxen::api::requests::RepoNew;
+// Import StreamExt for the next() method
 use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::error::OxenError;
 use liboxen::model::ParsedResource;
@@ -22,7 +24,7 @@ use liboxen::view::{
 };
 
 use actix_multipart::Multipart; // Gives us Multipart
-use liboxen::model::{RepoNew, User};
+use liboxen::model::User;
 
 use actix_web::{HttpRequest, HttpResponse, Result, web};
 use serde_json::from_slice;
@@ -308,12 +310,16 @@ pub async fn create(
 
 async fn handle_json_creation(
     app_data: &OxenAppData,
-    mut data: RepoNew,
+    data: RepoNew,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    data.storage_kind = Some(app_data.config.storage.resolve(data.storage_kind)?);
+    let data = {
+        let mut data = data;
+        data.storage_kind = Some(app_data.config.storage.resolve(data.storage_kind)?);
+        data
+    };
 
     let repo_new_clone = data.clone();
-    match repositories::create(&app_data.path, data).await {
+    match repositories::create(&app_data.path, data, app_data.merkle_store_kind).await {
         Ok(repo) => match repositories::commits::latest_commit(&repo.local_repo) {
             Ok(latest_commit) => Ok(HttpResponse::Ok().json(RepositoryCreationResponse {
                 status: STATUS_SUCCESS.to_string(),
@@ -340,27 +346,12 @@ async fn handle_json_creation(
                 }))
             }
             Err(err) => {
-                println!("Err repositories::create: {err:?}");
                 log::error!("Err repositories::commits::latest_commit: {err:?}");
                 Ok(HttpResponse::InternalServerError()
                     .json(StatusMessage::error("Failed to get latest commit.")))
             }
         },
-        Err(OxenError::RepoAlreadyExists(path)) => {
-            log::debug!("Repo already exists: {path:?}");
-            Ok(HttpResponse::Conflict().json(StatusMessage::error("Repo already exists.")))
-        }
-        Err(OxenError::InvalidRepoName(name)) => {
-            log::debug!("Invalid repo name: {name}");
-            Ok(HttpResponse::BadRequest().json(StatusMessage::error(format!(
-                "Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"
-            ))))
-        }
-        Err(err) => {
-            println!("Err repositories::create: {err:?}");
-            log::error!("Err repositories::create: {err:?}");
-            Ok(HttpResponse::InternalServerError().json(StatusMessage::error("Invalid body.")))
-        }
+        Err(err) => Ok(map_create_error_to_response(err)),
     }
 }
 
@@ -451,17 +442,22 @@ async fn handle_multipart_creation(
     }
 
     // Handle repository creation
-    let Some(mut repo_data) = repo_new else {
-        return Ok(HttpResponse::BadRequest().json(StatusMessage::error("Missing new_repo field")));
-    };
+    let repo_data = {
+        let Some(mut repo_data) = repo_new else {
+            return Ok(
+                HttpResponse::BadRequest().json(StatusMessage::error("Missing new_repo field"))
+            );
+        };
 
-    repo_data.files = if !files.is_empty() { Some(files) } else { None };
-    repo_data.storage_kind = Some(app_data.config.storage.resolve(repo_data.storage_kind)?);
+        repo_data.files = if !files.is_empty() { Some(files) } else { None };
+        repo_data.storage_kind = Some(app_data.config.storage.resolve(repo_data.storage_kind)?);
+        repo_data
+    };
 
     let repo_data_clone = repo_data.clone();
 
     // Create repository
-    match repositories::create(&app_data.path, repo_data).await {
+    match repositories::create(&app_data.path, repo_data, app_data.merkle_store_kind).await {
         Ok(repo) => match repositories::commits::latest_commit(&repo.local_repo) {
             Ok(latest_commit) => Ok(HttpResponse::Ok().json(RepositoryCreationResponse {
                 status: STATUS_SUCCESS.to_string(),
@@ -493,19 +489,40 @@ async fn handle_multipart_creation(
                     .json(StatusMessage::error("Failed to get latest commit.")))
             }
         },
-        Err(OxenError::RepoAlreadyExists(path)) => {
+        Err(err) => Ok(map_create_error_to_response(err)),
+    }
+}
+
+/// Map an [`OxenError`] returned by [`repositories::create`] to the HTTP
+/// response that both creation routes (JSON and multipart) send back.
+///
+/// Kept as a free function so both handlers stay byte-identical on the error
+/// path; any new variant only needs to be added here.
+fn map_create_error_to_response(err: OxenError) -> HttpResponse {
+    match err {
+        OxenError::RepoAlreadyExists(path) => {
             log::debug!("Repo already exists: {path:?}");
-            Ok(HttpResponse::Conflict().json(StatusMessage::error("Repo already exists.")))
+            HttpResponse::Conflict().json(StatusMessage::error("Repo already exists."))
         }
-        Err(OxenError::InvalidRepoName(name)) => {
+        OxenError::InvalidRepoName(name) => {
             log::debug!("Invalid repo name: {name}");
-            Ok(HttpResponse::BadRequest().json(StatusMessage::error(format!(
+            HttpResponse::BadRequest().json(StatusMessage::error(format!(
                 "Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"
-            ))))
+            )))
         }
-        Err(err) => {
+        OxenError::MerkleStoreLmdbNotSupportedOnVfs => {
+            log::debug!(
+                "Rejecting LMDB merkle store request: server sync dir is on a virtual file system"
+            );
+            HttpResponse::BadRequest().json(StatusMessage::error(
+                "Cannot create an LMDB-backed repository on a virtual file system. \
+                 Either retarget the server's sync directory at a real filesystem \
+                 or omit `merkle_store_kind` (defaults to file-backend).",
+            ))
+        }
+        err => {
             log::error!("Err repositories::create: {err:?}");
-            Ok(HttpResponse::InternalServerError().json(StatusMessage::error("Invalid body.")))
+            HttpResponse::InternalServerError().json(StatusMessage::error("Invalid body."))
         }
     }
 }

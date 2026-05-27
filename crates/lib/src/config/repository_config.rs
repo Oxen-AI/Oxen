@@ -25,7 +25,7 @@ pub enum RepoConfigError {
     Write(Box<OxenError>),
 
     #[error("[RepositoryConfig] Unsupported Merkle store kind: {kind}. Expected one of {tokens:?}.", kind=.0, tokens=<MerkleStoreKind as VariantNames>::VARIANTS)]
-    UnknownMerkeKind(#[from] strum::ParseError),
+    UnknownMerkleKind(#[from] strum::ParseError),
 
     #[error("Cannot obtain current directory.")]
     CurDir,

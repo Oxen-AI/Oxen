@@ -1,3 +1,5 @@
+//! Request payload for creating a new repository. `oxen-cli` sends this to `oxen-server`.
+//!
 use http::Uri;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -8,9 +10,15 @@ use crate::model::commit::Commit;
 use crate::model::file::FileNew;
 use crate::storage::StorageKind;
 
-#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
+/// Only used between client and server for creating a new remote repository.
+///
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema, thiserror::Error)]
 pub struct RepoNew {
+    /// The namespace that the repository lives in: dictates application-level repository ownership.
+    /// A namespace can be e.g. a user, a team, or an entire organization. Namespaces must be unique.
     pub namespace: String,
+    /// The name of the repository. When cloned locally, this is the name of the directory.
+    /// This name uniquely identifies it in the namespace.
     pub name: String,
     // All these are optional because you can create a repo with just a namespace and name
     // is_public only applies to OxenHub so is optional
@@ -25,7 +33,7 @@ pub struct RepoNew {
     pub description: Option<String>,
     // Files that you want to seed the repo with
     pub files: Option<Vec<FileNew>>,
-    // Which storage backend the server should use for this repo (e.g. "local", "s3")
+    /// Which storage backend the server should use for this repo (e.g. "local", "s3").
     #[serde(default)]
     pub storage_kind: Option<StorageKind>,
 }
@@ -36,23 +44,24 @@ impl std::fmt::Display for RepoNew {
     }
 }
 
-impl std::error::Error for RepoNew {}
-
 impl RepoNew {
+    /// The `namespace/repository` name.
     pub fn repo_id(&self) -> String {
         format!("{}/{}", self.namespace, self.name)
     }
 
+    /// Either the configured host or the default hostname.
     pub fn host(&self) -> String {
         self.host
             .clone()
             .unwrap_or_else(|| String::from(DEFAULT_HOST))
     }
 
+    /// The URL scheme (i.e. "http" or "https").
     pub fn scheme(&self) -> String {
         self.scheme
             .clone()
-            .unwrap_or_else(|| RepoNew::scheme_default(self.host()))
+            .unwrap_or_else(|| RepoNew::scheme_default(&self.host()))
     }
 
     /// repo_id is the "{namespace}/{repo_name}"
@@ -71,7 +80,7 @@ impl RepoNew {
             name: repo_name,
             is_public: None,
             host: Some(String::from(DEFAULT_HOST)),
-            scheme: Some(RepoNew::scheme_default(String::from(DEFAULT_HOST))),
+            scheme: Some(RepoNew::scheme_default(DEFAULT_HOST)),
             root_commit: None,
             description: None,
             files: None,
@@ -79,8 +88,8 @@ impl RepoNew {
         })
     }
 
-    pub fn scheme_default(host: impl AsRef<str>) -> String {
-        let host = host.as_ref();
+    /// Default using scheme logic: local oxen-server is unencrypted (http). All else is encrypted (https).
+    pub fn scheme_default(host: &str) -> String {
         if host.contains("localhost") || host.contains("127.0.0.1") || host.contains("0.0.0.0") {
             "http".to_string()
         } else {
@@ -97,7 +106,7 @@ impl RepoNew {
             namespace: String::from(namespace.as_ref()),
             name: String::from(name.as_ref()),
             host: Some(String::from(DEFAULT_HOST)),
-            scheme: Some(RepoNew::scheme_default(String::from(DEFAULT_HOST))),
+            scheme: Some(RepoNew::scheme_default(DEFAULT_HOST)),
             is_public: None,
             root_commit: None,
             description: None,
@@ -117,7 +126,7 @@ impl RepoNew {
             name: String::from(name.as_ref()),
             is_public: None,
             host: Some(String::from(host.as_ref())),
-            scheme: Some(RepoNew::scheme_default(host)),
+            scheme: Some(RepoNew::scheme_default(host.as_ref())),
             root_commit: None,
             description: None,
             files: None,
@@ -135,7 +144,7 @@ impl RepoNew {
             name: String::from(name.as_ref()),
             is_public: None,
             host: Some(String::from(DEFAULT_HOST)),
-            scheme: Some(RepoNew::scheme_default(String::from(DEFAULT_HOST))),
+            scheme: Some(RepoNew::scheme_default(DEFAULT_HOST)),
             root_commit: Some(root_commit),
             description: None,
             files: None,
@@ -154,7 +163,7 @@ impl RepoNew {
             name: String::from(name.as_ref()),
             is_public: None,
             host: Some(String::from(DEFAULT_HOST)),
-            scheme: Some(RepoNew::scheme_default(String::from(DEFAULT_HOST))),
+            scheme: Some(RepoNew::scheme_default(DEFAULT_HOST)),
             root_commit: None,
             description: None,
             files: Some(files),
@@ -164,21 +173,25 @@ impl RepoNew {
 
     pub fn from_url(url: &str) -> Result<RepoNew, OxenError> {
         let uri = url.parse::<Uri>()?;
-        let mut split_path: Vec<&str> = uri.path().split('/').collect();
 
-        if split_path.len() < 3 {
-            return Err(OxenError::basic_str("Invalid repo url"));
-        }
+        let (namespace, name) = {
+            let mut split_path: Vec<&str> = uri.path().split('/').collect();
+            if split_path.len() < 3 {
+                return Err(OxenError::NoNamespaceRepoInUrl(uri));
+            }
+            // Pop in reverse to get repo_name then namespace
+            // unwraps are safe because of above length check
+            let repo_name = split_path.pop().unwrap();
+            let namespace = split_path.pop().unwrap();
+            (namespace.to_string(), repo_name.to_string())
+        };
 
-        // Pop in reverse to get repo_name then namespace
-        let repo_name = split_path.pop().unwrap();
-        let namespace = split_path.pop().unwrap();
         Ok(RepoNew {
-            namespace: namespace.to_string(),
-            name: repo_name.to_string(),
+            namespace,
+            name,
             is_public: None,
-            host: Some(uri.host().unwrap().to_string()),
-            scheme: Some(uri.scheme().unwrap().to_string()),
+            host: uri.host().map(|x| x.to_string()),
+            scheme: uri.scheme().map(|x| x.to_string()),
             root_commit: None,
             description: None,
             files: None,

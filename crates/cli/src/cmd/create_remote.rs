@@ -6,10 +6,10 @@ use clap::{Arg, Command};
 use std::str::FromStr;
 
 use liboxen::api;
+use liboxen::api::requests::RepoNew;
 use liboxen::config::UserConfig;
 use liboxen::constants::{DEFAULT_HOST, DEFAULT_SCHEME};
 use liboxen::error::OxenError;
-use liboxen::model::RepoNew;
 use liboxen::model::file::{FileContents, FileNew};
 use liboxen::storage::StorageKind;
 

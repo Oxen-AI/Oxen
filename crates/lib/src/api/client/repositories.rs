@@ -1,11 +1,11 @@
-use crate::api;
 use crate::api::client;
+use crate::api::requests::RepoNew;
 use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::error::OxenError;
-use crate::model::{Branch, LocalRepository, Remote, RemoteRepository, RepoNew};
-use crate::repositories;
+use crate::model::{Branch, LocalRepository, Remote, RemoteRepository};
 use crate::view::repository::RepositoryCreationResponse;
 use crate::view::{NamespaceView, RepositoryResponse, StatusMessage};
+use crate::{api, repositories};
 use serde_json::json;
 use serde_json::value;
 use std::fmt;
@@ -204,6 +204,11 @@ pub async fn create(repo_new: RepoNew) -> Result<RemoteRepository, OxenError> {
     }
 }
 
+/// Send an HTTP call to re-create a local repository on oxen-server.
+///
+/// NOTE: Ignores the Merkle store kind in the local repository. The server controls which kind
+///       it uses when creating new repositories. A repository can be migrated manually by using
+///       the server's migration endpoint and the file <> lmdb bi-directional optional migration.
 pub async fn create_from_local(
     repository: &LocalRepository,
     mut repo_new: RepoNew,
@@ -221,8 +226,7 @@ pub async fn create_from_local(
     let body = client::parse_json_body(&url, res).await?;
 
     log::debug!("repositories::create_from_local response {body}");
-    let response: Result<RepositoryCreationResponse, serde_json::Error> =
-        serde_json::from_str(&body);
+    let response = serde_json::from_str::<RepositoryCreationResponse>(&body);
     match response {
         Ok(response) => Ok(RemoteRepository::from_creation_view(
             &response.repository,
@@ -235,13 +239,11 @@ pub async fn create_from_local(
                 name: String::from(DEFAULT_REMOTE_NAME),
             },
         )),
-        Err(err) => {
-            let err = format!(
-                "Could not create or find repository [{}]: {err}\n{body}",
-                repo_new.repo_id()
-            );
-            Err(OxenError::basic_str(err))
-        }
+        Err(err) => Err(OxenError::FailCreateOrFindRemoteRepo {
+            repo_id: repo_new.repo_id(),
+            err,
+            body,
+        }),
     }
 }
 
@@ -251,7 +253,7 @@ pub async fn delete(repository: &RemoteRepository) -> Result<StatusMessage, Oxen
     let client = client::new_for_url(&url)?;
     if let Ok(res) = client.delete(&url).send().await {
         let body = client::parse_json_body(&url, res).await?;
-        let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
+        let response = serde_json::from_str::<StatusMessage>(&body);
         match response {
             Ok(val) => Ok(val),
             Err(_) => Err(OxenError::basic_str(format!(
@@ -269,7 +271,7 @@ pub async fn delete_from_url(url: String) -> Result<StatusMessage, OxenError> {
     let client = client::new_for_url(&url)?;
     if let Ok(res) = client.delete(&url).send().await {
         let body = client::parse_json_body(&url, res).await?;
-        let response: Result<StatusMessage, serde_json::Error> = serde_json::from_str(&body);
+        let response = serde_json::from_str::<StatusMessage>(&body);
         match response {
             Ok(val) => Ok(val),
             Err(_) => Err(OxenError::basic_str(format!(
@@ -296,8 +298,7 @@ pub async fn transfer_namespace(
 
     if let Ok(res) = client.patch(&url).body(params).send().await {
         let body = client::parse_json_body(&url, res).await?;
-        let response: Result<RepositoryResponse, serde_json::Error> = serde_json::from_str(&body);
-
+        let response = serde_json::from_str::<RepositoryResponse>(&body);
         match response {
             Ok(response) => {
                 // Update remote to reflect new namespace
@@ -474,11 +475,11 @@ mod tests {
     use tokio::time::sleep;
 
     use crate::api;
+    use crate::api::requests::RepoNew;
     use crate::config::UserConfig;
     use crate::constants;
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
-    use crate::model::RepoNew;
     use crate::model::file::FileContents;
     use crate::model::file::FileNew;
     use crate::repositories;

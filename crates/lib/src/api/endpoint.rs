@@ -1,15 +1,12 @@
 //! # Endpoint - Helpers for creating urls for the remote API
 //!
 
+use crate::api::requests::repo_new::RepoNew;
 use crate::error::OxenError;
-use crate::model::{Remote, RemoteRepository, RepoNew};
+use crate::model::{Remote, RemoteRepository};
 use url::Url;
 
 pub const API_NAMESPACE: &str = "/api/repos";
-
-pub fn get_scheme(host: impl AsRef<str>) -> String {
-    RepoNew::scheme_default(host.as_ref())
-}
 
 pub fn url_from_host_and_scheme(
     host: impl AsRef<str>,
@@ -25,11 +22,17 @@ pub fn url_from_host_and_scheme(
 }
 
 pub fn url_from_host(host: &str, uri: &str) -> String {
-    format!("{}://{host}{API_NAMESPACE}{uri}", get_scheme(host))
+    format!(
+        "{}://{host}{API_NAMESPACE}{uri}",
+        RepoNew::scheme_default(host)
+    )
 }
 
 pub fn remote_url_from_namespace_name(host: &str, namespace: &str, name: &str) -> String {
-    format!("{}://{host}/{namespace}/{name}", get_scheme(host))
+    format!(
+        "{}://{host}/{namespace}/{name}",
+        RepoNew::scheme_default(host)
+    )
 }
 
 pub fn remote_url_from_namespace_name_scheme(
@@ -42,7 +45,7 @@ pub fn remote_url_from_namespace_name_scheme(
 }
 
 pub fn remote_url_from_name(host: &str, name: &str) -> String {
-    format!("{}://{host}/{name}", get_scheme(host))
+    format!("{}://{host}/{name}", RepoNew::scheme_default(host))
 }
 
 pub fn remote_url_from_name_and_scheme(host: &str, name: &str, scheme: &str) -> String {

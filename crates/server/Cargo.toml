@@ -53,6 +53,7 @@ rocksdb = { workspace = true }
 sanitize-filename = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+strum = { workspace = true }
 tar = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }

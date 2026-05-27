@@ -119,7 +119,7 @@ impl StoragePolicy {
     /// - `requested = None`: returns the server's default.
     /// - `requested = Some(k)`: returns `k` iff allowed; otherwise `BadRequest` (400).
     ///
-    /// Callers writing the result back to a `RepoNew` should treat the caller's
+    /// Callers writing the result back to a `ClientRepoCreateRequest` or `RepoNew` should treat the caller's
     /// `storage_kind` as a *request* — the server's policy decides what actually gets
     /// persisted (defense in depth).
     pub fn resolve(&self, requested: Option<StorageKind>) -> Result<StorageKind, OxenHttpError> {

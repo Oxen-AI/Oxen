@@ -1,11 +1,12 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+use liboxen::api::requests::RepoNew;
 use liboxen::config::UserConfig;
 use liboxen::error::OxenError;
 use liboxen::model::commit::NewCommitBody;
 use liboxen::model::file::{FileContents, FileNew};
-use liboxen::model::{Remote, RemoteRepository, RepoNew};
+use liboxen::model::{Remote, RemoteRepository};
 use liboxen::opts::{PaginateOpts, SortOpts};
 use liboxen::storage::StorageKind;
 use liboxen::{api, repositories};

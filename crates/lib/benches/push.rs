@@ -1,7 +1,8 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use liboxen::api::requests::RepoNew;
 use liboxen::constants::{DEFAULT_NAMESPACE, DEFAULT_REMOTE_NAME};
 use liboxen::error::OxenError;
-use liboxen::model::{LocalRepository, RepoNew};
+use liboxen::model::LocalRepository;
 use liboxen::repositories;
 use liboxen::test::test_host;
 use liboxen::util;
