@@ -395,7 +395,7 @@ pub fn create_initial_commit(
 
     // Set HEAD to the new branch
     with_ref_manager(repo, |manager| {
-        manager.set_head(branch_name);
+        manager.set_head(branch_name)?;
         Ok(())
     })?;
 
