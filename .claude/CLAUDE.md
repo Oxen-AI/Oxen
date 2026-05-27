@@ -115,6 +115,7 @@ oxen push origin main               # Push to remote
 - Use the result type (`Result<T, Error>`) when an operation could fail.
 - Never use `.unwrap()` or `.expect()` on a `Result` or on an `Option`.
   + Exception: In test-only code, it is ok to use use `.expect(<descriptive explanation of invariant that was violated>)` since we want to fail fast and have good stack traces for failing test cases.
+  + This rule still applies when the panic feels "guaranteed unreachable" because of an upstream invariant. If the enclosing function returns a `Result`, surface the case as a structured `OxenError` variant and propagate with `?` — a panic in production code is never preferable to a clean error path, no matter how confident you are the case can't happen.
 - Use as specific of an error type as possible for a function. Don't use a wider type unless it's necessary. When making modules and related pieces of code, try to use a locally-defined error enum for them if they all have similar errors.
 - Make sure there's an `OxenError` variant for every error type. Be liberal in wrapping other modules error types, or other specific error types, in a new variant. Use a `Box<>` wrapper for it and have a `#[from]` to derive.
 - `OxenError` is the top-level type for everything. If you need to unify different error types into one, use `OxenError`. These kinds of functions should return `Result<T, OxenError>`

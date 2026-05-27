@@ -422,16 +422,17 @@ pub fn create_version_store(
         StorageKind::S3 => {
             let opts = server_s3_opts.ok_or(OxenError::S3BackendMissingServerOpts)?;
             // Server repo paths are always `<sync_dir>/<namespace>/<name>` (the only path that
-            // reaches the S3 branch), so the tail components are guaranteed present.
+            // reaches the S3 branch), so the tail components should always be present. We still
+            // surface a structured error instead of panicking on a malformed caller.
             let name = repo_dir
                 .file_name()
                 .and_then(|s| s.to_str())
-                .expect("server-built repo path must have a name component");
+                .ok_or_else(|| OxenError::S3PrefixUnresolvable(repo_dir.into()))?;
             let namespace = repo_dir
                 .parent()
                 .and_then(|p| p.file_name())
                 .and_then(|s| s.to_str())
-                .expect("server-built repo path must have a namespace component");
+                .ok_or_else(|| OxenError::S3PrefixUnresolvable(repo_dir.into()))?;
             let prefix = format!("{namespace}/{name}");
             let store = S3VersionStore::new(opts.bucket.clone(), prefix);
             Ok(Arc::new(store))
