@@ -188,7 +188,7 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
     /// * `data` - The raw bytes to store
-    async fn store_version(&self, hash: &str, data: &[u8]) -> Result<(), OxenError>;
+    async fn store_version(&self, hash: &str, data: Bytes) -> Result<(), OxenError>;
 
     /// Store a chunk of a version file
     ///
@@ -213,7 +213,7 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         &self,
         orig_hash: &str,
         derived_filename: &str,
-        derived_data: &[u8],
+        derived_data: Bytes,
     ) -> Result<(), OxenError>;
 
     /// Retrieve a chunk of a version file
