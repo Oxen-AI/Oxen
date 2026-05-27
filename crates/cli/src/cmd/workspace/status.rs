@@ -88,7 +88,7 @@ impl RunCmd for WorkspaceStatusCmd {
     }
 
     /// Parse CLI arguments and execute the workspace status command.
-    async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &ArgMatches) -> Result<(), anyhow::Error> {
         let directory = args.get_one::<String>("path").map(PathBuf::from);
 
         // let workspace_id = args.get_one::<String>("workspace-id");
@@ -116,7 +116,7 @@ impl RunCmd for WorkspaceStatusCmd {
                 if let Some(name) = workspace_name {
                     name
                 } else {
-                    return Err(OxenError::basic_str(
+                    return Err(anyhow::anyhow!(
                         "Either workspace-id or workspace-name must be provided.",
                     ));
                 }

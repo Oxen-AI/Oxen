@@ -1,10 +1,14 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
-use liboxen::{command, error::OxenError};
+use liboxen::command;
 
 use crate::cmd::RunCmd;
-pub const NAME: &str = "get";
+
 pub struct DbGetCmd;
+
+const NAME: &str = "get";
+
+const ERROR_USE: &str = "Usage: oxen db get <PATH> <KEY>";
 
 #[async_trait]
 impl RunCmd for DbGetCmd {
@@ -27,14 +31,14 @@ impl RunCmd for DbGetCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
-        let error = "Usage: oxen db get <PATH> <KEY>";
+
         let Some(path) = args.get_one::<String>("PATH") else {
-            return Err(OxenError::basic_str(error));
+            return Err(anyhow::anyhow!(ERROR_USE));
         };
         let Some(key) = args.get_one::<String>("KEY") else {
-            return Err(OxenError::basic_str(error));
+            return Err(anyhow::anyhow!(ERROR_USE));
         };
 
         let dtype = args.get_one::<String>("dtype").map(|x| x.as_str());

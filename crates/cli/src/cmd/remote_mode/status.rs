@@ -60,7 +60,7 @@ impl RunCmd for RemoteModeStatusCmd {
             )
     }
 
-    async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &ArgMatches) -> Result<(), anyhow::Error> {
         let current_dir = std::env::current_dir().map_err(OxenError::from)?;
         let repo_dir = util::fs::get_repo_root_from_current_dir()
             .ok_or_else(|| OxenError::local_repo_not_found(&current_dir))?;
@@ -70,7 +70,7 @@ impl RunCmd for RemoteModeStatusCmd {
             repository.workspace_name.clone().unwrap()
         } else {
             // TODO: New error type
-            return Err(OxenError::basic_str(
+            return Err(anyhow::anyhow!(
                 "New err type, can't do rmeote mode command outside remote mode repo",
             ));
         };

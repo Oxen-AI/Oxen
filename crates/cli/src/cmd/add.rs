@@ -38,7 +38,7 @@ impl RunCmd for AddCmd {
         add_args()
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let paths: Vec<PathBuf> = args
             .get_many::<String>("files")

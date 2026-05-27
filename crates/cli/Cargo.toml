@@ -21,6 +21,7 @@ otel = ["liboxen/otel"]
 production = ["metrics", "otel", "default"]
 
 [dependencies]
+anyhow = { workspace = true }
 async-trait = { workspace = true }
 bytesize = { workspace = true }
 chrono = { workspace = true }

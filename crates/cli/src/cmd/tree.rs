@@ -58,7 +58,7 @@ impl RunCmd for TreeCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let depth = args
             .get_one::<String>("depth")
@@ -74,7 +74,7 @@ impl RunCmd for TreeCmd {
             repositories::commits::head_commit(&repo)?
         } else {
             let Some(commit) = repositories::commits::get_by_id(&repo, commit_id)? else {
-                return Err(OxenError::commit_id_does_not_exist(commit_id));
+                return Err(OxenError::commit_id_does_not_exist(commit_id))?;
             };
             commit
         };
@@ -107,7 +107,7 @@ impl TreeCmd {
         commit: &Commit,
         path: Option<&String>,
         depth: i32,
-    ) -> Result<(), OxenError> {
+    ) -> Result<(), anyhow::Error> {
         let load_start = Instant::now(); // Start timing
         match (repo.subtree_paths(), repo.depth()) {
             (Some(subtrees), Some(depth)) => {
@@ -116,7 +116,7 @@ impl TreeCmd {
                 println!("Loading first tree...");
                 let first = subtrees
                     .first()
-                    .ok_or_else(|| OxenError::basic_str("No subtree paths configured"))?;
+                    .ok_or_else(|| anyhow::anyhow!("No subtree paths configured"))?;
                 repositories::tree::print_tree_depth_subtree(repo, commit, depth, first)?;
             }
             (_, _) => {

@@ -1,11 +1,8 @@
-use colored::Colorize;
-use liboxen::error::OxenError;
+use thiserror::Error;
 
-/// Print an OxenError to stderr with colored prefix and optional hints.
-pub fn print_error(err: &OxenError) {
-    eprintln!("{} {}", "Error:".red().bold(), err);
-
-    if let Some(hint) = err.hint() {
-        eprintln!("  {} {}", "hint:".cyan().bold(), hint);
-    }
+#[derive(Debug, Error)]
+#[error("Unknown {parent} subcommand '{name}'")]
+pub struct UnknownSubcommand {
+    pub parent: &'static str,
+    pub name: String,
 }

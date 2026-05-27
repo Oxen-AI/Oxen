@@ -5,7 +5,6 @@ use liboxen::api;
 use liboxen::constants::DEFAULT_HOST;
 use liboxen::constants::DEFAULT_REMOTE_NAME;
 use liboxen::constants::DEFAULT_SCHEME;
-use liboxen::error::OxenError;
 use liboxen::opts::UploadOpts;
 use liboxen::repositories;
 
@@ -72,7 +71,7 @@ impl RunCmd for UploadCmd {
         )
     }
 
-    async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &ArgMatches) -> Result<(), anyhow::Error> {
         let opts = UploadOpts {
             paths: args
                 .get_many::<String>("paths")
@@ -104,8 +103,8 @@ impl RunCmd for UploadCmd {
 
         // `oxen upload $namespace/$repo_name $path`
         let paths = &opts.paths;
-        if paths.is_empty() {
-            return Err(OxenError::basic_str(
+        if paths.len() < 2 {
+            return Err(anyhow::anyhow!(
                 "Must supply repository and a file to upload.",
             ));
         }

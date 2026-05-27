@@ -59,15 +59,18 @@ impl RunCmd for FsckCmd {
         fsck_args()
     }
 
-    async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &ArgMatches) -> Result<(), anyhow::Error> {
         let repository = LocalRepository::from_current_dir()?;
         check_repo_migration_needed(&repository)?;
 
         match args.subcommand() {
-            Some(("clean", sub_args)) => run_clean(&repository, sub_args).await,
-            Some(("rebuild-dir-hashes", sub_args)) => run_rebuild_dir_hashes(&repository, sub_args),
+            Some(("clean", sub_args)) => run_clean(&repository, sub_args).await?,
+            Some(("rebuild-dir-hashes", sub_args)) => {
+                run_rebuild_dir_hashes(&repository, sub_args)?
+            }
             _ => unreachable!("clap enforces subcommand_required(true)"),
         }
+        Ok(())
     }
 }
 

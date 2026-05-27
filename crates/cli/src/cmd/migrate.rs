@@ -74,13 +74,13 @@ impl RunCmd for MigrateCmd {
             .subcommand(subcommands("down", "Apply a named migration backward."))
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         if let Some((direction, sub_matches)) = args.subcommand()
             && let Some((migration, sub_matches)) = sub_matches.subcommand()
         {
             let Some(migration) = all_migrations(migration) else {
-                return Err(OxenError::UnknownMigration(migration.to_string()));
+                return Err(OxenError::UnknownMigration(migration.to_string()))?;
             };
 
             let direction = Direction::from_str(direction)?;
@@ -109,7 +109,7 @@ impl RunCmd for MigrateCmd {
                     for (repo_path, error) in errored {
                         println!("\t[FAIL] \"{}\" due to: {error}", repo_path.display());
                     }
-                    return Err(OxenError::MigrationFailed);
+                    return Err(OxenError::MigrationFailed)?;
                 }
             } else {
                 let mr = try_apply_migration(

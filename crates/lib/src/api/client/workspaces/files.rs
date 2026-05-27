@@ -183,14 +183,11 @@ pub async fn add_files(
     let base_dir = std::path::absolute(base_dir)?;
 
     if !base_dir.is_dir() {
-        return Err(OxenError::basic_str(format!(
-            "base_dir is not a directory: {}",
-            base_dir.display()
-        )));
+        return Err(OxenError::NotADirectory(base_dir.to_path_buf()));
     }
 
     if paths.is_empty() {
-        return Err(OxenError::basic_str("No paths to add!"));
+        return Err(OxenError::NoPathsToAdd);
     }
 
     let workspace_id = workspace_id.as_ref();

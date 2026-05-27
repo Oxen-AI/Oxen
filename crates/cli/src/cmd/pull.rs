@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
 use liboxen::model::LocalRepository;
-use liboxen::{error::OxenError, opts::FetchOpts};
+use liboxen::opts::FetchOpts;
 
 use liboxen::repositories;
 
@@ -48,7 +48,7 @@ impl RunCmd for PullCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         let repo = LocalRepository::from_current_dir()?;
         let current_branch = repositories::branches::current_branch(&repo)?;
 

@@ -245,11 +245,11 @@ impl RunCmd for DFCmd {
         )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let mut opts = DFCmd::parse_df_args(args)?;
         let Some(path) = args.get_one::<String>("PATH") else {
-            return Err(OxenError::basic_str("Must supply a DataFrame to process."));
+            return Err(anyhow::anyhow!("Must supply a DataFrame to process."));
         };
         opts.path = Some(PathBuf::from(path));
 

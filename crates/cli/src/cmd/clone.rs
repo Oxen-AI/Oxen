@@ -85,7 +85,7 @@ impl RunCmd for CloneCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let url = args.get_one::<String>("URL").expect("required");
         let all = args.get_flag("all");
@@ -118,14 +118,14 @@ impl RunCmd for CloneCmd {
                 if path.is_absolute()
                     || path.components().any(|c| matches!(c, Component::ParentDir))
                 {
-                    return Err(OxenError::basic_str(
+                    return Err(anyhow::anyhow!(
                         "Invalid destination: absolute paths or '..' not allowed",
                     ));
                 }
 
                 let joined = current_dir.join(path);
                 if !joined.starts_with(&current_dir) {
-                    return Err(OxenError::basic_str(
+                    return Err(anyhow::anyhow!(
                         "Invalid destination: path escapes base directory",
                     ));
                 }

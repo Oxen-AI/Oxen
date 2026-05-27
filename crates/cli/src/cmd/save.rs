@@ -34,7 +34,7 @@ impl RunCmd for SaveCmd {
             )
     }
 
-    async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &ArgMatches) -> Result<(), anyhow::Error> {
         let repo_str = args.get_one::<String>("PATH").expect("Required");
         let output_str = args.get_one::<String>("output").expect("Required");
 

@@ -2,11 +2,11 @@ use async_trait::async_trait;
 use clap::{Arg, Command, arg};
 use std::collections::HashMap;
 
-use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
 
-use crate::cmd::RunCmd;
+use crate::cli_error::UnknownSubcommand;
+use crate::cmd::{RunCmd, Runners};
 pub const NAME: &str = "schemas";
 
 pub mod add;
@@ -57,11 +57,14 @@ impl RunCmd for SchemasCmd {
         command
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         let sub_commands = self.get_subcommands();
         if let Some((name, sub_matches)) = args.subcommand() {
             let Some(cmd) = sub_commands.get(name) else {
-                return Err(OxenError::unknown_subcommand("schemas", name));
+                return Err(UnknownSubcommand {
+                    parent: "schemas",
+                    name: name.to_string(),
+                })?;
             };
 
             // Calling await within an await is making it complain?
@@ -78,7 +81,10 @@ impl RunCmd for SchemasCmd {
         } else {
             // Fall back to list schemas
             let Some(cmd) = sub_commands.get("list") else {
-                return Err(OxenError::unknown_subcommand("schemas", "list"));
+                return Err(UnknownSubcommand {
+                    parent: "schemas",
+                    name: "list".to_string(),
+                })?;
             };
             tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(cmd.run(args))
@@ -89,14 +95,14 @@ impl RunCmd for SchemasCmd {
 }
 
 impl SchemasCmd {
-    fn get_subcommands(&self) -> HashMap<String, Box<dyn RunCmd>> {
-        let commands: Vec<Box<dyn RunCmd>> = vec![
+    fn get_subcommands(&self) -> Runners {
+        let commands: [Box<dyn RunCmd>; 4] = [
             Box::new(SchemasAddCmd),
             Box::new(SchemasListCmd),
             Box::new(SchemasRmCmd),
             Box::new(SchemasShowCmd),
         ];
-        let mut runners: HashMap<String, Box<dyn RunCmd>> = HashMap::new();
+        let mut runners = HashMap::new();
         for cmd in commands {
             runners.insert(cmd.name().to_string(), cmd);
         }

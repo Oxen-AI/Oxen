@@ -7,6 +7,7 @@ use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
 
+use crate::cli_error::UnknownSubcommand;
 use crate::cmd::RunCmd;
 use crate::helpers::{
     check_remote_version, check_remote_version_blocking, get_scheme_and_host_from_repo,
@@ -85,47 +86,51 @@ impl RunCmd for BranchCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Find the repository
         let repo = LocalRepository::from_current_dir()?;
 
         // Parse Args
         if let Some((cmd, _)) = args.subcommand() {
-            Err(OxenError::unknown_subcommand("branch", cmd))
+            return Err(UnknownSubcommand {
+                parent: "branch",
+                name: cmd.to_string(),
+            })?;
         } else if args.get_flag("all") {
-            self.list_all_branches(&repo).await
+            self.list_all_branches(&repo).await?;
         } else if let Some(remote_name) = args.get_one::<String>("remote") {
             if let Some(branch_name) = args.get_one::<String>("delete") {
                 self.delete_remote_branch(&repo, remote_name, branch_name)
-                    .await
+                    .await?;
             } else {
-                self.list_remote_branches(&repo, remote_name).await
+                self.list_remote_branches(&repo, remote_name).await?;
             }
         } else if let Some(name) = args.get_one::<String>("name") {
             if args.get_flag("force") {
                 let commit_id = args
                     .get_one::<String>("commit_id")
-                    .ok_or_else(|| OxenError::basic_str("Must supply a commit ID with --force"))?;
-                self.force_update_branch(&repo, name, commit_id)
+                    .ok_or_else(|| anyhow::anyhow!("Must supply a commit ID with --force"))?;
+                self.force_update_branch(&repo, name, commit_id)?;
             } else {
-                self.create_branch(&repo, name)
+                self.create_branch(&repo, name)?;
             }
         } else if let Some(name) = args.get_one::<String>("delete") {
-            self.delete_branch(&repo, name)
+            self.delete_branch(&repo, name)?;
         } else if let Some(name) = args.get_one::<String>("force-delete") {
-            self.force_delete_branch(&repo, name)
+            self.force_delete_branch(&repo, name)?;
         } else if let Some(name) = args.get_one::<String>("move") {
-            self.rename_current_branch(&repo, name)
+            self.rename_current_branch(&repo, name)?;
         } else if args.get_flag("show-current") {
-            self.show_current_branch(&repo)
+            self.show_current_branch(&repo)?;
         } else {
             // If in remote mode, include the head commit id for each branch
             if repo.is_remote_mode() {
-                self.list_branches_with_commits(&repo)
+                self.list_branches_with_commits(&repo)?;
             } else {
-                self.list_branches(&repo)
+                self.list_branches(&repo)?;
             }
         }
+        Ok(())
     }
 }
 

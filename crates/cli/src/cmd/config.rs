@@ -75,7 +75,7 @@ impl RunCmd for ConfigCmd {
             .arg_required_else_help(true)
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Non-Repo Dependent
         if let Some(name) = args.get_one::<String>("name") {
             self.set_user_name(name)?;
@@ -117,11 +117,11 @@ impl RunCmd for ConfigCmd {
 }
 
 impl ConfigCmd {
-    fn strip_host(host: &str) -> Result<String, OxenError> {
+    fn strip_host(host: &str) -> Result<String, anyhow::Error> {
         if host.contains("://") {
             Ok(url::Url::parse(host)?
                 .host_str()
-                .ok_or_else(|| OxenError::basic_str("Unable to parse host."))?
+                .ok_or_else(|| anyhow::anyhow!("Unable to parse host."))?
                 .to_string())
         } else {
             Ok(host.to_string())
@@ -145,7 +145,7 @@ impl ConfigCmd {
         Ok(())
     }
 
-    pub fn set_auth_token(&self, host: &str, token: &str) -> Result<(), OxenError> {
+    pub fn set_auth_token(&self, host: &str, token: &str) -> Result<(), anyhow::Error> {
         let host = Self::strip_host(host)?;
         let mut config = AuthConfig::get_or_create()?;
         config.add_host_auth_token(host.as_ref(), token);
@@ -154,7 +154,7 @@ impl ConfigCmd {
         Ok(())
     }
 
-    pub fn set_default_host(&self, host: &str) -> Result<(), OxenError> {
+    pub fn set_default_host(&self, host: &str) -> Result<(), anyhow::Error> {
         let host = Self::strip_host(host)?;
         let mut config = AuthConfig::get_or_create()?;
         if host.is_empty() {

@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
-use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use std::path::PathBuf;
 
@@ -37,13 +36,13 @@ impl RunCmd for InfoCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse args
         let path = args.get_one::<String>("path").map(PathBuf::from);
         let revision = args.get_one::<String>("revision").map(String::from);
 
         if path.is_none() {
-            return Err(OxenError::basic_str("Must supply path."));
+            return Err(anyhow::anyhow!("Must supply path."));
         }
 
         let path = path.unwrap();

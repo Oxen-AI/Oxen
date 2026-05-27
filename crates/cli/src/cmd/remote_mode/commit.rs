@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use clap::{Arg, Command};
 
 use liboxen::config::UserConfig;
-use liboxen::error::OxenError;
 use liboxen::model::{LocalRepository, NewCommitBody};
 use liboxen::repositories;
 
@@ -32,10 +31,10 @@ impl RunCmd for RemoteModeCommitCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let Some(message) = args.get_one::<String>("message") else {
-            return Err(OxenError::basic_str(
+            return Err(anyhow::anyhow!(
                 "Err: Usage `oxen workspace commit -w <workspace_id> -m <message>`",
             ));
         };

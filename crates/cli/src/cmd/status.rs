@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use clap::{Arg, ArgMatches, Command};
 
 use glob::glob;
-use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::model::staged_data::StagedDataOpts;
 use liboxen::repositories;
@@ -62,7 +61,7 @@ impl RunCmd for StatusCmd {
             )
     }
 
-    async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &ArgMatches) -> Result<(), anyhow::Error> {
         let skip = args
             .get_one::<String>("skip")
             .expect("Must supply skip")

@@ -37,10 +37,12 @@ pub use status::WorkspaceStatusCmd;
 use async_trait::async_trait;
 use clap::Command;
 
-use liboxen::error::OxenError;
 use std::collections::HashMap;
 
-use crate::cmd::RunCmd;
+use crate::{
+    cli_error::UnknownSubcommand,
+    cmd::{RunCmd, Runners},
+};
 pub const NAME: &str = "workspace";
 pub struct WorkspaceCmd;
 
@@ -66,11 +68,14 @@ impl RunCmd for WorkspaceCmd {
         command
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         let sub_commands = Self::get_subcommands();
         if let Some((name, sub_matches)) = args.subcommand() {
             let Some(cmd) = sub_commands.get(name) else {
-                return Err(OxenError::unknown_subcommand("workspace", name));
+                return Err(UnknownSubcommand {
+                    parent: "workspace",
+                    name: name.to_string(),
+                })?;
             };
 
             // Calling await within an await is making it complain?
@@ -83,8 +88,8 @@ impl RunCmd for WorkspaceCmd {
 }
 
 impl WorkspaceCmd {
-    fn get_subcommands() -> HashMap<String, Box<dyn RunCmd>> {
-        let commands: Vec<Box<dyn RunCmd>> = vec![
+    fn get_subcommands() -> Runners {
+        let commands: [Box<dyn RunCmd>; 12] = [
             Box::new(WorkspaceAddCmd),
             Box::new(WorkspaceClearCmd),
             Box::new(WorkspaceCommitCmd),
@@ -98,7 +103,7 @@ impl WorkspaceCmd {
             Box::new(WorkspaceStatusCmd),
             Box::new(WorkspaceDownloadCmd),
         ];
-        let mut runners: HashMap<String, Box<dyn RunCmd>> = HashMap::new();
+        let mut runners = HashMap::new();
         for cmd in commands {
             runners.insert(cmd.name().to_string(), cmd);
         }
@@ -108,10 +113,13 @@ impl WorkspaceCmd {
     pub async fn run_subcommands(
         name: &str,
         sub_matches: &clap::ArgMatches,
-    ) -> Result<(), OxenError> {
+    ) -> Result<(), anyhow::Error> {
         let sub_commands = Self::get_subcommands();
         let Some(cmd) = sub_commands.get(name) else {
-            return Err(OxenError::unknown_subcommand("workspace", name));
+            return Err(UnknownSubcommand {
+                parent: "workspace",
+                name: name.to_string(),
+            })?;
         };
 
         tokio::task::block_in_place(|| {

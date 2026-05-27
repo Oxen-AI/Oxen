@@ -9,6 +9,7 @@ use liboxen::repositories;
 
 use crate::cmd::RunCmd;
 use crate::util;
+use anyhow::Context;
 pub const NAME: &str = "add";
 
 pub struct SchemasAddCmd;
@@ -43,7 +44,7 @@ impl RunCmd for SchemasAddCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         // Path
         let path = args
@@ -63,12 +64,12 @@ impl RunCmd for SchemasAddCmd {
         let err_msg = "Must supply a file path, column name and either -m for metadata or -t for data type\n\n  oxen schemas add file.csv -c 'col1' -t 'str'\n";
 
         let Some(path) = &path else {
-            return Err(OxenError::basic_str(err_msg));
+            return Err(anyhow::anyhow!(err_msg));
         };
 
         // If there is a render flag without a column, return an error
         if render.is_some() && column.is_none() {
-            return Err(OxenError::basic_str(
+            return Err(anyhow::anyhow!(
                 "Must supply a column name with the -c flag when using --render.",
             ));
         }
@@ -80,7 +81,7 @@ impl RunCmd for SchemasAddCmd {
         if let Some(column) = column {
             if let Some(render) = render {
                 let render_json = self.generate_render_json(render)?;
-                match self.schema_add_column_metadata(&repository, path, column, render_json) {
+                match self.schema_add_column_metadata(&repository, path, column, &render_json) {
                     Ok(_) => {}
                     Err(err) => {
                         eprintln!("{err}")
@@ -116,18 +117,13 @@ impl SchemasAddCmd {
     fn schema_add_column_metadata(
         &self,
         repository: &LocalRepository,
-        path: impl AsRef<Path>,
-        column: impl AsRef<str>,
-        metadata: impl AsRef<str>,
-    ) -> Result<(), OxenError> {
+        path: &Path,
+        column: &str,
+        metadata: &str,
+    ) -> Result<(), anyhow::Error> {
         // make sure metadata is valid json, return oxen error if not
-        let metadata: serde_json::Value = serde_json::from_str(metadata.as_ref()).map_err(|e| {
-            OxenError::basic_str(format!(
-                "Metadata must be valid JSON: '{}'\n{}",
-                metadata.as_ref(),
-                e
-            ))
-        })?;
+        let metadata: serde_json::Value = serde_json::from_str(metadata)
+            .with_context(|| format!("Metadata must be valid JSON: '{}'", metadata))?;
 
         for (path, schema) in repositories::data_frames::schemas::add_column_metadata(
             repository, path, column, &metadata,
@@ -141,16 +137,11 @@ impl SchemasAddCmd {
     fn schema_add_metadata(
         &self,
         repository: &LocalRepository,
-        path: impl AsRef<Path>,
-        metadata: impl AsRef<str>,
-    ) -> Result<(), OxenError> {
-        let metadata: serde_json::Value = serde_json::from_str(metadata.as_ref()).map_err(|e| {
-            OxenError::basic_str(format!(
-                "Metadata must be valid JSON: '{}'\n{}",
-                metadata.as_ref(),
-                e
-            ))
-        })?;
+        path: &Path,
+        metadata: &str,
+    ) -> Result<(), anyhow::Error> {
+        let metadata: serde_json::Value = serde_json::from_str(metadata)
+            .with_context(|| format!("Metadata must be valid JSON: '{}'", metadata))?;
 
         for (path, schema) in
             repositories::data_frames::schemas::add_schema_metadata(repository, path, &metadata)?
@@ -161,8 +152,7 @@ impl SchemasAddCmd {
         Ok(())
     }
 
-    fn generate_render_json(&self, render_type: impl AsRef<str>) -> Result<String, OxenError> {
-        let render_type = render_type.as_ref();
+    fn generate_render_json(&self, render_type: &str) -> Result<String, anyhow::Error> {
         let valid_render_types: HashSet<&str> = ["image", "link", "video"].into_iter().collect();
         if valid_render_types.contains(render_type) {
             let json = serde_json::json!({
@@ -175,9 +165,9 @@ impl SchemasAddCmd {
 
             Ok(serde_json::to_string(&json)?)
         } else {
-            Err(OxenError::basic_str(format!(
-                "Invalid render type: {render_type}"
-            )))
+            Err(anyhow::anyhow!(
+                "Invalid render type: \"{render_type}\" - Only accepts \"image\", \"link\", or \"video\"."
+            ))
         }
     }
 }

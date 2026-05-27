@@ -1,3 +1,4 @@
+use anyhow::Context;
 use async_trait::async_trait;
 use clap::{Arg, Command};
 use colored::ColoredString;
@@ -15,18 +16,18 @@ use liboxen::opts::DiffOpts;
 use liboxen::repositories;
 
 use crate::cmd::RunCmd;
-pub const NAME: &str = "diff";
-pub const DIFFSEP: &str = "..";
+
 pub struct DiffCmd;
 
-fn write_to_pager(output: &mut Pager, text: &str) -> Result<(), OxenError> {
-    write!(output, "{text}")
-        .map_err(|e| OxenError::basic_str(format!("Could not write to pager: {e}")))
+const NAME: &str = "diff";
+const DIFFSEP: &str = "..";
+
+fn write_to_pager(output: &mut Pager, text: &str) -> Result<(), anyhow::Error> {
+    write!(output, "{text}").context("Could not write to pager.")
 }
 
-fn writeln_to_pager(output: &mut Pager, text: &str) -> Result<(), OxenError> {
-    writeln!(output, "{text}")
-        .map_err(|e| OxenError::basic_str(format!("Could not write to pager: {e}")))
+fn writeln_to_pager(output: &mut Pager, text: &str) -> Result<(), anyhow::Error> {
+    writeln!(output, "{text}").context("Could not write to pager.")
 }
 
 #[async_trait]
@@ -80,7 +81,7 @@ impl RunCmd for DiffCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let opts = DiffCmd::parse_args(args);
         let output = opts.output.clone();
@@ -217,7 +218,7 @@ impl DiffCmd {
         }
     }
 
-    pub fn print_diff_result(results: &Vec<DiffResult>) -> Result<(), OxenError> {
+    pub fn print_diff_result(results: &Vec<DiffResult>) -> Result<(), anyhow::Error> {
         let mut p = Pager::new();
 
         for result in results {
@@ -252,7 +253,7 @@ impl DiffCmd {
         Ok(())
     }
 
-    fn print_row_changes(p: &mut Pager, mods: &TabularDiffMods) -> Result<(), OxenError> {
+    fn print_row_changes(p: &mut Pager, mods: &TabularDiffMods) -> Result<(), anyhow::Error> {
         let mut outputs: Vec<ColoredString> = vec![];
 
         if mods.row_counts.modified + mods.row_counts.added + mods.row_counts.removed == 0 {
@@ -283,7 +284,7 @@ impl DiffCmd {
     }
 
     // TODO: Truncate to "and x more"
-    fn print_column_changes(p: &mut Pager, mods: &TabularDiffMods) -> Result<(), OxenError> {
+    fn print_column_changes(p: &mut Pager, mods: &TabularDiffMods) -> Result<(), anyhow::Error> {
         let mut outputs: Vec<ColoredString> = vec![];
 
         if !mods.col_changes.added.is_empty() || !mods.col_changes.added.is_empty() {
@@ -305,7 +306,7 @@ impl DiffCmd {
         Ok(())
     }
 
-    fn print_text_diff(p: &mut Pager, diff: &TextDiff) -> Result<(), OxenError> {
+    fn print_text_diff(p: &mut Pager, diff: &TextDiff) -> Result<(), anyhow::Error> {
         let filename1 = diff.filename1.clone();
         let filename2 = diff.filename2.clone();
 

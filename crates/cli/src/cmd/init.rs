@@ -5,7 +5,6 @@ use async_trait::async_trait;
 use clap::{Arg, Command, arg};
 use liboxen::config::repository_config::{MerkleStoreKind, RepoConfigError};
 use liboxen::core::versions::MinOxenVersion;
-use liboxen::error::OxenError;
 use strum::VariantNames;
 
 use crate::cmd::RunCmd;
@@ -59,7 +58,7 @@ impl RunCmd for InitCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         //
         // parse args
         //

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use clap::{Arg, ArgGroup, ArgMatches, Command};
 
-use liboxen::{api, core::oxenignore, error::OxenError, model::LocalRepository};
+use liboxen::{api, core::oxenignore, model::LocalRepository};
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "rm";
@@ -57,7 +57,7 @@ impl RunCmd for WorkspaceRmCmd {
             .arg_required_else_help(true)
     }
 
-    async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let mut paths: Vec<PathBuf> = args
             .get_many::<String>("files")
@@ -79,7 +79,7 @@ impl RunCmd for WorkspaceRmCmd {
                     if let Some(name) = workspace_name {
                         name
                     } else {
-                        return Err(OxenError::basic_str(
+                        return Err(anyhow::anyhow!(
                             "Either workspace-id or workspace-name must be provided.",
                         ));
                     }
@@ -97,7 +97,7 @@ impl RunCmd for WorkspaceRmCmd {
 
         // If no paths left after filtering, return early
         if paths.is_empty() {
-            return Err(OxenError::basic_str(
+            return Err(anyhow::anyhow!(
                 "No files to remove after filtering with .oxenignore.",
             ));
         }

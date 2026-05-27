@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
-use liboxen::error::OxenError;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "moo";
@@ -33,7 +32,7 @@ impl RunCmd for MooCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let n = args
             .get_one::<String>("number")
