@@ -7,37 +7,35 @@ use crate::config::EMBEDDING_CONFIG_FILENAME;
 use crate::config::EmbeddingConfig;
 use crate::config::embedding_config::{EmbeddingColumn, EmbeddingStatus};
 use crate::constants::{EXCLUDE_OXEN_COLS, TABLE_NAME};
+use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::df_db::{self, with_df_db_manager};
-use crate::error::OxenError;
-use crate::model::Workspace;
 use crate::model::data_frame::schema::Field;
+use crate::model::{Schema, Workspace};
 use crate::opts::{EmbeddingQueryOpts, PaginateOpts};
 use crate::{repositories, util};
 
 use std::path::Path;
 use std::path::PathBuf;
 
-fn embedding_config_path(workspace: &Workspace, path: impl AsRef<Path>) -> PathBuf {
+fn embedding_config_path(workspace: &Workspace, path: &Path) -> PathBuf {
     let path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let parent = path.parent().unwrap();
     parent.join(EMBEDDING_CONFIG_FILENAME)
 }
 
-fn embedding_config(
-    workspace: &Workspace,
-    path: impl AsRef<Path>,
-) -> Result<EmbeddingConfig, OxenError> {
+fn embedding_config(workspace: &Workspace, path: &Path) -> Result<EmbeddingConfig, DataFrameError> {
     let embedding_config = embedding_config_path(workspace, path);
-    let config_data = util::fs::read_from_path(&embedding_config)?;
+    let config_data = util::fs::read_from_path(&embedding_config)
+        .map_err(|e| DataFrameError::FailReadConfig(Box::new(e)))?;
     Ok(toml::from_str(&config_data)?)
 }
 
 fn write_embedding_size_to_config(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
-    column_name: impl AsRef<str>,
+    path: &Path,
+    column_name: &str,
     vector_length: usize,
-) -> Result<(), OxenError> {
+) -> Result<(), DataFrameError> {
     let embedding_config = embedding_config_path(workspace, path);
 
     // Try to read existing config, create new one if it doesn't exist
@@ -49,39 +47,45 @@ fn write_embedding_size_to_config(
     };
 
     let column = EmbeddingColumn {
-        name: column_name.as_ref().to_string(),
+        name: column_name.to_string(),
         vector_length,
         status: EmbeddingStatus::InProgress,
     };
 
-    config
-        .columns
-        .insert(column_name.as_ref().to_string(), column);
+    config.columns.insert(column_name.to_string(), column);
 
     let config_str = toml::to_string(&config)?;
-    std::fs::write(embedding_config, config_str)?;
+    std::fs::write(embedding_config, config_str).map_err(DataFrameError::FailWriteConfig)?;
     Ok(())
 }
 
 fn update_embedding_status(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
-    column_name: impl AsRef<str>,
+    path: &Path,
+    column_name: &str,
     status: EmbeddingStatus,
-) -> Result<(), OxenError> {
+) -> Result<(), DataFrameError> {
     let embedding_config = embedding_config_path(workspace, path);
-    let config_data = util::fs::read_from_path(&embedding_config)?;
-    let mut config: EmbeddingConfig = toml::from_str(&config_data)?;
-    config.columns.get_mut(column_name.as_ref()).unwrap().status = status;
+    let config_data = util::fs::read_from_path(&embedding_config)
+        .map_err(|e| DataFrameError::FailReadConfig(Box::new(e)))?;
+    let config = {
+        let mut config: EmbeddingConfig = toml::from_str(&config_data)?;
+        if let Some(existing) = config.columns.get_mut(column_name) {
+            existing.status = status;
+        } else {
+            return Err(DataFrameError::ColNotFoundInConfig(column_name.to_string()));
+        }
+        config
+    };
     let config_str = toml::to_string(&config)?;
-    std::fs::write(embedding_config, config_str)?;
+    std::fs::write(embedding_config, config_str).map_err(DataFrameError::FailWriteConfig)?;
     Ok(())
 }
 
 pub fn list_indexed_columns(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
-) -> Result<Vec<EmbeddingColumn>, OxenError> {
+    path: &Path,
+) -> Result<Vec<EmbeddingColumn>, DataFrameError> {
     let Ok(config) = embedding_config(workspace, path) else {
         return Ok(vec![]);
     };
@@ -90,11 +94,11 @@ pub fn list_indexed_columns(
 
 fn perform_indexing(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
-    column_name: String,
+    path: &Path,
+    column_name: &str,
     vector_length: usize,
-) -> Result<(), OxenError> {
-    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, &path);
+) -> Result<(), DataFrameError> {
+    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             // Execute VSS commands separately
@@ -114,7 +118,7 @@ fn perform_indexing(
     log::debug!(
         "Completed indexing embeddings for column `{}` on {}",
         column_name,
-        path.as_ref().display()
+        path.display()
     );
     update_embedding_status(workspace, path, column_name, EmbeddingStatus::Complete)?;
 
@@ -123,34 +127,29 @@ fn perform_indexing(
 
 pub fn index(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
-    column: impl AsRef<str>,
+    path: &Path,
+    column: &str,
     use_background_thread: bool,
-) -> Result<(), OxenError> {
-    let path = path.as_ref().to_path_buf();
-    let column = column.as_ref();
-
-    let column_name = column.to_string();
+) -> Result<(), DataFrameError> {
     log::debug!(
-        "Indexing embeddings for column: {column_name} using background thread: {use_background_thread}"
+        "Indexing embeddings for column: {column} using background thread: {use_background_thread}"
     );
 
-    let vector_length = get_embedding_length(workspace, &path, column)?;
+    let vector_length = get_embedding_length(workspace, path, column)?;
 
     if use_background_thread {
         // Clone necessary values for the background thread
         let workspace = workspace.clone();
-        let column_name = column_name.clone();
-        let path = path.clone();
-
+        let path = path.to_path_buf();
+        let column = column.to_string();
         // Spawn background thread for VSS setup
         std::thread::spawn(move || {
-            if let Err(e) = perform_indexing(&workspace, path, column_name, vector_length) {
+            if let Err(e) = perform_indexing(&workspace, &path, &column, vector_length) {
                 log::error!("Error in background indexing thread: {e}");
             }
         });
     } else {
-        perform_indexing(workspace, path, column_name, vector_length)?;
+        perform_indexing(workspace, path, column, vector_length)?;
     }
 
     Ok(())
@@ -158,11 +157,9 @@ pub fn index(
 
 fn get_embedding_length(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
-    column: impl AsRef<str>,
-) -> Result<usize, OxenError> {
-    let path = path.as_ref();
-    let column = column.as_ref();
+    path: &Path,
+    column: &str,
+) -> Result<usize, DataFrameError> {
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     log::debug!("Embedding index DB Path: {db_path:?}");
     let result_set = with_df_db_manager(&db_path, |manager| {
@@ -174,7 +171,7 @@ fn get_embedding_length(
         })
     })?;
     let Some(item) = result_set.first() else {
-        return Err(OxenError::basic_str("No items found"));
+        return Err(DataFrameError::NoRowsFound);
     };
     let first_column = item.column(0);
     log::debug!("First column: {first_column:?}");
@@ -186,43 +183,35 @@ fn get_embedding_length(
                 let array = first_column
                     .as_any()
                     .downcast_ref::<ListArray>()
-                    .ok_or_else(|| OxenError::basic_str("Failed to downcast to ListArray"))?;
+                    .ok_or_else(|| DataFrameError::FailListDowncast)?;
                 if let Some(first_value) = array.value(0).as_any().downcast_ref::<Float32Array>() {
                     first_value.len()
                 } else {
-                    return Err(OxenError::basic_str(
-                        "Expected Float32Array inside ListArray",
-                    ));
+                    return Err(DataFrameError::ExpectedF32ArrayInside);
                 }
             }
             arrow::datatypes::DataType::Float64 => {
                 let array = first_column
                     .as_any()
                     .downcast_ref::<ListArray>()
-                    .ok_or_else(|| OxenError::basic_str("Failed to downcast to ListArray"))?;
+                    .ok_or_else(|| DataFrameError::FailListDowncast)?;
                 if let Some(first_value) = array.value(0).as_any().downcast_ref::<Float64Array>() {
                     first_value.len()
                 } else {
-                    return Err(OxenError::basic_str(
-                        "Expected Float64Array inside ListArray",
-                    ));
+                    return Err(DataFrameError::ExpectF64ArrayInside);
                 }
             }
             _ => {
-                return Err(OxenError::basic_str(
-                    "Column must be a list of float32 or float64",
-                ));
+                return Err(DataFrameError::ExpectColFloats);
             }
         },
         arrow::datatypes::DataType::FixedSizeList(field, size) => match field.data_type() {
             arrow::datatypes::DataType::Float32 => *size as usize,
             _ => {
-                return Err(OxenError::basic_str(
-                    "Column FixedSizeList must be a float32 type",
-                ));
+                return Err(DataFrameError::ExpectF32FixedSizeList);
             }
         },
-        _ => return Err(OxenError::basic_str("Column must be a list type")),
+        _ => return Err(DataFrameError::ExpectList),
     };
 
     log::debug!("Vector length: {vector_length}");
@@ -234,10 +223,9 @@ fn get_embedding_length(
 pub fn embedding_from_query(
     conn: &duckdb::Connection,
     workspace: &Workspace,
-    path: impl AsRef<Path>,
+    path: &Path,
     query: &EmbeddingQueryOpts,
-) -> Result<(Vec<f32>, usize), OxenError> {
-    let path = path.as_ref();
+) -> Result<(Vec<f32>, usize), DataFrameError> {
     let column = query.column.clone();
     let query = query.query.clone();
     let sql = format!("SELECT {column} FROM df WHERE {query};");
@@ -247,11 +235,13 @@ pub fn embedding_from_query(
 
     // Read the vector length from the file we wrote in the index function
     let Ok(config) = embedding_config(workspace, path) else {
-        return Err(OxenError::basic_str(
-            "Must index embeddings before querying",
-        ));
+        return Err(DataFrameError::MustIndexEmbeddings);
     };
-    let vector_length = config.columns[&column].vector_length;
+    let vector_length = config
+        .columns
+        .get(&column)
+        .ok_or_else(|| DataFrameError::ColNotFoundInConfig(column.clone()))?
+        .vector_length;
     // log::debug!("Vector length: {}", vector_length);
     // Average the embeddings
     let avg_embedding = get_avg_embedding(result_set)?;
@@ -264,9 +254,9 @@ fn build_similarity_query_sql(
     similarity_column: &str,
     avg_embedding: &[f32],
     vector_length: usize,
-    schema: &crate::model::data_frame::schema::Schema,
+    schema: &Schema,
     exclude_cols: bool,
-) -> Result<String, OxenError> {
+) -> String {
     let embedding_str = format!(
         "[{}]",
         avg_embedding
@@ -284,17 +274,16 @@ fn build_similarity_query_sql(
         .collect::<Vec<&str>>();
 
     let columns_str = columns.join(", ");
-    let sql = format!(
+    format!(
         "SELECT {columns_str}, array_cosine_similarity({column}, {embedding_str}::FLOAT[{vector_length}]) as {similarity_column} FROM df ORDER BY {similarity_column} DESC"
-    );
-    Ok(sql)
+    )
 }
 
 pub fn similarity_query(
     workspace: &Workspace,
     opts: &EmbeddingQueryOpts,
     exclude_cols: bool,
-) -> Result<String, OxenError> {
+) -> Result<String, DataFrameError> {
     let column = opts.column.clone();
     let path = opts.path.clone();
     let similarity_column = opts.name.clone();
@@ -302,21 +291,21 @@ pub fn similarity_query(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, &path);
     log::debug!("Embedding query DB Path: {db_path:?}");
     let (avg_embedding, vector_length) = with_df_db_manager(&db_path, |manager| {
-        manager.with_conn(|conn| embedding_from_query(conn, workspace, path.clone(), opts))
+        manager.with_conn(|conn| embedding_from_query(conn, workspace, &path, opts))
     })?;
 
     let schema = with_df_db_manager(&db_path, |manager| {
-        manager.with_conn(|conn| df_db::get_schema(conn, TABLE_NAME))
+        manager.with_conn(|conn| Ok(df_db::get_schema(conn, TABLE_NAME)?))
     })?;
 
-    build_similarity_query_sql(
+    Ok(build_similarity_query_sql(
         &column,
         &similarity_column,
         &avg_embedding,
         vector_length,
         &schema,
         exclude_cols,
-    )
+    ))
 }
 
 /// Version of similarity_query that accepts a connection to avoid deadlock issues
@@ -325,37 +314,36 @@ pub fn similarity_query_with_conn(
     workspace: &Workspace,
     opts: &EmbeddingQueryOpts,
     exclude_cols: bool,
-) -> Result<String, OxenError> {
+) -> Result<String, DataFrameError> {
     let column = opts.column.clone();
     let path = opts.path.clone();
     let similarity_column = opts.name.clone();
 
-    let (avg_embedding, vector_length) = embedding_from_query(conn, workspace, path.clone(), opts)?;
+    let (avg_embedding, vector_length) = embedding_from_query(conn, workspace, &path, opts)?;
     let schema = df_db::get_schema(conn, TABLE_NAME)?;
 
-    build_similarity_query_sql(
+    Ok(build_similarity_query_sql(
         &column,
         &similarity_column,
         &avg_embedding,
         vector_length,
         &schema,
         exclude_cols,
-    )
+    ))
 }
 
 pub fn nearest_neighbors(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
-    column: impl AsRef<str>,
+    path: &Path,
+    column: &str,
     embedding: Vec<f32>,
     pagination: &PaginateOpts,
     exclude_cols: bool,
-) -> Result<DataFrame, OxenError> {
+) -> Result<DataFrame, DataFrameError> {
     // Time the query
     let start = std::time::Instant::now();
-    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, &path);
+    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
 
-    let column = column.as_ref();
     let vector_length = embedding.len();
     let similarity_column = "similarity";
     let (result_set, mut schema) = with_df_db_manager(&db_path, |manager| {
@@ -370,7 +358,7 @@ pub fn nearest_neighbors(
                 vector_length,
                 &schema,
                 exclude_cols,
-            )?;
+            );
 
             // Add pagination
             let limit = pagination.page_size;
@@ -408,7 +396,7 @@ fn execute_similarity_query(
     conn: &duckdb::Connection,
     sql: &str,
     similarity_column: &str,
-) -> Result<(Vec<RecordBatch>, crate::model::data_frame::schema::Schema), OxenError> {
+) -> Result<(Vec<RecordBatch>, Schema), DataFrameError> {
     let result_set: Vec<RecordBatch> = conn.prepare(sql)?.query_arrow([])?.collect();
     let mut schema = df_db::get_schema(conn, TABLE_NAME)?;
     schema.fields.push(Field::new(similarity_column, "f32"));
@@ -420,7 +408,7 @@ pub fn query_with_conn(
     conn: &duckdb::Connection,
     workspace: &Workspace,
     opts: &EmbeddingQueryOpts,
-) -> Result<DataFrame, OxenError> {
+) -> Result<DataFrame, DataFrameError> {
     let similarity_column = opts.name.clone();
 
     // Get the base SQL using the connection
@@ -454,7 +442,10 @@ pub fn query_with_conn(
     Ok(df)
 }
 
-pub fn query(workspace: &Workspace, opts: &EmbeddingQueryOpts) -> Result<DataFrame, OxenError> {
+pub fn query(
+    workspace: &Workspace,
+    opts: &EmbeddingQueryOpts,
+) -> Result<DataFrame, DataFrameError> {
     let path = opts.path.clone();
     let similarity_column = opts.name.clone();
 
@@ -492,7 +483,7 @@ pub fn query(workspace: &Workspace, opts: &EmbeddingQueryOpts) -> Result<DataFra
     Ok(df)
 }
 
-fn get_avg_embedding(result_set: Vec<RecordBatch>) -> Result<Vec<f32>, OxenError> {
+fn get_avg_embedding(result_set: Vec<RecordBatch>) -> Result<Vec<f32>, DataFrameError> {
     let mut embeddings: Vec<Vec<f32>> = Vec::new();
     let mut vector_length = 0;
     for batch in result_set {
@@ -503,7 +494,7 @@ fn get_avg_embedding(result_set: Vec<RecordBatch>) -> Result<Vec<f32>, OxenError
                     let array = first_column
                         .as_any()
                         .downcast_ref::<ListArray>()
-                        .ok_or_else(|| OxenError::basic_str("Failed to downcast to ListArray"))?;
+                        .ok_or_else(|| DataFrameError::FailListDowncast)?;
                     if let Some(first_value) =
                         array.value(0).as_any().downcast_ref::<Float32Array>()
                     {
@@ -511,20 +502,14 @@ fn get_avg_embedding(result_set: Vec<RecordBatch>) -> Result<Vec<f32>, OxenError
                         if vector_length == 0 {
                             vector_length = first_value.len();
                         } else if first_value.len() != vector_length {
-                            return Err(OxenError::basic_str(
-                                "All embeddings must be the same length",
-                            ));
+                            return Err(DataFrameError::EmbeddingLengthMismatch);
                         }
                     } else {
-                        return Err(OxenError::basic_str(
-                            "Expected Float32Array inside ListArray",
-                        ));
+                        return Err(DataFrameError::ExpectedF32ArrayInside);
                     }
                 }
                 _ => {
-                    return Err(OxenError::basic_str(
-                        "Expected arrow::datatypes::DataType::Float32 inside List",
-                    ));
+                    return Err(DataFrameError::ExpectedF32);
                 }
             },
             arrow::datatypes::DataType::FixedSizeList(field, _) => match field.data_type() {
@@ -532,9 +517,7 @@ fn get_avg_embedding(result_set: Vec<RecordBatch>) -> Result<Vec<f32>, OxenError
                     let array = first_column
                         .as_any()
                         .downcast_ref::<FixedSizeListArray>()
-                        .ok_or_else(|| {
-                            OxenError::basic_str("Failed to downcast to FixedSizeListArray")
-                        })?;
+                        .ok_or_else(|| DataFrameError::FailFixedSizeDowncast)?;
                     if let Some(first_value) =
                         array.value(0).as_any().downcast_ref::<Float32Array>()
                     {
@@ -542,34 +525,26 @@ fn get_avg_embedding(result_set: Vec<RecordBatch>) -> Result<Vec<f32>, OxenError
                         if vector_length == 0 {
                             vector_length = first_value.len();
                         } else if first_value.len() != vector_length {
-                            return Err(OxenError::basic_str(
-                                "All embeddings must be the same length",
-                            ));
+                            return Err(DataFrameError::EmbeddingLengthMismatch);
                         }
                     }
                 }
                 _ => {
-                    return Err(OxenError::basic_str(
-                        "Column FixedSizeList must be a float32 type",
-                    ));
+                    return Err(DataFrameError::ExpectF32FixedSizeList);
                 }
             },
             _ => {
-                return Err(OxenError::basic_str(
-                    "Expected arrow::datatypes::DataType::List inside as data type",
-                ));
+                return Err(DataFrameError::ExpectListInside);
             }
         }
     }
 
     if embeddings.is_empty() {
-        return Err(OxenError::NoRowsFound);
+        return Err(DataFrameError::NoRowsFound);
     }
 
     if vector_length == 0 {
-        return Err(OxenError::basic_str(
-            "Vector's must have a length greater than 0",
-        ));
+        return Err(DataFrameError::EmptyEmbedding);
     }
 
     // Average the embeddings along the columns

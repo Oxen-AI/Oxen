@@ -1,18 +1,18 @@
 use rocksdb::DB;
 
-use crate::{error::OxenError, view::data_frames::DataFrameColumnChange};
+use crate::{core::db::data_frames::DataFrameError, view::data_frames::DataFrameColumnChange};
 
 pub fn write_data_frame_column_change(
     data_frame_column_change: &DataFrameColumnChange,
     db: &DB,
-) -> Result<(), OxenError> {
+) -> Result<(), DataFrameError> {
     save_data_frame_column_changes(db, data_frame_column_change)
 }
 
 pub fn save_data_frame_column_changes(
     db: &DB,
     data_frame_column_change: &DataFrameColumnChange,
-) -> Result<(), OxenError> {
+) -> Result<(), DataFrameError> {
     let column_name = match &data_frame_column_change.column_after {
         Some(column_after) => column_after.column_name.clone(),
         None => data_frame_column_change
@@ -33,7 +33,7 @@ pub fn save_data_frame_column_changes(
     Ok(())
 }
 
-pub fn delete_data_frame_column_changes(db: &DB, column_name: &str) -> Result<(), OxenError> {
+pub fn delete_data_frame_column_changes(db: &DB, column_name: &str) -> Result<(), DataFrameError> {
     db.delete(column_name)?;
 
     log::debug!("delete_data_frame_column_changes() deleted change in: {column_name:?}");
@@ -41,7 +41,9 @@ pub fn delete_data_frame_column_changes(db: &DB, column_name: &str) -> Result<()
     Ok(())
 }
 
-pub fn get_all_data_frame_column_changes(db: &DB) -> Result<Vec<DataFrameColumnChange>, OxenError> {
+pub fn get_all_data_frame_column_changes(
+    db: &DB,
+) -> Result<Vec<DataFrameColumnChange>, DataFrameError> {
     let mut changes = Vec::new();
 
     // Iterate from the start
@@ -69,7 +71,7 @@ pub fn get_all_data_frame_column_changes(db: &DB) -> Result<Vec<DataFrameColumnC
 pub fn get_data_frame_column_change(
     db: &DB,
     name: &str,
-) -> Result<Option<DataFrameColumnChange>, OxenError> {
+) -> Result<Option<DataFrameColumnChange>, DataFrameError> {
     let val = db.get(name)?;
 
     match val {

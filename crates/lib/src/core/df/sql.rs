@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use crate::core::db::data_frames::DataFrameError;
 use crate::core::df::tabular;
 use crate::core::v_latest::workspaces;
 use crate::model::LocalRepository;
@@ -32,7 +33,7 @@ pub async fn query_df_from_repo(
         workspaces::data_frames::get_queryable_data_frame_workspace(repo, path, &commit)?;
 
     let db_path = repositories::workspaces::data_frames::duckdb_path(&workspace, path);
-    let df = with_df_db_manager(db_path, |manager| {
+    let df = with_df_db_manager(&db_path, |manager| {
         manager.with_conn_mut(|conn| query_df(conn, sql, Some(opts)))
     })?;
 
@@ -45,8 +46,8 @@ pub fn query_df(
     conn: &mut duckdb::Connection,
     sql: String,
     opts: Option<&DFOpts>,
-) -> Result<DataFrame, OxenError> {
-    let df = df_db::select_str(conn, sql, opts)?;
+) -> Result<DataFrame, DataFrameError> {
+    let df = df_db::select_str(conn, &sql, opts)?;
 
     Ok(df)
 }
@@ -55,7 +56,7 @@ pub fn export_df(
     conn: &duckdb::Connection,
     sql: String,
     opts: Option<&DFOpts>,
-    tmp_path: impl AsRef<Path>,
-) -> Result<(), OxenError> {
-    df_db::export(conn, sql, opts, tmp_path)
+    tmp_path: &Path,
+) -> Result<(), DataFrameError> {
+    df_db::export(conn, &sql, opts, tmp_path)
 }

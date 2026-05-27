@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use async_trait::async_trait;
 use clap::{Arg, Command, arg};
 
@@ -67,10 +69,11 @@ impl RunCmd for EmbeddingsIndexCmd {
             repositories::workspaces::data_frames::index(&repository, &workspace, path).await?;
             repositories::workspaces::data_frames::embeddings::index(
                 &workspace,
-                path,
+                Path::new(path),
                 column,
                 use_background_thread,
-            )
+            )?;
+            Ok(())
         } else {
             Err(OxenError::basic_str("Data frame is already indexed."))
         }

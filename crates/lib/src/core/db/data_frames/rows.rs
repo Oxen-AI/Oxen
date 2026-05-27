@@ -12,25 +12,28 @@ use sql_query_builder as sql;
 
 use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL, OXEN_COLS, OXEN_ID_COL};
 
+use crate::constants::TABLE_NAME;
 use crate::core::db;
-use crate::core::db::data_frames::row_changes_db;
 use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
+use crate::core::db::data_frames::{DataFrameError, row_changes_db};
 use crate::core::df::tabular;
 use crate::model::data_frame::schema::DataType;
 use crate::model::staged_row_status::StagedRowStatus;
 use crate::view::data_frames::DataFrameRowChange;
-use crate::{constants::TABLE_NAME, error::OxenError};
 use polars::prelude::*; // or use polars::lazy::*; if you're working in a lazy context
 
 use super::df_db;
 
-pub fn append_row(conn: &duckdb::Connection, df: &DataFrame) -> Result<DataFrame, OxenError> {
+pub fn append_row(conn: &duckdb::Connection, df: &DataFrame) -> Result<DataFrame, DataFrameError> {
     let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
     let df_schema = df.schema();
 
     let df_names: Vec<String> = df_schema.iter_names().map(|s| s.to_string()).collect();
     if !table_schema.has_field_names(&df_names) {
-        return Err(OxenError::incompatible_schemas(table_schema.clone()));
+        return Err(DataFrameError::IncompatibleSchemas {
+            table_schema,
+            df_cols: df_names,
+        });
     }
 
     let added_column = Column::Series(
@@ -67,9 +70,9 @@ pub fn modify_row(
     conn: &duckdb::Connection,
     df: &mut DataFrame,
     uuid: &str,
-) -> Result<DataFrame, OxenError> {
+) -> Result<DataFrame, DataFrameError> {
     if df.height() != 1 {
-        return Err(OxenError::basic_str("Modify row requires exactly one row"));
+        return Err(DataFrameError::ModifyOnly1Row);
     }
 
     let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
@@ -85,7 +88,10 @@ pub fn modify_row(
     let df = df.select(&df_cols)?;
     if !table_schema.has_field_names(&df_cols) {
         log::error!("modify_row incompatible_schemas {table_schema:?}\n{df_cols:?}");
-        return Err(OxenError::incompatible_schemas(table_schema));
+        return Err(DataFrameError::IncompatibleSchemas {
+            table_schema,
+            df_cols,
+        });
     }
 
     // get existing hash and status from db
@@ -124,7 +130,7 @@ pub fn modify_row(
     ))?;
     let result = df_db::modify_row_with_polars_df(conn, TABLE_NAME, uuid, &new_row)?;
     if result.height() == 0 {
-        return Err(OxenError::resource_not_found(uuid));
+        return Err(DataFrameError::MissingDataFrame(uuid.to_string()));
     }
     Ok(result)
 }
@@ -132,7 +138,7 @@ pub fn modify_row(
 pub fn modify_rows(
     conn: &duckdb::Connection,
     row_map: HashMap<String, DataFrame>,
-) -> Result<DataFrame, OxenError> {
+) -> Result<DataFrame, DataFrameError> {
     let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
 
     let mut update_map: HashMap<String, DataFrame> = HashMap::new();
@@ -140,9 +146,7 @@ pub fn modify_rows(
     // Filter it down to exclude any of the OXEN_COLS, we don't want to modify these but hub sends them over
     for (row_id, df) in row_map.iter() {
         if df.height() != 1 {
-            return Err(OxenError::basic_str(
-                "df must have exactly one row to be used for modification",
-            ));
+            return Err(DataFrameError::ModifyOnly1Row);
         }
         let schema = df.schema();
         let df_col_names: Vec<String> = schema.iter_names().map(|s| s.to_string()).collect();
@@ -154,7 +158,10 @@ pub fn modify_rows(
         let df = df.select(&df_cols)?;
         if !table_schema.has_field_names(&df_cols) {
             log::error!("modify_row incompatible_schemas {table_schema:?}\n{df_cols:?}");
-            return Err(OxenError::incompatible_schemas(table_schema));
+            return Err(DataFrameError::IncompatibleSchemas {
+                table_schema,
+                df_cols,
+            });
         }
 
         // get existing hash and status from db
@@ -194,30 +201,28 @@ pub fn modify_rows(
 
     let result = df_db::modify_rows_with_polars_df(conn, TABLE_NAME, &update_map)?;
     if result.height() == 0 {
-        return Err(OxenError::resource_not_found(""));
+        return Err(DataFrameError::MissingDataFrame("".to_string()));
     }
 
     if result.height() != update_map.len() {
-        return Err(OxenError::basic_str(format!(
-            "Expected {} rows to be modified, but got {}",
-            update_map.len(),
-            result.height()
-        )));
+        return Err(DataFrameError::UnexpectedModifications {
+            expected: update_map.len(),
+            actual: result.height(),
+        });
     }
 
     Ok(result)
 }
 
-pub fn delete_row(conn: &duckdb::Connection, uuid: &str) -> Result<DataFrame, OxenError> {
+pub fn delete_row(conn: &duckdb::Connection, uuid: &str) -> Result<DataFrame, DataFrameError> {
     let select_stmt = sql::Select::new()
         .select("*")
         .from(TABLE_NAME)
         .where_clause(&format!("{OXEN_ID_COL} = '{uuid}'"));
 
     let row_to_delete = df_db::select(conn, &select_stmt, None)?;
-
     if row_to_delete.height() == 0 {
-        return Err(OxenError::resource_not_found(uuid));
+        return Err(DataFrameError::MissingDataFrame(uuid.to_string()));
     }
 
     // If it's newly added, delete it. Otherwise, set it to removed
@@ -226,7 +231,7 @@ pub fn delete_row(conn: &duckdb::Connection, uuid: &str) -> Result<DataFrame, Ox
 
     let status = match status_str {
         Some(status) => status,
-        None => return Err(OxenError::basic_str("Diff status column is not a string")),
+        None => return Err(DataFrameError::DiffStatusColNotStr),
     };
     log::debug!("status is: {status}");
 
@@ -259,13 +264,13 @@ fn get_hash_and_status_for_modification(
     conn: &duckdb::Connection,
     old_row: &DataFrame,
     new_row: &DataFrame,
-) -> Result<(String, String), OxenError> {
+) -> Result<(String, String), DataFrameError> {
     let schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
     let col_names = schema.fields_names();
     let old_status = old_row.column(DIFF_STATUS_COL)?.get(0)?;
     let old_status = old_status
         .get_str()
-        .ok_or_else(|| OxenError::basic_str("Diff status column is not a string"))?;
+        .ok_or_else(|| DataFrameError::DiffStatusColNotStr)?;
 
     let old_hash = old_row.column(DIFF_HASH_COL)?.get(0)?;
 
@@ -273,7 +278,7 @@ fn get_hash_and_status_for_modification(
     let new_hash = new_hash_df.column("_temp_hash")?.get(0)?;
     let new_hash = new_hash
         .get_str()
-        .ok_or_else(|| OxenError::basic_str("Diff hash column is not a string"))?;
+        .ok_or_else(|| DataFrameError::DiffHashColNotStr)?;
 
     // We need to calculate the original hash for the row
     // Use a temp hash column to avoid collision with the column that's already there.
@@ -283,19 +288,18 @@ fn get_hash_and_status_for_modification(
         let original_data_hash = original_data_hash.column("_temp_hash")?.get(0)?;
         original_data_hash
             .get_str()
-            .ok_or_else(|| OxenError::basic_str("Diff hash column is not a string"))?
+            .ok_or_else(|| DataFrameError::DiffHashColNotStr)?
             .to_owned()
     } else {
         old_hash
             .get_str()
-            .ok_or_else(|| OxenError::basic_str("Diff hash column is not a string"))?
+            .ok_or_else(|| DataFrameError::DiffHashColNotStr)?
             .to_owned()
     };
 
     // Anything previously added must stay added regardless of any further modifications.
     // Modifying back to original state changes it to unchanged
     // If we have no prior hash info on the original hash state, it is now modified (this is the first modification)
-
     let new_status = if old_status == StagedRowStatus::Added.to_string() {
         StagedRowStatus::Added.to_string()
     } else if old_status == StagedRowStatus::Removed.to_string() {
@@ -318,11 +322,9 @@ fn get_hash_and_status_for_modification(
 /// Insert a row from a polars dataframe into a duckdb table.
 pub fn insert_polars_df(
     conn: &duckdb::Connection,
-    table_name: impl AsRef<str>,
+    table_name: &str,
     df: &DataFrame,
-) -> Result<DataFrame, OxenError> {
-    let table_name = table_name.as_ref();
-
+) -> Result<DataFrame, DataFrameError> {
     let schema = df.schema();
     let field_names: Vec<&str> = schema.iter_names().map(|s| s.as_str()).collect();
     let column_names: Vec<String> = field_names
@@ -379,7 +381,7 @@ pub fn record_row_change(
     operation: String,
     value: Value,
     new_value: Option<Value>,
-) -> Result<(), OxenError> {
+) -> Result<(), DataFrameError> {
     let change = DataFrameRowChange {
         row_id: row_id.to_owned(),
         operation,
@@ -395,7 +397,7 @@ pub fn record_row_change(
     row_changes_db::write_data_frame_row_change(&change, &db)
 }
 
-pub fn maybe_revert_row_changes(db: &DB, row_id: String) -> Result<(), OxenError> {
+pub fn maybe_revert_row_changes(db: &DB, row_id: String) -> Result<(), DataFrameError> {
     match row_changes_db::get_data_frame_row_change(db, &row_id) {
         Ok(None) => revert_row_changes(db, row_id),
         Ok(Some(_)) => Ok(()),
@@ -403,7 +405,7 @@ pub fn maybe_revert_row_changes(db: &DB, row_id: String) -> Result<(), OxenError
     }
 }
 
-pub fn revert_row_changes(db: &DB, row_id: String) -> Result<(), OxenError> {
+pub fn revert_row_changes(db: &DB, row_id: String) -> Result<(), DataFrameError> {
     row_changes_db::delete_data_frame_row_changes(db, &row_id)
 }
 
@@ -414,7 +416,7 @@ pub fn revert_row_changes(db: &DB, row_id: String) -> Result<(), OxenError> {
 pub(crate) fn column_sql_types_by_name(
     conn: &duckdb::Connection,
     table_name: &str,
-) -> Result<HashMap<String, String>, OxenError> {
+) -> Result<HashMap<String, String>, DataFrameError> {
     let schema = df_db::get_schema(conn, table_name)?;
     let mut by_name = HashMap::with_capacity(schema.fields.len());
     for field in schema.fields {

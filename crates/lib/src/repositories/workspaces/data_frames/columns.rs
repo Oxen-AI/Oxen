@@ -1,5 +1,6 @@
 use crate::core;
 use crate::core::db;
+use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::column_changes_db::get_all_data_frame_column_changes;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
@@ -110,7 +111,7 @@ pub async fn restore(
 pub fn get_column_diff(
     workspace: &Workspace,
     file_path: impl AsRef<Path>,
-) -> Result<Vec<DataFrameColumnChange>, OxenError> {
+) -> Result<Vec<DataFrameColumnChange>, DataFrameError> {
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
     let opts = db::key_val::opts::default();

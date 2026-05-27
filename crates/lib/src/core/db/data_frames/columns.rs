@@ -4,25 +4,27 @@ use duckdb::arrow::array::RecordBatch;
 use polars::frame::DataFrame;
 use rocksdb::DB;
 
+use crate::constants::TABLE_NAME;
 use crate::core::db;
-use crate::core::db::data_frames::column_changes_db;
 use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
+use crate::core::db::data_frames::{DataFrameError, column_changes_db};
 use crate::model::Schema;
 use crate::model::data_frame::schema::DataType;
 use crate::view::data_frames::columns::{ColumnToDelete, ColumnToUpdate, NewColumn};
 use crate::view::data_frames::{ColumnChange, DataFrameColumnChange};
-use crate::{constants::TABLE_NAME, error::OxenError};
 
 use super::df_db;
 
 pub fn add_column(
     conn: &duckdb::Connection,
     new_column: &NewColumn,
-) -> Result<DataFrame, OxenError> {
+) -> Result<DataFrame, DataFrameError> {
     let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
 
     if table_schema.has_column(&new_column.name) {
-        return Err(OxenError::column_name_already_exists(&new_column.name));
+        return Err(DataFrameError::ColumnNameAlreadyExists(
+            new_column.name.clone(),
+        ));
     }
 
     let inserted_df = polar_insert_column(conn, TABLE_NAME, new_column)?;
@@ -32,11 +34,13 @@ pub fn add_column(
 pub fn delete_column(
     conn: &duckdb::Connection,
     column_to_delete: &ColumnToDelete,
-) -> Result<DataFrame, OxenError> {
+) -> Result<DataFrame, DataFrameError> {
     let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
 
     if !table_schema.has_column(&column_to_delete.name) {
-        return Err(OxenError::column_name_not_found(&column_to_delete.name));
+        return Err(DataFrameError::ColumnNameNotFound(
+            column_to_delete.name.clone(),
+        ));
     }
 
     let inserted_df = polar_delete_column(conn, TABLE_NAME, column_to_delete)?;
@@ -47,9 +51,11 @@ pub fn update_column(
     conn: &duckdb::Connection,
     column_to_update: &ColumnToUpdate,
     table_schema: &Schema,
-) -> Result<DataFrame, OxenError> {
+) -> Result<DataFrame, DataFrameError> {
     if !table_schema.has_column(&column_to_update.name) {
-        return Err(OxenError::column_name_not_found(&column_to_update.name));
+        return Err(DataFrameError::ColumnNameNotFound(
+            column_to_update.name.clone(),
+        ));
     }
 
     let inserted_df = polar_update_column(conn, TABLE_NAME, column_to_update)?;
@@ -61,7 +67,7 @@ pub fn record_column_change(
     operation: String,
     column_before: Option<ColumnChange>,
     column_after: Option<ColumnChange>,
-) -> Result<(), OxenError> {
+) -> Result<(), DataFrameError> {
     let opts = db::key_val::opts::default();
     let db = DB::open(&opts, dunce::simplified(column_changes_path))?;
 
@@ -87,7 +93,10 @@ pub fn record_column_change(
     column_changes_db::write_data_frame_column_change(&change, &db)
 }
 
-pub fn maybe_revert_column_changes(db: &DB, column: Option<ColumnChange>) -> Result<(), OxenError> {
+pub fn maybe_revert_column_changes(
+    db: &DB,
+    column: Option<ColumnChange>,
+) -> Result<(), DataFrameError> {
     if let Some(column) = column {
         column_changes_db::get_data_frame_column_change(db, &column.column_name).and_then(
             |change_opt| match change_opt {
@@ -100,16 +109,15 @@ pub fn maybe_revert_column_changes(db: &DB, column: Option<ColumnChange>) -> Res
     }
 }
 
-pub fn revert_column_changes(db: &DB, column_name: &str) -> Result<(), OxenError> {
+pub fn revert_column_changes(db: &DB, column_name: &str) -> Result<(), DataFrameError> {
     column_changes_db::delete_data_frame_column_changes(db, column_name)
 }
 
 pub fn polar_insert_column(
     conn: &duckdb::Connection,
-    table_name: impl AsRef<str>,
+    table_name: &str,
     new_column: &NewColumn,
-) -> Result<DataFrame, OxenError> {
-    let table_name = table_name.as_ref();
+) -> Result<DataFrame, DataFrameError> {
     let data_type = DataType::from_string(&new_column.data_type).to_sql();
     let sql = format!(
         "ALTER TABLE {} ADD COLUMN {} {}",
@@ -125,11 +133,9 @@ pub fn polar_insert_column(
 
 pub fn polar_delete_column(
     conn: &duckdb::Connection,
-    table_name: impl AsRef<str>,
+    table_name: &str,
     column_to_delete: &ColumnToDelete,
-) -> Result<DataFrame, OxenError> {
-    let table_name = table_name.as_ref();
-
+) -> Result<DataFrame, DataFrameError> {
     // Corrected to DROP COLUMN instead of ADD COLUMN
     let sql = format!(
         "ALTER TABLE {} DROP COLUMN {}",
@@ -145,29 +151,31 @@ pub fn polar_delete_column(
 
 pub fn polar_update_column(
     conn: &duckdb::Connection,
-    table_name: impl AsRef<str>,
+    table_name: &str,
     column_to_update: &ColumnToUpdate,
-) -> Result<DataFrame, OxenError> {
-    let table_name = table_name.as_ref();
-    let mut sql_commands = Vec::new();
+) -> Result<DataFrame, DataFrameError> {
+    let sql_commands = {
+        let mut sql_commands = Vec::new();
 
-    if let Some(ref new_data_type) = column_to_update.new_data_type {
-        let data_type = DataType::from_string(new_data_type).to_sql();
+        if let Some(ref new_data_type) = column_to_update.new_data_type {
+            let data_type = DataType::from_string(new_data_type).to_sql();
 
-        let update_type_sql = format!(
-            "ALTER TABLE {} ALTER COLUMN {} TYPE {}",
-            table_name, column_to_update.name, data_type
-        );
-        sql_commands.push(update_type_sql);
-    }
+            let update_type_sql = format!(
+                "ALTER TABLE {} ALTER COLUMN {} TYPE {}",
+                table_name, column_to_update.name, data_type
+            );
+            sql_commands.push(update_type_sql);
+        }
 
-    if let Some(ref new_name) = column_to_update.new_name {
-        let rename_sql = format!(
-            "ALTER TABLE {} RENAME COLUMN {} TO {}",
-            table_name, column_to_update.name, new_name
-        );
-        sql_commands.push(rename_sql);
-    }
+        if let Some(ref new_name) = column_to_update.new_name {
+            let rename_sql = format!(
+                "ALTER TABLE {} RENAME COLUMN {} TO {}",
+                table_name, column_to_update.name, new_name
+            );
+            sql_commands.push(rename_sql);
+        }
+        sql_commands
+    };
 
     for sql in sql_commands {
         conn.execute(&sql, [])?;

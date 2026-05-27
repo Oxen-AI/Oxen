@@ -144,6 +144,13 @@ pub enum OxenError {
     MissingFileName(StringError),
 
     //
+    // Diff errors
+    //
+    /// The file type is unsupported for data frame operations.
+    #[error("{0}")]
+    InvalidFileType(StringError),
+
+    //
     // Workspaces
     //
     /// The workspace wasn't found (either locally or on a remote server).
@@ -170,6 +177,14 @@ pub enum OxenError {
         workspace_id: String,
         source: Box<OxenError>,
     },
+
+    /// Adding a file into a workspace
+    #[error("{0}")]
+    ImportFileError(StringError),
+
+    /// An error encountered during SQL parsing.
+    #[error("{0}")]
+    SQLParseError(StringError),
 
     #[error("{0}")]
     WorkspaceNameIndex(#[from] crate::core::workspaces::workspace_name_index::WsError),
@@ -284,7 +299,7 @@ pub enum OxenError {
     Lmdb(#[from] LmdbError),
 
     //
-    // Schema (dataframes)
+    // Schema
     //
     /// The schema is invalid or unsupported for dataframe operations.
     #[error("Invalid schema: {0}")]
@@ -293,18 +308,6 @@ pub enum OxenError {
     /// The schemas of the data frames are incompatible.
     #[error("Incompatible schemas: {0}")]
     IncompatibleSchemas(Box<Schema>),
-
-    /// The file type is unsupported for data frame operations.
-    #[error("{0}")]
-    InvalidFileType(StringError),
-
-    /// A column name already exists in the dataframe's schema and cannot be added again.
-    #[error("{0}")]
-    ColumnNameAlreadyExists(StringError),
-
-    /// A column name was requested in a dataframe, but no such column exists.
-    #[error("{0}")]
-    ColumnNameNotFound(StringError),
 
     /// An operation is not supported for the the dataframe.
     #[error("{0}")]
@@ -320,30 +323,14 @@ pub enum OxenError {
     ThumbnailingNotEnabled,
 
     //
-    // Dataframes
-    //
-    /// No rows were found for a given SQL query.
-    #[error("Query returned no rows")]
-    NoRowsFound,
-
-    /// An error encountered during dataframe operations.
-    /// Contains a human-readable description of the error.
-    #[error("{0}")]
-    DataFrameError(StringError),
-
-    /// Adding a file into a workspace
-    #[error("{0}")]
-    ImportFileError(StringError),
-
-    /// An error encountered during SQL parsing.
-    #[error("{0}")]
-    SQLParseError(StringError),
-
-    //
     //
     // Wrappers
     //
     //
+    /// An error encountered during dataframe operations.
+    #[error("{0}")]
+    DataFrameError(#[from] crate::core::db::data_frames::DataFrameError),
+
     /// An error encountered dealing with AWS
     #[error("AWS error: {0}")]
     AwsError(Box<dyn std::error::Error + Send + Sync>),
@@ -855,18 +842,6 @@ impl OxenError {
     pub fn invalid_file_type(file_type: impl AsRef<str>) -> OxenError {
         let err = format!("Invalid file type: {:?}", file_type.as_ref());
         OxenError::InvalidFileType(StringError::from(err))
-    }
-
-    /// Make a new OxenError::ColumnNameAlreadyExists error.
-    pub fn column_name_already_exists(column_name: &str) -> OxenError {
-        let err = format!("Column name already exists: {column_name:?}");
-        OxenError::ColumnNameAlreadyExists(StringError::from(err))
-    }
-
-    /// Make a new OxenError::ColumnNameNotFound error.
-    pub fn column_name_not_found(column_name: &str) -> OxenError {
-        let err = format!("Column name not found: {column_name:?}");
-        OxenError::ColumnNameNotFound(StringError::from(err))
     }
 
     /// Make a new OxenError::IncompatibleSchemas error.
