@@ -172,3 +172,64 @@ fn hash_large_file_contents(path: &Path) -> Result<u128, OxenError> {
 
     Ok(hasher.digest128())
 }
+
+/// Wraps a `std::io::Read` and feeds every byte successfully read into an `Xxh3` hasher;
+/// `digest128()` returns the running XXH3-128. Composable with anything that reads from a
+/// `Read` (e.g. `std::io::copy`).
+///
+/// For an async equivalent, compose `tokio_util::io::InspectReader` with a closure that calls
+/// `Xxh3::update` — we don't bundle one here because the current verified helpers hash inside
+/// the `spawn_blocking` writer task rather than via a reader-side wrapper.
+pub struct HashingReader<'a, R: ?Sized> {
+    inner: &'a mut R,
+    hasher: Xxh3,
+}
+
+impl<'a, R: Read + ?Sized> HashingReader<'a, R> {
+    pub fn new(inner: &'a mut R) -> Self {
+        Self {
+            inner,
+            hasher: Xxh3::new(),
+        }
+    }
+
+    pub fn digest128(&self) -> u128 {
+        self.hasher.digest128()
+    }
+}
+
+impl<R: Read + ?Sized> Read for HashingReader<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        if n > 0 {
+            self.hasher.update(&buf[..n]);
+        }
+        Ok(n)
+    }
+}
+
+#[cfg(test)]
+mod hashing_reader_tests {
+    use super::*;
+
+    #[test]
+    fn sync_reader_matches_one_shot() {
+        let payload = b"the quick brown fox jumps over the lazy dog";
+        let mut source = &payload[..];
+        let mut hashing = HashingReader::new(&mut source);
+        let mut sink = Vec::new();
+        hashing.read_to_end(&mut sink).unwrap();
+        assert_eq!(sink, payload);
+        assert_eq!(hashing.digest128(), xxh3_128(payload));
+    }
+
+    #[test]
+    fn sync_reader_empty_input() {
+        let mut source: &[u8] = &[];
+        let mut hashing = HashingReader::new(&mut source);
+        let mut sink = Vec::new();
+        hashing.read_to_end(&mut sink).unwrap();
+        assert!(sink.is_empty());
+        assert_eq!(hashing.digest128(), xxh3_128(b""));
+    }
+}

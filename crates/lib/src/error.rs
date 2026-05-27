@@ -18,6 +18,7 @@ use crate::command::migrate::Direction;
 use crate::config::repository_config::RepoConfigError;
 use crate::core::db::merkle_node::lmdb::LmdbError;
 use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
+use crate::model::MerkleHash;
 use crate::model::ParsedResource;
 use crate::model::RepoNew;
 use crate::model::Schema;
@@ -356,6 +357,16 @@ pub enum OxenError {
         dst: PathBuf,
         #[source]
         source: io::Error,
+    },
+
+    /// Content destined for `path` did not hash to the expected XXH3-128 digest. Returned by
+    /// the verified atomic-write helpers in `util::fs` so callers can distinguish "wrong content
+    /// arrived" from generic IO failures.
+    #[error("Hash mismatch writing {path:?}: expected {expected}, got {actual}")]
+    HashMismatch {
+        path: PathBuf,
+        expected: MerkleHash,
+        actual: MerkleHash,
     },
 
     /// Encountered when authentication fails. Contains the authentication error message.
