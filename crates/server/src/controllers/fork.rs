@@ -36,7 +36,7 @@ pub async fn fork(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
 
-    let original_repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+    let original_repo = get_repo(app_data, &namespace, &repo_name)?;
 
     // Update storage path in config.toml to relative path
     original_repo.save()?;

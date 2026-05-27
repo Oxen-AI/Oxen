@@ -86,7 +86,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     let name = path_param(&req, "repo_name")?.to_string();
 
     // Get the repository or return error
-    let repository = get_repo(&app_data.path, &namespace, &name)?;
+    let repository = get_repo(app_data, &namespace, &name)?;
     let mut size: u64 = 0;
     let mut data_types: Vec<DataTypeCount> = vec![];
     let mut default_resource: Option<ParsedResourceView> = None;
@@ -216,7 +216,7 @@ pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
 
-    let repository = get_repo(&app_data.path, &namespace, &name)?;
+    let repository = get_repo(app_data, &namespace, &name)?;
     repositories::size::update_size(&repository)?;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
@@ -242,7 +242,7 @@ pub async fn get_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
 
-    let repository = get_repo(&app_data.path, &namespace, &name)?;
+    let repository = get_repo(app_data, &namespace, &name)?;
     let size = repositories::size::get_size(&repository)?;
     Ok(HttpResponse::Ok().json(size))
 }
@@ -547,7 +547,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
 
-    let Ok(repository) = get_repo(&app_data.path, &namespace, &name) else {
+    let Ok(repository) = get_repo(app_data, &namespace, &name) else {
         return Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()));
     };
 

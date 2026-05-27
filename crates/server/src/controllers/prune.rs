@@ -44,7 +44,7 @@ pub async fn prune(
     let repo_name = path_param(&req, "repo_name")?.to_string();
 
     // Get the repository
-    let repository = get_repo(&app_data.path, &namespace, &repo_name)?;
+    let repository = get_repo(app_data, &namespace, &repo_name)?;
 
     let dry_run = body.dry_run;
 

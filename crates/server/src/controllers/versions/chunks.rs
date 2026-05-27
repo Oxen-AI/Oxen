@@ -31,7 +31,7 @@ pub async fn upload(
 
     let offset = query.offset.unwrap_or(0);
 
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(app_data, namespace, repo_name)?;
 
     log::debug!(
         "/upload version {} chunk offset{} to repo: {:?}",
@@ -61,7 +61,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let version_id = path_param(&req, "version_id")?.to_string();
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(app_data, namespace, repo_name)?;
 
     log::debug!("/complete version chunk upload to repo: {:?}", repo.path);
 
@@ -145,7 +145,7 @@ pub async fn download(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let version_id = path_param(&req, "version_id")?.to_string();
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(app_data, namespace, repo_name)?;
 
     let offset = query.offset.unwrap_or(0);
     let size = query.size.unwrap_or_else(stream_segment_size);
