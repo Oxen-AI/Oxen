@@ -94,7 +94,11 @@ pub fn get_by_dir(
         id: config.workspace_id.unwrap_or(workspace_id.to_owned()),
         name: config.workspace_name,
         base_repo: repo.clone(),
-        workspace_repo: LocalRepository::new(workspace_dir, repo_config)?,
+        workspace_repo: LocalRepository::new_with_server_opts(
+            workspace_dir,
+            repo_config,
+            repo.server_s3_opts(),
+        )?,
         commit,
         is_editable: config.is_editable,
     }))

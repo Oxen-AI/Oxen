@@ -107,6 +107,12 @@ impl StoragePolicy {
         }
     }
 
+    /// Server S3 opts to thread into liboxen constructors (e.g. `LocalRepository::from_dir`).
+    /// `None` when the S3 backend is not configured on this server.
+    pub fn s3(&self) -> Option<&S3Opts> {
+        self.s3.as_ref()
+    }
+
     /// Resolve the storage backend kind to use for a new repo.
     ///
     /// - `requested = None`: returns the server's default.

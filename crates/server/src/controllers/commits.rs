@@ -1048,7 +1048,12 @@ pub async fn complete(req: HttpRequest) -> Result<HttpResponse, Error> {
     let repo_name: &str = path_param(&req, "repo_name").unwrap();
     let commit_id: &str = path_param(&req, "commit_id").unwrap();
 
-    match repositories::get_by_namespace_and_name(&app_data.path, namespace, repo_name) {
+    match repositories::get_by_namespace_and_name(
+        &app_data.path,
+        namespace,
+        repo_name,
+        app_data.config.storage.s3(),
+    ) {
         Ok(Some(repo)) => {
             match repositories::commits::get_by_id(&repo, commit_id) {
                 Ok(Some(commit)) => {

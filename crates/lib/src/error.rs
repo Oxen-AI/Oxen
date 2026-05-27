@@ -281,10 +281,16 @@ pub enum OxenError {
     #[error("Unsupported storage kind: {0}")]
     UnsupportedStorageKind(String),
 
-    /// The S3 version store backend is not yet implemented; admin/server wiring lands in a later
-    /// step of the storage-policy work.
-    #[error("S3 storage backend not yet implemented")]
-    S3BackendNotImplemented,
+    /// An S3-backed repo was requested but the server has no S3 opts configured (the
+    /// `s3_bucket` is unset in the server's TOML). On the repo-create path this normally surfaces
+    /// as a 400 from `StoragePolicy::resolve()` before construction; this variant catches the
+    /// repo-load path or any other caller that built a `StorageConfig { kind: S3, .. }` without
+    /// going through the policy.
+    #[error(
+        "S3 storage requested but the server has no S3 opts configured \
+         (see `s3_bucket` under [storage] in the server config)"
+    )]
+    S3BackendMissingServerOpts,
 
     /// `oxen restore` finished with one or more file-restore failures. Aggregated rather than
     /// fail-fast so the rest of the files can still be restored. The vector should be non-empty.
@@ -732,6 +738,9 @@ impl OxenError {
             }
             DownloadBatchExhausted { .. } | VersionsMissingOnServer { .. } => {
                 "If a content blob is missing on the server, run `oxen push --missing-files` from a clone with the full local history to repair it."
+            }
+            S3BackendMissingServerOpts => {
+                "Set `[storage] s3_bucket = \"<your-bucket>\"` in the server's config TOML and restart oxen-server."
             }
             _ => return None,
         }
