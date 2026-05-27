@@ -112,6 +112,10 @@ pub trait MerkleTreeNodeIdType {
 
     /// The stable merkle hash of this node.
     fn hash(&self) -> MerkleHash;
+
+
+    /// The file or directory name for this node. If none, this node doesn't have a name.
+    fn name(&self) -> Option<&str>;
 }
 
 /// Trait for things that are Merkle tree nodes.

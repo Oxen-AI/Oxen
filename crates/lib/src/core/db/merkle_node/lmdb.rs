@@ -11,6 +11,9 @@ mod value_structs;
 /// The [`MerkleWriter`] implementation.
 mod writer;
 
+/// A hash of a file's contents & its name. Constructed from a `MerkleHash` and a filename exactly.
+mod hash_content_name;
+
 /// The cache of open `LMDB` environments in the process.
 pub(crate) mod cache;
 

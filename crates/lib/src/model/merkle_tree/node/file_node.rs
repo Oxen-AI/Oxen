@@ -251,6 +251,10 @@ impl MerkleTreeNodeIdType for FileNode {
     fn hash(&self) -> MerkleHash {
         *self.hash()
     }
+
+    fn name(&self) -> Option<&str> {
+        Some(self.node().name())
+    }
 }
 
 impl Hash for FileNode {

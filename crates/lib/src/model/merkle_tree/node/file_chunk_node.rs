@@ -40,6 +40,10 @@ impl MerkleTreeNodeIdType for FileChunkNode {
     fn hash(&self) -> MerkleHash {
         self.hash
     }
+
+    fn name(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// Debug is used for verbose multi-line output with println!("{:?}", node)

@@ -136,6 +136,10 @@ impl MerkleTreeNodeIdType for VNode {
     fn hash(&self) -> MerkleHash {
         *self.node().hash()
     }
+
+    fn name(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// Debug is used for verbose multi-line output with println!("{:?}", node)

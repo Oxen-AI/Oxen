@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+members = [".tmp-xxh3/demo","crates/*"]
 exclude = ["crates/data", "experiments/*"]
 
 [workspace.package]

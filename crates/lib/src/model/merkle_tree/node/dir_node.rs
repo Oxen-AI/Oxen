@@ -259,6 +259,10 @@ impl MerkleTreeNodeIdType for DirNode {
     fn hash(&self) -> MerkleHash {
         *self.node().hash()
     }
+
+    fn name(&self) -> Option<&str> {
+        Some(self.node().name())
+    }
 }
 
 /// Debug is used for verbose multi-line output with println!("{:?}", node)

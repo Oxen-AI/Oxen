@@ -4,7 +4,8 @@ use std::rc::Rc;
 use heed::{Database, Env, WithTls};
 
 use crate::core::db::merkle_node::lmdb::LmdbError;
-use crate::core::db::merkle_node::lmdb::lmdb_backend::{KeyLmdb, LmdbBackend, ValueLmdb};
+use crate::core::db::merkle_node::lmdb::hash_content_name::{Filename, HashCN};
+use crate::core::db::merkle_node::lmdb::lmdb_backend::{KeyLmdb, LmdbBackend, LmdbTables, ValueLmdb};
 use crate::core::db::merkle_node::lmdb::value_structs::{LmdbLink, LmdbNode};
 use crate::error::OxenError;
 use crate::model::merkle_tree::merkle_writer::{
@@ -22,8 +23,7 @@ impl MerkleWriter for LmdbBackend {
     fn begin<'a>(&'a self) -> Result<Box<dyn MerkleWriteSession + 'a>, OxenError> {
         Ok(Box::new(LmdbWriteSession {
             env: &self.lmdb_env,
-            merkle_tree_nodes: &self.merkle_tree_nodes,
-            merkle_links: &self.merkle_links,
+            tables: &self.tables,
             pending: Rc::new(Cell::new(Vec::new())),
         }))
     }
@@ -35,8 +35,9 @@ struct PendingWrite {
     node_hash: MerkleHash,
     node_kind: MerkleTreeNodeType,
     node_data: Vec<u8>,
+    filename: Option<Filename>,
     parent_id: Option<MerkleHash>,
-    children: Vec<(MerkleHash, LmdbNode)>,
+    children: Vec<(MerkleHash, Option<Filename>, LmdbNode)>,
 }
 
 /// Implements [`MerkleWriteSession`] for the [`LmdbBackend`] with all-or-nothing semantics.
@@ -63,8 +64,7 @@ struct PendingWrite {
 /// taken before `finish` see pre-session data; reads taken after see the new state.
 struct LmdbWriteSession<'env> {
     env: &'env Env<WithTls>,
-    merkle_tree_nodes: &'env Database<KeyLmdb, ValueLmdb>,
-    merkle_links: &'env Database<KeyLmdb, ValueLmdb>,
+    tables: &'env LmdbTables,
     pending: Rc<Cell<Vec<PendingWrite>>>,
 }
 
@@ -81,6 +81,7 @@ impl<'env> MerkleWriteSession for LmdbWriteSession<'env> {
             node_hash: node.hash(),
             node_kind: node.node_type(),
             node_data: node.to_msgpack_bytes()?,
+            filename: node.name(),
             parent_id,
             children_buffer: Vec::new(),
         }))
@@ -100,10 +101,27 @@ impl<'env> MerkleWriteSession for LmdbWriteSession<'env> {
         }
         let mut wtxn = LmdbBackend::write_txn(self.env)?;
         for pw in pending {
+
+            //
+            // Perform the following writes:
+            //
+            //  (1) write the node into the store:
+            //          (MerkleHash, XXH3(name)) = HashNC -> LmdbNode
+            //
+            //  (2) append the node into the duplicates:
+            //          (MerkleHash) -> Vec<XXH3(name)>
+            //
+            //  (3) write the tree links:
+            //          (MerkleHash) -> Vec<(MerkleHash, XXH3(name))>
+            //
+
+
+            // (1) write into node store
+            let hash_name_content = HashCN::new(&pw.node_hash, pw.filename.as_ref());
             LmdbBackend::put_serialized(
                 &mut wtxn,
-                self.merkle_tree_nodes,
-                &pw.node_hash,
+                &self.tables.merkle_node_store,
+                hash_name_content.as_u128(),
                 LmdbNode::encode,
                 LmdbNode {
                     kind: pw.node_kind,
@@ -111,9 +129,21 @@ impl<'env> MerkleWriteSession for LmdbWriteSession<'env> {
                 },
             )?;
 
+            // (2) append the node into the duplicates
+            let duplicates = match LmdbBackend::retrieve_bytes(
+                &wtxn,
+                &self.tables.merkle_node_dupes,
+                hash_name_content.as_u128(),
+            )? {
+                Some(existing) => existing,
+                None => vec![],
+            }
+
+
+            // (3) write the tree links
             let children = {
                 let mut children = Vec::with_capacity(pw.children.len());
-                for (child_hash, child_node) in pw.children {
+                for (child_hash, maybe_child_filename, child_node) in pw.children {
                     LmdbBackend::put_serialized(
                         &mut wtxn,
                         self.merkle_tree_nodes,
@@ -142,6 +172,27 @@ impl<'env> MerkleWriteSession for LmdbWriteSession<'env> {
     }
 }
 
+// impl<'a> MerkleWriteSession {
+//     fn write_single_node(&self, wxtn: &mut heed::RwTxn<'_>, content: MerkleHash, maybe_filename: Option<Filename>, kind: MerkleTreeNodeType, data: Vec<u8>) -> Result<(), LmdbError> {
+//         let (hash, table) = match maybe_filename {
+//             Some(filename) => {
+//                 let hash_of_content_and_name = HashCN::new(content, &filename);
+//                 (*hash_of_content_and_name.as_u128(), self.merkle_tree_files)
+//             },
+//             None => {
+//
+//             },
+//         };
+//         LmdbBackend::put_serialized(
+//             &mut wtxn,
+//             self.merkle_tree_else,
+//             content,
+//             LmdbNode::encode,
+//             LmdbNode { kind, data },
+//         )
+//     }
+// }
+
 /// Buffers one node's data + children in memory; on `finish`, hands the buffer off to the
 /// parent [`LmdbWriteSession`]'s pending queue.
 ///
@@ -153,8 +204,9 @@ struct LmdbNodeWriteSession {
     node_hash: MerkleHash,
     node_kind: MerkleTreeNodeType,
     node_data: Vec<u8>,
+    filename: Option<Filename>,
     parent_id: Option<MerkleHash>,
-    children_buffer: Vec<(MerkleHash, LmdbNode)>,
+    children_buffer: Vec<(MerkleHash, Option<Filename>, LmdbNode)>,
 }
 
 impl NodeWriteSession for LmdbNodeWriteSession {
@@ -170,7 +222,11 @@ impl NodeWriteSession for LmdbNodeWriteSession {
             data: child.to_msgpack_bytes()?,
         };
         self.children_buffer
-            .push((child.hash(), child_as_lmdb_node));
+            .push((
+                child.hash(),
+                child.name().map(Filename::new_assume_invariants),
+                child_as_lmdb_node,
+            ));
         Ok(())
     }
 
@@ -182,6 +238,7 @@ impl NodeWriteSession for LmdbNodeWriteSession {
             node_hash,
             node_kind,
             node_data,
+            filename,
             parent_id,
             children_buffer,
         } = *self;
@@ -192,6 +249,7 @@ impl NodeWriteSession for LmdbNodeWriteSession {
             node_hash,
             node_kind,
             node_data,
+            filename,
             parent_id,
             children: children_buffer,
         });
