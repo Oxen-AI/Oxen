@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 use tokio::time::Duration;
 
-use crate::constants::AVG_CHUNK_SIZE;
 use crate::constants::DEFAULT_REMOTE_NAME;
+use crate::constants::stream_segment_size;
 use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::MerkleTreeNode;
@@ -552,17 +552,21 @@ pub async fn push_entries(
     // Some files may be much larger than others....so we can't just zip them up and send them
     // since bodies will be too big. Hence we chunk and send the big ones, and bundle and send the small ones
 
-    // For files smaller than AVG_CHUNK_SIZE, we are going to group them, zip them up, and transfer them
+    let segment_size = stream_segment_size();
+
+    // For files at-or-below the streamed-transfer segment size, group them, zip them up, and
+    // transfer them as one batch.
     let smaller_entries: Vec<CommitEntry> = entries
         .iter()
-        .filter(|e| e.num_bytes <= AVG_CHUNK_SIZE)
+        .filter(|e| e.num_bytes <= segment_size)
         .map(|e| e.to_owned())
         .collect();
 
-    // For files larger than AVG_CHUNK_SIZE, we are going break them into chunks and send the chunks in parallel
+    // For files above the streamed-transfer segment size, split them into segments and send
+    // them in parallel.
     let larger_entries: Vec<CommitEntry> = entries
         .iter()
-        .filter(|e| e.num_bytes > AVG_CHUNK_SIZE)
+        .filter(|e| e.num_bytes > segment_size)
         .map(|e| e.to_owned())
         .collect();
 
@@ -573,7 +577,7 @@ pub async fn push_entries(
         remote_repo,
         smaller_entries,
         commit,
-        AVG_CHUNK_SIZE,
+        segment_size,
         progress,
     );
 

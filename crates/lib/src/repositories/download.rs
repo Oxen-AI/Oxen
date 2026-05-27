@@ -140,9 +140,10 @@ mod tests {
             let dir = repo.path.join(&large_file_dir);
             util::fs::create_dir_all(&dir)?;
 
-            // Create a large file (> 4 * AVG_CHUNK_SIZE)
+            // Create a file several streamed-transfer segments long so the download path
+            // exercises the parallel-segment branch.
             let large_file_path = dir.join("large_file.bin");
-            let large_file_size = 4 * constants::AVG_CHUNK_SIZE + 1024 * 1024; // 41MB
+            let large_file_size = 4 * constants::stream_segment_size() + 1024 * 1024;
             let large_file_data = vec![0u8; large_file_size as usize];
             std::fs::write(&large_file_path, large_file_data)?;
 

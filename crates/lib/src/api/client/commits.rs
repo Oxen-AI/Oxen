@@ -646,7 +646,7 @@ pub async fn post_data_to_server_with_client(
     filename: &Option<String>,
     bar: Arc<ProgressBar>,
 ) -> Result<(), OxenError> {
-    let chunk_size: usize = constants::AVG_CHUNK_SIZE as usize;
+    let chunk_size: usize = constants::stream_segment_size() as usize;
 
     if buffer.len() > chunk_size {
         upload_data_to_server_in_chunks_with_client(

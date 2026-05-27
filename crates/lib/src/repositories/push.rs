@@ -59,7 +59,7 @@ mod tests {
     use crate::api;
     use crate::command;
     use crate::constants;
-    use crate::constants::{AVG_CHUNK_SIZE, DEFAULT_BRANCH_NAME, DEFAULT_REMOTE_NAME};
+    use crate::constants::{DEFAULT_BRANCH_NAME, DEFAULT_REMOTE_NAME, stream_segment_size};
     use crate::core::progress::push_progress::PushProgress;
     use crate::error::OxenError;
     use crate::model::merkle_tree::node::MerkleTreeNode;
@@ -1577,24 +1577,26 @@ A: Checkout Oxen.ai
             let local_repo = local_repo.clone();
             let remote_repo = remote_repo.clone();
 
-            // Create a file with exactly AVG_CHUNK_SIZE bytes
+            // Create a file with exactly stream_segment_size() bytes so it sits at the
+            // boundary between the batched-zip and parallel-segment transfer paths.
+            let segment_size = stream_segment_size();
             let file_path = local_repo.path.join("exact_chunk_size_file.bin");
-            let file_data: Vec<u8> = vec![42; AVG_CHUNK_SIZE as usize];
+            let file_data: Vec<u8> = vec![42; segment_size as usize];
 
             // Write the data to the file
             util::fs::write_data(&file_path, &file_data)?;
 
-            // Verify the file size is exactly AVG_CHUNK_SIZE
+            // Verify the file size equals the segment size exactly.
             let metadata = util::fs::metadata(&file_path)?;
             assert_eq!(
                 metadata.len(),
-                AVG_CHUNK_SIZE,
-                "File size should be exactly AVG_CHUNK_SIZE"
+                segment_size,
+                "File size should be exactly stream_segment_size()"
             );
 
             // Add and commit the file
             repositories::add(&local_repo, &file_path).await?;
-            let commit_msg = "Add file with exactly AVG_CHUNK_SIZE bytes";
+            let commit_msg = "Add file with exactly stream_segment_size() bytes";
             let commit = repositories::commit(&local_repo, commit_msg)?;
 
             // Push the commit to the remote repository
@@ -1622,7 +1624,7 @@ A: Checkout Oxen.ai
                 // Verify the file was downloaded successfully
                 assert!(download_path.exists(), "Downloaded file should exist");
 
-                // Verify the file size is exactly AVG_CHUNK_SIZE
+                // Verify the file size matches the original.
                 let downloaded_metadata = util::fs::metadata(&download_path)?;
                 assert_eq!(
                     downloaded_metadata.len(),
@@ -1889,7 +1891,7 @@ A: Checkout Oxen.ai
             let sub_dir = local_repo.path.join("data").join("models");
             util::fs::create_dir_all(&sub_dir)?;
 
-            let file_size = 11 * 1024 * 1024; // 11MB, above AVG_CHUNK_SIZE
+            let file_size = (stream_segment_size() + 1024 * 1024) as usize;
             let file_path = sub_dir.join("weights.bin");
             let file_data: Vec<u8> = (0..file_size).map(|i| (i % 256) as u8).collect();
             util::fs::write_data(&file_path, &file_data)?;

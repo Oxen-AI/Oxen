@@ -2,7 +2,7 @@ use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::{PageNumQuery, app_data, parse_resource, path_param};
 
-use liboxen::constants::AVG_CHUNK_SIZE;
+use liboxen::constants::stream_segment_size;
 use liboxen::error::OxenError;
 use liboxen::util::fs::replace_file_name_keep_extension;
 use liboxen::util::paginate;
@@ -117,7 +117,7 @@ pub async fn download_chunk(
 
     let version_store = repo.version_store();
     let chunk_start: u64 = query.chunk_start.unwrap_or(0);
-    let chunk_size: u64 = query.chunk_size.unwrap_or(AVG_CHUNK_SIZE);
+    let chunk_size: u64 = query.chunk_size.unwrap_or_else(stream_segment_size);
 
     let file_node = match repositories::entries::get_file(&repo, &commit, &path)? {
         Some(node) => node,
