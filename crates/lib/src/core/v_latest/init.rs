@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::config::RepositoryConfig;
 use crate::config::repository_config::MerkleStoreKind;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
@@ -46,13 +47,13 @@ pub fn init_with_version_and_merkle_store(
         return Err(OxenError::RepoAlreadyExistsAtPath(path.to_path_buf()));
     }
 
-    let repo = LocalRepository::new_from_version_with_merkle_store_kind(
-        path,
-        version.to_string(),
-        None,
-        is_vfs,
+    let config = RepositoryConfig {
+        min_version: Some(version.to_string()),
+        vfs: if is_vfs { Some(true) } else { None },
         merkle_store_kind,
-    )?;
+        ..Default::default()
+    };
+    let repo = LocalRepository::new(path, config)?;
     repo.save()?;
 
     Ok(repo)
@@ -90,13 +91,14 @@ pub async fn init_with_version_storage_and_merkle_store(
         return Err(OxenError::RepoAlreadyExistsAtPath(path.to_path_buf()));
     }
 
-    let repo = LocalRepository::new_from_version_with_merkle_store_kind(
-        path,
-        version.to_string(),
-        storage_config,
-        is_vfs,
+    let config = RepositoryConfig {
+        min_version: Some(version.to_string()),
+        storage: storage_config,
+        vfs: if is_vfs { Some(true) } else { None },
         merkle_store_kind,
-    )?;
+        ..Default::default()
+    };
+    let repo = LocalRepository::new(path, config)?;
     repo.save()?;
 
     let version_store = repo.version_store();
