@@ -75,9 +75,6 @@ pub use merge::MergeCmd;
 pub mod node;
 pub use node::NodeCmd;
 
-pub mod pack;
-pub use pack::PackCmd;
-
 pub mod pull;
 pub use pull::PullCmd;
 
@@ -104,9 +101,6 @@ pub use schemas::SchemasCmd;
 
 pub mod tree;
 pub use tree::TreeCmd;
-
-pub mod unpack;
-pub use unpack::UnpackCmd;
 
 pub mod status;
 pub use status::StatusCmd;

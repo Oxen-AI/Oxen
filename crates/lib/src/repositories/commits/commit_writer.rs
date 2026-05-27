@@ -160,7 +160,7 @@ pub(crate) fn commit_with_cfg(
     with_ref_manager(repo, |manager| {
         if !head_path_exists {
             log::debug!("HEAD file does not exist, creating new branch");
-            manager.set_head(&branch_name);
+            manager.set_head(&branch_name)?;
             manager.set_branch_commit_id(&branch_name, &commit_id)?;
         }
         manager.set_head_commit_id(&commit_id)

@@ -106,3 +106,19 @@ pub fn check_repo_migration_needed(repo: &LocalRepository) -> Result<(), OxenErr
         "Error: Migration required".to_string().into(),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use liboxen::test;
+
+    /// The LMDB merkle-store migration is optional: even on a file-backend repo
+    /// (where it's *applicable*), it must not appear in the auto-block list, or
+    /// every normal CLI operation would refuse to proceed. `run_empty_local_repo_test`
+    /// creates a file-backend repo by default — exactly the case we want to assert
+    /// stays unblocked.
+    #[test]
+    fn test_check_repo_migration_needed_ignores_optional_migrations() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test(|repo| check_repo_migration_needed(&repo))
+    }
+}

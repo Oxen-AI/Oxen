@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::chunker::{map_bincode_error, Chunker};
+use crate::chunker::{Chunker, map_bincode_error};
 use crate::xhash;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};

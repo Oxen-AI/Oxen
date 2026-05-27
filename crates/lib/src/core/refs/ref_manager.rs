@@ -224,10 +224,8 @@ impl RefManager {
 
     // Write operations (from RefWriter)
 
-    pub fn set_head(&self, name: impl AsRef<str>) {
-        let name = name.as_ref();
+    pub fn set_head(&self, name: &str) -> Result<(), OxenError> {
         util::fs::atomic_write_to_path(&self.head_file, name.as_bytes())
-            .expect("Could not write to head");
     }
 
     pub fn create_branch(
@@ -320,7 +318,7 @@ impl RefManager {
             if self.has_branch(&head_val) {
                 self.set_head_branch_commit_id(commit_id)?;
             } else {
-                self.set_head(commit_id);
+                self.set_head(commit_id)?;
             }
         }
         Ok(())
@@ -439,7 +437,7 @@ mod tests {
                 let branch_name = "experiment/cat-dog";
                 let commit_id = format!("{}", uuid::Uuid::new_v4());
                 manager.create_branch(branch_name, &commit_id)?;
-                manager.set_head(branch_name);
+                manager.set_head(branch_name)?;
                 assert_eq!(manager.head_commit_id()?, Some(commit_id));
                 Ok(())
             })

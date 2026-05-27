@@ -147,7 +147,7 @@ mod tests {
     use crate::config::repository_config::MerkleStoreKind;
     use crate::core::db::merkle_node::lmdb::cache;
     use crate::error::OxenError;
-    use crate::test;
+    use crate::test::repo_prep::init_test_repo_with_merkle_store;
 
     /// Two `get_or_open` calls for the same canonical repo root return the
     /// same `Arc` — i.e. the underlying `LmdbBackend` (and its `Env`,
@@ -155,7 +155,7 @@ mod tests {
     /// have hit LMDB's "already open in this program" error.
     #[test]
     fn test_cache_returns_same_backend_for_concurrent_opens() -> Result<(), OxenError> {
-        let repo = test::init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
+        let repo = init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
         let a = cache::get_or_open(&repo.path)?;
         let b = cache::get_or_open(&repo.path)?;
         assert!(
@@ -168,8 +168,8 @@ mod tests {
     /// Two different canonical paths yield two distinct `LmdbBackend`s.
     #[test]
     fn test_cache_distinguishes_different_paths() -> Result<(), OxenError> {
-        let repo_a = test::init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
-        let repo_b = test::init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
+        let repo_a = init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
+        let repo_b = init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
         let a = cache::get_or_open(&repo_a.path)?;
         let b = cache::get_or_open(&repo_b.path)?;
         assert!(
@@ -183,11 +183,10 @@ mod tests {
     /// tombstone and a subsequent open yields a fresh `Arc`.
     #[test]
     fn test_cache_drops_backend_when_all_handles_released() -> Result<(), OxenError> {
-        let mut repo = test::init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
-        let repo_path = repo.path.clone();
-        // Free the test helper's strong handle so this test owns the only
-        // live reference at the point of `drop(a)` below.
-        repo.drop_inner();
+        let repo_path = init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?
+            // Free the test helper's strong handle so this test owns the only
+            // live reference at the point of `drop(a)` below.
+            .drop_local_repo();
 
         let a = cache::get_or_open(&repo_path)?;
         let weak = Arc::downgrade(&a);
@@ -213,7 +212,7 @@ mod tests {
     /// physical path collapse to one cache entry.
     #[test]
     fn test_cache_canonicalizes_path_shapes() -> Result<(), OxenError> {
-        let repo = test::init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
+        let repo = init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
         // Build a non-canonical variant: append a trailing `./.`.
         let nonsense = repo.path.join(".");
         let a = cache::get_or_open(&repo.path)?;

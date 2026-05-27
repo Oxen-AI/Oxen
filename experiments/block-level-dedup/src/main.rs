@@ -1,4 +1,4 @@
-use crate::chunker::{get_chunker, Algorithm, FrameworkError, FrameworkResult};
+use crate::chunker::{Algorithm, FrameworkError, FrameworkResult, get_chunker};
 use chunker::oxendedup::OxenChunker;
 use clap::{Parser, Subcommand};
 use std::fs;
@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub mod chunker;
+// mod cmd;
 pub mod xhash;
 
 struct TestMetrics {

@@ -1,17 +1,17 @@
-// use std::fs::File;
-// use std::io::Write;
-// use std::path::Path;
-// use std::path::PathBuf;
+use std::fs::File;
+use std::io::Write;
+use std::path::Path;
+use std::path::PathBuf;
 
 use async_trait::async_trait;
 use clap::{Arg, Command};
-// use liboxen::core::v0_10_0::index::CommitEntryReader;
+use liboxen::core::v0_10_0::index::CommitEntryReader;
 use liboxen::error::OxenError;
-// use liboxen::model::LocalRepository;
-// use liboxen::repositories;
-// use rocksdb::DBWithThreadMode;
-// use rocksdb::IteratorMode;
-// use rocksdb::MultiThreaded;
+use liboxen::model::LocalRepository;
+use liboxen::repositories;
+use rocksdb::DBWithThreadMode;
+use rocksdb::IteratorMode;
+use rocksdb::MultiThreaded;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "unpack";
@@ -52,7 +52,6 @@ impl RunCmd for UnpackCmd {
     }
 
     async fn run(&self, _args: &clap::ArgMatches) -> Result<(), OxenError> {
-        /*
         // Parse Args
         let paths: Vec<PathBuf> = args
             .get_many::<String>("files")
@@ -144,7 +143,6 @@ impl RunCmd for UnpackCmd {
         // Time the total time taken to read the files
         let end = std::time::Instant::now();
         println!("Total time taken: {:?}", end.duration_since(start));
-        */
         Ok(())
     }
 }

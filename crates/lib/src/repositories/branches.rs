@@ -89,7 +89,7 @@ pub fn create_checkout(repo: &LocalRepository, name: impl AsRef<str>) -> Result<
 
     with_ref_manager(repo, |manager| {
         let branch = manager.create_branch(&name, &head_commit.id)?;
-        manager.set_head(name);
+        manager.set_head(&name)?;
         Ok(branch)
     })
 }
@@ -215,9 +215,10 @@ pub async fn checkout_commit_from_commit(
 }
 
 pub fn set_head(repo: &LocalRepository, value: impl AsRef<str>) -> Result<(), OxenError> {
-    log::debug!("set_head {}", value.as_ref());
+    let value = value.as_ref();
+    log::debug!("set_head {value}");
     with_ref_manager(repo, |manager| {
-        manager.set_head(value);
+        manager.set_head(value)?;
         Ok(())
     })
 }
@@ -249,7 +250,7 @@ pub fn rename_current_branch(repo: &LocalRepository, new_name: &str) -> Result<(
     if let Ok(Some(branch)) = current_branch(repo) {
         with_ref_manager(repo, |manager| {
             manager.rename_branch(&branch.name, new_name)?;
-            manager.set_head(new_name);
+            manager.set_head(new_name)?;
             Ok(())
         })
     } else {
@@ -427,7 +428,7 @@ mod tests {
 
             // Back to main - hacky to avoid async checkout
             with_ref_manager(&repo, |manager| {
-                manager.set_head(DEFAULT_BRANCH_NAME);
+                manager.set_head(DEFAULT_BRANCH_NAME)?;
                 Ok(())
             })?;
 
