@@ -174,7 +174,7 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     // Save the current commit id so we know if the branch has advanced
     let commit_path =
         repositories::workspaces::data_frames::previous_commit_ref_path(workspace, path);
-    util::fs::write_to_path(commit_path, &commit.id)?;
+    util::fs::atomic_write_to_path(&commit_path, commit.id.as_bytes())?;
 
     Ok(())
 }

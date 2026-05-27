@@ -559,7 +559,7 @@ impl LocalRepository {
         let shallow_flag_path = util::fs::oxen_hidden_dir(&self.path).join(SHALLOW_FLAG);
         log::debug!("Write is shallow [{shallow}] to path: {shallow_flag_path:?}");
         if shallow {
-            util::fs::write_to_path(&shallow_flag_path, "true")?;
+            util::fs::atomic_write_to_path(&shallow_flag_path, b"true")?;
         } else if shallow_flag_path.exists() {
             util::fs::remove_file(&shallow_flag_path)?;
         }

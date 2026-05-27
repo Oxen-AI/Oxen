@@ -61,7 +61,7 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
         }
     };
 
-    util::fs::write_to_path(&path, size.to_string())?;
+    util::fs::atomic_write_to_path(&path, size.to_string().as_bytes())?;
 
     let repo_path = repo.path.clone();
     let path_clone = path.clone();
@@ -75,7 +75,9 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
                     status: SizeStatus::Done,
                     size: calculated_size,
                 };
-                if let Err(e) = util::fs::write_to_path(&path_clone, size.to_string()) {
+                if let Err(e) =
+                    util::fs::atomic_write_to_path(&path_clone, size.to_string().as_bytes())
+                {
                     log::error!("Failed to write size result: {e}");
                 }
             }
@@ -85,7 +87,7 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
                     status: SizeStatus::Error,
                     size: 0,
                 };
-                let _ = util::fs::write_to_path(&path_clone, size.to_string());
+                let _ = util::fs::atomic_write_to_path(&path_clone, size.to_string().as_bytes());
             }
         }
     });
