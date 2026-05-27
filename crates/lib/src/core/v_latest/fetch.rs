@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::constants::{AVG_CHUNK_SIZE, OXEN_HIDDEN_DIR};
+use crate::constants::{OXEN_HIDDEN_DIR, stream_segment_size};
 use crate::core::refs::with_ref_manager;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
@@ -603,17 +603,21 @@ pub async fn pull_entries_to_versions_dir(
     // Some files may be much larger than others....so we can't just download them within a single body
     // Hence we chunk and send the big ones, and bundle and download the small ones
 
-    // For files smaller than AVG_CHUNK_SIZE, we are going to group them, zip them up, and transfer them
+    let segment_size = stream_segment_size();
+
+    // For files at-or-below the streamed-transfer segment size, group them, zip them up, and
+    // transfer them as one batch.
     let smaller_entries: Vec<CommitEntry> = missing_entries
         .iter()
-        .filter(|e| e.num_bytes <= AVG_CHUNK_SIZE)
+        .filter(|e| e.num_bytes <= segment_size)
         .map(|e| e.to_owned())
         .collect();
 
-    // For files larger than AVG_CHUNK_SIZE, we are going break them into chunks and download the chunks in parallel
+    // For files above the streamed-transfer segment size, split them into segments and download
+    // them in parallel.
     let larger_entries: Vec<CommitEntry> = missing_entries
         .iter()
-        .filter(|e| e.num_bytes > AVG_CHUNK_SIZE)
+        .filter(|e| e.num_bytes > segment_size)
         .map(|e| e.to_owned())
         .collect();
 
@@ -725,7 +729,7 @@ async fn pull_small_entries(
     let total_size = repositories::entries::compute_entries_size(&entries)?;
 
     // Compute num chunks
-    let num_chunks = ((total_size / AVG_CHUNK_SIZE) + 1) as usize;
+    let num_chunks = ((total_size / stream_segment_size()) + 1) as usize;
 
     let mut chunk_size = entries.len() / num_chunks;
     if num_chunks > entries.len() {
@@ -831,17 +835,21 @@ pub async fn download_entries_to_working_dir(
     // Some files may be much larger than others....so we can't just download them within a single body
     // Hence we chunk and send the big ones, and bundle and download the small ones
 
-    // For files smaller than AVG_CHUNK_SIZE, we are going to group them, zip them up, and transfer them
+    let segment_size = stream_segment_size();
+
+    // For files at-or-below the streamed-transfer segment size, group them, zip them up, and
+    // transfer them as one batch.
     let smaller_entries: Vec<CommitEntry> = missing_entries
         .iter()
-        .filter(|e| e.num_bytes <= AVG_CHUNK_SIZE)
+        .filter(|e| e.num_bytes <= segment_size)
         .map(|e| e.to_owned())
         .collect();
 
-    // For files larger than AVG_CHUNK_SIZE, we are going break them into chunks and download the chunks in parallel
+    // For files above the streamed-transfer segment size, split them into segments and download
+    // them in parallel.
     let larger_entries: Vec<CommitEntry> = missing_entries
         .iter()
-        .filter(|e| e.num_bytes > AVG_CHUNK_SIZE)
+        .filter(|e| e.num_bytes > segment_size)
         .map(|e| e.to_owned())
         .collect();
 
@@ -962,7 +970,7 @@ async fn download_small_entries(
     let total_size = repositories::entries::compute_entries_size(&entries)?;
 
     // Compute num chunks
-    let num_chunks = ((total_size / AVG_CHUNK_SIZE) + 1) as usize;
+    let num_chunks = ((total_size / stream_segment_size()) + 1) as usize;
 
     let mut chunk_size = entries.len() / num_chunks;
     if num_chunks > entries.len() {

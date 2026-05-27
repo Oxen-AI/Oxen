@@ -1,6 +1,6 @@
 use crate::api::client;
 use crate::config::UserConfig;
-use crate::constants::{AVG_CHUNK_SIZE, DEFAULT_BRANCH_NAME};
+use crate::constants::{DEFAULT_BRANCH_NAME, stream_segment_size};
 use crate::error::OxenError;
 use crate::model::{
     CommitEntry, EntryDataType, LocalRepository, MetadataEntry, NewCommitBody, RemoteRepository,
@@ -259,7 +259,7 @@ pub async fn download_file(
     local_path: impl AsRef<Path>,
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
-    if entry.size > AVG_CHUNK_SIZE {
+    if entry.size > stream_segment_size() {
         download_large_entry(
             remote_repo,
             &remote_path,
@@ -331,7 +331,7 @@ pub async fn pull_large_entry(
     commit_entry: &CommitEntry,
 ) -> Result<(), OxenError> {
     // Read chunks
-    let chunk_size = AVG_CHUNK_SIZE;
+    let chunk_size = stream_segment_size();
     let total_size = commit_entry.num_bytes;
     let num_chunks = total_size.div_ceil(chunk_size) as usize;
     let hash = commit_entry.hash.clone();
@@ -539,9 +539,9 @@ pub async fn download_large_entry(
     num_bytes: u64,
 ) -> Result<(), OxenError> {
     // Read chunks
-    let chunk_size = AVG_CHUNK_SIZE;
+    let chunk_size = stream_segment_size();
     let total_size = num_bytes;
-    let num_chunks = ((total_size / chunk_size) + 1) as usize;
+    let num_chunks = total_size.div_ceil(chunk_size) as usize;
     let mut chunk_size = chunk_size;
 
     // Write files to ~/.oxen/tmp/HASH/chunk_0..N

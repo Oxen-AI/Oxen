@@ -85,14 +85,21 @@ mod tests {
     #[test]
     fn test_get_metadata_video_mov() {
         let file = test::test_video_file_with_name("dog_skatez.mov");
-        let metadata = repositories::metadata::get(file).unwrap();
+        let expected_size = std::fs::metadata(&file).unwrap().len();
+        let metadata = repositories::metadata::get(&file).unwrap();
         println!("metadata: {metadata:?}");
 
-        assert_eq!(metadata.size, 11657299);
+        assert_eq!(metadata.size, expected_size);
         assert_eq!(metadata.data_type, EntryDataType::Video);
         assert_eq!(metadata.mime_type, "video/quicktime");
 
-        // We do not know how to parse mov files yet
-        assert!(metadata.metadata.is_none());
+        let metadata: MetadataVideo = match metadata.metadata.unwrap() {
+            GenericMetadata::MetadataVideo(metadata) => metadata,
+            _ => panic!("Wrong metadata type"),
+        };
+
+        assert_eq!(metadata.video.width, 64);
+        assert_eq!(metadata.video.height, 64);
+        assert_relative_eq!(metadata.video.num_seconds, 1.0);
     }
 }

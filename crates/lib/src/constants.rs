@@ -1,6 +1,8 @@
 //! Constants used throughout the codebase
 //!
 
+use std::sync::LazyLock;
+
 use crate::core::versions::MinOxenVersion;
 
 /// Rust library version
@@ -167,9 +169,18 @@ pub const EVAL_ERROR_COL: &str = "_oxen_eval_error";
 pub const EVAL_DURATION_COL: &str = "_oxen_eval_duration";
 
 // Data transfer
-// Average chunk size of ~10mb
-/// Average chunk size of ~10mb when chunking and sending data
-pub const AVG_CHUNK_SIZE: u64 = 1024 * 1024 * 10;
+/// Threshold and segment size for the streamed-transfer path. Files at-or-below this size
+/// are grouped, zipped, and transferred as one batch; files above it are split into
+/// fixed-size segments of this many bytes and transferred in parallel. The same value
+/// also sizes each parallel-transfer segment, so it serves a dual role (threshold + unit).
+///
+/// 10 MiB in production. Tests override this via `OXEN_STREAM_SEGMENT_SIZE` (read by
+/// [`stream_segment_size`]) so test fixtures can be small while still exercising the
+/// streamed-transfer code path.
+///
+/// Not to be confused with content-defined chunking of version files, which uses its
+/// own terminology.
+pub const STREAM_SEGMENT_SIZE: u64 = 1024 * 1024 * 10;
 /// Standard buffer size for streaming I/O across the codebase — `BufReader` / `BufWriter`
 /// capacities, per-chunk sizes in Channel hand-off pipelines, and similar.
 pub const STREAMING_BUF_SIZE: usize = 10 * 1024 * 1024;
@@ -245,18 +256,18 @@ pub fn timeout() -> u64 {
     }
 }
 
-// Parse the timeout for http requests from environment variable
-pub fn chunk_size() -> u64 {
-    if let Ok(chunk_size) = std::env::var("OXEN_AVG_CHUNK_SIZE") {
-        // If the environment variable is set, use that
-        if let Ok(chunk_size) = chunk_size.parse::<u64>() {
-            chunk_size
-        } else {
-            // If parsing failed, fall back to default
-            AVG_CHUNK_SIZE
-        }
-    } else {
-        // Environment variable not set, use default
-        AVG_CHUNK_SIZE
-    }
+/// Returns the active streamed-transfer segment size (see [`STREAM_SEGMENT_SIZE`]).
+///
+/// Reads `OXEN_STREAM_SEGMENT_SIZE` once at first call and caches the result for the
+/// remainder of the process. The env var must be set before this function is first
+/// invoked — that's why `bin/test-rust` exports it before launching `oxen-server` and
+/// `cargo nextest`.
+pub fn stream_segment_size() -> u64 {
+    static CACHED: LazyLock<u64> = LazyLock::new(|| {
+        std::env::var("OXEN_STREAM_SEGMENT_SIZE")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(STREAM_SEGMENT_SIZE)
+    });
+    *CACHED
 }

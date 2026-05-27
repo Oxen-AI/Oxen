@@ -1,7 +1,7 @@
 use crate::api;
 use crate::api::client;
 use crate::api::client::internal_types::LocalOrBase;
-use crate::constants::{AVG_CHUNK_SIZE, max_retries};
+use crate::constants::{max_retries, stream_segment_size};
 use crate::error::OxenError;
 use crate::model::{CommitEntry, LocalRepository, MerkleHash, RemoteRepository};
 use crate::util::{self, concurrency, hasher};
@@ -116,7 +116,7 @@ pub async fn parallel_large_file_upload(
     let results = upload_chunks(
         remote_repo,
         &mut upload,
-        AVG_CHUNK_SIZE,
+        stream_segment_size(),
         PARALLEL_FAILURES,
         max_retries,
         progress,

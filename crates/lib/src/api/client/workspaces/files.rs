@@ -1,6 +1,6 @@
 use crate::api::client;
 use crate::api::client::internal_types::LocalOrBase;
-use crate::constants::{chunk_size, max_retries};
+use crate::constants::{max_retries, stream_segment_size};
 use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository, RemoteRepository};
@@ -259,8 +259,8 @@ pub async fn upload_single_file(
     };
 
     log::debug!("Uploading file with size: {}", metadata.len());
-    // If the file is larger than AVG_CHUNK_SIZE, use the parallel upload strategy
-    if metadata.len() > chunk_size() {
+    // If the file is above the streamed-transfer segment size, use the parallel upload strategy
+    if metadata.len() > stream_segment_size() {
         let directory = directory.as_ref();
         match api::client::versions::parallel_large_file_upload(
             remote_repo,
@@ -307,7 +307,7 @@ async fn upload_multiple_files(
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
 
-    let large_file_threshold = chunk_size();
+    let large_file_threshold = stream_segment_size();
 
     // Separate files by size, storing the file size with each path
     let mut large_files = Vec::new();
@@ -438,7 +438,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
         None => (PathBuf::new(), None, false),
     };
 
-    // Batch small files in chunks of ~AVG_CHUNK_SIZE
+    // Batch small files in groups of ~stream_segment_size() bytes
     log::debug!(
         "Uploading {} small files (total {} bytes)",
         small_files.len(),
@@ -464,7 +464,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
         current_batch.push((path.clone(), *file_size));
         current_batch_size += file_size;
 
-        if current_batch_size > chunk_size() || idx >= small_files.len() - 1 {
+        if current_batch_size > stream_segment_size() || idx >= small_files.len() - 1 {
             file_batches.push(current_batch.clone());
 
             current_batch.clear();

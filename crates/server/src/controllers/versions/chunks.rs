@@ -6,7 +6,7 @@ use crate::params::{app_data, path_param};
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use futures_util::stream::StreamExt as _;
-use liboxen::constants::AVG_CHUNK_SIZE;
+use liboxen::constants::stream_segment_size;
 use liboxen::core;
 use liboxen::repositories;
 use liboxen::view::StatusMessage;
@@ -42,7 +42,7 @@ pub async fn upload(
 
     let version_store = repo.version_store();
 
-    // Read the chunk from the payload. Chunks are <= 10MB (AVG_CHUNK_SIZE)
+    // Read the chunk from the payload. Chunks are <= the streamed-transfer segment size.
     let mut chunk = web::BytesMut::new();
     while let Some(part_result) = body.next().await {
         let part = part_result.map_err(|e| OxenHttpError::BadRequest(e.to_string().into()))?;
@@ -148,7 +148,7 @@ pub async fn download(
     let repo = get_repo(&app_data.path, namespace, repo_name)?;
 
     let offset = query.offset.unwrap_or(0);
-    let size = query.size.unwrap_or(AVG_CHUNK_SIZE);
+    let size = query.size.unwrap_or_else(stream_segment_size);
 
     log::debug!(
         "download_chunk for repo: {:?}, file_hash: {}, offset: {}, size: {}",
