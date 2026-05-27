@@ -73,6 +73,22 @@ pub enum LmdbError {
     #[error("[LmdbLink] header claims {claimed} children but tail has {actual}")]
     ChildrenCountMismatch { claimed: usize, actual: usize },
 
+    // ── LmdbDupes value (merkle_node_dupes) decode errors ────────────────────
+    #[error("[LmdbDupes] header truncated: only {len} bytes (need at least 16)")]
+    DupesHeaderTruncated { len: usize },
+
+    #[error("[LmdbDupes] bad magic: got {actual:?}, expected b\"OXDP\"")]
+    DupesBadMagic { actual: [u8; 4] },
+
+    #[error("[LmdbDupes] unsupported on-disk version: {0}")]
+    DupesUnsupportedVersion(u8),
+
+    #[error("[LmdbDupes] dupes tail length {tail_len} is not a multiple of 16 bytes")]
+    DupesTailMisaligned { tail_len: usize },
+
+    #[error("[LmdbDupes] header claims {claimed} dupes but tail has {actual}")]
+    DupesCountMismatch { claimed: usize, actual: usize },
+
     // ── LMDB / heed transport ────────────────────────────────────────────────
     #[error("Error retrieving: {0}")]
     Retrieve(heed::Error),
