@@ -13,17 +13,10 @@
 
 use std::collections::HashSet;
 
-use liboxen::storage::StorageKind;
+use liboxen::storage::{S3Opts, StorageKind};
 use serde::Deserialize;
 
 use crate::errors::OxenHttpError;
-
-/// Admin-only S3 configuration. The bucket is server-wide; per-repo prefixes are derived from
-/// `{namespace}/{name}` when the version store is constructed (not yet wired up).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct S3Opts {
-    pub bucket: String,
-}
 
 /// Server-side storage policy.
 ///
