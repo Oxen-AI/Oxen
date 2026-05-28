@@ -49,7 +49,7 @@ pub(in crate::core::db::merkle_node::lmdb) struct LmdbTables {
     // values is the [`LmdbNodeRef`].
     //
     // In the LMDB environment, this has name of the [DB_NODES] constant.
-    /// Maps HashNC to the actual merkle tree node's bytes.
+    /// (HashCN -> Node) Maps HashNC to the actual merkle tree node's bytes.
     ///
     /// -----------------------------------------------------------------------
     /// HashNC -> Node
@@ -58,7 +58,7 @@ pub(in crate::core::db::merkle_node::lmdb) struct LmdbTables {
     ///        = XXH3([u128,                u128])
     pub merkle_node_store: Database<KeyLmdb, ValueLmdb>,
 
-    /// Maps the merkle hash of the content to a vector of duplicate filenames.
+    /// (MerkleHash -> Vec<HashCN>) Maps the merkle hash of the content to a vector of duplicate filenames.
     ///
     /// [`MerkleHash`] values are the same for two files with identicial content.
     /// We, however, need to separately track each uniquely named file in the tree.
@@ -69,7 +69,7 @@ pub(in crate::core::db::merkle_node::lmdb) struct LmdbTables {
     /// u128                -> Vec<u128>
     pub merkle_node_dupes: Database<KeyLmdb, ValueLmdb>,
 
-    /// Stores the parent and children connections for each Merkle tree node.
+    /// (MerkleHash -> Vec<(MerkleHash, HashCN>) Stores the parent and children connections for each Merkle tree node.
     ///
     /// These values deserialize into a [`LmdbLink`]. The zerocopy view on these
     /// values is the [`LmdbLinkRef`].
@@ -412,7 +412,25 @@ impl LmdbBackend {
         }
         Ok(Some(stored_node))
     }
+}
 
+impl Drop for LmdbBackend {
+    fn drop(&mut self) {
+        if let Err(e) = self.lmdb_env.force_sync() {
+            log::error!("Could not flush LMDB state to disk! Error: {e}");
+        }
+    }
+}
+
+impl LmdbTables {
+    /// Writes the node into the store table and appends to its duplicate entry.
+    ///
+    ///  (1) write the node into the store:
+    ///          (MerkleHash, XXH3(name)) = HashNC -> LmdbNode
+    ///
+    ///  (2) append the node into the duplicates:
+    ///          (MerkleHash) -> Vec<XXH3(name)>
+    ///
     pub(super) fn put_node<'txn>(
         &self,
         wtxn: &mut heed::RwTxn<'txn>,
@@ -423,67 +441,66 @@ impl LmdbBackend {
         // (1) write into node store (access by HashCN)
         LmdbBackend::put_serialized(
             wtxn,
-            &self.tables.merkle_node_store,
+            &self.merkle_node_store,
             hash_name_content.as_u128(),
             LmdbNode::encode,
             node,
         )?;
 
         // (2) append the node into the duplicates (access by MerkleHash)
-        let duplicates: Vec<HashCN> = match LmdbBackend::retrieve_bytes(
-            wtxn,
-            &self.tables.merkle_node_dupes,
-            &hash.to_u128(),
-        )? {
-            Some(existing) => {
-                let mut existing = LmdbDupes::decode(existing)?.hash_cns;
-                existing.push(hash_name_content);
-                existing
-            }
-            None => vec![hash_name_content],
-        };
+        let duplicates: Vec<HashCN> =
+            match LmdbBackend::retrieve_bytes(wtxn, &self.merkle_node_dupes, &hash.to_u128())? {
+                Some(existing) => {
+                    let mut existing = LmdbDupes::decode(existing)?.hash_cns;
+                    existing.push(hash_name_content);
+                    existing
+                }
+                None => vec![hash_name_content],
+            };
         LmdbBackend::put_serialized(
             wtxn,
-            &self.tables.merkle_node_dupes,
+            &self.merkle_node_dupes,
             &hash.to_u128(),
             LmdbDupes::encode,
-            LmdbDupes { hash_cns: duplicates },
+            LmdbDupes {
+                hash_cns: duplicates,
+            },
         )
     }
 
+    /// Writes into the node_links table and writes each child into node_store and dupes.
+    ///
+    /// Uses [`put_node`] to write each child node.
+    ///
+    ///  (3) write the tree links:
+    ///          (MerkleHash) -> Vec<(MerkleHash, XXH3(name))>
+    ///
     pub(super) fn put_links<'txn>(
         &self,
-        wtxn: &'txn mut heed::RwTxn<'txn>,
+        wtxn: &mut heed::RwTxn<'txn>,
+        node_hash: MerkleHash,
         parent_id: Option<MerkleHash>,
-        children_and_data: Vec<(MerkleHash, Option<Filename>, LmdbNode),
+        children_and_data: Vec<(MerkleHash, HashCN, LmdbNode)>,
     ) -> Result<(), LmdbError> {
         // (3) write the tree links & write each child in the link
         let children: Vec<HashCN> = {
             let mut children = Vec::with_capacity(children_and_data.len());
-            for (child_hash, maybe_child_filename, child_node) in children_and_data {
-                let child_hash_cn = HashCN::new(&child_hash, maybe_child_filename.as_ref());
+            for (child_hash, child_hash_cn, child_node) in children_and_data {
                 children.push(child_hash_cn.clone());
-
-                self.put_node(wtxn, child_hash, hash_name_content, child_node)?;
+                self.put_node(wtxn, child_hash, child_hash_cn, child_node)?;
             }
             children
         };
         LmdbBackend::put_serialized(
             wtxn,
-            &tables.merkle_links,
-            // &child_hash.to_u128(),
-            &pw.node_hash.to_u128(),
+            &self.merkle_links,
+            &node_hash.to_u128(),
             LmdbLink::encode,
-            LmdbLink { parent_id, children },
+            LmdbLink {
+                parent_id,
+                children,
+            },
         )
-    }
-}
-
-impl Drop for LmdbBackend {
-    fn drop(&mut self) {
-        if let Err(e) = self.lmdb_env.force_sync() {
-            log::error!("Could not flush LMDB state to disk! Error: {e}");
-        }
     }
 }
 
