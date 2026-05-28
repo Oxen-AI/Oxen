@@ -1,5 +1,3 @@
-use std::path::Path;
-
 // use liboxen::constants::DEFAULT_REDIS_URL;
 use actix_web::http::header;
 use actix_web::{HttpResponse, HttpResponseBuilder};
@@ -8,14 +6,16 @@ use liboxen::error::OxenError;
 use liboxen::model::{LocalRepository, User};
 use liboxen::repositories;
 
+use crate::app_data::OxenAppData;
 use crate::errors::OxenHttpError;
 
+/// Look up a repo by `<namespace>/<name>` under the server's sync dir.
 pub fn get_repo(
-    path: &Path,
+    app_data: &OxenAppData,
     namespace: impl AsRef<str>,
     name: impl AsRef<str>,
 ) -> Result<LocalRepository, OxenHttpError> {
-    let repo = repositories::get_by_namespace_and_name(path, &namespace, &name)?;
+    let repo = repositories::get_by_namespace_and_name(&app_data.path, &namespace, &name)?;
     let Some(repo) = repo else {
         return Err(
             OxenError::RepoNotFound(Box::new(RepoNew::from_namespace_name(

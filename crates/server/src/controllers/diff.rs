@@ -63,7 +63,7 @@ pub async fn commits(
     let base_head = path_param(&req, "base_head")?.to_string();
 
     // Get the repository or return error
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(app_data, namespace, name)?;
 
     // Page size and number
     let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
@@ -122,7 +122,7 @@ pub async fn entries(
     let base_head = path_param(&req, "base_head")?.to_string();
 
     // Get the repository or return error
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(app_data, namespace, name)?;
 
     // Page size and number
     let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
@@ -201,7 +201,7 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     let base_head = path_param(&req, "base_head")?.to_string();
 
     // Get the repository or return error
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(app_data, namespace, name)?;
 
     // Parse the base and head from the base..head string
     let (base, head) = parse_base_head(&base_head)?;
@@ -254,7 +254,7 @@ pub async fn dir_entries(
     let dir = path_param(&req, "dir")?.to_string();
 
     // Get the repository or return error
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(app_data, namespace, name)?;
 
     // Page size and number
     let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
@@ -338,7 +338,7 @@ pub async fn file(
     let base_head = path_param(&req, "base_head")?.to_string();
 
     // Get the repository or return error
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(app_data, namespace, name)?;
 
     // Parse the base and head from the base..head/resource string
     // For Example)
@@ -408,7 +408,7 @@ pub async fn create_df_diff(
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
 
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(app_data, namespace, name)?;
 
     let data: Result<TabularCompareBody, serde_json::Error> = serde_json::from_str(&body);
     let data = match data {
@@ -515,7 +515,7 @@ pub async fn update_df_diff(
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
     let compare_id = path_param(&req, "compare_id")?.to_string();
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(app_data, namespace, name)?;
 
     let data: Result<TabularCompareBody, serde_json::Error> = serde_json::from_str(&body);
     let data = match data {
@@ -624,7 +624,7 @@ pub async fn get_df_diff(
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
     let compare_id = path_param(&req, "compare_id")?.to_string();
-    let repository = get_repo(&app_data.path, namespace, name)?;
+    let repository = get_repo(app_data, namespace, name)?;
     let base_head = path_param(&req, "base_head")?.to_string();
 
     let data: TabularCompareBody = serde_json::from_str(&body)?;
@@ -705,7 +705,7 @@ pub async fn delete_df_diff(req: HttpRequest) -> Result<HttpResponse, OxenHttpEr
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let compare_id = path_param(&req, "compare_id")?.to_string();
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(app_data, namespace, repo_name)?;
 
     repositories::diffs::delete_df_diff(&repo, &compare_id)?;
 
@@ -737,7 +737,7 @@ pub async fn get_derived_df(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(app_data, namespace, repo_name)?;
     let compare_id = path_param(&req, "compare_id")?.to_string();
     // let base_head = path_param(&req, "base_head")?.to_string();
 

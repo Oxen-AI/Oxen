@@ -23,7 +23,7 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
 
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(app_data, namespace, repo_name)?;
     let file_path = Path::new(path_param(&req, "path")?);
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -48,7 +48,7 @@ pub async fn neighbors(req: HttpRequest, body: String) -> Result<HttpResponse, O
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
 
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(app_data, namespace, repo_name)?;
     let file_path = Path::new(path_param(&req, "path")?);
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -154,7 +154,7 @@ pub async fn post(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, OxenHt
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
 
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(app_data, namespace, repo_name)?;
     let file_path = Path::new(path_param(&req, "path")?);
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
