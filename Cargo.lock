@@ -5292,6 +5292,7 @@ dependencies = [
  "humantime",
  "hyper 1.8.1",
  "itertools 0.14.0",
+ "md-5 0.10.6",
  "parking_lot",
  "percent-encoding",
  "quick-xml 0.38.4",
@@ -6131,6 +6132,7 @@ dependencies = [
  "bitflags 2.11.0",
  "chrono",
  "either",
+ "futures",
  "memchr",
  "polars-arrow",
  "polars-compute",
@@ -6145,6 +6147,7 @@ dependencies = [
  "polars-time",
  "polars-utils",
  "rayon",
+ "tokio",
  "version_check",
 ]
 

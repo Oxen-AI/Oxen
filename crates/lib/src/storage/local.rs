@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::constants::{VERSION_CHUNK_FILE_NAME, VERSION_CHUNKS_DIR, VERSION_FILE_NAME};
 use crate::error::OxenError;
 use crate::model::MerkleHash;
-use crate::storage::version_store::{LocalFilePath, VersionStore};
+use crate::storage::version_store::{LocalFilePath, VersionLocation, VersionStore};
 use crate::util::{self, concurrency, hasher};
 use crate::view::versions::CleanCorruptedVersionsResult;
 
@@ -196,6 +196,10 @@ impl VersionStore for LocalVersionStore {
 
     async fn get_version_path(&self, hash: &str) -> Result<LocalFilePath, OxenError> {
         Ok(LocalFilePath::Stable(self.version_path(hash)))
+    }
+
+    async fn version_location(&self, hash: &str) -> Result<VersionLocation, OxenError> {
+        Ok(VersionLocation::Local(self.version_path(hash)))
     }
 
     // TODO: (CleanCut) Do we need to make sure the destination path is outside the version store?
@@ -617,6 +621,20 @@ mod tests {
         // Get and verify the data
         let retrieved = store.get_version(&hash).await.unwrap();
         assert_eq!(retrieved, data);
+    }
+
+    #[tokio::test]
+    async fn test_version_location_returns_local_path() {
+        let (_temp_dir, store) = setup().await;
+        let hash = "abcdef1234567890";
+
+        let location = store.version_location(hash).await.unwrap();
+        match location {
+            VersionLocation::Local(path) => {
+                assert_eq!(path, store.version_path(hash));
+            }
+            other => panic!("expected Local variant, got {other:?}"),
+        }
     }
 
     #[tokio::test]
