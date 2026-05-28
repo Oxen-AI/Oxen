@@ -4,22 +4,23 @@ use bytesize::ByteSize;
 use heed::byteorder::LE;
 use heed::types::{Bytes, DecodeIgnore, U128};
 use heed::{AnyTls, Database, Env, EnvOpenOptions, WithTls};
-use sqlparser::ast::With;
 
 use crate::constants::OXEN_HIDDEN_DIR;
-use crate::core::db::merkle_node::lmdb::LmdbError;
 use crate::core::db::merkle_node::lmdb::hash_content_name::HashCN;
-use crate::core::db::merkle_node::lmdb::value_structs::{LmdbDupes, LmdbLink, LmdbNode};
+use crate::core::db::merkle_node::lmdb::value_structs::{
+    LmdbDupes, LmdbDupesRef, LmdbLink, LmdbNode,
+};
+use crate::core::db::merkle_node::lmdb::{LmdbError, value_structs};
 use crate::model::{MerkleHash, MerkleTreeNodeType};
 use crate::util;
 
 /// Keys are merkle hashes, which are `u128` values.
 /// MUST USE LITTLE ENDIAN (LE) so the byte layout matches
 /// `ContentHash::as_bytes` / `LocationHash::as_bytes`.
-pub(super) type KeyLmdb = U128<LE>;
+type KeyLmdb = U128<LE>;
 
 /// Values are serialized as bytes. Access requires deserialization into structs.
-pub(super) type ValueLmdb = Bytes;
+type ValueLmdb = Bytes;
 
 /// LMDB table name: storing merkle tree node byte
 const DB_NODE: &str = "merkle_node_store";
@@ -40,7 +41,7 @@ pub struct LmdbBackend {
     pub(super) tables: LmdbTables,
 }
 
-pub(in crate::core::db::merkle_node::lmdb) struct LmdbTables {
+pub(super) struct LmdbTables {
     // Stores every kind of merkle tree node: any concrete [`MerkleTreeNode`].
     // This includes files nodes! Note that there is no other data but the Merkle
     // tree node type (u8) and the msgpack-serialized bytes of the actual node.
@@ -69,15 +70,15 @@ pub(in crate::core::db::merkle_node::lmdb) struct LmdbTables {
     /// u128                -> Vec<u128>
     pub merkle_node_dupes: Database<KeyLmdb, ValueLmdb>,
 
-    /// (MerkleHash -> Vec<(MerkleHash, HashCN>) Stores the parent and children connections for each Merkle tree node.
+    /// (HashCN -> Vec<(MerkleHash, HashCN>) Stores the parent and children connections for each Merkle tree node.
     ///
     /// These values deserialize into a [`LmdbLink`]. The zerocopy view on these
     /// values is the [`LmdbLinkRef`].
     ///
     /// In the LMDB environment, this has name of the [DB_LINKS] constant.
     /// -----------------------------------------------------------------------
-    /// MerkleHash(content) -> Vec<(MerkleHash(content), XXH3(name))
-    /// u128                -> Vec<(u128,                u128)>
+    /// HashCN -> Vec<(MerkleHash(content), XXH3(name))
+    /// u128   -> Vec<(u128,                u128)>
     pub merkle_links: Database<KeyLmdb, ValueLmdb>,
 }
 
@@ -166,7 +167,6 @@ impl LmdbBackend {
     ///             struct before opening up the LMDB env again.
     pub(crate) fn new(repo_root: PathBuf, options: EnvOpenOptions) -> Result<Self, LmdbError> {
         log::info!("Config for LMDB backend: {options:?}");
-
         let lmdb_env = {
             let db_location = lmdb_dir_location(&repo_root);
             util::fs::create_dir_all(&db_location).map_err(|e| LmdbError::InitDir(Box::new(e)))?;
@@ -180,34 +180,11 @@ impl LmdbBackend {
             //         be unlikely for someone or something to accidentily stumble upon it and mess things up.
             unsafe { options.open(db_location).map_err(LmdbError::Access)? }
         };
-
-        let mut wtxn = lmdb_env.write_txn().map_err(LmdbError::Access)?;
-        let merkle_node_store = lmdb_env
-            .create_database::<KeyLmdb, ValueLmdb>(&mut wtxn, Some(DB_NODE))
-            .map_err(LmdbError::Write)?;
-        // let merkle_node_dupes = lmdb_env
-        //     .database_options()
-        //     .types::<KeyLmdb, ValueLmdb>()
-        //     .flags(heed::DatabaseFlags::DUP_SORT)
-        //     .name(DB_DUPES)
-        //     .create(&mut wtxn)
-        //     .map_err(LmdbError::Write)?;
-        let merkle_node_dupes = lmdb_env
-            .create_database::<KeyLmdb, ValueLmdb>(&mut wtxn, Some(DB_DUPES))
-            .map_err(LmdbError::Write)?;
-        let merkle_links = lmdb_env
-            .create_database::<KeyLmdb, ValueLmdb>(&mut wtxn, Some(DB_LINKS))
-            .map_err(LmdbError::Write)?;
-        wtxn.commit().map_err(LmdbError::Write)?;
-
+        let tables = LmdbTables::new(&lmdb_env)?;
         Ok(Self {
             repo_root,
             lmdb_env,
-            tables: LmdbTables {
-                merkle_node_store,
-                merkle_node_dupes,
-                merkle_links,
-            },
+            tables,
         })
     }
 
@@ -293,11 +270,11 @@ impl LmdbBackend {
     ///
     /// Unlike [`MerkleReader::exists`], this method will return `Ok(true)` for file nodes
     /// if the file exists in the tree.
-    pub fn full_exists(&self, hash: &HashCN) -> Result<bool, LmdbError> {
+    pub fn full_exists(&self, hash_cn: &HashCN) -> Result<bool, LmdbError> {
         let exists = Self::key_present(
             &self.read_txn()?,
             &self.tables.merkle_node_store,
-            hash.as_u128(),
+            hash_cn.as_u128(),
         )?;
         Ok(exists)
     }
@@ -310,48 +287,42 @@ impl LmdbBackend {
     /// Internally reads the value bytes directly from LMDB's mmap and decodes via
     /// [`LmdbNode::decode`], which uses the zero-copy [`super::value_structs::LmdbNodeRef`]
     /// path to validate the header before copying out the msgpack tail.
-    pub fn full_get_node(&self, hash: &HashCN) -> Result<Option<LmdbNode>, LmdbError> {
+    pub fn full_get_node(&self, hash_cn: &HashCN) -> Result<Option<LmdbNode>, LmdbError> {
         let rtxn = self.read_txn()?;
-        let Some(bytes) =
-            Self::retrieve_bytes(&rtxn, &self.tables.merkle_node_store, hash.as_u128())?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(LmdbNode::decode(bytes)?))
+        match Self::retrieve_bytes(&rtxn, &self.tables.merkle_node_store, hash_cn.as_u128())? {
+            Some(bytes) => Ok(Some(LmdbNode::decode(bytes)?)),
+            None => Ok(None),
+        }
     }
 
     pub fn get_duplicates(&self, hash: &MerkleHash) -> Result<Option<LmdbDupes>, LmdbError> {
         let rtxn = self.read_txn()?;
-        let Some(bytes) =
-            Self::retrieve_bytes(&rtxn, &self.tables.merkle_node_dupes, &hash.to_u128())?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(LmdbDupes::decode(bytes)?))
+        match Self::retrieve_bytes(&rtxn, &self.tables.merkle_node_dupes, &hash.to_u128())? {
+            Some(bytes) => Ok(Some(LmdbDupes::decode(bytes)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub(super) fn unique(
+        &self,
+        hash: &MerkleHash,
+    ) -> Result<value_structs::DupeUnqResult, LmdbError> {
+        let rtxn = self.read_txn()?;
+        match Self::retrieve_bytes(&rtxn, &self.tables.merkle_node_dupes, &hash.to_u128())? {
+            Some(bytes) => LmdbDupesRef::from_bytes(bytes)?.unique(),
+            None => Ok(value_structs::DupeUnqResult::None),
+        }
     }
 
     /// Retreives the node's parent link (if present) and its children. Returns Ok(None)
     /// if there is no node for the given hash.
-    pub fn get_links(&self, hash: &MerkleHash) -> Result<Option<LmdbLink>, LmdbError> {
+    pub fn get_links(&self, hash_cn: &HashCN) -> Result<Option<LmdbLink>, LmdbError> {
         let rtxn = self.read_txn()?;
-        let Some(bytes) = Self::retrieve_bytes(&rtxn, &self.tables.merkle_links, &hash.to_u128())?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(LmdbLink::decode(bytes)?))
+        match Self::retrieve_bytes(&rtxn, &self.tables.merkle_links, hash_cn.as_u128())? {
+            Some(bytes) => Ok(Some(LmdbLink::decode(bytes)?)),
+            None => Ok(None),
+        }
     }
-
-    // /// Flushes LMDB to disk and closes the underlying LMDB environment for this process.
-    // pub fn close(self) -> Result<(), heed::Error> {
-    //     log::info!("Preparing to close LMDB");
-    //     // drop everything but the LMDB env: we prepare that for closing and wait on it instead
-    //     let LmdbBackend { repo_root:_ , lmdb_env, merkle_tree_nodes: _, merkle_links: _ } = self;
-    //     lmdb_env.force_sync()?;
-    //     let signal_event = lmdb_env.prepare_for_closing();
-    //     log::info!("Waiting for the LMDB environment to close");
-    //     signal_event.wait();
-    //     Ok(())
-    // }
 
     /// Only gets a reference to the stored node information in LMDB for non-file/file chunk nodes.
     ///
@@ -419,10 +390,41 @@ impl Drop for LmdbBackend {
         if let Err(e) = self.lmdb_env.force_sync() {
             log::error!("Could not flush LMDB state to disk! Error: {e}");
         }
+        // NOTE: We cannot use `self.lmdb_env.prepare_for_closing().wait_timeout(...)`
+        //       because `prepare_for_closing` consumes the `heed::Env` and we only have
+        //       a mutable pointer to it in drop.
     }
 }
 
 impl LmdbTables {
+    /// Create the 3 LMDB tables in a new write transaction.
+    /// Private helper of [`LmdbBackend::new`].
+    fn new(lmdb_env: &heed::Env<WithTls>) -> Result<Self, LmdbError> {
+        let mut wtxn = lmdb_env.write_txn().map_err(LmdbError::Access)?;
+        let merkle_node_store = lmdb_env
+            .create_database::<KeyLmdb, ValueLmdb>(&mut wtxn, Some(DB_NODE))
+            .map_err(LmdbError::Write)?;
+        // let merkle_node_dupes = lmdb_env
+        //     .database_options()
+        //     .types::<KeyLmdb, ValueLmdb>()
+        //     .flags(heed::DatabaseFlags::DUP_SORT)
+        //     .name(DB_DUPES)
+        //     .create(&mut wtxn)
+        //     .map_err(LmdbError::Write)?;
+        let merkle_node_dupes = lmdb_env
+            .create_database::<KeyLmdb, ValueLmdb>(&mut wtxn, Some(DB_DUPES))
+            .map_err(LmdbError::Write)?;
+        let merkle_links = lmdb_env
+            .create_database::<KeyLmdb, ValueLmdb>(&mut wtxn, Some(DB_LINKS))
+            .map_err(LmdbError::Write)?;
+        wtxn.commit().map_err(LmdbError::Write)?;
+        Ok(Self {
+            merkle_node_store,
+            merkle_node_dupes,
+            merkle_links,
+        })
+    }
+
     /// Writes the node into the store table and appends to its duplicate entry.
     ///
     ///  (1) write the node into the store:
@@ -478,7 +480,7 @@ impl LmdbTables {
     pub(super) fn put_links<'txn>(
         &self,
         wtxn: &mut heed::RwTxn<'txn>,
-        node_hash: MerkleHash,
+        node_hash_cn: HashCN,
         parent_id: Option<MerkleHash>,
         children_and_data: Vec<(MerkleHash, HashCN, LmdbNode)>,
     ) -> Result<(), LmdbError> {
@@ -494,7 +496,7 @@ impl LmdbTables {
         LmdbBackend::put_serialized(
             wtxn,
             &self.merkle_links,
-            &node_hash.to_u128(),
+            node_hash_cn.as_u128(),
             LmdbLink::encode,
             LmdbLink {
                 parent_id,

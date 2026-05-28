@@ -24,8 +24,12 @@ use flate2::Compression;
 use flate2::write::GzEncoder;
 
 use crate::constants::{NODES_DIR, TREE_DIR};
-use crate::core::db::merkle_node::lmdb::LmdbError;
-use crate::core::db::merkle_node::lmdb::lmdb_backend::LmdbBackend;
+use crate::core::db::merkle_node::lmdb::{
+    LmdbError,
+    hash_content_name::HashCN,
+    lmdb_backend::LmdbBackend,
+    value_structs::{self, LmdbDupesRef},
+};
 use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
 use crate::error::OxenError;
 use crate::model::merkle_tree::merkle_transport::{MerklePacker, PackOptions};
@@ -44,9 +48,23 @@ impl MerklePacker for LmdbBackend {
     ) -> Result<(), OxenError> {
         let enc = GzEncoder::new(out, pack_options_compression(opts));
         let mut tar = tar::Builder::new(enc);
+
         for hash in hashes {
-            append_one_node(self, &mut tar, hash, &opts)?;
+            use value_structs::DupeUnqResult::*;
+            let hash_cn = match self.unique(hash)? {
+                Some(hash_cn) => hash_cn,
+                other => {
+                    if matches!(other, InvariantViolation) {
+                        log::error!("{ERROR_MSG_INVARIANT_VIOLATION} {} maps to nothing!", hash);
+                    }
+                    // skip non-unique (`None` is the normal case)
+                    continue;
+                }
+            };
+
+            append_one_node(self, &mut tar, hash, &hash_cn, &opts)?;
         }
+
         tar.finish().map_err(MerkleDbError::Io)?;
         tar.into_inner()
             .map_err(MerkleDbError::Io)?
@@ -60,8 +78,14 @@ impl MerklePacker for LmdbBackend {
     fn pack_all(&self, out: &mut dyn Write) -> Result<(), OxenError> {
         let enc = GzEncoder::new(out, Compression::fast());
         let mut tar = tar::Builder::new(enc);
-        for hash in all_node_hashes(self)? {
-            append_one_node(self, &mut tar, &hash, &PackOptions::ServerCanonical)?;
+        for (hash, hash_cn) in all_non_duplicate(self)? {
+            append_one_node(
+                self,
+                &mut tar,
+                &hash,
+                &hash_cn,
+                &PackOptions::ServerCanonical,
+            )?;
         }
         tar.finish().map_err(MerkleDbError::Io)?;
         tar.into_inner()
@@ -81,45 +105,67 @@ impl MerklePacker for LmdbBackend {
     /// behaviour. File / FileChunk nodes also contribute 0 because [`append_one_node`]
     /// skips them — they ride inside a parent's `children` blob, not their own dir.
     fn raw_byte_count(&self, hashes: &HashSet<MerkleHash>) -> u64 {
-        const TAR_HEADER_BYTES: u64 = 512;
-        const TAR_BLOCK_SIZE: u64 = 512;
-        fn padded(len: u64) -> u64 {
-            len.div_ceil(TAR_BLOCK_SIZE).saturating_mul(TAR_BLOCK_SIZE)
-        }
-
         let mut total: u64 = 0;
         for hash in hashes {
-            let Ok(Some(stored_node)) = self.get_stored_non_file_node(&hash) else {
-                continue;
-            };
-            let Ok(Some(link)) = self.get_links(hash) else {
+            // TODO: get_duplicates_ref
+            let Ok(Some(dupes)) = self.get_duplicates(hash) else {
                 continue;
             };
 
-            // children blob: concatenated `data()` of every present child.
-            let mut children_len: u64 = 0;
-            let mut lookup_entries: u64 = 0;
-            for child_hash in link.children() {
-                let Ok(Some(child_node)) = self.full_get_node(child_hash) else {
+            for hash_cn in dupes.hash_cns() {
+                // TODO: full_get_node_ref
+                let Ok(Some(stored_node)) = self.full_get_node(hash_cn) else {
                     continue;
                 };
-                children_len = children_len.saturating_add(child_node.data().len() as u64);
-                lookup_entries = lookup_entries.saturating_add(1);
-            }
-            // node blob layout: kind(1) | parent_id(16) | data_len(4) | data | (33 bytes per lookup entry).
-            // See `encode_node_file` above.
-            let node_len: u64 = 21u64
-                .saturating_add(stored_node.data().len() as u64)
-                .saturating_add(lookup_entries.saturating_mul(33));
 
-            // One tar dir entry + node file entry + children file entry, each padded.
-            let entry_total = TAR_HEADER_BYTES
-                .saturating_add(TAR_HEADER_BYTES.saturating_add(padded(node_len)))
-                .saturating_add(TAR_HEADER_BYTES.saturating_add(padded(children_len)));
-            total = total.saturating_add(entry_total);
+                let Ok(Some(link)) = self.get_links(hash_cn) else {
+                    continue;
+                };
+
+                // children blob: concatenated `data()` of every present child.
+                let (children_len, lookup_entries) = {
+                    let mut children_len: u64 = 0;
+                    let mut lookup_entries: u64 = 0;
+                    for child_hash in link.children() {
+                        // TODO: full_get_node_ref
+                        let Ok(Some(child_node)) = self.full_get_node(child_hash) else {
+                            continue;
+                        };
+                        children_len = children_len.saturating_add(child_node.data().len() as u64);
+                        lookup_entries = lookup_entries.saturating_add(1);
+                    }
+                    (children_len, lookup_entries)
+                };
+
+                // node blob layout: kind(1) | parent_id(16) | data_len(4) | data | (33 bytes per lookup entry).
+                //   => | 21 bytes of header | <variable length: data>
+                // See `encode_node_file` above.
+                let node_len: u64 = 21u64
+                    .saturating_add(stored_node.data().len() as u64)
+                    .saturating_add(lookup_entries.saturating_mul(33));
+
+                // One tar dir entry + node file entry + children file entry, each padded.
+                let entry_total = TAR_HEADER_BYTES
+                    .saturating_add(TAR_HEADER_BYTES.saturating_add(padded(node_len)))
+                    .saturating_add(TAR_HEADER_BYTES.saturating_add(padded(children_len)));
+
+                total = total.saturating_add(entry_total);
+            }
         }
         total
     }
+}
+
+// Tar archive header size, in bytes.
+const TAR_HEADER_BYTES: u64 = 512;
+
+// Tar archive block size, in bytes.
+const TAR_BLOCK_SIZE: u64 = 512;
+
+/// How many bytes, with padding, to write `len` bytes in a tar archive.
+#[inline(always)]
+fn padded(len: u64) -> u64 {
+    len.div_ceil(TAR_BLOCK_SIZE).saturating_mul(TAR_BLOCK_SIZE)
 }
 
 /// Match the per-layout gzip compression level used by [`super::super::file_backend::FileBackend`]
@@ -131,13 +177,12 @@ fn pack_options_compression(opts: PackOptions) -> Compression {
     }
 }
 
-/// Iterate every key in the `merkle_tree_nodes` table. Used by
-/// [`MerklePacker::pack_all`] to enumerate the store. The borrow on
-/// `rtxn` is released before we return the collected `Vec`, so callers
-/// don't tie up a read transaction.
-fn all_node_hashes(lmdb: &LmdbBackend) -> Result<Vec<MerkleHash>, LmdbError> {
+/// Iterate every key in the `merkle_tree_nodes` table and only return non-duplicate hashes.
+///
+/// Used by [`MerklePacker::pack_all`] to
+fn all_non_duplicate(lmdb: &LmdbBackend) -> Result<Vec<(MerkleHash, HashCN)>, LmdbError> {
     let rtxn = lmdb.read_txn()?;
-    let mut hashes: Vec<MerkleHash> = Vec::new();
+    let mut hashes = Vec::new();
     for entry in lmdb
         .tables
         // the dupes table maps each unique [`MerkleHash`] to all uniquely named files
@@ -147,11 +192,31 @@ fn all_node_hashes(lmdb: &LmdbBackend) -> Result<Vec<MerkleHash>, LmdbError> {
         .iter(&rtxn)
         .map_err(LmdbError::Access)?
     {
-        let (key, _value) = entry.map_err(LmdbError::Retrieve)?;
-        hashes.push(MerkleHash::new(key));
+        let (key, bytes) = entry.map_err(LmdbError::Retrieve)?;
+
+        use value_structs::DupeUnqResult::*;
+        let hash_cn = match LmdbDupesRef::from_bytes(bytes)?.unique()? {
+            Some(hash_cn) => hash_cn,
+            other => {
+                if matches!(other, InvariantViolation) {
+                    log::error!(
+                        "{ERROR_MSG_INVARIANT_VIOLATION} {} maps to nothing!",
+                        MerkleHash::new(key)
+                    );
+                }
+                // skip non-unique (`None` is the normal case)
+                continue;
+            }
+        };
+
+        hashes.push((MerkleHash::new(key), hash_cn));
     }
     Ok(hashes)
 }
+
+/// Part of an error message that's logged if any merkle hash maps to an empty vec of unique hashes.
+const ERROR_MSG_INVARIANT_VIOLATION: &str =
+    "Invariant violation: every merkle content hash must map to at least one unique hash!";
 
 /// Append `hash`'s `node` + `children` byte payloads to `tar`. Missing
 /// hashes are silently skipped to match the file backend's behaviour.
@@ -162,6 +227,7 @@ fn append_one_node<W: Write>(
     lmdb: &LmdbBackend,
     tar: &mut tar::Builder<GzEncoder<W>>,
     hash: &MerkleHash,
+    hash_cn: &HashCN,
     opts: &PackOptions,
 ) -> Result<(), OxenError> {
     // File-level nodes don't get their own dir in the file backend's wire
@@ -171,11 +237,11 @@ fn append_one_node<W: Write>(
         return Ok(());
     };
 
-    let Some(link) = lmdb.get_links(hash)? else {
+    let Some(link) = lmdb.get_links(hash_cn)? else {
         // Node row exists but link row doesn't — should be impossible per
         // the writer's invariants. Skip rather than fail the whole pack.
         log::error!(
-            "LMDB invariant violation. Content hash {hash} should be a commit, \
+            "LMDB invariant violation. Node (unique: {hash_cn}) should be a commit, \
             directory, or virtual directory node but it has no links entry in the tree."
         );
         return Ok(());

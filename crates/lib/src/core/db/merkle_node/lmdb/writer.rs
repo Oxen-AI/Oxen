@@ -6,7 +6,7 @@ use heed::{Env, WithTls};
 use crate::core::db::merkle_node::lmdb::LmdbError;
 use crate::core::db::merkle_node::lmdb::hash_content_name::{Filename, HashCN};
 use crate::core::db::merkle_node::lmdb::lmdb_backend::{LmdbBackend, LmdbTables};
-use crate::core::db::merkle_node::lmdb::value_structs::{LmdbDupes, LmdbLink, LmdbNode};
+use crate::core::db::merkle_node::lmdb::value_structs::LmdbNode;
 use crate::error::OxenError;
 use crate::model::merkle_tree::merkle_writer::{
     MerkleWriteSession, MerkleWriter, NodeWriteSession,
@@ -117,27 +117,23 @@ impl<'env> MerkleWriteSession for LmdbWriteSession<'env> {
             children,
         } in pending
         {
-            // Perform the following writes:
+            // Perform the following 3 writes:
             //
             //  (1) write the node into the store:
             //          (MerkleHash, XXH3(name)) = HashNC -> LmdbNode
             //
             //  (2) append the node into the duplicates:
             //          (MerkleHash) -> Vec<XXH3(name)>
-            //
-            //  (3) write the tree links:
-            //          (MerkleHash) -> Vec<(MerkleHash, XXH3(name))>
-            //
-            // (1) and (2)
             self.tables.put_node(
                 &mut wtxn,
                 node_hash.clone(),
                 node_hash_cn,
                 LmdbNode { kind, data },
             )?;
-            // (3)
+            //  (3) write the tree links:
+            //          (MerkleHash) -> Vec<(MerkleHash, XXH3(name))>
             self.tables
-                .put_links(&mut wtxn, node_hash, parent_id, children)?;
+                .put_links(&mut wtxn, node_hash_cn, parent_id, children)?;
         }
         wtxn.commit().map_err(LmdbError::Write)?;
         Ok(())

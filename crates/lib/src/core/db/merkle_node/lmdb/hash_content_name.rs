@@ -18,7 +18,7 @@ pub(super) fn hash_cn_from(node: &dyn TMerkleTreeNode) -> HashCN {
 // contents and the non-empty filename — except for [`HashCN::from_raw_u128`],
 // which rehydrates an already-computed value read back out of LMDB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct HashCN(u128);
+pub(super) struct HashCN(u128);
 
 impl HashCN {
     #[inline(always)]
@@ -49,12 +49,7 @@ impl HashCN {
         self.0.to_le_bytes()
     }
 
-    /// Unwraps the name-content hash into its raw u128 XXH3 hash value.
-    pub fn unwrap(self) -> u128 {
-        self.0
-    }
-
-    pub fn as_u128(&self) -> &u128 {
+    pub(super) fn as_u128(&self) -> &u128 {
         &self.0
     }
 
@@ -65,10 +60,11 @@ impl HashCN {
 }
 
 /// The name of a file. Can only be constructed from a valid filepath.
-pub(crate) struct Filename(String);
+pub(super) struct Filename(String);
 
 impl Filename {
     /// Get the name of the file. Returns None if the path has no file name or if it is not a file.
+    #[allow(dead_code)]
     pub fn new(file: &Path) -> Option<Self> {
         if file.is_file() {
             file.file_name()
@@ -107,7 +103,7 @@ pub struct HexHashCN(String);
 
 impl HexHashCN {
     /// The 32-character hex-encoded string of the [`u128`] [`HashCN`] value.
-    pub fn new(hash_nc: &HashCN) -> Self {
+    pub(super) fn new(hash_nc: &HashCN) -> Self {
         Self(format!("{:032x}", hash_nc.0))
     }
 }

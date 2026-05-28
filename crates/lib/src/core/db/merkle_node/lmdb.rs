@@ -17,9 +17,6 @@ mod hash_content_name;
 /// The cache of open `LMDB` environments in the process.
 pub(crate) mod cache;
 
-#[cfg(test)]
-use std::path::{Path, PathBuf};
-
 pub(in crate::core::db::merkle_node::lmdb) use lmdb_backend::DEFAULT_LMDB_MMAP_SIZE;
 pub use lmdb_backend::LmdbBackend;
 pub(crate) use lmdb_backend::{lmdb_backend_options, lmdb_dir_location};
@@ -29,10 +26,7 @@ use thiserror::Error;
 use crate::{
     core::db::merkle_node::lmdb::hash_content_name::HexHashCN,
     error::OxenError,
-    model::{
-        TMerkleTreeNode,
-        merkle_tree::{merkle_hash::HexHash, node_type::InvalidMerkleTreeNodeType},
-    },
+    model::merkle_tree::{merkle_hash::HexHash, node_type::InvalidMerkleTreeNodeType},
 };
 use bytesize::ByteSize;
 
@@ -145,7 +139,7 @@ mod tests {
         core::db::merkle_node::{
             LmdbBackend,
             lmdb::{
-                hash_content_name::{Filename, HashCN},
+                hash_content_name::{HashCN, hash_cn_from},
                 lmdb_backend_options, lmdb_dir_location,
             },
         },

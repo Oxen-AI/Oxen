@@ -181,6 +181,11 @@ impl LmdbDupesHeaderV1 {
 // drops, which the borrow checker enforces.
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[inline(always)]
+fn read_hash_cn_from_ref(bytes: &[u8; 16]) -> HashCN {
+    HashCN::from_raw_u128(u128::from_le_bytes(*bytes))
+}
+
 /// Zero-copy view over a `merkle_tree_nodes` value.
 ///
 /// `header` is a typed view into the first [`LmdbNodeHeaderV1::SIZE`] bytes;
@@ -201,6 +206,7 @@ impl<'a> LmdbNodeRef<'a> {
     /// 3. `try_ref_from_prefix` → its only remaining failure mode is an
     ///    invalid `NodeVersion` byte, which we map to
     ///    [`LmdbError::NodeUnsupportedVersion`].
+    #[inline]
     pub(crate) fn from_bytes(bytes: &'a [u8]) -> Result<Self, LmdbError> {
         if bytes.len() < LmdbNodeHeaderV1::SIZE {
             return Err(LmdbError::NodeHeaderTruncated { len: bytes.len() });
@@ -218,6 +224,7 @@ impl<'a> LmdbNodeRef<'a> {
 
     /// Decode the kind discriminant. Errors if the byte isn't a known
     /// [`MerkleTreeNodeType`].
+    #[inline(always)]
     pub(crate) fn kind(&self) -> Result<MerkleTreeNodeType, LmdbError> {
         Ok(MerkleTreeNodeType::from_u8(self.header.kind)?)
     }
@@ -236,6 +243,7 @@ pub(crate) struct LmdbLinkRef<'a> {
 impl<'a> LmdbLinkRef<'a> {
     /// Parse a stored `merkle_links` value with no copying. See
     /// [`LmdbNodeRef::from_bytes`] for the validation-order rationale.
+    #[inline]
     pub(crate) fn from_bytes(bytes: &'a [u8]) -> Result<Self, LmdbError> {
         if bytes.len() < LmdbLinkHeaderV1::SIZE {
             return Err(LmdbError::LinkHeaderTruncated { len: bytes.len() });
@@ -270,6 +278,7 @@ impl<'a> LmdbLinkRef<'a> {
         })
     }
 
+    #[inline(always)]
     pub(crate) fn parent_id(&self) -> Option<MerkleHash> {
         if self.header.has_parent == 1 {
             Some(MerkleHash::new(u128::from_le_bytes(self.header.parent)))
@@ -278,12 +287,18 @@ impl<'a> LmdbLinkRef<'a> {
         }
     }
 
+    #[inline(always)]
     pub(crate) fn children_iter(&self) -> impl Iterator<Item = HashCN> + '_ {
-        self.child_hashes
-            .iter()
-            .map(|h| HashCN::from_raw_u128(u128::from_le_bytes(*h)))
+        self.child_hashes.iter().map(read_hash_cn_from_ref)
     }
 
+    #[inline(always)]
+    #[allow(dead_code)]
+    pub(crate) fn get_child(&self, index: usize) -> Option<HashCN> {
+        self.child_hashes.get(index).map(read_hash_cn_from_ref)
+    }
+
+    #[inline(always)]
     pub(crate) fn num_children(&self) -> usize {
         self.child_hashes.len()
     }
@@ -293,6 +308,7 @@ impl<'a> LmdbLinkRef<'a> {
 /// (one per uniquely-named file) that all share the keyed content [`MerkleHash`].
 #[derive(Debug)]
 pub(crate) struct LmdbDupesRef<'a> {
+    #[allow(dead_code)]
     pub header: &'a LmdbDupesHeaderV1,
     /// Each entry is a 16-byte little-endian [`HashCN`]. Length is validated
     /// against `header.num_dupes` at parse time.
@@ -302,6 +318,7 @@ pub(crate) struct LmdbDupesRef<'a> {
 impl<'a> LmdbDupesRef<'a> {
     /// Parse a stored `merkle_node_dupes` value with no copying. See
     /// [`LmdbNodeRef::from_bytes`] for the validation-order rationale.
+    #[inline]
     pub(crate) fn from_bytes(bytes: &'a [u8]) -> Result<Self, LmdbError> {
         if bytes.len() < LmdbDupesHeaderV1::SIZE {
             return Err(LmdbError::DupesHeaderTruncated { len: bytes.len() });
@@ -328,15 +345,45 @@ impl<'a> LmdbDupesRef<'a> {
         Ok(Self { header, hash_cns })
     }
 
+    #[inline]
     pub(crate) fn hash_cns_iter(&self) -> impl Iterator<Item = HashCN> + '_ {
-        self.hash_cns
-            .iter()
-            .map(|h| HashCN::from_raw_u128(u128::from_le_bytes(*h)))
+        self.hash_cns.iter().map(read_hash_cn_from_ref)
     }
 
+    #[inline(always)]
+    #[allow(dead_code)]
+    pub(crate) fn get(&self, index: usize) -> Option<HashCN> {
+        self.hash_cns.get(index).map(read_hash_cn_from_ref)
+    }
+
+    #[inline(always)]
+    #[allow(dead_code)]
     pub(crate) fn num_dupes(&self) -> usize {
+        // self.header.get() as usize
         self.hash_cns.len()
     }
+
+    /// If this refers to a unique [`MerkleHash`], then return it. Otherwise return None.
+    #[inline(always)]
+    pub(super) fn unique(&self) -> Result<DupeUnqResult, LmdbError> {
+        match self.hash_cns.len() {
+            0 => Ok(DupeUnqResult::InvariantViolation),
+            1 => Ok(DupeUnqResult::Some(read_hash_cn_from_ref(
+                &self.hash_cns[0],
+            ))),
+            _ => Ok(DupeUnqResult::None),
+        }
+    }
+}
+
+pub(super) enum DupeUnqResult {
+    /// Must have 1 or more. This [`MerkleHash`] was found with 0 unique hashes.
+    InvariantViolation,
+    /// A [`MerkleHash`] is unique.
+    Some(HashCN),
+    /// > 1 case is normal => means that this is a duplicate file
+    /// we only want `MerkleHash`es that are unique, so ignore
+    None,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -359,6 +406,7 @@ pub struct LmdbNode {
 impl LmdbNode {
     /// Encode for storage in `merkle_tree_nodes`. Produces a single contiguous
     /// `Vec<u8>` of `[header][msgpack_tail]`. The header is a [`LmdbNodeHeaderV1`].
+    #[inline]
     pub(super) fn encode(self) -> Vec<u8> {
         let header = LmdbNodeHeaderV1 {
             magic: NODE_MAGIC,
@@ -374,6 +422,7 @@ impl LmdbNode {
 
     /// Eager-decode from on-disk bytes — copies the msgpack tail into a fresh
     /// `Vec`. Prefer [`LmdbNodeRef::from_bytes`] when zero-copy is possible.
+    #[inline]
     pub(super) fn decode(bytes: &[u8]) -> Result<Self, LmdbError> {
         let r = LmdbNodeRef::from_bytes(bytes)?;
         Ok(Self {
@@ -383,11 +432,13 @@ impl LmdbNode {
     }
 
     /// The type of Merkle tree node that's serialized.
+    #[inline(always)]
     pub fn kind(&self) -> MerkleTreeNodeType {
         self.kind
     }
 
     /// A reference to the msgpack-encoded bytes of the node.
+    #[inline(always)]
     pub fn data(&self) -> &[u8] {
         &self.data
     }
@@ -410,6 +461,7 @@ pub struct LmdbLink {
 impl LmdbLink {
     /// Encode for storage in `merkle_links`. Produces `[header][child_hashes]`.
     /// The header is a [`LmdbLinkHeaderV1`].
+    #[inline]
     pub(super) fn encode(self) -> Vec<u8> {
         let (has_parent, parent_bytes) = match self.parent_id {
             Some(p) => (1u8, p.to_le_bytes()),
@@ -434,6 +486,7 @@ impl LmdbLink {
 
     /// Eager-decode from on-disk bytes. Prefer [`LmdbLinkRef::from_bytes`] when
     /// zero-copy is possible.
+    #[inline]
     pub(super) fn decode(bytes: &[u8]) -> Result<Self, LmdbError> {
         let r = LmdbLinkRef::from_bytes(bytes)?;
         Ok(Self {
@@ -443,12 +496,14 @@ impl LmdbLink {
     }
 
     /// A reference to this node's optional parent hash.
+    #[inline(always)]
     pub fn parent_id(&self) -> Option<&MerkleHash> {
         self.parent_id.as_ref()
     }
 
     /// A reference to this node's children, each a [`HashCN`].
-    pub fn children(&self) -> &[HashCN] {
+    #[inline(always)]
+    pub(super) fn children(&self) -> &[HashCN] {
         &self.children
     }
 }
@@ -466,12 +521,15 @@ pub struct LmdbDupes {
 
 impl LmdbDupes {
     /// Build a dupes row from the set of [`HashCN`]s sharing one content hash.
+    #[inline]
+    #[allow(dead_code)]
     pub(super) fn new(hash_cns: Vec<HashCN>) -> Self {
         Self { hash_cns }
     }
 
     /// Encode for storage in `merkle_node_dupes`. Produces `[header][hash_cns]`.
     /// The header is a [`LmdbDupesHeaderV1`].
+    #[inline]
     pub(super) fn encode(self) -> Vec<u8> {
         let header = LmdbDupesHeaderV1 {
             magic: DUPES_MAGIC,
@@ -490,6 +548,7 @@ impl LmdbDupes {
 
     /// Eager-decode from on-disk bytes. Prefer [`LmdbDupesRef::from_bytes`] when
     /// zero-copy is possible.
+    #[inline]
     pub(super) fn decode(bytes: &[u8]) -> Result<Self, LmdbError> {
         let r = LmdbDupesRef::from_bytes(bytes)?;
         Ok(Self {
@@ -498,7 +557,8 @@ impl LmdbDupes {
     }
 
     /// The [`HashCN`]s recorded for this content hash.
-    pub fn hash_cns(&self) -> &[HashCN] {
+    #[inline(always)]
+    pub(super) fn hash_cns(&self) -> &[HashCN] {
         &self.hash_cns
     }
 }
@@ -682,6 +742,8 @@ mod tests {
         let r = LmdbLinkRef::from_bytes(&r_bytes).expect("ref parse");
         assert_eq!(r.num_children(), 2);
         assert_eq!(r.children_iter().collect::<Vec<_>>(), children);
+        assert_eq!(r.get_child(0), children.get(0));
+        assert_eq!(r.get_child(1), children.get(1));
     }
 
     #[test]

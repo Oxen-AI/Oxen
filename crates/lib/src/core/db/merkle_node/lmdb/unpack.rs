@@ -26,14 +26,12 @@ use tar::Archive;
 
 use crate::constants::{NODES_DIR, TREE_DIR};
 use crate::core::db::merkle_node::file_backend::{TarEntryKind, classify_tar_entry_path};
-use crate::core::db::merkle_node::lmdb::LmdbError;
-use crate::core::db::merkle_node::lmdb::hash_content_name::Filename;
-use crate::core::db::merkle_node::lmdb::hash_content_name::HashCN;
-use crate::core::db::merkle_node::lmdb::hash_content_name::hash_cn_from;
-use crate::core::db::merkle_node::lmdb::lmdb_backend::LmdbBackend;
-use crate::core::db::merkle_node::lmdb::lmdb_backend::LmdbTables;
-use crate::core::db::merkle_node::lmdb::value_structs::LmdbDupes;
-use crate::core::db::merkle_node::lmdb::value_structs::{LmdbLink, LmdbNode};
+use crate::core::db::merkle_node::lmdb::{
+    LmdbError,
+    hash_content_name::{Filename, HashCN, hash_cn_from},
+    lmdb_backend::{LmdbBackend, LmdbTables},
+    value_structs::LmdbNode,
+};
 use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
 use crate::error::OxenError;
 use crate::model::merkle_tree::merkle_transport::{MerkleUnpacker, UnpackOptions};
@@ -331,6 +329,7 @@ fn write_unpacked_into_lmdb(
                 node_hash,
                 entry
                     .name
+                    .as_ref()
                     .and_then(Filename::new_assume_invariants)
                     .as_ref(),
             );
@@ -341,59 +340,79 @@ fn write_unpacked_into_lmdb(
 
     let h = Helper {
         overwrite,
-        lmdb: &backend,
+        tables: &backend.tables,
     };
 
     let mut wtxn = LmdbBackend::write_txn(&backend.lmdb_env)?;
 
-    for ((node_hash, node_hash_cn), entry) in &node_and_children {
+    for ((node_hash, node_hash_cn), entry) in node_and_children {
         h.put_node(
             &mut wtxn,
-            node_hash,
-            node_hash_cn,
+            &node_hash,
+            &node_hash_cn,
             entry.kind,
             entry.data.clone(),
         )?;
-        let child_hashes = entry.children.iter().map(|c| c.hash_cn).collect::<Vec<_>>();
-        h.put_link(&mut wtxn, node_hash_cn, entry.parent_id, child_hashes)?;
 
-        // Embedded children: their `node` row is observable through this parent
-        // entry alone. If they don't have a full entry of their own in the tar,
-        // write a node + minimal-link pair so `get_node` doesn't trip its
-        // "node present but no link" integrity check.
-        for child in &entry.children {
-            if node_and_children.contains_key(&child.hash) {
-                // Will be handled by its own iteration of this loop.
-                continue;
-            }
-            h.put_node(
-                &mut wtxn,
-                &child.hash,
-                &child.hash_cn,
-                child.kind,
-                child.data.clone(),
-            )?;
-            // Only seed a minimal link if the link row doesn't already exist —
-            // skip-existing semantics for embedded-only children regardless of
-            // `opts`, so a child observed via two different parents doesn't
-            // get its link clobbered.
-            if !LmdbBackend::key_present(
-                &wtxn,
-                &backend.tables.merkle_links,
-                &child.hash.to_u128(),
-            )? {
-                LmdbBackend::put_serialized(
-                    &mut wtxn,
-                    &backend.tables.merkle_links,
-                    &child.hash.to_u128(),
-                    LmdbLink::encode,
-                    LmdbLink {
-                        parent_id: Some(*parent_hash),
-                        children: Vec::new(),
-                    },
-                )?;
-            }
-        }
+        let child_hashes = entry
+            .children
+            .into_iter()
+            .map(
+                |ParsedChild {
+                     hash,
+                     kind,
+                     data,
+                     hash_cn,
+                 }| (hash, hash_cn, LmdbNode { kind, data }),
+            )
+            .collect::<Vec<_>>();
+
+        h.put_link(&mut wtxn, &node_hash_cn, entry.parent_id, child_hashes)?;
+        // TODO NOTE: the below loop doesn't need to be written anymore.
+        //            [`Helper::put_link`] writes each child as a node.
+        //
+        //            Additionally, the "minimal link" will be written later if
+        //            the child is a non file or file chunk node. When this happens,
+        //            it will have the correct set of links to write.
+        //            Files/file chunks don't have children so they shouldn't have an entry.
+
+        // // Embedded children: their `node` row is observable through this parent
+        // // entry alone. If they don't have a full entry of their own in the tar,
+        // // write a node + minimal-link pair so `get_node` doesn't trip its
+        // // "node present but no link" integrity check.
+        // for child in &entry.children {
+        //     if node_and_children.contains_key(&(child.hash, child.hash_cn)) {
+        //         // Will be handled by its own iteration of this loop.
+        //         continue;
+        //     }
+        //     h.put_node(
+        //         &mut wtxn,
+        //         &child.hash,
+        //         &child.hash_cn,
+        //         child.kind,
+        //         child.data.clone(),
+        //     )?;
+        //     // Only seed a minimal link if the link row doesn't already exist —
+        //     // skip-existing semantics for embedded-only children regardless of
+        //     // `opts`, so a child observed via two different parents doesn't
+        //     // get its link clobbered.
+        //     if !LmdbBackend::key_present(
+        //         &wtxn,
+        //         &backend.tables.merkle_links,
+        //         &child.hash.to_u128(),
+        //     )? {
+        //         LmdbBackend::put_serialized(
+        //             &mut wtxn,
+        //             &backend.tables.merkle_links,
+        //             &child.hash.to_u128(),
+        //             LmdbLink::encode,
+        //             LmdbLink {
+        //                 parent_id: Some(node_hash),
+        //                 children: Vec::new(),
+        //             },
+        //         )?;
+        //     }
+        // }
     }
     wtxn.commit().map_err(LmdbError::Write)?;
 
@@ -405,7 +424,7 @@ fn write_unpacked_into_lmdb(
 /// Helper implementing functionality used in `unpack`.
 struct Helper<'a> {
     overwrite: bool,
-    lmdb: &'a LmdbBackend,
+    tables: &'a LmdbTables,
 }
 
 impl<'a> Helper<'a> {
@@ -418,27 +437,29 @@ impl<'a> Helper<'a> {
         data: Vec<u8>,
     ) -> Result<(), LmdbError> {
         if !self.overwrite
-            && LmdbBackend::key_present(wtxn, &self.lmdb.tables.merkle_node_dupes, &hash.to_u128())?
+            && LmdbBackend::key_present(wtxn, &self.tables.merkle_node_store, hash_cn.as_u128())?
+            && LmdbBackend::key_present(wtxn, &self.tables.merkle_node_dupes, &hash.to_u128())?
         {
             return Ok(());
         }
-        self.lmdb
+        self.tables
             .put_node(wtxn, *hash, *hash_cn, LmdbNode { kind, data })
     }
 
     fn put_link(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        hash: &MerkleHash,
+        hash_cn: &HashCN,
         parent_id: Option<MerkleHash>,
-        children_and_data: Vec<(MerkleHash, Option<Filename>, LmdbNode)>,
+        children_and_data: Vec<(MerkleHash, HashCN, LmdbNode)>,
     ) -> Result<(), LmdbError> {
         if !self.overwrite
-            && LmdbBackend::key_present(wtxn, &self.lmdb.tables.merkle_links, &hash.to_u128())?
+            && LmdbBackend::key_present(wtxn, &self.tables.merkle_links, hash_cn.as_u128())?
         {
             return Ok(());
         }
-        self.lmdb.put_links(wtxn, parent_id, children_and_data)
+        self.tables
+            .put_links(wtxn, *hash_cn, parent_id, children_and_data)
     }
 }
 
