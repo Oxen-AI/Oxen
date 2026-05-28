@@ -927,12 +927,14 @@ async fn download_large_entries(
                 let remote_path = &commit_entry.path;
 
                 // Download to the tmp path, then copy over to the entries dir
+                let expected_hash: crate::model::MerkleHash = commit_entry.hash.parse()?;
                 api::client::entries::download_large_entry(
                     &remote_repo,
                     remote_path,
                     &download_path,
                     &commit_entry.commit_id,
                     commit_entry.num_bytes,
+                    expected_hash,
                 )
                 .await?;
 

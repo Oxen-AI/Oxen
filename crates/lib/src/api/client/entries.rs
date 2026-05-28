@@ -3,7 +3,8 @@ use crate::config::UserConfig;
 use crate::constants::{DEFAULT_BRANCH_NAME, stream_segment_size};
 use crate::error::OxenError;
 use crate::model::{
-    CommitEntry, EntryDataType, LocalRepository, MetadataEntry, NewCommitBody, RemoteRepository,
+    CommitEntry, EntryDataType, LocalRepository, MerkleHash, MetadataEntry, NewCommitBody,
+    RemoteRepository,
 };
 use crate::opts::UploadOpts;
 use crate::repositories;
@@ -18,13 +19,10 @@ use flate2::Compression;
 use flate2::write::GzEncoder;
 use futures_util::{StreamExt, TryStreamExt};
 use http::Method;
-use std::fs::{self};
-use std::io::Cursor;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
+use tokio_util::io::StreamReader;
 
 /// Returns the metadata given a file path
 pub async fn get_entry(
@@ -259,6 +257,7 @@ pub async fn download_file(
     local_path: impl AsRef<Path>,
     revision: impl AsRef<str>,
 ) -> Result<(), OxenError> {
+    let expected_hash: MerkleHash = entry.hash.parse()?;
     if entry.size > stream_segment_size() {
         download_large_entry(
             remote_repo,
@@ -266,10 +265,18 @@ pub async fn download_file(
             &local_path,
             &revision,
             entry.size,
+            expected_hash,
         )
         .await
     } else {
-        download_small_entry(remote_repo, remote_path, local_path, revision).await
+        download_small_entry(
+            remote_repo,
+            remote_path,
+            local_path,
+            revision,
+            expected_hash,
+        )
+        .await
     }
 }
 
@@ -278,12 +285,12 @@ pub async fn download_small_entry(
     remote_path: impl AsRef<Path>,
     dest: impl AsRef<Path>,
     revision: impl AsRef<str>,
+    expected_hash: MerkleHash,
 ) -> Result<(), OxenError> {
     let path = remote_path.as_ref().to_string_lossy();
     let revision = revision.as_ref();
     let uri = format!("/file/{revision}/{path}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    // log::debug!("url: {url:?}");
     let client = client::new_for_url(&url)?;
     let response = client
         .get(&url)
@@ -294,23 +301,23 @@ pub async fn download_small_entry(
     let status = response.status();
     match status {
         reqwest::StatusCode::OK => {
-            // Copy to file
             let dest = dest.as_ref();
-            // Create parent directories if they don't exist
             if let Some(parent) = dest.parent() {
                 util::fs::create_dir_all(parent)?;
             }
 
-            // Create async reader and writer to receive the file stream
-            let mut dest_file = File::create(dest).await?;
-            let mut stream = response.bytes_stream();
-            while let Some(chunk_result) = stream.next().await {
-                let chunk = chunk_result
-                    .map_err(|e| OxenError::basic_str(format!("Failed to read chunk: {e}")))?;
-                dest_file.write_all(&chunk).await?;
-            }
+            // Adapt the response's `bytes_stream` to an `AsyncRead`, then stream into the
+            // verify-before-commit atomic-write helper. It hashes in-passing and skips the
+            // rename if the digest doesn't match `expected_hash`, so on either a SIGTERM
+            // mid-stream or a content mismatch, `dest` is never created — only an
+            // `AtomicTempFile` scratch sibling that drops cleanly.
+            let stream = response
+                .bytes_stream()
+                .map(|result| result.map_err(std::io::Error::other));
+            let mut reader = StreamReader::new(stream);
 
-            dest_file.flush().await?;
+            util::fs::atomic_write_from_async_reader_verified(dest, &mut reader, expected_hash)
+                .await?;
             Ok(())
         }
         reqwest::StatusCode::NOT_FOUND => Err(OxenError::path_does_not_exist(remote_path)),
@@ -537,6 +544,7 @@ pub async fn download_large_entry(
     local_path: impl AsRef<Path>,
     revision: impl AsRef<str>,
     num_bytes: u64,
+    expected_hash: MerkleHash,
 ) -> Result<(), OxenError> {
     // Read chunks
     let chunk_size = stream_segment_size();
@@ -634,52 +642,37 @@ pub async fn download_large_entry(
         }
     }
 
-    // Once all downloaded, recombine file and delete temp dir
+    // Once all downloaded, recombine file and delete temp dir.
     log::debug!("Unpack to {local_path:?}");
 
-    // Create parent dir if it doesn't exist
     if let Some(parent) = local_path.parent() {
         util::fs::create_dir_all(parent)?;
     }
 
-    let mut combined_file = util::fs::file_create(local_path)?;
-
-    let mut should_cleanup = false;
-    for i in 0..num_chunks {
-        let filename = format!("chunk_{i}");
-        let tmp_file = tmp_dir.join(filename);
-
-        log::debug!("Reading file bytes {tmp_file:?}");
-        match std::fs::File::open(&tmp_file) {
-            Ok(mut chunk_file) => {
-                let mut buffer: Vec<u8> = Vec::new();
-                chunk_file
-                    .read_to_end(&mut buffer)
-                    .expect("Could not read tmp file to end...");
-
-                match combined_file.write_all(&buffer) {
-                    Ok(_) => {
-                        log::debug!("Unpack successful! {local_path:?}");
-                        util::fs::remove_file(tmp_file)?;
-                    }
-                    Err(err) => {
-                        log::error!("Could not write all data to disk {err:?}");
-                        should_cleanup = true;
-                    }
-                }
-            }
-            Err(err) => {
-                log::error!("Could not read chunk file {tmp_file:?}: {err}");
-                should_cleanup = true;
-            }
+    // Chain the per-chunk files into one `Read`, stream that through the verify-before-commit
+    // atomic-write helper, then reclaim the chunk dir.
+    let chunk_paths: Vec<PathBuf> = (0..num_chunks)
+        .map(|i| tmp_dir.join(format!("chunk_{i}")))
+        .collect();
+    let tmp_dir_for_cleanup = tmp_dir.clone();
+    let local_path_for_blocking = local_path.to_path_buf();
+    tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
+        let mut combined: Box<dyn std::io::Read> = Box::new(std::io::empty());
+        for chunk_path in &chunk_paths {
+            let chunk_file = std::fs::File::open(chunk_path)?;
+            combined = Box::new(std::io::Read::chain(combined, chunk_file));
         }
-    }
-
-    if should_cleanup {
-        log::error!("Cleaning up tmp dir {tmp_dir:?}");
-        util::fs::remove_dir_all(tmp_dir)?;
-        return Err(OxenError::basic_str("Could not write all data to disk"));
-    }
+        util::fs::atomic_write_from_reader_verified(
+            &local_path_for_blocking,
+            &mut combined,
+            expected_hash,
+        )?;
+        if tmp_dir_for_cleanup.exists() {
+            std::fs::remove_dir_all(&tmp_dir_for_cleanup)?;
+        }
+        Ok(())
+    })
+    .await??;
 
     Ok(())
 }
@@ -776,10 +769,10 @@ async fn download_entry_chunk(
 
     match status {
         reqwest::StatusCode::OK => {
-            let mut dest = { fs::File::create(local_path)? };
             let bytes = response.bytes().await?;
-            let mut content = Cursor::new(bytes);
-            std::io::copy(&mut content, &mut dest)?;
+            let path = local_path.to_path_buf();
+            tokio::task::spawn_blocking(move || util::fs::atomic_write_to_path(&path, &bytes))
+                .await??;
             Ok(status)
         }
         reqwest::StatusCode::NOT_FOUND => Err(OxenError::path_does_not_exist(remote_path)),
@@ -1133,6 +1126,52 @@ mod tests {
                     .await;
             println!("entry: {entry:?}");
             assert!(entry.is_ok());
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_download_small_entry_hash_mismatch_skips_publish() -> Result<(), OxenError> {
+        // download_small_entry: pass a deliberately-wrong `expected_hash` and verify the
+        // canonical destination is never written (the verified atomic-write helper aborts
+        // before renaming) and the error variant is `HashMismatch` carrying both expected
+        // and actual.
+        test::run_select_data_sync_remote("annotations", |local_repo, remote_repo| async move {
+            let remote_path = Path::new("annotations").join("README.md");
+            let local_path = local_repo.path.join("never-published.md");
+
+            let bogus_expected =
+                crate::model::MerkleHash::new(0xdead_beef_dead_beef_dead_beef_dead_beefu128);
+            let result = api::client::entries::download_small_entry(
+                &remote_repo,
+                &remote_path,
+                &local_path,
+                DEFAULT_BRANCH_NAME,
+                bogus_expected,
+            )
+            .await;
+
+            match result {
+                Err(OxenError::HashMismatch {
+                    path,
+                    expected,
+                    actual,
+                }) => {
+                    assert_eq!(path, local_path);
+                    assert_eq!(expected, bogus_expected);
+                    assert_ne!(actual, bogus_expected);
+                }
+                other => panic!("expected HashMismatch, got {other:?}"),
+            }
+
+            // Canonical destination must be absent — verify-before-publish means the rename
+            // never happened. The `AtomicTempFile` scratch dropped cleanly too.
+            assert!(
+                !local_path.exists(),
+                "destination should not have been published"
+            );
 
             Ok(remote_repo)
         })
