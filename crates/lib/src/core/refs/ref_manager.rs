@@ -175,14 +175,17 @@ impl RefManager {
             return Ok(vec![]);
         }
         // Snapshot the branches under the read lock, then look up commits without holding it.
-        // `get_commit_or_head` may itself need the refs DB; releasing the lock first avoids
-        // taking it twice in nested scope (parking_lot RwLock is not re-entrant).
+        // Releasing first avoids re-entrant refs-DB acquisition (parking_lot RwLock is not
+        // re-entrant), and looking up by the snapshotted commit_id (not the branch name) keeps
+        // each returned pair self-consistent: a concurrent writer can advance the branch after
+        // we drop the lock, but `get_by_id` with the snapshot value returns the commit that
+        // matches the snapshot branch.
         let branches = self.list_branches()?;
         let mut out = Vec::with_capacity(branches.len());
         for branch in branches {
             let commit = repositories::commits::get_commit_or_head(
                 &self.repository,
-                Some(branch.name.clone()),
+                Some(branch.commit_id.clone()),
             )?;
             out.push((branch, commit));
         }
