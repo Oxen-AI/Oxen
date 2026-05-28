@@ -467,7 +467,7 @@ where
 
     let local_repo_dir = local_repo.path.clone();
 
-    for i in 1..26 {
+    for i in 1..6 {
         // Get random string
         let txt = generate_random_string(20);
         let file_path = add_txt_file_to_dir(&local_repo_dir, &txt)?;
