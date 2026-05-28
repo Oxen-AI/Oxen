@@ -26,6 +26,15 @@ use xxhash_rust::xxh3::Xxh3;
 /// AWS recommends uploading to S3 in a single PUT if filesize is <= 100 MB.
 const DEFAULT_ONESHOT_SIZE: u64 = 100 * 1024 * 1024;
 
+/// Server-supplied S3 configuration carried separately from per-repo `StorageConfig`. The bucket is
+/// a server-wide setting (the server can rotate it without rewriting every repo's config), so it
+/// never appears in `.oxen/config.toml` — only in the server's TOML, then threaded through repo
+/// construction. Clients of liboxen pass `None` for this when no S3 backend is server-enabled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct S3Opts {
+    pub bucket: String,
+}
+
 /// S3 implementation of version storage
 #[derive(Debug)]
 pub struct S3VersionStore {
