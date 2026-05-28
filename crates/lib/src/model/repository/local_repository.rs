@@ -914,7 +914,7 @@ mod tests {
         let result = LocalRepository::new(
             temp_dir.path(),
             RepositoryConfig {
-                min_version: Some("0.25.0".to_string()),
+                min_version: Some("0.36.0".to_string()),
                 vfs: Some(true),
                 merkle_store_kind: MerkleStoreKind::Lmdb,
                 ..Default::default()
@@ -934,7 +934,7 @@ mod tests {
         let repo = LocalRepository::new(
             temp_dir.path(),
             RepositoryConfig {
-                min_version: Some("0.25.0".to_string()),
+                min_version: Some("0.36.0".to_string()),
                 vfs: Some(true),
                 merkle_store_kind: MerkleStoreKind::File,
                 ..Default::default()

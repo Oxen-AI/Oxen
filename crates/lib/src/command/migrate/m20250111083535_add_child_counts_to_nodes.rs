@@ -68,7 +68,7 @@ fn run_on_commit(repository: &LocalRepository, commit: &Commit) -> Result<(), Ox
 
     // Iterate over the nodes, find the VNode and DirNode, and add the child counts
     let mut new_repo = repository.clone();
-    new_repo.set_min_version(MinOxenVersion::from_string("0.25.0")?);
+    new_repo.set_min_version(MinOxenVersion::LATEST);
 
     // *******************************************************************
     // We need to load all the children of all the VNodes for each DirNode
@@ -118,9 +118,9 @@ fn run_on_commit(repository: &LocalRepository, commit: &Commit) -> Result<(), Ox
     // println!("new tree for commit {}", commit);
     // repositories::tree::print_tree(&new_repo, commit)?;
 
-    // Set the oxen version to 0.25.0
+    // Stamp the migrated repo with the current LATEST version string.
     let mut config = RepositoryConfig::from_repo(&new_repo)?;
-    config.min_version = Some("0.25.0".to_string());
+    config.min_version = Some(MinOxenVersion::LATEST.as_str().to_string());
     let path = util::fs::config_filepath(&new_repo.path);
     config.save(&path)?;
 
@@ -369,7 +369,7 @@ mod tests {
             // Make sure that the repo version is updated
             let repo = LocalRepository::from_dir(&repo.path)?;
             let version_str = repo.min_version().to_string();
-            assert_eq!(version_str, "0.25.0");
+            assert_eq!(version_str, "0.36.0");
 
             Ok(())
         })
@@ -495,7 +495,7 @@ mod tests {
             // Make sure that the repo version is updated
             let repo = LocalRepository::from_dir(&repo.path)?;
             let version_str = repo.min_version().to_string();
-            assert_eq!(version_str, "0.25.0");
+            assert_eq!(version_str, "0.36.0");
 
             Ok(())
         })
