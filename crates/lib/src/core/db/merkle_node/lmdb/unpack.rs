@@ -27,6 +27,7 @@ use tar::Archive;
 use crate::constants::{NODES_DIR, TREE_DIR};
 use crate::core::db::merkle_node::file_backend::{TarEntryKind, classify_tar_entry_path};
 use crate::core::db::merkle_node::lmdb::LmdbError;
+use crate::core::db::merkle_node::lmdb::hash_content_name::Filename;
 use crate::core::db::merkle_node::lmdb::hash_content_name::HashCN;
 use crate::core::db::merkle_node::lmdb::hash_content_name::hash_cn_from;
 use crate::core::db::merkle_node::lmdb::lmdb_backend::LmdbBackend;
@@ -141,12 +142,14 @@ fn collect_tar_entries(reader: &mut dyn Read) -> Result<BufferedTarPayloads, Oxe
                 buffered.seen_hashes.insert(hash);
                 let mut bytes = Vec::new();
                 entry.read_to_end(&mut bytes).map_err(MerkleDbError::Io)?;
+                // bytes is the node file
                 buffered.node_files.insert(hash, bytes);
             }
             TarEntryKind::ChildrenFile(hash) => {
                 buffered.seen_hashes.insert(hash);
                 let mut bytes = Vec::new();
                 entry.read_to_end(&mut bytes).map_err(MerkleDbError::Io)?;
+                // bytes is the children file
                 buffered.children_files.insert(hash, bytes);
             }
         }
@@ -154,15 +157,16 @@ fn collect_tar_entries(reader: &mut dyn Read) -> Result<BufferedTarPayloads, Oxe
     Ok(buffered)
 }
 
-/// Parsed contents of one `tree/nodes/{prefix}/{suffix}/{node,children}` pair.
+/// Parsed contents of a pair of `node` and `children` files under some `tree/nodes/{prefix}/{suffix}/` directory.
 struct ParsedEntry {
-    /// Kind discriminant from the parent `node` file's header.
-    parent_kind: MerkleTreeNodeType,
+    /// Kind discriminant from this `node` file's header.
+    kind: MerkleTreeNodeType,
     /// Parent ID from the parent `node` file's header. `None` if the on-disk slot was 0.
-    /// Includes both the content hash and the content-name hash.
-    parent_id: Option<(MerkleHash, HashCN)>,
+    parent_id: Option<MerkleHash>,
+    /// The name of this node, if it is a directory.
+    name: Option<String>,
     /// Parent's msgpack tail.
-    parent_data: Vec<u8>,
+    data: Vec<u8>,
     /// One entry per child (already paired with its data slice from the children file).
     children: Vec<ParsedChild>,
 }
@@ -191,13 +195,13 @@ fn parse_pair(node_bytes: &[u8], children_bytes: &[u8]) -> Result<ParsedEntry, O
         }
         .into());
     }
-    let parent_kind = MerkleTreeNodeType::from_u8(node_bytes[0]).map_err(LmdbError::from)?;
+    let kind = MerkleTreeNodeType::from_u8(node_bytes[0]).map_err(LmdbError::from)?;
     let parent_value = {
         let mut parent_bytes_arr = [0u8; 16];
         parent_bytes_arr.copy_from_slice(&node_bytes[1..17]);
         u128::from_le_bytes(parent_bytes_arr)
     };
-    let parent_content_hash = if parent_value == 0 {
+    let parent_id = if parent_value == 0 {
         None
     } else {
         Some(MerkleHash::new(parent_value))
@@ -214,7 +218,10 @@ fn parse_pair(node_bytes: &[u8], children_bytes: &[u8]) -> Result<ParsedEntry, O
         }
         .into());
     }
-    let parent_data = node_bytes[HEADER_LEN..data_end].to_vec();
+    let data = node_bytes[HEADER_LEN..data_end].to_vec();
+
+    let name = EMerkleTreeNode::from_type_and_bytes(kind, &data)?
+        .as_t_node().name().map(|x| x.to_string());
 
     let lookup_tail = &node_bytes[data_end..];
     const LOOKUP_ENTRY_SIZE: usize = 1 + 16 + 8 + 8;
@@ -274,21 +281,11 @@ fn parse_pair(node_bytes: &[u8], children_bytes: &[u8]) -> Result<ParsedEntry, O
         children
     };
 
-    let parent_id = parent_content_hash
-        .map(
-            |p| -> Result<(MerkleHash, HashCN), rmp_serde::decode::Error> {
-                let cn = hash_cn_from(
-                    EMerkleTreeNode::from_type_and_bytes(parent_kind, &parent_data)?.as_t_node(),
-                );
-                Ok((p, cn))
-            },
-        )
-        .transpose()?;
-
     Ok(ParsedEntry {
-        parent_kind,
+        kind,
         parent_id,
-        parent_data,
+        name,
+        data,
         children,
     })
 }
@@ -322,38 +319,38 @@ fn write_unpacked_into_lmdb(
     // The node is the parent of the children.
     //      - The key (MerkleHash) identifies the parent.
     //      - The value (ParsedEntry) is its children.
-    let node_and_children: HashMap<MerkleHash, ParsedEntry> = {
+    let node_and_children: HashMap<(MerkleHash, HashCN), ParsedEntry> = {
         let mut parsed = HashMap::with_capacity(node_files.len());
-        for (hash, node_bytes) in &node_files {
+        for (node_hash, node_bytes) in &node_files {
             let empty_children: Vec<u8> = Vec::new();
-            let children_bytes = children_files.get(hash).unwrap_or(&empty_children);
+            let children_bytes = children_files.get(node_hash).unwrap_or(&empty_children);
             let entry = parse_pair(node_bytes, children_bytes)?;
-            parsed.insert(*hash, entry);
+            let node_hash_cn = HashCN::new(
+                node_hash,
+                entry.name.and_then(Filename::new_assume_invariants).as_ref(),
+            );
+            parsed.insert((*node_hash, node_hash_cn), entry);
         }
         parsed
     };
 
-    let h = Helper {
-        overwrite,
-        tables: &backend.tables,
-    };
+    let h = Helper { overwrite, tables: &backend.tables };
 
     let mut wtxn = LmdbBackend::write_txn(&backend.lmdb_env)?;
 
-    for (parent_hash, entry) in &node_and_children {
-        let parent_content_and_name_hash = entry.parent_id.map(|x| x.1);
+    for ((node_hash, node_hash_cn), entry) in &node_and_children {
         h.put_node(
             &mut wtxn,
-            parent_hash,
-            parent_content_and_name_hash,
-            entry.parent_kind,
-            entry.parent_data.clone(),
+            node_hash,
+            node_hash_cn,
+            entry.kind,
+            entry.data.clone(),
         )?;
         let child_hashes = entry.children.iter().map(|c| c.hash_cn).collect::<Vec<_>>();
         h.put_link(
             &mut wtxn,
-            parent_hash,
-            entry.parent_id.map(|x| x.0),
+            node_hash_cn,
+            entry.parent_id,
             child_hashes,
         )?;
 
@@ -418,10 +415,12 @@ impl<'a> Helper<'a> {
         data: Vec<u8>,
     ) -> Result<(), LmdbError> {
         if !self.overwrite
-            && LmdbBackend::key_present(wtxn, &self.tables.merkle_node_dupes, &hash.to_u128())?
+            && LmdbBackend::key_present(wtxn, &self.tables.merkle_node_dupes, hash_cn.as_u128())?
         {
             return Ok(());
         }
+
+        LmdbBackend::retrieve_bytes(wxtn, &self.tables.merkle_node_dupes, key)
 
         LmdbBackend::put_serialized(
             wtxn,
@@ -445,19 +444,22 @@ impl<'a> Helper<'a> {
     fn put_link(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        hash: &MerkleHash,
+        hash_cn: &HashCN,
         parent_id: Option<MerkleHash>,
         children: Vec<HashCN>,
     ) -> Result<(), LmdbError> {
         if !self.overwrite
-            && LmdbBackend::key_present(wtxn, &self.tables.merkle_links, &hash.to_u128())?
+            && LmdbBackend::key_present(wtxn, &self.tables.merkle_links, hash_cn.as_u128())?
         {
             return Ok(());
         }
+
+        // TODO: update link
+
         LmdbBackend::put_serialized(
             wtxn,
             &self.tables.merkle_links,
-            &hash.to_u128(),
+            hash_cn.as_u128(),
             LmdbLink::encode,
             LmdbLink {
                 parent_id,

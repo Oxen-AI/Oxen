@@ -4,6 +4,7 @@ use bytesize::ByteSize;
 use heed::byteorder::LE;
 use heed::types::{Bytes, DecodeIgnore, U128};
 use heed::{AnyTls, Database, Env, EnvOpenOptions, WithTls};
+use sqlparser::ast::With;
 
 use crate::constants::OXEN_HIDDEN_DIR;
 use crate::core::db::merkle_node::lmdb::LmdbError;
@@ -410,6 +411,71 @@ impl LmdbBackend {
             return Ok(None);
         }
         Ok(Some(stored_node))
+    }
+
+    pub(super) fn put_node<'txn>(
+        &self,
+        wtxn: &mut heed::RwTxn<'txn>,
+        hash: MerkleHash,
+        hash_name_content: HashCN,
+        node: LmdbNode,
+    ) -> Result<(), LmdbError> {
+        // (1) write into node store (access by HashCN)
+        LmdbBackend::put_serialized(
+            wtxn,
+            &self.tables.merkle_node_store,
+            hash_name_content.as_u128(),
+            LmdbNode::encode,
+            node,
+        )?;
+
+        // (2) append the node into the duplicates (access by MerkleHash)
+        let duplicates: Vec<HashCN> = match LmdbBackend::retrieve_bytes(
+            wtxn,
+            &self.tables.merkle_node_dupes,
+            &hash.to_u128(),
+        )? {
+            Some(existing) => {
+                let mut existing = LmdbDupes::decode(existing)?.hash_cns;
+                existing.push(hash_name_content);
+                existing
+            }
+            None => vec![hash_name_content],
+        };
+        LmdbBackend::put_serialized(
+            wtxn,
+            &self.tables.merkle_node_dupes,
+            &hash.to_u128(),
+            LmdbDupes::encode,
+            LmdbDupes { hash_cns: duplicates },
+        )
+    }
+
+    pub(super) fn put_links<'txn>(
+        &self,
+        wtxn: &'txn mut heed::RwTxn<'txn>,
+        parent_id: Option<MerkleHash>,
+        children_and_data: Vec<(MerkleHash, Option<Filename>, LmdbNode),
+    ) -> Result<(), LmdbError> {
+        // (3) write the tree links & write each child in the link
+        let children: Vec<HashCN> = {
+            let mut children = Vec::with_capacity(children_and_data.len());
+            for (child_hash, maybe_child_filename, child_node) in children_and_data {
+                let child_hash_cn = HashCN::new(&child_hash, maybe_child_filename.as_ref());
+                children.push(child_hash_cn.clone());
+
+                self.put_node(wtxn, child_hash, hash_name_content, child_node)?;
+            }
+            children
+        };
+        LmdbBackend::put_serialized(
+            wtxn,
+            &tables.merkle_links,
+            // &child_hash.to_u128(),
+            &pw.node_hash.to_u128(),
+            LmdbLink::encode,
+            LmdbLink { parent_id, children },
+        )
     }
 }
 

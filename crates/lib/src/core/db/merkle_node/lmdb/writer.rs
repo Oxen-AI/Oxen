@@ -1,13 +1,11 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use heed::{Database, Env, WithTls};
+use heed::{Env, WithTls};
 
 use crate::core::db::merkle_node::lmdb::LmdbError;
 use crate::core::db::merkle_node::lmdb::hash_content_name::{Filename, HashCN};
-use crate::core::db::merkle_node::lmdb::lmdb_backend::{
-    KeyLmdb, LmdbBackend, LmdbTables, ValueLmdb,
-};
+use crate::core::db::merkle_node::lmdb::lmdb_backend::{LmdbBackend, LmdbTables};
 use crate::core::db::merkle_node::lmdb::value_structs::{LmdbDupes, LmdbLink, LmdbNode};
 use crate::error::OxenError;
 use crate::model::merkle_tree::merkle_writer::{
@@ -83,7 +81,7 @@ impl<'env> MerkleWriteSession for LmdbWriteSession<'env> {
             node_hash: node.hash(),
             node_kind: node.node_type(),
             node_data: node.to_msgpack_bytes()?,
-            filename: node.name(),
+            filename: node.name().map(|x| x.to_string()),
             parent_id,
             children_buffer: Vec::new(),
         }))
@@ -103,78 +101,102 @@ impl<'env> MerkleWriteSession for LmdbWriteSession<'env> {
         }
         let mut wtxn = LmdbBackend::write_txn(self.env)?;
         for pw in pending {
-            //
-            // Perform the following writes:
-            //
-            //  (1) write the node into the store:
-            //          (MerkleHash, XXH3(name)) = HashNC -> LmdbNode
-            //
-            //  (2) append the node into the duplicates:
-            //          (MerkleHash) -> Vec<XXH3(name)>
-            //
-            //  (3) write the tree links:
-            //          (MerkleHash) -> Vec<(MerkleHash, XXH3(name))>
-            //
-
-            // (1) write into node store
-            let hash_name_content = HashCN::new(&pw.node_hash, pw.filename.as_ref());
-            LmdbBackend::put_serialized(
-                &mut wtxn,
-                &self.tables.merkle_node_store,
-                hash_name_content.as_u128(),
-                LmdbNode::encode,
-                LmdbNode {
-                    kind: pw.node_kind,
-                    data: pw.node_data,
-                },
-            )?;
-
-            // (2) append the node into the duplicates
-            let duplicates: Vec<HashCN> = match LmdbBackend::retrieve_bytes(
-                &wtxn,
-                &self.tables.merkle_node_dupes,
-                hash_name_content.as_u128(),
-            )? {
-                Some(existing) => {
-                    let mut existing = LmdbDupes::decode(existing)?.hash_cns;
-                    existing.push(hash_name_content);
-                    existing
-                }
-                None => vec![hash_name_content],
-            };
-            LmdbBackend::put_serialized(
-                &mut wtxn,
-                &self.tables.merkle_node_dupes,
-                &pw.node_hash.to_u128(),
-                LmdbDupes::encode,
-                LmdbDupes {
-                    hash_cns: duplicates,
-                },
-            )?;
-
-            // (3) write the tree links
-            let children: Vec<HashCN> = {
-                let mut children = Vec::with_capacity(pw.children.len());
-                for (child_hash, maybe_child_filename, child_node) in pw.children {
-                    let child_hash_cn = HashCN::new(&child_hash, maybe_child_filename.as_ref());
-                    children.push(child_hash_cn);
-                }
-                children
-            };
-            LmdbBackend::put_serialized(
-                &mut wtxn,
-                &self.tables.merkle_links,
-                &child_hash.to_u128(),
-                LmdbLink::encode,
-                LmdbLink {
-                    parent_id: pw.parent_id,
-                    children,
-                },
-            )?;
+            write(&self.tables, &mut wtxn, pw)?;
         }
         wtxn.commit().map_err(LmdbError::Write)?;
         Ok(())
     }
+}
+
+///
+/// Perform the following writes:
+///
+///  (1) write the node into the store:
+///          (MerkleHash, XXH3(name)) = HashNC -> LmdbNode
+///
+///  (2) append the node into the duplicates:
+///          (MerkleHash) -> Vec<XXH3(name)>
+///
+///  (3) write the tree links:
+///          (MerkleHash) -> Vec<(MerkleHash, XXH3(name))>
+///
+pub(super) fn write<'store, 'transaction>(
+    lmdb: &'store LmdbTables,
+    wtxn: &'transaction mut heed::RwTxn<'transaction>,
+    pw: PendingWrite,
+) -> Result<(), LmdbError> {
+
+
+
+
+
+    let hash_name_content = HashCN::new(&pw.node_hash, pw.filename.as_ref());
+
+
+
+    fn put_node(wxtn, hash, hash)
+
+    LmdbBackend::put_serialized(
+        wtxn,
+        &tables.merkle_node_store,
+        hash_name_content.as_u128(),
+        LmdbNode::encode,
+        LmdbNode {
+            kind: pw.node_kind,
+            data: pw.node_data,
+        },
+    )?;
+
+    // (2) append the node into the duplicates
+    let duplicates: Vec<HashCN> = match LmdbBackend::retrieve_bytes(
+        wtxn,
+        &tables.merkle_node_dupes,
+        hash_name_content.as_u128(),
+    )? {
+        Some(existing) => {
+            let mut existing = LmdbDupes::decode(existing)?.hash_cns;
+            existing.push(hash_name_content);
+            existing
+        }
+        None => vec![hash_name_content],
+    };
+    LmdbBackend::put_serialized(
+        wtxn,
+        &tables.merkle_node_dupes,
+        &pw.node_hash.to_u128(),
+        LmdbDupes::encode,
+        LmdbDupes {
+            hash_cns: duplicates,
+        },
+    )?;
+
+    // (3) write the tree links
+    let children: Vec<HashCN> = {
+        let mut children = Vec::with_capacity(pw.children.len());
+        for (child_hash, maybe_child_filename, child_node) in pw.children {
+            let child_hash_cn = HashCN::new(&child_hash, maybe_child_filename.as_ref());
+            children.push(child_hash_cn);
+
+            // TODO: Do we need to write the child node directly here?
+            //       Or are we guarenteed that it's going to show up in another (node, [])
+            //       -- as its own node with empty children.
+
+
+
+        }
+        children
+    };
+    LmdbBackend::put_serialized(
+        wtxn,
+        &tables.merkle_links,
+        // &child_hash.to_u128(),
+        &pw.node_hash.to_u128(),
+        LmdbLink::encode,
+        LmdbLink {
+            parent_id: pw.parent_id,
+            children,
+        },
+    )
 }
 
 // impl<'a> MerkleWriteSession {
@@ -228,7 +250,7 @@ impl NodeWriteSession for LmdbNodeWriteSession {
         };
         self.children_buffer.push((
             child.hash(),
-            child.name().map(Filename::new_assume_invariants),
+            child.name().and_then(Filename::new_assume_invariants),
             child_as_lmdb_node,
         ));
         Ok(())
