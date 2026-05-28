@@ -238,14 +238,17 @@ pub async fn create(
     util::fs::create_dir_all(&hidden_dir)?;
 
     // Create config file
-    let storage_config = new_repo
-        .storage_kind
-        .map(|kind| crate::storage::StorageConfig {
-            kind,
-            versions_path: None,
-        });
-    let local_repo =
-        LocalRepository::new_with_merkle_store_kind(&repo_dir, storage_config, merkle_store_kind)?;
+    let config = crate::config::RepositoryConfig {
+        storage: new_repo
+            .storage_kind
+            .map(|kind| crate::storage::StorageConfig {
+                kind,
+                versions_path: None,
+            }),
+        merkle_store_kind,
+        ..Default::default()
+    };
+    let local_repo = LocalRepository::new(&repo_dir, config)?;
     local_repo.save()?;
 
     // Initialize version store
