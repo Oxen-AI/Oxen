@@ -1,5 +1,6 @@
 use crate::core::db::merkle_node::LmdbBackend;
-use crate::core::db::merkle_node::lmdb::value_structs::LmdbDupesRef;
+use crate::core::db::merkle_node::lmdb::hash_content_name::HashCN;
+use crate::core::db::merkle_node::lmdb::value_structs::{self, LmdbDupesRef};
 use crate::core::db::merkle_node::lmdb::{
     LmdbError,
     value_structs::{LmdbLinkRef, LmdbNodeRef},
@@ -24,7 +25,7 @@ impl MerkleReader for LmdbBackend {
     ///       This will return `Ok(false)` on a file node that exists.
     fn exists(&self, hash: &MerkleHash) -> Result<bool, OxenError> {
         let rtxn = self.read_txn()?;
-        let Some(node_ref) = get_non_file_node_bytes_reference(self, &rtxn, hash)? else {
+        let Some((node_ref, _)) = get_non_file_node_bytes_reference(self, &rtxn, hash)? else {
             return Ok(false);
         };
         use MerkleTreeNodeType::*;
@@ -40,7 +41,8 @@ impl MerkleReader for LmdbBackend {
         let rtxn = self.read_txn()?;
 
         // ── Read the node entry (zero-copy view into mmap). ────────────────
-        let Some(node_ref) = get_non_file_node_bytes_reference(self, &rtxn, hash)? else {
+        let Some((node_ref, hash_cn)) = get_non_file_node_bytes_reference(self, &rtxn, hash)?
+        else {
             return Ok(None);
         };
         let kind = node_ref.kind()?;
@@ -52,7 +54,7 @@ impl MerkleReader for LmdbBackend {
 
         // ── Read the link entry to recover the parent_id. ──────────────────
         let Some(link_bytes) =
-            Self::retrieve_bytes(&rtxn, &self.tables.merkle_links, &hash.to_u128())?
+            Self::retrieve_bytes(&rtxn, &self.tables.merkle_links, hash_cn.as_u128())?
         else {
             // Node exists but no link row — table-cross integrity violation.
             return Err(LmdbError::IntegrityNoLink(hash.to_hex_hash()).into());
@@ -76,11 +78,16 @@ impl MerkleReader for LmdbBackend {
     ) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, OxenError> {
         let rtxn = self.read_txn()?;
 
+        let Some((_, hash_cn)) = get_non_file_node_bytes_reference(self, &rtxn, hash)? else {
+            // file and file chunk nodes cannot have children
+            return Ok(Vec::with_capacity(0));
+        };
+
         let Some(link_bytes) =
-            Self::retrieve_bytes(&rtxn, &self.tables.merkle_links, &hash.to_u128())?
+            Self::retrieve_bytes(&rtxn, &self.tables.merkle_links, hash_cn.as_u128())?
         else {
-            // Existing semantics: missing link is treated as "no children".
-            return Ok(Vec::new());
+            // Existing semantics for [`MerkleReader`] trait: missing link is treated as "no children".
+            return Ok(Vec::with_capacity(0));
         };
         let link_ref = LmdbLinkRef::from_bytes(link_bytes)?;
 
@@ -127,30 +134,35 @@ fn get_non_file_node_bytes_reference<'a>(
     lmdb: &LmdbBackend,
     rtxn: &'a heed::RoTxn<'a, heed::WithTls>,
     hash: &MerkleHash,
-) -> Result<Option<LmdbNodeRef<'a>>, LmdbError> {
+) -> Result<Option<(LmdbNodeRef<'a>, HashCN)>, LmdbError> {
     let Some(bytes) =
         LmdbBackend::retrieve_bytes(&rtxn, &lmdb.tables.merkle_node_dupes, &hash.to_u128())?
     else {
         return Ok(None);
     };
     let known_content_name_hashes = LmdbDupesRef::from_bytes(bytes)?;
-    if known_content_name_hashes.hash_cns.len() > 1 {
-        // only files can have duplicates: this is a list of other
-        // named files that have the same content (that's why they have
-        // the same MerkleHash!). These values are `HashCN`: hash content _and name_.
-        return Ok(None);
-    }
 
-    let Some(hash_cn) = known_content_name_hashes.hash_cns_iter().next() else {
-        return Err(LmdbError::IntegrityNoDupe(hash.to_hex_hash()));
+    use value_structs::DupeUnqResult;
+    let hash_cn = match known_content_name_hashes.unique()? {
+        DupeUnqResult::Some(hash_cn) => hash_cn,
+        DupeUnqResult::None => {
+            // only files can have duplicates: this is a list of other
+            // named files that have the same content (that's why they have
+            // the same MerkleHash!). These values are `HashCN`: hash content _and name_.
+            return Ok(None);
+        }
+        DupeUnqResult::InvariantViolation => {
+            return Err(LmdbError::IntegrityNoDupe(hash.to_hex_hash()));
+        }
     };
+
     let Some(bytes) =
         LmdbBackend::retrieve_bytes(&rtxn, &lmdb.tables.merkle_node_store, hash_cn.as_u128())?
     else {
         return Err(LmdbError::IntegrityNoNode(hash_cn.to_hex_hash()));
     };
 
-    Ok(Some(LmdbNodeRef::from_bytes(bytes)?))
+    Ok(Some((LmdbNodeRef::from_bytes(bytes)?, hash_cn)))
 }
 
 #[cfg(test)]
