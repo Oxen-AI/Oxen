@@ -3,11 +3,6 @@
 //! Push data from your local machine to a remote.
 //!
 
-use crate::core;
-use crate::error::OxenError;
-use crate::model::{Branch, LocalRepository};
-use crate::opts::PushOpts;
-
 /// # Push committed data to a remote
 ///
 /// ```ignore
@@ -35,17 +30,10 @@ use crate::opts::PushOpts;
 /// // Push the file
 /// repositories::push(&repo).await?;
 /// ```
-pub async fn push(repo: &LocalRepository) -> Result<Branch, OxenError> {
-    core::v_latest::push::push(repo).await
-}
+pub use crate::core::v_latest::push::push;
 
 /// Push to a specific remote branch on the default remote repository
-pub async fn push_remote_branch(
-    repo: &LocalRepository,
-    opts: &PushOpts,
-) -> Result<Branch, OxenError> {
-    core::v_latest::push::push_remote_branch(repo, opts).await
-}
+pub use crate::core::v_latest::push::push_remote_branch;
 
 #[cfg(test)]
 mod tests {

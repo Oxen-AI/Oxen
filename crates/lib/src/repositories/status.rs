@@ -4,13 +4,6 @@
 //! and which files are staged for commit.
 //!
 
-use std::path::Path;
-
-use crate::core;
-use crate::error::OxenError;
-use crate::model::staged_data::StagedDataOpts;
-use crate::model::{LocalRepository, StagedData};
-
 /// # oxen status
 ///
 /// Get status of files in repository, returns what files are tracked,
@@ -46,23 +39,11 @@ use crate::model::{LocalRepository, StagedData};
 /// let status = repositories::status(&repo).await?;
 /// assert_eq!(status.untracked_files.len(), 1);
 /// ```
-pub async fn status(repo: &LocalRepository) -> Result<StagedData, OxenError> {
-    core::v_latest::status::status(repo).await
-}
+pub use crate::core::v_latest::status::status;
 
-pub async fn status_from_opts(
-    repo: &LocalRepository,
-    opts: &StagedDataOpts,
-) -> Result<StagedData, OxenError> {
-    core::v_latest::status::status_from_opts(repo, opts).await
-}
+pub use crate::core::v_latest::status::status_from_opts;
 
-pub async fn status_from_dir(
-    repo: &LocalRepository,
-    dir: impl AsRef<Path>,
-) -> Result<StagedData, OxenError> {
-    core::v_latest::status::status_from_dir(repo, dir).await
-}
+pub use crate::core::v_latest::status::status_from_dir;
 
 #[cfg(test)]
 mod tests {

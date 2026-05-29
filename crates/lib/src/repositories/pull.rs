@@ -6,7 +6,6 @@
 use crate::core;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
-use crate::opts::fetch_opts::FetchOpts;
 
 /// Pull a repository's data from default branches origin/main
 /// Defaults defined in
@@ -37,13 +36,7 @@ pub async fn pull_all(repo: &LocalRepository) -> Result<(), OxenError> {
 }
 
 /// Pull a specific remote and branch
-#[tracing::instrument(skip(repo, fetch_opts), fields(repo_path = %repo.path.display()))]
-pub async fn pull_remote_branch(
-    repo: &LocalRepository,
-    fetch_opts: &FetchOpts,
-) -> Result<(), OxenError> {
-    core::v_latest::pull::pull_remote_branch(repo, fetch_opts).await
-}
+pub use crate::core::v_latest::pull::pull_remote_branch;
 
 #[cfg(test)]
 mod tests {

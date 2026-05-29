@@ -2,7 +2,6 @@ use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::{PageNumVersionQuery, app_data, parse_resource, path_param};
 
-use liboxen::core::versions::MinOxenVersion;
 use liboxen::opts::{PaginateOpts, SortOpts};
 use liboxen::perf_guard;
 use liboxen::view::PaginatedDirEntriesResponse;
@@ -43,7 +42,6 @@ pub async fn get(
 
     let page: usize = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size: usize = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
-    let api_version = MinOxenVersion::or_latest(query.api_version.clone())?;
     // depth: 0 = current only, positive = that many levels, negative = unlimited
     let depth: usize = match query.depth.unwrap_or(0) {
         d if d < 0 => usize::MAX,
@@ -80,7 +78,6 @@ pub async fn get(
             page_size,
         },
         &sort_opts,
-        api_version,
         depth,
     )?;
     drop(_perf_list);

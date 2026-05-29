@@ -1,10 +1,8 @@
-use std::path::{Path, PathBuf};
-
 use crate::core;
 use crate::error::OxenError;
 use crate::model::Commit;
+use crate::model::LocalRepository;
 use crate::model::merge_conflict::MergeConflict;
-use crate::model::{Branch, LocalRepository};
 
 #[derive(Debug)]
 pub struct MergeCommits {
@@ -41,72 +39,23 @@ pub fn list_conflicts(repo: &LocalRepository) -> Result<Vec<MergeConflict>, Oxen
         .collect())
 }
 
-pub async fn has_conflicts(
-    repo: &LocalRepository,
-    base_branch: &Branch,
-    merge_branch: &Branch,
-) -> Result<bool, OxenError> {
-    core::v_latest::merge::has_conflicts(repo, base_branch, merge_branch).await
-}
+pub use crate::core::v_latest::merge::has_conflicts;
 
-pub fn mark_conflict_as_resolved(repo: &LocalRepository, path: &Path) -> Result<(), OxenError> {
-    core::v_latest::merge::mark_conflict_as_resolved(repo, path)
-}
+pub use crate::core::v_latest::merge::mark_conflict_as_resolved;
 
-pub async fn can_merge_commits(
-    repo: &LocalRepository,
-    base_commit: &Commit,
-    merge_commit: &Commit,
-) -> Result<bool, OxenError> {
-    core::v_latest::merge::can_merge_commits(repo, base_commit, merge_commit).await
-}
+pub use crate::core::v_latest::merge::can_merge_commits;
 
-pub async fn list_conflicts_between_branches(
-    repo: &LocalRepository,
-    base_branch: &Branch,
-    merge_branch: &Branch,
-) -> Result<Vec<PathBuf>, OxenError> {
-    core::v_latest::merge::list_conflicts_between_branches(repo, base_branch, merge_branch).await
-}
+pub use crate::core::v_latest::merge::list_conflicts_between_branches;
 
-pub fn list_commits_between_branches(
-    repo: &LocalRepository,
-    base_branch: &Branch,
-    head_branch: &Branch,
-) -> Result<Vec<Commit>, OxenError> {
-    core::v_latest::merge::list_commits_between_branches(repo, base_branch, head_branch)
-}
+pub use crate::core::v_latest::merge::list_commits_between_branches;
 
-pub fn list_commits_between_commits(
-    repo: &LocalRepository,
-    base_commit: &Commit,
-    head_commit: &Commit,
-) -> Result<Vec<Commit>, OxenError> {
-    core::v_latest::merge::list_commits_between_commits(repo, base_commit, head_commit)
-}
+pub use crate::core::v_latest::merge::list_commits_between_commits;
 
-pub async fn list_conflicts_between_commits(
-    repo: &LocalRepository,
-    base_commit: &Commit,
-    merge_commit: &Commit,
-) -> Result<Vec<PathBuf>, OxenError> {
-    core::v_latest::merge::list_conflicts_between_commits(repo, base_commit, merge_commit).await
-}
+pub use crate::core::v_latest::merge::list_conflicts_between_commits;
 
-pub async fn merge_into_base(
-    repo: &LocalRepository,
-    merge_branch: &Branch,
-    base_branch: &Branch,
-) -> Result<Commit, OxenError> {
-    core::v_latest::merge::merge_into_base(repo, merge_branch, base_branch).await
-}
+pub use crate::core::v_latest::merge::merge_into_base;
 
-pub async fn merge(
-    repo: &LocalRepository,
-    branch_name: impl AsRef<str>,
-) -> Result<Option<Commit>, OxenError> {
-    core::v_latest::merge::merge(repo, branch_name).await
-}
+pub use crate::core::v_latest::merge::merge;
 
 /// Server-safe merge of two commits. Does not touch the working directory or
 /// HEAD — the caller is responsible for updating the branch ref.
@@ -114,64 +63,27 @@ pub async fn merge(
 /// Use this variant from server code paths that must not mutate on-disk files.
 /// For the client-side equivalent that updates the checkout and HEAD, see
 /// [`merge_commit_into_base`].
-pub async fn merge_commit_into_base_server_safe(
-    repo: &LocalRepository,
-    merge_commit: &Commit,
-    base_commit: &Commit,
-) -> Result<Option<Commit>, OxenError> {
-    core::v_latest::merge::merge_commit_into_base_server_safe(repo, merge_commit, base_commit).await
-}
+pub use crate::core::v_latest::merge::merge_commit_into_base_server_safe;
 
 /// Client-side merge of two commits. Updates files on disk and advances HEAD.
 ///
 /// For the server-side equivalent that never touches the working directory,
 /// see [`merge_commit_into_base_server_safe`].
-pub async fn merge_commit_into_base(
-    repo: &LocalRepository,
-    merge_commit: &Commit,
-    base_commit: &Commit,
-) -> Result<Option<Commit>, OxenError> {
-    core::v_latest::merge::merge_commit_into_base(repo, merge_commit, base_commit).await
-}
+pub use crate::core::v_latest::merge::merge_commit_into_base;
 
 /// Abandon an interrupted or in-conflict client-side merge. Clears `MERGE_IN_PROGRESS`,
 /// `MERGE_HEAD`, `ORIG_HEAD`, and the merge-conflicts DB, and restores the working tree to HEAD.
-pub async fn abort_merge(repo: &LocalRepository) -> Result<(), OxenError> {
-    core::v_latest::merge::abort_merge(repo).await
-}
+pub use crate::core::v_latest::merge::abort_merge;
 
-pub async fn merge_commit_into_base_on_branch(
-    repo: &LocalRepository,
-    merge_commit: &Commit,
-    base_commit: &Commit,
-    branch: &Branch,
-) -> Result<Commit, OxenError> {
-    core::v_latest::merge::merge_commit_into_base_on_branch(repo, merge_commit, base_commit, branch)
-        .await
-}
+pub use crate::core::v_latest::merge::merge_commit_into_base_on_branch;
 
-pub fn has_file(repo: &LocalRepository, path: &Path) -> Result<bool, OxenError> {
-    core::v_latest::merge::has_file(repo, path)
-}
+pub use crate::core::v_latest::merge::has_file;
 
-pub fn remove_conflict_path(repo: &LocalRepository, path: &Path) -> Result<(), OxenError> {
-    core::v_latest::merge::remove_conflict_path(repo, path)
-}
+pub use crate::core::v_latest::merge::remove_conflict_path;
 
-pub fn find_merge_commits<S: AsRef<str>>(
-    repo: &LocalRepository,
-    branch_name: S,
-) -> Result<MergeCommits, OxenError> {
-    core::v_latest::merge::find_merge_commits(repo, branch_name)
-}
+pub use crate::core::v_latest::merge::find_merge_commits;
 
-pub fn lowest_common_ancestor_from_commits(
-    repo: &LocalRepository,
-    base_commit: &Commit,
-    merge_commit: &Commit,
-) -> Result<Option<Commit>, OxenError> {
-    core::v_latest::merge::lowest_common_ancestor_from_commits(repo, base_commit, merge_commit)
-}
+pub use crate::core::v_latest::merge::lowest_common_ancestor_from_commits;
 
 #[cfg(test)]
 mod tests {

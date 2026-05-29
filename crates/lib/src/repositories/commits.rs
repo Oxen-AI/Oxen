@@ -6,7 +6,7 @@
 use crate::core;
 use crate::error::OxenError;
 use crate::model::User;
-use crate::model::{Commit, LocalRepository, MerkleHash};
+use crate::model::{Commit, LocalRepository};
 use crate::opts::PaginateOpts;
 use crate::util;
 use crate::view::{PaginatedCommits, StatusMessage};
@@ -60,30 +60,20 @@ pub async fn commit_allow_empty(
 }
 
 /// Iterate over all commits and get the one with the latest timestamp
-pub fn latest_commit(repo: &LocalRepository) -> Result<Commit, OxenError> {
-    core::v_latest::commits::latest_commit(repo)
-}
+pub use crate::core::v_latest::commits::latest_commit;
 
 /// The current HEAD commit of the branch you currently have checked out
-pub fn head_commit(repo: &LocalRepository) -> Result<Commit, OxenError> {
-    core::v_latest::commits::head_commit(repo)
-}
+pub use crate::core::v_latest::commits::head_commit;
 
 /// Maybe get the head commit if it exists
 /// Returns None if the head commit does not exist (empty repo)
-pub fn head_commit_maybe(repo: &LocalRepository) -> Result<Option<Commit>, OxenError> {
-    core::v_latest::commits::head_commit_maybe(repo)
-}
+pub use crate::core::v_latest::commits::head_commit_maybe;
 
 /// Get the root commit of a repository
-pub fn root_commit_maybe(repo: &LocalRepository) -> Result<Option<Commit>, OxenError> {
-    core::v_latest::commits::root_commit_maybe(repo)
-}
+pub use crate::core::v_latest::commits::root_commit_maybe;
 
 /// Get a commit by it's MerkleHash
-pub fn get_by_hash(repo: &LocalRepository, hash: &MerkleHash) -> Result<Option<Commit>, OxenError> {
-    core::v_latest::commits::get_by_hash(repo, hash)
-}
+pub use crate::core::v_latest::commits::get_by_hash;
 
 /// Get a commit by it's string hash
 pub fn get_by_id(
@@ -127,22 +117,13 @@ pub fn create_initial_commit(
 }
 
 /// List commits on the current branch from HEAD
-pub fn list(repo: &LocalRepository) -> Result<Vec<Commit>, OxenError> {
-    core::v_latest::commits::list(repo)
-}
+pub use crate::core::v_latest::commits::list;
 
 /// List commits for the repository in no particular order
-pub fn list_all(repo: &LocalRepository) -> Result<HashSet<Commit>, OxenError> {
-    core::v_latest::commits::list_all(repo)
-}
+pub use crate::core::v_latest::commits::list_all;
 
 // Source
-pub fn get_commit_or_head<S: AsRef<str> + Clone>(
-    repo: &LocalRepository,
-    commit_id_or_branch_name: Option<S>,
-) -> Result<Commit, OxenError> {
-    core::v_latest::commits::get_commit_or_head(repo, commit_id_or_branch_name)
-}
+pub use crate::core::v_latest::commits::get_commit_or_head;
 
 pub fn list_all_paginated(
     repo: &LocalRepository,
@@ -172,13 +153,7 @@ pub fn list_from_with_depth(
 }
 
 /// List the history between two commits
-pub fn list_between(
-    repo: &LocalRepository,
-    base: &Commit,
-    head: &Commit,
-) -> Result<Vec<Commit>, OxenError> {
-    core::v_latest::commits::list_between(repo, base, head)
-}
+pub use crate::core::v_latest::commits::list_between;
 
 /// Get a list of commits by the commit message
 pub fn get_by_message(
@@ -275,12 +250,7 @@ pub fn list_by_path_from_paginated(
     core::v_latest::commits::list_by_path_from_paginated(repo, commit, path, pagination)
 }
 
-pub fn count_from(
-    repo: &LocalRepository,
-    revision: impl AsRef<str>,
-) -> Result<(usize, bool), OxenError> {
-    core::v_latest::commits::count_from(repo, revision)
-}
+pub use crate::core::v_latest::commits::count_from;
 
 #[cfg(test)]
 mod tests {
@@ -289,6 +259,7 @@ mod tests {
 
     use crate::error::OxenError;
     use crate::model::EntryDataType;
+    use crate::model::MerkleHash;
     use crate::model::StagedEntryStatus;
     use crate::opts::CloneOpts;
     use crate::opts::RmOpts;

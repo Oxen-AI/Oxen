@@ -4,7 +4,7 @@
 use crate::core;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::merkle_tree::node::{DirNode, FileNode};
+use crate::model::merkle_tree::node::FileNode;
 use crate::opts::{PaginateOpts, SortOpts};
 use crate::repositories;
 use crate::util::concurrency;
@@ -19,13 +19,7 @@ use futures::{StreamExt, TryStreamExt, stream};
 use std::path::{Path, PathBuf};
 
 /// Get a directory object for a commit
-pub fn get_directory(
-    repo: &LocalRepository,
-    commit: &Commit,
-    path: impl AsRef<Path>,
-) -> Result<Option<DirNode>, OxenError> {
-    core::v_latest::entries::get_directory(repo, commit, path)
-}
+pub use crate::core::v_latest::entries::get_directory;
 
 /// Get a file node for a commit
 pub fn get_file(
@@ -45,7 +39,7 @@ pub fn list_commit_entries(
     revision: impl AsRef<str>,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
-    list_directory_w_version(repo, ROOT_PATH, revision, paginate_opts, repo.min_version())
+    list_directory_w_version(repo, ROOT_PATH, revision, paginate_opts)
 }
 
 /// List all the entries within a directory given a specific commit
@@ -55,16 +49,15 @@ pub fn list_directory(
     revision: impl AsRef<str>,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
-    list_directory_w_version(repo, directory, revision, paginate_opts, repo.min_version())
+    list_directory_w_version(repo, directory, revision, paginate_opts)
 }
 
-/// Force a version when listing a repo
+/// List the entries within a directory given a specific revision
 pub fn list_directory_w_version(
     repo: &LocalRepository,
     directory: impl AsRef<Path>,
     revision: impl AsRef<str>,
     paginate_opts: &PaginateOpts,
-    _version: MinOxenVersion,
 ) -> Result<PaginatedDirEntries, OxenError> {
     let revision_str = revision.as_ref().to_string();
     let branch = repositories::branches::get_by_name(repo, &revision_str).ok();
@@ -80,26 +73,6 @@ pub fn list_directory_w_version(
     core::v_latest::entries::list_directory(repo, directory, &parsed_resource, paginate_opts)
 }
 
-pub fn list_directory_w_workspace(
-    repo: &LocalRepository,
-    directory: impl AsRef<Path>,
-    revision: impl AsRef<str>,
-    workspace: Option<Workspace>,
-    paginate_opts: &PaginateOpts,
-    version: MinOxenVersion,
-) -> Result<PaginatedDirEntries, OxenError> {
-    list_directory_w_workspace_depth(
-        repo,
-        directory,
-        revision,
-        workspace,
-        paginate_opts,
-        &SortOpts::default(),
-        version,
-        0,
-    )
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn list_directory_w_workspace_depth(
     repo: &LocalRepository,
@@ -108,7 +81,6 @@ pub fn list_directory_w_workspace_depth(
     workspace: Option<Workspace>,
     paginate_opts: &PaginateOpts,
     sort_opts: &SortOpts,
-    _version: MinOxenVersion,
     depth: usize,
 ) -> Result<PaginatedDirEntries, OxenError> {
     let _perf = crate::perf_guard!("entries::list_directory_w_workspace");
@@ -202,16 +174,9 @@ pub fn get_commit_entry(
     }
 }
 
-pub fn list_for_commit(
-    repo: &LocalRepository,
-    commit: &Commit,
-) -> Result<Vec<CommitEntry>, OxenError> {
-    core::v_latest::entries::list_for_commit(repo, commit)
-}
+pub use crate::core::v_latest::entries::list_for_commit;
 
-pub fn count_for_commit(repo: &LocalRepository, commit: &Commit) -> Result<usize, OxenError> {
-    core::v_latest::entries::count_for_commit(repo, commit)
-}
+pub use crate::core::v_latest::entries::count_for_commit;
 
 /// Given a list of entries, compute the total in bytes size of all entries.
 pub fn compute_entries_size(entries: &[CommitEntry]) -> Result<u64, OxenError> {
@@ -284,12 +249,7 @@ pub async fn list_missing_files_in_commit_range(
     }
 }
 
-pub fn list_tabular_files_in_repo(
-    local_repo: &LocalRepository,
-    commit: &Commit,
-) -> Result<Vec<MetadataEntry>, OxenError> {
-    core::v_latest::entries::list_tabular_files_in_repo(local_repo, commit)
-}
+pub use crate::core::v_latest::entries::list_tabular_files_in_repo;
 
 #[cfg(test)]
 mod tests {
@@ -1075,7 +1035,6 @@ mod tests {
                 None,
                 &paginate_opts,
                 &SortOpts::default(),
-                repo.min_version(),
                 0,
             )?;
 
@@ -1101,7 +1060,6 @@ mod tests {
                 None,
                 &paginate_opts,
                 &SortOpts::default(),
-                repo.min_version(),
                 1,
             )?;
 
@@ -1141,7 +1099,6 @@ mod tests {
                     sort_by: SortBy::Date,
                     reverse: true,
                 },
-                repo.min_version(),
                 1,
             )?;
 
@@ -1161,7 +1118,6 @@ mod tests {
                 None,
                 &paginate_opts,
                 &SortOpts::default(),
-                repo.min_version(),
                 2,
             )?;
 

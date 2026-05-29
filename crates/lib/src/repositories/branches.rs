@@ -258,15 +258,7 @@ pub fn list_entry_versions_on_branch(
     core::v_latest::branches::list_entry_versions_for_commit(local_repo, &branch.commit_id, path)
 }
 
-pub async fn set_working_repo_to_commit(
-    repo: &LocalRepository,
-    commit: &Commit,
-    from_commit: &Option<Commit>,
-    on_conflict: OnConflict,
-) -> Result<(), OxenError> {
-    core::v_latest::branches::set_working_repo_to_commit(repo, commit, from_commit, on_conflict)
-        .await
-}
+pub use crate::core::v_latest::branches::set_working_repo_to_commit;
 
 #[cfg(test)]
 mod tests {

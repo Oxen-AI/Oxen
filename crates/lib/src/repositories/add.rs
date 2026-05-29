@@ -4,7 +4,6 @@
 //!
 
 use crate::core;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use std::path::Path;
@@ -29,20 +28,12 @@ use std::path::Path;
 /// # util::fs::remove_dir_all(base_dir)?;
 /// ```
 pub async fn add(repo: &LocalRepository, path: impl AsRef<Path>) -> Result<(), OxenError> {
-    add_all_with_version(repo, vec![path], repo.min_version()).await
+    add_all(repo, vec![path]).await
 }
 
 pub async fn add_all<T: AsRef<Path>>(
     repo: &LocalRepository,
     paths: impl IntoIterator<Item = T>,
-) -> Result<(), OxenError> {
-    add_all_with_version(repo, paths, repo.min_version()).await
-}
-
-pub async fn add_all_with_version<T: AsRef<Path>>(
-    repo: &LocalRepository,
-    paths: impl IntoIterator<Item = T>,
-    _version: MinOxenVersion,
 ) -> Result<(), OxenError> {
     core::v_latest::add::add(repo, paths).await
 }

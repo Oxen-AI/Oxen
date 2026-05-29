@@ -60,13 +60,7 @@ pub fn is_queryable_data_frame_indexed(
     core::v_latest::workspaces::data_frames::is_queryable_data_frame_indexed(repo, commit, path)
 }
 
-pub fn get_queryable_data_frame_workspace(
-    repo: &LocalRepository,
-    path: impl AsRef<Path>,
-    commit: &Commit,
-) -> Result<Workspace, OxenError> {
-    core::v_latest::workspaces::data_frames::get_queryable_data_frame_workspace(repo, path, commit)
-}
+pub use crate::core::v_latest::workspaces::data_frames::get_queryable_data_frame_workspace;
 
 pub async fn index(
     _repo: &LocalRepository,
@@ -76,13 +70,7 @@ pub async fn index(
     core::v_latest::workspaces::data_frames::index(workspace, path.as_ref()).await
 }
 
-pub async fn rename(
-    workspace: &Workspace,
-    path: impl AsRef<Path>,
-    new_path: impl AsRef<Path>,
-) -> Result<PathBuf, OxenError> {
-    core::v_latest::workspaces::data_frames::rename(workspace, path, new_path).await
-}
+pub use crate::core::v_latest::workspaces::data_frames::rename;
 
 pub fn unindex(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), DataFrameError> {
     let path = path.as_ref();

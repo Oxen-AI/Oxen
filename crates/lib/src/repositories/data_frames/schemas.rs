@@ -3,69 +3,26 @@
 //! Interact with schemas
 //!
 
-use std::collections::HashMap;
-use std::path::PathBuf;
-
-use crate::core;
-use crate::core::versions::MinOxenVersion;
-
 use crate::error::OxenError;
-use crate::model::{Commit, LocalRepository, Schema};
+use crate::model::LocalRepository;
 use crate::repositories;
 
 use std::path::Path;
 
-pub fn list(
-    repo: &LocalRepository,
-    commit: &Commit,
-) -> Result<HashMap<PathBuf, Schema>, OxenError> {
-    core::v_latest::data_frames::schemas::list(repo, commit)
-}
+pub use crate::core::v_latest::data_frames::schemas::list;
 
-pub fn get_by_path(
-    repo: &LocalRepository,
-    commit: &Commit,
-    path: impl AsRef<Path>,
-) -> Result<Option<Schema>, OxenError> {
-    core::v_latest::data_frames::schemas::get_by_path(repo, commit, path)
-}
+pub use crate::core::v_latest::data_frames::schemas::get_by_path;
 
 /// Get a staged schema
-pub fn get_staged(
-    repo: &LocalRepository,
-    path: impl AsRef<Path>,
-) -> Result<Option<Schema>, OxenError> {
-    core::v_latest::data_frames::schemas::get_staged(repo, path)
-}
+pub use crate::core::v_latest::data_frames::schemas::get_staged;
 
 /// Get staged schema for workspace
-pub fn get_staged_schema_with_staged_db_manager(
-    repo: &LocalRepository,
-    path: impl AsRef<Path>,
-) -> Result<Option<Schema>, OxenError> {
-    core::v_latest::data_frames::schemas::get_staged_schema_with_staged_db_manager(repo, path)
-}
+pub use crate::core::v_latest::data_frames::schemas::get_staged_schema_with_staged_db_manager;
 
-pub fn restore_schema(
-    repo: &LocalRepository,
-    path: impl AsRef<Path>,
-    og_schema: &Schema,
-    before_column: &str,
-    after_column: &str,
-) -> Result<(), OxenError> {
-    core::v_latest::data_frames::schemas::restore_schema(
-        repo,
-        path,
-        og_schema,
-        before_column,
-        after_column,
-    )
-}
+pub use crate::core::v_latest::data_frames::schemas::restore_schema;
 
 /// List all the staged schemas
-pub fn list_staged(repo: &LocalRepository) -> Result<HashMap<PathBuf, Schema>, OxenError> {
-    core::v_latest::data_frames::schemas::list_staged(repo)
-}
+pub use crate::core::v_latest::data_frames::schemas::list_staged;
 
 /// Get a string representation of the schema given a schema ref
 pub fn show(
@@ -110,35 +67,13 @@ pub fn show(
 }
 
 /// Remove a schema override from the staging area, TODO: Currently undefined behavior for non-staged schemas
-pub fn rm(repo: &LocalRepository, path: impl AsRef<Path>, staged: bool) -> Result<(), OxenError> {
-    core::v_latest::data_frames::schemas::rm(repo, path, staged)
-}
+pub use crate::core::v_latest::data_frames::schemas::rm;
 
 /// Add metadata to the schema
-pub fn add_schema_metadata(
-    repo: &LocalRepository,
-    path: impl AsRef<Path>,
-    metadata: &serde_json::Value,
-) -> Result<HashMap<PathBuf, Schema>, OxenError> {
-    core::v_latest::data_frames::schemas::add_schema_metadata(repo, path, metadata)
-}
+pub use crate::core::v_latest::data_frames::schemas::add_schema_metadata;
 
 /// Add metadata to a specific column
-pub fn add_column_metadata(
-    repo: &LocalRepository,
-    path: impl AsRef<Path>,
-    column: impl AsRef<str>,
-    metadata: &serde_json::Value,
-) -> Result<HashMap<PathBuf, Schema>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_19_0 => {
-            core::v_latest::data_frames::schemas::add_column_metadata(repo, path, column, metadata)
-        }
-        _ => {
-            core::v_latest::data_frames::schemas::add_column_metadata(repo, path, column, metadata)
-        }
-    }
-}
+pub use crate::core::v_latest::data_frames::schemas::add_column_metadata;
 
 // unit tests
 #[cfg(test)]

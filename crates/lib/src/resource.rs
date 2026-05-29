@@ -1,15 +1,4 @@
-use crate::core;
-use crate::error::OxenError;
-use crate::model::{LocalRepository, ParsedResource};
-
-use std::path::Path;
-
-pub fn parse_resource_from_path(
-    repo: &LocalRepository,
-    path: &Path,
-) -> Result<Option<ParsedResource>, OxenError> {
-    core::v_latest::resource::parse_resource_from_path(repo, path)
-}
+pub use crate::core::v_latest::resource::parse_resource_from_path;
 
 #[cfg(test)]
 mod tests {
