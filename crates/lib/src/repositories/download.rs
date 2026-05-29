@@ -226,8 +226,12 @@ mod tests {
             let branch = repositories::branches::current_branch(&repo)?.unwrap();
             let dir = Path::new("train");
 
-            // Download the directory
-            let output_dir = Path::new("output");
+            // Download the directory. Use a per-test unique path under
+            // `repo.path` (each test gets its own UUID-named dir) — a
+            // CWD-relative `output/` would race with the parallel parameterized
+            // case (file ↔ lmdb) that runs the same test body in the same
+            // process.
+            let output_dir = repo.path.join("output");
             repositories::download(&remote_repo, &dir, &output_dir, &branch.name).await?;
 
             // Check that the files are there
@@ -236,7 +240,7 @@ mod tests {
                 assert!(path.exists());
             }
 
-            util::fs::remove_dir_all(output_dir)?;
+            util::fs::remove_dir_all(&output_dir)?;
 
             Ok(())
         })
