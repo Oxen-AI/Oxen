@@ -1515,8 +1515,6 @@ pub fn get_diff_dir(repo: &LocalRepository, compare_id: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::repository_config::MerkleStoreKind;
-    use rstest::rstest;
     use std::path::Path;
     use std::path::PathBuf;
 
@@ -1535,14 +1533,9 @@ mod tests {
     use crate::model::diff::{ChangeType, DiffResult};
     use crate::model::entry::commit_entry::CommitPath;
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_diff_entries_add_multiple(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_bounding_box_csv_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_diff_entries_add_multiple() -> Result<(), OxenError> {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             // get og commit
             let base_commit = repositories::commits::head_commit(&repo)?;
 
@@ -1576,14 +1569,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_diff_entries_modify_one_tabular(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_bounding_box_csv_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_diff_entries_modify_one_tabular() -> Result<(), OxenError> {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let bbox_filename = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
@@ -1631,14 +1619,9 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_diff_entries_remove_one_tabular_file(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_bounding_box_csv_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_diff_entries_remove_one_tabular_file() -> Result<(), OxenError> {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let bbox_filename = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
@@ -1714,14 +1697,9 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_diff_get_add_remove_modify_counts(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_bounding_box_csv_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_diff_get_add_remove_modify_counts() -> Result<(), OxenError> {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             // Get initial commit
             let base_commit = repositories::commits::head_commit(&repo)?;
             // Add two files
@@ -1772,14 +1750,9 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_diff_entries_in_dir_at_root(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_bounding_box_csv_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_diff_entries_in_dir_at_root() -> Result<(), OxenError> {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let bbox_filename = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
@@ -1897,14 +1870,9 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_diff_entries_remove_one_tabular_in_dir(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_bounding_box_csv_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_diff_entries_remove_one_tabular_in_dir() -> Result<(), OxenError> {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let bbox_filename = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
@@ -2012,14 +1980,9 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_compare_one_added_one_removed_no_keys_no_targets(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_compare_one_added_one_removed_no_keys_no_targets() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let csv1 = "a,b,c\n1,2,3\n4,5,6\n";
             let csv2 = "a,b,c\n1,2,3\n4,5,2\n";
 
@@ -2072,14 +2035,9 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
         })
         .await
     }
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_compare_all_types_with_keys_and_targets(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_compare_all_types_with_keys_and_targets() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Keying on "a" and "b" with target "c"
             // Removed: -> 5,6 and 7,8
             // Added: 9,10
@@ -2152,14 +2110,9 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_compare_all_types_with_keys_and_same_targets(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_compare_all_types_with_keys_and_same_targets() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // If all the targets are 1 - aka, using targets but none are unchanged, we want to make sure that
             // the column namings of .left and .right are consistently handled
 
@@ -2229,17 +2182,12 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_compare_same_files_with_targets(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_compare_same_files_with_targets() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let csv1 = "a,b,c,d\n1,2,3,4\n4,5,6,7\n";
             let csv2 = "a,b,c,d\n1,2,3,4\n4,5,6,7\n";
 
@@ -2307,14 +2255,9 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn compare_no_keys_no_targets_added_column(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn compare_no_keys_no_targets_added_column() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let csv1 = "a,b,c,d\n1,2,3,4\n4,5,6,7\n8,7,6,5";
             let csv2 = "a,b,c,d,e\n1,2,3,4,5\n4,5,6,7,8\n9,8,7,6,5";
             // 2 modified (added row) 1 added 1 removed
@@ -2375,14 +2318,9 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_compare_keys_no_targets_implies_modified(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_compare_keys_no_targets_implies_modified() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // We'll key on a, b, and c.
             // D will then be an implicit target bc it's a shared column
             // (1 added, 1 removed, 1 modified)

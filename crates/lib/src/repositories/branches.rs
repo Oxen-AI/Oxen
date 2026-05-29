@@ -304,8 +304,6 @@ pub async fn set_working_repo_to_commit(
 
 #[cfg(test)]
 mod tests {
-    use crate::config::repository_config::MerkleStoreKind;
-    use rstest::rstest;
     use std::path::Path;
 
     use crate::constants::DEFAULT_BRANCH_NAME;
@@ -313,14 +311,9 @@ mod tests {
     use crate::error::OxenError;
     use crate::{repositories, test, util};
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_branch_versions_main(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_list_branch_versions_main() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Make a dir
             let dir_path = Path::new("test_dir");
             let dir_repo_path = repo.path.join(dir_path);
@@ -391,14 +384,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_branch_versions_branch_off_main(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_list_branch_versions_branch_off_main() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let dir_path = Path::new("test_dir");
             util::fs::create_dir_all(repo.path.join(dir_path))?;
 
@@ -485,14 +473,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_force_update_existing_branch(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_force_update_existing_branch() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Create two commits
             let file_path = repo.path.join("file.txt");
             util::fs::write_to_path(&file_path, "first")?;
@@ -518,14 +501,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_force_update_creates_new_branch(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_force_update_creates_new_branch() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let head = repositories::commits::head_commit(&repo)?;
 
             // Force update a branch that doesn't exist yet
@@ -538,14 +516,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_force_update_invalid_commit_fails(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_force_update_invalid_commit_fails() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let result =
                 repositories::branches::update(&repo, "test-branch", "nonexistent_commit_id");
             assert!(result.is_err());
@@ -555,12 +528,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_local_delete_branch(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_local_delete_branch() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             // Get the original branches
             let og_branches = repositories::branches::list(&repo)?;
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();

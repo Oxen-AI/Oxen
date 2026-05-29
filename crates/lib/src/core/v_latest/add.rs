@@ -1269,16 +1269,10 @@ pub fn has_different_modification_time(node: &FileNode, time: &FileTime) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::test;
-    use rstest::rstest;
-
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_add_respects_oxenignore(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_add_respects_oxenignore() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let ignored_file = "ignored.txt";
             let normal_file = "normal.txt";
 
@@ -1325,14 +1319,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_add_dot_on_committed_repo(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_add_dot_on_committed_repo() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let dir1 = repo.path.join("dir1");
             let dir2 = repo.path.join("dir2");
             std::fs::create_dir_all(&dir1)?;
@@ -1385,14 +1374,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_add_respects_dir_ignore_patterns(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_add_respects_dir_ignore_patterns() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let dir_to_ignore = "ignored_dir";
             let normal_dir = "normal_dir";
 

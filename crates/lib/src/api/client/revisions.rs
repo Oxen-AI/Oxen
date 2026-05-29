@@ -34,19 +34,13 @@ pub async fn get(
 #[cfg(test)]
 mod tests {
     use crate::api;
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::error::OxenError;
-    use rstest::rstest;
-
     use crate::repositories;
     use crate::test;
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_get_revision_from_commit(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_one_commit_sync_repo_test(kind, |local_repo, remote_repo| async move {
+    async fn test_get_revision_from_commit() -> Result<(), OxenError> {
+        test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
             let commit = repositories::commits::head_commit(&local_repo)?;
 
             let revision = api::client::revisions::get(&remote_repo, &commit.id).await?;
@@ -59,12 +53,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_get_revision_from_branch(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_one_commit_sync_repo_test(kind, |local_repo, remote_repo| async move {
+    async fn test_get_revision_from_branch() -> Result<(), OxenError> {
+        test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
             let branch = repositories::branches::current_branch(&local_repo)?.unwrap();
 
             let revision = api::client::revisions::get(&remote_repo, &branch.name).await?;

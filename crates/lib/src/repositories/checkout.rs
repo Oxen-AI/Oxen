@@ -205,23 +205,15 @@ pub async fn checkout_combine<P: AsRef<Path>>(
 #[cfg(test)]
 mod tests {
     use crate::api;
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
     use crate::opts::FetchOpts;
     use crate::repositories;
     use crate::test;
     use crate::util;
-    use rstest::rstest;
-
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_checkout_non_existant_commit_id(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_command_checkout_non_existant_commit_id() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // This shouldn't work
             let checkout_result = repositories::checkout(&repo, "non-existent").await;
             assert!(checkout_result.is_err());
@@ -231,14 +223,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_checkout_commit_id(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_command_checkout_commit_id() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Write a hello file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello")?;
@@ -276,14 +263,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_checkout_commit_then_merge_main(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_command_checkout_commit_then_merge_main() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Write a hello file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello")?;
@@ -356,14 +338,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_checkout_current_branch_name_does_nothing(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_command_checkout_current_branch_name_does_nothing() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Write the first file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello")?;
@@ -382,14 +359,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_cannot_checkout_branch_with_dots_in_name(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_cannot_checkout_branch_with_dots_in_name() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Write the first file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello")?;
@@ -408,14 +380,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_checkout_added_file(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_command_checkout_added_file() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Write the first file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello")?;
@@ -475,14 +442,9 @@ mod tests {
      * Merge branch into main
      * Assert that the file on main is not overwritten
      */
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_merge_does_not_overwrite_modified_file(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_command_merge_does_not_overwrite_modified_file() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Write the first file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello")?;
@@ -537,14 +499,9 @@ mod tests {
      * Merge branch into main
      * Assert that the new file on main is not overwritten
      */
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_merge_does_not_overwrite_new_file(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_command_merge_does_not_overwrite_new_file() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Write the first file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello")?;
@@ -591,14 +548,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_checkout_added_file_keep_untracked(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_command_checkout_added_file_keep_untracked() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Write the first file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello")?;
@@ -657,14 +609,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_checkout_modified_file(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_command_checkout_modified_file() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Write the first file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello")?;
@@ -705,14 +652,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_checkout_modified_file_in_subdirectory(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async(kind, "annotations", |repo| async move {
+    async fn test_command_checkout_modified_file_in_subdirectory() -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Track & commit the file
             let one_shot_path = repo.path.join("annotations/train/one_shot.csv");
             repositories::add(&repo, &one_shot_path).await?;
@@ -752,14 +694,10 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_checkout_modified_file_from_fully_committed_repo(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async(kind, "annotations", |repo| async move {
+    async fn test_command_checkout_modified_file_from_fully_committed_repo() -> Result<(), OxenError>
+    {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Track & commit all the data
             let one_shot_path = repo.path.join("annotations/train/one_shot.csv");
             repositories::add(&repo, &repo.path).await?;
@@ -803,14 +741,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_remove_dir_then_revert(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async(kind, "train", |repo| async move {
+    async fn test_command_remove_dir_then_revert() -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
             // (dir already created in helper)
             let dir_to_remove = repo.path.join("train");
             let og_num_files = util::fs::rcount_files_in_dir(&dir_to_remove);
@@ -848,14 +781,9 @@ mod tests {
     }
 
     // Test the default clone (not --all or --shallow) can revert to files that are not local
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_checkout_deleted_after_clone(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(kind, |local_repo, remote_repo| async move {
+    async fn test_checkout_deleted_after_clone() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             let og_commits = repositories::commits::list_all(&local_repo)?;
 
@@ -922,14 +850,9 @@ mod tests {
     IO(Os { code: 2, kind: NotFound, message: "No such file or directory" })
 
     */
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_clone_checkout_old_commit_checkout_new_commit(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(kind, |_, remote_repo| async move {
+    async fn test_clone_checkout_old_commit_checkout_new_commit() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|repo_dir| async move {
@@ -956,15 +879,10 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_checkout_local_does_not_remove_untracked_files(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_checkout_local_does_not_remove_untracked_files() -> Result<(), OxenError> {
         // Push the Remote Repo
-        test::run_one_commit_sync_repo_test(kind, |_, remote_repo| async move {
+        test::run_one_commit_sync_repo_test(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             // Clone Repo to User A
@@ -1017,14 +935,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_checkout_remote_does_not_remove_untracked_files(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(kind, |_local_repo, remote_repo| async move {
+    async fn test_checkout_remote_does_not_remove_untracked_files() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             // Create additional branch on remote repo before clone
 
             let cloned_remote = remote_repo.clone();
@@ -1083,14 +996,10 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_checkout_old_commit_does_not_overwrite_untracked_files(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(kind, |_local_repo, remote_repo| async move {
+    async fn test_checkout_old_commit_does_not_overwrite_untracked_files() -> Result<(), OxenError>
+    {
+        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             // Create additional branch on remote repo before clone
             let branch_name = "test-branch";
             api::client::branches::create_from_branch(
@@ -1151,14 +1060,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_checkout_preserves_uncommitted_file_deletion(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_checkout_preserves_uncommitted_file_deletion() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Write and commit two files
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello")?;
@@ -1202,14 +1106,10 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_checkout_conflicts_on_uncommitted_deletion_of_modified_file(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_checkout_conflicts_on_uncommitted_deletion_of_modified_file()
+    -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Write and commit a file
             let hello_file = repo.path.join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello")?;
@@ -1246,14 +1146,9 @@ mod tests {
 
     // a file that only exists on branch B should be removed
     // when checking out branch A, even if the user deleted a different file.
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_checkout_removes_branch_specific_file_when_switching(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_checkout_removes_branch_specific_file_when_switching() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Commit a file on main
             let common_file = repo.path.join("common.txt");
             util::fs::write_to_path(&common_file, "common content")?;
@@ -1298,14 +1193,9 @@ mod tests {
 
     // when a directory exists on branch B but not branch A,
     // checking out branch B should restore the directory and its files.
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_checkout_restores_directory_from_target_branch(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_checkout_restores_directory_from_target_branch() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Commit files in a directory on main
             let dir = repo.path.join("data");
             std::fs::create_dir_all(&dir)?;
@@ -1350,14 +1240,9 @@ mod tests {
 
     // round-trip checkout should give a clean working directory
     // matching the target branch each time.
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_checkout_roundtrip_restores_all_files(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_checkout_roundtrip_restores_all_files() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Main branch: common.txt
             let common_file = repo.path.join("common.txt");
             util::fs::write_to_path(&common_file, "common")?;
@@ -1441,14 +1326,10 @@ mod tests {
     // deleting a directory and checking out the same branch
     // that has the directory should restore it (e.g., `oxen checkout .` or
     // re-checkout of current branch after unstaged deletion).
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_checkout_restores_deleted_directory_same_branch_content(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_checkout_restores_deleted_directory_same_branch_content() -> Result<(), OxenError>
+    {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Both branches have the same directory content
             let dir = repo.path.join("models");
             std::fs::create_dir_all(&dir)?;
@@ -1530,14 +1411,10 @@ mod tests {
     // Regression test: when a file on the current branch has the same content
     // (same hash) as a different file on the target branch, checkout should
     // still remove it if it doesn't exist on the target branch.
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_checkout_removes_duplicate_content_file_at_different_path(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_checkout_removes_duplicate_content_file_at_different_path()
+    -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Main branch: file1.txt with some content
             let file1 = repo.path.join("file1.txt");
             util::fs::write_to_path(&file1, "shared content")?;
@@ -1583,14 +1460,10 @@ mod tests {
     // full_dir_path.is_dir(): the file satisfies .exists(), the hash is in
     // common_nodes, and the code returns Ok(()) — silently skipping the
     // entire subtree restoration.
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_checkout_restores_directory_when_file_exists_at_same_path(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_checkout_restores_directory_when_file_exists_at_same_path()
+    -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // -- main branch: "data/" is a directory with two files --
             let dir = repo.path.join("data");
             std::fs::create_dir_all(&dir)?;

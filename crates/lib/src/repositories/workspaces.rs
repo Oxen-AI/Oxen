@@ -698,21 +698,14 @@ fn build_file_status_maps_for_file(
 mod tests {
     use super::*;
     use crate::api;
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::constants::{DEFAULT_BRANCH_NAME, WORKSPACE_NAME_INDEX_DIR};
     use crate::repositories;
     use crate::test;
     use crate::util;
-    use rstest::rstest;
-
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_can_commit_different_files_workspaces_without_merge_conflicts(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_can_commit_different_files_workspaces_without_merge_conflicts()
+    -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Write two files, hello.txt and goodbye.txt, and commit them
             let hello_file = repo.path.join("hello.txt");
             let goodbye_file = repo.path.join("goodbye.txt");
@@ -770,14 +763,10 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_cannot_commit_different_files_workspaces_with_merge_conflicts(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_cannot_commit_different_files_workspaces_with_merge_conflicts()
+    -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Both workspaces try to commit the same file
             let hello_file = repo.path.join("greetings").join("hello.txt");
             util::fs::write_to_path(&hello_file, "Hello")?;
@@ -834,14 +823,10 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_can_commit_different_files_workspaces_without_merge_conflicts_in_subdirs(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_can_commit_different_files_workspaces_without_merge_conflicts_in_subdirs()
+    -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Write two files, greetings/hello.txt and greetings/goodbye.txt, and commit them
             let hello_file = repo.path.join("greetings").join("hello.txt");
             let goodbye_file = repo.path.join("greetings").join("goodbye.txt");
@@ -900,14 +885,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_temporary_workspace_cleanup(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_temporary_workspace_cleanup() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Write a test file and commit it
             let test_file = repo.path.join("test.txt");
             util::fs::write_to_path(&test_file, "Hello")?;
@@ -954,14 +934,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_concurrent_workspace_commits(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_sync_repo_test(kind, |repo, remote_repo| async move {
+    async fn test_concurrent_workspace_commits() -> Result<(), OxenError> {
+        test::run_one_commit_sync_repo_test(|repo, remote_repo| async move {
             // Create two files in different directories to avoid conflicts
             let file1 = repo.path.join("dir1").join("file1.txt");
             let file2 = repo.path.join("dir2").join("file2.txt");
@@ -1048,17 +1023,12 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_fully_concurrent_workspace_operations(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_fully_concurrent_workspace_operations() -> Result<(), OxenError> {
         // Number of concurrent tasks to run
         const NUM_TASKS: usize = 20;
 
-        test::run_one_commit_sync_repo_test(kind, |repo, remote_repo| async move {
+        test::run_one_commit_sync_repo_test(|repo, remote_repo| async move {
             let mut handles = vec![];
 
             // Spawn NUM_TASKS concurrent tasks

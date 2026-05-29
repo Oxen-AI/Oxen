@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn test_data_persists_across_env_reopen() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(MerkleStoreKind::File, |repo| {
+        test::run_empty_local_repo_test_with_kind(MerkleStoreKind::File, |repo| {
             let commit_h = h("11111111111111111111111111111111");
             let commit = commit_with_hash(&repo, commit_h);
 

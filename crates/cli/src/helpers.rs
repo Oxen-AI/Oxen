@@ -120,7 +120,7 @@ mod tests {
     /// unblocked.
     #[test]
     fn test_check_repo_migration_needed_ignores_optional_migrations() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(MerkleStoreKind::File, |repo| {
+        test::run_empty_local_repo_test_with_kind(MerkleStoreKind::File, |repo| {
             check_repo_migration_needed(&repo)
         })
     }

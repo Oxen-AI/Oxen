@@ -123,21 +123,15 @@ pub async fn fetch_remote_branch(
 mod tests {
     use crate::api;
     use crate::command;
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::constants;
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
     use crate::opts::fetch_opts::FetchOpts;
     use crate::repositories;
     use crate::test;
-    use rstest::rstest;
-
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_fetch_branches(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |mut repo| async move {
+    async fn test_fetch_branches() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|mut repo| async move {
             // Set the proper remote
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;

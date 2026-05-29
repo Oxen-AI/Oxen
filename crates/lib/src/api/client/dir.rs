@@ -119,10 +119,7 @@ pub async fn get_dir(
 mod tests {
     use crate::api;
     use crate::command;
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::constants;
-    use rstest::rstest;
-
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
     use crate::model::StagedEntryStatus;
@@ -135,14 +132,9 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_dir_has_correct_commits(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |local_repo| async move {
+    async fn test_list_dir_has_correct_commits() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|local_repo| async move {
             let mut local_repo = local_repo;
 
             // Set the proper remote
@@ -351,14 +343,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_dir_has_populates_resource_path(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(kind, |local_repo, remote_repo| async move {
+    async fn test_list_dir_has_populates_resource_path() -> Result<(), OxenError> {
+        test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
             let first_commit = repositories::commits::head_commit(&local_repo)?;
 
             // Make sure we have one entry
@@ -400,12 +387,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_get_dir_encoding(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(kind, |local_repo, remote_repo| async move {
+    async fn test_get_dir_encoding() -> Result<(), OxenError> {
+        test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
             let mut local_repo = local_repo;
 
             command::config::set_remote(
@@ -453,99 +437,87 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_get_dir_with_workspace(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(
-            kind,
-            |local_repo, remote_repo| async move {
-                let file_path = PathBuf::from("annotations")
-                    .join("train")
-                    .join("file.txt")
-                    .to_str()
-                    .unwrap()
-                    .to_string();
-                let workspace_id = "test_workspace_id";
-                let directory_name = PathBuf::from("annotations")
-                    .join("train")
-                    .to_str()
-                    .unwrap()
-                    .to_string();
+    async fn test_get_dir_with_workspace() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+            let file_path = PathBuf::from("annotations")
+                .join("train")
+                .join("file.txt")
+                .to_str()
+                .unwrap()
+                .to_string();
+            let workspace_id = "test_workspace_id";
+            let directory_name = PathBuf::from("annotations")
+                .join("train")
+                .to_str()
+                .unwrap()
+                .to_string();
 
-                let workspace = api::client::workspaces::create(
-                    &remote_repo,
-                    DEFAULT_BRANCH_NAME,
-                    &workspace_id,
-                )
-                .await?;
-                assert_eq!(workspace.id, workspace_id);
+            let workspace =
+                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
+                    .await?;
+            assert_eq!(workspace.id, workspace_id);
 
-                let full_path = local_repo.path.join(file_path);
-                util::fs::file_create(&full_path)?;
-                util::fs::write(&full_path, b"test content")?;
+            let full_path = local_repo.path.join(file_path);
+            util::fs::file_create(&full_path)?;
+            util::fs::write(&full_path, b"test content")?;
 
-                let _result = api::client::workspaces::files::upload_single_file(
-                    &remote_repo,
-                    &workspace_id,
-                    directory_name.clone(),
-                    &full_path,
-                )
-                .await;
+            let _result = api::client::workspaces::files::upload_single_file(
+                &remote_repo,
+                &workspace_id,
+                directory_name.clone(),
+                &full_path,
+            )
+            .await;
 
-                let file_path = test::test_bounding_box_csv();
-                let full_path = local_repo.path.join(file_path);
-                util::fs::write(&full_path, "name,age\nAlice,30\nBob,25\n")?;
+            let file_path = test::test_bounding_box_csv();
+            let full_path = local_repo.path.join(file_path);
+            util::fs::write(&full_path, "name,age\nAlice,30\nBob,25\n")?;
 
-                let _result = api::client::workspaces::files::upload_single_file(
-                    &remote_repo,
-                    &workspace_id,
-                    directory_name,
-                    &full_path,
-                )
-                .await;
-                let train_path = PathBuf::from("annotations")
-                    .join("train")
-                    .to_str()
-                    .unwrap()
-                    .to_string();
-                let response =
-                    api::client::dir::get_dir(&remote_repo, workspace_id, train_path).await?;
+            let _result = api::client::workspaces::files::upload_single_file(
+                &remote_repo,
+                &workspace_id,
+                directory_name,
+                &full_path,
+            )
+            .await;
+            let train_path = PathBuf::from("annotations")
+                .join("train")
+                .to_str()
+                .unwrap()
+                .to_string();
+            let response =
+                api::client::dir::get_dir(&remote_repo, workspace_id, train_path).await?;
 
-                for entry in response.entries.entries.iter() {
-                    if let EMetadataEntry::WorkspaceMetadataEntry(ws_entry) = entry {
-                        match ws_entry.filename.as_str() {
-                            "bounding_box.csv" => {
-                                assert_eq!(
-                                    ws_entry.changes.as_ref().unwrap().status,
-                                    StagedEntryStatus::Modified,
-                                    "Expected bounding_box.csv to be Modified"
-                                );
-                            }
-                            "file.txt" => {
-                                assert_eq!(
-                                    ws_entry.changes.as_ref().unwrap().status,
-                                    StagedEntryStatus::Added,
-                                    "Expected file.txt to be Added"
-                                );
-                            }
-                            _ => {}
+            for entry in response.entries.entries.iter() {
+                if let EMetadataEntry::WorkspaceMetadataEntry(ws_entry) = entry {
+                    match ws_entry.filename.as_str() {
+                        "bounding_box.csv" => {
+                            assert_eq!(
+                                ws_entry.changes.as_ref().unwrap().status,
+                                StagedEntryStatus::Modified,
+                                "Expected bounding_box.csv to be Modified"
+                            );
                         }
+                        "file.txt" => {
+                            assert_eq!(
+                                ws_entry.changes.as_ref().unwrap().status,
+                                StagedEntryStatus::Added,
+                                "Expected file.txt to be Added"
+                            );
+                        }
+                        _ => {}
                     }
                 }
-                Ok(remote_repo)
-            },
-        )
+            }
+            Ok(remote_repo)
+        })
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_dir_sort_opts(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |local_repo| async move {
+    async fn test_list_dir_sort_opts() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|local_repo| async move {
             let mut local_repo = local_repo;
 
             let name = local_repo.dirname();
@@ -588,14 +560,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_dir_depth_and_nested_sort_opts(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |local_repo| async move {
+    async fn test_list_dir_depth_and_nested_sort_opts() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|local_repo| async move {
             let mut local_repo = local_repo;
 
             let name = local_repo.dirname();

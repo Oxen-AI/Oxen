@@ -1199,10 +1199,7 @@ impl CommitMerkleTree {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::test;
-    use rstest::rstest;
-
     use std::path::PathBuf;
 
     use crate::core::v_latest::index::CommitMerkleTree;
@@ -1213,17 +1210,14 @@ mod tests {
 
     use test::add_n_files_m_dirs;
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_load_dir_nodes(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_empty_dir_test_for_kind_async(kind, |dir| async move {
+    async fn test_load_dir_nodes() -> Result<(), OxenError> {
+        test::run_empty_dir_test_for_kind_async(|dir| async move {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init_with_version_and_merkle_store(
                 &dir,
                 MinOxenVersion::LATEST,
-                kind,
+                test::merkle_store_kind_from_env(),
             )?;
 
             // Write data to the repo

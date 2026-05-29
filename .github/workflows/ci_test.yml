@@ -6,6 +6,8 @@ on:
 env:
   AWS_REGION: us-west-1
   AWS_ROLE: arn:aws:iam::213020545630:role/ci-test-integration-role
+  # must ensure this is an empty string or unset in order to run both LMDB and File Merkle store backends
+  OXEN_TEST_MERKLE_STORE: ""
 
 permissions:
   id-token: write

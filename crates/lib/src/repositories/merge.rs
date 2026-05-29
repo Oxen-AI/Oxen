@@ -256,9 +256,6 @@ pub fn lowest_common_ancestor_from_commits(
 
 #[cfg(test)]
 mod tests {
-    use crate::config::repository_config::MerkleStoreKind;
-    use rstest::rstest;
-
     use std::path::Path;
 
     use crate::core::df::tabular;
@@ -323,14 +320,9 @@ mod tests {
         Ok(lca)
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_one_commit_add_fast_forward(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_one_commit_add_fast_forward() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             // Write and commit hello file to main branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
             let hello_file = repo.path.join("hello.txt");
@@ -372,14 +364,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_one_commit_remove_fast_forward(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_one_commit_remove_fast_forward() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             // Write and add hello file
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
             let hello_file = repo.path.join("hello.txt");
@@ -426,14 +413,9 @@ mod tests {
         })
         .await
     }
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_one_commit_modified_fast_forward(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_one_commit_modified_fast_forward() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             // Write and add hello file
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
             let hello_file = repo.path.join("hello.txt");
@@ -482,12 +464,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_is_three_way_merge(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_is_three_way_merge() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let merge_branch_name = "B"; // see populate function
             populate_threeway_merge_repo(&repo, merge_branch_name).await?;
 
@@ -501,14 +480,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_get_lowest_common_ancestor(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_get_lowest_common_ancestor() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let merge_branch_name = "B"; // see populate function
             let lca = populate_threeway_merge_repo(&repo, merge_branch_name).await?;
 
@@ -523,14 +497,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_no_conflict_three_way_merge(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_no_conflict_three_way_merge() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let merge_branch_name = "B";
             // this will checkout main again so we can try to merge
 
@@ -654,17 +623,12 @@ mod tests {
         Ok(())
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_three_way_no_content_delta_client_side(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_merge_three_way_no_content_delta_client_side() -> Result<(), OxenError> {
         // Three-way merge where merge isn't an ancestor of base but contributes no new content —
         // base squash-replayed the merge branch. Pre-fix this 500ed with "No changes to commit".
         // Post-fix: succeeds and produces an empty merge commit with two parents and base's tree.
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let feature_branch = "feature";
             let main_head_before_merge =
                 populate_already_up_to_date_three_way(&repo, feature_branch).await?;
@@ -684,16 +648,11 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_three_way_no_content_delta_server_side(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_merge_three_way_no_content_delta_server_side() -> Result<(), OxenError> {
         // Server-side equivalent — exercises `merge_into_base`, the path called from the
         // oxen-server `/api/repos/.../merge/{base..head}` controller.
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
             let feature_branch_name = "feature";
             let main_head_before_merge =
@@ -717,14 +676,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_conflict_three_way_merge(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_conflict_three_way_merge() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             // This test has a conflict where user on the main line, and user on the branch, both modify a.txt
 
             // Ex) We want to merge E into D to create F
@@ -805,14 +759,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_conflict_three_way_merge_post_merge_branch(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_conflict_three_way_merge_post_merge_branch() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             // This case for a three way merge was failing, if one branch gets fast forwarded, then the next
             // should have a conflict from the LCA
 
@@ -860,14 +809,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merger_has_merge_conflicts_without_merging(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merger_has_merge_conflicts_without_merging() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             // This case for a three way merge was failing, if one branch gets fast forwarded, then the next
             // should have a conflict from the LCA
 
@@ -915,14 +859,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_merge_conflicts_without_merging(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_list_merge_conflicts_without_merging() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             // This case for a three way merge was failing, if one branch gets fast forwarded, then the next
             // should have a conflict from the LCA
 
@@ -971,14 +910,10 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_merge_dataframe_conflict_both_added_rows_checkout_theirs(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_command_merge_dataframe_conflict_both_added_rows_checkout_theirs()
+    -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Add a more rows on this branch
@@ -1025,14 +960,10 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_merge_dataframe_conflict_both_added_rows_combine_uniq(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_command_merge_dataframe_conflict_both_added_rows_combine_uniq()
+    -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             let bbox_filename = Path::new("annotations")
@@ -1080,14 +1011,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_merge_dataframe_conflict_error_added_col(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_command_merge_dataframe_conflict_error_added_col() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             let bbox_filename = Path::new("annotations")
@@ -1149,14 +1075,9 @@ mod tests {
     oxen push
     oxen pull repo_a (should be fast forward)
     */
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_merge_fast_forward_pull(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(kind, |_local_repo, remote_repo| async move {
+    async fn test_command_merge_fast_forward_pull() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             test::run_empty_dir_test_async(|repo_dir_a| async move {
                 let repo_dir_a = repo_dir_a.join("repo_a");
@@ -1228,12 +1149,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_no_commit_needed(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_no_commit_needed() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             // 1. Commit something in main branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
             let labels_path = repo.path.join("labels.txt");
@@ -1266,17 +1184,12 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_client_equal_tips_returns_base(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_merge_client_equal_tips_returns_base() -> Result<(), OxenError> {
         // Equal-tip merge on the client path: a sibling branch points at the same commit as HEAD.
         // Must report "Already up to date" — Some(base) — rather than None (which is what
         // fast_forward_merge used to return for this case before the equal-tip dispatch fix).
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch = repositories::branches::current_branch(&repo)?.unwrap();
             repositories::branches::create_from_head(&repo, "twin")?;
 
@@ -1296,14 +1209,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_diverged_branches_then_merge_again(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_diverged_branches_then_merge_again() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             // 1. Commit something in main branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
             let file1_path = repo.path.join("file1.txt");
@@ -1374,14 +1282,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_immediately_after_checkout(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_immediately_after_checkout() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             // 1. Commit something in main branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
             let labels_path = repo.path.join("labels.txt");
@@ -1409,14 +1312,9 @@ mod tests {
     // Regression test: files modified only on the merge branch whose parent directory
     // hash is shared between the LCA and base should not trigger "your local changes
     // would be overwritten."
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_three_way_file_modified_only_on_merge_branch(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_three_way_file_modified_only_on_merge_branch() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             // Setup: create initial files in a subdirectory
             let models_dir = repo.path.join("models");
             util::fs::create_dir_all(&models_dir)?;
@@ -1466,14 +1364,9 @@ mod tests {
 
     // --- Client-side merge tests for delete edge cases ---
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_client_base_deletes_merge_unchanged(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_client_base_deletes_merge_unchanged() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
 
             // LCA: create two files
@@ -1512,14 +1405,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_client_modify_delete_conflict(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_client_modify_delete_conflict() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
 
             // LCA: create a file
@@ -1552,14 +1440,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_client_delete_modify_conflict(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_client_delete_modify_conflict() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
 
             // LCA: create a file
@@ -1594,14 +1477,9 @@ mod tests {
 
     // --- Server-side merge tests (merge_into_base) ---
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_into_base_fast_forward(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_into_base_fast_forward() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Add a file and commit on main
@@ -1639,17 +1517,12 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_into_base_equal_tips_returns_base(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_merge_into_base_equal_tips_returns_base() -> Result<(), OxenError> {
         // Equal-tip merge on the server path: a sibling branch points at the same commit as the
         // base branch. Must succeed and return base unchanged — previously this returned
         // Err("No changes to merge").
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch = repositories::branches::current_branch(&repo)?.unwrap();
             repositories::branches::create_from_head(&repo, "twin")?;
             let merge_branch = repositories::branches::get_by_name(&repo, "twin")?;
@@ -1667,14 +1540,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_into_base_three_way_no_conflicts(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_into_base_three_way_no_conflicts() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
 
             // Commit a file on main (LCA)
@@ -1715,14 +1583,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_into_base_three_way_with_conflicts(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_into_base_three_way_with_conflicts() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
 
             // Commit a file on main (LCA)
@@ -1762,14 +1625,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_into_base_does_not_modify_working_dir(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_into_base_does_not_modify_working_dir() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Commit a file on main
@@ -1807,14 +1665,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_into_base_ff_with_modification(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_into_base_ff_with_modification() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             let hello_file = repo.path.join("hello.txt");
@@ -1846,14 +1699,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_into_base_ff_with_deletion(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_into_base_ff_with_deletion() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             let hello_file = repo.path.join("hello.txt");
@@ -1887,14 +1735,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_into_base_ff_with_subdirectories(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_into_base_ff_with_subdirectories() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             let models_dir = repo.path.join("models").join("kling");
@@ -1927,14 +1770,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_into_base_three_way_with_subdirectories(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_into_base_three_way_with_subdirectories() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
 
             // Create initial files in subdirectories
@@ -1980,14 +1818,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_into_base_three_way_modification_no_conflict(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_into_base_three_way_modification_no_conflict() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
 
             // Create two files
@@ -2028,14 +1861,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_into_base_three_way_deletion_no_conflict(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_into_base_three_way_deletion_no_conflict() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
 
             // Create two files
@@ -2072,14 +1900,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_into_base_three_way_conflict_in_subdirectory(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_into_base_three_way_conflict_in_subdirectory() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
 
             let models_dir = repo.path.join("models");
@@ -2116,14 +1939,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_into_base_three_way_both_add_same_path(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_into_base_three_way_both_add_same_path() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
 
             // LCA: no new.txt yet
@@ -2160,14 +1978,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_into_base_three_way_modify_delete_conflict(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_into_base_three_way_modify_delete_conflict() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
 
             // LCA: create a file
@@ -2203,14 +2016,10 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_into_base_three_way_base_deletes_merge_unchanged(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_into_base_three_way_base_deletes_merge_unchanged() -> Result<(), OxenError>
+    {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
 
             // LCA: create two files
@@ -2248,14 +2057,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_into_base_three_way_delete_modify_conflict(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_into_base_three_way_delete_modify_conflict() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
 
             // LCA: create a file
@@ -2291,14 +2095,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_into_base_three_way_dir_metadata(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_into_base_three_way_dir_metadata() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
 
             // LCA: create three files (a.txt, b.txt, c.txt)
@@ -2401,14 +2200,9 @@ mod tests {
     /// Regression test: deletion of a file in a directory that's shared between LCA and base
     /// (i.e., the directory hash is identical in both, so `unique_dir_entries` prunes it).
     /// The merge branch deletes a file from that shared directory.
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_into_base_three_way_delete_in_shared_dir(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_into_base_three_way_delete_in_shared_dir() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
 
             // LCA: create files in a subdirectory
@@ -2458,16 +2252,11 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_commit_into_base_on_branch_ancestor_is_no_op(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_merge_commit_into_base_on_branch_ancestor_is_no_op() -> Result<(), OxenError> {
         // When the merge commit is an ancestor of the base commit (lca == merge), the merge is a
         // no-op. The branch ref must NOT advance to a fabricated empty merge commit.
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // First commit on main becomes the "ancestor" we'll later try to merge into HEAD.
@@ -2504,17 +2293,13 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_commit_into_base_server_safe_ff_does_not_touch_working_dir(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_merge_commit_into_base_server_safe_ff_does_not_touch_working_dir()
+    -> Result<(), OxenError> {
         // Verifies that merge_commit_into_base_server_safe succeeds even when
         // stale files exist in the repo directory (no "local changes would be
         // overwritten" error).
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Add a file and commit
@@ -2560,16 +2345,12 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_commit_into_base_server_safe_three_way_does_not_touch_working_dir(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_merge_commit_into_base_server_safe_three_way_does_not_touch_working_dir()
+    -> Result<(), OxenError> {
         // Verifies that merge_commit_into_base_server_safe uses the server-safe
         // three-way merge path and never touches the working directory.
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Shared ancestor
@@ -2624,14 +2405,9 @@ mod tests {
     // was advanced. On resume the file differs from HEAD (commit A) yet matches
     // the merge target (commit B), and must be treated as a successful no-op
     // rather than flagged as "cannot_overwrite".
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_resumes_after_partial_fast_forward(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_resumes_after_partial_fast_forward() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             // Commit A on main: world.txt = "World"
@@ -2700,14 +2476,9 @@ mod tests {
     // A truncated file (content matches neither base nor target) must still resume
     // cleanly when the MERGE_IN_PROGRESS marker names the same target commit: is_resume
     // bypasses the conflict check and force-restores the file from the version store.
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_resume_truncated_fast_forward(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_resume_truncated_fast_forward() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let (_main, _base, target) = make_feature_branch_with_modification(
                 &repo,
                 "world.txt",
@@ -2741,14 +2512,9 @@ mod tests {
 
     // If the marker names a different target than the current merge, abort with
     // MergeInProgressMismatch without touching the marker or the working tree.
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_aborts_on_marker_mismatch(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_aborts_on_marker_mismatch() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let (_main, _base, _target) = make_feature_branch_with_modification(
                 &repo,
                 "world.txt",
@@ -2782,14 +2548,9 @@ mod tests {
     }
 
     // A normal successful merge never leaves MERGE_IN_PROGRESS behind.
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_clears_marker_on_success(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_clears_marker_on_success() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let (_main, _base, _target) = make_feature_branch_with_modification(
                 &repo,
                 "world.txt",
@@ -2815,14 +2576,9 @@ mod tests {
     // A successful no-op (already-up-to-date) merge must also clear any stale marker for the
     // same target left behind by a prior interrupted attempt — otherwise the next merge of a
     // different target would error with MergeInProgressMismatch.
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_clears_marker_on_already_up_to_date(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_clears_marker_on_already_up_to_date() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             // Create commit A on main, then advance main with commit B. Make a sibling branch
             // "ancestor" pointing at A so merging it into main hits is_already_up_to_date.
             let f1 = repo.path.join("f1.txt");
@@ -2852,14 +2608,9 @@ mod tests {
 
     // Abort restores the working tree from a fast-forward-in-progress state and
     // clears every merge marker.
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_abort_resets_partial_ff(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_abort_resets_partial_ff() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let (_main, base, target) = make_feature_branch_with_modification(
                 &repo,
                 "world.txt",
@@ -2887,14 +2638,9 @@ mod tests {
     // An interrupted merge can leave a file truncated mid-write: its hash matches neither the
     // pre-merge base nor the merge target. Abort must force-restore HEAD's version regardless —
     // the core motivating case for Fix B.
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_abort_resets_truncated_file(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_abort_resets_truncated_file() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let (_main, base, target) = make_feature_branch_with_modification(
                 &repo,
                 "world.txt",
@@ -2922,14 +2668,9 @@ mod tests {
 
     // Abort wipes the 3-way merge conflict state (MERGE_HEAD / ORIG_HEAD / conflict DB)
     // left behind when a 3-way merge detects conflicts.
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_abort_clears_conflict_state(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_abort_clears_conflict_state() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch = repositories::branches::current_branch(&repo)?.unwrap().name;
 
             let file = repo.path.join("shared.txt");
@@ -2972,14 +2713,9 @@ mod tests {
     // A marker left over from a merge whose target commit no longer exists locally — exactly the
     // "retry the original target" escape hatch in the MergeInProgressMismatch hint. Abort must
     // still clean up the working tree and the marker without requiring the target to be resolvable.
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_abort_with_unknown_marker_target(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_abort_with_unknown_marker_target() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let (_main, base, _target) = make_feature_branch_with_modification(
                 &repo,
                 "world.txt",
@@ -3008,14 +2744,9 @@ mod tests {
     }
 
     // Abort with nothing to abort returns a specific error variant, not a silent no-op.
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_abort_errors_when_nothing_to_abort(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_merge_abort_errors_when_nothing_to_abort() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let err = repositories::merge::abort_merge(&repo)
                 .await
                 .expect_err("abort on a clean repo should error");

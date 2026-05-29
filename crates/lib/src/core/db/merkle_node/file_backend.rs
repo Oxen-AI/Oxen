@@ -584,7 +584,7 @@ mod tests {
     /// Simply test that we can write a node with a child and read it.
     #[test]
     fn test_write_node_child() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(MerkleStoreKind::File, |repo| {
+        test::run_empty_local_repo_test_with_kind(MerkleStoreKind::File, |repo| {
             let commit = CommitNode::default();
             let dir = DirNode::default();
             let commit_hash = commit.hash();
@@ -884,7 +884,7 @@ mod tests {
     /// installed hash is readable from the target store.
     #[tokio::test]
     async fn test_transport_round_trip() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(MerkleStoreKind::File, |repo| {
+        test::run_one_commit_local_repo_test_with_kind(MerkleStoreKind::File, |repo| {
             let mut packed = Vec::new();
             repo.merkle_transport()?
                 .pack_all(&mut packed)
@@ -915,7 +915,7 @@ mod tests {
     /// decompressed tar payload must be identical.
     #[tokio::test]
     async fn test_compress_nodes_wire_format_unchanged() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(MerkleStoreKind::File, |repo| {
+        test::run_one_commit_local_repo_test_with_kind(MerkleStoreKind::File, |repo| {
             let head = repositories::commits::head_commit(&repo)?;
             let hashes = HashSet::from_iter([head.hash().expect("no commit for head")]);
 
@@ -944,7 +944,7 @@ mod tests {
     /// Same byte-compat check for the whole-tree path.
     #[tokio::test]
     async fn test_compress_tree_wire_format_unchanged() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(MerkleStoreKind::File, |repo| {
+        test::run_one_commit_local_repo_test_with_kind(MerkleStoreKind::File, |repo| {
             // prior code for packing an entire Merkle tree into a .tar.gz
             let old_pack_method = compress_tree(&repo)?;
 
@@ -970,7 +970,7 @@ mod tests {
     /// `pack_nodes(&{hash})`).
     #[tokio::test]
     async fn test_compress_node_wire_format_unchanged() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(MerkleStoreKind::File, |repo| {
+        test::run_one_commit_local_repo_test_with_kind(MerkleStoreKind::File, |repo| {
             let head = repositories::commits::head_commit(&repo)?;
             let hash = head.hash().expect("no commit for head");
 
@@ -1001,7 +1001,7 @@ mod tests {
     /// `pack_nodes(&{commit hashes})`).
     #[tokio::test]
     async fn test_compress_commits_wire_format_unchanged() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(MerkleStoreKind::File, |repo| {
+        test::run_one_commit_local_repo_test_with_kind(MerkleStoreKind::File, |repo| {
             let head = repositories::commits::head_commit(&repo)?;
             let commits: Vec<Commit> = vec![head];
 
@@ -1062,7 +1062,7 @@ mod tests {
     /// through the store in both target repos.
     #[tokio::test]
     async fn test_unpack_nodes_unchanged() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(MerkleStoreKind::File, |repo| {
+        test::run_one_commit_local_repo_test_with_kind(MerkleStoreKind::File, |repo| {
             let head = repositories::commits::head_commit(&repo)?;
             let hashes = HashSet::from_iter([head.hash().expect("no commit for head")]);
 
@@ -1151,63 +1151,66 @@ mod tests {
     /// cover every installed hash directory.
     #[tokio::test]
     async fn test_node_download_request_unpack_unchanged() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(MerkleStoreKind::File, |repo| async move {
-            let mut packed = Vec::new();
-            repo.merkle_transport()?
-                .pack_all(&mut packed)
-                .expect("pack_all failed");
-            assert!(!packed.is_empty(), "pack_all produced empty buffer");
+        test::run_one_commit_local_repo_test_async_with_kind(
+            MerkleStoreKind::File,
+            |repo| async move {
+                let mut packed = Vec::new();
+                repo.merkle_transport()?
+                    .pack_all(&mut packed)
+                    .expect("pack_all failed");
+                assert!(!packed.is_empty(), "pack_all produced empty buffer");
 
-            // Old client install path (mirror of node_download_request on main).
-            let tmp_old = tempfile::TempDir::new()?;
-            let repo_old = repositories::init(tmp_old.path())?;
-            node_download_request_unpack_old(&repo_old, &packed)
-                .await
-                .expect("old unpack failed");
+                // Old client install path (mirror of node_download_request on main).
+                let tmp_old = tempfile::TempDir::new()?;
+                let repo_old = repositories::init(tmp_old.path())?;
+                node_download_request_unpack_old(&repo_old, &packed)
+                    .await
+                    .expect("old unpack failed");
 
-            // New client install path: trait, with download-path overwrite semantics.
-            let tmp_new = tempfile::TempDir::new()?;
-            let repo_new = repositories::init(tmp_new.path())?;
-            let installed = repo_new
-                .merkle_transport()?
-                .unpack(&mut &packed[..], UnpackOptions::Overwrite)
-                .expect("new unpack failed");
+                // New client install path: trait, with download-path overwrite semantics.
+                let tmp_new = tempfile::TempDir::new()?;
+                let repo_new = repositories::init(tmp_new.path())?;
+                let installed = repo_new
+                    .merkle_transport()?
+                    .unpack(&mut &packed[..], UnpackOptions::Overwrite)
+                    .expect("new unpack failed");
 
-            // 1. The on-disk node trees must be identical.
-            let old_tree = collect_dir_contents(
-                &repo_old
-                    .path
-                    .join(OXEN_HIDDEN_DIR)
-                    .join(TREE_DIR)
-                    .join(NODES_DIR),
-            );
-            let new_tree = collect_dir_contents(
-                &repo_new
-                    .path
-                    .join(OXEN_HIDDEN_DIR)
-                    .join(TREE_DIR)
-                    .join(NODES_DIR),
-            );
-            assert!(
-                !old_tree.is_empty(),
-                "no files installed via old node_download_request unpack — test input was empty"
-            );
-            assert_eq!(
-                old_tree, new_tree,
-                "on-disk merkle node trees differ between old node_download_request \
-                 unpack and new MerkleUnpacker::unpack"
-            );
-
-            // 2. Every installed hash must be readable through the new store.
-            assert!(!installed.is_empty(), "trait unpack reported no hashes");
-            for h in &installed {
-                assert!(
-                    repo_new.merkle_store()?.exists(h).expect("exists failed"),
-                    "hash {h} not readable in repo unpacked via trait unpack"
+                // 1. The on-disk node trees must be identical.
+                let old_tree = collect_dir_contents(
+                    &repo_old
+                        .path
+                        .join(OXEN_HIDDEN_DIR)
+                        .join(TREE_DIR)
+                        .join(NODES_DIR),
                 );
-            }
-            Ok(())
-        })
+                let new_tree = collect_dir_contents(
+                    &repo_new
+                        .path
+                        .join(OXEN_HIDDEN_DIR)
+                        .join(TREE_DIR)
+                        .join(NODES_DIR),
+                );
+                assert!(
+                    !old_tree.is_empty(),
+                    "no files installed via old node_download_request unpack — test input was empty"
+                );
+                assert_eq!(
+                    old_tree, new_tree,
+                    "on-disk merkle node trees differ between old node_download_request \
+                 unpack and new MerkleUnpacker::unpack"
+                );
+
+                // 2. Every installed hash must be readable through the new store.
+                assert!(!installed.is_empty(), "trait unpack reported no hashes");
+                for h in &installed {
+                    assert!(
+                        repo_new.merkle_store()?.exists(h).expect("exists failed"),
+                        "hash {h} not readable in repo unpacked via trait unpack"
+                    );
+                }
+                Ok(())
+            },
+        )
         .await
     }
 
@@ -1299,7 +1302,7 @@ mod tests {
     /// silent `id.len() == 32` gate that dropped these entries.
     #[tokio::test]
     async fn test_unpack_recovers_hash_with_leading_zero_nibbles() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(MerkleStoreKind::File, |repo| {
+        test::run_empty_local_repo_test_with_kind(MerkleStoreKind::File, |repo| {
             // Pick a small `u128` whose hex form is much shorter than 32 chars.
             // `MerkleHash`'s `Display` is `{:x}` (no zero padding) so this is
             // exactly the shape that triggered the bug.
@@ -1580,7 +1583,7 @@ mod tests {
     /// externally visible behaviour change for the upload wire format.
     #[tokio::test]
     async fn test_create_nodes_wire_format_unchanged() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(MerkleStoreKind::File, |repo| {
+        test::run_one_commit_local_repo_test_with_kind(MerkleStoreKind::File, |repo| {
             let head = repositories::commits::head_commit(&repo)?;
             let hashes = HashSet::from_iter([head.hash().expect("no commit for head")]);
 
@@ -1610,7 +1613,7 @@ mod tests {
     /// `exists` on a hash that was never written returns `Ok(false)`.
     #[test]
     fn test_exists_returns_false_for_missing_hash() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(MerkleStoreKind::File, |repo| {
+        test::run_empty_local_repo_test_with_kind(MerkleStoreKind::File, |repo| {
             let store = repo.merkle_store()?;
             let missing = MerkleHash::new(0xDEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF_u128);
             assert!(
@@ -1624,7 +1627,7 @@ mod tests {
     /// `get_node` on a hash that was never written returns `Ok(None)`.
     #[test]
     fn test_get_node_returns_none_for_missing_hash() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(MerkleStoreKind::File, |repo| {
+        test::run_empty_local_repo_test_with_kind(MerkleStoreKind::File, |repo| {
             let store = repo.merkle_store()?;
             let missing = MerkleHash::new(0xDEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF_u128);
             assert!(
@@ -1643,7 +1646,7 @@ mod tests {
     /// [`MerkleReader::get_children`].
     #[test]
     fn test_get_children_returns_empty_for_node_without_children() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(MerkleStoreKind::File, |repo| {
+        test::run_empty_local_repo_test_with_kind(MerkleStoreKind::File, |repo| {
             let commit = CommitNode::default();
             let commit_hash = *commit.hash();
             {
@@ -1672,7 +1675,7 @@ mod tests {
     /// should round-trip cleanly with no error.
     #[test]
     fn test_writer_session_with_no_nodes() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(MerkleStoreKind::File, |repo| {
+        test::run_empty_local_repo_test_with_kind(MerkleStoreKind::File, |repo| {
             let store = repo.merkle_store()?;
             let session = store.begin().expect("begin failed");
             session
@@ -1686,7 +1689,7 @@ mod tests {
     /// hash set) returns `Ok(empty hash set)`.
     #[tokio::test]
     async fn test_unpack_empty_tarball() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(MerkleStoreKind::File, |repo| {
+        test::run_one_commit_local_repo_test_with_kind(MerkleStoreKind::File, |repo| {
             let mut buf = Vec::new();
             repo.merkle_transport()?
                 .pack_nodes(&HashSet::new(), PackOptions::ServerCanonical, &mut buf)
@@ -1713,7 +1716,7 @@ mod tests {
     /// contain entries only for the valid hash's prefix.
     #[tokio::test]
     async fn test_pack_nodes_skips_absent_hashes() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(MerkleStoreKind::File, |repo| {
+        test::run_one_commit_local_repo_test_with_kind(MerkleStoreKind::File, |repo| {
             let head = repositories::commits::head_commit(&repo).expect("no head commit");
             let head_hash = head.hash().expect("no commit for head");
             let absent = MerkleHash::new(0xDEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF_u128);
@@ -1754,7 +1757,7 @@ mod tests {
     /// 3. for an absent hash, the estimate contributes 0 (matches `pack_nodes`'s skip).
     #[tokio::test]
     async fn test_pack_nodes_byte_estimate_is_upper_bound() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(MerkleStoreKind::File, |repo| {
+        test::run_one_commit_local_repo_test_with_kind(MerkleStoreKind::File, |repo| {
             let head = repositories::commits::head_commit(&repo)?;
             let head_hash = head.hash().expect("no commit for head");
             let mut hashes = HashSet::new();
@@ -1802,7 +1805,7 @@ mod tests {
     /// target to vfs=true, unpack, and assert hashes are readable.
     #[tokio::test]
     async fn test_unpack_via_vfs_branch() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(MerkleStoreKind::File, |repo| {
+        test::run_one_commit_local_repo_test_with_kind(MerkleStoreKind::File, |repo| {
             let mut packed = Vec::new();
             repo.merkle_transport()?
                 .pack_all(&mut packed)

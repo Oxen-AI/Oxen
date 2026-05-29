@@ -76,8 +76,6 @@ pub async fn download_dir_to_repo(
 
 #[cfg(test)]
 mod tests {
-    use crate::config::repository_config::MerkleStoreKind;
-    use rstest::rstest;
     use std::path::PathBuf;
 
     use super::*;
@@ -90,14 +88,9 @@ mod tests {
 
     use crate::constants;
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_download_directory(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |mut repo| async move {
+    async fn test_remote_download_directory() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|mut repo| async move {
             // write text files to dir
             let dir = repo.path.join("train");
             util::fs::create_dir_all(&dir)?;
@@ -139,14 +132,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_download_directory_with_large_file(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |mut repo| async move {
+    async fn test_remote_download_directory_with_large_file() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|mut repo| async move {
             // write text files to dir
             let large_file_dir = PathBuf::from("train").join("large_file");
             let dir = repo.path.join(&large_file_dir);
@@ -193,14 +181,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_download_directory_local_path(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |mut repo| async move {
+    async fn test_remote_download_directory_local_path() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|mut repo| async move {
             // write text files to dir
             let dir = repo.path.join("train");
             util::fs::create_dir_all(&dir)?;
@@ -247,12 +230,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_download_one_file(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(kind, |mut local_repo, remote_repo| async move {
+    async fn test_download_one_file() -> Result<(), OxenError> {
+        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             let file_path = "hello.txt";
             let local_path = &local_repo.path.join(file_path);
@@ -285,12 +265,9 @@ mod tests {
         Ok(())
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_download_dir(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(kind, |local_repo, remote_repo| async move {
+    async fn test_download_dir() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             let src_path = "train";
             // Count files in local repo

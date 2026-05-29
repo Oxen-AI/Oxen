@@ -217,7 +217,7 @@ mod tests {
         // These tests exercise the `LmdbBackend` directly via `open_lmdb_at` (a separate
         // env under the OS temp dir), so the repo's own Merkle store kind is irrelevant —
         // use `File` for the cheap, default setup.
-        crate::test::run_empty_local_repo_test(
+        crate::test::run_empty_local_repo_test_with_kind(
             crate::config::repository_config::MerkleStoreKind::File,
             |repo| {
                 let backend = open_lmdb_at(&repo.path);

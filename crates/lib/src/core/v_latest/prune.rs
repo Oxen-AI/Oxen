@@ -310,16 +310,10 @@ async fn prune_versions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::test;
-    use rstest::rstest;
-
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_prune_empty_repo(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_prune_empty_repo() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let stats = prune(&repo, false).await?;
             assert_eq!(stats.nodes_scanned, 0);
             assert_eq!(stats.nodes_removed, 0);
@@ -330,12 +324,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_prune_with_commits(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
+    async fn test_prune_with_commits() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Add and commit some files
             let train_dir = repo.path.join("train");
             test::add_txt_file_to_dir(&train_dir, "file1.txt")?;
@@ -353,12 +344,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_prune_branch(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
+    async fn test_prune_branch() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let train_dir = repo.path.join("train");
             test::add_txt_file_to_dir(&train_dir, "file1.txt")?;
             test::add_txt_file_to_dir(&train_dir, "file2.txt")?;
@@ -379,12 +367,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_prune_dry_run(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
+    async fn test_prune_dry_run() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let stats = prune(&repo, true).await?;
             // Dry run should not actually remove anything
             assert_eq!(stats.nodes_scanned, 0);
@@ -394,14 +379,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_prune_deleted_branch_commits(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
+    async fn test_prune_deleted_branch_commits() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Initial commit
             let train_dir = repo.path.join("train");
             let initial_file = test::add_txt_file_to_dir(&train_dir, "file1.txt")?;
@@ -444,14 +424,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_prune_does_not_delete_referenced_data(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
+    async fn test_prune_does_not_delete_referenced_data() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Initial commit on main
             let file1 = repo.path.join("file1.txt");
             tokio::fs::write(&file1, "file1").await?;

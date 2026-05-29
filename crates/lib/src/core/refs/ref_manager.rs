@@ -347,19 +347,14 @@ impl RefManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::test;
     use crate::util;
-    use rstest::rstest;
     use std::thread;
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_concurrent_access(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_concurrent_access() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             // Spawn multiple threads to read/write concurrently
             let mut handles = vec![];
             for i in 0..5 {
@@ -396,12 +391,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_branches(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_list_branches() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -428,12 +420,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_default_head(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_default_head() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
                 assert_eq!(manager.read_head_ref()?.unwrap(), DEFAULT_BRANCH_NAME);
                 Ok(())
@@ -442,12 +431,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_create_branch_set_head(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_create_branch_set_head() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
                 let branch_name = "experiment/cat-dog";
                 let commit_id = format!("{}", uuid::Uuid::new_v4());
@@ -460,12 +446,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_branches_empty(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_list_branches_empty() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
                 // always start with a default branch
                 let branches = manager.list_branches()?;
@@ -476,12 +459,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_branches_one(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_list_branches_one() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
                 let name = "my-branch";
                 let commit_id = format!("{}", uuid::Uuid::new_v4());
@@ -495,12 +475,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_branches_many(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_list_branches_many() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
                 // we always start with a default branch
                 manager.create_branch("name_1", "1")?;
@@ -514,12 +491,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_create_branch_same_name(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_create_branch_same_name() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
                 manager.create_branch("my-fun-name", "1")?;
 
@@ -534,12 +508,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_delete_branch(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_delete_branch() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
                 let name = "my-branch-name";
                 manager.create_branch(name, "1234")?;
@@ -558,12 +529,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_rename_branch(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_rename_branch() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
                 let og_name = "my-branch-name";
                 manager.create_branch(og_name, "1234")?;
@@ -592,12 +560,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_invalid_branch_names(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_invalid_branch_names() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
                 let result = manager.create_branch("my name", "1234");
                 assert!(result.is_err());

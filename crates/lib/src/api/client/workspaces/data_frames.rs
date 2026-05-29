@@ -286,9 +286,6 @@ pub async fn rename_data_frame(
 
 #[cfg(test)]
 mod tests {
-    use crate::config::repository_config::MerkleStoreKind;
-    use rstest::rstest;
-
     use std::path::Path;
 
     use crate::config::UserConfig;
@@ -302,187 +299,153 @@ mod tests {
     use crate::{api, repositories, util};
     use crate::{command, test};
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_get_by_resource(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(
-            kind,
-            |_local_repo, remote_repo| async move {
-                let path = Path::new("annotations/train/bounding_box.csv");
+    async fn test_get_by_resource() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+            let path = Path::new("annotations/train/bounding_box.csv");
 
-                let workspace_id = "some_workspace";
-                let workspace = api::client::workspaces::create(
-                    &remote_repo,
-                    DEFAULT_BRANCH_NAME,
-                    workspace_id,
-                )
-                .await;
-                assert!(workspace.is_ok());
+            let workspace_id = "some_workspace";
+            let workspace =
+                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
+                    .await;
+            assert!(workspace.is_ok());
 
-                api::client::workspaces::data_frames::put(
-                    &remote_repo,
-                    workspace_id,
-                    path,
-                    &serde_json::json!({"is_indexed": true}),
-                )
-                .await?;
+            api::client::workspaces::data_frames::put(
+                &remote_repo,
+                workspace_id,
+                path,
+                &serde_json::json!({"is_indexed": true}),
+            )
+            .await?;
 
-                let res = api::client::workspaces::data_frames::get(
-                    &remote_repo,
-                    workspace_id,
-                    path,
-                    &DFOpts::empty(),
-                )
-                .await?;
+            let res = api::client::workspaces::data_frames::get(
+                &remote_repo,
+                workspace_id,
+                path,
+                &DFOpts::empty(),
+            )
+            .await?;
 
-                assert_eq!(res.status.status_message, "resource_found");
+            assert_eq!(res.status.status_message, "resource_found");
 
-                Ok(remote_repo)
-            },
-        )
+            Ok(remote_repo)
+        })
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_workspace_data_frames(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(
-            kind,
-            |_local_repo, remote_repo| async move {
-                let path = Path::new("annotations")
-                    .join(Path::new("train"))
-                    .join(Path::new("bounding_box.csv"));
-                let workspace_id = "some_workspace";
-                let workspace = api::client::workspaces::create(
-                    &remote_repo,
-                    DEFAULT_BRANCH_NAME,
-                    workspace_id,
-                )
-                .await;
-                assert!(workspace.is_ok());
+    async fn test_list_workspace_data_frames() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+            let path = Path::new("annotations")
+                .join(Path::new("train"))
+                .join(Path::new("bounding_box.csv"));
+            let workspace_id = "some_workspace";
+            let workspace =
+                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
+                    .await;
+            assert!(workspace.is_ok());
 
-                api::client::workspaces::data_frames::index(&remote_repo, workspace_id, &path)
+            api::client::workspaces::data_frames::index(&remote_repo, workspace_id, &path).await?;
+
+            let res = api::client::workspaces::data_frames::list(
+                &remote_repo,
+                DEFAULT_BRANCH_NAME,
+                workspace_id,
+            )
+            .await?;
+
+            assert_eq!(res.entries.entries.len(), 1);
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_rename_data_frame() -> Result<(), OxenError> {
+        // Skip workspace ops on windows
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+            let workspace_id = UserConfig::identifier()?;
+            let workspace =
+                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
                     .await?;
+            assert_eq!(workspace.id, workspace_id);
 
-                let res = api::client::workspaces::data_frames::list(
-                    &remote_repo,
-                    DEFAULT_BRANCH_NAME,
-                    workspace_id,
-                )
-                .await?;
+            // Define the original and new paths for the data frame
+            let original_path = Path::new("annotations/train/bounding_box.csv");
+            let new_path = Path::new("new/dir/bounding_box_renamed.csv");
 
-                assert_eq!(res.entries.entries.len(), 1);
+            // Index the original data frame
+            api::client::workspaces::data_frames::index(
+                &remote_repo,
+                &workspace.id,
+                &original_path,
+            )
+            .await?;
 
-                Ok(remote_repo)
-            },
-        )
+            // Rename the data frame
+            let rename_response = api::client::workspaces::data_frames::rename_data_frame(
+                &remote_repo,
+                &workspace.id,
+                &original_path,
+                &new_path,
+            )
+            .await?;
+            assert_eq!(rename_response.status, "success");
+            let user = UserConfig::get()?.to_user();
+            // Commit the changes
+            let new_commit = NewCommitBody {
+                author: user.name.to_owned(),
+                email: user.email.to_owned(),
+                message: "renamed data frame".to_string(),
+            };
+
+            api::client::workspaces::commit(
+                &remote_repo,
+                DEFAULT_BRANCH_NAME,
+                &workspace.id,
+                &new_commit,
+            )
+            .await?;
+
+            // Verify that the data frame has been renamed
+            let renamed_df = api::client::data_frames::get(
+                &remote_repo,
+                DEFAULT_BRANCH_NAME,
+                &new_path,
+                DFOpts::empty(),
+            )
+            .await?;
+            assert_eq!(renamed_df.status.status_message, "resource_found");
+
+            let original_df = api::client::data_frames::get(
+                &remote_repo,
+                DEFAULT_BRANCH_NAME,
+                &original_path,
+                DFOpts::empty(),
+            )
+            .await?;
+
+            assert_eq!(original_df.status.status_message, "resource_found");
+
+            Ok(remote_repo)
+        })
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_rename_data_frame(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+    async fn test_edit_rename_and_commit_data_frame_to_nonexistent_folder() -> Result<(), OxenError>
+    {
         // Skip workspace ops on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(
-            kind,
-            |_local_repo, remote_repo| async move {
-                let workspace_id = UserConfig::identifier()?;
-                let workspace = api::client::workspaces::create(
-                    &remote_repo,
-                    DEFAULT_BRANCH_NAME,
-                    &workspace_id,
-                )
-                .await?;
-                assert_eq!(workspace.id, workspace_id);
-
-                // Define the original and new paths for the data frame
-                let original_path = Path::new("annotations/train/bounding_box.csv");
-                let new_path = Path::new("new/dir/bounding_box_renamed.csv");
-
-                // Index the original data frame
-                api::client::workspaces::data_frames::index(
-                    &remote_repo,
-                    &workspace.id,
-                    &original_path,
-                )
-                .await?;
-
-                // Rename the data frame
-                let rename_response = api::client::workspaces::data_frames::rename_data_frame(
-                    &remote_repo,
-                    &workspace.id,
-                    &original_path,
-                    &new_path,
-                )
-                .await?;
-                assert_eq!(rename_response.status, "success");
-                let user = UserConfig::get()?.to_user();
-                // Commit the changes
-                let new_commit = NewCommitBody {
-                    author: user.name.to_owned(),
-                    email: user.email.to_owned(),
-                    message: "renamed data frame".to_string(),
-                };
-
-                api::client::workspaces::commit(
-                    &remote_repo,
-                    DEFAULT_BRANCH_NAME,
-                    &workspace.id,
-                    &new_commit,
-                )
-                .await?;
-
-                // Verify that the data frame has been renamed
-                let renamed_df = api::client::data_frames::get(
-                    &remote_repo,
-                    DEFAULT_BRANCH_NAME,
-                    &new_path,
-                    DFOpts::empty(),
-                )
-                .await?;
-                assert_eq!(renamed_df.status.status_message, "resource_found");
-
-                let original_df = api::client::data_frames::get(
-                    &remote_repo,
-                    DEFAULT_BRANCH_NAME,
-                    &original_path,
-                    DFOpts::empty(),
-                )
-                .await?;
-
-                assert_eq!(original_df.status.status_message, "resource_found");
-
-                Ok(remote_repo)
-            },
-        )
-        .await
-    }
-
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
-    #[tokio::test]
-    async fn test_edit_rename_and_commit_data_frame_to_nonexistent_folder(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        // Skip workspace ops on windows
-        if std::env::consts::OS == "windows" {
-            return Ok(());
-        }
-
-        test::run_remote_repo_test_bounding_box_csv_pushed(kind, |_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let workspace_id = UserConfig::identifier()?;
             let workspace =
                 api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
@@ -580,19 +543,14 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_edit_rename_and_commit_data_frame(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_edit_rename_and_commit_data_frame() -> Result<(), OxenError> {
         // Skip workspace ops on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(kind, |_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let workspace_id = UserConfig::identifier()?;
             let workspace =
                 api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
@@ -690,14 +648,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_query_workspace_data_frames_with_sql(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(kind, |_, remote_repo| async move {
+    async fn test_query_workspace_data_frames_with_sql() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             let path = Path::new("annotations")
                 .join(Path::new("train"))
@@ -737,175 +690,135 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_download_nonexistent_data_frame_returns_resource_not_found(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(
-            kind,
-            |_local_repo, remote_repo| async move {
-                let remote_repo_copy = remote_repo.clone();
-                let workspace_id = "some_workspace";
-                let workspace = api::client::workspaces::create(
-                    &remote_repo,
-                    DEFAULT_BRANCH_NAME,
-                    workspace_id,
-                )
-                .await;
-                assert!(workspace.is_ok());
-
-                test::run_empty_dir_test_async(|sync_dir| async move {
-                    let output_path = sync_dir.join("should_not_exist.csv");
-                    let mut opts = DFOpts::empty();
-                    opts.output = Some(output_path.clone());
-                    let result = api::client::workspaces::data_frames::download(
-                        &remote_repo,
-                        workspace_id,
-                        Path::new("this/path/does_not_exist.csv"),
-                        &opts,
-                    )
+    async fn test_download_nonexistent_data_frame_returns_resource_not_found()
+    -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+            let workspace_id = "some_workspace";
+            let workspace =
+                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
                     .await;
+            assert!(workspace.is_ok());
 
-                    assert!(result.is_err());
-                    let err = result.unwrap_err();
-                    match err {
-                        OxenError::ResourceNotFound(_) => {} // expected
-                        other => panic!("Expected OxenError::ResourceNotFound, got: {other:?}"),
-                    }
-                    assert!(!output_path.exists());
-                    Ok(())
-                })
-                .await?;
-
-                Ok(remote_repo_copy)
-            },
-        )
-        .await
-    }
-
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
-    #[tokio::test]
-    async fn test_download_workspace_data_frames(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(
-            kind,
-            |local_repo, remote_repo| async move {
-                let remote_repo_copy = remote_repo.clone();
-                let path = Path::new("annotations")
-                    .join(Path::new("train"))
-                    .join(Path::new("bounding_box.csv"));
-                let workspace_id = "some_workspace";
-                let workspace = api::client::workspaces::create(
+            test::run_empty_dir_test_async(|sync_dir| async move {
+                let output_path = sync_dir.join("should_not_exist.csv");
+                let mut opts = DFOpts::empty();
+                opts.output = Some(output_path.clone());
+                let result = api::client::workspaces::data_frames::download(
                     &remote_repo,
-                    DEFAULT_BRANCH_NAME,
                     workspace_id,
+                    Path::new("this/path/does_not_exist.csv"),
+                    &opts,
                 )
                 .await;
-                assert!(workspace.is_ok());
 
-                api::client::workspaces::data_frames::index(&remote_repo, workspace_id, &path)
-                    .await?;
+                assert!(result.is_err());
+                let err = result.unwrap_err();
+                match err {
+                    OxenError::ResourceNotFound(_) => {} // expected
+                    other => panic!("Expected OxenError::ResourceNotFound, got: {other:?}"),
+                }
+                assert!(!output_path.exists());
+                Ok(())
+            })
+            .await?;
 
-                test::run_empty_dir_test_async(|sync_dir| async move {
-                    let output_path = sync_dir.join("test_download.csv");
-                    let mut opts = DFOpts::empty();
-                    opts.output = Some(output_path.clone());
-                    api::client::workspaces::data_frames::download(
-                        &remote_repo,
-                        workspace_id,
-                        &path,
-                        &opts,
-                    )
-                    .await?;
-
-                    assert!(output_path.exists());
-
-                    // Check the file contents are the same
-                    let file_contents = std::fs::read_to_string(output_path)?;
-                    let expected_contents = std::fs::read_to_string(local_repo.path.join(path))?;
-                    assert_eq!(file_contents, expected_contents);
-
-                    Ok(())
-                })
-                .await?;
-
-                Ok(remote_repo_copy)
-            },
-        )
+            Ok(remote_repo_copy)
+        })
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_download_workspace_data_frames_to_different_format(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(
-            kind,
-            |local_repo, remote_repo| async move {
-                let remote_repo_copy = remote_repo.clone();
-                let path = Path::new("annotations")
-                    .join(Path::new("train"))
-                    .join(Path::new("bounding_box.csv"));
-                let workspace_id = "some_workspace";
-                let workspace = api::client::workspaces::create(
+    async fn test_download_workspace_data_frames() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+            let path = Path::new("annotations")
+                .join(Path::new("train"))
+                .join(Path::new("bounding_box.csv"));
+            let workspace_id = "some_workspace";
+            let workspace =
+                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
+                    .await;
+            assert!(workspace.is_ok());
+
+            api::client::workspaces::data_frames::index(&remote_repo, workspace_id, &path).await?;
+
+            test::run_empty_dir_test_async(|sync_dir| async move {
+                let output_path = sync_dir.join("test_download.csv");
+                let mut opts = DFOpts::empty();
+                opts.output = Some(output_path.clone());
+                api::client::workspaces::data_frames::download(
                     &remote_repo,
-                    DEFAULT_BRANCH_NAME,
                     workspace_id,
+                    &path,
+                    &opts,
                 )
-                .await;
-                assert!(workspace.is_ok());
-
-                api::client::workspaces::data_frames::index(&remote_repo, workspace_id, &path)
-                    .await?;
-
-                test::run_empty_dir_test_async(|sync_dir| async move {
-                    let output_path = sync_dir.join("test_download.jsonl");
-                    let mut opts = DFOpts::empty();
-                    opts.output = Some(output_path.clone());
-                    api::client::workspaces::data_frames::download(
-                        &remote_repo,
-                        workspace_id,
-                        &path,
-                        &opts,
-                    )
-                    .await?;
-
-                    assert!(output_path.exists());
-
-                    // Check the file contents are the same
-                    let og_df =
-                        tabular::read_df(local_repo.path.join(path), DFOpts::empty()).await?;
-                    let download_df = tabular::read_df(&output_path, DFOpts::empty()).await?;
-                    assert_eq!(og_df.height(), download_df.height());
-                    assert_eq!(og_df.width(), download_df.width());
-
-                    Ok(())
-                })
                 .await?;
 
-                Ok(remote_repo_copy)
-            },
-        )
+                assert!(output_path.exists());
+
+                // Check the file contents are the same
+                let file_contents = std::fs::read_to_string(output_path)?;
+                let expected_contents = std::fs::read_to_string(local_repo.path.join(path))?;
+                assert_eq!(file_contents, expected_contents);
+
+                Ok(())
+            })
+            .await?;
+
+            Ok(remote_repo_copy)
+        })
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_download_workspace_data_frames_with_sql(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(kind, |_, remote_repo| async move {
+    async fn test_download_workspace_data_frames_to_different_format() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
+            let path = Path::new("annotations")
+                .join(Path::new("train"))
+                .join(Path::new("bounding_box.csv"));
+            let workspace_id = "some_workspace";
+            let workspace =
+                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
+                    .await;
+            assert!(workspace.is_ok());
+
+            api::client::workspaces::data_frames::index(&remote_repo, workspace_id, &path).await?;
+
+            test::run_empty_dir_test_async(|sync_dir| async move {
+                let output_path = sync_dir.join("test_download.jsonl");
+                let mut opts = DFOpts::empty();
+                opts.output = Some(output_path.clone());
+                api::client::workspaces::data_frames::download(
+                    &remote_repo,
+                    workspace_id,
+                    &path,
+                    &opts,
+                )
+                .await?;
+
+                assert!(output_path.exists());
+
+                // Check the file contents are the same
+                let og_df = tabular::read_df(local_repo.path.join(path), DFOpts::empty()).await?;
+                let download_df = tabular::read_df(&output_path, DFOpts::empty()).await?;
+                assert_eq!(og_df.height(), download_df.height());
+                assert_eq!(og_df.width(), download_df.width());
+
+                Ok(())
+            })
+            .await?;
+
+            Ok(remote_repo_copy)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_download_workspace_data_frames_with_sql() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             let path = Path::new("annotations")
                 .join(Path::new("train"))
@@ -947,14 +860,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_download_workspace_data_frames_with_aggregation_sql(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(kind, |_, remote_repo| async move {
+    async fn test_download_workspace_data_frames_with_aggregation_sql() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             let path = Path::new("annotations")
                 .join(Path::new("train"))
@@ -997,52 +905,35 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_index_workspace_data_frames(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(
-            kind,
-            |_local_repo, remote_repo| async move {
-                let path = Path::new("annotations/train/bounding_box.csv");
-                let workspace_id = "some_workspace";
-                let workspace = api::client::workspaces::create(
-                    &remote_repo,
-                    DEFAULT_BRANCH_NAME,
-                    workspace_id,
-                )
-                .await;
-                assert!(workspace.is_ok());
+    async fn test_index_workspace_data_frames() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+            let path = Path::new("annotations/train/bounding_box.csv");
+            let workspace_id = "some_workspace";
+            let workspace =
+                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
+                    .await;
+            assert!(workspace.is_ok());
 
-                let res =
-                    api::client::workspaces::data_frames::index(&remote_repo, workspace_id, path)
-                        .await?;
+            let res = api::client::workspaces::data_frames::index(&remote_repo, workspace_id, path)
+                .await?;
 
-                assert_eq!(res.status, "success");
+            assert_eq!(res.status, "success");
 
-                let res =
-                    api::client::workspaces::data_frames::unindex(&remote_repo, workspace_id, path)
-                        .await?;
+            let res =
+                api::client::workspaces::data_frames::unindex(&remote_repo, workspace_id, path)
+                    .await?;
 
-                assert_eq!(res.status, "success");
+            assert_eq!(res.status, "success");
 
-                Ok(remote_repo)
-            },
-        )
+            Ok(remote_repo)
+        })
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_index_workspace_data_frame_with_binary_column(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(kind, |mut local_repo, remote_repo| async move {
+    async fn test_index_workspace_data_frame_with_binary_column() -> Result<(), OxenError> {
+        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             let path = test::test_binary_column_parquet_file();
 
             let file_name = "binary_col.parquet";
@@ -1075,66 +966,51 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_data_frame_diff(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+    async fn test_data_frame_diff() -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(
-            kind,
-            |_local_repo, remote_repo| async move {
-                let workspace_id = "some_workspace";
-                let path = Path::new("annotations/train/bounding_box.csv");
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+            let workspace_id = "some_workspace";
+            let path = Path::new("annotations/train/bounding_box.csv");
 
-                let res = api::client::workspaces::create(
-                    &remote_repo,
-                    DEFAULT_BRANCH_NAME,
-                    workspace_id,
-                )
-                .await;
-                assert!(res.is_ok());
+            let res =
+                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
+                    .await;
+            assert!(res.is_ok());
 
-                let res =
-                    api::client::workspaces::data_frames::index(&remote_repo, workspace_id, path)
-                        .await?;
+            let res = api::client::workspaces::data_frames::index(&remote_repo, workspace_id, path)
+                .await?;
 
-                assert_eq!(res.status, "success");
+            assert_eq!(res.status, "success");
 
-                let res = api::client::workspaces::data_frames::diff(
-                    &remote_repo,
-                    workspace_id,
-                    path,
-                    1,
-                    100,
-                )
-                .await;
+            let res = api::client::workspaces::data_frames::diff(
+                &remote_repo,
+                workspace_id,
+                path,
+                1,
+                100,
+            )
+            .await;
 
-                assert!(res.is_ok());
+            assert!(res.is_ok());
 
-                Ok(remote_repo)
-            },
-        )
+            Ok(remote_repo)
+        })
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_restore_modified_dataframe(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_restore_modified_dataframe() -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(kind, |_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(&remote_repo, branch_name, DEFAULT_BRANCH_NAME).await?;
             assert_eq!(branch.name, branch_name);
@@ -1204,17 +1080,14 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_diff_modified_dataframe(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
+    async fn test_diff_modified_dataframe() -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(kind, |_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(&remote_repo, branch_name, DEFAULT_BRANCH_NAME).await?;
             assert_eq!(branch.name, branch_name);
@@ -1257,19 +1130,14 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_diff_delete_row_from_modified_dataframe(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_diff_delete_row_from_modified_dataframe() -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
 
-        test::run_remote_repo_test_bounding_box_csv_pushed(kind, |_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(&remote_repo, branch_name, DEFAULT_BRANCH_NAME).await?;
             assert_eq!(branch.name, branch_name);
@@ -1348,19 +1216,14 @@ mod tests {
     # update data frame file on server
     oxen pull repo_a (should be fast forward)
     */
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_update_df_on_server_fast_forward_pull(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_update_df_on_server_fast_forward_pull() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             // Skip server side duckdb tests on windows
             return Ok(());
         }
 
-        test::run_training_data_fully_sync_remote(kind, |_local_repo, remote_repo| async move {
+        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|empty_dir| async move {
@@ -1454,14 +1317,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_update_root_df_on_server_fast_forward_pull(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(kind, |_local_repo, remote_repo| async move {
+    async fn test_update_root_df_on_server_fast_forward_pull() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|empty_dir| async move {

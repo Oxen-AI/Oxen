@@ -39,9 +39,6 @@ pub async fn get(remote_repo: &RemoteRepository) -> Result<RepositoryStatsView, 
 
 #[cfg(test)]
 mod tests {
-    use crate::config::repository_config::MerkleStoreKind;
-    use rstest::rstest;
-
     use crate::api;
     use crate::command;
     use crate::constants::DEFAULT_REMOTE_NAME;
@@ -51,12 +48,9 @@ mod tests {
     use crate::util;
 
     // NOTE: Keep this test to ensure we compute sizes on the backend
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_get_stats(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |mut local_repo| async move {
+    async fn test_remote_get_stats() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("csvs");
             util::fs::create_dir_all(&large_dir)?;

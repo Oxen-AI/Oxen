@@ -79,9 +79,6 @@ pub async fn status(
 
 #[cfg(test)]
 mod tests {
-    use crate::config::repository_config::MerkleStoreKind;
-    use rstest::rstest;
-
     use std::path::PathBuf;
 
     use crate::error::OxenError;
@@ -120,14 +117,10 @@ mod tests {
     // LICENSE
     // README.md
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_repo_clean_with_all_files_unsynced_after_remote_mode_clone(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(kind, |mut _local_repo, remote_repo| async move {
+    async fn test_repo_clean_with_all_files_unsynced_after_remote_mode_clone()
+    -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|mut _local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -164,14 +157,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_mode_subdirectory_status(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(kind, |_local_repo, remote_repo| async move {
+    async fn test_remote_mode_subdirectory_status() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -319,14 +307,10 @@ mod tests {
     // from local disk should still surface as unsynced — only `Removed`-status entries
     // should suppress the unsynced classification. Earlier the gate used a plain
     // `contains_key` check on the staged-files map, which over-suppressed.
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_mode_status_unsynced_when_modified_stage_missing_on_disk(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(kind, |_local_repo, remote_repo| async move {
+    async fn test_remote_mode_status_unsynced_when_modified_stage_missing_on_disk()
+    -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -409,12 +393,9 @@ mod tests {
     //       TODO: Consider fixing this
 
     /*
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_mode_status_move_regular_file(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(kind, |_local_repo, remote_repo| async move {
+    async fn test_remote_mode_status_move_regular_file() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {

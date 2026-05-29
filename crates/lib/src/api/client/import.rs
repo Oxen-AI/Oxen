@@ -98,91 +98,76 @@ pub async fn import_url(
 
 #[cfg(test)]
 mod tests {
-    use crate::config::repository_config::MerkleStoreKind;
-    use crate::test;
-    use bytes::Bytes;
-    use rstest::rstest;
-
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
     use crate::model::NewCommitBody;
+    use crate::test;
+    use bytes::Bytes;
 
     use crate::api;
 
     use std::io::Write;
     use std::path::Path;
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_upload_zip_file(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(
-            kind,
-            |_local_repo, remote_repo| async move {
-                let branch_name = "upload-zip-test";
-                api::client::branches::create_from_branch(
-                    &remote_repo,
-                    branch_name,
-                    DEFAULT_BRANCH_NAME,
-                )
-                .await?;
+    async fn test_upload_zip_file() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+            let branch_name = "upload-zip-test";
+            api::client::branches::create_from_branch(
+                &remote_repo,
+                branch_name,
+                DEFAULT_BRANCH_NAME,
+            )
+            .await?;
 
-                // Create a test ZIP file
-                let temp_dir = tempfile::tempdir()?;
-                let zip_path = temp_dir.path().join("test.zip");
-                let zip_file = std::fs::File::create(&zip_path)?;
-                let mut zip = zip::ZipWriter::new(&zip_file);
+            // Create a test ZIP file
+            let temp_dir = tempfile::tempdir()?;
+            let zip_path = temp_dir.path().join("test.zip");
+            let zip_file = std::fs::File::create(&zip_path)?;
+            let mut zip = zip::ZipWriter::new(&zip_file);
 
-                let options: zip::write::FileOptions<()> = zip::write::FileOptions::default();
-                zip.start_file("image1.png", options).unwrap();
-                zip.write_all(b"fake png data 1")?;
-                zip.start_file("image2.png", options).unwrap();
-                zip.write_all(b"fake png data 2")?;
-                zip.finish().unwrap();
-                drop(zip_file);
+            let options: zip::write::FileOptions<()> = zip::write::FileOptions::default();
+            zip.start_file("image1.png", options).unwrap();
+            zip.write_all(b"fake png data 1")?;
+            zip.start_file("image2.png", options).unwrap();
+            zip.write_all(b"fake png data 2")?;
+            zip.finish().unwrap();
+            drop(zip_file);
 
-                // Upload the ZIP
-                let result = api::client::import::upload_zip(
-                    &remote_repo,
-                    branch_name,
-                    "images",
-                    &zip_path,
-                    "Test User",
-                    "test@oxen.ai",
-                    Some("Upload test ZIP"),
-                )
-                .await;
+            // Upload the ZIP
+            let result = api::client::import::upload_zip(
+                &remote_repo,
+                branch_name,
+                "images",
+                &zip_path,
+                "Test User",
+                "test@oxen.ai",
+                Some("Upload test ZIP"),
+            )
+            .await;
 
-                assert!(result.is_ok());
-                let commit = result.unwrap();
-                assert!(commit.message.contains("Upload test ZIP"));
+            assert!(result.is_ok());
+            let commit = result.unwrap();
+            assert!(commit.message.contains("Upload test ZIP"));
 
-                let bytes =
-                    api::client::file::get_file(&remote_repo, branch_name, "images/image1.png")
-                        .await;
+            let bytes =
+                api::client::file::get_file(&remote_repo, branch_name, "images/image1.png").await;
 
-                assert!(bytes.is_ok());
-                assert!(!bytes.as_ref().unwrap().is_empty());
-                assert_eq!(
-                    bytes.as_ref().unwrap(),
-                    &Bytes::from_static(b"fake png data 1")
-                );
+            assert!(bytes.is_ok());
+            assert!(!bytes.as_ref().unwrap().is_empty());
+            assert_eq!(
+                bytes.as_ref().unwrap(),
+                &Bytes::from_static(b"fake png data 1")
+            );
 
-                Ok(remote_repo)
-            },
-        )
+            Ok(remote_repo)
+        })
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_upload_zip_file_empty_repo(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(kind, |_local_repo, remote_repo| async move {
+    async fn test_upload_zip_file_empty_repo() -> Result<(), OxenError> {
+        test::run_empty_remote_repo_test(|_local_repo, remote_repo| async move {
             let branch_name = "upload-zip-test";
 
             // Create a test ZIP file
@@ -240,14 +225,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_import_url_with_update_timestamp(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(kind, |_local_repo, remote_repo| async move {
+    async fn test_import_url_with_update_timestamp() -> Result<(), OxenError> {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = DEFAULT_BRANCH_NAME;
             let download_url =
                 "https://hub.oxen.ai/api/repos/ox/Oxen-AI-Assets/file/main/images/bloxy_white_background.png";

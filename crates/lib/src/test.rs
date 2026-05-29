@@ -28,9 +28,29 @@ use std::fs::{File, OpenOptions};
 use std::future::Future;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::{Arc, LazyLock, Mutex};
 use tokio::time::sleep;
 use tracing::level_filters::LevelFilter;
+
+/// Test-only: pick the [`MerkleStoreKind`] for any env-driven helper.
+///
+/// Reads `OXEN_TEST_MERKLE_STORE`; unset or empty → [`MerkleStoreKind::default()`];
+/// otherwise parses via [`MerkleStoreKind::from_str`] (lowercase: `"file"` /
+/// `"lmdb"`). Fails fast on garbage values rather than silently defaulting.
+pub fn merkle_store_kind_from_env() -> MerkleStoreKind {
+    const VAR: &str = "OXEN_TEST_MERKLE_STORE";
+    match std::env::var(VAR) {
+        Ok(s) if s.is_empty() => MerkleStoreKind::default(),
+        Ok(s) => MerkleStoreKind::from_str(&s).unwrap_or_else(|e| {
+            panic!("invalid {VAR}={s:?}: {e}. Expected one of: file, lmdb (or unset/empty).")
+        }),
+        Err(std::env::VarError::NotPresent) => MerkleStoreKind::default(),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            panic!("{VAR} is set but contains non-UTF-8 bytes; refusing to guess.")
+        }
+    }
+}
 
 pub const DEFAULT_TEST_HOST: &str = "localhost:3000";
 
@@ -326,7 +346,15 @@ where
 /// need the dir placed correctly for `kind`. The directory (and any repo created in
 /// it) is cleaned up after the test — the inner [`LocalRepository`] is dropped at the
 /// end of the closure, before this removal, so an LMDB env is closed first.
-pub async fn run_empty_dir_test_for_kind_async<T, Fut>(
+pub async fn run_empty_dir_test_for_kind_async<T, Fut>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(PathBuf) -> Fut,
+    Fut: Future<Output = Result<(), OxenError>>,
+{
+    run_empty_dir_test_for_kind_async_with_kind(merkle_store_kind_from_env(), test).await
+}
+
+pub async fn run_empty_dir_test_for_kind_async_with_kind<T, Fut>(
     kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
@@ -356,7 +384,17 @@ where
     Ok(())
 }
 
-pub fn run_empty_local_repo_test<T>(kind: MerkleStoreKind, test: T) -> Result<(), OxenError>
+pub fn run_empty_local_repo_test<T>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
+{
+    run_empty_local_repo_test_with_kind(merkle_store_kind_from_env(), test)
+}
+
+pub fn run_empty_local_repo_test_with_kind<T>(
+    kind: MerkleStoreKind,
+    test: T,
+) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
 {
@@ -380,7 +418,15 @@ where
     Ok(())
 }
 
-pub async fn run_empty_local_repo_test_async<T, Fut>(
+pub async fn run_empty_local_repo_test_async<T, Fut>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> Fut,
+    Fut: Future<Output = Result<(), OxenError>>,
+{
+    run_empty_local_repo_test_async_with_kind(merkle_store_kind_from_env(), test).await
+}
+
+pub async fn run_empty_local_repo_test_async_with_kind<T, Fut>(
     kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
@@ -412,7 +458,14 @@ where
     Ok(())
 }
 
-pub async fn run_one_commit_local_repo_test<T>(
+pub async fn run_one_commit_local_repo_test<T>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
+{
+    run_one_commit_local_repo_test_with_kind(merkle_store_kind_from_env(), test).await
+}
+
+pub async fn run_one_commit_local_repo_test_with_kind<T>(
     kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
@@ -444,7 +497,15 @@ where
     Ok(())
 }
 
-pub async fn run_one_commit_local_repo_test_async<T, Fut>(
+pub async fn run_one_commit_local_repo_test_async<T, Fut>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> Fut,
+    Fut: Future<Output = Result<(), OxenError>>,
+{
+    run_one_commit_local_repo_test_async_with_kind(merkle_store_kind_from_env(), test).await
+}
+
+pub async fn run_one_commit_local_repo_test_async_with_kind<T, Fut>(
     kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
@@ -478,7 +539,15 @@ where
 }
 
 /// Test syncing between local and remote, where both exist, and both are empty
-pub async fn run_one_commit_sync_repo_test<T, Fut>(
+pub async fn run_one_commit_sync_repo_test<T, Fut>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository, RemoteRepository) -> Fut,
+    Fut: Future<Output = Result<RemoteRepository, OxenError>>,
+{
+    run_one_commit_sync_repo_test_with_kind(merkle_store_kind_from_env(), test).await
+}
+
+pub async fn run_one_commit_sync_repo_test_with_kind<T, Fut>(
     kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
@@ -526,7 +595,16 @@ where
 }
 
 /// Test syncing between local and remote where local has high n commits and remote is empty
-pub async fn run_many_local_commits_empty_sync_remote_test<T, Fut>(
+pub async fn run_many_local_commits_empty_sync_remote_test<T, Fut>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository, RemoteRepository) -> Fut,
+    Fut: Future<Output = Result<RemoteRepository, OxenError>>,
+{
+    run_many_local_commits_empty_sync_remote_test_with_kind(merkle_store_kind_from_env(), test)
+        .await
+}
+
+pub async fn run_many_local_commits_empty_sync_remote_test_with_kind<T, Fut>(
     kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
@@ -604,7 +682,15 @@ pub async fn make_many_commits(local_repo: &LocalRepository) -> Result<(), OxenE
     Ok(())
 }
 
-pub async fn run_local_repo_training_data_committed_async<T, F>(
+pub async fn run_local_repo_training_data_committed_async<T, F>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> F + std::panic::UnwindSafe,
+    F: std::future::Future<Output = Result<(), OxenError>>,
+{
+    run_local_repo_training_data_committed_async_with_kind(merkle_store_kind_from_env(), test).await
+}
+
+pub async fn run_local_repo_training_data_committed_async_with_kind<T, F>(
     kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
@@ -638,7 +724,15 @@ where
 }
 
 /// Test where we synced training data to the remote
-pub async fn run_training_data_fully_sync_remote<T, Fut>(
+pub async fn run_training_data_fully_sync_remote<T, Fut>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository, RemoteRepository) -> Fut,
+    Fut: Future<Output = Result<RemoteRepository, OxenError>>,
+{
+    run_training_data_fully_sync_remote_with_kind(merkle_store_kind_from_env(), test).await
+}
+
+pub async fn run_training_data_fully_sync_remote_with_kind<T, Fut>(
     kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
@@ -684,7 +778,15 @@ where
     Ok(())
 }
 
-pub async fn run_select_data_sync_remote<T, Fut>(
+pub async fn run_select_data_sync_remote<T, Fut>(data: &str, test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository, RemoteRepository) -> Fut,
+    Fut: Future<Output = Result<RemoteRepository, OxenError>>,
+{
+    run_select_data_sync_remote_with_kind(merkle_store_kind_from_env(), data, test).await
+}
+
+pub async fn run_select_data_sync_remote_with_kind<T, Fut>(
     kind: MerkleStoreKind,
     data: &str,
     test: T,
@@ -763,7 +865,15 @@ where
 }
 
 /// Test interacting with a remote repo that has nothing synced
-pub async fn run_empty_remote_repo_test<T, Fut>(
+pub async fn run_empty_remote_repo_test<T, Fut>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository, RemoteRepository) -> Fut,
+    Fut: Future<Output = Result<RemoteRepository, OxenError>>,
+{
+    run_empty_remote_repo_test_with_kind(merkle_store_kind_from_env(), test).await
+}
+
+pub async fn run_empty_remote_repo_test_with_kind<T, Fut>(
     kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
@@ -804,7 +914,15 @@ where
 }
 
 /// Test interacting with a remote repo that has nothing synced
-pub async fn run_empty_configured_remote_repo_test<T, Fut>(
+pub async fn run_empty_configured_remote_repo_test<T, Fut>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository, RemoteRepository) -> Fut,
+    Fut: Future<Output = Result<RemoteRepository, OxenError>>,
+{
+    run_empty_configured_remote_repo_test_with_kind(merkle_store_kind_from_env(), test).await
+}
+
+pub async fn run_empty_configured_remote_repo_test_with_kind<T, Fut>(
     kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
@@ -856,7 +974,15 @@ where
 }
 
 /// Test interacting with a remote repo that has nothing synced
-pub async fn run_readme_remote_repo_test<T, Fut>(
+pub async fn run_readme_remote_repo_test<T, Fut>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository, RemoteRepository) -> Fut,
+    Fut: Future<Output = Result<RemoteRepository, OxenError>>,
+{
+    run_readme_remote_repo_test_with_kind(merkle_store_kind_from_env(), test).await
+}
+
+pub async fn run_readme_remote_repo_test_with_kind<T, Fut>(
     kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
@@ -959,7 +1085,15 @@ where
 }
 
 /// Test interacting with a remote repo that has has the initial commit pushed
-pub async fn run_remote_repo_test_all_data_pushed<T, Fut>(
+pub async fn run_remote_repo_test_all_data_pushed<T, Fut>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(RemoteRepository) -> Fut,
+    Fut: Future<Output = Result<RemoteRepository, OxenError>>,
+{
+    run_remote_repo_test_all_data_pushed_with_kind(merkle_store_kind_from_env(), test).await
+}
+
+pub async fn run_remote_repo_test_all_data_pushed_with_kind<T, Fut>(
     kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
@@ -1015,7 +1149,15 @@ where
 }
 
 /// Same as run_remote_repo_test_all_data_pushed but with just one file
-pub async fn run_remote_repo_test_bounding_box_csv_pushed<T, Fut>(
+pub async fn run_remote_repo_test_bounding_box_csv_pushed<T, Fut>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository, RemoteRepository) -> Fut,
+    Fut: Future<Output = Result<RemoteRepository, OxenError>>,
+{
+    run_remote_repo_test_bounding_box_csv_pushed_with_kind(merkle_store_kind_from_env(), test).await
+}
+
+pub async fn run_remote_repo_test_bounding_box_csv_pushed_with_kind<T, Fut>(
     kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
@@ -1073,7 +1215,15 @@ where
 }
 
 /// Same as run_remote_repo_test_all_data_pushed but with just one file
-pub async fn run_remote_repo_test_embeddings_jsonl_pushed<T, Fut>(
+pub async fn run_remote_repo_test_embeddings_jsonl_pushed<T, Fut>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(RemoteRepository) -> Fut,
+    Fut: Future<Output = Result<RemoteRepository, OxenError>>,
+{
+    run_remote_repo_test_embeddings_jsonl_pushed_with_kind(merkle_store_kind_from_env(), test).await
+}
+
+pub async fn run_remote_repo_test_embeddings_jsonl_pushed_with_kind<T, Fut>(
     kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
@@ -1131,7 +1281,15 @@ where
 }
 
 /// Run a test on a repo with a bunch of files
-pub async fn run_training_data_repo_test_no_commits_async<T, Fut>(
+pub async fn run_training_data_repo_test_no_commits_async<T, Fut>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> Fut,
+    Fut: Future<Output = Result<(), OxenError>>,
+{
+    run_training_data_repo_test_no_commits_async_with_kind(merkle_store_kind_from_env(), test).await
+}
+
+pub async fn run_training_data_repo_test_no_commits_async_with_kind<T, Fut>(
     kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
@@ -1168,6 +1326,22 @@ where
 }
 
 pub async fn run_training_data_repo_test_no_commits_async_with_version<T, Fut>(
+    version: MinOxenVersion,
+    test: T,
+) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> Fut,
+    Fut: Future<Output = Result<(), OxenError>>,
+{
+    run_training_data_repo_test_no_commits_async_with_version_and_kind(
+        merkle_store_kind_from_env(),
+        version,
+        test,
+    )
+    .await
+}
+
+pub async fn run_training_data_repo_test_no_commits_async_with_version_and_kind<T, Fut>(
     kind: MerkleStoreKind,
     version: MinOxenVersion,
     test: T,
@@ -1203,6 +1377,18 @@ where
 }
 
 pub async fn run_select_data_repo_test_no_commits_async<T, Fut>(
+    data: &str,
+    test: T,
+) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> Fut,
+    Fut: Future<Output = Result<(), OxenError>>,
+{
+    run_select_data_repo_test_no_commits_async_with_kind(merkle_store_kind_from_env(), data, test)
+        .await
+}
+
+pub async fn run_select_data_repo_test_no_commits_async_with_kind<T, Fut>(
     kind: MerkleStoreKind,
     data: &str,
     test: T,
@@ -1237,6 +1423,18 @@ where
 }
 
 pub async fn run_select_data_repo_test_committed_async<T, Fut>(
+    data: &str,
+    test: T,
+) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> Fut,
+    Fut: Future<Output = Result<(), OxenError>>,
+{
+    run_select_data_repo_test_committed_async_with_kind(merkle_store_kind_from_env(), data, test)
+        .await
+}
+
+pub async fn run_select_data_repo_test_committed_async_with_kind<T, Fut>(
     kind: MerkleStoreKind,
     data: &str,
     test: T,
@@ -1271,7 +1469,15 @@ where
     Ok(())
 }
 
-pub async fn run_empty_data_repo_test_no_commits_async<T, Fut>(
+pub async fn run_empty_data_repo_test_no_commits_async<T, Fut>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> Fut,
+    Fut: Future<Output = Result<(), OxenError>>,
+{
+    run_empty_data_repo_test_no_commits_async_with_kind(merkle_store_kind_from_env(), test).await
+}
+
+pub async fn run_empty_data_repo_test_no_commits_async_with_kind<T, Fut>(
     kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
@@ -1296,7 +1502,14 @@ where
 }
 
 /// Run a test on a repo with a bunch of files
-pub fn run_training_data_repo_test_no_commits<T>(
+pub fn run_training_data_repo_test_no_commits<T>(test: T) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
+{
+    run_training_data_repo_test_no_commits_with_kind(merkle_store_kind_from_env(), test)
+}
+
+pub fn run_training_data_repo_test_no_commits_with_kind<T>(
     kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
@@ -1334,6 +1547,17 @@ where
 
 /// Run a test on a repo with a bunch of files
 pub async fn run_training_data_repo_test_fully_committed_async<T, Fut>(
+    test: T,
+) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> Fut,
+    Fut: Future<Output = Result<(), OxenError>>,
+{
+    run_training_data_repo_test_fully_committed_async_with_kind(merkle_store_kind_from_env(), test)
+        .await
+}
+
+pub async fn run_training_data_repo_test_fully_committed_async_with_kind<T, Fut>(
     kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
@@ -1416,6 +1640,20 @@ fn create_embeddings_jsonl(repo_path: &Path) -> Result<(), OxenError> {
 }
 
 pub async fn run_bounding_box_csv_repo_test_fully_committed_async<T, Fut>(
+    test: T,
+) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> Fut,
+    Fut: Future<Output = Result<(), OxenError>>,
+{
+    run_bounding_box_csv_repo_test_fully_committed_async_with_kind(
+        merkle_store_kind_from_env(),
+        test,
+    )
+    .await
+}
+
+pub async fn run_bounding_box_csv_repo_test_fully_committed_async_with_kind<T, Fut>(
     kind: MerkleStoreKind,
     test: T,
 ) -> Result<(), OxenError>
@@ -2132,22 +2370,16 @@ pub fn add_img_file_to_dir(dir: &Path, file_path: &Path) -> Result<PathBuf, Oxen
 // Catch all tests for the library
 #[cfg(test)]
 mod tests {
-    use rstest::rstest;
-
     use std::path::Path;
 
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::error::OxenError;
     use crate::repositories;
 
     use super::{run_training_data_repo_test_fully_committed_async, write_txt_file_to_path};
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_oxen_ignore_file(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_oxen_ignore_file() -> Result<(), OxenError> {
+        run_training_data_repo_test_fully_committed_async(|repo| async move {
             // Add a file that we are going to ignore
             let ignore_filename = "ignoreme.txt";
             let ignore_path = repo.path.join(ignore_filename);
@@ -2169,12 +2401,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_oxen_ignore_dir(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_oxen_ignore_dir() -> Result<(), OxenError> {
+        run_training_data_repo_test_fully_committed_async(|repo| async move {
             // Add a file that we are going to ignore
             let ignore_dir = "ignoreme/";
             let ignore_path = repo.path.join(ignore_dir);

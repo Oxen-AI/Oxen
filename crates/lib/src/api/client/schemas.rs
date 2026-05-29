@@ -86,9 +86,6 @@ pub async fn get(
 
 #[cfg(test)]
 mod tests {
-    use crate::config::repository_config::MerkleStoreKind;
-    use rstest::rstest;
-
     use crate::api;
     use crate::command;
     use crate::constants::DEFAULT_BRANCH_NAME;
@@ -102,12 +99,9 @@ mod tests {
 
     use serde_json::json;
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_list_schemas(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |mut local_repo| async move {
+    async fn test_remote_list_schemas() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|mut local_repo| async move {
             // Create the remote repo
             let remote_repo = test::create_remote_repo(&local_repo).await?;
 
@@ -157,12 +151,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_get_schema2(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |mut local_repo| async move {
+    async fn test_remote_get_schema2() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("csvs");
             util::fs::create_dir_all(&large_dir)?;
@@ -253,14 +244,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_get_schema_on_branch(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |mut local_repo| async move {
+    async fn test_remote_get_schema_on_branch() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let large_dir = repo_dir.join("csvs");
             util::fs::create_dir_all(&large_dir)?;

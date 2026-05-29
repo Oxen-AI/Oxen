@@ -224,10 +224,46 @@ if [ "$RUN_PYTHON" = true ]; then
         pytest -s tests "$@"
     )
 else
-    # Run Rust tests
-    echo "==> Running tests with 'cargo nextest run $FEATURE_ARGS $*' ..."
-    # shellcheck disable=SC2086
-    cargo nextest run $FEATURE_ARGS "$@"
+    # Run Rust tests. The merkle-store backend the tests use is picked up
+    # implicitly from `OXEN_TEST_MERKLE_STORE` by liboxen's test helpers
+    # (`test::merkle_store_kind_from_env`). When the var is set (including the
+    # empty string, which means "use the default"), respect it and run once;
+    # when *unset*, run the suite twice — once per known backend — so CI
+    # exercises both without the caller having to ask. The server / ramdisk /
+    # build setup above is shared across both iterations.
+    run_rust_tests() {
+        echo "==> OXEN_TEST_MERKLE_STORE=${OXEN_TEST_MERKLE_STORE}"
+        echo "==> Running tests with 'cargo nextest run $FEATURE_ARGS $*' ..."
+        # shellcheck disable=SC2086
+        cargo nextest run $FEATURE_ARGS "$@"
+    }
+    if [ -n "${OXEN_TEST_MERKLE_STORE+set}" ]; then
+        run_rust_tests "$@"
+    else
+        # Run-both-then-fail: even if one backend's run fails, still run the
+        # other so the developer/CI sees the union of failures from both. We
+        # disable `-e` for the duration of the loop and remember the worst-
+        # observed non-zero exit code to surface at the end.
+        overall=0
+        per_backend_status=""
+        set +e
+        for kind in file lmdb; do
+            export OXEN_TEST_MERKLE_STORE="$kind"
+            run_rust_tests "$@"
+            rc=$?
+            if [ "$rc" -ne 0 ]; then
+                overall="$rc"
+                per_backend_status+="  OXEN_TEST_MERKLE_STORE=$kind -> FAIL (exit $rc)"$'\n'
+            else
+                per_backend_status+="  OXEN_TEST_MERKLE_STORE=$kind -> PASS"$'\n'
+            fi
+        done
+        set -e
+        unset OXEN_TEST_MERKLE_STORE
+        echo "==> Per-backend results:"
+        printf '%s' "$per_backend_status"
+        exit "$overall"
+    fi
 fi
 
 # cleanup handled via the trapped cleanup function

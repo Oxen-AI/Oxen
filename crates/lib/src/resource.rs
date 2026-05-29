@@ -62,23 +62,16 @@ pub fn get_commit_or_head<S: AsRef<str>>(
 
 #[cfg(test)]
 mod tests {
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::test;
-    use rstest::rstest;
     use std::path::Path;
 
     use crate::error::OxenError;
     use crate::repositories;
     use crate::resource;
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_parse_resource_for_commit(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_parse_resource_for_commit() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let history = repositories::commits::list(&repo)?;
             let commit = history.first().unwrap();
             let path_str = format!("{}/annotations/train/one_shot.csv", commit.id);
@@ -99,14 +92,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_parse_resource_for_branch(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_parse_resource_for_branch() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "my-branch";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
 
@@ -129,14 +117,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_parse_resource_for_long_branch_name(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_parse_resource_for_long_branch_name() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "my/crazy/branch/name";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
 
@@ -159,14 +142,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_parse_resource_for_branch_base_dir(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_parse_resource_for_branch_base_dir() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "my_branch";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
 
@@ -189,14 +167,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_parse_resource_from_path_root_dir(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_parse_resource_from_path_root_dir() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "main";
             // let branch = repositories::branches::create_checkout(&repo, branch_name)?;
 
@@ -217,14 +190,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_parse_resource_from_path_root_dir_complicated_branch(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_parse_resource_from_path_root_dir_complicated_branch() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "super/complex/branch-name/slashes";
             let _branch = repositories::branches::create_checkout(&repo, branch_name)?;
 
@@ -248,14 +216,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_parse_resource_from_path_nonroot_complicated_branch(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_parse_resource_from_path_nonroot_complicated_branch() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "super/complex/branch-name/slashes";
             let _branch = repositories::branches::create_checkout(&repo, branch_name)?;
 
@@ -278,14 +241,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_parse_resource_from_path_with_file(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_parse_resource_from_path_with_file() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "super/complex/branch-name/slashes";
             let _branch = repositories::branches::create_checkout(&repo, branch_name)?;
 
@@ -312,14 +270,9 @@ mod tests {
     // Precedence tests — lock in the commit > branch > workspace ordering
     // -----------------------------------------------------------------------
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_parse_resource_commit_wins_over_branch(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_parse_resource_commit_wins_over_branch() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let commit = repositories::commits::head_commit(&repo)?;
 
             // Create a branch whose name is exactly the commit id.
@@ -341,14 +294,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_parse_resource_branch_wins_over_workspace(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_parse_resource_branch_wins_over_workspace() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let commit = repositories::commits::head_commit(&repo)?;
 
             // Create a branch and a workspace with the same name.
@@ -375,14 +323,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_parse_resource_workspace_resolves_when_no_branch(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_parse_resource_workspace_resolves_when_no_branch() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let commit = repositories::commits::head_commit(&repo)?;
 
             let workspace = repositories::workspaces::create(&repo, &commit, "my-workspace", true)?;
@@ -403,14 +346,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_parse_resource_full_branch_path_match(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_parse_resource_full_branch_path_match() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             // Branch name spans the entire path — no file portion.
             let branch_name = "feature/v2/experiment";
             let branch = repositories::branches::create_from_head(&repo, branch_name)?;
@@ -428,14 +366,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_parse_resource_returns_none_for_unknown(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(kind, |repo| async move {
+    async fn test_parse_resource_returns_none_for_unknown() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let path = Path::new("nonexistent-thing/file.txt");
             let result = resource::parse_resource_from_path(&repo, path)?;
             assert!(result.is_none(), "unknown identifier should return None");

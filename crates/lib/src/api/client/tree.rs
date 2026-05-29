@@ -492,23 +492,18 @@ pub async fn mark_nodes_as_synced(
 #[cfg(test)]
 mod tests {
     use crate::api;
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::error::OxenError;
     use crate::opts::FetchOpts;
     use crate::repositories;
     use crate::test;
-    use rstest::rstest;
     use std::fs;
 
     use std::collections::HashSet;
     use std::path::PathBuf;
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_has_node(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_one_commit_sync_repo_test(kind, |local_repo, remote_repo| async move {
+    async fn test_has_node() -> Result<(), OxenError> {
+        test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
             let commit = repositories::commits::head_commit(&local_repo)?;
             let commit_hash = commit.id.parse()?;
             let has_node = api::client::tree::has_node(&remote_repo, commit_hash).await?;
@@ -519,12 +514,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_download_tree_from_path(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(kind, |local_repo, remote_repo| async move {
+    async fn test_download_tree_from_path() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
             let commit = repositories::commits::head_commit(&local_repo)?;
             let remote_repo_clone = remote_repo.clone();
             let download_repo_path_1 = local_repo.path.join("download_repo_test_1");
@@ -592,12 +584,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_download_trees_from(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(kind, |local_repo, remote_repo| async move {
+    async fn test_download_trees_from() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
             let commit = repositories::commits::head_commit(&local_repo)?;
             let remote_repo_clone = remote_repo.clone();
             let download_repo_path = local_repo.path.join("download_repo_test_1");
@@ -676,12 +665,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_missing_node_hashes(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_one_commit_sync_repo_test(kind, |local_repo, remote_repo| async move {
+    async fn test_list_missing_node_hashes() -> Result<(), OxenError> {
+        test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
             let commit = repositories::commits::head_commit(&local_repo)?;
             let commit_hash = commit.id.parse()?;
             let _missing_node_hashes = api::client::tree::list_missing_node_hashes(

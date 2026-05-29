@@ -211,9 +211,6 @@ pub async fn list_entry_versions(
 
 #[cfg(test)]
 mod tests {
-    use crate::config::repository_config::MerkleStoreKind;
-    use rstest::rstest;
-
     use std::path::Path;
 
     use crate::api;
@@ -227,12 +224,9 @@ mod tests {
     use crate::test;
     use crate::util;
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_create_remote_branch(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(kind, |mut local_repo, remote_repo| async move {
+    async fn test_create_remote_branch() -> Result<(), OxenError> {
+        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // add and commit a file
             let new_file = local_repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -256,14 +250,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_create_remote_branch_from_existing(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(kind, |mut local_repo, remote_repo| async move {
+    async fn test_create_remote_branch_from_existing() -> Result<(), OxenError> {
+        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // add and commit a file
             let new_file = local_repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -290,12 +279,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_get_branch_by_name(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(kind, |mut local_repo, remote_repo| async move {
+    async fn test_get_branch_by_name() -> Result<(), OxenError> {
+        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // add and commit a file
             let new_file = local_repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -321,12 +307,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_remote_branches(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(kind, |mut local_repo, remote_repo| async move {
+    async fn test_list_remote_branches() -> Result<(), OxenError> {
+        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // Create and push the main branch
             // add a file
             let new_file = local_repo.path.join("new_file.txt");
@@ -366,12 +349,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_delete_branch(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(kind, |mut local_repo, remote_repo| async move {
+    async fn test_delete_branch() -> Result<(), OxenError> {
+        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // add and commit a file
             let new_file = local_repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -409,12 +389,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_rename_current_branch(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_rename_current_branch() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -445,12 +422,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_delete_remote_branch(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(kind, |mut repo| async move {
+    async fn test_delete_remote_branch() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|mut repo| async move {
             // Set the proper remote
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
@@ -487,14 +461,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_should_not_push_branch_that_does_not_exist(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(kind, |mut repo| async move {
+    async fn test_should_not_push_branch_that_does_not_exist() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|mut repo| async move {
             // Set the proper remote
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
@@ -538,14 +507,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_cannot_delete_branch_you_are_on(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async(kind, "labels", |repo| async move {
+    async fn test_cannot_delete_branch_you_are_on() -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -565,14 +529,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_cannot_force_delete_branch_you_are_on(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
+    async fn test_cannot_force_delete_branch_you_are_on() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -592,14 +551,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_cannot_delete_branch_that_is_ahead_of_current(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async(kind, "labels", |repo| async move {
+    async fn test_cannot_delete_branch_that_is_ahead_of_current() -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -636,14 +590,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_force_delete_branch_that_is_ahead_of_current(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async(kind, "labels", |repo| async move {
+    async fn test_force_delete_branch_that_is_ahead_of_current() -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async("labels", |repo| async move {
             // add and commit a file
             let new_file = repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -676,59 +625,49 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_list_entry_versions(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_select_data_repo_test_committed_async(
-            kind,
-            "annotations",
-            |mut repo| async move {
-                // Set up remote
-                let remote = test::repo_remote_url_from(&repo.dirname());
-                command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-                let remote_repo = test::create_remote_repo(&repo).await?;
+    async fn test_list_entry_versions() -> Result<(), OxenError> {
+        test::run_select_data_repo_test_committed_async("annotations", |mut repo| async move {
+            // Set up remote
+            let remote = test::repo_remote_url_from(&repo.dirname());
+            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
+            let remote_repo = test::create_remote_repo(&repo).await?;
 
-                // Get path to existing annotations file
-                let file_path = Path::new("annotations")
-                    .join("test")
-                    .join("annotations.csv");
-                let file_repo_path = repo.path.join(&file_path);
+            // Get path to existing annotations file
+            let file_path = Path::new("annotations")
+                .join("test")
+                .join("annotations.csv");
+            let file_repo_path = repo.path.join(&file_path);
 
-                // Store initial commit id
-                let commit_1 = repositories::commits::head_commit(&repo)?;
+            // Store initial commit id
+            let commit_1 = repositories::commits::head_commit(&repo)?;
 
-                // Modify annotations file with new line
-                test::append_line_txt_file(
-                    &file_repo_path,
-                    "test/new_image.jpg,unknown,1.0,1.0,1,1",
-                )?;
-                repositories::add(&repo, &file_repo_path).await?;
-                let commit_2 = repositories::commit(&repo, "adding new annotation")?;
+            // Modify annotations file with new line
+            test::append_line_txt_file(&file_repo_path, "test/new_image.jpg,unknown,1.0,1.0,1,1")?;
+            repositories::add(&repo, &file_repo_path).await?;
+            let commit_2 = repositories::commit(&repo, "adding new annotation")?;
 
-                // Push to remote
-                repositories::push(&repo).await?;
+            // Push to remote
+            repositories::push(&repo).await?;
 
-                // Get paginated versions from API
-                let result = api::client::branches::list_entry_versions(
-                    &remote_repo,
-                    DEFAULT_BRANCH_NAME,
-                    &file_path,
-                    &PaginateOpts::default(),
-                )
-                .await?;
+            // Get paginated versions from API
+            let result = api::client::branches::list_entry_versions(
+                &remote_repo,
+                DEFAULT_BRANCH_NAME,
+                &file_path,
+                &PaginateOpts::default(),
+            )
+            .await?;
 
-                // Verify results
-                assert_eq!(result.versions.len(), 2);
+            // Verify results
+            assert_eq!(result.versions.len(), 2);
 
-                // Most recent version should be first
-                assert_eq!(result.versions[0].commit.id, commit_2.id);
-                assert_eq!(result.versions[1].commit.id, commit_1.id);
+            // Most recent version should be first
+            assert_eq!(result.versions[0].commit.id, commit_2.id);
+            assert_eq!(result.versions[1].commit.id, commit_1.id);
 
-                Ok(())
-            },
-        )
+            Ok(())
+        })
         .await
     }
 }

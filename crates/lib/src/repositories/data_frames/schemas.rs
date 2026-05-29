@@ -170,22 +170,16 @@ pub fn add_column_metadata(
 // unit tests
 #[cfg(test)]
 mod tests {
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::error::OxenError;
     use crate::test;
     use crate::util;
     use crate::{command, repositories};
-    use rstest::rstest;
-
     use serde_json::json;
     use std::path::{Path, PathBuf};
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_schema_list(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(kind, |repo| async move {
+    async fn test_command_schema_list() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let commit = repositories::commits::head_commit(&repo)?;
             let schemas = repositories::data_frames::schemas::list(&repo, &commit)?;
             assert_eq!(schemas.len(), 8);
@@ -215,12 +209,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_stage_and_commit_schema(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
+    async fn test_stage_and_commit_schema() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Make sure no schemas are staged
             let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_schemas.len(), 0);
@@ -272,12 +263,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_copy_schemas_from_parent(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
+    async fn test_copy_schemas_from_parent() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Make sure no schemas are staged
             let status = repositories::status(&repo).await?;
             assert_eq!(status.staged_schemas.len(), 0);
@@ -332,12 +320,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_schemas_add_staged(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async(kind, "annotations", |repo| async move {
+    async fn test_schemas_add_staged() -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Find the bbox csv
             let bbox_path = repo
                 .path
@@ -408,12 +393,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_schemas_schema_rm_staged(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async(kind, "annotations", |repo| async move {
+    async fn test_schemas_schema_rm_staged() -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Find the bbox csv
             let bbox_path = repo
                 .path
@@ -450,14 +432,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_schemas_add_schema_metadata(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async(kind, "annotations", |repo| async move {
+    async fn test_schemas_add_schema_metadata() -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Find the bbox csv
             let bbox_path = repo
                 .path
@@ -486,14 +463,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_schemas_add_schema_metadata_and_col_metadata(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async(kind, "annotations", |repo| async move {
+    async fn test_schemas_add_schema_metadata_and_col_metadata() -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Find the bbox csv
             let bbox_path = repo
                 .path
@@ -538,14 +510,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_schemas_add_column_metadata(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async(kind, "annotations", |repo| async move {
+    async fn test_schemas_add_column_metadata() -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Find the bbox csv
             let bbox_file = Path::new("annotations")
                 .join("train")
@@ -578,14 +545,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_schemas_add_column_to_committed_schema2(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async(kind, "annotations", |repo| async move {
+    async fn test_schemas_add_column_to_committed_schema2() -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Find the bbox csv
             let bbox_file = Path::new("annotations")
                 .join("train")
@@ -640,14 +602,10 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_schemas_add_column_to_committed_schema_after_changing_data(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async(kind, "annotations", |repo| async move {
+    async fn test_schemas_add_column_to_committed_schema_after_changing_data()
+    -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Find the bbox csv
             let bbox_path = repo
                 .path
@@ -696,14 +654,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_schemas_persist_schema_types_across_commits(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async(kind, "annotations", |repo| async move {
+    async fn test_schemas_persist_schema_types_across_commits() -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
             // Find the bbox csv
             let bbox_path = repo
                 .path
@@ -835,14 +788,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_schemas_merge_fast_forward_pull(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_select_data_sync_remote(kind, "README.md", |_local_repo, remote_repo| async move {
+    async fn test_schemas_merge_fast_forward_pull() -> Result<(), OxenError> {
+        test::run_select_data_sync_remote("README.md", |_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             test::run_empty_dir_test_async(|repo_dir_a| async move {
                 let repo_dir_a = repo_dir_a.join("repo_a");

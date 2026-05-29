@@ -198,7 +198,6 @@ pub async fn entries(
 mod tests {
     use crate::api;
     use crate::command;
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::constants;
     use crate::constants::DIFF_STATUS_COL;
     use crate::error::OxenError;
@@ -210,16 +209,11 @@ mod tests {
     use polars::lazy::dsl::col;
     use polars::lazy::dsl::lit;
     use polars::lazy::frame::IntoLazy;
-    use rstest::rstest;
-
     use std::path::PathBuf;
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_compare_commits(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(kind, |mut local_repo, remote_repo| async move {
+    async fn test_compare_commits() -> Result<(), OxenError> {
+        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // Keep track of the commit ids
             let mut commit_ids = Vec::new();
 
@@ -259,14 +253,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_compare_change_at_root_dir_tree(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_sync_repo_test(kind, |mut local_repo, remote_repo| async move {
+    async fn test_compare_change_at_root_dir_tree() -> Result<(), OxenError> {
+        test::run_one_commit_sync_repo_test(|mut local_repo, remote_repo| async move {
             let og_commit = repositories::commits::head_commit(&local_repo)?;
 
             // Write a file
@@ -313,14 +302,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_compare_change_tabular_at_root_dir_tree(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_one_commit_sync_repo_test(kind, |mut local_repo, remote_repo| async move {
+    async fn test_compare_change_tabular_at_root_dir_tree() -> Result<(), OxenError> {
+        test::run_one_commit_sync_repo_test(|mut local_repo, remote_repo| async move {
             // Write a file
             let file_path = PathBuf::from("test_me_out.csv");
             let full_path = &local_repo.path.join(file_path);
@@ -404,12 +388,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_compare_nested_dir_tree(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(kind, |mut local_repo, remote_repo| async move {
+    async fn test_compare_nested_dir_tree() -> Result<(), OxenError> {
+        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // Keep track of the commit ids
             let mut commit_ids = Vec::new();
 
@@ -458,14 +439,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_create_compare_get_derived(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(kind, |mut local_repo, remote_repo| async move {
+    async fn test_remote_create_compare_get_derived() -> Result<(), OxenError> {
+        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // Keying on first 3, targeting on d - should be:
             // 1 modified, 1 added, 1 removed?
             let csv1 = "a,b,c,d\n1,2,3,4\n4,5,6,7\n9,0,1,2";
@@ -564,14 +540,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_compare_does_not_update_automatically(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_remote_repo_test(kind, |mut local_repo, remote_repo| async move {
+    async fn test_remote_compare_does_not_update_automatically() -> Result<(), OxenError> {
+        test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             // Keying on first 3, targeting on d - should be:
             // 1 modified, 1 added, 1 removed?
             let csv1 = "a,b,c,d\n1,2,3,4\n4,5,6,7\n9,0,1,2";

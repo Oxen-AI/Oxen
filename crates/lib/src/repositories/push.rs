@@ -58,7 +58,6 @@ pub async fn push_remote_branch(
 mod tests {
     use crate::api;
     use crate::command;
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::constants;
     use crate::constants::{AVG_CHUNK_SIZE, DEFAULT_BRANCH_NAME, DEFAULT_REMOTE_NAME};
     use crate::core::progress::push_progress::PushProgress;
@@ -71,17 +70,13 @@ mod tests {
     use crate::util;
     use crate::view::entries::EMetadataEntry;
     use futures::future;
-    use rstest::rstest;
     use std::collections::HashSet;
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_push_one_commit(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(kind, |repo| async {
+    async fn test_command_push_one_commit() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async {
             let mut repo = repo;
 
             // Track the file
@@ -132,14 +127,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_push_inbetween_two_commits(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(kind, |repo| async {
+    async fn test_command_push_inbetween_two_commits() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async {
             let mut repo = repo;
             // Track the train dir
             let train_dir = repo.path.join("train");
@@ -191,14 +181,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_push_after_two_commits(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(kind, |repo| async {
+    async fn test_command_push_after_two_commits() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async {
             // Make mutable copy so we can set remote
             let mut repo = repo;
 
@@ -245,14 +230,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_latest_commit_is_computed_properly(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async {
+    async fn test_latest_commit_is_computed_properly() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async {
             // Make mutable copy so we can set remote
             let mut repo = repo;
 
@@ -362,14 +342,9 @@ mod tests {
     }
 
     // This broke when you tried to add the "." directory to add everything, after already committing the train directory.
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_command_push_after_two_commits_adding_dot(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(kind, |repo| async {
+    async fn test_command_push_after_two_commits_adding_dot() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async {
             // Make mutable copy so we can set remote
             let mut repo = repo;
 
@@ -410,14 +385,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_cannot_push_if_remote_not_set(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(kind, |repo| async move {
+    async fn test_cannot_push_if_remote_not_set() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Track the file
             let train_dirname = "train";
             let train_dir = repo.path.join(train_dirname);
@@ -433,14 +403,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_push_branch_with_with_no_new_commits(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(kind, |mut repo| async move {
+    async fn test_push_branch_with_with_no_new_commits() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|mut repo| async move {
             // Track a dir
             let train_path = repo.path.join("train");
             repositories::add(&repo, &train_path).await?;
@@ -544,60 +509,44 @@ mod tests {
     // 2) Create repo B with data
     // 3) Push Repo A
     // 4) Push repo B to repo A and fail
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_cannot_push_two_separate_repos(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(kind, |mut repo_1| async move {
-            test::run_training_data_repo_test_fully_committed_async(
-                kind,
-                |mut repo_2| async move {
-                    // Add to the first repo
-                    let new_file = "new_file.txt";
-                    let new_file_path = repo_1.path.join(new_file);
-                    let new_file_path = test::write_txt_file_to_path(new_file_path, "new file")?;
-                    repositories::add(&repo_1, &new_file_path).await?;
-                    repositories::commit(&repo_1, "Adding first file path.")?;
-                    // Set/create the proper remote
-                    let remote = test::repo_remote_url_from(&repo_1.dirname());
-                    command::config::set_remote(
-                        &mut repo_1,
-                        constants::DEFAULT_REMOTE_NAME,
-                        &remote,
-                    )?;
-                    test::create_remote_repo(&repo_1).await?;
-                    repositories::push(&repo_1).await?;
+    async fn test_cannot_push_two_separate_repos() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|mut repo_1| async move {
+            test::run_training_data_repo_test_fully_committed_async(|mut repo_2| async move {
+                // Add to the first repo
+                let new_file = "new_file.txt";
+                let new_file_path = repo_1.path.join(new_file);
+                let new_file_path = test::write_txt_file_to_path(new_file_path, "new file")?;
+                repositories::add(&repo_1, &new_file_path).await?;
+                repositories::commit(&repo_1, "Adding first file path.")?;
+                // Set/create the proper remote
+                let remote = test::repo_remote_url_from(&repo_1.dirname());
+                command::config::set_remote(&mut repo_1, constants::DEFAULT_REMOTE_NAME, &remote)?;
+                test::create_remote_repo(&repo_1).await?;
+                repositories::push(&repo_1).await?;
 
-                    // Adding two commits to have a longer history that also should fail
-                    let new_file = "new_file_2.txt";
-                    let new_file_path = repo_2.path.join(new_file);
-                    let new_file_path = test::write_txt_file_to_path(new_file_path, "new file 2")?;
-                    repositories::add(&repo_2, &new_file_path).await?;
-                    repositories::commit(&repo_2, "Adding second file path.")?;
+                // Adding two commits to have a longer history that also should fail
+                let new_file = "new_file_2.txt";
+                let new_file_path = repo_2.path.join(new_file);
+                let new_file_path = test::write_txt_file_to_path(new_file_path, "new file 2")?;
+                repositories::add(&repo_2, &new_file_path).await?;
+                repositories::commit(&repo_2, "Adding second file path.")?;
 
-                    let new_file = "new_file_3.txt";
-                    let new_file_path = repo_2.path.join(new_file);
-                    let new_file_path = test::write_txt_file_to_path(new_file_path, "new file 3")?;
-                    repositories::add(&repo_2, &new_file_path).await?;
-                    repositories::commit(&repo_2, "Adding third file path.")?;
+                let new_file = "new_file_3.txt";
+                let new_file_path = repo_2.path.join(new_file);
+                let new_file_path = test::write_txt_file_to_path(new_file_path, "new file 3")?;
+                repositories::add(&repo_2, &new_file_path).await?;
+                repositories::commit(&repo_2, "Adding third file path.")?;
 
-                    // Set remote to the same as the first repo
-                    command::config::set_remote(
-                        &mut repo_2,
-                        constants::DEFAULT_REMOTE_NAME,
-                        &remote,
-                    )?;
+                // Set remote to the same as the first repo
+                command::config::set_remote(&mut repo_2, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
-                    // Push should FAIL
-                    let result = repositories::push(&repo_2).await;
-                    assert!(result.is_err());
+                // Push should FAIL
+                let result = repositories::push(&repo_2).await;
+                assert!(result.is_err());
 
-                    Ok(())
-                },
-            )
+                Ok(())
+            })
             .await?;
 
             Ok(())
@@ -605,102 +554,84 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_push_many_commits_default_branch(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_many_local_commits_empty_sync_remote_test(
-            kind,
-            |local_repo, remote_repo| async move {
-                // Nothing should be synced on remote and no commit objects created
-                let history =
-                    api::client::commits::list_commit_history(&remote_repo, DEFAULT_BRANCH_NAME)
-                        .await?;
-                assert_eq!(history.len(), 0);
+    async fn test_push_many_commits_default_branch() -> Result<(), OxenError> {
+        test::run_many_local_commits_empty_sync_remote_test(|local_repo, remote_repo| async move {
+            // Nothing should be synced on remote and no commit objects created
+            let history =
+                api::client::commits::list_commit_history(&remote_repo, DEFAULT_BRANCH_NAME)
+                    .await?;
+            assert_eq!(history.len(), 0);
 
-                // Push all to remote
-                repositories::push(&local_repo).await?;
+            // Push all to remote
+            repositories::push(&local_repo).await?;
 
-                // Should now have 25 commits on remote
-                let history =
-                    api::client::commits::list_commit_history(&remote_repo, DEFAULT_BRANCH_NAME)
-                        .await?;
-                assert_eq!(history.len(), 25);
+            // Should now have 25 commits on remote
+            let history =
+                api::client::commits::list_commit_history(&remote_repo, DEFAULT_BRANCH_NAME)
+                    .await?;
+            assert_eq!(history.len(), 25);
 
-                Ok(remote_repo)
-            },
-        )
+            Ok(remote_repo)
+        })
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_push_many_commits_new_branch(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_many_local_commits_empty_sync_remote_test(
-            kind,
-            |local_repo, remote_repo| async move {
-                // Nothing should be synced on remote and no commit objects created
-                let history =
-                    api::client::commits::list_commit_history(&remote_repo, DEFAULT_BRANCH_NAME)
-                        .await?;
-                assert_eq!(history.len(), 0);
+    async fn test_push_many_commits_new_branch() -> Result<(), OxenError> {
+        test::run_many_local_commits_empty_sync_remote_test(|local_repo, remote_repo| async move {
+            // Nothing should be synced on remote and no commit objects created
+            let history =
+                api::client::commits::list_commit_history(&remote_repo, DEFAULT_BRANCH_NAME)
+                    .await?;
+            assert_eq!(history.len(), 0);
 
-                // Create new local branch
-                let new_branch_name = "my-branch";
-                repositories::branches::create_checkout(&local_repo, new_branch_name)?;
+            // Create new local branch
+            let new_branch_name = "my-branch";
+            repositories::branches::create_checkout(&local_repo, new_branch_name)?;
 
-                // New commit
-                let new_file = "new_file.txt";
-                let new_file_path = local_repo.path.join(new_file);
-                let new_file_path = test::write_txt_file_to_path(new_file_path, "new file")?;
-                repositories::add(&local_repo, &new_file_path).await?;
-                repositories::commit(&local_repo, "Adding first file path.")?;
+            // New commit
+            let new_file = "new_file.txt";
+            let new_file_path = local_repo.path.join(new_file);
+            let new_file_path = test::write_txt_file_to_path(new_file_path, "new file")?;
+            repositories::add(&local_repo, &new_file_path).await?;
+            repositories::commit(&local_repo, "Adding first file path.")?;
 
-                // Push new branch to remote without first syncing main
-                let opts = PushOpts {
-                    remote: DEFAULT_REMOTE_NAME.to_string(),
-                    branch: new_branch_name.to_string(),
-                    ..Default::default()
-                };
-                repositories::push::push_remote_branch(&local_repo, &opts).await?;
+            // Push new branch to remote without first syncing main
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: new_branch_name.to_string(),
+                ..Default::default()
+            };
+            repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
-                // Should now have 26 commits on remote on new branch
-                let history_new =
-                    api::client::commits::list_commit_history(&remote_repo, new_branch_name)
-                        .await?;
-                assert_eq!(history_new.len(), 26);
+            // Should now have 26 commits on remote on new branch
+            let history_new =
+                api::client::commits::list_commit_history(&remote_repo, new_branch_name).await?;
+            assert_eq!(history_new.len(), 26);
 
-                // TODO: v0_10_0 logic should have 1 commit on main
-                // Should still have no commits on main
-                let history_main =
-                    api::client::commits::list_commit_history(&remote_repo, DEFAULT_BRANCH_NAME)
-                        .await;
-                log::debug!("history_main: {history_main:?}");
-                // assert_eq!(history_main.len(), 1);
-                assert!(history_main.is_err());
+            // TODO: v0_10_0 logic should have 1 commit on main
+            // Should still have no commits on main
+            let history_main =
+                api::client::commits::list_commit_history(&remote_repo, DEFAULT_BRANCH_NAME).await;
+            log::debug!("history_main: {history_main:?}");
+            // assert_eq!(history_main.len(), 1);
+            assert!(history_main.is_err());
 
-                // Back to main
-                repositories::checkout(&local_repo, DEFAULT_BRANCH_NAME).await?;
+            // Back to main
+            repositories::checkout(&local_repo, DEFAULT_BRANCH_NAME).await?;
 
-                // Push to remote
-                repositories::push(&local_repo).await?;
+            // Push to remote
+            repositories::push(&local_repo).await?;
 
-                // 25 on main
-                let history_main =
-                    api::client::commits::list_commit_history(&remote_repo, DEFAULT_BRANCH_NAME)
-                        .await?;
-                assert_eq!(history_main.len(), 25);
+            // 25 on main
+            let history_main =
+                api::client::commits::list_commit_history(&remote_repo, DEFAULT_BRANCH_NAME)
+                    .await?;
+            assert_eq!(history_main.len(), 25);
 
-                Ok(remote_repo)
-            },
-        )
+            Ok(remote_repo)
+        })
         .await
     }
 
@@ -769,19 +700,14 @@ mod tests {
     // 2) Clone repo B with data
     // 3) Push Repo A
     // 4) Push repo B to repo A and fail
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_tree_cannot_push_two_separate_cloned_repos(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_tree_cannot_push_two_separate_cloned_repos() -> Result<(), OxenError> {
         // Push the first repo with data
-        test::run_training_data_fully_sync_remote(kind, |_, remote_repo_1| async move {
+        test::run_training_data_fully_sync_remote(|_, remote_repo_1| async move {
             let remote_repo_1_copy = remote_repo_1.clone();
 
             // Push the second repo with data
-            test::run_training_data_fully_sync_remote(kind, |_, remote_repo_2| async move {
+            test::run_training_data_fully_sync_remote(|_, remote_repo_2| async move {
                 let remote_repo_2_copy = remote_repo_2.clone();
                 // Clone the first repo
                 test::run_empty_dir_test_async(|first_repo_dir| async move {
@@ -856,14 +782,9 @@ mod tests {
     // * User A makes a commit and pushes
     // * User B makes a different commit — normal push fails
     // * User B force pushes — succeeds and remote matches user B's history
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_force_push_when_remote_is_ahead(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(kind, |_, remote_repo| async move {
+    async fn test_force_push_when_remote_is_ahead() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             // Clone to user A
@@ -935,15 +856,10 @@ mod tests {
     // * User B makes commit modifying `README.md` pushes and fails
     // * User B pulls user A's changes and there is a conflict
     // * User B fixes the conflict and pushes and succeeds
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_tree_cannot_push_when_remote_repo_is_ahead_same_file(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_tree_cannot_push_when_remote_repo_is_ahead_same_file() -> Result<(), OxenError> {
         // Push the Remote Repo
-        test::run_training_data_fully_sync_remote(kind, |_, remote_repo| async move {
+        test::run_training_data_fully_sync_remote(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             // Clone Repo to User A
@@ -1029,15 +945,11 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_tree_cannot_push_when_remote_is_many_commits_ahead_tree_conflicts(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_tree_cannot_push_when_remote_is_many_commits_ahead_tree_conflicts()
+    -> Result<(), OxenError> {
         // Push the Remote Repo
-        test::run_training_data_fully_sync_remote(kind, |_, remote_repo| async move {
+        test::run_training_data_fully_sync_remote(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             // Clone Repo to User A
@@ -1104,15 +1016,10 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_tree_cannot_push_tree_conflict_deleted_file(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_tree_cannot_push_tree_conflict_deleted_file() -> Result<(), OxenError> {
         // Push the Remote Repo
-        test::run_training_data_fully_sync_remote(kind, |_, remote_repo| async move {
+        test::run_training_data_fully_sync_remote(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             // Clone Repo to User A
             test::run_empty_dir_test_async(|user_a_repo_dir| async move {
@@ -1243,14 +1150,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_push_move_entire_directory(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(kind, |local_repo, remote_repo| async move {
+    async fn test_push_move_entire_directory() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
             // Move the README to a new file name
             let train_images = local_repo.path.join("train");
             let new_path = local_repo.path.join("images").join("train");
@@ -1310,14 +1212,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_push_only_one_modified_file(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(kind, |local_repo, remote_repo| async move {
+    async fn test_push_only_one_modified_file() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
             // Move the README to a new file name
             let readme_path = local_repo.path.join("README.md");
             let new_path = local_repo.path.join("README2.md");
@@ -1352,14 +1249,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_push_root_subtree_depth_1(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(kind, |_local_repo, remote_repo| async move {
+    async fn test_push_root_subtree_depth_1() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
@@ -1404,14 +1296,9 @@ A: Oxen.ai is a great tool for this! It can handle any size dataset, and is opti
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_push_annotations_test_subtree(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(kind, |_local_repo, remote_repo| async move {
+    async fn test_push_annotations_test_subtree() -> Result<(), OxenError> {
+        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
@@ -1465,15 +1352,10 @@ A: Checkout Oxen.ai
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_push_subtree_nlp_classification(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_push_subtree_nlp_classification() -> Result<(), OxenError> {
         // Push the Remote Repo
-        test::run_training_data_fully_sync_remote(kind, |_, remote_repo| async move {
+        test::run_training_data_fully_sync_remote(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             // Clone Repo
@@ -1538,15 +1420,10 @@ A: Checkout Oxen.ai
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_push_partial_clone_nlp_classification(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_push_partial_clone_nlp_classification() -> Result<(), OxenError> {
         // Push the Remote Repo
-        test::run_training_data_fully_sync_remote(kind, |_, remote_repo| async move {
+        test::run_training_data_fully_sync_remote(|_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             // Clone Repo
@@ -1694,14 +1571,9 @@ A: Checkout Oxen.ai
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_push_file_with_exact_avg_chunk_size(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(kind, |local_repo, remote_repo| async move {
+    async fn test_push_file_with_exact_avg_chunk_size() -> Result<(), OxenError> {
+        test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
             let local_repo = local_repo.clone();
             let remote_repo = remote_repo.clone();
 
@@ -1774,13 +1646,8 @@ A: Checkout Oxen.ai
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_merge_conflict_push_failure(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_merge_conflict_push_failure() -> Result<(), OxenError> {
         // Test that after a merge conflict, pushing again should fail
         // 1) Create repo, push
         // 2) Clone to different location
@@ -1788,7 +1655,7 @@ A: Checkout Oxen.ai
         // 4) Modify dir1/file1.txt in original, add, commit, pull (expect merge conflict)
         // 5) After merge conflict, pushing should fail
 
-        test::run_training_data_fully_sync_remote(kind, |original_repo, remote_repo| async move {
+        test::run_training_data_fully_sync_remote(|original_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             // Create dir1/file1.txt in the original repo
@@ -1856,14 +1723,9 @@ A: Checkout Oxen.ai
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_create_nodes_before_starting_push(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(kind, |local_repo, remote_repo| async move {
+    async fn test_create_nodes_before_starting_push() -> Result<(), OxenError> {
+        test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
             // Add a single new file
             let new_file = local_repo.path.join("new_file.txt");
             util::fs::write(&new_file, "I am a new file")?;
@@ -1916,20 +1778,15 @@ A: Checkout Oxen.ai
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_push_large_file_and_clone_verify(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_push_large_file_and_clone_verify() -> Result<(), OxenError> {
         // Test pushing a 100MB file and cloning to verify all files
         // 1) Create local repo with 100MB file
         // 2) Push to remote
         // 3) Clone to different directory
         // 4) Verify file exists and contents match
 
-        test::run_empty_local_repo_test_async(kind, |local_repo| async move {
+        test::run_empty_local_repo_test_async(|local_repo| async move {
             // Create a 100MB file
             let file_size = 100 * 1024 * 1024; // 100MB
             let file_path = local_repo.path.join("large_file.bin");
@@ -2022,17 +1879,12 @@ A: Checkout Oxen.ai
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_push_large_file_in_subdir_and_clone_verify(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_push_large_file_in_subdir_and_clone_verify() -> Result<(), OxenError> {
         // Test pushing a >10MB file inside a subdirectory, then cloning.
         // This exercises the chunk download path where entry.path must include
         // the directory prefix for the server to find the file.
-        test::run_empty_local_repo_test_async(kind, |local_repo| async move {
+        test::run_empty_local_repo_test_async(|local_repo| async move {
             // Create a subdirectory and write a >10MB file into it
             let sub_dir = local_repo.path.join("data").join("models");
             util::fs::create_dir_all(&sub_dir)?;

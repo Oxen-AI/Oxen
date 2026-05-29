@@ -27,8 +27,6 @@ pub fn status_from_dir(
 
 #[cfg(test)]
 mod tests {
-    use crate::config::repository_config::MerkleStoreKind;
-    use rstest::rstest;
     use std::path::Path;
 
     use crate::error::OxenError;
@@ -37,14 +35,9 @@ mod tests {
 
     /// A clean workspace (named or otherwise) must yield an empty StagedData rather than
     /// an error. The HTTP layer relies on this to return 200 instead of 404.
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_status_clean_workspace_returns_empty(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_status_clean_workspace_returns_empty() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let file = repo.path.join("hello.txt");
             crate::util::fs::write_to_path(&file, "hello")?;
             repositories::add(&repo, &file).await?;
@@ -74,19 +67,14 @@ mod tests {
     /// internals (e.g. `CURRENT`) — a never-fully-initialized or mid-init state — must
     /// still return an empty `StagedData` rather than a corruption error. Otherwise the
     /// HTTP layer surfaces 500 for a benign clean-workspace race.
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_status_partial_staged_db_returns_empty(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
+    async fn test_status_partial_staged_db_returns_empty() -> Result<(), OxenError> {
         use crate::constants::STAGED_DIR;
         use crate::core::staged::staged_db_manager;
         use crate::util;
         use rocksdb::{DB, Options};
 
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let file = repo.path.join("hello.txt");
             crate::util::fs::write_to_path(&file, "hello")?;
             repositories::add(&repo, &file).await?;

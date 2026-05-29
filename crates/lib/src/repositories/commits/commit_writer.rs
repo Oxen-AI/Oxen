@@ -1256,10 +1256,8 @@ fn create_commit_data(
 
 #[cfg(test)]
 mod tests {
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::model::merkle_tree::merkle_reader::MerkleEntry;
     use crate::test;
-    use rstest::rstest;
     use std::collections::HashSet;
     use std::path::Path;
 
@@ -1272,17 +1270,14 @@ mod tests {
     use crate::util;
     use test::add_n_files_m_dirs;
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_first_commit(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_empty_dir_test_for_kind_async(kind, |dir| async move {
+    async fn test_first_commit() -> Result<(), OxenError> {
+        test::run_empty_dir_test_for_kind_async(|dir| async move {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init_with_version_and_merkle_store(
                 &dir,
                 crate::constants::MIN_OXEN_VERSION,
-                kind,
+                test::merkle_store_kind_from_env(),
             )?;
 
             // Write data to the repo
@@ -1365,19 +1360,14 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_commit_only_dirs_at_top_level(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_dir_test_for_kind_async(kind, async |dir| {
+    async fn test_commit_only_dirs_at_top_level() -> Result<(), OxenError> {
+        test::run_empty_dir_test_for_kind_async(async |dir| {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init_with_version_and_merkle_store(
                 &dir,
                 crate::constants::MIN_OXEN_VERSION,
-                kind,
+                test::merkle_store_kind_from_env(),
             )?;
 
             // Add a new file to files/dir_0/
@@ -1404,19 +1394,14 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_commit_single_file_deep_in_dir(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_dir_test_for_kind_async(kind, |dir| async move {
+    async fn test_commit_single_file_deep_in_dir() -> Result<(), OxenError> {
+        test::run_empty_dir_test_for_kind_async(|dir| async move {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init_with_version_and_merkle_store(
                 &dir,
                 crate::constants::MIN_OXEN_VERSION,
-                kind,
+                test::merkle_store_kind_from_env(),
             )?;
 
             // Add a new file to files/dir_0/
@@ -1443,19 +1428,14 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_2nd_commit_keeps_num_bytes_and_data_type_counts(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_dir_test_for_kind_async(kind, |dir| async move {
+    async fn test_2nd_commit_keeps_num_bytes_and_data_type_counts() -> Result<(), OxenError> {
+        test::run_empty_dir_test_for_kind_async(|dir| async move {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init_with_version_and_merkle_store(
                 &dir,
                 crate::constants::MIN_OXEN_VERSION,
-                kind,
+                test::merkle_store_kind_from_env(),
             )?;
 
             // Write data to the repo
@@ -1508,17 +1488,14 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_second_commit(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_empty_dir_test_for_kind_async(kind, |dir| async move {
+    async fn test_second_commit() -> Result<(), OxenError> {
+        test::run_empty_dir_test_for_kind_async(|dir| async move {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init_with_version_and_merkle_store(
                 &dir,
                 crate::constants::MIN_OXEN_VERSION,
-                kind,
+                test::merkle_store_kind_from_env(),
             )?;
 
             // Write data to the repo
@@ -1637,19 +1614,14 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_commit_configurable_vnode_size(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_dir_test_for_kind_async(kind, |dir| async move {
+    async fn test_commit_configurable_vnode_size() -> Result<(), OxenError> {
+        test::run_empty_dir_test_for_kind_async(|dir| async move {
             // Instantiate the correct version of the repo
             let mut repo = repositories::init::init_with_version_and_merkle_store(
                 &dir,
                 crate::constants::MIN_OXEN_VERSION,
-                kind,
+                test::merkle_store_kind_from_env(),
             )?;
             // Set the vnode size to 5
             repo.set_vnode_size(5);
@@ -1725,19 +1697,14 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_commit_20_files_6_vnode_size(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_dir_test_for_kind_async(kind, |dir| async move {
+    async fn test_commit_20_files_6_vnode_size() -> Result<(), OxenError> {
+        test::run_empty_dir_test_for_kind_async(|dir| async move {
             // Instantiate the correct version of the repo
             let mut repo = repositories::init::init_with_version_and_merkle_store(
                 &dir,
                 crate::constants::MIN_OXEN_VERSION,
-                kind,
+                test::merkle_store_kind_from_env(),
             )?;
             // Set the vnode size to 6
             repo.set_vnode_size(6);
@@ -1804,17 +1771,14 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_third_commit(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_empty_dir_test_for_kind_async(kind, |dir| async move {
+    async fn test_third_commit() -> Result<(), OxenError> {
+        test::run_empty_dir_test_for_kind_async(|dir| async move {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init_with_version_and_merkle_store(
                 &dir,
                 crate::constants::MIN_OXEN_VERSION,
-                kind,
+                test::merkle_store_kind_from_env(),
             )?;
 
             // Write data to the repo
@@ -1897,12 +1861,9 @@ mod tests {
     updating the root dir hash of the _initial_ commit to the root dir hash from
     the commit where the directory was removed.
      */
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_rm_dir_doesnt_break_tree(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(kind, async |repo| {
+    async fn test_rm_dir_doesnt_break_tree() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(async |repo| {
             // create initial commit
             let readme = repo.path.join("README.md");
             repositories::add(&repo, &readme).await?;

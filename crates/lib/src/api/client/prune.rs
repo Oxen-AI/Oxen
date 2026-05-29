@@ -82,20 +82,14 @@ pub async fn prune(remote_repo: &RemoteRepository, dry_run: bool) -> Result<Prun
 mod tests {
     use crate::api;
     use crate::command;
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::constants::DEFAULT_REMOTE_NAME;
     use crate::error::OxenError;
     use crate::repositories;
     use crate::test;
     use crate::util;
-    use rstest::rstest;
-
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_prune_dry_run(#[case] kind: MerkleStoreKind) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |mut local_repo| async move {
+    async fn test_remote_prune_dry_run() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let train_dir = repo_dir.join("train");
             util::fs::create_dir_all(&train_dir)?;
@@ -127,14 +121,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_remote_prune_removes_dangling_branch(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |mut local_repo| async move {
+    async fn test_remote_prune_removes_dangling_branch() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = &local_repo.path;
             let train_dir = repo_dir.join("train");
             util::fs::create_dir_all(&train_dir)?;

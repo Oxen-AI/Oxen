@@ -991,19 +991,11 @@ pub fn list_by_path_from_paginated(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::repositories;
     use crate::test;
-    use rstest::rstest;
-
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_pagination_order_with_more_than_10_commits(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_pagination_order_with_more_than_10_commits() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Create 15 commits to trigger the slow path (skip + limit > 10)
             let mut commit_ids = Vec::new();
 
@@ -1061,14 +1053,9 @@ mod tests {
         .await
     }
 
-    #[rstest]
-    #[case::file(MerkleStoreKind::File)]
-    #[case::lmdb(MerkleStoreKind::Lmdb)]
     #[tokio::test]
-    async fn test_pagination_with_forward_path(
-        #[case] kind: MerkleStoreKind,
-    ) -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(kind, |repo| async move {
+    async fn test_pagination_with_forward_path() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Create exactly 10 commits - this should use forward pagination (fast path)
             let mut commit_ids = Vec::new();
 

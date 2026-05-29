@@ -458,18 +458,21 @@ mod tests {
         )?;
 
         // File-backed target.
-        test::run_empty_local_repo_test_async(MerkleStoreKind::File, |target_repo| async move {
-            let installed = target_repo
-                .merkle_transport()?
-                .unpack(&mut &buf[..], UnpackOptions::Overwrite)?;
-            assert!(
-                installed.contains(&parent_h),
-                "unpack reported {installed:?}"
-            );
-            let store = target_repo.merkle_store()?;
-            assert!(store.exists(&parent_h)?);
-            Ok(())
-        })
+        test::run_empty_local_repo_test_async_with_kind(
+            MerkleStoreKind::File,
+            |target_repo| async move {
+                let installed = target_repo
+                    .merkle_transport()?
+                    .unpack(&mut &buf[..], UnpackOptions::Overwrite)?;
+                assert!(
+                    installed.contains(&parent_h),
+                    "unpack reported {installed:?}"
+                );
+                let store = target_repo.merkle_store()?;
+                assert!(store.exists(&parent_h)?);
+                Ok(())
+            },
+        )
         .await?;
         Ok(())
     }
@@ -478,7 +481,7 @@ mod tests {
     /// the LMDB unpacker accepts the canonical file backend wire format.
     #[tokio::test]
     async fn test_file_pack_unpacks_into_lmdb() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(
+        test::run_one_commit_local_repo_test_async_with_kind(
             MerkleStoreKind::File,
             |source_repo| async move {
                 // Pack everything that's in the file-backed source.
