@@ -775,11 +775,6 @@ impl OxenError {
         OxenError::InvalidVersion(StringError::from(s.as_ref()))
     }
 
-    /// Make a new OxenError::UnsupportedRepoVersion error.
-    pub fn unsupported_repo_version(s: impl AsRef<str>) -> Self {
-        OxenError::UnsupportedRepoVersion(StringError::from(s.as_ref()))
-    }
-
     /// Makes an OxenError::Upload error.
     pub fn upload(s: &str) -> Self {
         OxenError::Upload(StringError::from(s))

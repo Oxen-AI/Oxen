@@ -34,7 +34,7 @@ impl MinOxenVersion {
 
     pub fn from_string(s: impl AsRef<str>) -> Result<MinOxenVersion, OxenError> {
         match s.as_ref() {
-            "0.10.0" => Err(OxenError::unsupported_repo_version(s.as_ref())),
+            "0.10.0" => Err(OxenError::UnsupportedRepoVersion(s.as_ref().into())),
             "0.19.0" => Ok(MinOxenVersion::V0_19_0),
             "0.25.0" => Ok(MinOxenVersion::V0_25_0),
             "0.36.0" => Ok(MinOxenVersion::LATEST),
