@@ -1261,19 +1261,16 @@ where
 
     // Run test to see if it panic'd
     log::info!(">>>>> run_select_data_repo_test_committed_async running test");
-    let result = match test(repo).await {
-        Ok(_) => true,
-        Err(err) => {
-            eprintln!("Error running test. Err: {err}");
-            false
-        }
-    };
+    let result = test(repo).await;
 
     // Remove repo dir
     maybe_cleanup_repo(&repo_dir)?;
 
     // Assert everything okay after we cleanup the repo dir
-    assert!(result);
+    assert!(
+        matches!(result, Ok(_)),
+        "Error running test. Err: {result:?}"
+    );
     Ok(())
 }
 
@@ -1291,19 +1288,16 @@ where
 
     // Run test to see if it panic'd
     log::info!(">>>>> run_empty_data_repo_test_no_commits_async running test");
-    let result = match test(repo).await {
-        Ok(_) => true,
-        Err(err) => {
-            eprintln!("Error running test. Err: {err}");
-            false
-        }
-    };
+    let result = test(repo).await;
 
     // Remove repo dir
     maybe_cleanup_repo(&repo_dir)?;
 
     // Assert everything okay after we cleanup the repo dir
-    assert!(result);
+    assert!(
+        matches!(result, Ok(_)),
+        "Error running test. Err: {result:?}"
+    );
     Ok(())
 }
 
