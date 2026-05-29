@@ -44,6 +44,7 @@ impl HashCN {
     }
 
     /// The little-endian 16-byte representation, for writing into an LMDB value.
+    #[warn(clippy::wrong_self_convention)]
     #[inline(always)]
     pub(in crate::core::db::merkle_node::lmdb) fn to_le_bytes(&self) -> [u8; 16] {
         self.0.to_le_bytes()
@@ -54,6 +55,7 @@ impl HashCN {
     }
 
     /// The hexidecimal representation of the name-content hash.
+    #[warn(clippy::wrong_self_convention)]
     pub fn to_hex_hash(&self) -> HexHashCN {
         HexHashCN::new(self)
     }

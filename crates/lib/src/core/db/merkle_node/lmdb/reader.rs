@@ -136,7 +136,7 @@ fn get_non_file_node_bytes_reference<'a>(
     hash: &MerkleHash,
 ) -> Result<Option<(LmdbNodeRef<'a>, HashCN)>, LmdbError> {
     let Some(bytes) =
-        LmdbBackend::retrieve_bytes(&rtxn, &lmdb.tables.merkle_node_dupes, &hash.to_u128())?
+        LmdbBackend::retrieve_bytes(rtxn, &lmdb.tables.merkle_node_dupes, &hash.to_u128())?
     else {
         return Ok(None);
     };
@@ -157,7 +157,7 @@ fn get_non_file_node_bytes_reference<'a>(
     };
 
     let Some(bytes) =
-        LmdbBackend::retrieve_bytes(&rtxn, &lmdb.tables.merkle_node_store, hash_cn.as_u128())?
+        LmdbBackend::retrieve_bytes(rtxn, &lmdb.tables.merkle_node_store, hash_cn.as_u128())?
     else {
         return Err(LmdbError::IntegrityNoNode(hash_cn.to_hex_hash()));
     };

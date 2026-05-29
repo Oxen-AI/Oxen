@@ -1267,10 +1267,7 @@ where
     maybe_cleanup_repo(&repo_dir)?;
 
     // Assert everything okay after we cleanup the repo dir
-    assert!(
-        matches!(result, Ok(_)),
-        "Error running test. Err: {result:?}"
-    );
+    assert!(result.is_ok(), "Error running test. Err: {result:?}");
     Ok(())
 }
 
@@ -1294,10 +1291,7 @@ where
     maybe_cleanup_repo(&repo_dir)?;
 
     // Assert everything okay after we cleanup the repo dir
-    assert!(
-        matches!(result, Ok(_)),
-        "Error running test. Err: {result:?}"
-    );
+    assert!(result.is_ok(), "Error running test. Err: {result:?}");
     Ok(())
 }
 

@@ -382,7 +382,7 @@ pub(super) enum DupeUnqResult {
     /// A [`MerkleHash`] is unique.
     Some(HashCN),
     /// > 1 case is normal => means that this is a duplicate file
-    /// we only want `MerkleHash`es that are unique, so ignore
+    /// > we only want `MerkleHash`es that are unique, so ignore
     None,
 }
 
@@ -742,7 +742,7 @@ mod tests {
         let r = LmdbLinkRef::from_bytes(&r_bytes).expect("ref parse");
         assert_eq!(r.num_children(), 2);
         assert_eq!(r.children_iter().collect::<Vec<_>>(), children);
-        assert_eq!(r.get_child(0).as_ref(), children.get(0));
+        assert_eq!(r.get_child(0).as_ref(), children.first());
         assert_eq!(r.get_child(1).as_ref(), children.get(1));
     }
 
