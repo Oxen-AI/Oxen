@@ -18,7 +18,7 @@ pub(super) fn hash_cn_from(node: &dyn TMerkleTreeNode) -> HashCN {
 // contents and the non-empty filename — except for [`HashCN::from_raw_u128`],
 // which rehydrates an already-computed value read back out of LMDB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(super) struct HashCN(u128);
+pub struct HashCN(u128);
 
 impl HashCN {
     #[inline(always)]
@@ -60,7 +60,7 @@ impl HashCN {
 }
 
 /// The name of a file. Can only be constructed from a valid filepath.
-pub(super) struct Filename(String);
+pub struct Filename(String);
 
 impl Filename {
     /// Get the name of the file. Returns None if the path has no file name or if it is not a file.

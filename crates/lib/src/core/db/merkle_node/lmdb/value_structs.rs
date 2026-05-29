@@ -742,8 +742,8 @@ mod tests {
         let r = LmdbLinkRef::from_bytes(&r_bytes).expect("ref parse");
         assert_eq!(r.num_children(), 2);
         assert_eq!(r.children_iter().collect::<Vec<_>>(), children);
-        assert_eq!(r.get_child(0), children.get(0));
-        assert_eq!(r.get_child(1), children.get(1));
+        assert_eq!(r.get_child(0).as_ref(), children.get(0));
+        assert_eq!(r.get_child(1).as_ref(), children.get(1));
     }
 
     #[test]

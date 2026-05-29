@@ -197,6 +197,7 @@ impl NodeWriteSession for LmdbNodeWriteSession {
 mod tests {
     use crate::config::repository_config::MerkleStoreKind;
     use crate::core::db::merkle_node::LmdbBackend;
+    use crate::core::db::merkle_node::lmdb::hash_content_name::HashCN;
     use crate::error::OxenError;
     use crate::model::MerkleHash;
     use crate::model::merkle_tree::merkle_reader::MerkleReader;
@@ -324,26 +325,28 @@ mod tests {
             let file_h = h("dddddddddddddddddddddddddddddddd");
             let chunk_h = h("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
 
-            write_one(backend, &commit_with_hash(repo, commit_h), None)?;
-            write_one(backend, &dir_with_hash(repo, dir_h), Some(parent))?;
-            write_one(backend, &vnode_with_hash(repo, vnode_h), Some(parent))?;
-            write_one(backend, &file_node_with_hash(repo, file_h), Some(parent))?;
-            write_one(backend, &file_chunk_node_with_hash(chunk_h), Some(parent))?;
+            let commit_h_cn = write_one(backend, &commit_with_hash(repo, commit_h), None)?;
+            let dir_h_cn = write_one(backend, &dir_with_hash(repo, dir_h), Some(parent))?;
+            let vnode_h_cn = write_one(backend, &vnode_with_hash(repo, vnode_h), Some(parent))?;
+            let file_h_cn = write_one(backend, &file_node_with_hash(repo, file_h), Some(parent))?;
+            let chunk_h_cn = write_one(backend, &file_chunk_node_with_hash(chunk_h), Some(parent))?;
 
-            let commit_link = backend.get_links(&commit_h)?.expect("commit link");
+            let commit_link = backend.get_links(&commit_h_cn)?.expect("commit link");
             assert_eq!(commit_link.parent_id, None);
             assert!(commit_link.children.is_empty());
 
-            for hash in [&dir_h, &vnode_h, &file_h, &chunk_h] {
-                let link = backend.get_links(hash)?.expect("link for non-commit kind");
+            for hash_cn in [&dir_h_cn, &vnode_h_cn, &file_h_cn, &chunk_h_cn] {
+                let link = backend
+                    .get_links(hash_cn)?
+                    .expect("link for non-commit kind");
                 assert_eq!(
                     link.parent_id,
                     Some(parent),
-                    "parent should round-trip for {hash}"
+                    "parent should round-trip for {hash_cn}"
                 );
                 assert!(
                     link.children.is_empty(),
-                    "no add_child was called for {hash}"
+                    "no add_child was called for {hash_cn}"
                 );
             }
             Ok(())
@@ -353,7 +356,10 @@ mod tests {
     #[test]
     fn test_get_links_returns_none_for_unwritten_hash() -> Result<(), OxenError> {
         with_test_backend(|_repo, backend| {
-            let missing = MerkleHash::new(0xDEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF_u128);
+            let missing = HashCN::new(
+                &MerkleHash::new(0xDEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF_u128),
+                None,
+            );
             assert!(backend.get_links(&missing)?.is_none());
             Ok(())
         })
@@ -370,9 +376,10 @@ mod tests {
             assert!(!backend.exists(&missing)?);
             assert!(backend.get_node(&missing)?.is_none());
             assert!(backend.get_children(&missing)?.is_empty());
-            assert!(!backend.full_exists(&missing)?);
-            assert!(backend.full_get_node(&missing)?.is_none());
-            assert!(backend.get_links(&missing)?.is_none());
+            let missing_cn = HashCN::new(&missing, None);
+            assert!(!backend.full_exists(&missing_cn)?);
+            assert!(backend.full_get_node(&missing_cn)?.is_none());
+            assert!(backend.get_links(&missing_cn)?.is_none());
             Ok(())
         })
     }
