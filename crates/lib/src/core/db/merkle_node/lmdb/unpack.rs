@@ -30,7 +30,7 @@ use crate::core::db::merkle_node::lmdb::{
     LmdbError,
     hash_content_name::{Filename, HashCN, hash_cn_from},
     lmdb_backend::{LmdbBackend, LmdbTables},
-    value_structs::LmdbNode,
+    value_structs::{LmdbLink, LmdbNode},
 };
 use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
 use crate::error::OxenError;
@@ -338,6 +338,13 @@ fn write_unpacked_into_lmdb(
         parsed
     };
 
+    // Snapshot the set of `(content_hash, hash_cn)` pairs that have their own
+    // `{prefix}/{suffix}/` entry in the tar — used below to skip the
+    // minimal-link write for any embedded child that will be handled by its
+    // own iteration of the loop.
+    let parsed_pair_keys: HashSet<(MerkleHash, HashCN)> =
+        node_and_children.keys().copied().collect();
+
     let h = Helper {
         overwrite,
         tables: &backend.tables,
@@ -354,6 +361,15 @@ fn write_unpacked_into_lmdb(
             entry.data.clone(),
         )?;
 
+        // Snapshot the embedded children's identity + kind *before* consuming
+        // `entry.children` for `put_link` — we need it for the minimal-link pass
+        // immediately below.
+        let embedded: Vec<(MerkleHash, HashCN, MerkleTreeNodeType)> = entry
+            .children
+            .iter()
+            .map(|c| (c.hash, c.hash_cn, c.kind))
+            .collect();
+
         let child_hashes = entry
             .children
             .into_iter()
@@ -367,52 +383,48 @@ fn write_unpacked_into_lmdb(
             )
             .collect::<Vec<_>>();
 
+        // Writes (a) the parent's link and (b) each child's node row (via the
+        // inner `put_node` inside `LmdbTables::put_links`).
         h.put_link(&mut wtxn, &node_hash_cn, entry.parent_id, child_hashes)?;
-        // TODO NOTE: the below loop doesn't need to be written anymore.
-        //            [`Helper::put_link`] writes each child as a node.
-        //
-        //            Additionally, the "minimal link" will be written later if
-        //            the child is a non file or file chunk node. When this happens,
-        //            it will have the correct set of links to write.
-        //            Files/file chunks don't have children so they shouldn't have an entry.
 
-        // // Embedded children: their `node` row is observable through this parent
-        // // entry alone. If they don't have a full entry of their own in the tar,
-        // // write a node + minimal-link pair so `get_node` doesn't trip its
-        // // "node present but no link" integrity check.
-        // for child in &entry.children {
-        //     if node_and_children.contains_key(&(child.hash, child.hash_cn)) {
-        //         // Will be handled by its own iteration of this loop.
-        //         continue;
-        //     }
-        //     h.put_node(
-        //         &mut wtxn,
-        //         &child.hash,
-        //         &child.hash_cn,
-        //         child.kind,
-        //         child.data.clone(),
-        //     )?;
-        //     // Only seed a minimal link if the link row doesn't already exist —
-        //     // skip-existing semantics for embedded-only children regardless of
-        //     // `opts`, so a child observed via two different parents doesn't
-        //     // get its link clobbered.
-        //     if !LmdbBackend::key_present(
-        //         &wtxn,
-        //         &backend.tables.merkle_links,
-        //         &child.hash.to_u128(),
-        //     )? {
-        //         LmdbBackend::put_serialized(
-        //             &mut wtxn,
-        //             &backend.tables.merkle_links,
-        //             &child.hash.to_u128(),
-        //             LmdbLink::encode,
-        //             LmdbLink {
-        //                 parent_id: Some(node_hash),
-        //                 children: Vec::new(),
-        //             },
-        //         )?;
-        //     }
-        // }
+        // Embedded non-leaf children only get a `node` row from the step above —
+        // they still need their own `link` row, or `reader::get_node` trips
+        // `IntegrityNoLink`. If such a child has its own `{prefix}/{suffix}/` pair
+        // in the tar, its own iteration below will write the full link; otherwise
+        // seed a minimal one (parent_id = the embedding parent, no children of
+        // its own). File / FileChunk leaves don't need a link — `get_node`
+        // short-circuits for them — so they are skipped here.
+        //
+        // Skip-existing semantics for the seeded link regardless of `opts`, so a
+        // child observed via two different parents doesn't get its link
+        // clobbered with an empty children list.
+        for (child_hash, child_hash_cn, child_kind) in &embedded {
+            if matches!(
+                child_kind,
+                MerkleTreeNodeType::File | MerkleTreeNodeType::FileChunk
+            ) {
+                continue;
+            }
+            if parsed_pair_keys.contains(&(*child_hash, *child_hash_cn)) {
+                continue;
+            }
+            if !LmdbBackend::key_present(
+                &wtxn,
+                &backend.tables.merkle_links,
+                child_hash_cn.as_u128(),
+            )? {
+                LmdbBackend::put_serialized(
+                    &mut wtxn,
+                    &backend.tables.merkle_links,
+                    child_hash_cn.as_u128(),
+                    LmdbLink::encode,
+                    LmdbLink {
+                        parent_id: Some(node_hash),
+                        children: Vec::new(),
+                    },
+                )?;
+            }
+        }
     }
     wtxn.commit().map_err(LmdbError::Write)?;
 

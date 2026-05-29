@@ -70,15 +70,19 @@ pub(super) struct LmdbTables {
     /// u128                -> Vec<u128>
     pub merkle_node_dupes: Database<KeyLmdb, ValueLmdb>,
 
-    /// (HashCN -> Vec<(MerkleHash, HashCN>) Stores the parent and children connections for each Merkle tree node.
+    /// Stores the parent + children connections for each Merkle tree node.
     ///
-    /// These values deserialize into a [`LmdbLink`]. The zerocopy view on these
-    /// values is the [`LmdbLinkRef`].
+    /// Values deserialize into an [`LmdbLink`]; the zero-copy view is [`LmdbLinkRef`].
+    /// The on-disk LMDB table is named by [`DB_LINKS`].
     ///
-    /// In the LMDB environment, this has name of the [DB_LINKS] constant.
     /// -----------------------------------------------------------------------
-    /// HashCN -> Vec<(MerkleHash(content), XXH3(name))
-    /// u128   -> Vec<(u128,                u128)>
+    /// HashCN -> LmdbLink { parent_id: Option<MerkleHash>, children: Vec<HashCN> }
+    /// u128   -> [header (32B) | child_0:u128 LE | child_1:u128 LE | …]
+    ///
+    /// Keying by [`HashCN`] (not the content [`MerkleHash`]) means two same-content
+    /// dirs/vnodes with different names get distinct link rows — and child references
+    /// are the unique [`HashCN`] keys into [`Self::merkle_node_store`], so resolving
+    /// a child is a single `node_store` lookup with no collision possible.
     pub merkle_links: Database<KeyLmdb, ValueLmdb>,
 }
 
@@ -404,6 +408,9 @@ impl LmdbTables {
         let merkle_node_store = lmdb_env
             .create_database::<KeyLmdb, ValueLmdb>(&mut wtxn, Some(DB_NODE))
             .map_err(LmdbError::Write)?;
+        // TODO: replace this key -> vec<> with LMDB's built-in duplicate support
+        //       this lets us store multiple values for a key
+        //       it should be faster than taking and appending in the write case
         // let merkle_node_dupes = lmdb_env
         //     .database_options()
         //     .types::<KeyLmdb, ValueLmdb>()
@@ -449,12 +456,25 @@ impl LmdbTables {
             node,
         )?;
 
-        // (2) append the node into the duplicates (access by MerkleHash)
+        // (2) append the node into the duplicates (access by MerkleHash).
+        //
+        // Idempotent on the same `HashCN`. Each non-leaf node is `put_node`'d **twice** within
+        // one write session — once via its own `PendingWrite`'s `put_node` and once via its
+        // parent's `put_links` inner loop (the parent's loop is the only path that writes
+        // leaf children into `node_store`, since leaves never get their own `create_node`).
+        // A blind append would leave non-leaves with `dupes[H] = [hash_cn, hash_cn]`, making
+        // `LmdbDupesRef::unique()` return `None` and silently dropping every non-leaf from
+        // `pack_nodes` — that was exactly the bug that left the server's tree missing its
+        // root dir / vnode `node` DB after every LMDB-client push. Distinct `HashCN`s
+        // (duplicate-content files with different names) are *not* deduped here: they are
+        // genuinely different entries and both belong in this vec.
         let duplicates: Vec<HashCN> =
             match LmdbBackend::retrieve_bytes(wtxn, &self.merkle_node_dupes, &hash.to_u128())? {
                 Some(existing) => {
                     let mut existing = LmdbDupes::decode(existing)?.hash_cns;
-                    existing.push(hash_name_content);
+                    if !existing.contains(&hash_name_content) {
+                        existing.push(hash_name_content);
+                    }
                     existing
                 }
                 None => vec![hash_name_content],
