@@ -30,7 +30,7 @@ use crate::core::db::merkle_node::lmdb::{
     LmdbError,
     hash_content_name::{Filename, HashCN, hash_cn_from},
     lmdb_backend::{LmdbBackend, LmdbTables},
-    value_structs::{LmdbLink, LmdbNode},
+    value_structs::LmdbNode,
 };
 use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
 use crate::error::OxenError;
@@ -338,13 +338,6 @@ fn write_unpacked_into_lmdb(
         parsed
     };
 
-    // Snapshot the set of `(content_hash, hash_cn)` pairs that have their own
-    // `{prefix}/{suffix}/` entry in the tar — used below to skip the
-    // minimal-link write for any embedded child that will be handled by its
-    // own iteration of the loop.
-    let parsed_pair_keys: HashSet<(MerkleHash, HashCN)> =
-        node_and_children.keys().copied().collect();
-
     let h = Helper {
         overwrite,
         tables: &backend.tables,
@@ -361,15 +354,6 @@ fn write_unpacked_into_lmdb(
             entry.data.clone(),
         )?;
 
-        // Snapshot the embedded children's identity + kind *before* consuming
-        // `entry.children` for `put_link` — we need it for the minimal-link pass
-        // immediately below.
-        let embedded: Vec<(MerkleHash, HashCN, MerkleTreeNodeType)> = entry
-            .children
-            .iter()
-            .map(|c| (c.hash, c.hash_cn, c.kind))
-            .collect();
-
         let child_hashes = entry
             .children
             .into_iter()
@@ -383,48 +367,21 @@ fn write_unpacked_into_lmdb(
             )
             .collect::<Vec<_>>();
 
-        // Writes (a) the parent's link and (b) each child's node row (via the
-        // inner `put_node` inside `LmdbTables::put_links`).
-        h.put_link(&mut wtxn, &node_hash_cn, entry.parent_id, child_hashes)?;
-
-        // Embedded non-leaf children only get a `node` row from the step above —
-        // they still need their own `link` row, or `reader::get_node` trips
-        // `IntegrityNoLink`. If such a child has its own `{prefix}/{suffix}/` pair
-        // in the tar, its own iteration below will write the full link; otherwise
-        // seed a minimal one (parent_id = the embedding parent, no children of
-        // its own). File / FileChunk leaves don't need a link — `get_node`
-        // short-circuits for them — so they are skipped here.
-        //
-        // Skip-existing semantics for the seeded link regardless of `opts`, so a
-        // child observed via two different parents doesn't get its link
-        // clobbered with an empty children list.
-        for (child_hash, child_hash_cn, child_kind) in &embedded {
-            if matches!(
-                child_kind,
-                MerkleTreeNodeType::File | MerkleTreeNodeType::FileChunk
-            ) {
-                continue;
-            }
-            if parsed_pair_keys.contains(&(*child_hash, *child_hash_cn)) {
-                continue;
-            }
-            if !LmdbBackend::key_present(
-                &wtxn,
-                &backend.tables.merkle_links,
-                child_hash_cn.as_u128(),
-            )? {
-                LmdbBackend::put_serialized(
-                    &mut wtxn,
-                    &backend.tables.merkle_links,
-                    child_hash_cn.as_u128(),
-                    LmdbLink::encode,
-                    LmdbLink {
-                        parent_id: Some(node_hash),
-                        children: Vec::new(),
-                    },
-                )?;
-            }
-        }
+        // Writes the parent's link, each child's node row (via `put_node` inside
+        // `LmdbTables::put_links`), AND a minimal link row for any non-leaf
+        // child that doesn't already have one — so embedded-only non-leaves
+        // (e.g. a dir/vnode that doesn't have its own `{prefix}/{suffix}/` pair
+        // in the tar) are observable through `reader::get_node` without
+        // tripping `IntegrityNoLink`. If a non-leaf child does have its own
+        // pair, its own iteration of this loop overwrites the seeded minimal
+        // link with the full one.
+        h.put_link(
+            &mut wtxn,
+            &node_hash,
+            &node_hash_cn,
+            entry.parent_id,
+            child_hashes,
+        )?;
     }
     wtxn.commit().map_err(LmdbError::Write)?;
 
@@ -461,6 +418,7 @@ impl<'a> Helper<'a> {
     fn put_link(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
+        hash: &MerkleHash,
         hash_cn: &HashCN,
         parent_id: Option<MerkleHash>,
         children_and_data: Vec<(MerkleHash, HashCN, LmdbNode)>,
@@ -471,7 +429,7 @@ impl<'a> Helper<'a> {
             return Ok(());
         }
         self.tables
-            .put_links(wtxn, *hash_cn, parent_id, children_and_data)
+            .put_links(wtxn, *hash, *hash_cn, parent_id, children_and_data)
     }
 }
 

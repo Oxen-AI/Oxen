@@ -500,6 +500,7 @@ impl LmdbTables {
     pub(super) fn put_links<'txn>(
         &self,
         wtxn: &mut heed::RwTxn<'txn>,
+        node_hash: MerkleHash,
         node_hash_cn: HashCN,
         parent_id: Option<MerkleHash>,
         children_and_data: Vec<(MerkleHash, HashCN, LmdbNode)>,
@@ -508,8 +509,39 @@ impl LmdbTables {
         let children: Vec<HashCN> = {
             let mut children = Vec::with_capacity(children_and_data.len());
             for (child_hash, child_hash_cn, child_node) in children_and_data {
-                children.push(child_hash_cn.clone());
+                children.push(child_hash_cn);
+                let child_kind = child_node.kind;
                 self.put_node(wtxn, child_hash, child_hash_cn, child_node)?;
+                // Non-leaf children added via `add_child` without an own
+                // `create_node` (e.g. the sentinel empty root dir written by
+                // `create_initial_commit`) get a node row from `put_node` above
+                // but no link row, which trips `reader::get_node`'s
+                // `IntegrityNoLink` invariant. Seed a minimal link
+                // (parent_id = embedding parent, no children of its own) only
+                // when one isn't already present — a follow-up `put_links` from
+                // the child's own `PendingWrite` will then overwrite it with
+                // the real link, while a different embedding parent's iteration
+                // won't clobber an already-written real link. File / FileChunk
+                // leaves never need a link — the reader short-circuits for them.
+                if !matches!(
+                    child_kind,
+                    MerkleTreeNodeType::File | MerkleTreeNodeType::FileChunk
+                ) && !LmdbBackend::key_present(
+                    wtxn,
+                    &self.merkle_links,
+                    child_hash_cn.as_u128(),
+                )? {
+                    LmdbBackend::put_serialized(
+                        wtxn,
+                        &self.merkle_links,
+                        child_hash_cn.as_u128(),
+                        LmdbLink::encode,
+                        LmdbLink {
+                            parent_id: Some(node_hash),
+                            children: Vec::new(),
+                        },
+                    )?;
+                }
             }
             children
         };
