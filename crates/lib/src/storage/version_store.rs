@@ -14,7 +14,7 @@ use utoipa::ToSchema;
 use crate::constants;
 use crate::constants::MAX_CONCURRENT_VERSION_PROBES;
 use crate::error::OxenError;
-use crate::storage::LocalVersionStore;
+use crate::storage::{LocalVersionStore, S3Opts, S3VersionStore};
 use crate::util;
 use crate::view::versions::CleanCorruptedVersionsResult;
 
@@ -389,10 +389,17 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     fn storage_kind(&self) -> StorageKind;
 }
 
-/// This only creates a version store struct, it does not initialize it
+/// Build a `VersionStore` for the given repo according to its persisted `StorageConfig`.
+///
+/// `server_s3_opts` is the server-wide S3 configuration (bucket name). It must be `Some`
+/// whenever `config.kind == StorageKind::S3`; CLI and test paths pass `None` because they never
+/// run with the S3 backend enabled. The S3 prefix is derived from the repo path's
+/// `<namespace>/<name>` tail at construction time and never written to per-repo config, so the
+/// server can rotate buckets without rewriting every repo.
 pub fn create_version_store(
     repo_dir: &Path,
     config: &StorageConfig,
+    server_s3_opts: Option<&S3Opts>,
 ) -> Result<Arc<dyn VersionStore>, OxenError> {
     match config.kind {
         StorageKind::Local => {
@@ -412,6 +419,60 @@ pub fn create_version_store(
             let store = LocalVersionStore::new(versions_dir);
             Ok(Arc::new(store))
         }
-        StorageKind::S3 => Err(OxenError::S3BackendNotImplemented),
+        StorageKind::S3 => {
+            let opts = server_s3_opts.ok_or(OxenError::S3BackendMissingServerOpts)?;
+            // Server repo paths are always `<sync_dir>/<namespace>/<name>` (the only path that
+            // reaches the S3 branch), so the tail components should always be present. We still
+            // surface a structured error instead of panicking on a malformed caller.
+            let name = repo_dir
+                .file_name()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| OxenError::S3PrefixUnresolvable(repo_dir.into()))?;
+            let namespace = repo_dir
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| OxenError::S3PrefixUnresolvable(repo_dir.into()))?;
+            let prefix = format!("{namespace}/{name}");
+            let store = S3VersionStore::new(opts.bucket.clone(), prefix);
+            Ok(Arc::new(store))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn s3_config() -> StorageConfig {
+        StorageConfig {
+            kind: StorageKind::S3,
+            versions_path: None,
+        }
+    }
+
+    /// The S3 branch requires server opts. `None` is the runtime tripwire for callers that
+    /// somehow built an S3-shaped `StorageConfig` without going through `StoragePolicy::resolve()`.
+    #[test]
+    fn create_version_store_s3_without_server_opts_errors() {
+        let repo_dir = PathBuf::from("/srv/oxen/test-ns/test-repo");
+        let result = create_version_store(&repo_dir, &s3_config(), None);
+        assert!(
+            matches!(result, Err(OxenError::S3BackendMissingServerOpts)),
+            "expected S3BackendMissingServerOpts, got {result:?}",
+        );
+    }
+
+    /// With server opts, the S3 branch returns an S3-kind store.
+    #[test]
+    fn create_version_store_s3_with_server_opts_builds_s3_store() {
+        let repo_dir = PathBuf::from("/srv/oxen/test-ns/test-repo");
+        let opts = S3Opts {
+            bucket: "my-bucket".to_string(),
+        };
+        let store = create_version_store(&repo_dir, &s3_config(), Some(&opts))
+            .expect("S3 store should construct when server opts are present");
+        assert_eq!(store.storage_kind(), StorageKind::S3);
     }
 }

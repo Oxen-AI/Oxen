@@ -158,7 +158,12 @@ pub async fn stats(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     let namespace: Option<&str> = path_param(&req, "namespace").ok();
     let name: Option<&str> = path_param(&req, "repo_name").ok();
     if let (Some(name), Some(namespace)) = (name, namespace) {
-        match repositories::get_by_namespace_and_name(&app_data.path, namespace, name) {
+        match repositories::get_by_namespace_and_name(
+            &app_data.path,
+            namespace,
+            name,
+            app_data.config.storage.s3(),
+        ) {
             Ok(Some(repo)) => {
                 let stats = repositories::stats::get_stats(&repo)?;
                 let data_types: Vec<DataTypeView> = stats
@@ -319,7 +324,14 @@ async fn handle_json_creation(
     };
 
     let repo_new_clone = data.clone();
-    match repositories::create(&app_data.path, data, app_data.merkle_store_kind).await {
+    match repositories::create(
+        &app_data.path,
+        data,
+        app_data.merkle_store_kind,
+        app_data.config.storage.s3(),
+    )
+    .await
+    {
         Ok(repo) => match repositories::commits::latest_commit(&repo.local_repo) {
             Ok(latest_commit) => Ok(HttpResponse::Ok().json(RepositoryCreationResponse {
                 status: STATUS_SUCCESS.to_string(),
@@ -457,7 +469,14 @@ async fn handle_multipart_creation(
     let repo_data_clone = repo_data.clone();
 
     // Create repository
-    match repositories::create(&app_data.path, repo_data, app_data.merkle_store_kind).await {
+    match repositories::create(
+        &app_data.path,
+        repo_data,
+        app_data.merkle_store_kind,
+        app_data.config.storage.s3(),
+    )
+    .await
+    {
         Ok(repo) => match repositories::commits::latest_commit(&repo.local_repo) {
             Ok(latest_commit) => Ok(HttpResponse::Ok().json(RepositoryCreationResponse {
                 status: STATUS_SUCCESS.to_string(),
@@ -596,8 +615,13 @@ pub async fn transfer_namespace(
 
     log::debug!("transfer_namespace from: {from_namespace} to: {to_namespace}");
 
-    let repo =
-        repositories::transfer_namespace(&app_data.path, &name, &from_namespace, &to_namespace)?;
+    let repo = repositories::transfer_namespace(
+        &app_data.path,
+        &name,
+        &from_namespace,
+        &to_namespace,
+        app_data.config.storage.s3(),
+    )?;
 
     // Return repository view under new namespace
     Ok(HttpResponse::Ok().json(RepositoryResponse {

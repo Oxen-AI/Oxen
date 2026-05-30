@@ -9,7 +9,7 @@ use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::merkle_tree::{MerkleStore, MerkleTransport, TransportableMerkleStore};
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
-use crate::storage::{StorageConfig, VersionStore, create_version_store};
+use crate::storage::{S3Opts, StorageConfig, VersionStore, create_version_store};
 use crate::util;
 use crate::view::RepositoryView;
 
@@ -45,7 +45,11 @@ pub struct LocalRepository {
     /// Storage backend configuration. Set once at construction and never mutated for the life
     /// of this `LocalRepository` — the source of truth for which backend `version_store` is.
     storage_config: StorageConfig,
-    /// Built from `storage_config` at construction. Never replaced.
+    /// Server-wide S3 opts, carried so that operations that derive a new `LocalRepository`
+    /// from an existing one (e.g. workspace creation) can rebuild a matching S3 version store
+    /// without re-threading the server opts through every function. CLI paths leave this `None`.
+    server_s3_opts: Option<S3Opts>,
+    /// Built from `storage_config` + `server_s3_opts` at construction. Never replaced.
     version_store: Arc<dyn VersionStore>,
 
     merkle_store: Option<Arc<dyn TransportableMerkleStore>>,
@@ -59,12 +63,24 @@ pub struct LocalRepositoryWithEntries {
 }
 
 impl LocalRepository {
-    /// Load a `LocalRepository` from a directory's `.oxen/config.toml`.
+    /// Load a repo from disk without any server-side S3 opts. Use this from the CLI and any code
+    /// path that doesn't talk to the server's storage config — an on-disk `[storage] kind = "s3"`
+    /// will surface as [`OxenError::S3BackendMissingServerOpts`]. Server code should call
+    /// [`Self::from_dir_with_server_opts`] instead.
     pub fn from_dir(path: impl AsRef<Path>) -> Result<Self, OxenError> {
+        Self::from_dir_with_server_opts(path, None)
+    }
+
+    /// Server-side variant of [`Self::from_dir`]: threads the server's S3 opts so that
+    /// `[storage] kind = "s3"` repos build a real `S3VersionStore`.
+    pub fn from_dir_with_server_opts(
+        path: impl AsRef<Path>,
+        server_s3_opts: Option<&S3Opts>,
+    ) -> Result<Self, OxenError> {
         let path = path.as_ref();
         let config_path = util::fs::config_filepath(path);
         let config = RepositoryConfig::from_file(&config_path)?;
-        Self::new(path, config)
+        Self::new_with_server_opts(path, config, server_s3_opts)
     }
 
     /// Loads the Merkle store for the repository at the specified root path.
@@ -129,6 +145,14 @@ impl LocalRepository {
         &self.storage_config
     }
 
+    /// Server-wide S3 opts the repo was constructed with (always `None` on CLI builds).
+    /// Operations that derive a new `LocalRepository` from this one — workspace creation, for
+    /// example — should pass this back into the constructor so the derived repo's S3 version
+    /// store can be rebuilt.
+    pub fn server_s3_opts(&self) -> Option<&S3Opts> {
+        self.server_s3_opts.as_ref()
+    }
+
     /// Get a reference to the version store.
     pub fn version_store(&self) -> Arc<dyn VersionStore> {
         Arc::clone(&self.version_store)
@@ -144,7 +168,9 @@ impl LocalRepository {
         LocalRepository::from_dir(&repo_dir)
     }
 
-    /// Instantiate a new repository at a given path from a `RepositoryConfig`.
+    /// Instantiate a new repository at a given path from a `RepositoryConfig`. CLI/test helper;
+    /// server code that may build S3-backed repos should call [`Self::new_with_server_opts`]
+    /// instead.
     ///
     /// Note: does NOT create the repo on disk or write the config file — just instantiates the
     /// struct. To load an existing repo from disk, use [`Self::from_dir`].
@@ -156,9 +182,19 @@ impl LocalRepository {
         path: impl AsRef<Path>,
         config: RepositoryConfig,
     ) -> Result<LocalRepository, OxenError> {
+        Self::new_with_server_opts(path, config, None)
+    }
+
+    /// Server-side variant of [`Self::new`]: threads server S3 opts so an
+    /// `[storage] kind = "s3"` config builds a real `S3VersionStore`.
+    pub fn new_with_server_opts(
+        path: impl AsRef<Path>,
+        config: RepositoryConfig,
+        server_s3_opts: Option<&S3Opts>,
+    ) -> Result<LocalRepository, OxenError> {
         let path = path.as_ref().to_path_buf();
         let storage_config = config.storage.unwrap_or_default();
-        let version_store = create_version_store(&path, &storage_config)?;
+        let version_store = create_version_store(&path, &storage_config, server_s3_opts)?;
         let m_store = Self::load_merkle_store(
             path.clone(),
             config.merkle_store_kind,
@@ -177,6 +213,7 @@ impl LocalRepository {
             workspace_name: config.workspace_name,
             workspaces: config.workspaces,
             storage_config,
+            server_s3_opts: server_s3_opts.cloned(),
             version_store,
             merkle_store: Some(m_store),
             merkle_store_kind: config.merkle_store_kind,
@@ -186,7 +223,7 @@ impl LocalRepository {
     pub fn from_view(view: RepositoryView) -> Result<LocalRepository, OxenError> {
         let path = std::env::current_dir()?.join(view.name);
         let storage_config = StorageConfig::default();
-        let version_store = create_version_store(&path, &storage_config)?;
+        let version_store = create_version_store(&path, &storage_config, None)?;
         let merkle_store_kind = MerkleStoreKind::default();
         let m_store = Self::load_merkle_store(path.clone(), merkle_store_kind, false)?;
         Ok(LocalRepository {
@@ -202,6 +239,7 @@ impl LocalRepository {
             workspace_name: None,
             workspaces: None,
             storage_config,
+            server_s3_opts: None,
             version_store,
             merkle_store: Some(m_store),
             merkle_store_kind,
@@ -229,7 +267,7 @@ impl LocalRepository {
     ) -> Result<LocalRepository, OxenError> {
         let path = path.to_owned();
         let storage_config = StorageConfig::default();
-        let version_store = create_version_store(&path, &storage_config)?;
+        let version_store = create_version_store(&path, &storage_config, None)?;
         let m_store = Self::load_merkle_store(path.clone(), merkle_store_kind, is_vfs)?;
         Ok(LocalRepository {
             path,
@@ -244,6 +282,7 @@ impl LocalRepository {
             workspace_name: None,
             workspaces: None,
             storage_config,
+            server_s3_opts: None,
             version_store,
             merkle_store: Some(m_store),
             merkle_store_kind,

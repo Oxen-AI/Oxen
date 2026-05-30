@@ -42,7 +42,12 @@ pub async fn resolve(req: HttpRequest) -> HttpResponse {
     let namespace: Option<&str> = path_param(&req, "namespace").ok();
     let name: Option<&str> = path_param(&req, "repo_name").ok();
     if let (Some(name), Some(namespace)) = (name, namespace) {
-        match repositories::get_by_namespace_and_name(&app_data.path, namespace, name) {
+        match repositories::get_by_namespace_and_name(
+            &app_data.path,
+            namespace,
+            name,
+            app_data.config.storage.s3(),
+        ) {
             Ok(Some(_)) => match req.url_for("repo_root", [namespace, name]) {
                 Ok(url) => {
                     log::debug!("resolved repo URL: {url}");

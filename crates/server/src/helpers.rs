@@ -15,7 +15,12 @@ pub fn get_repo(
     namespace: impl AsRef<str>,
     name: impl AsRef<str>,
 ) -> Result<LocalRepository, OxenHttpError> {
-    let repo = repositories::get_by_namespace_and_name(&app_data.path, &namespace, &name)?;
+    let repo = repositories::get_by_namespace_and_name(
+        &app_data.path,
+        &namespace,
+        &name,
+        app_data.config.storage.s3(),
+    )?;
     let Some(repo) = repo else {
         return Err(
             OxenError::RepoNotFound(Box::new(RepoNew::from_namespace_name(
