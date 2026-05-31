@@ -1350,6 +1350,7 @@ pub fn maybe_cleanup_repo(repo_dir: &Path) -> Result<(), OxenError> {
     core::staged::remove_from_cache_with_children(repo_dir)?;
     core::refs::ref_manager::remove_from_cache_with_children(repo_dir)?;
     core::db::data_frames::df_db::remove_df_db_from_cache_with_children(repo_dir)?;
+    core::db::data_frames::changes_db::remove_from_cache_with_children(repo_dir)?;
     core::db::dir_hashes::dir_hashes_db::remove_from_cache_with_children(repo_dir)?;
     core::workspaces::workspace_name_index::remove_from_cache_with_children(repo_dir);
 

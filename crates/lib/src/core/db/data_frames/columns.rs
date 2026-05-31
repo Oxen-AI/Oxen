@@ -5,9 +5,8 @@ use polars::frame::DataFrame;
 use rocksdb::DB;
 
 use crate::constants::TABLE_NAME;
-use crate::core::db;
 use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
-use crate::core::db::data_frames::{DataFrameError, column_changes_db};
+use crate::core::db::data_frames::{DataFrameError, changes_db, column_changes_db};
 use crate::model::Schema;
 use crate::model::data_frame::schema::DataType;
 use crate::view::data_frames::columns::{ColumnToDelete, ColumnToUpdate, NewColumn};
@@ -68,8 +67,7 @@ pub fn record_column_change(
     column_before: Option<ColumnChange>,
     column_after: Option<ColumnChange>,
 ) -> Result<(), DataFrameError> {
-    let opts = db::key_val::opts::default();
-    let db = DB::open(&opts, dunce::simplified(column_changes_path))?;
+    let db = changes_db::get_changes_db(column_changes_path)?;
 
     if operation == "deleted"
         && let Some(column) = &column_before
