@@ -5,6 +5,7 @@ use crate::{
     model::{Schema, staged_row_status::StagedRowStatus},
 };
 
+pub mod changes_db;
 pub mod column_changes_db;
 pub mod columns;
 pub mod df_db;

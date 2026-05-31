@@ -1,11 +1,11 @@
 use polars::frame::DataFrame;
-use rocksdb::DB;
 
 use crate::constants::TABLE_NAME;
-use crate::core::db;
 use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
-use crate::core::db::data_frames::{column_changes_db, columns, df_db::with_df_db_manager};
+use crate::core::db::data_frames::{
+    changes_db, column_changes_db, columns, df_db::with_df_db_manager,
+};
 use crate::core::staged::staged_db_manager::get_staged_db_manager;
 use crate::core::v_latest::workspaces;
 use crate::error::OxenError;
@@ -173,8 +173,7 @@ pub async fn restore(
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
 
-    let opts = db::key_val::opts::default();
-    let db = DB::open(&opts, dunce::simplified(&column_changes_path))?;
+    let db = changes_db::get_changes_db(&column_changes_path)?;
 
     log::debug!("restore_column() got db_path: {db_path:?}");
 

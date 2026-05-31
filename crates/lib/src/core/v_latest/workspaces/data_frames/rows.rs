@@ -3,14 +3,13 @@ use polars::frame::DataFrame;
 use polars::prelude::NamedFrom;
 use polars::prelude::PlSmallStr;
 use polars::series::Series;
-use rocksdb::DB;
 use serde_json::Value;
 
 use crate::constants::DIFF_STATUS_COL;
-use crate::core::db;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::opts::DFOpts;
 
+use crate::core::db::data_frames::changes_db;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::db::data_frames::rows;
 use crate::core::df::tabular;
@@ -289,10 +288,9 @@ pub async fn restore_row_in_db(
 ) -> Result<DataFrame, OxenError> {
     let row_id = row_id.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path.as_ref());
-    let opts = db::key_val::opts::default();
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, path.as_ref());
-    let db = DB::open(&opts, dunce::simplified(&column_changes_path))?;
+    let db = changes_db::get_changes_db(&column_changes_path)?;
 
     // Get the row by id
     let row =

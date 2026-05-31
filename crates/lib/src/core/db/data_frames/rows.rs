@@ -13,9 +13,8 @@ use sql_query_builder as sql;
 use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL, OXEN_COLS, OXEN_ID_COL};
 
 use crate::constants::TABLE_NAME;
-use crate::core::db;
 use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
-use crate::core::db::data_frames::{DataFrameError, row_changes_db};
+use crate::core::db::data_frames::{DataFrameError, changes_db, row_changes_db};
 use crate::core::df::tabular;
 use crate::model::data_frame::schema::DataType;
 use crate::model::staged_row_status::StagedRowStatus;
@@ -389,8 +388,7 @@ pub fn record_row_change(
         new_value,
     };
 
-    let opts = db::key_val::opts::default();
-    let db = DB::open(&opts, dunce::simplified(row_changes_path))?;
+    let db = changes_db::get_changes_db(row_changes_path)?;
 
     maybe_revert_row_changes(&db, row_id.to_owned())?;
 

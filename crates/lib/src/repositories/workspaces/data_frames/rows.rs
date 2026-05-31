@@ -12,12 +12,11 @@ use polars::frame::DataFrame;
 use polars::prelude::PlSmallStr;
 
 use crate::{core, repositories};
-use rocksdb::DB;
 use sql_query_builder::Select;
 
 use crate::constants::{DIFF_STATUS_COL, OXEN_ID_COL, OXEN_ROW_ID_COL, TABLE_NAME};
-use crate::core::db;
 
+use crate::core::db::data_frames::changes_db;
 use crate::core::db::data_frames::df_db::{self, with_df_db_manager};
 use crate::model::LocalRepository;
 use crate::model::staged_row_status::StagedRowStatus;
@@ -45,9 +44,10 @@ pub fn get_row_diff(
 ) -> Result<Vec<DataFrameRowChange>, DataFrameError> {
     let row_changes_path =
         repositories::workspaces::data_frames::row_changes_path(workspace, file_path);
-    let opts = db::key_val::opts::default();
-    let db = DB::open_for_read_only(&opts, dunce::simplified(&row_changes_path), false)?;
-    get_all_data_frame_row_changes(&db)
+    match changes_db::try_get_changes_db(&row_changes_path)? {
+        Some(db) => get_all_data_frame_row_changes(&db),
+        None => Ok(Vec::new()),
+    }
 }
 
 pub fn update(
