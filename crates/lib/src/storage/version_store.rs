@@ -75,6 +75,30 @@ impl LocalFilePath {
     }
 }
 
+/// Where a version file's data lives, in a form a cloud-aware reader can consume directly.
+///
+/// Unlike [`LocalFilePath`], this never materializes a remote version file to a temp file on
+/// local disk. Callers that need bytes-on-disk should use `copy_version_to_path` instead.
+/// Callers that already use a cloud-aware reader (Polars `scan_*` with `CloudOptions`, DuckDB
+/// `read_parquet` via the `httpfs` extension, …) consume `S3` variants directly.
+#[derive(Debug, Clone)]
+pub enum VersionLocation {
+    /// Local-backed store: the version file lives on disk at this path.
+    Local(PathBuf),
+    /// S3-backed store: enough config for a cloud-aware reader to fetch the version file
+    /// directly without round-tripping through local disk.
+    S3 {
+        /// Fully-qualified S3 URL of the combined version file:
+        /// `s3://{bucket}/{prefix}/{hash}/data`.
+        url: String,
+        bucket: String,
+        region: String,
+        /// `Some(host:port)` for non-AWS S3-compatible endpoints (s3s test fixture, MinIO,
+        /// etc.). `None` selects the default AWS endpoint.
+        endpoint_url: Option<String>,
+    },
+}
+
 /// Storage backend kind. Serializes as `"local"` / `"s3"` on the wire and on disk.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
@@ -317,6 +341,22 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// # Arguments
     /// * `hash` - The content hash of the version file to retrieve
     async fn get_version_path(&self, hash: &str) -> Result<LocalFilePath, OxenError>;
+
+    /// Return a [`VersionLocation`] describing where the version file lives, in a form a
+    /// cloud-aware reader can consume without materializing it to a temp file on local disk.
+    ///
+    /// Local-backed stores return [`VersionLocation::Local`] with the on-disk path; S3-backed
+    /// stores return [`VersionLocation::S3`] carrying the s3:// URL plus the bucket, region, and
+    /// endpoint override the caller needs to configure Polars `CloudOptions` or DuckDB `httpfs`.
+    ///
+    /// Prefer this over [`Self::get_version_path`] whenever the consumer has a cloud-aware
+    /// reader available (Polars `scan_*`, DuckDB `read_parquet`, …): `get_version_path`
+    /// materializes the entire version file to a temp file on S3, which is fine for small
+    /// files but OOMs at the multi-GB scale customers care about.
+    ///
+    /// # Arguments
+    /// * `hash` - The content hash of the version file
+    async fn version_location(&self, hash: &str) -> Result<VersionLocation, OxenError>;
 
     /// Copy a versioned file from the version store to a destination path on the local filesystem
     ///
