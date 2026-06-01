@@ -339,8 +339,8 @@ pub fn extract_file_node_to_working_dir(
             let res = conn.execute(&delete.to_string(), [])?;
             log::debug!("delete query result is: {res:?}");
 
-            let excluded_cols = get_existing_excluded_columns(conn, TABLE_NAME)?;
-            let sql = format!("SELECT * EXCLUDE ({excluded_cols}) FROM '{TABLE_NAME}'");
+            let projection = build_export_projection(conn, TABLE_NAME)?;
+            let sql = format!("SELECT {projection} FROM '{TABLE_NAME}'");
             let query = wrap_sql_for_export(&sql, &working_path);
             log::debug!("extracting file node to working dir query: {query:?}");
             conn.execute(&query, [])?;
@@ -398,28 +398,181 @@ pub fn wrap_sql_for_export(sql: &str, path: &Path) -> String {
     }
 }
 
-fn get_existing_excluded_columns(
-    conn: &Connection,
-    table_name: &str,
-) -> Result<String, duckdb::Error> {
-    // Query to get existing columns in the table
-    let existing_cols_query = format!(
-        "SELECT column_name FROM information_schema.columns WHERE table_name = '{table_name}'"
+/// Build the explicit `SELECT` projection used when exporting the staged DuckDB
+/// table to the working tree, omitting the oxen-internal columns
+/// ([`EXCLUDE_OXEN_COLS`]).
+///
+/// Columns whose DuckDB `data_type` is `JSON` or `JSON[]` are wrapped so that a
+/// stored value which isn't valid JSON is preserved as a JSON string rather than
+/// aborting the export:
+///
+/// ```sql
+/// CASE WHEN "col" IS NULL OR json_valid(CAST("col" AS VARCHAR))
+///      THEN "col"
+///      ELSE to_json(CAST("col" AS VARCHAR)) END AS "col"
+/// ```
+///
+/// Rows written before insert-time JSON validation was added can hold raw
+/// non-JSON text in JSON-typed columns. `COPY ... (FORMAT JSON)` re-parses each
+/// value and throws a "Malformed JSON" error on those, failing the whole
+/// data-frame export. `json_valid` returns false (it does not throw) on invalid
+/// input, so the wrap is a no-op for valid data and only rewrites
+/// genuinely-corrupt values. Only the JSON writer (jsonl/ndjson/json) re-parses
+/// these values; the csv/tsv/parquet export paths are unaffected, and this
+/// projection is a safe identity for them.
+///
+/// Columns are emitted in `ordinal_position` order so the exported schema matches
+/// the table.
+fn build_export_projection(conn: &Connection, table_name: &str) -> Result<String, duckdb::Error> {
+    let cols_query = format!(
+        "SELECT column_name, data_type FROM information_schema.columns \
+         WHERE table_name = '{table_name}' ORDER BY ordinal_position"
     );
 
-    let existing_cols: Vec<String> = {
-        let mut stmt = conn.prepare(&existing_cols_query)?;
-        stmt.query_map([], |row| row.get(0))?
-            .filter_map(Result::ok)
-            .collect()
+    let cols: Vec<(String, String)> = {
+        let mut stmt = conn.prepare(&cols_query)?;
+        stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .filter_map(Result::ok)
+        .collect()
     };
 
-    // Filter excluded columns to only those that exist in the table
-    let filtered_excluded_cols: Vec<String> = EXCLUDE_OXEN_COLS
-        .iter()
-        .filter(|col| existing_cols.contains(&col.to_string()))
-        .map(|col| format!("\"{col}\""))
+    let projection: Vec<String> = cols
+        .into_iter()
+        .filter(|(name, _)| !EXCLUDE_OXEN_COLS.contains(&name.as_str()))
+        .map(|(name, data_type)| {
+            if data_type == "JSON" || data_type == "JSON[]" {
+                json_tolerant_export_expr(&name)
+            } else {
+                format!("\"{name}\"")
+            }
+        })
         .collect();
 
-    Ok(filtered_excluded_cols.join(", "))
+    Ok(projection.join(", "))
+}
+
+/// Projection expression for a single `JSON`/`JSON[]` column that tolerates a
+/// stored value which isn't valid JSON. `json_valid` returns false (never throws)
+/// on invalid input, so valid values pass through unchanged (the `THEN` branch)
+/// and only genuinely-corrupt values are rewritten into a valid JSON string (the
+/// `ELSE` branch). See [`build_export_projection`] for why corrupt values exist.
+fn json_tolerant_export_expr(name: &str) -> String {
+    format!(
+        "CASE WHEN \"{name}\" IS NULL OR json_valid(CAST(\"{name}\" AS VARCHAR)) \
+         THEN \"{name}\" ELSE to_json(CAST(\"{name}\" AS VARCHAR)) END AS \"{name}\""
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::db::data_frames::df_db;
+    use crate::test;
+
+    /// The export projection must wrap `JSON` and `JSON[]` columns in the
+    /// invalid-JSON-tolerant `CASE` expression, project everything else as-is,
+    /// drop the oxen-internal columns, and preserve `ordinal_position` order.
+    #[test]
+    fn test_build_export_projection_wraps_json_columns() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_empty_dir_test(|dir| {
+            let conn = df_db::get_connection(&dir.join("db"))?;
+            // Column order here is the order information_schema reports.
+            conn.execute(
+                &format!(
+                    "CREATE TABLE {TABLE_NAME} (\
+                       \"name\" VARCHAR, \
+                       \"meta\" JSON, \
+                       \"count\" BIGINT, \
+                       \"tags\" JSON[], \
+                       \"{oxen_id}\" VARCHAR, \
+                       \"{DIFF_STATUS_COL}\" VARCHAR, \
+                       \"{DIFF_HASH_COL}\" VARCHAR)",
+                    oxen_id = crate::constants::OXEN_ID_COL,
+                ),
+                [],
+            )?;
+
+            let projection = build_export_projection(&conn, TABLE_NAME)?;
+
+            let expected = format!(
+                "\"name\", {}, \"count\", {}",
+                json_tolerant_export_expr("meta"),
+                json_tolerant_export_expr("tags"),
+            );
+            assert_eq!(projection, expected);
+
+            // The wrap must reference json_valid / to_json so a corrupt value
+            // can't abort the COPY ... (FORMAT JSON) re-serialization.
+            assert!(projection.contains("json_valid"));
+            assert!(projection.contains("to_json"));
+            // Oxen-internal columns are dropped, never emitted.
+            assert!(!projection.contains(crate::constants::OXEN_ID_COL));
+            assert!(!projection.contains(DIFF_STATUS_COL));
+            assert!(!projection.contains(DIFF_HASH_COL));
+            Ok(())
+        })
+    }
+
+    /// The tolerant `CASE` wrap must turn a value that isn't valid JSON into a
+    /// JSON string that survives `COPY ... (FORMAT JSON)`, while valid values
+    /// pass through untouched. DuckDB 1.5.2 validates JSON on every ingestion
+    /// path (insert, cast, `read_json`, `read_parquet`), so the corrupt
+    /// JSON-column state this guards against can only originate from data
+    /// written by older engines and can't be synthesized here. We instead
+    /// exercise the exact projection SQL: `CAST(json_col AS VARCHAR)` yields the
+    /// raw stored bytes, so feeding the wrap a `VARCHAR` reproduces the runtime
+    /// behavior on those bytes.
+    #[test]
+    fn test_json_tolerant_export_neutralizes_invalid_json() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_empty_dir_test(|dir| {
+            let conn = df_db::get_connection(&dir.join("db"))?;
+            // 'Insufficient credits' mimics a legacy value: a plain string
+            // stored in a JSON-typed column; '{"a":1}' is genuinely valid
+            // JSON; NULL takes the IS NULL guard.
+            conn.execute("CREATE TABLE t (v VARCHAR, ord INTEGER)", [])?;
+            conn.execute(
+                "INSERT INTO t VALUES ('Insufficient credits', 1), ('{\"a\":1}', 2), (NULL, 3)",
+                [],
+            )?;
+
+            let expr = json_tolerant_export_expr("v");
+            let out = dir.join("out.jsonl");
+            let query = wrap_sql_for_export(&format!("SELECT {expr} FROM t ORDER BY ord"), &out);
+
+            // Must NOT raise "Malformed JSON" the way a bare `SELECT v` would on
+            // a corrupt JSON column.
+            conn.execute(&query, [])?;
+
+            // Bad value is emitted as a valid JSON string, not raw text.
+            let content = std::fs::read_to_string(&out)?;
+            assert!(
+                content.contains("{\"v\":\"Insufficient credits\"}"),
+                "expected the invalid value to be wrapped as a JSON string, got:\n{content}"
+            );
+            assert!(
+                content.contains("{\"v\":{\"a\":1}}"),
+                "expected valid JSON to pass through unchanged, got:\n{content}"
+            );
+
+            // Output round-trips: read_json re-parses it without error.
+            let count: i64 = conn.query_row(
+                &format!(
+                    "SELECT count(*) FROM read_json('{}')",
+                    out.to_string_lossy()
+                ),
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(count, 3);
+            Ok(())
+        })
+    }
 }

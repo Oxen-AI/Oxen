@@ -40,7 +40,7 @@ pub async fn rebuild_dir_hashes(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+    let repo = get_repo(app_data, &namespace, &repo_name)?;
 
     let commit = if let Some(commit_id) = &query.commit_id {
         repositories::commits::get_by_id(&repo, commit_id)?
@@ -99,7 +99,7 @@ pub async fn clean(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+    let repo = get_repo(app_data, &namespace, &repo_name)?;
 
     let dry_run = query.dry_run;
     log::info!("fsck clean: {namespace}/{repo_name} dry_run={dry_run}");

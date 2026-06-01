@@ -2,9 +2,11 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 use clap::Command;
-use liboxen::error::OxenError;
 
-use crate::cmd::RunCmd;
+use crate::{
+    cli_error::UnknownSubcommand,
+    cmd::{RunCmd, Runners},
+};
 
 pub const NAME: &str = "db";
 
@@ -38,12 +40,15 @@ impl RunCmd for DbCmd {
         command
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let sub_commands = self.get_subcommands();
         if let Some((name, sub_matches)) = args.subcommand() {
             let Some(cmd) = sub_commands.get(name) else {
-                return Err(OxenError::unknown_subcommand("db", name));
+                return Err(UnknownSubcommand {
+                    parent: "db",
+                    name: name.to_string(),
+                })?;
             };
 
             // Calling await within an await is making it complain?
@@ -51,7 +56,7 @@ impl RunCmd for DbCmd {
                 tokio::runtime::Handle::current().block_on(cmd.run(sub_matches))
             })?;
         } else {
-            return Err(OxenError::basic_str(
+            return Err(anyhow::anyhow!(
                 "No db subcommand provided. Run `oxen db --help` for usage.",
             ));
         }
@@ -61,13 +66,13 @@ impl RunCmd for DbCmd {
 }
 
 impl DbCmd {
-    fn get_subcommands(&self) -> HashMap<String, Box<dyn RunCmd>> {
-        let commands: Vec<Box<dyn RunCmd>> = vec![
+    fn get_subcommands(&self) -> Runners {
+        let commands: [Box<dyn RunCmd>; 3] = [
             Box::new(DbListCmd),
             Box::new(DbGetCmd),
             Box::new(DbCountCmd),
         ];
-        let mut runners: HashMap<String, Box<dyn RunCmd>> = HashMap::new();
+        let mut runners = HashMap::new();
         for cmd in commands {
             runners.insert(cmd.name().to_string(), cmd);
         }

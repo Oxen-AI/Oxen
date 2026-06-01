@@ -7,6 +7,7 @@ pub mod repo_prep;
 pub mod test_utils;
 
 use crate::api;
+use crate::api::requests::RepoNew;
 use crate::command;
 use crate::constants;
 use crate::constants::DEFAULT_REMOTE_NAME;
@@ -16,7 +17,7 @@ use crate::error::OxenError;
 use crate::model::data_frame::schema::Field;
 use crate::model::file::{FileContents, FileNew};
 use crate::model::merkle_tree::node::merkle_tree_node_cache;
-use crate::model::{LocalRepository, RemoteRepository, RepoNew, Schema, User};
+use crate::model::{LocalRepository, RemoteRepository, Schema, User};
 use crate::opts::RmOpts;
 use crate::repositories;
 use crate::util;
@@ -1349,6 +1350,7 @@ pub fn maybe_cleanup_repo(repo_dir: &Path) -> Result<(), OxenError> {
     core::staged::remove_from_cache_with_children(repo_dir)?;
     core::refs::ref_manager::remove_from_cache_with_children(repo_dir)?;
     core::db::data_frames::df_db::remove_df_db_from_cache_with_children(repo_dir)?;
+    core::db::data_frames::changes_db::remove_from_cache_with_children(repo_dir)?;
     core::db::dir_hashes::dir_hashes_db::remove_from_cache_with_children(repo_dir)?;
     core::workspaces::workspace_name_index::remove_from_cache_with_children(repo_dir);
 

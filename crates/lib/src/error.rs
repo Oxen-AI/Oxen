@@ -7,6 +7,7 @@ use aws_sdk_s3::error::BuildError;
 use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
 use aws_smithy_runtime_api::client::result::SdkError;
 use duckdb::arrow::error::ArrowError;
+use http::Uri;
 use std::fmt::Write;
 use std::io;
 use std::num::ParseIntError;
@@ -14,12 +15,13 @@ use std::path::Path;
 use std::path::PathBuf;
 use tokio::task::JoinError;
 
+use crate::api::requests::RepoNew;
 use crate::command::migrate::Direction;
 use crate::config::repository_config::RepoConfigError;
 use crate::core::db::merkle_node::lmdb::LmdbError;
 use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
+use crate::model::MerkleHash;
 use crate::model::ParsedResource;
-use crate::model::RepoNew;
 use crate::model::Schema;
 use crate::model::Workspace;
 use crate::model::merkle_tree::merkle_hash::HexHash;
@@ -67,15 +69,35 @@ pub enum OxenError {
     #[error("Invalid repository or namespace name '{0}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+")]
     InvalidRepoName(StringError),
 
+    #[error(
+        "Invalid repository URL. Expecting 3 '/' parts to extract the namespace and repository name in the path of this URL: {0}"
+    )]
+    NoNamespaceRepoInUrl(Uri),
+
     /// When `get_fork_status` cannot obtain the fork status for a repository.
     #[error("No fork status found.")]
     ForkStatusNotFound,
+
+    #[error("A file already exists at the destination path: {0}")]
+    ForkDestinationExists(PathBuf),
+
+    #[error("Could not create or find repository [{repo_id}]: {err}\n{body}")]
+    FailCreateOrFindRemoteRepo {
+        repo_id: String,
+        err: serde_json::Error,
+        body: String,
+    },
 
     // TODO: Once all serialization paths use `*View` instead of `Workspace`, which requires `LocalRepository`
     //       to implement `Serializable`, then these *StoreNotInitialized errors can be deleted.,
     /// The [`MerkleStore`] or [`TransportMerkle`] for a [`LocalRepository`] was not initialized before access.
     #[error("Merkle store not initialized")]
     MerkleStoreNotInitialized,
+
+    /// A repository is misconfigured. Its Merkle tree store setting doesn't match the on-disk state.
+    /// The inner [`PathBuf`] is the local repository's root.
+    #[error("Repository {path} is configured with LMDB Merkle store but the on-disk LMDB files are not present.", path=.0.display())]
+    MisconfiguredMerkleLmdb(PathBuf),
 
     /// LMDB-backed Merkle store was requested on a repository configured for a
     /// virtual file system. LMDB requires a real, byte-addressable mmap target
@@ -189,6 +211,12 @@ pub enum OxenError {
     #[error("{0}")]
     WorkspaceNameIndex(#[from] crate::core::workspaces::workspace_name_index::WsError),
 
+    #[error("Not a real directory: {0}")]
+    NotADirectory(PathBuf),
+
+    #[error("No paths to add!")]
+    NoPathsToAdd,
+
     //
     // Resources (paths, uris, etc.)
     //
@@ -257,10 +285,25 @@ pub enum OxenError {
     #[error("Unsupported storage kind: {0}")]
     UnsupportedStorageKind(String),
 
-    /// The S3 version store backend is not yet implemented; admin/server wiring lands in a later
-    /// step of the storage-policy work.
-    #[error("S3 storage backend not yet implemented")]
-    S3BackendNotImplemented,
+    /// An S3-backed repo was requested but the server has no S3 opts configured (the
+    /// `s3_bucket` is unset in the server's TOML). On the repo-create path this normally surfaces
+    /// as a 400 from `StoragePolicy::resolve()` before construction; this variant catches the
+    /// repo-load path or any other caller that built a `StorageConfig { kind: S3, .. }` without
+    /// going through the policy.
+    #[error(
+        "S3 storage requested but the server has no S3 opts configured \
+         (see `s3_bucket` under [storage] in the server config)"
+    )]
+    S3BackendMissingServerOpts,
+
+    /// `create_version_store` could not derive the S3 object prefix from the repo path because the
+    /// path lacks the expected `<namespace>/<name>` tail. Server repo paths are always built as
+    /// `<sync_dir>/<namespace>/<name>`, so this only surfaces for malformed callers — but we
+    /// surface it as a structured error rather than panicking.
+    #[error(
+        "Cannot derive S3 object prefix from repo path {0}: expected `<namespace>/<name>` tail"
+    )]
+    S3PrefixUnresolvable(PathBufError),
 
     /// `oxen restore` finished with one or more file-restore failures. Aggregated rather than
     /// fail-fast so the rest of the files can still be restored. The vector should be non-empty.
@@ -360,6 +403,16 @@ pub enum OxenError {
         dst: PathBuf,
         #[source]
         source: io::Error,
+    },
+
+    /// Content destined for `path` did not hash to the expected XXH3-128 digest. Returned by
+    /// the verified atomic-write helpers in `util::fs` so callers can distinguish "wrong content
+    /// arrived" from generic IO failures.
+    #[error("Hash mismatch writing {path:?}: expected {expected}, got {actual}")]
+    HashMismatch {
+        path: PathBuf,
+        expected: MerkleHash,
+        actual: MerkleHash,
     },
 
     /// Encountered when authentication fails. Contains the authentication error message.
@@ -701,6 +754,8 @@ impl OxenError {
             }
             UnsupportedRepoVersion(_) => {
                 "Use an older Oxen release to migrate this repository up to the current format, then retry with this CLI."
+            S3BackendMissingServerOpts => {
+                "Set `[storage] s3_bucket = \"<your-bucket>\"` in the server's config TOML and restart oxen-server."
             }
             _ => return None,
         }
@@ -778,11 +833,6 @@ impl OxenError {
     /// Makes an OxenError::Upload error.
     pub fn upload(s: &str) -> Self {
         OxenError::Upload(StringError::from(s))
-    }
-
-    /// Make a new OxenError::RepoNotFound error.
-    pub fn repo_not_found(repo: RepoNew) -> Self {
-        OxenError::RepoNotFound(Box::new(repo))
     }
 
     /// Make a new OxenError::FileImportError error.
@@ -1036,14 +1086,6 @@ impl OxenError {
 
     pub fn parse_error(value: impl AsRef<str>) -> OxenError {
         OxenError::basic_str(format!("Parse error: {:?}", value.as_ref()))
-    }
-
-    pub fn unknown_subcommand(parent: impl AsRef<str>, name: impl AsRef<str>) -> OxenError {
-        OxenError::basic_str(format!(
-            "Unknown {} subcommand '{}'",
-            parent.as_ref(),
-            name.as_ref()
-        ))
     }
 }
 

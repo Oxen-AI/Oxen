@@ -1,7 +1,7 @@
 use crate::config::RepositoryConfig;
 use crate::config::repository_config::MerkleStoreKind;
 use crate::constants::SHALLOW_FLAG;
-use crate::constants::{self, DEFAULT_VNODE_SIZE, MIN_OXEN_VERSION};
+use crate::constants::{self, DEFAULT_VNODE_SIZE};
 use crate::core::db::merkle_node::file_backend::FileBackend;
 use crate::core::db::merkle_node::lmdb;
 use crate::core::versions::MinOxenVersion;
@@ -9,7 +9,7 @@ use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::merkle_tree::{MerkleStore, MerkleTransport, TransportableMerkleStore};
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
-use crate::storage::{StorageConfig, VersionStore, create_version_store};
+use crate::storage::{S3Opts, StorageConfig, VersionStore, create_version_store};
 use crate::util;
 use crate::view::RepositoryView;
 
@@ -45,7 +45,11 @@ pub struct LocalRepository {
     /// Storage backend configuration. Set once at construction and never mutated for the life
     /// of this `LocalRepository` — the source of truth for which backend `version_store` is.
     storage_config: StorageConfig,
-    /// Built from `storage_config` at construction. Never replaced.
+    /// Server-wide S3 opts, carried so that operations that derive a new `LocalRepository`
+    /// from an existing one (e.g. workspace creation) can rebuild a matching S3 version store
+    /// without re-threading the server opts through every function. CLI paths leave this `None`.
+    server_s3_opts: Option<S3Opts>,
+    /// Built from `storage_config` + `server_s3_opts` at construction. Never replaced.
     version_store: Arc<dyn VersionStore>,
 
     merkle_store: Option<Arc<dyn TransportableMerkleStore>>,
@@ -59,39 +63,24 @@ pub struct LocalRepositoryWithEntries {
 }
 
 impl LocalRepository {
-    /// Create a LocalRepository from a directory
+    /// Load a repo from disk without any server-side S3 opts. Use this from the CLI and any code
+    /// path that doesn't talk to the server's storage config — an on-disk `[storage] kind = "s3"`
+    /// will surface as [`OxenError::S3BackendMissingServerOpts`]. Server code should call
+    /// [`Self::from_dir_with_server_opts`] instead.
     pub fn from_dir(path: impl AsRef<Path>) -> Result<Self, OxenError> {
+        Self::from_dir_with_server_opts(path, None)
+    }
+
+    /// Server-side variant of [`Self::from_dir`]: threads the server's S3 opts so that
+    /// `[storage] kind = "s3"` repos build a real `S3VersionStore`.
+    pub fn from_dir_with_server_opts(
+        path: impl AsRef<Path>,
+        server_s3_opts: Option<&S3Opts>,
+    ) -> Result<Self, OxenError> {
         let path = path.as_ref();
         let config_path = util::fs::config_filepath(path);
         let config = RepositoryConfig::from_file(&config_path)?;
-
-        let merkle_store_kind = config.merkle_store_kind;
-        let m_store = Self::load_merkle_store(
-            path.to_path_buf(),
-            merkle_store_kind,
-            config.vfs.unwrap_or(false),
-        )?;
-
-        let storage_config = config.storage.unwrap_or_default();
-        let version_store = create_version_store(path, &storage_config)?;
-
-        Ok(LocalRepository {
-            path: path.to_path_buf(),
-            remote_name: config.remote_name,
-            min_version: config.min_version,
-            remotes: config.remotes,
-            vnode_size: config.vnode_size,
-            subtree_paths: config.subtree_paths,
-            depth: config.depth,
-            vfs: config.vfs,
-            remote_mode: config.remote_mode,
-            workspace_name: config.workspace_name,
-            workspaces: config.workspaces,
-            storage_config,
-            version_store,
-            merkle_store: Some(m_store),
-            merkle_store_kind: config.merkle_store_kind,
-        })
+        Self::new_with_server_opts(path, config, server_s3_opts)
     }
 
     /// Loads the Merkle store for the repository at the specified root path.
@@ -156,6 +145,14 @@ impl LocalRepository {
         &self.storage_config
     }
 
+    /// Server-wide S3 opts the repo was constructed with (always `None` on CLI builds).
+    /// Operations that derive a new `LocalRepository` from this one — workspace creation, for
+    /// example — should pass this back into the constructor so the derived repo's S3 version
+    /// store can be rebuilt.
+    pub fn server_s3_opts(&self) -> Option<&S3Opts> {
+        self.server_s3_opts.as_ref()
+    }
+
     /// Get a reference to the version store.
     pub fn version_store(&self) -> Arc<dyn VersionStore> {
         Arc::clone(&self.version_store)
@@ -171,101 +168,62 @@ impl LocalRepository {
         LocalRepository::from_dir(&repo_dir)
     }
 
-    /// Instantiate a new repository at a given path
-    /// Note: Does not create the repository on disk, or read the config file, just instantiates the struct
-    /// To load the repository, use `LocalRepository::from_dir` or `LocalRepository::from_current_dir`
-    pub fn new(
-        path: impl AsRef<Path>,
-        storage_config: Option<StorageConfig>,
-    ) -> Result<LocalRepository, OxenError> {
-        Self::new_with_merkle_store_kind(path, storage_config, MerkleStoreKind::default())
-    }
-
-    /// [`Self::new`] but with an explicit [`MerkleStoreKind`] selection.
-    pub fn new_with_merkle_store_kind(
-        path: impl AsRef<Path>,
-        storage_config: Option<StorageConfig>,
-        merkle_store_kind: MerkleStoreKind,
-    ) -> Result<LocalRepository, OxenError> {
-        let path = path.as_ref().to_path_buf();
-        let storage_config = storage_config.unwrap_or_default();
-        let version_store = create_version_store(&path, &storage_config)?;
-        let m_store = Self::load_merkle_store(path.clone(), merkle_store_kind, false)?;
-        Ok(LocalRepository {
-            path,
-            remotes: vec![],
-            remote_name: None,
-            // New with a path should default to our current MIN_OXEN_VERSION
-            min_version: Some(MIN_OXEN_VERSION.to_string()),
-            vnode_size: None,
-            subtree_paths: None,
-            depth: None,
-            vfs: None,
-            remote_mode: None,
-            workspace_name: None,
-            workspaces: None,
-            storage_config,
-            version_store,
-            merkle_store: Some(m_store),
-            merkle_store_kind,
-        })
-    }
-
-    /// Load an older version of a repository with older oxen core logic
-    pub fn new_from_version(
-        path: impl AsRef<Path>,
-        min_version: impl AsRef<str>,
-        storage_config: Option<StorageConfig>,
-        is_vfs: bool,
-    ) -> Result<LocalRepository, OxenError> {
-        Self::new_from_version_with_merkle_store_kind(
-            path,
-            min_version,
-            storage_config,
-            is_vfs,
-            MerkleStoreKind::default(),
-        )
-    }
-
-    /// [`Self::new_from_version`] but with an explicit [`MerkleStoreKind`] selection.
+    /// Instantiate a new repository at a given path from a `RepositoryConfig`. CLI/test helper;
+    /// server code that may build S3-backed repos should call [`Self::new_with_server_opts`]
+    /// instead.
+    ///
+    /// Note: does NOT create the repo on disk or write the config file — just instantiates the
+    /// struct. To load an existing repo from disk, use [`Self::from_dir`].
     ///
     /// Errors with [`OxenError::MerkleStoreLmdbNotSupportedOnVfs`] when
-    /// `merkle_store_kind == MerkleStoreKind::Lmdb && is_vfs`, since the LMDB
-    /// backend uses memory-mapped IO that's incompatible with virtual file systems.
-    pub fn new_from_version_with_merkle_store_kind(
+    /// `config.merkle_store_kind == MerkleStoreKind::Lmdb && config.vfs == Some(true)`, since
+    /// LMDB's mmap is incompatible with virtual file systems.
+    pub fn new(
         path: impl AsRef<Path>,
-        min_version: impl AsRef<str>,
-        storage_config: Option<StorageConfig>,
-        is_vfs: bool,
-        merkle_store_kind: MerkleStoreKind,
+        config: RepositoryConfig,
+    ) -> Result<LocalRepository, OxenError> {
+        Self::new_with_server_opts(path, config, None)
+    }
+
+    /// Server-side variant of [`Self::new`]: threads server S3 opts so an
+    /// `[storage] kind = "s3"` config builds a real `S3VersionStore`.
+    pub fn new_with_server_opts(
+        path: impl AsRef<Path>,
+        config: RepositoryConfig,
+        server_s3_opts: Option<&S3Opts>,
     ) -> Result<LocalRepository, OxenError> {
         let path = path.as_ref().to_path_buf();
-        let storage_config = storage_config.unwrap_or_default();
-        let version_store = create_version_store(&path, &storage_config)?;
-        let m_store = Self::load_merkle_store(path.clone(), merkle_store_kind, is_vfs)?;
+        let storage_config = config.storage.unwrap_or_default();
+        let version_store = create_version_store(&path, &storage_config, server_s3_opts)?;
+        let m_store = Self::load_merkle_store(
+            path.clone(),
+            config.merkle_store_kind,
+            config.vfs.unwrap_or(false),
+        )?;
         Ok(LocalRepository {
             path,
-            remotes: vec![],
-            remote_name: None,
-            min_version: Some(min_version.as_ref().to_string()),
-            vnode_size: None,
-            subtree_paths: None,
-            depth: None,
-            vfs: if is_vfs { Some(true) } else { None },
-            remote_mode: None,
-            workspace_name: None,
-            workspaces: None,
+            remote_name: config.remote_name,
+            min_version: config.min_version,
+            remotes: config.remotes,
+            vnode_size: config.vnode_size,
+            subtree_paths: config.subtree_paths,
+            depth: config.depth,
+            vfs: config.vfs,
+            remote_mode: config.remote_mode,
+            workspace_name: config.workspace_name,
+            workspaces: config.workspaces,
             storage_config,
+            server_s3_opts: server_s3_opts.cloned(),
             version_store,
             merkle_store: Some(m_store),
-            merkle_store_kind,
+            merkle_store_kind: config.merkle_store_kind,
         })
     }
 
     pub fn from_view(view: RepositoryView) -> Result<LocalRepository, OxenError> {
         let path = std::env::current_dir()?.join(view.name);
         let storage_config = StorageConfig::default();
-        let version_store = create_version_store(&path, &storage_config)?;
+        let version_store = create_version_store(&path, &storage_config, None)?;
         let merkle_store_kind = MerkleStoreKind::default();
         let m_store = Self::load_merkle_store(path.clone(), merkle_store_kind, false)?;
         Ok(LocalRepository {
@@ -281,6 +239,7 @@ impl LocalRepository {
             workspace_name: None,
             workspaces: None,
             storage_config,
+            server_s3_opts: None,
             version_store,
             merkle_store: Some(m_store),
             merkle_store_kind,
@@ -292,10 +251,23 @@ impl LocalRepository {
         path: &Path,
         is_vfs: bool,
     ) -> Result<LocalRepository, OxenError> {
+        Self::from_remote_with_merkle_store_kind(repo, path, MerkleStoreKind::default(), is_vfs)
+    }
+
+    /// [`Self::from_remote`] but with an explicit [`MerkleStoreKind`] selection.
+    ///
+    /// The Merkle store choice is a per-disk decision (like the choice an `oxen init`
+    /// caller makes), not a part of the cloned repo's logical state — so a clone is
+    /// free to pick its own backend regardless of what the remote server uses.
+    pub fn from_remote_with_merkle_store_kind(
+        repo: RemoteRepository,
+        path: &Path,
+        merkle_store_kind: MerkleStoreKind,
+        is_vfs: bool,
+    ) -> Result<LocalRepository, OxenError> {
         let path = path.to_owned();
         let storage_config = StorageConfig::default();
-        let version_store = create_version_store(&path, &storage_config)?;
-        let merkle_store_kind = MerkleStoreKind::default();
+        let version_store = create_version_store(&path, &storage_config, None)?;
         let m_store = Self::load_merkle_store(path.clone(), merkle_store_kind, is_vfs)?;
         Ok(LocalRepository {
             path,
@@ -310,6 +282,7 @@ impl LocalRepository {
             workspace_name: None,
             workspaces: None,
             storage_config,
+            server_s3_opts: None,
             version_store,
             merkle_store: Some(m_store),
             merkle_store_kind,
@@ -715,9 +688,11 @@ mod tests {
 
     use filetime::FileTime;
 
+    use crate::api::requests::RepoNew;
+    use crate::config::RepositoryConfig;
     use crate::config::repository_config::MerkleStoreKind;
     use crate::error::OxenError;
-    use crate::model::{LocalRepository, RepoNew};
+    use crate::model::LocalRepository;
     use crate::test;
     use crate::test::repo_prep::{
         init_test_repo_merkle_init_version_store_async, init_test_repo_with_merkle_store,
@@ -815,7 +790,7 @@ mod tests {
     fn test_add_workspace() -> Result<(), OxenError> {
         let temp_dir = TempDir::new()?;
         let repo_path = temp_dir.path().to_path_buf();
-        let mut repo = LocalRepository::new(repo_path, None)?;
+        let mut repo = LocalRepository::new(repo_path, RepositoryConfig::default())?;
 
         let sample_name = "sample";
         repo.add_workspace(sample_name);
@@ -833,7 +808,7 @@ mod tests {
     fn test_cannot_add_repeat_workspace() -> Result<(), OxenError> {
         let temp_dir = TempDir::new()?;
         let repo_path = temp_dir.path().to_path_buf();
-        let mut repo = LocalRepository::new(repo_path, None)?;
+        let mut repo = LocalRepository::new(repo_path, RepositoryConfig::default())?;
 
         let sample_name = "sample";
         repo.add_workspace(sample_name);
@@ -846,7 +821,7 @@ mod tests {
     fn test_delete_workspace() -> Result<(), OxenError> {
         let temp_dir = TempDir::new()?;
         let repo_path = temp_dir.path().to_path_buf();
-        let mut repo = LocalRepository::new(repo_path, None)?;
+        let mut repo = LocalRepository::new(repo_path, RepositoryConfig::default())?;
 
         let sample_name = "sample";
         repo.add_workspace(sample_name);
@@ -879,7 +854,13 @@ mod tests {
             kind: StorageKind::Local,
             versions_path: Some(PathBuf::from("/mnt/nfs/customer/.oxen/versions/files")),
         };
-        let repo = LocalRepository::new(&repo_path, Some(custom.clone()))?;
+        let repo = LocalRepository::new(
+            &repo_path,
+            RepositoryConfig {
+                storage: Some(custom.clone()),
+                ..Default::default()
+            },
+        )?;
         repo.save()?;
 
         let reloaded = LocalRepository::from_dir(&repo_path)?;
@@ -903,7 +884,7 @@ mod tests {
     #[test]
     fn test_new_defaults_to_file_merkle_store() -> Result<(), OxenError> {
         let temp_dir = TempDir::new()?;
-        let repo = LocalRepository::new(temp_dir.path(), None)?;
+        let repo = LocalRepository::new(temp_dir.path(), RepositoryConfig::default())?;
         assert_eq!(repo.merkle_store_kind(), MerkleStoreKind::File);
         Ok(())
     }
@@ -913,10 +894,12 @@ mod tests {
     #[test]
     fn test_new_with_merkle_store_kind_picks_lmdb() -> Result<(), OxenError> {
         let temp_dir = TempDir::new()?;
-        let repo = LocalRepository::new_with_merkle_store_kind(
+        let repo = LocalRepository::new(
             temp_dir.path(),
-            None,
-            MerkleStoreKind::Lmdb,
+            RepositoryConfig {
+                merkle_store_kind: MerkleStoreKind::Lmdb,
+                ..Default::default()
+            },
         )?;
         assert_eq!(repo.merkle_store_kind(), MerkleStoreKind::Lmdb);
         Ok(())
@@ -928,12 +911,14 @@ mod tests {
     #[test]
     fn test_new_with_merkle_store_kind_rejects_lmdb_on_vfs() -> Result<(), OxenError> {
         let temp_dir = TempDir::new()?;
-        let result = LocalRepository::new_from_version_with_merkle_store_kind(
+        let result = LocalRepository::new(
             temp_dir.path(),
-            "0.25.0",
-            None,
-            true, // is_vfs
-            MerkleStoreKind::Lmdb,
+            RepositoryConfig {
+                min_version: Some("0.25.0".to_string()),
+                vfs: Some(true),
+                merkle_store_kind: MerkleStoreKind::Lmdb,
+                ..Default::default()
+            },
         );
         assert!(
             matches!(result, Err(OxenError::MerkleStoreLmdbNotSupportedOnVfs)),
@@ -946,12 +931,14 @@ mod tests {
     #[test]
     fn test_new_with_file_kind_accepts_vfs() -> Result<(), OxenError> {
         let temp_dir = TempDir::new()?;
-        let repo = LocalRepository::new_from_version_with_merkle_store_kind(
+        let repo = LocalRepository::new(
             temp_dir.path(),
-            "0.25.0",
-            None,
-            true,
-            MerkleStoreKind::File,
+            RepositoryConfig {
+                min_version: Some("0.25.0".to_string()),
+                vfs: Some(true),
+                merkle_store_kind: MerkleStoreKind::File,
+                ..Default::default()
+            },
         )?;
         assert!(repo.is_vfs());
         assert_eq!(repo.merkle_store_kind(), MerkleStoreKind::File);

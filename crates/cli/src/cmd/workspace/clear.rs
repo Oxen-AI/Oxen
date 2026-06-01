@@ -1,13 +1,15 @@
+use anyhow::Context;
 use async_trait::async_trait;
 use clap::{ArgMatches, Command};
-
 use dialoguer::Confirm;
 use liboxen::api;
 use liboxen::{error::OxenError, model::LocalRepository};
 
 use crate::cmd::RunCmd;
-pub const NAME: &str = "clear";
+
 pub struct WorkspaceClearCmd;
+
+const NAME: &str = "clear";
 
 #[async_trait]
 impl RunCmd for WorkspaceClearCmd {
@@ -25,7 +27,7 @@ impl RunCmd for WorkspaceClearCmd {
         )
     }
 
-    async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &ArgMatches) -> Result<(), anyhow::Error> {
         let repository = LocalRepository::from_current_dir()?;
         let remote_name = args.get_one::<String>("remote");
         let remote_repo = match remote_name {
@@ -53,10 +55,8 @@ impl RunCmd for WorkspaceClearCmd {
             Ok(false) => {
                 return Ok(());
             }
-            Err(e) => {
-                return Err(OxenError::basic_str(format!(
-                    "Error confirming deletion: {e}"
-                )));
+            error => {
+                error.context("Error confirming deletion.")?;
             }
         }
 

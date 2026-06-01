@@ -100,7 +100,7 @@ pub async fn import(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
+    let repo = get_repo(app_data, namespace, &repo_name)?;
     let resource = parse_resource(&req, &repo)?;
 
     // Resource must specify branch for committing the workspace
@@ -244,7 +244,7 @@ pub async fn upload_zip(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+    let repo = get_repo(app_data, &namespace, &repo_name)?;
 
     // If there's no head commit, handle initial upload
     if repositories::commits::head_commit_maybe(&repo)?.is_none() {

@@ -50,7 +50,7 @@ impl RunCmd for RestoreCmd {
         restore_args()
     }
 
-    async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &ArgMatches) -> Result<(), anyhow::Error> {
         let repository = LocalRepository::from_current_dir()?;
         check_repo_migration_needed(&repository)?;
         let paths: Vec<PathBuf> = args

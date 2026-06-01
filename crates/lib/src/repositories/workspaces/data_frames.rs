@@ -1316,6 +1316,67 @@ mod tests {
         }).await
     }
 
+    /// Regression guard for the workspace-commit export on JSON-typed columns.
+    /// Exercises the real index → add-row → commit path on a column DuckDB
+    /// infers as `JSON`, so the export projection (`build_export_projection`)
+    /// round-trips a JSON column through the export's `COPY ... (FORMAT JSON)`.
+    ///
+    /// DuckDB 1.5.2 validates JSON on every ingestion path, so a genuinely
+    /// corrupt JSON-column value can't be synthesized through the public API;
+    /// that tolerance branch is covered by the focused tests in
+    /// `core::v_latest::workspaces::data_frames`. This test guards the happy
+    /// path so the export projection can't regress normal JSON-column exports.
+    #[tokio::test]
+    async fn test_commit_workspace_with_json_column_round_trips() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Object values make read_json (and the workspace index) type
+            // `error_details` as a JSON column.
+            let path = Path::new("media.jsonl");
+            let full_path = repo.path.join(path);
+            std::fs::write(
+                &full_path,
+                "{\"id\":1,\"error_details\":{\"code\":402,\"msg\":\"x\"}}\n\
+                 {\"id\":2,\"error_details\":{\"code\":200,\"msg\":\"ok\"}}\n",
+            )?;
+            repositories::add(&repo, &full_path).await?;
+            let commit = repositories::commit(&repo, "add media jsonl")?;
+
+            let user = UserConfig::get()?.to_user();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            workspaces::data_frames::index(&repo, &workspace, path).await?;
+
+            // Append a row whose JSON column holds a valid object.
+            let json_data = json!({"id": 3, "error_details": {"code": 500, "msg": "err"}});
+            workspaces::data_frames::rows::add(&repo, &workspace, path, &json_data)?;
+
+            let new_commit = NewCommitBody {
+                author: user.name.to_owned(),
+                email: user.email,
+                message: "Commit workspace with JSON column".to_string(),
+            };
+            // The export driven by this commit is where a corrupt legacy value
+            // would abort; it must succeed for a valid JSON column.
+            let commit = workspaces::commit(&workspace, &new_commit, DEFAULT_BRANCH_NAME).await?;
+
+            // The committed file round-trips: re-read it and confirm every row survived.
+            let entry = repositories::entries::get_commit_entry(&repo, &commit, path)?.unwrap();
+            let version_store = repo.version_store();
+            let version_file = version_store.get_version_path(&entry.hash).await?;
+            let extension = entry.path.extension().unwrap().to_str().unwrap();
+            let data_frame =
+                df::tabular::read_df_with_extension(version_file, extension, &DFOpts::empty())
+                    .await?;
+            assert_eq!(data_frame.height(), 3);
+            assert!(data_frame.column("error_details").is_ok());
+            Ok(())
+        })
+        .await
+    }
+
     #[test]
     fn test_add_exclude_to_simple_select() -> Result<(), OxenError> {
         let sql = "SELECT * FROM table";

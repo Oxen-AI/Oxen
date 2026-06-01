@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
 
-use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
 
@@ -34,7 +33,7 @@ impl RunCmd for RemoteModeCheckoutCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         let mut repo = LocalRepository::from_current_dir()?;
 
         // Parse Args

@@ -350,6 +350,25 @@ pub fn atomic_write_to_path(target: &Path, contents: &[u8]) -> Result<(), OxenEr
     tmp.commit()
 }
 
+/// Like [`atomic_write_to_path`], but only writes to `target` if `contents` hashes to
+/// `expected_hash` (XXH3-128). On mismatch, `target` is unchanged and `OxenError::HashMismatch` is
+/// returned. Use this on writes where the writer already knows what the bytes should hash to.
+pub fn atomic_write_to_path_verified(
+    target: &Path,
+    contents: &[u8],
+    expected_hash: MerkleHash,
+) -> Result<(), OxenError> {
+    let actual = MerkleHash::new(xxhash_rust::xxh3::xxh3_128(contents));
+    if actual != expected_hash {
+        return Err(OxenError::HashMismatch {
+            path: target.to_path_buf(),
+            expected: expected_hash,
+            actual,
+        });
+    }
+    atomic_write_to_path(target, contents)
+}
+
 /// Atomically write everything yielded by async `reader` to `target` via the write-temp-then-rename
 /// pattern. Same disk-side guarantees as [`atomic_write_to_path`], but pulled from an `AsyncRead`
 /// source instead of an in-memory slice.
@@ -364,6 +383,35 @@ pub fn atomic_write_to_path(target: &Path, contents: &[u8]) -> Result<(), OxenEr
 pub async fn atomic_write_from_async_reader<R>(
     target: &Path,
     reader: &mut R,
+) -> Result<(), OxenError>
+where
+    R: tokio::io::AsyncRead + Unpin + ?Sized,
+{
+    atomic_write_from_async_reader_inner(target, reader, None).await
+}
+
+/// Like [`atomic_write_from_async_reader`], but hashes every streamed byte in-passing and only
+/// renames the temp file over `target` if the resulting XXH3-128 digest matches `expected_hash`.
+/// On mismatch, the temp file is dropped without committing and `OxenError::HashMismatch` is
+/// returned — `target` is never overwritten with wrong content, so there is no transient
+/// bad-state window for concurrent readers.
+///
+/// Use this when the caller already knows the hash of the bytes that will be written.
+pub async fn atomic_write_from_async_reader_verified<R>(
+    target: &Path,
+    reader: &mut R,
+    expected_hash: MerkleHash,
+) -> Result<(), OxenError>
+where
+    R: tokio::io::AsyncRead + Unpin + ?Sized,
+{
+    atomic_write_from_async_reader_inner(target, reader, Some(expected_hash)).await
+}
+
+async fn atomic_write_from_async_reader_inner<R>(
+    target: &Path,
+    reader: &mut R,
+    expected_hash: Option<MerkleHash>,
 ) -> Result<(), OxenError>
 where
     R: tokio::io::AsyncRead + Unpin + ?Sized,
@@ -388,12 +436,22 @@ where
     // or `StreamMsg::Err` — means the reader didn't finish cleanly (cancellation, panic, IO
     // failure), so we return an error and let `tmp` drop without committing so the partial
     // scratch is unlinked.
+    //
+    // When `expected_hash` is `Some`, every chunk also feeds an `Xxh3` hasher and the rename
+    // is skipped if the final digest doesn't match. `tmp` drops in that case so `target` is
+    // never overwritten — verify-before-publish, not publish-then-rollback.
     let writer = tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
         let mut tmp = AtomicTempFile::create(&target)?;
+        let mut hasher = expected_hash.map(|_| xxhash_rust::xxh3::Xxh3::new());
         let mut saw_eof = false;
         while let Some(msg) = rx.blocking_recv() {
             match msg {
-                StreamMsg::Chunk(chunk) => tmp.as_writer().write_all(&chunk)?,
+                StreamMsg::Chunk(chunk) => {
+                    if let Some(h) = hasher.as_mut() {
+                        h.update(&chunk);
+                    }
+                    tmp.as_writer().write_all(&chunk)?;
+                }
                 StreamMsg::Err(err) => return Err(err.into()),
                 StreamMsg::Eof => {
                     saw_eof = true;
@@ -407,6 +465,16 @@ where
                  partial write discarded"
             ))
             .into());
+        }
+        if let (Some(expected), Some(hasher)) = (expected_hash, hasher) {
+            let actual = MerkleHash::new(hasher.digest128());
+            if actual != expected {
+                return Err(OxenError::HashMismatch {
+                    path: target,
+                    expected,
+                    actual,
+                });
+            }
         }
         tmp.commit()
     });
@@ -458,6 +526,39 @@ where
         // `std::io::BufWriter::Drop` attempts to flush but silently swallows errors.
         // Flush explicitly so any IO error propagates before `commit` does the rename.
         buf_writer.flush()?;
+    }
+    tmp.commit()
+}
+
+/// Sync sibling of [`atomic_write_from_async_reader_verified`]. Hashes the streamed bytes via
+/// [`HashingReader`][crate::util::hasher::HashingReader] and commits the rename only if the
+/// resulting XXH3-128 matches `expected_hash`. On mismatch, the temp file is dropped without
+/// being renamed and `OxenError::HashMismatch` is returned.
+pub fn atomic_write_from_reader_verified<R>(
+    target: &Path,
+    reader: &mut R,
+    expected_hash: MerkleHash,
+) -> Result<(), OxenError>
+where
+    R: std::io::Read + ?Sized,
+{
+    let mut tmp = AtomicTempFile::create(target)?;
+    let actual = {
+        let mut hashing = crate::util::hasher::HashingReader::new(reader);
+        let mut buf_writer =
+            std::io::BufWriter::with_capacity(constants::STREAMING_BUF_SIZE, tmp.as_writer());
+        std::io::copy(&mut hashing, &mut buf_writer)?;
+        // `std::io::BufWriter::Drop` attempts to flush but silently swallows errors.
+        // Flush explicitly so any IO error propagates before the hash check.
+        buf_writer.flush()?;
+        MerkleHash::new(hashing.digest128())
+    };
+    if actual != expected_hash {
+        return Err(OxenError::HashMismatch {
+            path: target.to_path_buf(),
+            expected: expected_hash,
+            actual,
+        });
     }
     tmp.commit()
 }
@@ -2002,7 +2103,7 @@ pub async fn unpack_async_tar_archive<R: futures_util::AsyncRead + Unpin>(
 #[cfg(test)]
 mod tests {
     use crate::error::OxenError;
-    use crate::model::EntryDataType;
+    use crate::model::{EntryDataType, MerkleHash};
     use crate::test;
     use crate::util;
 
@@ -2338,6 +2439,66 @@ def add(a, b):
     }
 
     #[tokio::test]
+    async fn test_atomic_write_to_path_verified_commits_on_match() -> Result<(), OxenError> {
+        use xxhash_rust::xxh3::xxh3_128;
+
+        test::run_empty_dir_test_async(|dir| async move {
+            let target = dir.join("blob.bin");
+            let payload = b"the quick brown fox jumps over the lazy dog";
+            let expected = MerkleHash::new(xxh3_128(payload));
+
+            util::fs::atomic_write_to_path_verified(&target, payload, expected)?;
+
+            let written = tokio::fs::read(&target).await?;
+            assert_eq!(written, payload);
+
+            // No stray `.oxentmp.<uuid>` siblings.
+            let mut entries = tokio::fs::read_dir(&dir).await?;
+            let mut names = Vec::new();
+            while let Some(entry) = entries.next_entry().await? {
+                names.push(entry.file_name());
+            }
+            assert_eq!(names.len(), 1, "unexpected leftover files: {names:?}");
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_atomic_write_to_path_verified_aborts_on_mismatch() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|dir| async move {
+            let target = dir.join("blob.bin");
+            let payload = b"the quick brown fox jumps over the lazy dog";
+            let bogus_expected = MerkleHash::new(0xdead_beef_dead_beef_dead_beef_dead_beefu128);
+
+            let result = util::fs::atomic_write_to_path_verified(&target, payload, bogus_expected);
+
+            match result {
+                Err(OxenError::HashMismatch {
+                    path,
+                    expected,
+                    actual,
+                }) => {
+                    assert_eq!(path, target);
+                    assert_eq!(expected, bogus_expected);
+                    assert_ne!(actual, bogus_expected);
+                }
+                other => panic!("expected HashMismatch, got {other:?}"),
+            }
+
+            // Mismatch must not touch the filesystem at all — no target file, no scratch siblings.
+            assert!(!tokio::fs::try_exists(&target).await?);
+            let mut entries = tokio::fs::read_dir(&dir).await?;
+            assert!(
+                entries.next_entry().await?.is_none(),
+                "directory should be empty after mismatched verified write"
+            );
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_atomic_temp_file_name_pattern() -> Result<(), OxenError> {
         // Verify scratch files follow `<target_basename>.oxentmp.<random>` so fsck can match them
         // later. The `tests` module is a child of `util::fs`, so it can construct `AtomicTempFile`
@@ -2557,5 +2718,133 @@ def add(a, b):
             Ok(())
         })
         .await
+    }
+
+    #[tokio::test]
+    async fn test_atomic_write_from_async_reader_verified_commits_on_match() -> Result<(), OxenError>
+    {
+        use xxhash_rust::xxh3::xxh3_128;
+
+        test::run_empty_dir_test_async(|dir| async move {
+            let target = dir.join("blob.bin");
+            let payload: Vec<u8> = (0..50_000u32).flat_map(u32::to_le_bytes).collect();
+            let expected = MerkleHash::new(xxh3_128(&payload));
+            let mut reader = std::io::Cursor::new(payload.clone());
+
+            util::fs::atomic_write_from_async_reader_verified(&target, &mut reader, expected)
+                .await?;
+
+            let written = tokio::fs::read(&target).await?;
+            assert_eq!(written, payload);
+
+            // No stray `.oxentmp.<uuid>` siblings.
+            let mut entries = tokio::fs::read_dir(&dir).await?;
+            let mut names = Vec::new();
+            while let Some(entry) = entries.next_entry().await? {
+                names.push(entry.file_name());
+            }
+            assert_eq!(names.len(), 1, "unexpected leftover files: {names:?}");
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_atomic_write_from_async_reader_verified_aborts_on_mismatch()
+    -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|dir| async move {
+            let target = dir.join("blob.bin");
+            let payload: Vec<u8> = (0..50_000u32).flat_map(u32::to_le_bytes).collect();
+            let mut reader = std::io::Cursor::new(payload);
+            let bogus_expected = MerkleHash::new(0xdead_beef_dead_beef_dead_beef_dead_beefu128);
+
+            let result = util::fs::atomic_write_from_async_reader_verified(
+                &target,
+                &mut reader,
+                bogus_expected,
+            )
+            .await;
+
+            match result {
+                Err(OxenError::HashMismatch {
+                    path,
+                    expected,
+                    actual,
+                }) => {
+                    assert_eq!(path, target);
+                    assert_eq!(expected, bogus_expected);
+                    assert_ne!(actual, bogus_expected);
+                }
+                other => panic!("expected HashMismatch, got {other:?}"),
+            }
+
+            // Target must not exist (we never renamed) and no scratch siblings either.
+            assert!(!tokio::fs::try_exists(&target).await?);
+            let mut entries = tokio::fs::read_dir(&dir).await?;
+            assert!(
+                entries.next_entry().await?.is_none(),
+                "directory should be empty after aborted verified write"
+            );
+            Ok(())
+        })
+        .await
+    }
+
+    #[test]
+    fn test_atomic_write_from_reader_verified_commits_on_match() -> Result<(), OxenError> {
+        use xxhash_rust::xxh3::xxh3_128;
+
+        test::run_empty_dir_test(|dir| {
+            let target = dir.join("blob.bin");
+            let payload: Vec<u8> = (0..50_000u32).flat_map(u32::to_le_bytes).collect();
+            let expected = MerkleHash::new(xxh3_128(&payload));
+            let mut reader = std::io::Cursor::new(payload.clone());
+
+            util::fs::atomic_write_from_reader_verified(&target, &mut reader, expected)?;
+
+            let written = std::fs::read(&target)?;
+            assert_eq!(written, payload);
+
+            // No stray `.oxentmp.<uuid>` siblings.
+            let names: Vec<_> = std::fs::read_dir(dir)?
+                .filter_map(|e| e.ok().map(|e| e.file_name()))
+                .collect();
+            assert_eq!(names.len(), 1, "unexpected leftover files: {names:?}");
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_atomic_write_from_reader_verified_aborts_on_mismatch() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let target = dir.join("blob.bin");
+            let payload: Vec<u8> = (0..50_000u32).flat_map(u32::to_le_bytes).collect();
+            let mut reader = std::io::Cursor::new(payload);
+            let bogus_expected = MerkleHash::new(0xdead_beef_dead_beef_dead_beef_dead_beefu128);
+
+            let result =
+                util::fs::atomic_write_from_reader_verified(&target, &mut reader, bogus_expected);
+
+            match result {
+                Err(OxenError::HashMismatch {
+                    path,
+                    expected,
+                    actual,
+                }) => {
+                    assert_eq!(path, target);
+                    assert_eq!(expected, bogus_expected);
+                    assert_ne!(actual, bogus_expected);
+                }
+                other => panic!("expected HashMismatch, got {other:?}"),
+            }
+
+            // Target must not exist (we never renamed) and no scratch siblings either.
+            assert!(!target.exists());
+            let names: Vec<_> = std::fs::read_dir(dir)?
+                .filter_map(|e| e.ok().map(|e| e.file_name()))
+                .collect();
+            assert!(names.is_empty(), "directory should be empty: {names:?}");
+            Ok(())
+        })
     }
 }

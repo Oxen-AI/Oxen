@@ -5,7 +5,6 @@ use clap::{Arg, Command};
 
 use liboxen::api;
 use liboxen::constants::{DEFAULT_BRANCH_NAME, DEFAULT_HOST, DEFAULT_SCHEME};
-use liboxen::error::OxenError;
 use std::path::PathBuf;
 
 use liboxen::repositories;
@@ -59,14 +58,14 @@ impl RunCmd for DownloadCmd {
         )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse args
         let id = args
             .get_one::<String>("ID")
             .expect("Must supply a repository id");
         // Check that the id format is namespace/repo-name
         if id.chars().filter(|&c| c == '/').count() != 1 {
-            return Err(OxenError::basic_str(
+            return Err(anyhow::anyhow!(
                 "Invalid repository ID format. Must be namespace/repo-name",
             ));
         }
@@ -76,7 +75,7 @@ impl RunCmd for DownloadCmd {
             .map(PathBuf::from)
             .collect();
         if paths.is_empty() {
-            return Err(OxenError::basic_str("Must supply a path to download."));
+            return Err(anyhow::anyhow!("Must supply a path to download."));
         }
         let dst = args
             .get_one::<String>("output")

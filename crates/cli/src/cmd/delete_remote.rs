@@ -1,14 +1,15 @@
+use anyhow::Context;
 use async_trait::async_trait;
 use clap::{Arg, Command};
-
 use dialoguer::Confirm;
 use liboxen::api;
 use liboxen::constants::DEFAULT_HOST;
-use liboxen::error::OxenError;
 
 use crate::cmd::RunCmd;
-pub const NAME: &str = "delete-remote";
+
 pub struct DeleteRemoteCmd;
+
+const NAME: &str = "delete-remote";
 
 #[async_trait]
 impl RunCmd for DeleteRemoteCmd {
@@ -49,10 +50,10 @@ impl RunCmd for DeleteRemoteCmd {
         )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let Some(namespace_name) = args.get_one::<String>("name") else {
-            return Err(OxenError::basic_str(
+            return Err(anyhow::anyhow!(
                 "Must supply a namespace/name for the remote repository.",
             ));
         };
@@ -87,10 +88,8 @@ impl RunCmd for DeleteRemoteCmd {
                 Ok(false) => {
                     return Ok(());
                 }
-                Err(e) => {
-                    return Err(OxenError::basic_str(format!(
-                        "Error confirming deletion: {e}"
-                    )));
+                error => {
+                    error.context("Error confirming deletion.")?;
                 }
             }
         } else {

@@ -1,6 +1,6 @@
 use crate::core;
-use crate::core::db;
 use crate::core::db::data_frames::DataFrameError;
+use crate::core::db::data_frames::changes_db;
 use crate::core::db::data_frames::column_changes_db::get_all_data_frame_column_changes;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, Schema, Workspace};
@@ -90,11 +90,9 @@ pub fn get_column_diff(
 ) -> Result<Vec<DataFrameColumnChange>, DataFrameError> {
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
-    let opts = db::key_val::opts::default();
-
-    match DB::open_for_read_only(&opts, dunce::simplified(&column_changes_path), false) {
-        Ok(db) => get_all_data_frame_column_changes(&db),
-        Err(_) => Ok(Vec::new()),
+    match changes_db::try_get_changes_db(&column_changes_path)? {
+        Some(db) => get_all_data_frame_column_changes(&db),
+        None => Ok(Vec::new()),
     }
 }
 
@@ -105,18 +103,9 @@ pub fn decorate_fields_with_column_diffs(
 ) -> Result<(), OxenError> {
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, file_path.as_ref());
-    let opts = db::key_val::opts::default();
-    let db_open_result = DB::open_for_read_only(
-        &opts,
-        dunce::simplified(column_changes_path.as_path()),
-        false,
-    );
-
-    if db_open_result.is_err() {
+    let Some(db) = changes_db::try_get_changes_db(&column_changes_path)? else {
         return Ok(());
-    }
-
-    let db = db_open_result?;
+    };
 
     df_views
         .source

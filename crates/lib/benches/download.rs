@@ -1,5 +1,6 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use liboxen::constants::DEFAULT_REMOTE_NAME;
+use liboxen::config::repository_config::MerkleStoreKind;
+use liboxen::constants::{DEFAULT_REMOTE_NAME, MIN_OXEN_VERSION};
 use liboxen::error::OxenError;
 use liboxen::model::{LocalRepository, RemoteRepository};
 use liboxen::repositories;
@@ -10,6 +11,10 @@ use rand::distributions::Alphanumeric;
 use rand::{Rng, RngCore};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+#[path = "bench_support.rs"]
+mod bench_support;
+use bench_support::backend_kinds_from_env;
 
 fn generate_random_string(len: usize) -> String {
     rand::thread_rng()
@@ -43,18 +48,21 @@ async fn setup_repo_for_download_benchmark(
     num_files_to_download_in_benchmark: usize,
     dir_size: usize,
     data_path: Option<String>,
+    kind: MerkleStoreKind,
+    backend_name: &str,
 ) -> Result<(LocalRepository, RemoteRepository, PathBuf), OxenError> {
     println!(
-        "setup_repo_for_download_benchmark got repo_size {repo_size}, num_files_to_download {num_files_to_download_in_benchmark}, and dir_size {dir_size}",
+        "setup_repo_for_download_benchmark got repo_size {repo_size}, num_files_to_download {num_files_to_download_in_benchmark}, dir_size {dir_size}, backend {backend_name}",
     );
     let repo_dir = base_dir.join(format!(
-        "repo_{num_files_to_download_in_benchmark}_{dir_size}"
+        "repo_{backend_name}_{num_files_to_download_in_benchmark}_{dir_size}"
     ));
     if repo_dir.exists() {
         util::fs::remove_dir_all(&repo_dir)?;
     }
 
-    let mut repo = repositories::init(&repo_dir)?;
+    let mut repo =
+        repositories::init::init_with_version_and_merkle_store(&repo_dir, MIN_OXEN_VERSION, kind)?;
     let remote_repo = create_or_clear_remote_repo(&repo).await?;
     command::config::set_remote(&mut repo, DEFAULT_REMOTE_NAME, &remote_repo.remote.url)?;
 
@@ -141,63 +149,73 @@ pub fn download_benchmark(c: &mut Criterion) {
         // (100000, 1000),
         // (1000000, 1000),
     ];
-    for &(repo_size, dir_size) in params.iter() {
-        let num_files_to_download = repo_size / 10;
-        let (repo, remote_repo, repo_dir) = rt
-            .block_on(setup_repo_for_download_benchmark(
-                &base_dir,
-                repo_size,
-                num_files_to_download,
-                dir_size,
-                data_path.clone(),
-            ))
-            .unwrap();
+    let backends = backend_kinds_from_env();
+    for &(kind, name) in &backends {
+        for &(repo_size, dir_size) in params.iter() {
+            let num_files_to_download = repo_size / 10;
+            let (repo, remote_repo, repo_dir) = rt
+                .block_on(setup_repo_for_download_benchmark(
+                    &base_dir,
+                    repo_size,
+                    num_files_to_download,
+                    dir_size,
+                    data_path.clone(),
+                    kind,
+                    name,
+                ))
+                .unwrap();
 
-        group.bench_with_input(
-            BenchmarkId::new(
-                format!("{num_files_to_download}k_files_in_{dir_size}dirs"),
-                format!("{:?}", (num_files_to_download, dir_size)),
-            ),
-            &(num_files_to_download, dir_size),
-            |b, _| {
-                b.to_async(&rt).iter_batched(
-                    || {
-                        let iter_dir =
-                            repo_dir.join(format!("run-{}", rand::thread_rng().r#gen::<u64>()));
+            group.bench_with_input(
+                BenchmarkId::new(
+                    format!("{name}_{num_files_to_download}_files_in_{dir_size}dirs"),
+                    format!("{:?}", (name, num_files_to_download, dir_size)),
+                ),
+                &(num_files_to_download, dir_size),
+                |b, _| {
+                    b.to_async(&rt).iter_batched(
+                        || {
+                            let iter_dir =
+                                repo_dir.join(format!("run-{}", rand::thread_rng().r#gen::<u64>()));
 
-                        // Create a clean local repo without the files
-                        let oxen_hidden_path = util::fs::oxen_hidden_dir(&iter_dir);
-                        util::fs::create_dir_all(&oxen_hidden_path).unwrap();
+                            // Create a clean local repo without the files
+                            let oxen_hidden_path = util::fs::oxen_hidden_dir(&iter_dir);
+                            util::fs::create_dir_all(&oxen_hidden_path).unwrap();
 
-                        // create a clean local repo ready for the fetch
-                        let mut local_repo =
-                            LocalRepository::from_remote(remote_repo.clone(), &iter_dir, false)
-                                .unwrap();
-                        iter_dir.clone_into(&mut local_repo.path);
-                        local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
-                        local_repo.set_min_version(repo.min_version());
-                        local_repo.set_subtree_paths(repo.subtree_paths());
-                        local_repo.set_depth(repo.depth());
+                            // create a clean local repo ready for the download
+                            let mut local_repo =
+                                LocalRepository::from_remote(remote_repo.clone(), &iter_dir, false)
+                                    .unwrap();
+                            iter_dir.clone_into(&mut local_repo.path);
+                            local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
+                            local_repo.set_min_version(repo.min_version());
+                            local_repo.set_subtree_paths(repo.subtree_paths());
+                            local_repo.set_depth(repo.depth());
 
-                        local_repo.save().unwrap();
-                        (&remote_repo, iter_dir)
-                    },
-                    |(remote_repo, iter_dir)| async move {
-                        repositories::download(remote_repo, Path::new("files"), &iter_dir, "main")
+                            local_repo.save().unwrap();
+                            (&remote_repo, iter_dir)
+                        },
+                        |(remote_repo, iter_dir)| async move {
+                            repositories::download(
+                                remote_repo,
+                                Path::new("files"),
+                                &iter_dir,
+                                "main",
+                            )
                             .await
                             .unwrap();
-                    },
-                    criterion::BatchSize::PerIteration,
-                );
-            },
-        );
+                        },
+                        criterion::BatchSize::PerIteration,
+                    );
+                },
+            );
 
-        std::thread::sleep(std::time::Duration::from_millis(1000));
+            std::thread::sleep(std::time::Duration::from_millis(1000));
 
-        let _ = rt
-            .block_on(api::client::repositories::delete(&remote_repo))
-            .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(500));
+            let _ = rt
+                .block_on(api::client::repositories::delete(&remote_repo))
+                .unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
     }
     group.finish();
 

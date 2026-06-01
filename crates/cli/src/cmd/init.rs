@@ -5,7 +5,6 @@ use async_trait::async_trait;
 use clap::{Arg, Command, arg};
 use liboxen::config::repository_config::{MerkleStoreKind, RepoConfigError};
 use liboxen::core::versions::MinOxenVersion;
-use liboxen::error::OxenError;
 use strum::VariantNames;
 
 use crate::cmd::RunCmd;
@@ -59,7 +58,7 @@ impl RunCmd for InitCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         //
         // parse args
         //
@@ -80,7 +79,7 @@ impl RunCmd for InitCmd {
         // that look at enum structure.
         let merkle_store_kind = match args.get_one::<String>("merkle-store") {
             Some(token) => {
-                MerkleStoreKind::from_str(token).map_err(RepoConfigError::UnknownMerkeKind)?
+                MerkleStoreKind::from_str(token).map_err(RepoConfigError::UnknownMerkleKind)?
             }
             None => MerkleStoreKind::default(),
         };

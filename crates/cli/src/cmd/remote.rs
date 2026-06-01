@@ -24,7 +24,7 @@ impl RunCmd for RemoteCmd {
         )
     }
 
-    async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &ArgMatches) -> Result<(), anyhow::Error> {
         let verbose = args.get_flag("verbose");
         if verbose {
             self.list_remotes_verbose()?;

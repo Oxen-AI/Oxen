@@ -4,7 +4,7 @@ use strum::{Display, EnumIter, EnumString, IntoStaticStr, VariantArray, VariantN
 use thiserror::Error;
 use utoipa::ToSchema;
 
-use crate::constants::DEFAULT_VNODE_SIZE;
+use crate::constants::{DEFAULT_VNODE_SIZE, MIN_OXEN_VERSION};
 use crate::error::OxenError;
 use crate::model::{LocalRepository, Remote};
 use crate::storage::StorageConfig;
@@ -25,7 +25,7 @@ pub enum RepoConfigError {
     Write(Box<OxenError>),
 
     #[error("[RepositoryConfig] Unsupported Merkle store kind: {kind}. Expected one of {tokens:?}.", kind=.0, tokens=<MerkleStoreKind as VariantNames>::VARIANTS)]
-    UnknownMerkeKind(#[from] strum::ParseError),
+    UnknownMerkleKind(#[from] strum::ParseError),
 
     #[error("Cannot obtain current directory.")]
     CurDir,
@@ -94,13 +94,16 @@ pub struct RepositoryConfig {
 }
 
 impl Default for RepositoryConfig {
+    /// Default matches what `oxen init` writes to a fresh repo's `config.toml`: the current
+    /// `MIN_OXEN_VERSION`, the default vnode size, the default Merkle store backend, and `None`
+    /// for every per-repo override.
     fn default() -> Self {
         RepositoryConfig {
             remote_name: None,
             remotes: Vec::new(),
             subtree_paths: None,
             depth: None,
-            min_version: None,
+            min_version: Some(MIN_OXEN_VERSION.to_string()),
             vnode_size: Some(DEFAULT_VNODE_SIZE),
             storage: None,
             vfs: None,

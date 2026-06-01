@@ -13,17 +13,10 @@
 
 use std::collections::HashSet;
 
-use liboxen::storage::StorageKind;
+use liboxen::storage::{S3Opts, StorageKind};
 use serde::Deserialize;
 
 use crate::errors::OxenHttpError;
-
-/// Admin-only S3 configuration. The bucket is server-wide; per-repo prefixes are derived from
-/// `{namespace}/{name}` when the version store is constructed (not yet wired up).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct S3Opts {
-    pub bucket: String,
-}
 
 /// Server-side storage policy.
 ///
@@ -114,12 +107,18 @@ impl StoragePolicy {
         }
     }
 
+    /// Server S3 opts to thread into liboxen constructors (e.g. `LocalRepository::from_dir`).
+    /// `None` when the S3 backend is not configured on this server.
+    pub fn s3(&self) -> Option<&S3Opts> {
+        self.s3.as_ref()
+    }
+
     /// Resolve the storage backend kind to use for a new repo.
     ///
     /// - `requested = None`: returns the server's default.
     /// - `requested = Some(k)`: returns `k` iff allowed; otherwise `BadRequest` (400).
     ///
-    /// Callers writing the result back to a `RepoNew` should treat the caller's
+    /// Callers writing the result back to a `ClientRepoCreateRequest` or `RepoNew` should treat the caller's
     /// `storage_kind` as a *request* — the server's policy decides what actually gets
     /// persisted (defense in depth).
     pub fn resolve(&self, requested: Option<StorageKind>) -> Result<StorageKind, OxenHttpError> {

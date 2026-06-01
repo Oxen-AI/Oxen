@@ -1,13 +1,16 @@
 use async_trait::async_trait;
 use clap::{Arg, Command, arg};
 use std::path::{Component, Path, PathBuf};
+use std::str::FromStr;
 
 use liboxen::api;
+use liboxen::config::repository_config::{MerkleStoreKind, RepoConfigError};
 use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::error::OxenError;
 use liboxen::opts::CloneOpts;
 use liboxen::opts::FetchOpts;
 use liboxen::repositories;
+use strum::VariantNames;
 
 use crate::cmd::RunCmd;
 use crate::helpers::{check_remote_version, check_remote_version_blocking};
@@ -68,9 +71,21 @@ impl RunCmd for CloneCmd {
                     .help("Clone the repo in 'remote mode', pulling the metadata but not the file contents")
                     .action(clap::ArgAction::SetTrue),
             )
+            .arg(
+                Arg::new("merkle-store")
+                    .long("merkle-store")
+                    .help(
+                        "Which Merkle tree store to use locally for the cloned repo. \
+                         'file' is the original on-disk format (default, backwards-compatible). \
+                         'lmdb' uses an LMDB database for the tree store — not supported on \
+                         virtual file systems."
+                    )
+                    .value_parser(<MerkleStoreKind as VariantNames>::VARIANTS.to_vec())
+                    .action(clap::ArgAction::Set),
+            )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let url = args.get_one::<String>("URL").expect("required");
         let all = args.get_flag("all");
@@ -88,6 +103,12 @@ impl RunCmd for CloneCmd {
             .transpose()?;
         let is_vfs = args.get_flag("vfs");
         let is_remote = args.get_flag("remote");
+        let merkle_store_kind = match args.get_one::<String>("merkle-store") {
+            Some(token) => {
+                MerkleStoreKind::from_str(token).map_err(RepoConfigError::UnknownMerkleKind)?
+            }
+            None => MerkleStoreKind::default(),
+        };
 
         let current_dir = std::env::current_dir()?;
         let dst: PathBuf = match args.get_one::<String>("DESTINATION") {
@@ -97,14 +118,14 @@ impl RunCmd for CloneCmd {
                 if path.is_absolute()
                     || path.components().any(|c| matches!(c, Component::ParentDir))
                 {
-                    return Err(OxenError::basic_str(
+                    return Err(anyhow::anyhow!(
                         "Invalid destination: absolute paths or '..' not allowed",
                     ));
                 }
 
                 let joined = current_dir.join(path);
                 if !joined.starts_with(&current_dir) {
-                    return Err(OxenError::basic_str(
+                    return Err(anyhow::anyhow!(
                         "Invalid destination: path escapes base directory",
                     ));
                 }
@@ -129,6 +150,7 @@ impl RunCmd for CloneCmd {
             },
             is_vfs,
             is_remote,
+            merkle_store_kind,
         };
 
         let (scheme, host) = api::client::get_scheme_and_host_from_url(&opts.url)?;

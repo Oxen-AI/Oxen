@@ -1,3 +1,4 @@
+use anyhow::Context;
 use async_trait::async_trait;
 use clap::{Arg, ArgMatches, Command};
 use colored::Colorize;
@@ -5,17 +6,17 @@ use minus::Pager;
 use std::fmt::Write;
 use time::format_description;
 
-use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
 
 use crate::cmd::RunCmd;
-pub const NAME: &str = "log";
+
 pub struct LogCmd;
 
-fn write_to_pager(output: &mut Pager, text: &str) -> Result<(), OxenError> {
-    writeln!(output, "{text}")
-        .map_err(|e| OxenError::basic_str(format!("Could not write to pager: {e}")))
+const NAME: &str = "log";
+
+fn write_to_pager(output: &mut Pager, text: &str) -> Result<(), anyhow::Error> {
+    writeln!(output, "{text}").context("Could not write to pager.")
 }
 
 #[async_trait]
@@ -42,7 +43,7 @@ impl RunCmd for LogCmd {
             )
     }
 
-    async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &ArgMatches) -> Result<(), anyhow::Error> {
         // Look up from the current dir for .oxen directory
         let repo = LocalRepository::from_current_dir()?;
 
@@ -64,7 +65,7 @@ impl LogCmd {
         repo: &LocalRepository,
         revision: Option<String>,
         num_commits: usize,
-    ) -> Result<(), OxenError> {
+    ) -> Result<(), anyhow::Error> {
         let revision = match revision {
             Some(revision) => revision,
             None => repositories::commits::head_commit(repo)?.id,

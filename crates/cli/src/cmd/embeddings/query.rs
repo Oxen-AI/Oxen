@@ -4,7 +4,6 @@ use async_trait::async_trait;
 use clap::{Arg, Command, arg};
 use liboxen::constants::{DEFAULT_PAGE_NUM, DEFAULT_PAGE_SIZE};
 use liboxen::core::df::tabular;
-use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::opts::{EmbeddingQueryOpts, PaginateOpts};
 use liboxen::repositories;
@@ -61,23 +60,21 @@ impl RunCmd for EmbeddingsQueryCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let path = args.get_one::<String>("PATH");
         let column = args.get_one::<String>("column");
 
         let Some(path) = path else {
-            return Err(OxenError::basic_str(
-                "Must supply a path to the data frame.",
-            ));
+            return Err(anyhow::anyhow!("Must supply a path to the data frame."));
         };
 
         let Some(column) = column else {
-            return Err(OxenError::basic_str("Must supply a column name."));
+            return Err(anyhow::anyhow!("Must supply a column name."));
         };
 
         let Some(query) = args.get_one::<String>("query") else {
-            return Err(OxenError::basic_str("Must supply a query."));
+            return Err(anyhow::anyhow!("Must supply a query."));
         };
 
         let page_size = args
@@ -101,18 +98,14 @@ impl RunCmd for EmbeddingsQueryCmd {
         };
 
         if opts.parse_query().is_err() {
-            return Err(OxenError::basic_str(
-                "Query must be in the format key=value",
-            ));
+            return Err(anyhow::anyhow!("Query must be in the format key=value"));
         }
 
         let repository = LocalRepository::from_current_dir()?;
         let commit = repositories::commits::head_commit(&repository)?;
         let workspace_id = format!("{}-{}", path, commit.id);
         let Some(workspace) = repositories::workspaces::get(&repository, &workspace_id)? else {
-            return Err(OxenError::basic_str(format!(
-                "Workspace not found: {workspace_id}"
-            )));
+            return Err(anyhow::anyhow!("Workspace not found: {workspace_id}"));
         };
 
         let start = std::time::Instant::now();

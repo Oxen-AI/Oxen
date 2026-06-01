@@ -79,7 +79,7 @@ pub async fn run(req: HttpRequest, body: web::Bytes) -> Result<HttpResponse, Oxe
         OxenHttpError::BadRequest(format!("Unknown migration: {migration_name}").into())
     })?;
 
-    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+    let repo = get_repo(app_data, &namespace, &repo_name)?;
 
     try_apply_migration(migration, direction, run_optional, repo)?;
 

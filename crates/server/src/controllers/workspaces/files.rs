@@ -86,7 +86,7 @@ pub async fn get(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(app_data, namespace, repo_name)?;
     let version_store = repo.version_store();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -205,7 +205,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let repo = get_repo(&app_data.path, namespace, &repo_name)?;
+    let repo = get_repo(app_data, namespace, &repo_name)?;
     let directory = path_param(&req, "path")?.to_string();
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -296,7 +296,7 @@ pub async fn add_version_files(
     let directory = path_param(&req, "directory")?.to_string();
     let update_timestamp = query.update_timestamp.unwrap_or(false);
 
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(app_data, namespace, repo_name)?;
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
@@ -355,7 +355,7 @@ pub async fn rm_files(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(app_data, namespace, repo_name)?;
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
@@ -399,7 +399,7 @@ pub async fn validate(req: HttpRequest, _body: String) -> Result<HttpResponse, O
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(app_data, namespace, repo_name)?;
 
     let Some(_workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
@@ -437,7 +437,7 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(app_data, namespace, repo_name)?;
     let path = PathBuf::from(path_param(&req, "path")?);
 
     // Parse request body

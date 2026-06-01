@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use clap::{Arg, Command, arg};
 
-use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
 
@@ -36,12 +35,12 @@ impl RunCmd for SchemasShowCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let repository = LocalRepository::from_current_dir()?;
 
         let Some(path) = args.get_one::<String>("PATH") else {
-            return Err(OxenError::basic_str(
+            return Err(anyhow::anyhow!(
                 "Must supply a path of the schema you want to show.",
             ));
         };

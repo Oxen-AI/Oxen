@@ -137,7 +137,7 @@ pub async fn get(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+    let repo = get_repo(app_data, &namespace, &repo_name)?;
     let version_store = repo.version_store();
     let resource = parse_resource(&req, &repo)?;
     let workspace = resource.workspace.as_ref();
@@ -259,7 +259,7 @@ pub async fn put(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+    let repo = get_repo(app_data, &namespace, &repo_name)?;
 
     // If there's no head commit, handle initial upload
     if repositories::commits::head_commit_maybe(&repo)?.is_none() {
@@ -372,7 +372,7 @@ pub async fn delete(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+    let repo = get_repo(app_data, &namespace, &repo_name)?;
 
     // Parse the resource (branch/commit/path)
     let resource = parse_resource(&req, &repo)?;
@@ -463,7 +463,7 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(&app_data.path, &namespace, &repo_name)?;
+    let repo = get_repo(app_data, &namespace, &repo_name)?;
 
     // Parse the resource (branch/commit/path)
     let resource = parse_resource(&req, &repo)?;

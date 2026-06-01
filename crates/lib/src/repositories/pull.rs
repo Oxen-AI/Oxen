@@ -42,6 +42,7 @@ pub use crate::core::v_latest::pull::pull_remote_branch;
 mod tests {
     use crate::api;
     use crate::command;
+    use crate::config::RepositoryConfig;
     use crate::constants;
     use crate::constants::OXEN_HIDDEN_DIR;
     use crate::core::df::tabular;
@@ -1978,7 +1979,7 @@ mod tests {
             let remote_repo_clone = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
                 // Create an empty repo locally
-                let mut local_repo = LocalRepository::new(dir, None)?;
+                let mut local_repo = LocalRepository::new(dir, RepositoryConfig::default())?;
 
                 // Add and commit a new file
                 let hello_file = local_repo.path.join("dir").join("hello.txt");

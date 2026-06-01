@@ -17,7 +17,7 @@ use tokio::sync::OnceCell;
 use tokio_stream::Stream;
 use tokio_util::io::StreamReader;
 
-use super::version_store::{LocalFilePath, VersionStore};
+use super::version_store::{LocalFilePath, VersionLocation, VersionStore};
 use crate::constants::{STREAMING_BUF_SIZE, VERSION_FILE_NAME};
 use crate::util::hasher;
 use crate::view::versions::CleanCorruptedVersionsResult;
@@ -25,6 +25,15 @@ use xxhash_rust::xxh3::Xxh3;
 
 /// AWS recommends uploading to S3 in a single PUT if filesize is <= 100 MB.
 const DEFAULT_ONESHOT_SIZE: u64 = 100 * 1024 * 1024;
+
+/// Server-supplied S3 configuration carried separately from per-repo `StorageConfig`. The bucket is
+/// a server-wide setting (the server can rotate it without rewriting every repo's config), so it
+/// never appears in `.oxen/config.toml` — only in the server's TOML, then threaded through repo
+/// construction. Clients of liboxen pass `None` for this when no S3 backend is server-enabled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct S3Opts {
+    pub bucket: String,
+}
 
 /// S3 implementation of version storage
 #[derive(Debug)]
@@ -34,6 +43,11 @@ pub struct S3VersionStore {
     prefix: String,
     /// Threshold (bytes) below which we upload with a single PUT rather than a multipart upload.
     oneshot_size: u64,
+    /// Optional endpoint override (S3-compatible stores, the in-process s3s test fixture, MinIO,
+    /// etc.). `None` selects the default AWS endpoint. Surfaced through `VersionLocation::S3` so
+    /// cloud-aware readers (Polars `CloudOptions`, DuckDB `SET s3_endpoint=...`) hit the same
+    /// host as the version store itself.
+    endpoint_url: Option<String>,
 }
 
 impl S3VersionStore {
@@ -48,6 +62,7 @@ impl S3VersionStore {
             bucket: bucket.into(),
             prefix: prefix.into(),
             oneshot_size: DEFAULT_ONESHOT_SIZE,
+            endpoint_url: None,
         }
     }
 
@@ -93,7 +108,12 @@ impl S3VersionStore {
     }
 
     #[cfg(test)]
-    pub fn new_with_client(client: Arc<Client>, bucket: String, prefix: String) -> Self {
+    pub fn new_with_client(
+        client: Arc<Client>,
+        bucket: String,
+        prefix: String,
+        endpoint_url: Option<String>,
+    ) -> Self {
         let cell = OnceCell::new();
         cell.set(Ok(client)).expect("cell was just created");
         Self {
@@ -101,6 +121,7 @@ impl S3VersionStore {
             bucket,
             prefix,
             oneshot_size: DEFAULT_ONESHOT_SIZE,
+            endpoint_url,
         }
     }
 
@@ -602,6 +623,21 @@ impl VersionStore for S3VersionStore {
         Ok(LocalFilePath::Temp(tmp))
     }
 
+    async fn version_location(&self, hash: &str) -> Result<VersionLocation, OxenError> {
+        let client = self.client().await?;
+        let region = client
+            .config()
+            .region()
+            .map(|r| r.to_string())
+            .unwrap_or_else(|| "us-east-1".to_string());
+        Ok(VersionLocation::S3 {
+            url: format!("s3://{}/{}", self.bucket, self.generate_key(hash)),
+            bucket: self.bucket.clone(),
+            region,
+            endpoint_url: self.endpoint_url.clone(),
+        })
+    }
+
     /// Copy a version file to a destination path on the local filesystem, creating any necessary
     /// parent directories and overwriting any existing file at the destination path.
     // TODO: We should probably only allow writing to a specific set of path prefixes
@@ -1046,6 +1082,7 @@ mod tests {
             Arc::new(client),
             "test-bucket".to_string(),
             "test-namespace/test-repo".to_string(),
+            Some(format!("http://{addr}")),
         );
 
         (store, tmp, server_handle)
@@ -1062,6 +1099,35 @@ mod tests {
             .force_path_style(true)
             .build();
         Client::from_conf(config)
+    }
+
+    #[tokio::test]
+    async fn test_version_location_returns_s3_variant_with_endpoint() {
+        let (store, _tmp, _server) = setup().await;
+        let hash = "abcdef1234567890";
+
+        let location = store.version_location(hash).await.unwrap();
+        match location {
+            VersionLocation::S3 {
+                url,
+                bucket,
+                region,
+                endpoint_url,
+            } => {
+                assert_eq!(
+                    url,
+                    format!("s3://test-bucket/test-namespace/test-repo/{hash}/data")
+                );
+                assert_eq!(bucket, "test-bucket");
+                assert_eq!(region, "us-east-1");
+                let endpoint = endpoint_url.expect("test setup configures a loopback endpoint");
+                assert!(
+                    endpoint.starts_with("http://127.0.0.1:"),
+                    "expected loopback endpoint url, got {endpoint:?}"
+                );
+            }
+            other => panic!("expected S3 variant, got {other:?}"),
+        }
     }
 
     #[tokio::test]

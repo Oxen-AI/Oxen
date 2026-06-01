@@ -3,7 +3,6 @@ use std::path::Path;
 use async_trait::async_trait;
 use clap::{Arg, Command, arg};
 
-use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
 
@@ -37,19 +36,19 @@ impl RunCmd for EmbeddingsIndexCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let path = args.get_one::<String>("PATH");
         let column = args.get_one::<String>("column");
 
         let err_msg = "Must supply a path to the data frame.";
         let Some(path) = path else {
-            return Err(OxenError::basic_str(err_msg));
+            return Err(anyhow::anyhow!(err_msg));
         };
 
         let err_msg = "Must supply a column name.";
         let Some(column) = column else {
-            return Err(OxenError::basic_str(err_msg));
+            return Err(anyhow::anyhow!(err_msg));
         };
 
         let use_background_thread = args.get_flag("use-background-thread");
@@ -75,7 +74,7 @@ impl RunCmd for EmbeddingsIndexCmd {
             )?;
             Ok(())
         } else {
-            Err(OxenError::basic_str("Data frame is already indexed."))
+            Err(anyhow::anyhow!("Data frame is already indexed."))
         }
     }
 }

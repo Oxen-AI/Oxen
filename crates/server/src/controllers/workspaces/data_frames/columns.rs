@@ -25,7 +25,7 @@ pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let repo = get_repo(&app_data.path, namespace.clone(), repo_name.clone())?;
+    let repo = get_repo(app_data, namespace.clone(), repo_name.clone())?;
     let file_path = PathBuf::from(path_param(&req, "path")?);
 
     let mut body_json: Value = serde_json::from_str(&body).map_err(|_err| {
@@ -106,7 +106,7 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let repo = get_repo(&app_data.path, namespace.clone(), repo_name.clone())?;
+    let repo = get_repo(app_data, namespace.clone(), repo_name.clone())?;
     let file_path = PathBuf::from(path_param(&req, "path")?);
     let column_name = path_param(&req, "column_name")
         .map_err(|_| OxenHttpError::BadRequest("Column name missing in path parameters".into()))?;
@@ -183,7 +183,7 @@ pub async fn update(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let repo = get_repo(&app_data.path, namespace.clone(), repo_name.clone())?;
+    let repo = get_repo(app_data, namespace.clone(), repo_name.clone())?;
     let file_path = PathBuf::from(path_param(&req, "path")?);
     let column_name = path_param(&req, "column_name")
         .map_err(|_| OxenHttpError::BadRequest("Column name missing in path parameters".into()))?;
@@ -305,7 +305,7 @@ pub async fn add_column_metadata(
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let path = path_param(&req, "path")?.to_string();
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(app_data, namespace, repo_name)?;
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
@@ -346,7 +346,7 @@ pub async fn restore(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
         name: column_name.to_string(),
     };
 
-    let repo = get_repo(&app_data.path, namespace, repo_name)?;
+    let repo = get_repo(app_data, namespace, repo_name)?;
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()

@@ -6,16 +6,17 @@ use clap::{Arg, Command};
 use std::str::FromStr;
 
 use liboxen::api;
+use liboxen::api::requests::RepoNew;
 use liboxen::config::UserConfig;
 use liboxen::constants::{DEFAULT_HOST, DEFAULT_SCHEME};
-use liboxen::error::OxenError;
-use liboxen::model::RepoNew;
 use liboxen::model::file::{FileContents, FileNew};
 use liboxen::storage::StorageKind;
 
 use crate::cmd::RunCmd;
-pub const NAME: &str = "create-remote";
+
 pub struct CreateRemoteCmd;
+
+const NAME: &str = "create-remote";
 
 #[async_trait]
 impl RunCmd for CreateRemoteCmd {
@@ -69,10 +70,10 @@ impl RunCmd for CreateRemoteCmd {
         )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let Some(namespace_name) = args.get_one::<String>("name") else {
-            return Err(OxenError::basic_str(
+            return Err(anyhow::anyhow!(
                 "Must supply a namespace/name for the remote repository.",
             ));
         };
@@ -96,13 +97,19 @@ impl RunCmd for CreateRemoteCmd {
         // The format is namespace/name
         let parts: Vec<&str> = namespace_name.split('/').collect();
         if parts.len() != 2 {
-            return Err(OxenError::basic_str(
+            return Err(anyhow::anyhow!(
                 "Invalid name format. Must be namespace/name",
             ));
         }
 
         let namespace = parts[0];
         let name = parts[1];
+        if namespace.is_empty() || name.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Invalid name format. Neither namespace ({namespace}) nor name ({name}) can be empty.",
+            ));
+        }
+
         let empty = !args.get_flag("add_readme");
         let is_public = args.get_flag("is_public");
 

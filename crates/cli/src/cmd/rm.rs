@@ -47,7 +47,7 @@ impl RunCmd for RmCmd {
         rm_args()
     }
 
-    async fn run(&self, args: &ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &ArgMatches) -> Result<(), anyhow::Error> {
         let paths: Vec<PathBuf> = args
             .get_many::<String>("files")
             .expect("Must supply files")

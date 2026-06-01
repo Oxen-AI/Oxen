@@ -3,7 +3,6 @@ use clap::{Arg, Command};
 
 use liboxen::api;
 use liboxen::config::UserConfig;
-use liboxen::error::OxenError;
 use liboxen::model::{LocalRepository, NewCommitBody};
 use liboxen::repositories;
 
@@ -53,10 +52,10 @@ impl RunCmd for WorkspaceCommitCmd {
             )
     }
 
-    async fn run(&self, args: &clap::ArgMatches) -> Result<(), OxenError> {
+    async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
         // Parse Args
         let Some(message) = args.get_one::<String>("message") else {
-            return Err(OxenError::basic_str(
+            return Err(anyhow::anyhow!(
                 "Err: Usage `oxen workspace commit -w <workspace_id> -m <message>`",
             ));
         };
@@ -75,7 +74,7 @@ impl RunCmd for WorkspaceCommitCmd {
                     if let Some(name) = workspace_name {
                         name
                     } else {
-                        return Err(OxenError::basic_str(
+                        return Err(anyhow::anyhow!(
                             "Either workspace-id or workspace-name must be provided.",
                         ));
                     }
@@ -92,7 +91,7 @@ impl RunCmd for WorkspaceCommitCmd {
                 match repositories::branches::current_branch(&repo)? {
                     Some(branch) => branch.name,
                     None => {
-                        return Err(OxenError::basic_str(
+                        return Err(anyhow::anyhow!(
                             "No current branch. Use --branch to specify a target branch to commit the workspace to.",
                         ));
                     }
