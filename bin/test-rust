@@ -194,7 +194,7 @@ fi
 export OXEN_TEST_HOST="localhost:${OXEN_PORT}"
 
 echo "==> Starting oxen-server on port ${OXEN_PORT}..."
-./target/debug/oxen-server start -p "${OXEN_PORT}" &
+./target/debug/oxen-server start -p "${OXEN_PORT}" --test &
 SERVER_PID=$!
 
 wait_for_server() {

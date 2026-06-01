@@ -61,6 +61,7 @@ pub async fn import(
     filename: Option<String>,
     workspace: &Workspace,
     update_timestamp: bool,
+    allow_loopback: bool,
 ) -> Result<(), OxenError> {
     match workspace.base_repo.min_version() {
         MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
@@ -72,6 +73,7 @@ pub async fn import(
                 filename,
                 workspace,
                 update_timestamp,
+                allow_loopback,
             )
             .await?;
             Ok(())
@@ -282,12 +284,14 @@ mod tests {
             ];
 
             for (url, label) in cases {
+                // allow_loopback is false, so loopback targets are rejected like other private IPs.
                 let result = workspaces::files::import(
                     url,
                     "",
                     std::path::PathBuf::from("data"),
                     None,
                     &workspace,
+                    false,
                     false,
                 )
                 .await;
