@@ -168,6 +168,7 @@ fn all_commands() -> [Box<dyn cmd::RunCmd>; 37] {
     [
         Box::new(cmd::AddCmd),
         Box::new(cmd::BranchCmd),
+        Box::new(cmd::CatCmd),
         Box::new(cmd::CheckoutCmd),
         Box::new(cmd::CleanCmd),
         Box::new(cmd::CloneCmd),
