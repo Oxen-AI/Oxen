@@ -98,6 +98,8 @@ pub async fn import(
     body: web::Json<Value>,
 ) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
+    // In test mode the import SSRF guard allows loopback download targets; false otherwise.
+    let allow_loopback = app_data.test_mode;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, namespace, &repo_name)?;
@@ -195,6 +197,7 @@ pub async fn import(
         filename,
         &workspace,
         update_timestamp,
+        allow_loopback,
     )
     .await?;
 
@@ -501,18 +504,34 @@ mod tests {
         repositories::add(&repo, &hello_file).await?;
         let _commit = repositories::commit(&repo, "First commit")?;
 
+        // Serve a small tabular file from a local mock server. The URL's basename
+        // (cats_vs_dogs.tsv) becomes the committed filename.
+        let mut server = mockito::Server::new_async().await;
+        let tsv_body = "file\tlabel\ncat.1.jpg\tcat\ndog.1.jpg\tdog\n";
+        let _mock = server
+            .mock("GET", "/tables/cats_vs_dogs.tsv")
+            .with_status(200)
+            .with_header("content-type", "text/tab-separated-values")
+            .with_body(tsv_body)
+            .create_async()
+            .await;
+        let download_url = format!("{}/tables/cats_vs_dogs.tsv", server.url());
+
         let uri = format!("/oxen/{namespace}/{repo_name}/file/import/main/data");
 
-        // import a file from oxen for testing
+        // import a file from the local mock server for testing
         let body = serde_json::json!({
-            "download_url": "https://hub.oxen.ai/api/repos/datasets/GettingStarted/file/main/tables/cats_vs_dogs.tsv",
+            "download_url": download_url,
             "name": author,
             "email": email,
         });
 
         let req = actix_web::test::TestRequest::post()
             .uri(&uri)
-            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+            .app_data(OxenAppData {
+                test_mode: true,
+                ..OxenAppData::new(sync_dir.to_path_buf())
+            })
             .param("namespace", namespace)
             .param("repo_name", repo_name)
             .set_json(&body)
@@ -520,7 +539,10 @@ mod tests {
 
         let app = actix_web::test::init_service(
             App::new()
-                .app_data(OxenAppData::new(sync_dir.clone()))
+                .app_data(OxenAppData {
+                    test_mode: true,
+                    ..OxenAppData::new(sync_dir.clone())
+                })
                 .route(
                     "/oxen/{namespace}/{repo_name}/file/import/{resource:.*}",
                     web::post().to(controllers::import::import),
@@ -564,18 +586,34 @@ mod tests {
         repositories::add(&repo, &hello_file).await?;
         let _commit = repositories::commit(&repo, "First commit")?;
 
+        // Serve a small text file from a local mock server. The URL's basename (chat.py)
+        // becomes the committed filename.
+        let mut server = mockito::Server::new_async().await;
+        let py_body = "import oxen\n\nprint(\"hello from a test notebook\")\n";
+        let _mock = server
+            .mock("GET", "/notebooks/chat.py")
+            .with_status(200)
+            .with_header("content-type", "text/x-python")
+            .with_body(py_body)
+            .create_async()
+            .await;
+        let download_url = format!("{}/notebooks/chat.py", server.url());
+
         let uri = format!("/oxen/{namespace}/{repo_name}/file/import/main/notebooks");
 
-        // import a file from oxen for testing
+        // import a file from the local mock server for testing
         let body = serde_json::json!({
-            "download_url": "https://hub.oxen.ai/api/repos/datasets/GettingStarted/file/main/notebooks/chat.py",
+            "download_url": download_url,
             "name": author,
             "email": email,
         });
 
         let req = actix_web::test::TestRequest::post()
             .uri(&uri)
-            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+            .app_data(OxenAppData {
+                test_mode: true,
+                ..OxenAppData::new(sync_dir.to_path_buf())
+            })
             .param("namespace", namespace)
             .param("repo_name", repo_name)
             .set_json(&body)
@@ -583,7 +621,10 @@ mod tests {
 
         let app = actix_web::test::init_service(
             App::new()
-                .app_data(OxenAppData::new(sync_dir.clone()))
+                .app_data(OxenAppData {
+                    test_mode: true,
+                    ..OxenAppData::new(sync_dir.clone())
+                })
                 .route(
                     "/oxen/{namespace}/{repo_name}/file/import/{resource:.*}",
                     web::post().to(controllers::import::import),

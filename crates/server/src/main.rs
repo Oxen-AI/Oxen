@@ -361,6 +361,16 @@ enum ServerCommand {
             value_parser = clap::value_parser!(MerkleStoreKind),
         )]
         merkle_store_kind: MerkleStoreKind,
+
+        /// Run the server in test mode. Not for production use.
+        #[arg(
+            short = 't',
+            long = "test",
+            help = "Run the server in test mode. Currently this only relaxes the import SSRF \
+                    guard to allow loopback download targets so tests can serve fixtures from a \
+                    local mock HTTP server. Do not use in production."
+        )]
+        test: bool,
     },
 
     /// Create a new user in the server and output the config file for that user
@@ -475,6 +485,7 @@ async fn server() -> Result<(), ServerError> {
             auth,
             config,
             merkle_store_kind,
+            test,
         } => {
             let _metrics_guard = init_metrics()?;
             let server_config = load_server_config(config.as_deref())?;
@@ -491,6 +502,7 @@ async fn server() -> Result<(), ServerError> {
                     disable_merkle_cache: env::var("OXEN_DISABLE_MERKLE_CACHE").is_ok(),
                     enable_auth: auth,
                     merkle_store_kind,
+                    test_mode: test,
                 },
                 &sync_dir,
                 server_config,
@@ -576,6 +588,9 @@ struct ServerOpts {
     disable_merkle_cache: bool,
     enable_auth: bool,
     merkle_store_kind: MerkleStoreKind,
+    /// Test mode (`--test`): relaxes the import SSRF guard to allow loopback targets. Never
+    /// enabled in production.
+    test_mode: bool,
 }
 
 async fn start(
@@ -589,6 +604,7 @@ async fn start(
         disable_merkle_cache,
         enable_auth,
         merkle_store_kind,
+        test_mode,
     } = opts;
 
     // Configure merkle tree node caching
@@ -607,6 +623,7 @@ async fn start(
         path: PathBuf::from(sync_dir),
         config,
         merkle_store_kind,
+        test_mode,
     };
 
     {

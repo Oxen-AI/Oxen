@@ -311,7 +311,9 @@ enum InvalidUrlError {
 /// Resolves a URL's hostname via DNS and rejects it if any resolved address is
 /// private/reserved. This prevents SSRF attacks where a user-supplied URL could reach
 /// internal services (e.g. cloud metadata at 169.254.169.254, internal APIs, etc.).
-async fn validate_url_target(url: &Url) -> Result<(), InvalidUrlError> {
+///
+/// When `allow_loopback` is true, loopback targets (127.0.0.0/8 and ::1) are permitted (for tests).
+async fn validate_url_target(url: &Url, allow_loopback: bool) -> Result<(), InvalidUrlError> {
     let host = url.host_str().ok_or(InvalidUrlError::NoHost)?;
     let port = url.port_or_known_default().unwrap_or(443);
     let addr = format!("{host}:{port}");
@@ -325,8 +327,12 @@ async fn validate_url_target(url: &Url) -> Result<(), InvalidUrlError> {
             })?;
 
     for socket_addr in resolved {
-        if is_private_ip(&socket_addr.ip()) {
-            return Err(InvalidUrlError::PrivateIp(socket_addr.ip()));
+        let ip = socket_addr.ip();
+        if allow_loopback && ip.is_loopback() {
+            continue;
+        }
+        if is_private_ip(&ip) {
+            return Err(InvalidUrlError::PrivateIp(ip));
         }
     }
 
@@ -373,6 +379,8 @@ fn sanitize_filename(name: &str) -> String {
 
 /// Downloads a file from a user-supplied URL into a workspace directory.
 /// Validates the URL scheme and target IP before fetching to prevent SSRF.
+///
+/// `allow_loopback` relaxes the SSRF guard for loopback targets for tests.
 pub async fn import(
     url: &str,
     auth: &str,
@@ -380,6 +388,7 @@ pub async fn import(
     filename: Option<String>,
     workspace: &Workspace,
     update_timestamp: bool,
+    allow_loopback: bool,
 ) -> Result<(), OxenError> {
     let parsed_url =
         Url::parse(url).map_err(|_| OxenError::file_import_error(format!("Invalid URL: {url}")))?;
@@ -391,7 +400,7 @@ pub async fn import(
         ));
     }
 
-    validate_url_target(&parsed_url)
+    validate_url_target(&parsed_url, allow_loopback)
         .await
         .map_err(|e| OxenError::ImportFileError(format!("{e}").into()))?;
 
@@ -405,6 +414,7 @@ pub async fn import(
         filename,
         workspace,
         update_timestamp,
+        allow_loopback,
     )
     .await?;
 
@@ -476,6 +486,7 @@ async fn fetch_file(
     caller_filename: Option<String>,
     workspace: &Workspace,
     update_timestamp: bool,
+    allow_loopback: bool,
 ) -> Result<(), OxenError> {
     let client = Client::builder()
         .redirect(redirect::Policy::none())
@@ -521,7 +532,7 @@ async fn fetch_file(
                     "Redirect to non-HTTP(S) URL is not allowed",
                 ));
             }
-            validate_url_target(&next_url)
+            validate_url_target(&next_url, allow_loopback)
                 .await
                 .map_err(|e| OxenError::ImportFileError(format!("{e}").into()))?;
 
