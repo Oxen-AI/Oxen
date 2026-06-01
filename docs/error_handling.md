@@ -13,38 +13,42 @@ this consistent design pattern on a best-effort approach
    generally disallowed in the code as they cause the calling code to panic. Only tests that are
    asserting properties may use `.unwrap()` and `.expect()` on `Result` and `Option` typed values.
 
-2. In library code, errors must be as structured and informative as possible. All of the information
-   about the source of the error must be included so that a caller has a reasonable opportunity to
-   understand the error and handle it programmatically. Idiomatic Rust encourages the use of an `enum`
-   defined error type to encapsulate different conditions as variants of the `enum`.
+2. In `liboxen`, make an error a structured `OxenError` variant when — and only when — a caller will
+   act on it: either the error is inspected (`match`ed) somewhere in the code, or it can be returned to
+   a caller of the public liboxen API. A structured variant carries the information needed to understand
+   and handle the condition programmatically; its `#[error("...")]` message documents the condition.
+   Idiomatic Rust encourages the use of an `enum`-defined error type with one variant per meaningful
+   condition.
 
-3. Errors that obfuscate the source or transform an error into a simple string message must be avoided.
-   In Rust, errors must either be defined as a `struct` or an `enum` that provides descriptive variants
-   that each describe a specific error condition. For `enum`-defined errors, callers of code that uses
-   these errors must be able to reasonably `match` on the `Err` variant. An error that is a string
-   makes such programmatic introspection and handling of errors impossible.
+3. An error that is never inspected and never crosses the public liboxen API does not need a structured
+   variant. Encode it as `OxenError::InternalError` with a formatted string. (`OxenError::Basic` is the
+   older, less specific form of the same idea; prefer `InternalError` for these internal cases.)
+   Inventing a structured variant that no caller ever matches on adds ceremony without changing
+   behavior, so reserve structured variants for the cases described in Goal 2.
 
 4. End-user facing code (the CLI and server) must have descriptive error messages that explain the
    problem clearly. When it's possible to correct the error, the user-facing error message must
    provide guidance or instructions the user can follow that will rectify the issue.
 
-5. Errors should be defined as close to the using code as possible. Strongly prefer making error `enum`s
-   that are specific to a module, package, or crate. For example, wrappers and helpers on networking
-   code should use a streamlined locally defined error `enum` that is specific to _networking_ errors.
-   Calling code should rely on `From` implementations to convert from one logically related set of code's
-   error type into an appropriate unifying container error type.
+5. Do not introduce new error types when a crate's top-level error type fits. `liboxen` uses
+   `OxenError` and `oxen-server` uses `OxenHttpError`. Prefer extending the top-level type — or
+   wrapping a third-party error into it with a `#[from]` conversion — over defining a new module- or
+   crate-local error `enum`.
 
-6. For `liboxen`, the top-level unifying error type is `OxenError`. All library code must have some
-   conversion(s) that allow a more specific error type to be wrapped as an `OxenError`.
+6. `liboxen` library code returns `Result<T, OxenError>`; wrap more specific error types into
+   `OxenError` with `#[from]` conversions. `oxen-server` translates those failures into HTTP responses
+   through `OxenHttpError`: map each `OxenError` variant you want to differentiate to the API caller to a
+   specific `OxenHttpError` variant (e.g. `RepoNotFound` → 404) and map everything else to
+   `OxenHttpError::InternalServerError`.
 
 
 ## Specific Guidance for Modernization of Existing Oxen Code
 
-The `OxenError::Basic` and `OxenError::InternalError` variants are deprecated. No new code must use these
-string error representations. These throw away all useful error information and encode it as a string,
-making it impossible to `match` on specific error conditions and handle them programmatically. Library users
-are unable to meaningfully handle these variants.
+When you touch existing code that uses `OxenError::Basic` or `OxenError::InternalError`, decide based on
+how the error is used:
 
-Any refactoring that touches these uses of string-defined OxenError variants should convert them into well-defined
-variants of an error `enum`. At a bare minimum, they should be translated to a new structured _variant_
-on `OxenError`. The existing string message can be used as the `#[error("...")]` on the new variant.
+- If the error is inspected somewhere, or can be returned to a caller of the public liboxen API, convert
+  it to a structured `OxenError` variant. The existing string message can be reused as the
+  `#[error("...")]` on the new variant.
+- Otherwise it is an internal error that no caller acts on; leave it as a string error, preferring
+  `OxenError::InternalError` over the older `OxenError::Basic`.
