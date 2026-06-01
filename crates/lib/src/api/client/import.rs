@@ -230,8 +230,21 @@ mod tests {
     async fn test_import_url_with_update_timestamp() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = DEFAULT_BRANCH_NAME;
-            let download_url =
-                "https://hub.oxen.ai/api/repos/ox/Oxen-AI-Assets/file/main/images/bloxy_white_background.png";
+
+            // Serve stable, identical bytes from a local mock server so the three imports below
+            // hash to the same version, exercising re-import dedup. The oxen-server process
+            // performs the fetch, so it must run in test mode to permit the loopback target. The
+            // mock and server stay in scope for the whole closure so every GET is served.
+            let mut server = mockito::Server::new_async().await;
+            let _mock = server
+                .mock("GET", "/images/bloxy_white_background.png")
+                .with_status(200)
+                .with_header("content-type", "image/png")
+                .with_body("fake png bytes for re-import dedup testing")
+                .create_async()
+                .await;
+            let download_url = format!("{}/images/bloxy_white_background.png", server.url());
+            let download_url = download_url.as_str();
 
             let commit_body = NewCommitBody {
                 message: "First import".to_string(),
@@ -285,14 +298,9 @@ mod tests {
             assert_ne!(first_commit.id, third_commit.id);
 
             // Verify latest_commit on the entry matches the update_timestamp commit
-            let entries = api::client::dir::list(
-                &remote_repo,
-                branch_name,
-                Path::new("imported"),
-                1,
-                100,
-            )
-            .await?;
+            let entries =
+                api::client::dir::list(&remote_repo, branch_name, Path::new("imported"), 1, 100)
+                    .await?;
             let file_entry = entries
                 .entries
                 .iter()

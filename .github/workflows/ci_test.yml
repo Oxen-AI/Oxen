@@ -175,13 +175,13 @@ jobs:
       - name: Run oxen rust tests (Linux/macOS)
         if: matrix.platform != 'windows'
         run: |
-          ./target/debug/oxen-server start &
+          ./target/debug/oxen-server start --test &
           cargo nextest run --workspace --profile ci
 
       - name: Run oxen rust tests (Windows)
         if: matrix.platform == 'windows'
         run: |
-          Start-Process ".\target\debug\oxen-server.exe" -ArgumentList "start"
+          Start-Process ".\target\debug\oxen-server.exe" -ArgumentList "start","--test"
           cargo nextest run --workspace --profile ci
 
   python-test:
