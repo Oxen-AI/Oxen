@@ -249,6 +249,10 @@ pub enum OxenError {
     #[error("Invalid version: {0}")]
     InvalidVersion(StringError),
 
+    /// The repository was created by an Oxen version this CLI no longer supports.
+    #[error("This repository was created by Oxen v{0}, which is no longer supported by this CLI.")]
+    UnsupportedRepoVersion(StringError),
+
     #[error("Unknown migration: {0}")]
     UnknownMigration(String),
 
@@ -749,6 +753,9 @@ impl OxenError {
             }
             DownloadBatchExhausted { .. } | VersionsMissingOnServer { .. } => {
                 "If a content blob is missing on the server, run `oxen push --missing-files` from a clone with the full local history to repair it."
+            }
+            UnsupportedRepoVersion(_) => {
+                "Use an older Oxen release to migrate this repository up to the current format, then retry with this CLI."
             }
             S3BackendMissingServerOpts => {
                 "Set `[storage] s3_bucket = \"<your-bucket>\"` in the server's config TOML and restart oxen-server."

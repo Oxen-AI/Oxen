@@ -12,7 +12,6 @@ use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::db::data_frames::workspace_df_db::select_cols_from_schema;
 use crate::core::db::data_frames::{DataFrameError, df_db, workspace_df_db};
 use crate::core::df::sql;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::{Branch, Commit, EntryDataType, LocalRepository, NewCommitBody, Workspace};
 use crate::opts::DFOpts;
@@ -58,52 +57,20 @@ pub fn is_queryable_data_frame_indexed(
     path: impl AsRef<Path>,
     commit: &Commit,
 ) -> Result<bool, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::data_frames::is_queryable_data_frame_indexed(
-            repo, commit, path,
-        ),
-    }
+    core::v_latest::workspaces::data_frames::is_queryable_data_frame_indexed(repo, commit, path)
 }
 
-pub fn get_queryable_data_frame_workspace(
-    repo: &LocalRepository,
-    path: impl AsRef<Path>,
-    commit: &Commit,
-) -> Result<Workspace, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => {
-            panic!("get_queryable_data_frame_workspace not implemented for v0.10.0");
-        }
-        _ => core::v_latest::workspaces::data_frames::get_queryable_data_frame_workspace(
-            repo, path, commit,
-        ),
-    }
-}
+pub use crate::core::v_latest::workspaces::data_frames::get_queryable_data_frame_workspace;
 
 pub async fn index(
-    repo: &LocalRepository,
+    _repo: &LocalRepository,
     workspace: &Workspace,
     path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::workspaces::data_frames::index(workspace, path.as_ref()).await,
-    }
+    core::v_latest::workspaces::data_frames::index(workspace, path.as_ref()).await
 }
 
-pub async fn rename(
-    workspace: &Workspace,
-    path: impl AsRef<Path>,
-    new_path: impl AsRef<Path>,
-) -> Result<PathBuf, OxenError> {
-    match workspace.base_repo.min_version() {
-        MinOxenVersion::V0_10_0 => Err(OxenError::basic_str(
-            "rename is not supported for this version of oxen",
-        )),
-        _ => core::v_latest::workspaces::data_frames::rename(workspace, path, new_path).await,
-    }
-}
+pub use crate::core::v_latest::workspaces::data_frames::rename;
 
 pub fn unindex(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), DataFrameError> {
     let path = path.as_ref();

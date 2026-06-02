@@ -5,7 +5,6 @@
 
 use std::collections::HashSet;
 
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::opts::{GlobOpts, RmOpts};
@@ -38,13 +37,8 @@ async fn p_rm(
     repo: &LocalRepository,
     opts: &RmOpts,
 ) -> Result<(), OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            log::debug!("Version found: V0_19_0");
-            core::v_latest::rm::rm(paths, repo, opts).await?;
-        }
-    }
+    log::debug!("Version found: V0_19_0");
+    core::v_latest::rm::rm(paths, repo, opts).await?;
     Ok(())
 }
 

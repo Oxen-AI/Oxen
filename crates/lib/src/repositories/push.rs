@@ -3,12 +3,6 @@
 //! Push data from your local machine to a remote.
 //!
 
-use crate::core;
-use crate::core::versions::MinOxenVersion;
-use crate::error::OxenError;
-use crate::model::{Branch, LocalRepository};
-use crate::opts::PushOpts;
-
 /// # Push committed data to a remote
 ///
 /// ```ignore
@@ -36,23 +30,10 @@ use crate::opts::PushOpts;
 /// // Push the file
 /// repositories::push(&repo).await?;
 /// ```
-pub async fn push(repo: &LocalRepository) -> Result<Branch, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 is deprecated"),
-        _ => core::v_latest::push::push(repo).await,
-    }
-}
+pub use crate::core::v_latest::push::push;
 
 /// Push to a specific remote branch on the default remote repository
-pub async fn push_remote_branch(
-    repo: &LocalRepository,
-    opts: &PushOpts,
-) -> Result<Branch, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 is deprecated"),
-        _ => core::v_latest::push::push_remote_branch(repo, opts).await,
-    }
-}
+pub use crate::core::v_latest::push::push_remote_branch;
 
 #[cfg(test)]
 mod tests {
@@ -610,7 +591,6 @@ mod tests {
                 api::client::commits::list_commit_history(&remote_repo, new_branch_name).await?;
             assert_eq!(history_new.len(), 26);
 
-            // TODO: v0_10_0 logic should have 1 commit on main
             // Should still have no commits on main
             let history_main =
                 api::client::commits::list_commit_history(&remote_repo, DEFAULT_BRANCH_NAME).await;

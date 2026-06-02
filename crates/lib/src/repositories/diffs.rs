@@ -10,11 +10,9 @@
 
 use crate::constants::{CACHE_DIR, COMPARES_DIR, LEFT_COMPARE_COMMIT, RIGHT_COMPARE_COMMIT};
 use crate::core::merge::entry_merge_conflict_reader::EntryMergeConflictReader;
-use crate::core::versions::MinOxenVersion;
 use crate::model::entry::commit_entry::CommitPath;
 use crate::model::merkle_tree::node::FileNode;
 
-use crate::core;
 use crate::core::df::tabular;
 use crate::error::OxenError;
 use crate::model::diff::diff_entry_status::DiffEntryStatus;
@@ -1211,42 +1209,9 @@ pub async fn compute_new_columns_from_dfs(
     })
 }
 
-pub async fn diff_entries(
-    repo: &LocalRepository,
-    file_path: impl AsRef<Path>,
-    base_entry: Option<FileNode>,
-    base_commit: &Commit,
-    head_entry: Option<FileNode>,
-    head_commit: &Commit,
-    df_opts: DFOpts,
-) -> Result<DiffEntry, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            core::v_latest::diff::diff_entries(
-                repo,
-                file_path,
-                base_entry,
-                base_commit,
-                head_entry,
-                head_commit,
-                df_opts,
-            )
-            .await
-        }
-    }
-}
+pub use crate::core::v_latest::diff::diff_entries;
 
-pub fn list_changed_dirs(
-    repo: &LocalRepository,
-    base_commit: &Commit,
-    head_commit: &Commit,
-) -> Result<Vec<(PathBuf, DiffEntryStatus)>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::diff::list_changed_dirs(repo, base_commit, head_commit),
-    }
-}
+pub use crate::core::v_latest::diff::list_changed_dirs;
 
 pub fn cache_tabular_diff(
     repo: &LocalRepository,
@@ -1382,31 +1347,7 @@ fn read_dupes(repo: &LocalRepository, compare_id: &str) -> Result<TabularDiffDup
     Ok(dupes)
 }
 
-pub async fn list_diff_entries(
-    repo: &LocalRepository,
-    base_commit: &Commit,
-    head_commit: &Commit,
-    base_dir: PathBuf,
-    head_dir: PathBuf,
-    page: usize,
-    page_size: usize,
-) -> Result<DiffEntriesCounts, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            core::v_latest::diff::list_diff_entries(
-                repo,
-                base_commit,
-                head_commit,
-                base_dir,
-                head_dir,
-                page,
-                page_size,
-            )
-            .await
-        }
-    }
-}
+pub use crate::core::v_latest::diff::list_diff_entries;
 
 fn write_diff_df_cache(
     repo: &LocalRepository,

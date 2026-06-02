@@ -14,22 +14,12 @@
 //! - An untracked directory is only removed whole when its entire subtree is untracked —
 //!   `oxen status` already classifies partially-tracked directories differently.
 
-use crate::core;
 pub use crate::core::v_latest::clean::CleanResult;
-use crate::core::versions::MinOxenVersion;
-use crate::error::OxenError;
-use crate::model::LocalRepository;
-use crate::opts::CleanOpts;
 
 /// Remove untracked files and directories from `repo`'s working tree.
 ///
 /// See the module-level docs for the full behavior contract.
-pub async fn clean(repo: &LocalRepository, opts: &CleanOpts) -> Result<CleanResult, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::clean::clean(repo, opts).await,
-    }
-}
+pub use crate::core::v_latest::clean::clean;
 
 #[cfg(test)]
 mod tests {

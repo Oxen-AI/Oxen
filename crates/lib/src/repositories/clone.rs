@@ -8,7 +8,6 @@ use std::path::Path;
 use crate::api;
 use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::core;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, Remote, RemoteRepository};
 use crate::opts::CloneOpts;
@@ -84,10 +83,7 @@ async fn clone_repo(
     opts: &CloneOpts,
 ) -> Result<LocalRepository, OxenError> {
     println!("🐂 cloning repo {}", remote_repo.url());
-    match remote_repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::clone::clone_repo(remote_repo, opts).await,
-    }
+    core::v_latest::clone::clone_repo(remote_repo, opts).await
 }
 
 async fn clone_repo_remote_mode(
@@ -95,10 +91,7 @@ async fn clone_repo_remote_mode(
     opts: &CloneOpts,
 ) -> Result<LocalRepository, OxenError> {
     println!("🐂 cloning repo {}", remote_repo.url());
-    match remote_repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::clone::clone_repo_remote_mode(remote_repo, opts).await,
-    }
+    core::v_latest::clone::clone_repo_remote_mode(remote_repo, opts).await
 }
 
 #[cfg(test)]

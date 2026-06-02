@@ -4,14 +4,6 @@
 //! and which files are staged for commit.
 //!
 
-use std::path::Path;
-
-use crate::core;
-use crate::core::versions::MinOxenVersion;
-use crate::error::OxenError;
-use crate::model::staged_data::StagedDataOpts;
-use crate::model::{LocalRepository, StagedData};
-
 /// # oxen status
 ///
 /// Get status of files in repository, returns what files are tracked,
@@ -47,32 +39,11 @@ use crate::model::{LocalRepository, StagedData};
 /// let status = repositories::status(&repo).await?;
 /// assert_eq!(status.untracked_files.len(), 1);
 /// ```
-pub async fn status(repo: &LocalRepository) -> Result<StagedData, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::status::status(repo).await,
-    }
-}
+pub use crate::core::v_latest::status::status;
 
-pub async fn status_from_opts(
-    repo: &LocalRepository,
-    opts: &StagedDataOpts,
-) -> Result<StagedData, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v10 not supported"),
-        _ => core::v_latest::status::status_from_opts(repo, opts).await,
-    }
-}
+pub use crate::core::v_latest::status::status_from_opts;
 
-pub async fn status_from_dir(
-    repo: &LocalRepository,
-    dir: impl AsRef<Path>,
-) -> Result<StagedData, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::status::status_from_dir(repo, dir).await,
-    }
-}
+pub use crate::core::v_latest::status::status_from_dir;
 
 #[cfg(test)]
 mod tests {
@@ -202,7 +173,6 @@ mod tests {
             let repo_status = repositories::status(&repo).await?;
             repo_status.print();
 
-            // TODO: v0_10_0 logic should have no dirs staged
             // root dir should be staged
             assert_eq!(repo_status.staged_dirs.len(), 1);
             // labels.txt
@@ -640,10 +610,9 @@ mod tests {
             let status = repositories::status(&repo).await?;
             status.print();
             assert_eq!(status.moved_files.len(), 0);
-            // TODO: v0_10_0 logic should have root and new_train/train2
             assert_eq!(status.untracked_dirs.len(), 1);
-            // TODO: v0_10_0 test had 5 removed files here, but when the entire
-            // directory was moved it doesn't make sense to show individual files
+            // When the whole directory was moved, individual files aren't listed as
+            // removed — only the directory move is reported.
             assert_eq!(status.removed_files.len(), 1);
 
             // Add the removals
@@ -687,7 +656,6 @@ mod tests {
             status.print();
             let dirs = status.staged_dirs;
 
-            // TODO: v0_10_0 logic should have root and training_data
             // We should just have training_data staged
             assert_eq!(dirs.len(), 1);
             let added_dir = dirs.get(&training_data_dir).unwrap();

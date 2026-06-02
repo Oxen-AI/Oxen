@@ -1,11 +1,8 @@
 //! Helper functions to get metadata from the local filesystem.
 //!
 
-use crate::core;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::entry::entry_data_type::EntryDataType;
-use crate::model::entry::metadata_entry::CLIMetadataEntry;
 use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::model::metadata::MetadataDir;
 use crate::model::metadata::generic_metadata::GenericMetadata;
@@ -99,16 +96,7 @@ pub fn from_dir_node(
 }
 
 /// Returns metadata with latest commit information. Less efficient than get().
-pub fn get_cli(
-    repo: &LocalRepository,
-    entry_path: impl AsRef<Path>,
-    data_path: impl AsRef<Path>,
-) -> Result<CLIMetadataEntry, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::metadata::get_cli(repo, entry_path, data_path),
-    }
-}
+pub use crate::core::v_latest::metadata::get_cli;
 
 /// Returns the file size in bytes.
 pub fn get_file_size(path: impl AsRef<Path>) -> Result<u64, OxenError> {

@@ -3,12 +3,6 @@
 //! Restore a file to a previous version
 //!
 
-use crate::core;
-use crate::core::versions::MinOxenVersion;
-use crate::error::OxenError;
-use crate::model::LocalRepository;
-use crate::opts::RestoreOpts;
-
 /// # Restore a removed file that was committed
 ///
 /// ```ignore
@@ -37,12 +31,7 @@ use crate::opts::RestoreOpts;
 /// // Restore the file
 /// repositories::restore::restore(&repo, RestoreOpts::from_path_ref(hello_name, commit.id)).await?;
 /// ```
-pub async fn restore(repo: &LocalRepository, opts: RestoreOpts) -> Result<(), OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::restore::restore(repo, opts).await,
-    }
-}
+pub use crate::core::v_latest::restore::restore;
 
 #[cfg(test)]
 mod tests {

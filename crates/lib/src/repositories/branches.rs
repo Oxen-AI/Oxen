@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 
 use crate::core::refs::with_ref_manager;
 use crate::core::v_latest::branches::OnConflict;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::{Branch, Commit, CommitEntry, LocalRepository};
 use crate::repositories;
@@ -175,10 +174,7 @@ pub async fn checkout_branch_from_commit(
 ) -> Result<(), OxenError> {
     let name = name.as_ref();
     log::debug!("checkout_branch {name}");
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::branches::checkout(repo, name, from_commit).await,
-    }
+    core::v_latest::branches::checkout(repo, name, from_commit).await
 }
 
 /// Checkout a subtree from a commit
@@ -188,14 +184,7 @@ pub async fn checkout_subtrees_to_commit(
     subtree_paths: &[PathBuf],
     depth: i32,
 ) -> Result<(), OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => {
-            panic!("checkout_subtree_from_commit not implemented for oxen v0.10.0")
-        }
-        _ => {
-            core::v_latest::branches::checkout_subtrees(repo, to_commit, subtree_paths, depth).await
-        }
-    }
+    core::v_latest::branches::checkout_subtrees(repo, to_commit, subtree_paths, depth).await
 }
 
 /// Checkout a commit. `on_conflict` decides whether to abort or overwrite when the working tree
@@ -206,12 +195,7 @@ pub async fn checkout_commit_from_commit(
     from_commit: &Option<Commit>,
     on_conflict: OnConflict,
 ) -> Result<(), OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => {
-            core::v_latest::branches::checkout_commit(repo, commit, from_commit, on_conflict).await
-        }
-    }
+    core::v_latest::branches::checkout_commit(repo, commit, from_commit, on_conflict).await
 }
 
 pub fn set_head(repo: &LocalRepository, value: impl AsRef<str>) -> Result<(), OxenError> {
@@ -271,37 +255,10 @@ pub fn list_entry_versions_on_branch(
         branch.name,
         branch.commit_id
     );
-    match local_repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::branches::list_entry_versions_for_commit(
-            local_repo,
-            &branch.commit_id,
-            path,
-        ),
-    }
+    core::v_latest::branches::list_entry_versions_for_commit(local_repo, &branch.commit_id, path)
 }
 
-pub async fn set_working_repo_to_commit(
-    repo: &LocalRepository,
-    commit: &Commit,
-    from_commit: &Option<Commit>,
-    on_conflict: OnConflict,
-) -> Result<(), OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => {
-            panic!("set_working_repo_to_commit not implemented for oxen v0.10.0")
-        }
-        _ => {
-            core::v_latest::branches::set_working_repo_to_commit(
-                repo,
-                commit,
-                from_commit,
-                on_conflict,
-            )
-            .await
-        }
-    }
-}
+pub use crate::core::v_latest::branches::set_working_repo_to_commit;
 
 #[cfg(test)]
 mod tests {

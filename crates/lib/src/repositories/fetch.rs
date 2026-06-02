@@ -5,7 +5,6 @@
 
 use crate::api;
 use crate::core;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::{Branch, LocalRepository, RemoteBranch, RemoteRepository};
 use crate::opts::fetch_opts::FetchOpts;
@@ -113,10 +112,7 @@ pub async fn fetch_remote_branch(
         remote_repo.name, fetch_opts.branch
     );
 
-    match repo.min_version() {
-        MinOxenVersion::V0_10_0 => panic!("v0.10.0 no longer supported"),
-        _ => core::v_latest::fetch::fetch_remote_branch(repo, remote_repo, fetch_opts).await,
-    }
+    core::v_latest::fetch::fetch_remote_branch(repo, remote_repo, fetch_opts).await
 }
 
 #[cfg(test)]
