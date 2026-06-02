@@ -1,10 +1,16 @@
+//! All RefManager methods are synchronous and acquire `parking_lot::RwLock` guards on
+//! `refs_db`. Do not introduce `.await` while holding a guard — `parking_lot` is not
+//! re-entrant or await-aware, and a held guard across an await will deadlock the runtime.
+//! Per-operation `spawn_blocking` callers are fine because the guard lifetime is bounded
+//! by the closure.
+
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::str;
 use std::sync::{Arc, LazyLock};
 
 use lru::LruCache;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use rocksdb::{DB, IteratorMode};
 
 use crate::constants::{HEAD_FILE, REFS_DIR};
@@ -16,8 +22,10 @@ use crate::util;
 
 const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 
-// Static cache of DB instances with LRU eviction
-static DB_INSTANCES: LazyLock<Mutex<LruCache<PathBuf, Arc<DB>>>> =
+// Static cache of DB instances with LRU eviction. Each entry wraps the DB in a
+// `RwLock` so compound read-modify-write sequences (e.g. `create_branch`'s
+// "check exists, then put") serialize under exclusive access.
+static DB_INSTANCES: LazyLock<Mutex<LruCache<PathBuf, Arc<RwLock<DB>>>>> =
     LazyLock::new(|| Mutex::new(LruCache::new(DB_CACHE_SIZE)));
 
 /// Removes a repository's DB instance from the cache.
@@ -47,7 +55,7 @@ pub fn remove_from_cache_with_children(
 }
 
 pub struct RefManager {
-    refs_db: Arc<DB>,
+    refs_db: Arc<RwLock<DB>>,
     head_file: PathBuf,
     repository: LocalRepository,
 }
@@ -62,22 +70,21 @@ where
 
         let mut instances = DB_INSTANCES.lock();
         if let Some(db) = instances.get(&refs_dir) {
-            Ok::<Arc<DB>, OxenError>(db.clone())
+            Ok::<Arc<RwLock<DB>>, OxenError>(db.clone())
         } else {
-            // Ensure directory exists
             if !refs_dir.exists() {
-                util::fs::create_dir_all(&refs_dir).map_err(|e| {
-                    log::error!("Failed to create refs directory: {e}");
-                    OxenError::basic_str(format!("Failed to create refs directory: {e}"))
-                })?;
+                util::fs::create_dir_all(&refs_dir)?;
             }
 
             let opts = db::key_val::opts::default();
-            let db = DB::open(&opts, dunce::simplified(&refs_dir)).map_err(|e| {
-                log::error!("Failed to open refs database: {e}");
-                OxenError::basic_str(format!("Failed to open refs database: {e}"))
+            let db = DB::open(&opts, dunce::simplified(&refs_dir)).map_err(|source| {
+                log::error!("Failed to open refs database at {refs_dir:?}: {source}");
+                OxenError::RefsDbOpenFailed {
+                    path: refs_dir.clone(),
+                    source,
+                }
             })?;
-            let arc_db = Arc::new(db);
+            let arc_db = Arc::new(RwLock::new(db));
             instances.put(refs_dir, arc_db.clone());
             Ok(arc_db)
         }
@@ -89,7 +96,6 @@ where
         repository: repository.clone(),
     };
 
-    // Execute the operation with our RefManager instance
     operation(&manager)
 }
 
@@ -97,12 +103,8 @@ impl RefManager {
     // Read operations (from RefReader)
 
     pub fn has_branch(&self, name: &str) -> bool {
-        let bytes = name.as_bytes();
-        match self.refs_db.get(bytes) {
-            Ok(Some(_)) => true,
-            Ok(None) => false,
-            Err(_) => false,
-        }
+        let db = self.refs_db.read();
+        matches!(db.get(name.as_bytes()), Ok(Some(_)))
     }
 
     pub fn get_current_branch(&self) -> Result<Option<Branch>, OxenError> {
@@ -123,14 +125,10 @@ impl RefManager {
     }
 
     pub fn get_commit_id_for_branch(&self, name: &str) -> Result<Option<String>, OxenError> {
-        let bytes = name.as_bytes();
-        match self.refs_db.get(bytes) {
-            Ok(Some(value)) => Ok(Some(String::from(str::from_utf8(&value)?))),
-            Ok(None) => Ok(None),
-            Err(err) => {
-                log::error!("get_commit_id_for_branch error finding commit id for branch {name}");
-                Err(OxenError::basic_str(err))
-            }
+        let db = self.refs_db.read();
+        match db.get(name.as_bytes())? {
+            Some(value) => Ok(Some(String::from(str::from_utf8(&value)?))),
+            None => Ok(None),
         }
     }
 
@@ -159,67 +157,39 @@ impl RefManager {
     }
 
     pub fn list_branches(&self) -> Result<Vec<Branch>, OxenError> {
-        let mut branch_names: Vec<Branch> = vec![];
-        let iter = self.refs_db.iterator(IteratorMode::Start);
-        for item in iter {
-            match item {
-                Ok((key, value)) => match (str::from_utf8(&key), str::from_utf8(&value)) {
-                    (Ok(key_str), Ok(value)) => {
-                        let ref_name = String::from(key_str);
-                        let id = String::from(value);
-                        branch_names.push(Branch {
-                            name: ref_name,
-                            commit_id: id,
-                        });
-                    }
-                    _ => {
-                        return Err(OxenError::basic_str("Could not read utf8 val..."));
-                    }
-                },
-                Err(err) => {
-                    let err = format!("Error reading refs db\nErr: {err}");
-                    return Err(OxenError::basic_str(err));
-                }
-            }
+        let db = self.refs_db.read();
+        let mut branches = vec![];
+        for item in db.iterator(IteratorMode::Start) {
+            let (key, value) = item?;
+            branches.push(Branch {
+                name: str::from_utf8(&key)?.to_string(),
+                commit_id: str::from_utf8(&value)?.to_string(),
+            });
         }
-        Ok(branch_names)
+        Ok(branches)
     }
 
     pub fn list_branches_with_commits(&self) -> Result<Vec<(Branch, Commit)>, OxenError> {
-        let mut branch_names: Vec<(Branch, Commit)> = vec![];
         let maybe_head_ref = self.read_head_ref()?;
-        let iter = self.refs_db.iterator(IteratorMode::Start);
-        for item in iter {
-            match item {
-                Ok((key, value)) => match (str::from_utf8(&key), str::from_utf8(&value)) {
-                    (Ok(key_str), Ok(value)) => {
-                        if maybe_head_ref.is_some() {
-                            let ref_name = String::from(key_str);
-                            let id = String::from(value);
-                            let ref_commit = repositories::commits::get_commit_or_head(
-                                &self.repository,
-                                Some(ref_name.clone()),
-                            )?;
-                            branch_names.push((
-                                Branch {
-                                    name: ref_name,
-                                    commit_id: id,
-                                },
-                                ref_commit,
-                            ));
-                        }
-                    }
-                    _ => {
-                        return Err(OxenError::basic_str("Could not read utf8 val..."));
-                    }
-                },
-                Err(err) => {
-                    let err = format!("Error reading refs db\nErr: {err}");
-                    return Err(OxenError::basic_str(err));
-                }
-            }
+        if maybe_head_ref.is_none() {
+            return Ok(vec![]);
         }
-        Ok(branch_names)
+        // Snapshot the branches under the read lock, then look up commits without holding it.
+        // Releasing first avoids re-entrant refs-DB acquisition (parking_lot RwLock is not
+        // re-entrant), and looking up by the snapshotted commit_id (not the branch name) keeps
+        // each returned pair self-consistent: a concurrent writer can advance the branch after
+        // we drop the lock, but `get_by_id` with the snapshot value returns the commit that
+        // matches the snapshot branch.
+        let branches = self.list_branches()?;
+        let mut out = Vec::with_capacity(branches.len());
+        for branch in branches {
+            let commit = repositories::commits::get_commit_or_head(
+                &self.repository,
+                Some(branch.commit_id.clone()),
+            )?;
+            out.push((branch, commit));
+        }
+        Ok(out)
     }
 
     // Write operations (from RefWriter)
@@ -237,20 +207,18 @@ impl RefManager {
         let commit_id = commit_id.as_ref();
 
         if self.is_invalid_branch_name(name) {
-            let err = format!("'{name}' is not a valid branch name.");
-            return Err(OxenError::basic_str(err));
+            return Err(OxenError::InvalidBranchName(name.to_string()));
         }
 
-        if self.has_branch(name) {
-            let err = format!("Branch already exists: {name}");
-            Err(OxenError::basic_str(err))
-        } else {
-            self.set_branch_commit_id(name, commit_id)?;
-            Ok(Branch {
-                name: String::from(name),
-                commit_id: String::from(commit_id),
-            })
+        let db = self.refs_db.write();
+        if db.get(name.as_bytes())?.is_some() {
+            return Err(OxenError::BranchAlreadyExists(name.to_string()));
         }
+        db.put(name.as_bytes(), commit_id.as_bytes())?;
+        Ok(Branch {
+            name: name.to_string(),
+            commit_id: commit_id.to_string(),
+        })
     }
 
     fn is_invalid_branch_name(&self, name: &str) -> bool {
@@ -274,31 +242,32 @@ impl RefManager {
     }
 
     pub fn rename_branch(&self, old_name: &str, new_name: &str) -> Result<(), OxenError> {
-        if !self.has_branch(old_name) {
-            Err(OxenError::local_branch_not_found(old_name))
-        } else if self.has_branch(new_name) {
-            Err(OxenError::basic_str(format!(
-                "Branch already exists: {new_name}"
-            )))
-        } else if self.is_invalid_branch_name(new_name) {
-            Err(OxenError::basic_str(format!(
-                "'{new_name}' is not a valid branch name."
-            )))
-        } else {
-            let old_id = self.refs_db.get(old_name)?.unwrap();
-            self.refs_db.delete(old_name)?;
-            self.refs_db.put(new_name, old_id)?;
-            Ok(())
+        if self.is_invalid_branch_name(new_name) {
+            return Err(OxenError::InvalidBranchName(new_name.to_string()));
         }
+        let db = self.refs_db.write();
+        if db.get(new_name.as_bytes())?.is_some() {
+            return Err(OxenError::BranchAlreadyExists(new_name.to_string()));
+        }
+        let Some(old_id) = db.get(old_name.as_bytes())? else {
+            return Err(OxenError::local_branch_not_found(old_name));
+        };
+        db.delete(old_name.as_bytes())?;
+        db.put(new_name.as_bytes(), &old_id)?;
+        Ok(())
     }
 
     pub fn delete_branch(&self, name: &str) -> Result<Branch, OxenError> {
-        let Some(branch) = self.get_branch_by_name(name)? else {
-            let err = format!("Branch does not exist: {name}");
-            return Err(OxenError::basic_str(err));
+        let db = self.refs_db.write();
+        let Some(value) = db.get(name.as_bytes())? else {
+            return Err(OxenError::local_branch_not_found(name));
         };
-        self.refs_db.delete(name)?;
-        Ok(branch)
+        let commit_id = str::from_utf8(&value)?.to_string();
+        db.delete(name.as_bytes())?;
+        Ok(Branch {
+            name: name.to_string(),
+            commit_id,
+        })
     }
 
     pub fn set_branch_commit_id(
@@ -306,9 +275,35 @@ impl RefManager {
         name: impl AsRef<str>,
         commit_id: impl AsRef<str>,
     ) -> Result<(), OxenError> {
-        let name = name.as_ref();
-        let commit_id = commit_id.as_ref();
-        self.refs_db.put(name, commit_id)?;
+        let db = self.refs_db.write();
+        db.put(name.as_ref().as_bytes(), commit_id.as_ref().as_bytes())?;
+        Ok(())
+    }
+
+    /// Atomically replace the commit id for `branch` only if its current value matches
+    /// `expected_old`. Pass `expected_old = None` to require the branch be absent.
+    /// Returns [`OxenError::BranchHeadMismatch`] when the observed value diverges from
+    /// `expected_old` (in which case the DB is left unchanged).
+    pub fn compare_and_swap_branch_commit_id(
+        &self,
+        branch: &str,
+        expected_old: Option<&str>,
+        new_commit_id: &str,
+    ) -> Result<(), OxenError> {
+        let db = self.refs_db.write();
+        let actual_bytes = db.get(branch.as_bytes())?;
+        let actual = match &actual_bytes {
+            Some(bytes) => Some(str::from_utf8(bytes)?),
+            None => None,
+        };
+        if actual != expected_old {
+            return Err(OxenError::BranchHeadMismatch {
+                branch: branch.to_string(),
+                expected: expected_old.map(str::to_string),
+                actual: actual.map(str::to_string),
+            });
+        }
+        db.put(branch.as_bytes(), new_commit_id.as_bytes())?;
         Ok(())
     }
 
@@ -564,7 +559,209 @@ mod tests {
         test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
                 let result = manager.create_branch("my name", "1234");
-                assert!(result.is_err());
+                assert!(matches!(result, Err(OxenError::InvalidBranchName(_))));
+                Ok(())
+            })
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_create_branch_same_name_exactly_one_wins() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            // 10 threads race to create the same branch with different commit ids. Under the
+            // refs RwLock, exactly one must succeed; the rest must get BranchAlreadyExists. The
+            // pre-RwLock behavior had a check-then-act race where multiple creates could each
+            // see has_branch==false and silently overwrite each other.
+            let mut handles = vec![];
+            for i in 0..10 {
+                let repo_clone = repo.clone();
+                let handle = thread::spawn(move || -> Result<bool, OxenError> {
+                    with_ref_manager(&repo_clone, |manager| {
+                        match manager.create_branch("contested", format!("commit-{i}")) {
+                            Ok(_) => Ok(true),
+                            Err(OxenError::BranchAlreadyExists(_)) => Ok(false),
+                            Err(other) => Err(other),
+                        }
+                    })
+                });
+                handles.push(handle);
+            }
+
+            let outcomes: Vec<bool> = handles
+                .into_iter()
+                .map(|h| h.join().expect("thread panicked"))
+                .collect::<Result<Vec<_>, _>>()?;
+            let winners = outcomes.iter().filter(|&&won| won).count();
+            assert_eq!(
+                winners, 1,
+                "expected exactly one create to win, got {winners}"
+            );
+
+            with_ref_manager(&repo, |manager| {
+                assert!(manager.has_branch("contested"));
+                Ok(())
+            })
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_rename_collisions() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            // Set up: branches src-a and src-b, both racing to rename to "dest".
+            with_ref_manager(&repo, |manager| {
+                manager.create_branch("src-a", "commit-a")?;
+                manager.create_branch("src-b", "commit-b")?;
+                Ok(())
+            })?;
+
+            let repo_a = repo.clone();
+            let h_a = thread::spawn(move || -> Result<bool, OxenError> {
+                with_ref_manager(&repo_a, |manager| {
+                    match manager.rename_branch("src-a", "dest") {
+                        Ok(_) => Ok(true),
+                        Err(OxenError::BranchAlreadyExists(_)) => Ok(false),
+                        Err(other) => Err(other),
+                    }
+                })
+            });
+            let repo_b = repo.clone();
+            let h_b = thread::spawn(move || -> Result<bool, OxenError> {
+                with_ref_manager(&repo_b, |manager| {
+                    match manager.rename_branch("src-b", "dest") {
+                        Ok(_) => Ok(true),
+                        Err(OxenError::BranchAlreadyExists(_)) => Ok(false),
+                        Err(other) => Err(other),
+                    }
+                })
+            });
+
+            let won_a = h_a.join().expect("thread a panicked")?;
+            let won_b = h_b.join().expect("thread b panicked")?;
+            assert_ne!(won_a, won_b, "exactly one rename must win");
+
+            with_ref_manager(&repo, |manager| {
+                let branches = manager.list_branches()?;
+                let names: Vec<&str> = branches.iter().map(|b| b.name.as_str()).collect();
+                assert!(names.contains(&"dest"), "dest must exist after one win");
+                // Whichever source lost retains its original name; the winner's source is gone.
+                let losing_src = if won_a { "src-b" } else { "src-a" };
+                let winning_src = if won_a { "src-a" } else { "src-b" };
+                assert!(names.contains(&losing_src));
+                assert!(!names.contains(&winning_src));
+                Ok(())
+            })
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_compare_and_swap_branch_commit_id_happy_path() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            with_ref_manager(&repo, |manager| {
+                manager.create_branch("feature", "c1")?;
+                manager.compare_and_swap_branch_commit_id("feature", Some("c1"), "c2")?;
+                assert_eq!(
+                    manager.get_commit_id_for_branch("feature")?.as_deref(),
+                    Some("c2")
+                );
+                Ok(())
+            })
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_compare_and_swap_branch_commit_id_mismatch() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            with_ref_manager(&repo, |manager| {
+                manager.create_branch("feature", "c1")?;
+                let result =
+                    manager.compare_and_swap_branch_commit_id("feature", Some("wrong"), "c2");
+                match result {
+                    Err(OxenError::BranchHeadMismatch {
+                        branch,
+                        expected,
+                        actual,
+                    }) => {
+                        assert_eq!(branch, "feature");
+                        assert_eq!(expected.as_deref(), Some("wrong"));
+                        assert_eq!(actual.as_deref(), Some("c1"));
+                    }
+                    other => panic!("expected BranchHeadMismatch, got {other:?}"),
+                }
+                // Value must be unchanged.
+                assert_eq!(
+                    manager.get_commit_id_for_branch("feature")?.as_deref(),
+                    Some("c1")
+                );
+                Ok(())
+            })
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_compare_and_swap_branch_commit_id_absent_expected() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            with_ref_manager(&repo, |manager| {
+                // expected = None means "the branch must be absent" — succeeds and creates it.
+                manager.compare_and_swap_branch_commit_id("new-branch", None, "c1")?;
+                assert_eq!(
+                    manager.get_commit_id_for_branch("new-branch")?.as_deref(),
+                    Some("c1"),
+                );
+
+                // Once present, a second swap with expected = None must fail with the actual.
+                let result = manager.compare_and_swap_branch_commit_id("new-branch", None, "c2");
+                match result {
+                    Err(OxenError::BranchHeadMismatch {
+                        expected, actual, ..
+                    }) => {
+                        assert_eq!(expected, None);
+                        assert_eq!(actual.as_deref(), Some("c1"));
+                    }
+                    other => panic!("expected BranchHeadMismatch, got {other:?}"),
+                }
+                Ok(())
+            })
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_set_branch_commit_id_serializes() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            // 10 threads racing on set_branch_commit_id — every write must serialize under
+            // the RwLock and the final value must equal one of the values we wrote (no torn
+            // writes, no panics). Before Phase 2 wires CAS in, last-writer-wins is allowed;
+            // this test asserts safety only, not no-loss.
+            with_ref_manager(&repo, |manager| manager.create_branch("hot", "initial"))?;
+
+            let mut handles = vec![];
+            for i in 0..10 {
+                let repo_clone = repo.clone();
+                let handle = thread::spawn(move || -> Result<(), OxenError> {
+                    with_ref_manager(&repo_clone, |manager| {
+                        manager.set_branch_commit_id("hot", format!("commit-{i}"))
+                    })
+                });
+                handles.push(handle);
+            }
+            for h in handles {
+                h.join().expect("thread panicked")?;
+            }
+
+            with_ref_manager(&repo, |manager| {
+                let final_value = manager
+                    .get_commit_id_for_branch("hot")?
+                    .expect("branch must exist");
+                let valid: Vec<String> = (0..10).map(|i| format!("commit-{i}")).collect();
+                assert!(
+                    valid.contains(&final_value),
+                    "final value {final_value} is not one of the writes"
+                );
                 Ok(())
             })
         })

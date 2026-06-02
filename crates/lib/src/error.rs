@@ -415,6 +415,32 @@ pub enum OxenError {
         actual: MerkleHash,
     },
 
+    /// Failed to open the refs RocksDB database at the given path.
+    #[error("Failed to open refs database {path:?}: {source}")]
+    RefsDbOpenFailed {
+        path: PathBuf,
+        #[source]
+        source: rocksdb::Error,
+    },
+
+    /// Tried to create or rename to a branch name that already exists.
+    #[error("Branch already exists: {0}")]
+    BranchAlreadyExists(String),
+
+    /// Branch name violates the ref-format rules (see git-check-ref-format).
+    #[error("'{0}' is not a valid branch name.")]
+    InvalidBranchName(String),
+
+    /// `compare_and_swap_branch_commit_id` saw a branch head that did not match the expected
+    /// previous value. `expected = None` means the caller expected the branch to be absent;
+    /// `actual = None` means the branch was absent at the time of the swap attempt.
+    #[error("Branch '{branch}' head mismatch: expected {expected:?}, found {actual:?}")]
+    BranchHeadMismatch {
+        branch: String,
+        expected: Option<String>,
+        actual: Option<String>,
+    },
+
     /// Encountered when authentication fails. Contains the authentication error message.
     #[error("Authentication failed: {0}")]
     Authentication(StringError),
