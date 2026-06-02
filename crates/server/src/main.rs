@@ -81,6 +81,7 @@ use clap::{Parser, Subcommand};
 
 use std::env;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::config::Config;
 use crate::config::storage_policy::StoragePolicyError;
@@ -639,6 +640,12 @@ async fn start(
     // operations before a supervisor force-kills the process.
     const ACTIX_SHUTDOWN_TIMEOUT_SECS: u64 = 30;
 
+    // actix's default HTTP/1 keep-alive is 5s. Keep it comfortably above the OxenHub
+    // Finch client's idle-eviction window so the client always retires an idle pooled
+    // connection before the server reaps it — a reused server-closed socket surfaces
+    // to the client as a dropped connection (502 Bad Gateway).
+    const ACTIX_KEEP_ALIVE_SECS: u64 = 75;
+
     let server_result = HttpServer::new(move || {
         App::new()
             .app_data(data.clone())
@@ -681,6 +688,7 @@ async fn start(
             .wrap(MetricsMiddleware)
             .wrap(TracingLogger::default())
     })
+    .keep_alive(Duration::from_secs(ACTIX_KEEP_ALIVE_SECS))
     .bind((host.to_owned(), port))?
     .shutdown_timeout(ACTIX_SHUTDOWN_TIMEOUT_SECS)
     .run()
