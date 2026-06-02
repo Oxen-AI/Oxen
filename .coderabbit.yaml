@@ -28,3 +28,8 @@ reviews:
     # Review PRs against any base branch
     base_branches:
       - ".*"
+
+  # Disable the docstring-coverage pre-merge check — it reports a misleading 0% for this repo.
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
