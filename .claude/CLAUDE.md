@@ -51,27 +51,21 @@ cargo build --workspace                           # Debug build
 ```
 
 ### Testing
-Many tests require the oxen server to be running. If it is not running on port 3000 and
-a test fails because it cannot connect to oxen-server, then start it:
+Use the `bin/test-rust` script to run the tests — do not invoke `cargo test` or `cargo nextest run` directly. The script builds the workspace, raises the file-handle limit, sets up a ramdisk for test data, starts `oxen-server` on a free port, runs the suite with `cargo nextest run`, and tears everything down on exit. Its full usage is documented in a comment at the top of the script.
 ```bash
-cargo run -p oxen-server start
+bin/test-rust                         # Build and run all Rust tests
+bin/test-rust test_function_name      # Run only Rust tests matching test_function_name
+bin/test-rust -p                      # Run the Python test suite (via pytest + maturin)
+bin/test-rust -p -k test_init         # Run Python tests matching test_init
 ```
-
-Run specific tests:
-```bash
-cargo test test_function_name         # Run specific matching tests
-cargo test --lib test_function_name   # Run specific library test
-```
-
-Run all tests
-```bash
-ulimit -n 10240                       # Increase file handles before running tests
-cargo nextest run                     # Run all tests
-```
+- The script starts `oxen-server` itself, so you do not need to start it separately.
+- It does not install prerequisites by default. If a dependency is missing, run `bin/install-prereqs` (or re-run with `bin/test-rust --install-deps`).
+- If the ramdisk cannot be mounted, pass `--no-ramdisk` to run against the regular filesystem.
+- Arguments after the script's own flags are forwarded to `cargo nextest run` (or `pytest` with `-p`).
 
 ### Testing with Debug Output
 ```bash
-env RUST_LOG=warn,liboxen=debug,integration_test=debug cargo test -- --nocapture test_name
+env RUST_LOG=warn,liboxen=debug,integration_test=debug bin/test-rust --no-capture test_name
 ```
 
 ### Code Quality
@@ -115,13 +109,11 @@ oxen push origin main               # Push to remote
 - Use the result type (`Result<T, Error>`) when an operation could fail.
 - Never use `.unwrap()` or `.expect()` on a `Result` or on an `Option`.
   + Exception: In test-only code, it is ok to use use `.expect(<descriptive explanation of invariant that was violated>)` since we want to fail fast and have good stack traces for failing test cases.
-  + This rule still applies when the panic feels "guaranteed unreachable" because of an upstream invariant. If the enclosing function returns a `Result`, surface the case as a structured `OxenError` variant and propagate with `?` — a panic in production code is never preferable to a clean error path, no matter how confident you are the case can't happen.
-- Use as specific of an error type as possible for a function. Don't use a wider type unless it's necessary. When making modules and related pieces of code, try to use a locally-defined error enum for them if they all have similar errors.
-- Make sure there's an `OxenError` variant for every error type. Be liberal in wrapping other modules error types, or other specific error types, in a new variant. Use a `Box<>` wrapper for it and have a `#[from]` to derive.
-- `OxenError` is the top-level type for everything. If you need to unify different error types into one, use `OxenError`. These kinds of functions should return `Result<T, OxenError>`
+  + This rule still applies when the panic feels "guaranteed unreachable" because of an upstream invariant. If the enclosing function returns a `Result`, propagate it with `?` — a panic in production code is never preferable to a clean error path, no matter how confident you are the case can't happen.
+- If an error type is acted upon in code, then use as specific of an error type as possible. Don't use a wider type unless it's necessary. When making modules and related pieces of code, try to use a locally-defined error enum for them if they all have similar errors.
+- liboxen uses `OxenError` as the top-level type for errors. Unify different error types under `OxenError`. Fallible functions should return `Result<T, OxenError>`. Do not create or use additional error types outside of `OxenError` if it can be avoided. If an error is never inspected internally and cannot be returned to a caller of the liboxen library through a public API, then use `OxenError::InternalError` with a formatted string. If an error is inspected or can be returned to a caller of the liboxen library through a public API, make a structured error variant on the `OxenError` `enum`.
+- oxen-server uses `OxenHttpError` as the top-level type for errors. All `OxenError` variants that we want to differentiate to the caller of the oxen-server API should be mapped to specific `OxenHttpError` variants. Otherwise they should be mapped to `OxenHttpError::InternalServerError`. Do not create or use additional error types outside of `OxenHttpError` if it can be avoided.
 - Implement proper error propagation through the `?` operator.
-- Never write code that uses `OxenError::Basic` or `OxenError::InternalError`. Do not use their constructor methods either (`OxenError::basic_str` and `OxenError::internal_error`, respectively). These variants are deprecated and will be removed. As a general principle, never encode an error as a string: it throws away valuable structured information about the error, which makes it impossible for a caller to handle the error programmatically. Instead, make a structured error variant of an appropriate error `enum` that describes the error. Include a `#[error("...")]` on the variant to provide a helpful user-facing error message describing the problem and, if applicable, a possible command or procedure the user can perform to fix the error.
-- If making logically related code that all share the same kind of errors, then strongly consider making a unique error `enum` _for that code only_. If that code is called by other code that has a different error enum, then define an explicit `impl From<SourceError> for TargetError` conversion to convert. If that makes the code messy, then make a conversion into `OxenError` and upgrade the calling function to return `OxenError` instead.
 
 # Making Changes
 
@@ -134,7 +126,7 @@ oxen push origin main               # Push to remote
 - The `bin/test-rust` script does not install prerequisites by default. If any dependencies turn out to be missing, prompt the user to run `bin/install-prereqs` (or re-run `bin/test-rust --install-deps`).
 - Prefer using inline code over creating a new function when the function would only be called once and the function body would be less than 15 lines.
 - Do not use "out parameters" (functions that take an `&mut Vec` / `&mut HashMap` / etc. for the callee to fill). Return the value directly instead. Exceptions: the user explicitly asks for an out parameter, or the caller genuinely needs to reuse a pre-allocated buffer across many calls to avoid allocation churn in a measured hot path.
-- Preserve comments whenever possible. Comments that were written by someone other than Claude should always be preserved or updated if possible.
+- Preserve code comments whenever possible. Comments that were written by someone other than Claude should always be preserved or updated if possible.
 - The Python project calls into the Rust project. Whenever changing the Rust code, check to see if the Python code needs to be updated.
 - After changing any Rust or Python code, verify that Rust tests pass with `bin/test-rust` and Python tests pass with `bin/test-rust -p`
 - When updating a dependency, prefer updating to the latest stable version.

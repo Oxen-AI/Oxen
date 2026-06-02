@@ -610,11 +610,13 @@ pub enum OxenError {
     //
     // Fallback
     //
-    // TODO: remove all uses of `Basic` and replace with specific errors.
+    // Legacy generic string error. Prefer InternalError for internal errors that no caller acts on,
+    // or a structured variant when the error is inspected or can reach the public liboxen API.
     #[error("{0}")]
     Basic(StringError),
 
-    // TODO: remove all uses of `Basic` and replace with specific errors.
+    // String fallback for internal errors that are never inspected and never reach the public
+    // liboxen API.
     #[error("{0}")]
     InternalError(StringError),
 }
