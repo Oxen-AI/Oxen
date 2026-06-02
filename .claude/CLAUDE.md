@@ -110,6 +110,7 @@ oxen push origin main               # Push to remote
 
 ## Code Organization
 - We define module exports in a `<module_name>.rs` file at the same level as the corresponding `module_name/` directory and *NOT* the older `mod.rs` pattern.
+- Prefer importing bare items (structs, enums, traits, functions, constants, macros) and referring to them unqualified, rather than importing a parent module and qualifying at each use site — e.g. `use std::time::Duration;` then `Duration::from_secs(5)`, not `std::time::Duration::from_secs(5)`. Exception: keep enough of the path to disambiguate when a bare import would be ambiguous or misleading, such as two same-named items from different modules, or where a module qualifier is the established idiom (the classic case is `use std::fmt;` then `fmt::Result` to avoid clashing with the prelude `Result`); reach for an `as` alias when that reads better than a module qualifier.
 
 ## Error Handling
 - Use the result type (`Result<T, Error>`) when an operation could fail.
