@@ -172,6 +172,14 @@ pub enum OxenError {
     #[error("{0}")]
     InvalidFileType(StringError),
 
+    /// The user supplied a CSV delimiter that was not exactly one byte.
+    #[error("Delimiter must be a single character")]
+    InvalidDelimiter,
+
+    /// The user supplied an empty CSV quote character.
+    #[error("If provided, the quote character must be non-empty")]
+    InvalidQuoteChar,
+
     //
     // Workspaces
     //

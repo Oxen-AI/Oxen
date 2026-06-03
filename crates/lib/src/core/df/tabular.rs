@@ -1,4 +1,5 @@
 use duckdb::ToSql;
+use polars::io::cloud::CloudOptions;
 use polars::prelude::*;
 use serde_json::json;
 use std::collections::HashSet;
@@ -13,15 +14,16 @@ use crate::core::df::pretty_print;
 use crate::core::df::sql;
 use crate::error::OxenError;
 use crate::io::chunk_reader::ChunkReader;
-use crate::model::Commit;
 use crate::model::DataFrameSize;
 use crate::model::LocalRepository;
 use crate::model::data_frame::schema::DataType;
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::opts::{CountLinesOpts, DFOpts, PaginateOpts};
 use crate::repositories;
+use crate::storage::{VersionLocation, VersionStore};
 use crate::util::fs;
 use crate::util::hasher;
+use std::sync::Arc;
 
 use comfy_table::Table;
 use indicatif::ProgressBar;
@@ -433,15 +435,6 @@ fn unique_count_df(df: LazyFrame, columns: Vec<String>) -> Result<LazyFrame, Oxe
 pub async fn transform(df: DataFrame, opts: DFOpts) -> Result<DataFrame, OxenError> {
     let df = transform_lazy(df.lazy(), opts.clone()).await?;
     Ok(transform_slice_lazy(df, &opts)?.collect()?)
-}
-
-pub async fn transform_new(df: LazyFrame, opts: &DFOpts) -> Result<LazyFrame, OxenError> {
-    //    let height = df.height();
-    let df = transform_lazy(df, opts.clone()).await?;
-    // `transform_slice_lazy` collects in its `column_at` branch; run it off the async runtime so a
-    // cloud-backed frame's collect doesn't `block_in_place`-panic on a current-thread runtime.
-    let opts = opts.clone();
-    task::spawn_blocking(move || transform_slice_lazy(df, &opts)).await?
 }
 
 pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame, OxenError> {
@@ -985,11 +978,13 @@ struct CsvDialect {
     quote_char: Option<u8>,
 }
 
-fn sniff_csv_dialect(path: impl AsRef<Path>, opts: &DFOpts) -> Result<CsvDialect, OxenError> {
+/// Parse the user-specified CSV delimiter/quote overrides from `DFOpts`. Either may be `None`, in
+/// which case that value is sniffed from the data instead.
+fn parse_user_csv_opts(opts: &DFOpts) -> Result<(Option<u8>, Option<u8>), OxenError> {
     let user_delimiter = match &opts.delimiter {
         Some(delimiter) => {
             if delimiter.len() != 1 {
-                return Err(OxenError::basic_str("Delimiter must be a single character"));
+                return Err(OxenError::InvalidDelimiter);
             }
             Some(delimiter.as_bytes()[0])
         }
@@ -1002,37 +997,53 @@ fn sniff_csv_dialect(path: impl AsRef<Path>, opts: &DFOpts) -> Result<CsvDialect
             if !b.is_empty() {
                 Some(b[0])
             } else {
-                return Err(OxenError::basic_str(
-                    "If provided, quote character must be non empty!",
-                ));
+                return Err(OxenError::InvalidQuoteChar);
             }
         }
         None => None,
     };
 
+    Ok((user_delimiter, user_quote))
+}
+
+/// Combine sniffer output with the user overrides into a final dialect, falling back to RFC 4180
+/// defaults when sniffing failed.
+fn build_csv_dialect<E: std::fmt::Debug>(
+    sniffed: Result<qsv_sniffer::metadata::Metadata, E>,
+    user_delimiter: Option<u8>,
+    user_quote: Option<u8>,
+) -> CsvDialect {
+    match sniffed {
+        Ok(metadata) => {
+            log::debug!("Sniffed csv dialect: {:?}", metadata.dialect);
+            CsvDialect {
+                delimiter: user_delimiter.unwrap_or(metadata.dialect.delimiter),
+                quote_char: user_quote.or_else(|| Some(sniffed_quote(&metadata))),
+            }
+        }
+        Err(err) => {
+            log::warn!("Error sniffing csv -> {err:?}");
+            CsvDialect {
+                delimiter: user_delimiter.unwrap_or(DEFAULT_DELIMITER),
+                quote_char: user_quote.or(Some(DEFAULT_QUOTE_CHAR)),
+            }
+        }
+    }
+}
+
+fn sniff_csv_dialect(path: impl AsRef<Path>, opts: &DFOpts) -> Result<CsvDialect, OxenError> {
+    let (user_delimiter, user_quote) = parse_user_csv_opts(opts)?;
     if let (Some(delimiter), Some(_)) = (user_delimiter, user_quote) {
         return Ok(CsvDialect {
             delimiter,
             quote_char: user_quote,
         });
     }
-
-    match qsv_sniffer::Sniffer::new().sniff_path(&path) {
-        Ok(metadata) => {
-            log::debug!("Sniffed csv dialect: {:?}", metadata.dialect);
-            Ok(CsvDialect {
-                delimiter: user_delimiter.unwrap_or(metadata.dialect.delimiter),
-                quote_char: user_quote.or_else(|| Some(sniffed_quote(&metadata))),
-            })
-        }
-        Err(err) => {
-            log::warn!("Error sniffing csv {:?} -> {:?}", path.as_ref(), err);
-            Ok(CsvDialect {
-                delimiter: user_delimiter.unwrap_or(DEFAULT_DELIMITER),
-                quote_char: user_quote.or(Some(DEFAULT_QUOTE_CHAR)),
-            })
-        }
-    }
+    Ok(build_csv_dialect(
+        qsv_sniffer::Sniffer::new().sniff_path(&path),
+        user_delimiter,
+        user_quote,
+    ))
 }
 
 const DEFAULT_QUOTE_CHAR: u8 = b'"';
@@ -1065,15 +1076,15 @@ pub async fn read_df(path: impl AsRef<Path>, opts: DFOpts) -> Result<DataFrame, 
     }
 }
 
+/// Read a tabular file from a local filesystem path. For version files held by a `VersionStore`,
+/// use [`read_version_df`] instead so access goes through the store's byte interface.
 pub async fn read_df_with_extension(
     path: impl AsRef<Path>,
     extension: impl AsRef<str>,
     opts: &DFOpts,
 ) -> Result<DataFrame, OxenError> {
     let path = path.as_ref().to_path_buf();
-    let extension_str = extension.as_ref();
-
-    p_read_df_with_extension(path, extension_str, opts.clone()).await
+    p_read_df_with_extension(path, extension.as_ref(), opts.clone()).await
 }
 
 async fn _read_lazy_df_with_extension(
@@ -1130,59 +1141,230 @@ pub async fn p_read_df_with_extension(
     opts: DFOpts,
 ) -> Result<DataFrame, OxenError> {
     let df_lazy = _read_lazy_df_with_extension(path, extension.as_ref(), &opts).await?;
-
-    let result_df_lazy = if opts.has_transform() {
-        transform_new(df_lazy, &opts).await?
-    } else {
-        df_lazy
-    };
-
-    task::spawn_blocking(move || result_df_lazy.collect().map_err(OxenError::from))
-        .await
-        .map_err(|e| OxenError::basic_str(format!("Collect task panicked: {e}")))?
+    collect_with_opts(df_lazy, opts).await
 }
 
-pub async fn maybe_read_df_with_extension(
-    repo: &LocalRepository,
-    version_path: impl AsRef<Path>,
-    path: impl AsRef<Path>,
-    commit_id: &str,
+/// Apply any `DFOpts` transform to a lazy frame and collect it into a `DataFrame` off the async
+/// runtime. Shared by the local and S3 read paths. The IO-bearing transform pipeline
+/// (`transform_lazy`) runs on the caller's runtime; the eager slice and the final collect then
+/// share one `spawn_blocking` so a cloud-backed frame's collect never drives `block_in_place` on
+/// the server's current-thread runtime.
+pub(crate) async fn collect_with_opts(
+    df_lazy: LazyFrame,
+    opts: DFOpts,
+) -> Result<DataFrame, OxenError> {
+    if opts.has_transform() {
+        let transformed = transform_lazy(df_lazy, opts.clone()).await?;
+        task::spawn_blocking(move || {
+            transform_slice_lazy(transformed, &opts)?
+                .collect()
+                .map_err(OxenError::from)
+        })
+        .await?
+    } else {
+        task::spawn_blocking(move || df_lazy.collect().map_err(OxenError::from)).await?
+    }
+}
+
+/// Head bytes fetched as the CSV/TSV dialect sniff sample. qsv_sniffer reads whole lines and stops
+/// once the cumulative size passes its 16 KiB default sample, so it normally inspects ~16 KiB; the
+/// extra headroom here covers wide rows. If we have trouble sniffing wide rows, we can try
+/// increasing this value.
+const CSV_SNIFF_SAMPLE_BYTES: u64 = 64 * 1024;
+
+/// Read a tabular version file by hash through the `VersionStore` byte interface.
+///
+/// The store is immutable, content-addressed byte storage, so this never asks it for a writable
+/// handle. Local backends read the version file from disk. For S3, JSON content and the CSV/TSV
+/// dialect sniff sample are pulled through the store's own `get_version`/`get_version_chunk`; the
+/// columnar formats (Parquet/CSV/TSV/JSONL/IPC) additionally use a cloud-aware Polars scan as a
+/// read-only optimization so Polars can prune via range requests instead of reading the whole
+/// object.
+pub async fn read_version_df(
+    version_store: &Arc<dyn VersionStore>,
+    hash: &str,
+    extension: impl AsRef<str>,
     opts: &DFOpts,
 ) -> Result<DataFrame, OxenError> {
-    let version_path = version_path.as_ref();
-    if !version_path.exists() {
-        return Err(OxenError::entry_does_not_exist(path));
-    }
-
-    let extension = version_path.extension().and_then(OsStr::to_str);
-
-    if let Some(extension) = extension {
-        read_df_with_extension(path, extension, opts).await
-    } else {
-        let commit = repositories::commits::get_by_id(repo, commit_id)?;
-        if let Some(commit) = commit {
-            try_to_read_extension_from_node(repo, version_path, path, &commit, opts).await
-        } else {
-            let err = format!("Could not find commit: {commit_id}");
-            Err(OxenError::basic_str(err))
+    let extension = extension.as_ref();
+    match version_store.version_location(hash).await? {
+        VersionLocation::Local(path) => {
+            p_read_df_with_extension(path, extension, opts.clone()).await
+        }
+        VersionLocation::S3 {
+            url,
+            region,
+            endpoint_url,
+            ..
+        } => {
+            read_s3_version_df(
+                version_store,
+                hash,
+                &url,
+                &region,
+                endpoint_url,
+                extension,
+                opts,
+            )
+            .await
         }
     }
 }
 
-async fn try_to_read_extension_from_node(
-    repo: &LocalRepository,
-    version_path: impl AsRef<Path>,
-    path: impl AsRef<Path>,
-    commit: &Commit,
+/// S3 branch of [`read_version_df`]. Columnar formats use a cloud-aware Polars scan; JSON and the
+/// CSV/TSV sniff sample are read through the store's byte interface.
+async fn read_s3_version_df(
+    version_store: &Arc<dyn VersionStore>,
+    hash: &str,
+    url: &str,
+    region: &str,
+    endpoint_url: Option<String>,
+    extension: &str,
     opts: &DFOpts,
 ) -> Result<DataFrame, OxenError> {
-    let node = repositories::tree::get_file_by_path(repo, commit, &path)?;
-    if let Some(file_node) = node {
-        read_df_with_extension(&version_path, file_node.extension(), opts).await
-    } else {
-        let err = format!("Could not find file node {:?}", path.as_ref());
-        Err(OxenError::basic_str(err))
+    log::debug!("Reading S3 version df {url} with extension {extension}");
+    let cloud_opts = {
+        let region: &str = region;
+        let endpoint_url = endpoint_url.as_deref();
+        let mut config = vec![("aws_region", region.to_string())];
+        if let Some(endpoint) = endpoint_url {
+            config.push(("aws_endpoint_url", endpoint.to_string()));
+            config.push(("aws_allow_http", "true".to_string()));
+            config.push(("aws_virtual_hosted_style_request", "false".to_string()));
+        }
+        CloudOptions::from_untyped_config(url, config.iter().map(|(k, v)| (*k, v.as_str())))
+    }?;
+    let url = url.to_string();
+
+    let df_lazy = match extension {
+        "ndjson" | "jsonl" => {
+            task::spawn_blocking(move || read_s3_jsonl(&url, cloud_opts)).await??
+        }
+        "json" => {
+            // `JsonReader` is byte-stream only (no cloud reader), so pull the bytes through the
+            // store and parse them in memory.
+            let bytes = version_store.get_version(hash).await?;
+            task::spawn_blocking(move || read_json_bytes(bytes)).await??
+        }
+        "csv" | "data" | "tsv" => {
+            // `.tsv` pins the tab delimiter; only the quote character is sniffed.
+            let force_delim = (extension == "tsv").then_some(b'\t');
+            let dialect = resolve_s3_csv_dialect(version_store, hash, opts, force_delim).await?;
+            task::spawn_blocking(move || {
+                read_s3_csv(&url, cloud_opts, dialect.delimiter, dialect.quote_char)
+            })
+            .await??
+        }
+        "parquet" => task::spawn_blocking(move || read_s3_parquet(&url, cloud_opts)).await??,
+        "arrow" => {
+            if opts.sql.is_some() {
+                return Err(OxenError::internal_error(
+                    "SQL queries are not supported for .arrow files",
+                ));
+            }
+            task::spawn_blocking(move || read_s3_ipc(&url, cloud_opts)).await??
+        }
+        _ => {
+            return Err(OxenError::internal_error(format!(
+                "Could not load data frame from S3 with unsupported extension: {extension}"
+            )));
+        }
+    };
+
+    collect_with_opts(df_lazy, opts.clone()).await
+}
+
+/// Resolve the CSV/TSV dialect for an S3 version file: honor explicit `DFOpts` overrides, otherwise
+/// sniff a head sample fetched through the store's `get_version_chunk` (full parity with the local
+/// path, which also samples only the head). `force_delim` pins the delimiter for `.tsv` while still
+/// sniffing the quote character.
+async fn resolve_s3_csv_dialect(
+    version_store: &Arc<dyn VersionStore>,
+    hash: &str,
+    opts: &DFOpts,
+    force_delim: Option<u8>,
+) -> Result<CsvDialect, OxenError> {
+    let (user_delimiter, user_quote) = parse_user_csv_opts(opts)?;
+    let delimiter = force_delim.or(user_delimiter);
+    if let (Some(delimiter), Some(_)) = (delimiter, user_quote) {
+        return Ok(CsvDialect {
+            delimiter,
+            quote_char: user_quote,
+        });
     }
+    // Fixed-size head sample. `sniff_reader` needs Read+Seek and rewinds per pass, so it can't
+    // consume the forward-only `get_version_stream` directly; a buffer (hence a byte cap) is
+    // required. If huge first lines sniff wrong, raise this cap. Streaming whole lines would match
+    // local exactly but reintroduces local's unbounded single-line memory cost.
+    let sample = version_store
+        .get_version_chunk(hash, 0, CSV_SNIFF_SAMPLE_BYTES)
+        .await?;
+    // Sniffing parses the sample (CPU-bound); keep it off the async runtime.
+    let sniffed =
+        task::spawn_blocking(move || qsv_sniffer::Sniffer::new().sniff_reader(Cursor::new(sample)))
+            .await?;
+    Ok(build_csv_dialect(sniffed, delimiter, user_quote))
+}
+
+fn read_s3_parquet(url: &str, cloud_opts: CloudOptions) -> Result<LazyFrame, OxenError> {
+    let args = ScanArgsParquet {
+        cloud_options: Some(cloud_opts),
+        ..Default::default()
+    };
+    LazyFrame::scan_parquet(url, args).map_err(OxenError::from)
+}
+
+fn read_s3_ipc(url: &str, cloud_opts: CloudOptions) -> Result<LazyFrame, OxenError> {
+    let args = ScanArgsIpc {
+        cloud_options: Some(cloud_opts),
+        ..Default::default()
+    };
+    LazyFrame::scan_ipc(url, args).map_err(OxenError::from)
+}
+
+fn read_s3_jsonl(url: &str, cloud_opts: CloudOptions) -> Result<LazyFrame, OxenError> {
+    LazyJsonLineReader::new(url)
+        .with_infer_schema_length(Some(NonZeroUsize::new(10000).unwrap()))
+        .with_cloud_options(Some(cloud_opts))
+        .finish()
+        .map_err(OxenError::from)
+}
+
+fn read_s3_csv(
+    url: &str,
+    cloud_opts: CloudOptions,
+    delimiter: u8,
+    quote_char: Option<u8>,
+) -> Result<LazyFrame, OxenError> {
+    base_lazy_csv_reader(url, delimiter, quote_char)
+        .with_cloud_options(Some(cloud_opts))
+        .finish()
+        .map_err(OxenError::from)
+}
+
+fn read_json_bytes(bytes: Vec<u8>) -> Result<LazyFrame, OxenError> {
+    let df = JsonReader::new(Cursor::new(bytes))
+        .infer_schema_len(Some(NonZeroUsize::new(10000).unwrap()))
+        .finish()?;
+    Ok(df.lazy())
+}
+
+/// Read a version file by hash whose extension isn't known to the caller, resolving it from the
+/// committed file node. Version files are content-addressed (stored as `.../data`), so the
+/// extension never comes from the stored object itself.
+pub async fn maybe_read_version_df(
+    repo: &LocalRepository,
+    version_store: &Arc<dyn VersionStore>,
+    hash: &str,
+    path: impl AsRef<Path>,
+    commit_id: &str,
+    opts: &DFOpts,
+) -> Result<DataFrame, OxenError> {
+    let commit = repositories::commits::get_by_id(repo, commit_id)?
+        .ok_or_else(|| OxenError::commit_id_does_not_exist(commit_id))?;
+    let node = repositories::tree::get_file_by_path(repo, &commit, &path)?
+        .ok_or_else(|| OxenError::entry_does_not_exist(&path))?;
+    read_version_df(version_store, hash, node.extension(), opts).await
 }
 
 pub fn scan_df(
@@ -1985,7 +2167,7 @@ mod tests {
                 opts
             },
         );
-        assert!(matches!(r, Err(OxenError::Basic(_))));
+        assert!(matches!(r, Err(OxenError::InvalidQuoteChar)));
         Ok(())
     }
 

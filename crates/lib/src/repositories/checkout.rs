@@ -149,23 +149,19 @@ pub async fn checkout_combine<P: AsRef<Path>>(
     {
         if util::fs::is_tabular(&conflict.base_entry.path) {
             let version_store = repo.version_store();
-            let df_base_path = version_store
-                .get_version_path(&conflict.base_entry.hash)
-                .await?;
-            let df_base = tabular::maybe_read_df_with_extension(
+            let df_base = tabular::maybe_read_version_df(
                 repo,
-                &df_base_path,
+                &version_store,
+                &conflict.base_entry.hash,
                 &conflict.base_entry.path,
                 &conflict.base_entry.commit_id,
                 &DFOpts::empty(),
             )
             .await?;
-            let df_merge_path = version_store
-                .get_version_path(&conflict.merge_entry.hash)
-                .await?;
-            let df_merge = tabular::maybe_read_df_with_extension(
+            let df_merge = tabular::maybe_read_version_df(
                 repo,
-                df_merge_path,
+                &version_store,
+                &conflict.merge_entry.hash,
                 &conflict.merge_entry.path,
                 &conflict.merge_entry.commit_id,
                 &DFOpts::empty(),
