@@ -358,17 +358,18 @@ fn val_from_str_and_dtype<'a>(s: &'a str, dtype: &polars::prelude::DataType) -> 
     }
 }
 
-fn val_from_df_and_filter<'a>(df: &mut LazyFrame, filter: &'a DFFilterVal) -> AnyValue<'a> {
-    if let Some(value) = df
-        .collect_schema()
-        .expect("Unable to get schema from data frame")
-        .iter_fields()
-        .find(|f| f.name == filter.field)
-    {
-        val_from_str_and_dtype(&filter.value, value.dtype())
+fn val_from_df_and_filter<'a>(
+    df: &mut LazyFrame,
+    filter: &'a DFFilterVal,
+) -> Result<AnyValue<'a>, OxenError> {
+    // Resolving the schema collects metadata; for a cloud-backed frame this is real S3 IO, so
+    // propagate the error rather than panicking on a transient failure.
+    let schema = df.collect_schema()?;
+    if let Some(value) = schema.iter_fields().find(|f| f.name == filter.field) {
+        Ok(val_from_str_and_dtype(&filter.value, value.dtype()))
     } else {
         log::error!("Unknown field {:?}", filter.field);
-        AnyValue::Null
+        Ok(AnyValue::Null)
     }
 }
 
@@ -385,17 +386,17 @@ fn lit_from_any(value: &AnyValue) -> Expr {
     }
 }
 
-fn filter_from_val(df: &mut LazyFrame, filter: &DFFilterVal) -> Expr {
-    let val = val_from_df_and_filter(df, filter);
+fn filter_from_val(df: &mut LazyFrame, filter: &DFFilterVal) -> Result<Expr, OxenError> {
+    let val = val_from_df_and_filter(df, filter)?;
     let val = lit_from_any(&val);
-    match filter.op {
+    Ok(match filter.op {
         DFFilterOp::EQ => col(&filter.field).eq(val),
         DFFilterOp::GT => col(&filter.field).gt(val),
         DFFilterOp::LT => col(&filter.field).lt(val),
         DFFilterOp::GTE => col(&filter.field).gt_eq(val),
         DFFilterOp::LTE => col(&filter.field).lt_eq(val),
         DFFilterOp::NEQ => col(&filter.field).neq(val),
-    }
+    })
 }
 
 fn filter_df(mut df: LazyFrame, filter: &DFFilterExp) -> Result<LazyFrame, OxenError> {
@@ -405,9 +406,9 @@ fn filter_df(mut df: LazyFrame, filter: &DFFilterExp) -> Result<LazyFrame, OxenE
     }
 
     let mut vals = filter.vals.iter();
-    let mut expr: Expr = filter_from_val(&mut df, vals.next().unwrap());
+    let mut expr: Expr = filter_from_val(&mut df, vals.next().unwrap())?;
     for op in &filter.logical_ops {
-        let chain_expr: Expr = filter_from_val(&mut df, vals.next().unwrap());
+        let chain_expr: Expr = filter_from_val(&mut df, vals.next().unwrap())?;
 
         match op {
             DFLogicalOp::AND => expr = expr.and(chain_expr),
@@ -437,10 +438,17 @@ pub async fn transform(df: DataFrame, opts: DFOpts) -> Result<DataFrame, OxenErr
 pub async fn transform_new(df: LazyFrame, opts: &DFOpts) -> Result<LazyFrame, OxenError> {
     //    let height = df.height();
     let df = transform_lazy(df, opts.clone()).await?;
-    transform_slice_lazy(df, opts)
+    // `transform_slice_lazy` collects in its `column_at` branch; run it off the async runtime so a
+    // cloud-backed frame's collect doesn't `block_in_place`-panic on a current-thread runtime.
+    let opts = opts.clone();
+    task::spawn_blocking(move || transform_slice_lazy(df, &opts)).await?
 }
 
 pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame, OxenError> {
+    // INVARIANT: this runs on the caller's async runtime. Any eager Polars work added below
+    // (`.collect()` / `.collect_schema()`) must run inside `spawn_blocking` (see the filter and
+    // take branches): a cloud-backed `LazyFrame` drives `block_in_place`, which panics on the
+    // server's current-thread runtime.
     log::debug!("transform_lazy Got transform ops {opts:?}");
     if let Some(vstack) = opts.clone().vstack {
         log::debug!("transform_lazy Got files to stack {vstack:?}");
@@ -476,7 +484,9 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
     match opts.get_filter() {
         Ok(filter) => {
             if let Some(filter) = filter {
-                df = filter_df(df, &filter)?;
+                // `filter_df` resolves the frame schema (`collect_schema`) to build the predicate;
+                // run it off the async runtime so a cloud frame doesn't block_in_place-panic.
+                df = task::spawn_blocking(move || filter_df(df, &filter)).await??;
             }
         }
         Err(err) => {
@@ -551,7 +561,11 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
 
     // These ops should be the last ops since they depends on order
     if let Some(indices) = opts.take_indices() {
-        match take(df.clone(), indices) {
+        // `take` collects the frame, so run it off the async runtime: a cloud frame's collect
+        // drives Polars `block_in_place`, which panics on the server's current-thread runtime.
+        // Mirrors the spawn_blocking-wrapped collects in `add_col_lazy`/`add_row`.
+        let df_to_take = df.clone();
+        match task::spawn_blocking(move || take(df_to_take, indices)).await? {
             Ok(new_df) => {
                 df = new_df.lazy();
             }
@@ -571,10 +585,12 @@ pub fn transform_slice_lazy(mut df: LazyFrame, opts: &DFOpts) -> Result<LazyFram
     df = tail(df, opts);
 
     if let Some(item) = opts.column_at() {
-        let full_df = df.collect().unwrap();
-        let value = full_df.column(&item.col).unwrap().get(item.index).unwrap();
+        // `collect` is real S3 IO for a cloud-backed frame, and col/index come from user input;
+        // propagate errors rather than panicking via `unwrap`.
+        let full_df = df.collect()?;
+        let value = full_df.column(&item.col)?.get(item.index)?;
         let s1 = Column::Series(Series::new(PlSmallStr::from_str(""), &[value]).into());
-        let df = DataFrame::new(vec![s1]).unwrap();
+        let df = DataFrame::new(vec![s1])?;
         return Ok(df.lazy());
     }
 
