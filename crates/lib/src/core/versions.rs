@@ -9,7 +9,6 @@ use crate::{error::OxenError, util::oxen_version::OxenVersion};
 #[derive(Debug, Clone)]
 pub enum MinOxenVersion {
     V0_19_0,
-    V0_25_0,
     LATEST,
 }
 
@@ -36,7 +35,9 @@ impl MinOxenVersion {
         match s.as_ref() {
             "0.10.0" => Err(OxenError::UnsupportedRepoVersion(s.as_ref().into())),
             "0.19.0" => Ok(MinOxenVersion::V0_19_0),
-            "0.25.0" => Ok(MinOxenVersion::V0_25_0),
+            // Repos written by the v0.25.0 add_child_counts_to_nodes migration carry
+            // "0.25.0" in their .oxen/config.toml; the on-disk format is identical to LATEST.
+            "0.25.0" => Ok(MinOxenVersion::LATEST),
             "0.36.0" => Ok(MinOxenVersion::LATEST),
             _ => Err(OxenError::invalid_version(s.as_ref())),
         }
@@ -45,7 +46,6 @@ impl MinOxenVersion {
     pub fn as_str(&self) -> &'static str {
         match self {
             MinOxenVersion::V0_19_0 => "0.19.0",
-            MinOxenVersion::V0_25_0 => "0.25.0",
             MinOxenVersion::LATEST => "0.36.0",
         }
     }

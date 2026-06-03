@@ -1,4 +1,4 @@
-//! Core logic for oxen v0.25.0 and above
+//! Core logic for the latest oxen on-disk format.
 //!
 
 pub mod add;

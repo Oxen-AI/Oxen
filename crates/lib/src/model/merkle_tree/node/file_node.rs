@@ -66,28 +66,26 @@ pub struct FileNode {
 impl FileNode {
     pub fn new(repo: &LocalRepository, opts: FileNodeOpts) -> Result<Self, OxenError> {
         match repo.min_version() {
-            MinOxenVersion::LATEST | MinOxenVersion::V0_25_0 | MinOxenVersion::V0_19_0 => {
-                Ok(Self {
-                    node: EFileNode::V0_25_0(FileNodeDataV0_25_0 {
-                        node_type: MerkleTreeNodeType::File,
-                        name: opts.name,
-                        hash: opts.hash,
-                        combined_hash: opts.combined_hash,
-                        metadata_hash: opts.metadata_hash,
-                        num_bytes: opts.num_bytes,
-                        last_commit_id: MerkleHash::new(0),
-                        last_modified_seconds: opts.last_modified_seconds,
-                        last_modified_nanoseconds: opts.last_modified_nanoseconds,
-                        data_type: opts.data_type,
-                        metadata: opts.metadata,
-                        mime_type: opts.mime_type,
-                        extension: opts.extension,
-                        chunk_hashes: vec![],
-                        chunk_type: FileChunkType::SingleFile,
-                        storage_backend: FileStorageType::Disk,
-                    }),
-                })
-            }
+            MinOxenVersion::LATEST | MinOxenVersion::V0_19_0 => Ok(Self {
+                node: EFileNode::V0_25_0(FileNodeDataV0_25_0 {
+                    node_type: MerkleTreeNodeType::File,
+                    name: opts.name,
+                    hash: opts.hash,
+                    combined_hash: opts.combined_hash,
+                    metadata_hash: opts.metadata_hash,
+                    num_bytes: opts.num_bytes,
+                    last_commit_id: MerkleHash::new(0),
+                    last_modified_seconds: opts.last_modified_seconds,
+                    last_modified_nanoseconds: opts.last_modified_nanoseconds,
+                    data_type: opts.data_type,
+                    metadata: opts.metadata,
+                    mime_type: opts.mime_type,
+                    extension: opts.extension,
+                    chunk_hashes: vec![],
+                    chunk_type: FileChunkType::SingleFile,
+                    storage_backend: FileStorageType::Disk,
+                }),
+            }),
         }
     }
 

@@ -57,7 +57,7 @@ impl CommitNode {
                     node_type: MerkleTreeNodeType::Commit,
                 }),
             }),
-            MinOxenVersion::LATEST | MinOxenVersion::V0_25_0 => Ok(CommitNode {
+            MinOxenVersion::LATEST => Ok(CommitNode {
                 node: ECommitNode::V0_25_0(CommitNodeDataV0_25_0 {
                     hash: opts.hash,
                     parent_ids: opts.parent_ids,
