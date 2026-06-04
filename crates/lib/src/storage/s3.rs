@@ -632,7 +632,6 @@ impl VersionStore for S3VersionStore {
             .unwrap_or_else(|| "us-east-1".to_string());
         Ok(VersionLocation::S3 {
             url: format!("s3://{}/{}", self.bucket, self.generate_key(hash)),
-            bucket: self.bucket.clone(),
             region,
             endpoint_url: self.endpoint_url.clone(),
         })
@@ -657,6 +656,12 @@ impl VersionStore for S3VersionStore {
         tokio::io::copy_buf(&mut stream, &mut writer)
             .await
             .map_err(|e| OxenError::basic_str(format!("Failed to copy S3 stream to file: {e}")))?;
+        // `BufWriter::Drop` does not flush; flush explicitly so every byte reaches the file before
+        // a reader (e.g. DuckDB) opens the destination path.
+        writer
+            .flush()
+            .await
+            .map_err(|e| OxenError::basic_str(format!("Failed to flush S3 stream to file: {e}")))?;
 
         Ok(())
     }
@@ -1110,7 +1115,6 @@ mod tests {
         match location {
             VersionLocation::S3 {
                 url,
-                bucket,
                 region,
                 endpoint_url,
             } => {
@@ -1118,7 +1122,6 @@ mod tests {
                     url,
                     format!("s3://test-bucket/test-namespace/test-repo/{hash}/data")
                 );
-                assert_eq!(bucket, "test-bucket");
                 assert_eq!(region, "us-east-1");
                 let endpoint = endpoint_url.expect("test setup configures a loopback endpoint");
                 assert!(
@@ -1888,6 +1891,79 @@ mod tests {
             let hash = upload(&store, b"not a data frame".to_vec()).await;
             let result = tabular::read_version_df(&store, &hash, "xlsx", &DFOpts::empty()).await;
             assert!(result.is_err());
+        }
+
+        /// End-to-end: index a workspace data frame whose version file lives in S3.
+        ///
+        /// Drives 16c's S3 branch of `workspaces::data_frames::index`: `version_location` returns
+        /// `S3`, so the bytes are streamed to a temp file via `copy_version_to_path` and DuckDB
+        /// reads that local path. The DuckDB database itself stays on local disk; only the version
+        /// file is sourced from the s3s fixture, exercising the path that has no local version
+        /// file to fall back on.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn test_index_workspace_data_frame_from_s3() -> Result<(), crate::error::OxenError> {
+            // DuckDB indexing is skipped on Windows across the workspace tests; mirror that.
+            if std::env::consts::OS == "windows" {
+                return Ok(());
+            }
+
+            use crate::config::UserConfig;
+            use crate::constants::TABLE_NAME;
+            use crate::core::db::data_frames::df_db;
+            use crate::core::db::data_frames::df_db::with_df_db_manager;
+            use crate::model::{LocalRepository, Workspace};
+            use crate::repositories;
+            use std::path::Path;
+
+            let (s3_store, _tmp, _server) = setup_dyn().await;
+
+            crate::test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+                let file_path = Path::new("annotations")
+                    .join("train")
+                    .join("bounding_box.csv");
+                let commit = repositories::commits::head_commit(&repo)?;
+
+                // Mirror the committed file's version bytes into the S3 store under the same hash
+                // so the S3-backed index path has them to fetch.
+                let node =
+                    repositories::tree::get_node_by_path_with_children(&repo, &commit, &file_path)?
+                        .expect("committed file should resolve in the merkle tree");
+                let hash = node.hash.to_string();
+                let bytes = repo.version_store().get_version(&hash).await?;
+                s3_store.store_version(&hash, bytes.into()).await?;
+
+                // Build a workspace, then point its base repo at the S3-backed store.
+                let workspace_id = UserConfig::identifier()?;
+                let workspace =
+                    repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+                let s3_base = LocalRepository::new_for_testing(&workspace.base_repo, s3_store);
+                let s3_workspace = Workspace {
+                    base_repo: s3_base,
+                    ..workspace
+                };
+
+                // version_location -> S3 -> copy_version_to_path(temp) -> DuckDB read of the temp.
+                repositories::workspaces::data_frames::index(
+                    &s3_workspace.base_repo,
+                    &s3_workspace,
+                    &file_path,
+                )
+                .await?;
+
+                // The indexed table should be populated from the S3-sourced bytes.
+                let db_path =
+                    repositories::workspaces::data_frames::duckdb_path(&s3_workspace, &file_path);
+                let count = with_df_db_manager(&db_path, |manager| {
+                    manager.with_conn(|conn| {
+                        let n = df_db::count(conn, TABLE_NAME)?;
+                        Ok(n)
+                    })
+                })?;
+                assert!(count > 0, "expected the S3-indexed table to have rows");
+
+                Ok(())
+            })
+            .await
         }
     }
 }

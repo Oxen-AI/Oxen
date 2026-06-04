@@ -1,3 +1,4 @@
+use async_tempfile::TempFile;
 use duckdb::Connection;
 
 use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL, EXCLUDE_OXEN_COLS, TABLE_NAME};
@@ -16,6 +17,7 @@ use crate::model::{
     Commit, EntryDataType, LocalRepository, MerkleHash, StagedEntryStatus, Workspace,
 };
 use crate::repositories;
+use crate::storage::version_store::VersionLocation;
 use crate::{error::OxenError, util};
 use std::path::{Path, PathBuf};
 
@@ -140,36 +142,58 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     util::fs::create_dir_all(parent)?;
 
     let version_store = repo.version_store();
-    let version_path = version_store
-        .get_version_path(&file_hash.to_string())
-        .await?;
+    let hash_str = file_hash.to_string();
+
+    // DuckDB's `read_*()` can only ingest a local filesystem path. Local stores expose the
+    // on-disk version file directly (zero copy); S3 streams the object to a temp file kept alive
+    // until indexing finishes (RAII cleanup on drop). The temp file is created in the workspace's
+    // DuckDB directory (`parent`) rather than the OS temp dir: that directory lives on the
+    // oxen-server data volume, which is sized to hold version files, whereas `/tmp` may be tiny.
+    let (version_path, _temp_file) = match version_store.version_location(&hash_str).await? {
+        VersionLocation::Local(path) => (path, None),
+        VersionLocation::S3 { .. } => {
+            let temp = TempFile::new_in(parent)
+                .await
+                .map_err(|e| OxenError::basic_str(format!("Failed to create temp file: {e}")))?;
+            let temp_path = temp.file_path().to_path_buf();
+            version_store
+                .copy_version_to_path(&hash_str, &temp_path)
+                .await?;
+            (temp_path, Some(temp))
+        }
+    };
 
     log::debug!(
         "core::v_latest::index::workspaces::data_frames::index({path:?}) got version path: {version_path:?}"
     );
 
     let extension = match &commit_merkle_tree.node {
-        EMerkleTreeNode::File(file_node) => file_node.extension(),
+        EMerkleTreeNode::File(file_node) => file_node.extension().to_string(),
         _ => {
             return Err(OxenError::basic_str("File node is not a file node"));
         }
     };
 
-    with_df_db_manager(&db_path, |manager| {
-        manager.with_conn(|conn| {
-            if df_db::table_exists(conn, TABLE_NAME)? {
-                df_db::drop_table(conn, TABLE_NAME)?;
-            }
+    // DuckDB indexing is blocking file IO plus a full parse, so run it off the async runtime per
+    // the sync-core / async-edge policy. The DuckDB connection lives entirely inside the closure
+    // (it never crosses an `.await`), and `_temp_file` is held on the async side until the
+    // blocking work finishes, so a materialized S3 temp file outlives the read.
+    tokio::task::spawn_blocking(move || {
+        with_df_db_manager(&db_path, |manager| {
+            manager.with_conn(|conn| {
+                if df_db::table_exists(conn, TABLE_NAME)? {
+                    df_db::drop_table(conn, TABLE_NAME)?;
+                }
 
-            df_db::index_file_with_id(&version_path, conn, extension)?;
-            log::debug!(
-                "core::v_latest::index::workspaces::data_frames::index({path:?}) finished!"
-            );
-
-            add_row_status_cols(conn)?;
-            Ok(())
+                df_db::index_file_with_id(&version_path, conn, &extension)?;
+                add_row_status_cols(conn)?;
+                Ok(())
+            })
         })
-    })?;
+    })
+    .await??;
+
+    log::debug!("core::v_latest::index::workspaces::data_frames::index({path:?}) finished!");
 
     // Save the current commit id so we know if the branch has advanced
     let commit_path =

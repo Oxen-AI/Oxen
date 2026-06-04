@@ -91,7 +91,6 @@ pub enum VersionLocation {
         /// Fully-qualified S3 URL of the combined version file:
         /// `s3://{bucket}/{prefix}/{hash}/data`.
         url: String,
-        bucket: String,
         region: String,
         /// `Some(host:port)` for non-AWS S3-compatible endpoints (s3s test fixture, MinIO,
         /// etc.). `None` selects the default AWS endpoint.
@@ -346,8 +345,8 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// cloud-aware reader can consume without materializing it to a temp file on local disk.
     ///
     /// Local-backed stores return [`VersionLocation::Local`] with the on-disk path; S3-backed
-    /// stores return [`VersionLocation::S3`] carrying the s3:// URL plus the bucket, region, and
-    /// endpoint override the caller needs to configure Polars `CloudOptions` or DuckDB `httpfs`.
+    /// stores return [`VersionLocation::S3`] carrying the s3:// URL plus the region and endpoint
+    /// override the caller needs to configure Polars `CloudOptions` or DuckDB `httpfs`.
     ///
     /// Prefer this over [`Self::get_version_path`] whenever the consumer has a cloud-aware
     /// reader available (Polars `scan_*`, DuckDB `read_parquet`, …): `get_version_path`

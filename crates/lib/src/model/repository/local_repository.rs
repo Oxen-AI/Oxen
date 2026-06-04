@@ -220,6 +220,22 @@ impl LocalRepository {
         })
     }
 
+    /// Test-only constructor: clone an existing repo but back it with a caller-supplied version
+    /// store.
+    ///
+    /// `create_version_store` only ever builds an `S3VersionStore` against real AWS, so tests
+    /// can't otherwise point a repo at an in-process fixture (e.g. an s3s-backed store). This
+    /// clones `base` and swaps in `version_store`, leaving the on-disk path, merkle store, and
+    /// config untouched so the repo still resolves its commit/merkle metadata locally while
+    /// reading version files from the injected store.
+    #[cfg(test)]
+    pub fn new_for_testing(base: &LocalRepository, version_store: Arc<dyn VersionStore>) -> Self {
+        LocalRepository {
+            version_store,
+            ..base.clone()
+        }
+    }
+
     pub fn from_view(view: RepositoryView) -> Result<LocalRepository, OxenError> {
         let path = std::env::current_dir()?.join(view.name);
         let storage_config = StorageConfig::default();
