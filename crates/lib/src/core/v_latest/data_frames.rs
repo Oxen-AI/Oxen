@@ -1,5 +1,4 @@
 use crate::core::db::data_frames::df_db::with_df_db_manager;
-use crate::core::df::tabular::transform_new;
 use crate::core::df::{sql, tabular};
 use crate::core::staged::get_staged_db_manager;
 use crate::error::OxenError;
@@ -93,10 +92,13 @@ pub async fn get_slice(
     }
     // Read the data frame from the version path
     let version_store = repo.version_store();
-    let version_path = version_store
-        .get_version_path(&file_node.hash().to_string())
-        .await?;
-    let df = tabular::read_df_with_extension(version_path, file_node.extension(), opts).await?;
+    let df = tabular::read_version_df(
+        &version_store,
+        &file_node.hash().to_string(),
+        file_node.extension(),
+        opts,
+    )
+    .await?;
     log::debug!("get_slice df {:?}", df.height());
 
     // Check what the view height is
@@ -157,7 +159,7 @@ async fn handle_sql_querying(
             manager.with_conn_mut(|conn| sql::query_df(conn, sql, None))
         })?;
         log::debug!("handle_sql_querying got df {df:?}");
-        let paginated_df = transform_new(df.clone().lazy(), opts).await?.collect()?;
+        let paginated_df = tabular::collect_with_opts(df.clone().lazy(), opts.clone()).await?;
 
         let source_schema = if let Some(schema) =
             repositories::data_frames::schemas::get_by_path(repo, &workspace.commit, path)?

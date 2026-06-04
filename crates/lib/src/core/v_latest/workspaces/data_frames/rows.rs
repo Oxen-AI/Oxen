@@ -256,16 +256,15 @@ pub async fn prepare_modified_or_removed_row(
 
     // let scan_rows = 10000 as usize;
     let version_store = repo.version_store();
-    let committed_df_path = version_store
-        .get_version_path(&commit_merkle_tree.hash.to_string())
-        .await?;
-
-    log::debug!("prepare_modified_or_removed_row() committed_df_path: {committed_df_path:?}");
 
     // TODONOW should not be using all rows - just need to parse delim
-    let lazy_df =
-        tabular::read_df_with_extension(committed_df_path, file_node.extension(), &DFOpts::empty())
-            .await?;
+    let lazy_df = tabular::read_version_df(
+        &version_store,
+        &commit_merkle_tree.hash.to_string(),
+        file_node.extension(),
+        &DFOpts::empty(),
+    )
+    .await?;
 
     // Get the row by index
     let mut row = lazy_df.slice(row_idx_og, 1_usize);
