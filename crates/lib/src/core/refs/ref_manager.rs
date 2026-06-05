@@ -4,10 +4,11 @@
 //! Per-operation `spawn_blocking` callers are fine because the guard lifetime is bounded
 //! by the closure.
 
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str;
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, Weak};
 
 use lru::LruCache;
 use parking_lot::{Mutex, RwLock};
@@ -22,17 +23,112 @@ use crate::util;
 
 const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 
-// Static cache of DB instances with LRU eviction. Each entry wraps the DB in a
-// `RwLock` so compound read-modify-write sequences (e.g. `create_branch`'s
-// "check exists, then put") serialize under exclusive access.
-static DB_INSTANCES: LazyLock<Mutex<LruCache<PathBuf, Arc<RwLock<DB>>>>> =
-    LazyLock::new(|| Mutex::new(LruCache::new(DB_CACHE_SIZE)));
+/// Caches open refs RocksDB handles with two distinct guarantees:
+///
+/// 1. **Uniqueness** — at most one live read-write `DB` handle exists per refs
+///    directory at any time. This matters because RocksDB's on-disk `LOCK` is a
+///    *per-process* fcntl lock: a second `DB::open` on the same path from within
+///    this same process is NOT rejected, so you end up with two independent
+///    handles whose background compaction threads race — one deletes SST files
+///    the other's MANIFEST still references, corrupting the DB
+///    (`MANIFEST-xxxxx references 000NNN.sst: No such file or directory`).
+///    `live` holds a `Weak` per path so any caller that arrives while a handle
+///    is still alive upgrades and reuses it instead of opening a duplicate.
+///
+/// 2. **Warmth** — `warm` is a bounded LRU of *strong* refs that keeps the
+///    most-recently-used handles open so back-to-back operations don't pay the
+///    reopen cost.
+///
+/// The crucial property: evicting from `warm` only drops a strong ref, it never
+/// permits a duplicate open. As long as some caller still holds the handle, the
+/// `live` weak upgrades to that exact instance. The previous design cached only
+/// strong refs in an LRU, so once a still-in-use entry was evicted the next
+/// caller had no way to find the live handle and opened a second one — the
+/// source of the corruption.
+struct RefsDbCache {
+    live: HashMap<PathBuf, Weak<RwLock<DB>>>,
+    warm: LruCache<PathBuf, Arc<RwLock<DB>>>,
+}
+
+impl RefsDbCache {
+    fn new() -> Self {
+        Self {
+            live: HashMap::new(),
+            warm: LruCache::new(DB_CACHE_SIZE),
+        }
+    }
+
+    /// The single live handle for `refs_dir`, refreshing its warmth on the way
+    /// out. `None` if no handle is currently alive. Upgrading the `live` weak is
+    /// what prevents a second `DB::open` while another caller still holds one.
+    fn get(&mut self, refs_dir: &Path) -> Option<Arc<RwLock<DB>>> {
+        let db = self.live.get(refs_dir).and_then(Weak::upgrade)?;
+        // Refresh warmth so a still-in-use repo isn't churned out of the LRU.
+        self.warm.put(refs_dir.to_path_buf(), db.clone());
+        Some(db)
+    }
+
+    /// Record a freshly-opened handle as both the unique live handle (`live`) and
+    /// a warm entry. Keeping both maps in sync lives here so callers never touch
+    /// the fields directly.
+    fn insert(&mut self, refs_dir: &Path, db: &Arc<RwLock<DB>>) {
+        self.live.insert(refs_dir.to_path_buf(), Arc::downgrade(db));
+        self.warm.put(refs_dir.to_path_buf(), db.clone());
+        // Drop tombstones for handles that have since closed so `live` stays
+        // bounded by the number of currently-open repos, not every repo ever
+        // touched.
+        self.live.retain(|_, weak| weak.strong_count() > 0);
+    }
+
+    fn remove(&mut self, refs_dir: &Path) {
+        self.live.remove(refs_dir);
+        let _ = self.warm.pop(refs_dir);
+    }
+}
+
+static DB_INSTANCES: LazyLock<Mutex<RefsDbCache>> =
+    LazyLock::new(|| Mutex::new(RefsDbCache::new()));
+
+/// Returns the single live refs DB handle for `refs_dir`, opening one only if no
+/// live handle currently exists. The whole get-or-open is performed under the
+/// cache mutex so two threads can never race into two `DB::open` calls.
+fn get_or_open_refs_db(refs_dir: &Path) -> Result<Arc<RwLock<DB>>, OxenError> {
+    let mut cache = DB_INSTANCES.lock();
+
+    if let Some(existing) = cache.get(refs_dir) {
+        return Ok(existing);
+    }
+
+    // No live handle: every prior handle has been dropped, so it is safe to open
+    // a fresh one. (There is one narrow window: if the last `Arc` is mid-drop,
+    // `Weak::upgrade` can observe `strong_count == 0` before the `rocksdb::DB`
+    // destructor finishes releasing the on-disk `LOCK`, so this `DB::open` could
+    // momentarily collide with it and surface as `RefsDbOpenFailed`. That window
+    // is one destructor long — vastly narrower than the evicted-but-live bug this
+    // cache exists to prevent — so we don't add lock-retry complexity for it.)
+    if !refs_dir.exists() {
+        util::fs::create_dir_all(refs_dir)?;
+    }
+
+    let opts = db::key_val::opts::default();
+    let db = DB::open(&opts, dunce::simplified(refs_dir)).map_err(|source| {
+        log::error!("Failed to open refs database at {refs_dir:?}: {source}");
+        OxenError::RefsDbOpenFailed {
+            path: refs_dir.to_path_buf(),
+            source,
+        }
+    })?;
+    let arc_db = Arc::new(RwLock::new(db));
+    cache.insert(refs_dir, &arc_db);
+
+    Ok(arc_db)
+}
 
 /// Removes a repository's DB instance from the cache.
 pub fn remove_from_cache(repository_path: impl AsRef<std::path::Path>) -> Result<(), OxenError> {
     let refs_dir = util::fs::oxen_hidden_dir(repository_path).join(REFS_DIR);
-    let mut instances = DB_INSTANCES.lock();
-    let _ = instances.pop(&refs_dir); // drop immediately
+    let mut cache = DB_INSTANCES.lock();
+    cache.remove(&refs_dir);
     Ok(())
 }
 
@@ -41,15 +137,18 @@ pub fn remove_from_cache(repository_path: impl AsRef<std::path::Path>) -> Result
 pub fn remove_from_cache_with_children(
     repository_path: impl AsRef<std::path::Path>,
 ) -> Result<(), OxenError> {
-    let mut dbs_to_remove: Vec<PathBuf> = vec![];
-    let mut instances = DB_INSTANCES.lock();
-    for (key, _) in instances.iter() {
-        if key.starts_with(&repository_path) {
-            dbs_to_remove.push(key.clone());
-        }
-    }
-    for db in dbs_to_remove {
-        let _ = instances.pop(&db); // drop immediately
+    let repository_path = repository_path.as_ref();
+    let mut cache = DB_INSTANCES.lock();
+    // `live` is a superset of `warm` (every open inserts into both, removals
+    // clear both), so its keys cover every cached path under this repo.
+    let to_remove: Vec<PathBuf> = cache
+        .live
+        .keys()
+        .filter(|key| key.starts_with(repository_path))
+        .cloned()
+        .collect();
+    for refs_dir in to_remove {
+        cache.remove(&refs_dir);
     }
     Ok(())
 }
@@ -64,31 +163,8 @@ pub fn with_ref_manager<F, T>(repository: &LocalRepository, operation: F) -> Res
 where
     F: FnOnce(&RefManager) -> Result<T, OxenError>,
 {
-    // Get or create the DB instance from cache
-    let refs_db = {
-        let refs_dir = util::fs::oxen_hidden_dir(&repository.path).join(REFS_DIR);
-
-        let mut instances = DB_INSTANCES.lock();
-        if let Some(db) = instances.get(&refs_dir) {
-            Ok::<Arc<RwLock<DB>>, OxenError>(db.clone())
-        } else {
-            if !refs_dir.exists() {
-                util::fs::create_dir_all(&refs_dir)?;
-            }
-
-            let opts = db::key_val::opts::default();
-            let db = DB::open(&opts, dunce::simplified(&refs_dir)).map_err(|source| {
-                log::error!("Failed to open refs database at {refs_dir:?}: {source}");
-                OxenError::RefsDbOpenFailed {
-                    path: refs_dir.clone(),
-                    source,
-                }
-            })?;
-            let arc_db = Arc::new(RwLock::new(db));
-            instances.put(refs_dir, arc_db.clone());
-            Ok(arc_db)
-        }
-    }?;
+    let refs_dir = util::fs::oxen_hidden_dir(&repository.path).join(REFS_DIR);
+    let refs_db = get_or_open_refs_db(&refs_dir)?;
 
     let manager = RefManager {
         refs_db,
@@ -338,6 +414,14 @@ impl RefManager {
     }
 }
 
+/// Test-only: drop the *strong* warm ref for a path without touching `live`,
+/// simulating the LRU evicting a still-in-use entry under cache pressure.
+#[cfg(test)]
+fn evict_from_warm_only(refs_dir: &Path) {
+    let mut cache = DB_INSTANCES.lock();
+    let _ = cache.warm.pop(refs_dir);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -345,6 +429,42 @@ mod tests {
     use crate::test;
     use crate::util;
     use std::thread;
+
+    #[tokio::test]
+    async fn test_evicted_but_live_handle_is_reused_not_reopened() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let refs_dir = util::fs::oxen_hidden_dir(&repo.path).join(REFS_DIR);
+
+            // Acquire and KEEP a live handle, mirroring an in-flight request that
+            // still holds the Arc.
+            let arc1 = get_or_open_refs_db(&refs_dir)?;
+
+            // Simulate the LRU evicting this path's warm (strong) ref while arc1
+            // is still alive — the exact condition that previously triggered a
+            // second DB::open on the same directory and corrupted it.
+            evict_from_warm_only(&refs_dir);
+
+            // Re-acquiring MUST hand back the same live handle, never a duplicate.
+            let arc2 = get_or_open_refs_db(&refs_dir)?;
+            assert!(
+                Arc::ptr_eq(&arc1, &arc2),
+                "evicted-but-live refs DB must be reused, not reopened \
+                 (a second handle on the same path corrupts RocksDB)"
+            );
+
+            // Once every handle is dropped, the cache may legitimately reopen.
+            drop(arc1);
+            drop(arc2);
+            remove_from_cache(&repo.path)?;
+            with_ref_manager(&repo, |manager| {
+                assert!(!manager.list_branches()?.is_empty());
+                Ok(())
+            })?;
+
+            Ok(())
+        })
+        .await
+    }
 
     #[tokio::test]
     async fn test_concurrent_access() -> Result<(), OxenError> {
