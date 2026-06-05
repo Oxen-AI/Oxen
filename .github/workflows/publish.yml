@@ -108,19 +108,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Update oxen formula on homebrew-core
-        uses: mislav/bump-homebrew-formula-action@v3
+        uses: dawidd6/action-homebrew-bump-formula@v7
         with:
-          formula-name: oxen
-          formula-path: Formula/o/oxen.rb
-          homebrew-tap: Homebrew/homebrew-core
-          base-branch: main
-          download-url: https://github.com/Oxen-AI/Oxen/archive/${{ github.ref }}.tar.gz
-          commit-message: |
-            {{formulaName}} {{version}}
-
-            Created by https://github.com/mislav/bump-homebrew-formula-action
-        env:
-          COMMITTER_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          # Personal access token with fork + PR scopes; the action forks
+          # homebrew-core, runs `brew bump-formula-pr`, and opens the PR.
+          token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          formula: oxen
+          tag: ${{ github.ref }}
 
   publish_homebrew_oxen_server:
     name: 🍺 Update oxen-server formula on Oxen-AI/homebrew-oxen-server

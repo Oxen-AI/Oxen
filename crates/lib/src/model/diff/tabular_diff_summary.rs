@@ -141,13 +141,14 @@ impl TabularDiffWrapper {
         match node {
             Some(node) => {
                 let version_store = repo.version_store();
-                let version_path = version_store
-                    .get_version_path(&node.hash().to_string())
-                    .await
-                    .expect("invariant violation: version path not found in maybe_get_df_from_file_node");
-                tabular::read_df_with_extension(&*version_path, node.extension(), &DFOpts::empty())
-                    .await
-                    .ok()
+                tabular::read_version_df(
+                    &version_store,
+                    &node.hash().to_string(),
+                    node.extension(),
+                    &DFOpts::empty(),
+                )
+                .await
+                .ok()
             }
             None => None,
         }

@@ -660,11 +660,9 @@ pub async fn diff_tabular_file_and_file_node(
     let (df_1, df_2) = match file_node {
         Some(file_node) => {
             let version_store = repo.version_store();
-            let file_node_path = version_store
-                .get_version_path(&file_node.hash().to_string())
-                .await?;
-            let df_1 = tabular::read_df_with_extension(
-                file_node_path,
+            let df_1 = tabular::read_version_df(
+                &version_store,
+                &file_node.hash().to_string(),
                 file_node.extension(),
                 &DFOpts::empty(),
             )
@@ -698,20 +696,16 @@ pub async fn diff_tabular_file_nodes(
     match (file_1, file_2) {
         (Some(file_1), Some(file_2)) => {
             let version_store = repo.version_store();
-            let version_path_1 = version_store
-                .get_version_path(&file_1.hash().to_string())
-                .await?;
-            let version_path_2 = version_store
-                .get_version_path(&file_2.hash().to_string())
-                .await?;
-            let df_1 = tabular::read_df_with_extension(
-                version_path_1,
+            let df_1 = tabular::read_version_df(
+                &version_store,
+                &file_1.hash().to_string(),
                 file_1.extension(),
                 &DFOpts::empty(),
             )
             .await?;
-            let df_2 = tabular::read_df_with_extension(
-                version_path_2,
+            let df_2 = tabular::read_version_df(
+                &version_store,
+                &file_2.hash().to_string(),
                 file_2.extension(),
                 &DFOpts::empty(),
             )
@@ -723,11 +717,9 @@ pub async fn diff_tabular_file_nodes(
         }
         (Some(file_1), None) => {
             let version_store = repo.version_store();
-            let version_path_1 = version_store
-                .get_version_path(&file_1.hash().to_string())
-                .await?;
-            let df_1 = tabular::read_df_with_extension(
-                version_path_1,
+            let df_1 = tabular::read_version_df(
+                &version_store,
+                &file_1.hash().to_string(),
                 file_1.extension(),
                 &DFOpts::empty(),
             )
@@ -740,12 +732,10 @@ pub async fn diff_tabular_file_nodes(
         }
         (None, Some(file_2)) => {
             let version_store = repo.version_store();
-            let version_path_2 = version_store
-                .get_version_path(&file_2.hash().to_string())
-                .await?;
             let df_1 = tabular::new_df();
-            let df_2 = tabular::read_df_with_extension(
-                version_path_2,
+            let df_2 = tabular::read_version_df(
+                &version_store,
+                &file_2.hash().to_string(),
                 file_2.extension(),
                 &DFOpts::empty(),
             )
