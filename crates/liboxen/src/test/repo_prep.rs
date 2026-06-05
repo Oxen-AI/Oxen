@@ -31,7 +31,7 @@ use crate::test::{
 /// repos to the OS temp dir keeps the env on the host's real volume (NTFS on Windows runners).
 ///
 /// This function mirrors `lmdb_test_root` in
-/// `crates/lib/src/core/db/merkle_node/lmdb.rs`, used by the low-level [`LmdbBackend`] tests.
+/// `crates/liboxen/src/core/db/merkle_node/lmdb.rs`, used by the low-level [`LmdbBackend`] tests.
 #[inline(always)]
 pub(crate) fn lmdb_test_base() -> PathBuf {
     std::env::temp_dir().join("oxen-lmdb-tests")

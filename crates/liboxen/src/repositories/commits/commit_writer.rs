@@ -1923,7 +1923,7 @@ mod tests {
     //
     // `DirNode` carries `data_type_counts: HashMap<String, u64>` and
     // `data_type_sizes: HashMap<String, u64>` (see
-    // `crates/lib/src/model/merkle_tree/node/dir_node.rs:48-49`). When the
+    // `crates/liboxen/src/model/merkle_tree/node/dir_node.rs:48-49`). When the
     // node is msgpack-encoded for the per-node `children` and `node` files,
     // the serializer iterates each `HashMap` to emit its key/value pairs.
     // `std::collections::HashMap` uses `RandomState`, which is randomized
@@ -2181,7 +2181,7 @@ mod tests {
     ///
     /// **Why this is structural rather than byte-for-byte.** `DirNode`'s
     /// `data_type_counts` / `data_type_sizes` are `HashMap<String, u64>`
-    /// (`crates/lib/src/model/merkle_tree/node/dir_node.rs:48-49`). The
+    /// (`crates/liboxen/src/model/merkle_tree/node/dir_node.rs:48-49`). The
     /// msgpack serializer iterates each map to emit key/value pairs, and
     /// `std::collections::HashMap` uses `RandomState` (per-instance,
     /// thread-local PRNG seed) — so two HashMaps with the same key/value

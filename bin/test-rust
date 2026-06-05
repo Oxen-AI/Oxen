@@ -45,7 +45,7 @@ export OXEN_METRICS_PORT='off'
 # Lower the streamed-transfer segment size (default 10 MiB) so test fixtures can be small
 # while still exercising the streamed-transfer code path. Must be set before launching
 # oxen-server so both processes agree on the threshold. See `stream_segment_size()` in
-# crates/lib/src/constants.rs.
+# crates/liboxen/src/constants.rs.
 export OXEN_STREAM_SEGMENT_SIZE=131072  # 128 KiB
 
 # On macOS, SIP strips DYLD_LIBRARY_PATH from processes launched by system

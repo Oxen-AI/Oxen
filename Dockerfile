@@ -37,9 +37,9 @@ RUN apt-get update \
 # RUN cd /usr/src && cargo new --bin oxen-server
 # WORKDIR /usr/src/oxen-server
 # COPY Cargo.toml Cargo.lock ./
-# COPY crates/lib/Cargo.toml crates/lib/Cargo.toml
-# COPY crates/cli/Cargo.toml crates/cli/Cargo.toml
-# COPY crates/server/Cargo.toml crates/server/Cargo.toml
+# COPY crates/liboxen/Cargo.toml crates/liboxen/Cargo.toml
+# COPY crates/oxen-cli/Cargo.toml crates/oxen-cli/Cargo.toml
+# COPY crates/oxen-server/Cargo.toml crates/oxen-server/Cargo.toml
 # # build just the deps for caching
 # RUN cargo build-deps --release
 

@@ -115,7 +115,7 @@ mod tests {
     /// Build a sync dir on the OS temp filesystem (not the per-test `OXEN_TEST_RUN_DIR`,
     /// which is a Windows ImDisk RAMDisk on CI). LMDB depends on NT memory-section APIs
     /// that the RAMDisk does not implement — see the long-form rationale in
-    /// `crates/lib/src/test/repo_prep.rs::lmdb_test_base`.
+    /// `crates/liboxen/src/test/repo_prep.rs::lmdb_test_base`.
     fn lmdb_safe_sync_dir() -> Result<PathBuf, OxenError> {
         let sync_dir = std::env::temp_dir()
             .join("oxen-server-lmdb-fork-tests")
@@ -146,7 +146,7 @@ mod tests {
     /// Drive the fork controller against an LMDB-backed source repo and confirm the
     /// forked repo created under the sync dir is also LMDB-backed and exposes the
     /// same commit set as the source. This is the end-to-end version of the lib-level
-    /// test in `crates/lib/src/repositories/fork.rs`, exercised through the HTTP
+    /// test in `crates/liboxen/src/repositories/fork.rs`, exercised through the HTTP
     /// handler and `get_repo`/`app_data` plumbing rather than the raw `start_fork`.
     #[actix_web::test]
     async fn test_fork_endpoint_preserves_lmdb_backend_and_commits() -> Result<(), OxenError> {

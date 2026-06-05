@@ -129,7 +129,7 @@ If you are building anything with Oxen.ai or have any questions we would love to
 
 ## Build 🔨
 
-Each codebase has its own build instructions, please refer to the [Rust build instructions](./crates/lib/README.md#-build--run)
+Each codebase has its own build instructions, please refer to the [Rust build instructions](./crates/liboxen/README.md#-build--run)
 and [`oxen-python`'s build instructions](./oxen-python/README.md#build) for specifics.
 
 However, each codebase shares the same pre-requisites and pre-commit hooks.
@@ -174,7 +174,7 @@ Make sure [`cmake`](https://cmake.org/download/) is installed. `cmake` can be in
 brew install cmake
 ```
 
-The [Python interface](./oxen-python/README.md) uses [`liboxen`](./crates/lib/) bindings provided by PyO3.
+The [Python interface](./oxen-python/README.md) uses [`liboxen`](./crates/liboxen/) bindings provided by PyO3.
 
 The `oxen-python` codebase requires installing [`uv`](https://docs.astral.sh/uv/getting-started/installation/):
 
@@ -215,7 +215,7 @@ cargo build --workspace --release --features production
 ```
 
 This enables:
-- **OpenTelemetry tracing** (`otel`) -- export spans to any OTLP-compatible collector (Jaeger, Tempo, Datadog, etc.). See [OpenTelemetry Tracing](crates/server/README.md#opentelemetry-tracing) for runtime configuration.
+- **OpenTelemetry tracing** (`otel`) -- export spans to any OTLP-compatible collector (Jaeger, Tempo, Datadog, etc.). See [OpenTelemetry Tracing](crates/oxen-server/README.md#opentelemetry-tracing) for runtime configuration.
 - **FFmpeg thumbnails** (`ffmpeg`) -- generate video/image thumbnails via FFmpeg (requires FFmpeg libraries installed on the host).
 - **Performance logging** (`perf-logging`) -- additional timing instrumentation for internal operations.
 
@@ -267,18 +267,18 @@ tail -f ~/.oxen/logs/oxen-server.2026-04-06 | jq 'select(.level == "ERROR")'
 
 `oxen-server` can expose a Prometheus-compatible metrics endpoint. Requires
 the `metrics` compile-time feature (included in `production`) and `OXEN_METRICS_PORT`
-at runtime. See [Prometheus Metrics](crates/server/README.md#prometheus-metrics) for details.
+at runtime. See [Prometheus Metrics](crates/oxen-server/README.md#prometheus-metrics) for details.
 
 ## OpenTelemetry Tracing
 
 `oxen-server` can export tracing spans to any OTLP-compatible collector (Jaeger, Tempo, etc.).
 Requires building with the `otel` feature flag.
-See [OpenTelemetry Tracing](crates/server/README.md#opentelemetry-tracing) for details.
+See [OpenTelemetry Tracing](crates/oxen-server/README.md#opentelemetry-tracing) for details.
 
 ## FmtSpan Events
 
 Span lifecycle events can be emitted as log lines on stderr for lightweight tracing.
-See [FmtSpan Events](crates/server/README.md#fmtspan-events) for details.
+See [FmtSpan Events](crates/oxen-server/README.md#fmtspan-events) for details.
 
 ## Why build Oxen?
 
