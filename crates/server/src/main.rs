@@ -143,7 +143,6 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
         crate::controllers::workspaces::changes::unstage_many,
         // Workspaces - files
         crate::controllers::workspaces::files::get,
-        crate::controllers::workspaces::files::add,
         crate::controllers::workspaces::files::add_version_files,
         crate::controllers::workspaces::files::rm_files,
         // Branches

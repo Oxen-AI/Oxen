@@ -1,3 +1,4 @@
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Iterator, Optional
 
@@ -272,7 +273,15 @@ class Workspace:
                 The path in the remote repo where the file will be added
         """
 
-        self._workspace.add_bytes(src, buf, dst)
+        # An in-memory buffer has no file on disk, so write it to a client-side temp file
+        # (named so the entry keeps its intended name) and route through the on-disk add path.
+        name = Path(src).name
+        if not name:
+            raise ValueError(f"src has no file name: {src!r}")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir) / name
+            tmp_path.write_bytes(buf)
+            self.add(tmp_path, dst)
 
     def rm(self, path: str) -> None:
         """

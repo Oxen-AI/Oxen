@@ -6,10 +6,9 @@ use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository, RemoteRepository};
 use crate::opts::GlobOpts;
 use crate::util::{self, concurrency};
-use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash};
+use crate::view::{ErrorFileInfo, ErrorFilesResponse, FileWithHash};
 use crate::{api, repositories, view, view::workspaces::ValidateUploadFeasibilityRequest};
 
-use bytesize::ByteSize;
 use futures_util::StreamExt;
 use glob_match::glob_match;
 
@@ -31,7 +30,6 @@ use flate2::write::GzEncoder;
 
 const BASE_WAIT_TIME: usize = 300;
 const MAX_WAIT_TIME: usize = 10_000;
-const WORKSPACE_ADD_LIMIT: u64 = 100_000_000;
 
 #[derive(Debug)]
 pub struct UploadResult {
@@ -221,72 +219,37 @@ pub async fn add_files(
     }
 }
 
-pub async fn add_bytes(
-    remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    directory: impl AsRef<str>,
-    path: PathBuf,
-    buf: &[u8],
-) -> Result<(), OxenError> {
-    let workspace_id = workspace_id.as_ref();
-    let directory = directory.as_ref();
-
-    match upload_bytes_as_file(remote_repo, workspace_id, directory, &path, buf).await {
-        Ok(path) => {
-            println!("🐂 oxen added entry {path:?} to workspace {workspace_id}");
-        }
-        Err(e) => {
-            return Err(e);
-        }
-    }
-
-    Ok(())
-}
-
+/// Stage a single file from disk to a workspace, returning its remote path.
+#[cfg(any(test, feature = "test-utils"))]
 pub async fn upload_single_file(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
     directory: impl AsRef<Path>,
     path: impl AsRef<Path>,
 ) -> Result<PathBuf, OxenError> {
+    let directory = directory.as_ref();
     let path = path.as_ref();
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| OxenError::basic_str(format!("Path has no file name: {path:?}")))?;
+    let dst_path = directory.join(file_name);
 
-    let Ok(metadata) = path.metadata() else {
-        return Err(OxenError::path_does_not_exist(path));
-    };
+    // Route through the shared dispatcher so small files batch and large files chunk-upload,
+    // exactly like a multi-file add of a single file.
+    let err_files = upload_multiple_files(
+        remote_repo,
+        workspace_id,
+        directory,
+        vec![path.to_path_buf()],
+        None,
+        false,
+    )
+    .await?;
 
-    log::debug!("Uploading file with size: {}", metadata.len());
-    // If the file is above the streamed-transfer segment size, use the parallel upload strategy
-    if metadata.len() > stream_segment_size() {
-        let directory = directory.as_ref();
-        match api::client::versions::parallel_large_file_upload(
-            remote_repo,
-            path,
-            Some(directory),
-            Some(workspace_id.as_ref().to_string()),
-            false,
-            None,
-            None,
-        )
-        .await
-        {
-            Ok(upload) => Ok(upload.local_path),
-            Err(err) => Err(err),
-        }
-    } else {
-        // Single multipart request
-        p_upload_single_file(remote_repo, workspace_id, directory, path).await
+    match err_files.into_iter().next() {
+        Some(err) => Err(OxenError::basic_str(err.error)),
+        None => Ok(dst_path),
     }
-}
-
-pub async fn upload_bytes_as_file(
-    remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    directory: impl AsRef<Path>,
-    path: impl AsRef<Path>,
-    buf: &[u8],
-) -> Result<PathBuf, OxenError> {
-    p_upload_bytes_as_file(remote_repo, workspace_id, directory, path, buf).await
 }
 
 async fn upload_multiple_files(
@@ -900,123 +863,6 @@ pub async fn stage_files_to_workspace(
     let response: ErrorFilesResponse = serde_json::from_str(&body)?;
 
     Ok(response.err_files)
-}
-
-async fn p_upload_single_file(
-    remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    directory: impl AsRef<Path>,
-    path: impl AsRef<Path>,
-) -> Result<PathBuf, OxenError> {
-    let workspace_id = workspace_id.as_ref();
-    let directory = directory.as_ref();
-    let directory_name = directory.to_string_lossy();
-    let path = path.as_ref();
-    log::debug!("multipart_file_upload path: {path:?}");
-    let Ok(file) = std::fs::read(path) else {
-        let err = format!("Error reading file at path: {path:?}");
-        return Err(OxenError::basic_str(err));
-    };
-
-    let uri = format!("/workspaces/{workspace_id}/files/{directory_name}");
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
-    let file_name: String = path.file_name().unwrap().to_string_lossy().into();
-    log::info!("api::client::workspaces::files::add sending file_name: {file_name:?}");
-
-    let file_part = reqwest::multipart::Part::bytes(file).file_name(file_name);
-    let form = reqwest::multipart::Form::new().part("file", file_part);
-    let client = client::new_for_url(&url)?;
-    let response = client.post(&url).multipart(form).send().await?;
-    let body = client::parse_json_body(&url, response).await?;
-    let result: Result<FilePathsResponse, serde_json::Error> = serde_json::from_str(&body);
-    match result {
-        Ok(val) => {
-            log::debug!("File path response: {val:?}");
-            if let Some(path) = val.paths.first() {
-                Ok(path.clone())
-            } else {
-                Err(OxenError::basic_str("No file path returned from server"))
-            }
-        }
-        Err(err) => {
-            let err = format!(
-                "api::staging::add_file error parsing response from {url}\n\nErr {err:?} \n\n{body}"
-            );
-            Err(OxenError::basic_str(err))
-        }
-    }
-}
-
-async fn p_upload_bytes_as_file(
-    remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    directory: impl AsRef<Path>,
-    path: impl AsRef<Path>,
-    mut buf: &[u8],
-) -> Result<PathBuf, OxenError> {
-    // Check if the total size of the files is too large (over 100mb for now)
-    let limit = WORKSPACE_ADD_LIMIT;
-    let total_size: u64 = buf.len().try_into().unwrap();
-    if total_size > limit {
-        let error_msg = format!(
-            "Total size of files to upload is too large. {} > {} Consider using `oxen push` instead for now until upload supports bulk push.",
-            ByteSize::b(total_size),
-            ByteSize::b(limit)
-        );
-        return Err(OxenError::basic_str(error_msg));
-    }
-
-    let workspace_id = workspace_id.as_ref();
-    let directory = directory.as_ref();
-    let directory_name = directory.to_string_lossy();
-    let path = path.as_ref();
-    log::debug!("multipart_file_upload path: {path:?}");
-
-    let file_name: String = path.file_name().unwrap().to_string_lossy().into();
-    log::info!("uploading bytes with file_name: {file_name:?}");
-
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    std::io::copy(&mut buf, &mut encoder)?;
-    let compressed_bytes = match encoder.finish() {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            return Err(OxenError::basic_str(format!(
-                "Failed to finish gzip for file {}: {}",
-                &file_name, e
-            )));
-        }
-    };
-
-    let file_part = reqwest::multipart::Part::bytes(compressed_bytes)
-        .file_name(file_name)
-        .mime_str("application/gzip")?;
-
-    let form = reqwest::multipart::Form::new().part("file[]", file_part);
-
-    let uri = format!("/workspaces/{workspace_id}/files/{directory_name}");
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
-    let client = client::new_for_url(&url)?;
-    let response = client.post(&url).multipart(form).send().await?;
-    let body = client::parse_json_body(&url, response).await?;
-    let result: Result<FilePathsResponse, serde_json::Error> = serde_json::from_str(&body);
-    match result {
-        Ok(val) => {
-            log::debug!("File path response: {val:?}");
-            if let Some(path) = val.paths.first() {
-                Ok(path.clone())
-            } else {
-                Err(OxenError::basic_str("No file path returned from server"))
-            }
-        }
-        Err(err) => {
-            let err = format!(
-                "api::staging::add_file error parsing response from {url}\n\nErr {err:?} \n\n{body}"
-            );
-            Err(OxenError::basic_str(err))
-        }
-    }
 }
 
 // TODO: Merge this with 'rm_files'
