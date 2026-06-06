@@ -51,25 +51,6 @@ pub async fn add(
     paths: Vec<PathBuf>,
     local_repo: &Option<LocalRepository>,
 ) -> Result<UploadFails, OxenError> {
-    add_with_opts(
-        remote_repo,
-        workspace_id,
-        directory,
-        paths,
-        local_repo,
-        false,
-    )
-    .await
-}
-
-pub async fn add_with_opts(
-    remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    directory: impl AsRef<str>,
-    paths: Vec<PathBuf>,
-    local_repo: &Option<LocalRepository>,
-    update_timestamp: bool,
-) -> Result<UploadFails, OxenError> {
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
 
@@ -102,7 +83,6 @@ pub async fn add_with_opts(
             .clone()
             .map(|local| LocalOrBase::Local(Box::new(local.clone())))
             .as_ref(),
-        update_timestamp,
     )
     .await;
 
@@ -207,7 +187,6 @@ pub async fn add_files(
         //    for a single API call.
         paths,
         Some(&base_dir_enum),
-        false,
     )
     .await
     {
@@ -242,7 +221,6 @@ pub async fn upload_single_file(
         directory,
         vec![path.to_path_buf()],
         None,
-        false,
     )
     .await?;
 
@@ -258,7 +236,6 @@ async fn upload_multiple_files(
     directory: impl AsRef<Path>,
     paths: Vec<PathBuf>,
     local_or_base: Option<&LocalOrBase>,
-    update_timestamp: bool,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     if paths.is_empty() {
         return Ok(vec![]);
@@ -334,7 +311,6 @@ async fn upload_multiple_files(
             &path,
             Some(&dst_dir),
             Some(workspace_id.to_string()),
-            update_timestamp,
             None,
             None,
         )
@@ -361,7 +337,6 @@ async fn upload_multiple_files(
         small_files,
         small_files_size,
         local_or_base,
-        update_timestamp,
     )
     .await?;
 
@@ -377,7 +352,6 @@ pub(crate) async fn parallel_batched_small_file_upload(
     small_files: Vec<(PathBuf, u64)>,
     small_files_size: u64,
     local_or_base: Option<&LocalOrBase>,
-    update_timestamp: bool,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     if small_files.is_empty() {
         return Ok(vec![]);
@@ -488,12 +462,11 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                 )?;
 
                                 // In remote-mode repos, skip adding files already present in
-                                // the tree unless update_timestamp is set. Done here in async
-                                // context (rather than inside `spawn_blocking` below) so the
-                                // mtime-tolerance comparison can `.await`.
-                                if !update_timestamp
-                                    && let Some((ref head_commit, ref local_repository)) =
-                                        head_commit_local_repo_maybe_clone
+                                // the tree and unmodified. Done here in async context (rather
+                                // than inside `spawn_blocking` below) so the mtime-tolerance
+                                // comparison can `.await`.
+                                if let Some((ref head_commit, ref local_repository)) =
+                                    head_commit_local_repo_maybe_clone
                                     && let Some(file_node) = repositories::tree::get_file_by_path(
                                         local_repository,
                                         head_commit,
@@ -664,7 +637,6 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                         Arc::new(files_to_stage),
                                         &directory_str,
                                         upload_err_files,
-                                        update_timestamp,
                                     )
                                     .await
                                     {
@@ -777,7 +749,6 @@ pub async fn stage_files_to_workspace_with_retry(
     files_to_add: Arc<Vec<FileWithHash>>,
     directory_str: impl AsRef<str>,
     err_files: Vec<ErrorFileInfo>,
-    update_timestamp: bool,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let mut retry_count: usize = 0;
     let directory_str = directory_str.as_ref();
@@ -794,7 +765,6 @@ pub async fn stage_files_to_workspace_with_retry(
             files_to_add.clone(),
             directory_str,
             err_files.clone(),
-            update_timestamp,
         )
         .await
         {
@@ -833,15 +803,10 @@ pub async fn stage_files_to_workspace(
     files_to_add: Arc<Vec<FileWithHash>>,
     directory_str: impl AsRef<str>,
     err_files: Vec<ErrorFileInfo>,
-    update_timestamp: bool,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let workspace_id = workspace_id.as_ref();
     let directory_str = directory_str.as_ref();
-    let uri = if update_timestamp {
-        format!("/workspaces/{workspace_id}/versions/{directory_str}?update_timestamp=true")
-    } else {
-        format!("/workspaces/{workspace_id}/versions/{directory_str}")
-    };
+    let uri = format!("/workspaces/{workspace_id}/versions/{directory_str}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let files_to_send = if !err_files.is_empty() {
