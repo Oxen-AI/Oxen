@@ -9,6 +9,7 @@ use parking_lot::Mutex;
 use sql_query_builder::Delete;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode};
 use crate::model::staged_row_status::StagedRowStatus;
@@ -232,14 +233,17 @@ pub async fn rename(
     if staged_entry.is_none() {
         let workspace_file_path = workspace.workspace_repo.path.join(new_path);
 
-        // Export the file from the version path to the new path
+        // Export the file from the version path to the new path, setting mtime from merkle record
         if let Some(existing_file_node) =
             repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
         {
             let version_store = workspace.base_repo.version_store();
             let hash = existing_file_node.hash().to_string();
+            let mtime = SystemTime::UNIX_EPOCH
+                + Duration::from_secs(existing_file_node.last_modified_seconds() as u64)
+                + Duration::from_nanos(existing_file_node.last_modified_nanoseconds() as u64);
             version_store
-                .copy_version_to_path(&hash, &workspace_file_path)
+                .copy_version_to_path(&hash, &workspace_file_path, mtime)
                 .await?;
         }
 
