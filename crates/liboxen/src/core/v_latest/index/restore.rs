@@ -436,15 +436,11 @@ pub async fn restore_file(
     let parent = working_path.parent().unwrap();
     util::fs::create_dir_all(parent)?;
 
-    // Use the version store to copy the file to the working path
+    // Use the version store to atomically copy the file to the working path with the correct mtime
     let hash_str = file_hash.to_string();
     version_store
-        .copy_version_to_path(&hash_str, &working_path)
+        .copy_version_to_path(&hash_str, &working_path, expected_mtime)
         .await?;
 
-    filetime::set_file_mtime(
-        &working_path,
-        filetime::FileTime::from_system_time(expected_mtime),
-    )?;
     Ok(())
 }

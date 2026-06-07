@@ -1,6 +1,7 @@
 use std;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::constants::{VERSION_CHUNK_FILE_NAME, VERSION_CHUNKS_DIR, VERSION_FILE_NAME};
 use crate::error::OxenError;
@@ -203,7 +204,12 @@ impl VersionStore for LocalVersionStore {
     }
 
     // TODO: (CleanCut) Do we need to make sure the destination path is outside the version store?
-    async fn copy_version_to_path(&self, hash: &str, dest_path: &Path) -> Result<(), OxenError> {
+    async fn copy_version_to_path(
+        &self,
+        hash: &str,
+        dest_path: &Path,
+        mtime: SystemTime,
+    ) -> Result<(), OxenError> {
         let version_path = self.version_path(hash);
         log::debug!("copying version path: {version_path:?} to {dest_path:?}");
         // Distinguish "the version-store blob is missing" from generic copy errors so the
@@ -219,7 +225,11 @@ impl VersionStore for LocalVersionStore {
                 });
             }
         }
-        util::fs::copy_mkdir(&version_path, dest_path).await?;
+        let dest_path = dest_path.to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            util::fs::atomic_copy_with_mtime(&version_path, &dest_path, mtime)
+        })
+        .await??;
         Ok(())
     }
 
@@ -882,5 +892,56 @@ mod tests {
                 .await
                 .unwrap()
         );
+    }
+
+    /// `copy_version_to_path` must land bytes + stamp the mtime atomically. This is the
+    /// working-tree publish path that `restore_file` (oxen pull/checkout/restore) drives —
+    /// losing the mtime here is what defeats the `oxen status` size+mtime fast path.
+    #[tokio::test]
+    async fn test_copy_version_to_path_with_mtime_stamps_atomically() {
+        let (_temp_dir, store) = setup().await;
+        let data = b"working-tree publish content";
+        let hash = hasher::hash_buffer(data);
+        store
+            .store_version(&hash, Bytes::from_static(data))
+            .await
+            .unwrap();
+
+        let dest_dir = TempDir::new().unwrap();
+        let dest_path = dest_dir.path().join("subdir/output.bin");
+        let mtime = SystemTime::UNIX_EPOCH + std::time::Duration::new(1_700_000_000, 123_456_789);
+
+        store
+            .copy_version_to_path(&hash, &dest_path, mtime)
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read(&dest_path).unwrap(), data);
+        let actual = std::fs::metadata(&dest_path).unwrap().modified().unwrap();
+        assert_eq!(actual, mtime);
+    }
+
+    /// Missing source hash surfaces as `VersionStoreDataMissing` and the call must not
+    /// leave a scratch sibling or zero-byte file next to the destination.
+    #[tokio::test]
+    async fn test_copy_version_to_path_missing_version() {
+        let (_temp_dir, store) = setup().await;
+        let dest_dir = TempDir::new().unwrap();
+        let dest_path = dest_dir.path().join("out.bin");
+        let mtime = SystemTime::UNIX_EPOCH + std::time::Duration::new(1_700_000_000, 0);
+
+        let result = store
+            .copy_version_to_path("0000000000000000", &dest_path, mtime)
+            .await;
+        assert!(matches!(
+            result,
+            Err(OxenError::VersionStoreDataMissing { .. })
+        ));
+        assert!(!dest_path.exists());
+        let names: Vec<_> = std::fs::read_dir(dest_dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.file_name()))
+            .collect();
+        assert!(names.is_empty(), "leftover entries: {names:?}");
     }
 }

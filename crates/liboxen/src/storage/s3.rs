@@ -11,15 +11,15 @@ use futures::StreamExt;
 use log;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::fs::{File, create_dir_all};
+use std::time::SystemTime;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::OnceCell;
 use tokio_stream::Stream;
 use tokio_util::io::StreamReader;
 
 use super::version_store::{LocalFilePath, VersionLocation, VersionStore};
-use crate::constants::{STREAMING_BUF_SIZE, VERSION_FILE_NAME};
-use crate::util::hasher;
+use crate::constants::VERSION_FILE_NAME;
+use crate::util::{self, hasher};
 use crate::view::versions::CleanCorruptedVersionsResult;
 use xxhash_rust::xxh3::Xxh3;
 
@@ -638,32 +638,18 @@ impl VersionStore for S3VersionStore {
     }
 
     /// Copy a version file to a destination path on the local filesystem, creating any necessary
-    /// parent directories and overwriting any existing file at the destination path.
+    /// parent directories. The publish is atomic and the published file is stamped with `mtime`
+    /// alongside the bytes — any error leaves the prior contents (if any) at `dest_path`
+    /// untouched, never a torn or wrong-mtime file.
     // TODO: We should probably only allow writing to a specific set of path prefixes
-    async fn copy_version_to_path(&self, hash: &str, dest_path: &Path) -> Result<(), OxenError> {
-        if let Some(parent) = dest_path.parent() {
-            create_dir_all(parent)
-                .await
-                .map_err(|e| OxenError::basic_str(format!("Failed to create parent dirs: {e}")))?;
-        }
-
-        let file = File::create(dest_path)
-            .await
-            .map_err(|e| OxenError::basic_str(format!("Failed to create file: {e}")))?;
-        let mut writer = tokio::io::BufWriter::with_capacity(STREAMING_BUF_SIZE, file);
-
+    async fn copy_version_to_path(
+        &self,
+        hash: &str,
+        dest_path: &Path,
+        mtime: SystemTime,
+    ) -> Result<(), OxenError> {
         let mut stream = StreamReader::new(self.get_version_stream(hash).await?);
-        tokio::io::copy_buf(&mut stream, &mut writer)
-            .await
-            .map_err(|e| OxenError::basic_str(format!("Failed to copy S3 stream to file: {e}")))?;
-        // `BufWriter::Drop` does not flush; flush explicitly so every byte reaches the file before
-        // a reader (e.g. DuckDB) opens the destination path.
-        writer
-            .flush()
-            .await
-            .map_err(|e| OxenError::basic_str(format!("Failed to flush S3 stream to file: {e}")))?;
-
-        Ok(())
+        util::fs::atomic_write_from_async_reader_with_mtime(dest_path, &mut stream, mtime).await
     }
 
     async fn store_version_chunk(
@@ -1213,14 +1199,17 @@ mod tests {
 
         let dest_dir = async_tempfile::TempDir::new().await.unwrap();
         let dest_path = dest_dir.dir_path().join("subdir/output.bin");
+        let mtime = SystemTime::UNIX_EPOCH + std::time::Duration::new(1_700_000_000, 123_456_789);
 
         store
-            .copy_version_to_path("eeedef1234567890", &dest_path)
+            .copy_version_to_path("eeedef1234567890", &dest_path, mtime)
             .await
             .unwrap();
 
         let contents = tokio::fs::read(&dest_path).await.unwrap();
         assert_eq!(contents, data);
+        let actual_mtime = std::fs::metadata(&dest_path).unwrap().modified().unwrap();
+        assert_eq!(actual_mtime, mtime);
     }
 
     #[tokio::test]
