@@ -2,8 +2,7 @@ use criterion::{BenchmarkId, Criterion, black_box};
 use criterion::{criterion_group, criterion_main};
 use liboxen::api;
 use liboxen::command;
-use liboxen::config::repository_config::MerkleStoreKind;
-use liboxen::constants::{DEFAULT_BRANCH_NAME, DEFAULT_REMOTE_NAME, MIN_OXEN_VERSION};
+use liboxen::constants::{DEFAULT_BRANCH_NAME, DEFAULT_REMOTE_NAME};
 use liboxen::error::OxenError;
 use liboxen::model::{LocalRepository, RemoteRepository};
 use liboxen::repositories;
@@ -14,10 +13,6 @@ use rand::{Rng, RngCore};
 use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
-
-#[path = "bench_support.rs"]
-mod bench_support;
-use bench_support::backend_kinds_from_env;
 
 fn generate_random_string(len: usize) -> String {
     rand::thread_rng()
@@ -51,24 +46,21 @@ async fn setup_repo_for_workspace_add_benchmark(
     num_files_to_add_in_benchmark: usize,
     dir_size: usize,
     data_path: Option<String>,
-    kind: MerkleStoreKind,
-    backend_name: &str,
 ) -> Result<(LocalRepository, RemoteRepository, Vec<PathBuf>), OxenError> {
     println!(
-        "setup_repo_for_workspace_add_benchmark got repo_size {repo_size}, num_files_to_add {num_files_to_add_in_benchmark}, dir_size {dir_size}, backend {backend_name}",
+        "setup_repo_for_workspace_add_benchmark got repo_size {repo_size}, num_files_to_add {num_files_to_add_in_benchmark}, and dir_size {dir_size}",
     );
     // Generate Uuid to ensure the data is pushed to a new remote
     let remote_id = Uuid::new_v4().to_string();
     let repo_dir = base_dir.join(format!(
-        "repo_{backend_name}_{num_files_to_add_in_benchmark}_{dir_size}_{remote_id}"
+        "repo_{num_files_to_add_in_benchmark}_{dir_size}_{remote_id}"
     ));
 
     if repo_dir.exists() {
         util::fs::remove_dir_all(&repo_dir)?;
     }
 
-    let mut repo =
-        repositories::init::init_with_version_and_merkle_store(&repo_dir, MIN_OXEN_VERSION, kind)?;
+    let mut repo = repositories::init(&repo_dir)?;
 
     let remote_repo = create_or_clear_remote_repo(&repo).await?;
     command::config::set_remote(&mut repo, DEFAULT_REMOTE_NAME, &remote_repo.remote.url)?;
@@ -183,60 +175,55 @@ pub fn workspace_add_benchmark(c: &mut Criterion) {
         // (100000, 1000),
         // (1000000, 1000),
     ];
-    let backends = backend_kinds_from_env();
-    for &(kind, name) in &backends {
-        for &(repo_size, dir_size) in params.iter() {
-            let num_files_to_add = repo_size / 1000;
-            let (_, remote_repo, files) = rt
-                .block_on(setup_repo_for_workspace_add_benchmark(
-                    &base_dir,
-                    repo_size,
-                    num_files_to_add,
-                    dir_size,
-                    data_path.clone(),
-                    kind,
-                    name,
-                ))
-                .unwrap();
+    for &(repo_size, dir_size) in params.iter() {
+        let num_files_to_add = repo_size / 1000;
+        let (_, remote_repo, files) = rt
+            .block_on(setup_repo_for_workspace_add_benchmark(
+                &base_dir,
+                repo_size,
+                num_files_to_add,
+                dir_size,
+                data_path.clone(),
+            ))
+            .unwrap();
 
-            group.bench_with_input(
-                BenchmarkId::new(
-                    format!("{name}_{num_files_to_add}k_files_in_{dir_size}dirs"),
-                    format!("{:?}", (name, num_files_to_add, dir_size)),
-                ),
-                &(num_files_to_add, dir_size),
-                |b, _| {
-                    let branch_name = DEFAULT_BRANCH_NAME;
+        group.bench_with_input(
+            BenchmarkId::new(
+                format!("{num_files_to_add}k_files_in_{dir_size}dirs"),
+                format!("{:?}", (num_files_to_add, dir_size)),
+            ),
+            &(num_files_to_add, dir_size),
+            |b, _| {
+                let branch_name = DEFAULT_BRANCH_NAME;
 
-                    // Generate a random workspace id
-                    let workspace_id = Uuid::new_v4().to_string();
+                // Generate a random workspace id
+                let workspace_id = Uuid::new_v4().to_string();
 
-                    let workspace = rt
-                        .block_on(api::client::workspaces::create(
-                            &remote_repo,
-                            &branch_name,
-                            &workspace_id,
-                        ))
-                        .unwrap();
+                let workspace = rt
+                    .block_on(api::client::workspaces::create(
+                        &remote_repo,
+                        &branch_name,
+                        &workspace_id,
+                    ))
+                    .unwrap();
 
-                    b.to_async(&rt).iter(|| async {
-                        api::client::workspaces::files::add(
-                            &remote_repo,
-                            &workspace.id.as_str(),
-                            "",
-                            files.clone(),
-                            &None,
-                        )
-                        .await
-                        .unwrap();
-                    });
+                b.to_async(&rt).iter(|| async {
+                    api::client::workspaces::files::add(
+                        &remote_repo,
+                        &workspace.id.as_str(),
+                        "",
+                        files.clone(),
+                        &None,
+                    )
+                    .await
+                    .unwrap();
+                });
 
-                    let _ = rt
-                        .block_on(api::client::workspaces::delete(&remote_repo, &workspace.id))
-                        .unwrap();
-                },
-            );
-        }
+                let _ = rt
+                    .block_on(api::client::workspaces::delete(&remote_repo, &workspace.id))
+                    .unwrap();
+            },
+        );
     }
     group.finish();
 
