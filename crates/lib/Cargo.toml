@@ -178,8 +178,3 @@ required-features = ["test-utils"]
 name = "workspace_add"
 harness = false
 required-features = ["test-utils"]
-
-[[bench]]
-name = "merkle_store"
-harness = false
-required-features = ["test-utils"]
