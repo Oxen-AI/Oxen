@@ -1938,6 +1938,24 @@ pub fn write_txt_file_to_path(
     Ok(path.to_path_buf())
 }
 
+/// Create `dir` and populate it with `count` files named `{prefix}_{i}.txt`,
+/// each containing the text `{prefix} {i}`. Returns the directory path.
+pub fn populate_dir_with_txt_files(
+    dir: impl AsRef<Path>,
+    prefix: &str,
+    count: usize,
+) -> Result<PathBuf, OxenError> {
+    let dir = dir.as_ref();
+    util::fs::create_dir_all(dir)?;
+    for i in 0..count {
+        write_txt_file_to_path(
+            dir.join(format!("{prefix}_{i}.txt")),
+            format!("{prefix} {i}"),
+        )?;
+    }
+    Ok(dir.to_path_buf())
+}
+
 pub fn append_line_txt_file<P: AsRef<Path>>(path: P, line: &str) -> Result<PathBuf, OxenError> {
     let path = path.as_ref();
 

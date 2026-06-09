@@ -321,11 +321,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_api_local_entries_count_many_dirs() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
-            // (files already created in helper)
+        test::run_empty_local_repo_test_async(|repo| async move {
+            test::write_txt_file_to_path(repo.path.join("README.md"), "README")?;
+            test::populate_dir_with_txt_files(repo.path.join("train"), "train", 3)?;
+            test::populate_dir_with_txt_files(repo.path.join("test"), "test", 2)?;
             let num_files = util::fs::rcount_files_in_dir(&repo.path);
 
-            // Commit the dir
             repositories::add(&repo, &repo.path).await?;
             let commit = repositories::commit(&repo, "Adding all data")?;
 
