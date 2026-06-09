@@ -57,7 +57,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-mv";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
