@@ -324,14 +324,7 @@ async fn handle_json_creation(
     };
 
     let repo_new_clone = data.clone();
-    match repositories::create(
-        &app_data.path,
-        data,
-        app_data.merkle_store_kind,
-        app_data.config.storage.s3(),
-    )
-    .await
-    {
+    match repositories::create(&app_data.path, data, app_data.config.storage.s3()).await {
         Ok(repo) => match repositories::commits::latest_commit(&repo.local_repo) {
             Ok(latest_commit) => Ok(HttpResponse::Ok().json(RepositoryCreationResponse {
                 status: STATUS_SUCCESS.to_string(),
@@ -469,14 +462,7 @@ async fn handle_multipart_creation(
     let repo_data_clone = repo_data.clone();
 
     // Create repository
-    match repositories::create(
-        &app_data.path,
-        repo_data,
-        app_data.merkle_store_kind,
-        app_data.config.storage.s3(),
-    )
-    .await
-    {
+    match repositories::create(&app_data.path, repo_data, app_data.config.storage.s3()).await {
         Ok(repo) => match repositories::commits::latest_commit(&repo.local_repo) {
             Ok(latest_commit) => Ok(HttpResponse::Ok().json(RepositoryCreationResponse {
                 status: STATUS_SUCCESS.to_string(),
@@ -528,16 +514,6 @@ fn map_create_error_to_response(err: OxenError) -> HttpResponse {
             HttpResponse::BadRequest().json(StatusMessage::error(format!(
                 "Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"
             )))
-        }
-        OxenError::MerkleStoreLmdbNotSupportedOnVfs => {
-            log::debug!(
-                "Rejecting LMDB merkle store request: server sync dir is on a virtual file system"
-            );
-            HttpResponse::BadRequest().json(StatusMessage::error(
-                "Cannot create an LMDB-backed repository on a virtual file system. \
-                 Either retarget the server's sync directory at a real filesystem \
-                 or omit `merkle_store_kind` (defaults to file-backend).",
-            ))
         }
         err => {
             log::error!("Err repositories::create: {err:?}");

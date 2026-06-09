@@ -2,7 +2,6 @@ use dotenvy::dotenv;
 use dotenvy::from_filename;
 use liboxen::api::requests::RepoNew;
 use liboxen::config::UserConfig;
-use liboxen::config::repository_config::MerkleStoreKind;
 use liboxen::constants::OXEN_VERSION;
 use liboxen::error::OxenError;
 use liboxen::model::User;
@@ -346,22 +345,6 @@ enum ServerCommand {
         )]
         config: Option<PathBuf>,
 
-        /// The default Merkle tree store to use for new repositories.
-        /// A migration can be run to change any repository's Merkle tree store implementation.
-        #[arg(
-            short = 'm',
-            long = "merkle-store",
-            help = format!(
-                "The Merkle tree store implementation to use for new repositories. \
-                 Possible values: {}. Default: {}.",
-               <MerkleStoreKind as strum::VariantNames>::VARIANTS.join(", "),
-               MerkleStoreKind::default(),
-            ),
-            default_value_t = MerkleStoreKind::default(),
-            value_parser = clap::value_parser!(MerkleStoreKind),
-        )]
-        merkle_store_kind: MerkleStoreKind,
-
         /// Run the server in test mode. Not for production use.
         #[arg(
             short = 't',
@@ -484,7 +467,6 @@ async fn server() -> Result<(), ServerError> {
             port,
             auth,
             config,
-            merkle_store_kind,
             test,
         } => {
             let _metrics_guard = init_metrics()?;
@@ -501,7 +483,6 @@ async fn server() -> Result<(), ServerError> {
                     // TODO: why is this not checking the value of the env var?
                     disable_merkle_cache: env::var("OXEN_DISABLE_MERKLE_CACHE").is_ok(),
                     enable_auth: auth,
-                    merkle_store_kind,
                     test_mode: test,
                 },
                 &sync_dir,
@@ -587,7 +568,6 @@ fn init_metrics() -> Result<Option<MetricsGuard>, ServerError> {
 struct ServerOpts {
     disable_merkle_cache: bool,
     enable_auth: bool,
-    merkle_store_kind: MerkleStoreKind,
     /// Test mode (`--test`): relaxes the import SSRF guard to allow loopback targets. Never
     /// enabled in production.
     test_mode: bool,
@@ -603,7 +583,6 @@ async fn start(
     let ServerOpts {
         disable_merkle_cache,
         enable_auth,
-        merkle_store_kind,
         test_mode,
     } = opts;
 
@@ -622,7 +601,6 @@ async fn start(
     let data = app_data::OxenAppData {
         path: PathBuf::from(sync_dir),
         config,
-        merkle_store_kind,
         test_mode,
     };
 

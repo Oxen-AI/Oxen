@@ -1,9 +1,6 @@
-use crate::config::RepositoryConfig;
-use crate::config::repository_config::MerkleStoreKind;
 use crate::constants::{OXEN_HIDDEN_DIR, WORKSPACES_DIR};
-use crate::core::db::merkle_node::lmdb::{OXEN_LMDB_MERKLE_DIR, get_or_open, lmdb_dir_location};
 use crate::error::OxenError;
-use crate::util::fs::{self as oxen_fs, config_filepath};
+use crate::util::fs as oxen_fs;
 use crate::view::fork::{ForkStartResponse, ForkStatus, ForkStatusFile, ForkStatusResponse};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -74,20 +71,6 @@ pub fn start_fork(
         return Err(OxenError::ForkDestinationExists(new_path));
     }
 
-    let og_config = RepositoryConfig::from_file(config_filepath(&original_path))?;
-
-    let using_lmdb = {
-        let configured_lmdb = matches!(og_config.merkle_store_kind, MerkleStoreKind::Lmdb);
-        if configured_lmdb && !lmdb_dir_location(&original_path).is_dir() {
-            return Err(OxenError::MisconfiguredMerkleLmdb(original_path));
-        }
-        configured_lmdb
-    };
-
-    if og_config.vfs.unwrap_or(false) && using_lmdb {
-        return Err(OxenError::MerkleStoreLmdbNotSupportedOnVfs);
-    }
-
     oxen_fs::create_dir_all(&new_path)?;
     write_status(&new_path, &ForkStatus::Counting(0))?;
 
@@ -105,42 +88,6 @@ pub fn start_fork(
             }
         };
 
-        // if LMDB, then perform a special copy of its database file.
-        if using_lmdb {
-            match get_or_open(&original_path) {
-                Ok(lmdb_backend) => {
-                    // Copy **without** compaction (`CompactionOption::Disabled`). A fork is a
-                    // verbatim copy of the store and compation only works if the physical
-                    // location is unchanged.
-                    if let Err(error) =
-                        lmdb_backend.copy_on_disk(&new_path, heed::CompactionOption::Disabled)
-                    {
-                        log::error!(
-                            "Repository {} uses LMDB but failed to copy its on-disk file: {error}",
-                            original_path.display()
-                        );
-                        write_status(&new_path, &ForkStatus::Failed(error.to_string()))
-                            .unwrap_or_else(|e| {
-                                log::error!("Failed to write fork error status: {e}");
-                            });
-                        return;
-                    }
-                }
-                Err(error) => {
-                    log::error!(
-                        "Repository {} uses LMDB but failed to open its env: {error}",
-                        original_path.display()
-                    );
-                    write_status(&new_path, &ForkStatus::Failed(error.to_string())).unwrap_or_else(
-                        |e| {
-                            log::error!("Failed to write fork error status: {e}");
-                        },
-                    );
-                    return;
-                }
-            }
-        };
-
         // Close any cached RocksDB instances for the source repo before copying its
         // files. These DBs (refs, staged, the file-backend Merkle node cache) are
         // kept open process-wide in LRU caches, and RocksDB holds their files open —
@@ -149,8 +96,7 @@ pub fn start_fork(
         // it reaches a file another handle holds open. Evicting drops the last
         // `Arc<DB>`, closing the DBs and releasing the handles. Mirrors
         // `repositories::transfer_namespace`, which evicts the same caches before
-        // relocating a repo on disk. (The LMDB env is unaffected: its dir is skipped by
-        // the copy below and was snapshotted above via `copy_on_disk`.)
+        // relocating a repo on disk.
         if let Err(e) = close_cached_dbs(&original_path) {
             log::error!("Failed to close source repo DB caches before fork copy: {e}");
             write_status(&new_path, &ForkStatus::Failed(e.to_string())).unwrap_or_else(|e| {
@@ -159,7 +105,7 @@ pub fn start_fork(
             return;
         }
 
-        // ignores workspaces and LMDB dirs
+        // ignores the workspaces dir
         match copy_dir_recursive(&original_path, &new_path, &new_path, total_items, 0.0) {
             Ok(_) => {
                 write_status(&new_path, &ForkStatus::Complete).unwrap_or_else(|e| {
@@ -204,7 +150,7 @@ pub fn get_fork_status(repo_path: &Path) -> Result<ForkStatusResponse, OxenError
     })
 }
 
-/// Copies everything from `src` to `dst`, except for workspaces & LMDB.
+/// Copies everything from `src` to `dst`, except for the workspaces dir.
 fn copy_dir_recursive(
     src: &Path,
     dst: &Path,
@@ -213,14 +159,13 @@ fn copy_dir_recursive(
     mut progress: f32,
 ) -> Result<f32, OxenError> {
     let workspaces_path = PathBuf::from(OXEN_HIDDEN_DIR).join(WORKSPACES_DIR);
-    let lmdb_path = PathBuf::from(OXEN_HIDDEN_DIR).join(OXEN_LMDB_MERKLE_DIR);
 
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let path = entry.path();
         let dest_path = dst.join(entry.file_name());
 
-        if path.ends_with(&workspaces_path) || path.ends_with(&lmdb_path) {
+        if path.ends_with(&workspaces_path) {
             continue;
         }
 
@@ -244,12 +189,11 @@ fn copy_dir_recursive(
 
 fn count_items(path: &Path, status_repo: &Path, mut current_count: u32) -> Result<u32, OxenError> {
     let workspaces_path = PathBuf::from(OXEN_HIDDEN_DIR).join(WORKSPACES_DIR);
-    let lmdb_path = PathBuf::from(OXEN_HIDDEN_DIR).join(OXEN_LMDB_MERKLE_DIR);
 
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let path = entry.path();
-        if path.ends_with(&workspaces_path) || path.ends_with(&lmdb_path) {
+        if path.ends_with(&workspaces_path) {
             continue;
         }
         if path.is_dir() {
@@ -390,106 +334,5 @@ mod tests {
             }
         })
         .await
-    }
-
-    /// Fork an LMDB-backed repository and verify the forked repo is also LMDB-backed,
-    /// has the canonical snapshotted `data.mdb` on disk, and exposes the same commits
-    /// as the source — i.e. the LMDB merkle store survived the `Env::copy_to_path`
-    /// snapshot path inside `start_fork`.
-    #[tokio::test]
-    async fn test_fork_lmdb_backed_repo_preserves_backend_and_data() -> Result<(), OxenError> {
-        use crate::config::repository_config::MerkleStoreKind;
-        use crate::model::LocalRepository;
-        use crate::test::repo_prep::{init_lmdb_safe_test_repo_with_merkle_store, lmdb_test_base};
-        use crate::test::{add_txt_file_to_dir, generate_random_string};
-
-        let source = init_lmdb_safe_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
-        assert_eq!(source.merkle_store_kind(), MerkleStoreKind::Lmdb);
-
-        // A real commit so the LMDB env actually has merkle nodes to snapshot.
-        // Done inline rather than via `apply_one_commit_local_repo` because the latter uses
-        // `run_async` (a nested `block_on`), which conflicts with this test's tokio runtime.
-        let file_path = add_txt_file_to_dir(&source.path, &generate_random_string(20))?;
-        repositories::add(&source, &file_path).await?;
-        repositories::commit(&source, "Init commit")?;
-        let source_commit_ids: Vec<String> = repositories::commits::list_all(&source)?
-            .into_iter()
-            .map(|c| c.id)
-            .collect();
-        assert!(
-            !source_commit_ids.is_empty(),
-            "fresh one-commit repo must expose at least one commit"
-        );
-
-        // Place the fork sibling-of the source under `lmdb_test_base()`, not inside it,
-        // so `copy_dir_recursive` doesn't recurse into its own destination.
-        let forked_path = lmdb_test_base().join(format!("forked-{}", uuid::Uuid::new_v4()));
-
-        start_fork(source.path.clone(), forked_path.clone())?;
-
-        // Poll until the fork reaches a terminal state (`complete` or `failed`),
-        // tolerating the transient `started`/`counting`/`in_progress` states and a
-        // not-yet-created status file. Mirrors `test_fork_operations`.
-        let mut status = get_fork_status(&forked_path).ok();
-        let mut attempts = 0;
-        const MAX_ATTEMPTS: u32 = 30;
-        while !matches!(
-            status.as_ref().map(|s| s.status.as_str()),
-            Some("complete" | "failed")
-        ) && attempts < MAX_ATTEMPTS
-        {
-            tokio::time::sleep(Duration::from_millis(500)).await;
-            status = match get_fork_status(&forked_path) {
-                Ok(s) => Some(s),
-                Err(OxenError::ForkStatusNotFound) => None,
-                Err(e) => return Err(e),
-            };
-            attempts += 1;
-        }
-        let status = status.expect("fork status file should exist after polling");
-        assert_eq!(
-            status.status, "complete",
-            "fork should finish in 'complete' state; got {:?} (error: {:?})",
-            status.status, status.error,
-        );
-
-        // The snapshot must land at `<forked>/.oxen/lmdb_merkle_tree_store/data.mdb`,
-        // since heed's `copy_to_path` is called with that exact path in `LmdbBackend::copy_on_disk`.
-        let dst_lmdb_dir = lmdb_dir_location(&forked_path);
-        let dst_data_mdb = dst_lmdb_dir.join("data.mdb");
-        assert!(
-            dst_data_mdb.is_file(),
-            "forked LMDB env should contain data.mdb at {}",
-            dst_data_mdb.display()
-        );
-        assert!(
-            std::fs::metadata(&dst_data_mdb)?.len() > 0,
-            "snapshot data.mdb should be non-empty"
-        );
-
-        // The recursive copy must skip the source's LMDB dir on the destination side —
-        // otherwise it would have clobbered the snapshot with a half-written `data.mdb`.
-        // (We can't easily detect "clobbered", but if the readback below succeeds, it didn't.)
-
-        // Open the forked repo: this exercises the snapshot for real by opening the env.
-        let forked = LocalRepository::from_dir(&forked_path)?;
-        assert_eq!(
-            forked.merkle_store_kind(),
-            MerkleStoreKind::Lmdb,
-            "forked repo must preserve the source's MerkleStoreKind"
-        );
-        let forked_commit_ids: Vec<String> = repositories::commits::list_all(&forked)?
-            .into_iter()
-            .map(|c| c.id)
-            .collect();
-        assert_eq!(
-            forked_commit_ids, source_commit_ids,
-            "forked repo must expose the same commit set as the source"
-        );
-
-        // Release the env mmap before removing the dir so Windows can unlink the file.
-        drop(forked);
-        let _ = std::fs::remove_dir_all(&forked_path);
-        Ok(())
     }
 }
