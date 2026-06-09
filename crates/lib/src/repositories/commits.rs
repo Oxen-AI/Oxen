@@ -424,9 +424,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_commit_removed_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
-            // (dir already created in helper)
-            let dir_to_remove = repo.path.join("train");
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let dir_to_remove =
+                test::populate_dir_with_txt_files(repo.path.join("train"), "file", 3)?;
             let og_file_count = util::fs::rcount_files_in_dir(&dir_to_remove);
 
             repositories::add(&repo, &dir_to_remove).await?;
@@ -630,20 +630,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_history_order() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
-            let train_dir = repo.path.join("train");
-            repositories::add(&repo, train_dir).await?;
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let train_dir = test::populate_dir_with_txt_files(repo.path.join("train"), "train", 2)?;
+            repositories::add(&repo, &train_dir).await?;
             let initial_commit_message = "adding train dir";
             repositories::commit(&repo, initial_commit_message)?;
 
-            // Write a text file
             let text_path = repo.path.join("newnewnew.txt");
             util::fs::write_to_path(&text_path, "Hello World")?;
             repositories::add(&repo, &text_path).await?;
             repositories::commit(&repo, "adding text file")?;
 
-            let test_dir = repo.path.join("test");
-            repositories::add(&repo, test_dir).await?;
+            let test_dir = test::populate_dir_with_txt_files(repo.path.join("test"), "test", 2)?;
+            repositories::add(&repo, &test_dir).await?;
             let most_recent_message = "adding test dir";
             repositories::commit(&repo, most_recent_message)?;
 
@@ -660,7 +659,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_commit_history_list_between() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let new_file = repo.path.join("new_1.txt");
             test::write_txt_file_to_path(&new_file, "new 1")?;
             repositories::add(&repo, new_file).await?;
@@ -955,7 +954,7 @@ A: Oxen.ai
     // The file size should be updated in the index
     #[tokio::test]
     async fn test_clone_subtree_commit_file_update_size() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        test::run_one_commit_sync_repo_test(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
