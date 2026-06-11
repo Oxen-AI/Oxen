@@ -19,7 +19,8 @@ use tokio_util::io::StreamReader;
 
 use super::version_store::{LocalFilePath, VersionLocation, VersionStore};
 use crate::constants::VERSION_FILE_NAME;
-use crate::util::{self, hasher};
+use crate::util::fs::AtomicFile;
+use crate::util::hasher;
 use crate::view::versions::CleanCorruptedVersionsResult;
 use xxhash_rust::xxh3::Xxh3;
 
@@ -649,7 +650,10 @@ impl VersionStore for S3VersionStore {
         mtime: SystemTime,
     ) -> Result<(), OxenError> {
         let mut stream = StreamReader::new(self.get_version_stream(hash).await?);
-        util::fs::atomic_write_from_async_reader_with_mtime(dest_path, &mut stream, mtime).await
+        AtomicFile::new(dest_path)
+            .with_mtime(mtime)
+            .stream_async(&mut stream)
+            .await
     }
 
     async fn store_version_chunk(
