@@ -225,7 +225,11 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
 
     let mut ret_files = vec![];
     for upload_file in upload_files {
-        let file_name = upload_file.path.file_name().unwrap();
+        let Some(file_name) = upload_file.path.file_name() else {
+            return Err(OxenHttpError::BadRequest(
+                format!("Invalid upload file path: {:?}", upload_file.path).into(),
+            ));
+        };
         let dst_path = PathBuf::from(&directory).join(file_name);
         let version_path = version_store.get_version_path(&upload_file.hash).await?;
 
