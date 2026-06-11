@@ -1293,6 +1293,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_merge_into_base_ff_with_deletion() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let base_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            let hello_file = repo.path.join("hello.txt");
+            let world_file = repo.path.join("world.txt");
+            util::fs::write_to_path(&hello_file, "Hello")?;
+            util::fs::write_to_path(&world_file, "World")?;
+            repositories::add(&repo, &hello_file).await?;
+            repositories::add(&repo, &world_file).await?;
+            repositories::commit(&repo, "Adding files")?;
+
+            // Feature branch deletes world.txt
+            repositories::branches::create_checkout(&repo, "feature")?;
+            util::fs::remove_file(&world_file)?;
+            repositories::add(&repo, &world_file).await?;
+            repositories::commit(&repo, "Removing world file")?;
+
+            repositories::checkout(&repo, &base_branch.name).await?;
+            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
+            let base_branch = repositories::branches::get_by_name(&repo, &base_branch.name)?;
+
+            let merge_commit =
+                repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
+
+            assert_eq!(merge_commit.id, merge_branch.commit_id);
+
+            // Working dir should still have the file (server merge doesn't touch it)
+            assert!(world_file.exists());
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_merge_into_base_three_way_with_subdirectories() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|repo| async move {
             let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
