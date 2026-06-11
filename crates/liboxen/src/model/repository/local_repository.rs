@@ -10,6 +10,7 @@ use crate::model::merkle_tree::{MerkleStore, MerkleTransport, TransportableMerkl
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
 use crate::storage::{S3Opts, StorageConfig, VersionStore, create_version_store};
 use crate::util;
+use crate::util::fs::AtomicFile;
 use crate::view::RepositoryView;
 
 use std::collections::{HashMap, HashSet};
@@ -508,7 +509,7 @@ impl LocalRepository {
         let shallow_flag_path = util::fs::oxen_hidden_dir(&self.path).join(SHALLOW_FLAG);
         log::debug!("Write is shallow [{shallow}] to path: {shallow_flag_path:?}");
         if shallow {
-            util::fs::atomic_write_to_path(&shallow_flag_path, b"true")?;
+            AtomicFile::new(&shallow_flag_path).write(b"true")?;
         } else if shallow_flag_path.exists() {
             util::fs::remove_file(&shallow_flag_path)?;
         }

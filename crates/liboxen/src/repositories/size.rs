@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use crate::util::fs::AtomicFile;
 use crate::{error::OxenError, model::LocalRepository, util};
 use std::path::PathBuf;
 
@@ -61,7 +62,7 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
         }
     };
 
-    util::fs::atomic_write_to_path(&path, size.to_string().as_bytes())?;
+    AtomicFile::new(&path).write(size.to_string().as_bytes())?;
 
     let repo_path = repo.path.clone();
     let path_clone = path.clone();
@@ -75,9 +76,7 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
                     status: SizeStatus::Done,
                     size: calculated_size,
                 };
-                if let Err(e) =
-                    util::fs::atomic_write_to_path(&path_clone, size.to_string().as_bytes())
-                {
+                if let Err(e) = AtomicFile::new(&path_clone).write(size.to_string().as_bytes()) {
                     log::error!("Failed to write size result: {e}");
                 }
             }
@@ -87,7 +86,7 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
                     status: SizeStatus::Error,
                     size: 0,
                 };
-                let _ = util::fs::atomic_write_to_path(&path_clone, size.to_string().as_bytes());
+                let _ = AtomicFile::new(&path_clone).write(size.to_string().as_bytes());
             }
         }
     });

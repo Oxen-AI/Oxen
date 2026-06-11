@@ -9,6 +9,7 @@ use crate::model::{
 use crate::opts::UploadOpts;
 use crate::repositories;
 use crate::storage::VersionStore;
+use crate::util::fs::AtomicFile;
 use crate::view::entries::{EMetadataEntry, PaginatedMetadataEntriesResponse};
 use crate::{api, constants};
 use crate::{current_function, util};
@@ -22,6 +23,7 @@ use http::Method;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::task::spawn_blocking;
 use tokio_util::io::StreamReader;
 
 /// Returns the metadata given a file path
@@ -316,7 +318,9 @@ pub async fn download_small_entry(
                 .map(|result| result.map_err(std::io::Error::other));
             let mut reader = StreamReader::new(stream);
 
-            util::fs::atomic_write_from_async_reader_verified(dest, &mut reader, expected_hash)
+            AtomicFile::new(dest)
+                .with_hash(expected_hash)
+                .stream_async(&mut reader)
                 .await?;
             Ok(())
         }
@@ -656,17 +660,15 @@ pub async fn download_large_entry(
         .collect();
     let tmp_dir_for_cleanup = tmp_dir.clone();
     let local_path_for_blocking = local_path.to_path_buf();
-    tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
+    spawn_blocking(move || -> Result<(), OxenError> {
         let mut combined: Box<dyn std::io::Read> = Box::new(std::io::empty());
         for chunk_path in &chunk_paths {
             let chunk_file = std::fs::File::open(chunk_path)?;
             combined = Box::new(std::io::Read::chain(combined, chunk_file));
         }
-        util::fs::atomic_write_from_reader_verified(
-            &local_path_for_blocking,
-            &mut combined,
-            expected_hash,
-        )?;
+        AtomicFile::new(&local_path_for_blocking)
+            .with_hash(expected_hash)
+            .stream(&mut combined)?;
         if tmp_dir_for_cleanup.exists() {
             std::fs::remove_dir_all(&tmp_dir_for_cleanup)?;
         }
@@ -771,8 +773,7 @@ async fn download_entry_chunk(
         reqwest::StatusCode::OK => {
             let bytes = response.bytes().await?;
             let path = local_path.to_path_buf();
-            tokio::task::spawn_blocking(move || util::fs::atomic_write_to_path(&path, &bytes))
-                .await??;
+            spawn_blocking(move || AtomicFile::new(&path).write(&bytes)).await??;
             Ok(status)
         }
         reqwest::StatusCode::NOT_FOUND => Err(OxenError::path_does_not_exist(remote_path)),

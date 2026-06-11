@@ -4,4 +4,12 @@
 disallowed-methods = [
     { path = "std::fs::canonicalize", reason = "Use `liboxen::util::fs::canonicalize` — it falls back to `std::path::absolute` on filesystems that don't support canonicalization (e.g. Windows imdisk ramdisks used in the test suite)." },
     { path = "std::path::Path::canonicalize", reason = "Use `liboxen::util::fs::canonicalize` — it falls back to `std::path::absolute` on filesystems that don't support canonicalization (e.g. Windows imdisk ramdisks used in the test suite)." },
+
+    # Non-atomic filesystem writes — production code must use `AtomicFile` # (`crates/liboxen/src/util/fs.rs`) so a crash
+    # mid-write can never leave a torn or partially-written file. Commented out until the existing violations are migrated.
+    # Uncomment once `cargo clippy --workspace --all-targets --no-deps -- -D warnings` passes with these enabled.
+    # { path = "std::fs::write", reason = "Use `AtomicFile` (`crates/liboxen/src/util/fs.rs`) for atomic publishes." },
+    # { path = "tokio::fs::write", reason = "Use `AtomicFile` (`crates/liboxen/src/util/fs.rs`) for atomic publishes." },
+    # { path = "std::fs::File::create", reason = "Use `AtomicFile` (`crates/liboxen/src/util/fs.rs`) for atomic publishes." },
+    # { path = "tokio::fs::File::create", reason = "Use `AtomicFile` (`crates/liboxen/src/util/fs.rs`) for atomic publishes." },
 ]

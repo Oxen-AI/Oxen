@@ -11,7 +11,7 @@ use crate::repositories::merkle_tree::node::EMerkleTreeNode;
 use crate::util;
 
 use crate::model::{Commit, LocalRepository, Workspace, workspace::WorkspaceConfig};
-use crate::util::fs::atomic_write_to_path;
+use crate::util::fs::AtomicFile;
 use crate::view::entries::EMetadataEntry;
 
 pub mod data_frames;
@@ -221,7 +221,7 @@ fn create_on_disk(
     // Write the TOML string to WORKSPACE_CONFIG
     let workspace_config_path = Workspace::config_path_from_dir(&workspace_dir);
     log::debug!("index::workspaces::create writing workspace config to: {workspace_config_path:?}");
-    atomic_write_to_path(&workspace_config_path, toml_string.as_bytes())?;
+    AtomicFile::new(&workspace_config_path).write(toml_string.as_bytes())?;
 
     Ok(Workspace {
         id: workspace_id.to_owned(),
@@ -477,7 +477,7 @@ pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), O
         OxenError::basic_str(format!("Failed to serialize workspace config to TOML: {e}"))
     })?;
 
-    atomic_write_to_path(&config_path, toml_string.as_bytes())?;
+    AtomicFile::new(&config_path).write(toml_string.as_bytes())?;
 
     Ok(())
 }
