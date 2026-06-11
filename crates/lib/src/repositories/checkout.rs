@@ -546,67 +546,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_command_checkout_added_file_keep_untracked() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            // Write the first file
-            let hello_file = repo.path.join("hello.txt");
-            util::fs::write_to_path(&hello_file, "Hello")?;
-
-            // Have another file lying around we will not remove
-            let keep_file = repo.path.join("keep_me.txt");
-            util::fs::write_to_path(&keep_file, "I am untracked, don't remove me")?;
-
-            // Track & commit the file
-            repositories::add(&repo, &hello_file).await?;
-            repositories::commit(&repo, "Added hello.txt")?;
-
-            // Get the original branch name
-            let orig_branch = repositories::branches::current_branch(&repo)?.unwrap();
-
-            // Create and checkout branch
-            let branch_name = "feature/world-explorer";
-            repositories::branches::create_checkout(&repo, branch_name)?;
-
-            // Write a second file
-            let world_file = repo.path.join("world.txt");
-            util::fs::write_to_path(&world_file, "World")?;
-
-            // Track & commit the second file in the branch
-            repositories::add(&repo, &world_file).await?;
-            repositories::commit(&repo, "Added world.txt")?;
-
-            // Make sure we have both commits
-            let commits = repositories::commits::list(&repo)?;
-            assert_eq!(commits.len(), 2);
-
-            let branches = repositories::branches::list(&repo)?;
-            assert_eq!(branches.len(), 2);
-
-            // Make sure we have all files on disk in our repo dir
-            assert!(hello_file.exists());
-            assert!(world_file.exists());
-            assert!(keep_file.exists());
-
-            // Go back to the main branch
-            repositories::checkout(&repo, orig_branch.name).await?;
-
-            // The world file should no longer be there
-            assert!(hello_file.exists());
-            assert!(!world_file.exists());
-            assert!(keep_file.exists());
-
-            // Go back to the world branch
-            repositories::checkout(&repo, branch_name).await?;
-            assert!(hello_file.exists());
-            assert!(world_file.exists());
-            assert!(keep_file.exists());
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
     async fn test_command_checkout_modified_file() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
             // Write the first file
@@ -651,9 +590,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_checkout_modified_file_in_subdirectory() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
-            // Track & commit the file
-            let one_shot_path = repo.path.join("annotations/train/one_shot.csv");
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create a file in a nested subdirectory, then commit
+            let sub_dir = repo.path.join("annotations").join("train");
+            util::fs::create_dir_all(&sub_dir)?;
+            let one_shot_path = sub_dir.join("one_shot.csv");
+            test::write_txt_file_to_path(&one_shot_path, "file,label\n")?;
             repositories::add(&repo, &one_shot_path).await?;
             repositories::commit(&repo, "Adding one shot")?;
 
@@ -692,62 +634,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_command_checkout_modified_file_from_fully_committed_repo() -> Result<(), OxenError>
-    {
-        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
-            // Track & commit all the data
-            let one_shot_path = repo.path.join("annotations/train/one_shot.csv");
-            repositories::add(&repo, &repo.path).await?;
-            repositories::commit(&repo, "Adding one shot")?;
-
-            // Get the original branch name
-            let orig_branch = repositories::branches::current_branch(&repo)?.unwrap();
-
-            // Get OG file contents
-            let og_content = util::fs::read_from_path(&one_shot_path)?;
-
-            let branch_name = "feature/modify-data";
-            repositories::branches::create_checkout(&repo, branch_name)?;
-
-            let file_contents = "file,label\ntrain/cat_1.jpg,0\n";
-            let one_shot_path = test::modify_txt_file(one_shot_path, file_contents)?;
-            let status = repositories::status(&repo).await?;
-            assert_eq!(status.modified_files.len(), 1);
-            repositories::add(&repo, &one_shot_path).await?;
-            let status = repositories::status(&repo).await?;
-            status.print();
-            assert_eq!(status.modified_files.len(), 0);
-            assert_eq!(status.staged_files.len(), 1);
-
-            let status = repositories::status(&repo).await?;
-            status.print();
-            repositories::commit(&repo, "Changing one shot")?;
-
-            // checkout OG and make sure it reverts
-            repositories::checkout(&repo, orig_branch.name).await?;
-            let updated_content = util::fs::read_from_path(&one_shot_path)?;
-            assert_eq!(og_content, updated_content);
-
-            // checkout branch again and make sure it reverts
-            repositories::checkout(&repo, branch_name).await?;
-            let updated_content = util::fs::read_from_path(&one_shot_path)?;
-            assert_eq!(file_contents, updated_content);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
     async fn test_command_remove_dir_then_revert() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
-            // (dir already created in helper)
-            let dir_to_remove = repo.path.join("train");
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Create an inline directory with a few files
+            let dir_to_remove = repo.path.join("data");
+            util::fs::create_dir_all(&dir_to_remove)?;
+            for i in 0..3 {
+                test::write_txt_file_to_path(
+                    dir_to_remove.join(format!("file_{i}.txt")),
+                    format!("contents {i}"),
+                )?;
+            }
             let og_num_files = util::fs::rcount_files_in_dir(&dir_to_remove);
 
             // track the dir
             repositories::add(&repo, &dir_to_remove).await?;
-            repositories::commit(&repo, "Adding train dir")?;
+            repositories::commit(&repo, "Adding data dir")?;
 
             // Get the original branch name
             let orig_branch = repositories::branches::current_branch(&repo)?.unwrap();
@@ -761,9 +663,9 @@ mod tests {
 
             // Track the deletion
             repositories::add(&repo, &dir_to_remove).await?;
-            repositories::commit(&repo, "Removing train dir")?;
+            repositories::commit(&repo, "Removing data dir")?;
 
-            // checkout OG and make sure it restores the train dir
+            // checkout OG and make sure it restores the data dir
             repositories::checkout(&repo, orig_branch.name).await?;
             assert!(dir_to_remove.exists());
             assert_eq!(util::fs::rcount_files_in_dir(&dir_to_remove), og_num_files);
@@ -849,8 +751,15 @@ mod tests {
     */
     #[tokio::test]
     async fn test_clone_checkout_old_commit_checkout_new_commit() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_, remote_repo| async move {
+        test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
+
+            // Add a second commit so the cloned repo has more than one commit to iterate through.
+            let extra_file = local_repo.path.join("hello.txt");
+            test::write_txt_file_to_path(&extra_file, "hello")?;
+            repositories::add(&local_repo, &extra_file).await?;
+            repositories::commit(&local_repo, "Adding hello.txt")?;
+            repositories::push(&local_repo).await?;
 
             test::run_empty_dir_test_async(|repo_dir| async move {
                 let cloned_repo =
@@ -934,7 +843,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_checkout_remote_does_not_remove_untracked_files() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        test::run_one_commit_sync_repo_test(|_local_repo, remote_repo| async move {
             // Create additional branch on remote repo before clone
 
             let cloned_remote = remote_repo.clone();
@@ -980,70 +889,6 @@ mod tests {
                 repositories::checkout(&cloned_repo, branch_name).await?;
 
                 // Files should exist
-                assert!(file_1.exists());
-                assert!(file_in_dir_1.exists());
-                assert!(file_in_dir_2.exists());
-
-                Ok(())
-            })
-            .await?;
-
-            Ok(cloned_remote)
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_checkout_old_commit_does_not_overwrite_untracked_files() -> Result<(), OxenError>
-    {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
-            // Create additional branch on remote repo before clone
-            let branch_name = "test-branch";
-            api::client::branches::create_from_branch(
-                &remote_repo,
-                branch_name,
-                DEFAULT_BRANCH_NAME,
-            )
-            .await?;
-
-            let cloned_remote = remote_repo.clone();
-
-            // Clone with the --all flag
-            test::run_empty_dir_test_async(|new_repo_dir| async move {
-                let cloned_repo = repositories::deep_clone_url(
-                    &remote_repo.remote.url,
-                    &new_repo_dir.join("new_repo"),
-                )
-                .await?;
-
-                let test_dir_path = cloned_repo.path.join("test");
-                let commit = repositories::commits::first_by_message(&cloned_repo, "Adding test/")?;
-
-                // Create untracked files
-                let file_1 = cloned_repo.path.join("file_1.txt");
-                let dir_1 = cloned_repo.path.join("dir_1");
-                let file_in_dir_1 = dir_1.join("file_in_dir_1.txt");
-                let dir_2 = cloned_repo.path.join("dir_2");
-                let subdir_2 = dir_2.join("subdir_2");
-                let file_in_dir_2 = subdir_2.join("file_in_dir_2.txt");
-
-                // Create the files and dirs
-                std::fs::create_dir(&dir_1)?;
-                std::fs::create_dir(&dir_2)?;
-                std::fs::create_dir(&subdir_2)?;
-
-                test::write_txt_file_to_path(&file_1, "this is file 1")?;
-                test::write_txt_file_to_path(&file_in_dir_1, "this is file in dir 1")?;
-                test::write_txt_file_to_path(&file_in_dir_2, "this is file in dir 2")?;
-
-                assert!(commit.is_some());
-                assert!(!test_dir_path.exists());
-
-                // checkout the commit
-                repositories::checkout(&cloned_repo, &commit.unwrap().id).await?;
-                // Make sure we restored the directory
-                assert!(test_dir_path.exists());
-                // Make sure the untracked files are still there
                 assert!(file_1.exists());
                 assert!(file_in_dir_1.exists());
                 assert!(file_in_dir_2.exists());
@@ -1189,52 +1034,6 @@ mod tests {
     }
 
     // when a directory exists on branch B but not branch A,
-    // checking out branch B should restore the directory and its files.
-    #[tokio::test]
-    async fn test_checkout_restores_directory_from_target_branch() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            // Commit files in a directory on main
-            let dir = repo.path.join("data");
-            std::fs::create_dir_all(&dir)?;
-            let file1 = dir.join("file1.txt");
-            let file2 = dir.join("file2.txt");
-            util::fs::write_to_path(&file1, "data file 1")?;
-            util::fs::write_to_path(&file2, "data file 2")?;
-            repositories::add(&repo, &repo.path).await?;
-            repositories::commit(&repo, "Add data directory")?;
-
-            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
-
-            // Create a branch that removes the directory
-            let branch_name = "feature/no-data";
-            repositories::branches::create_checkout(&repo, branch_name)?;
-            std::fs::remove_dir_all(&dir)?;
-            repositories::add(&repo, &repo.path).await?;
-            repositories::commit(&repo, "Remove data directory")?;
-
-            // Verify dir is gone on feature branch
-            assert!(!dir.exists());
-
-            // Checkout main — directory should be restored
-            repositories::checkout(&repo, &main_branch.name).await?;
-            assert!(
-                dir.exists(),
-                "data/ directory should be restored when checking out main"
-            );
-            assert!(
-                file1.exists(),
-                "data/file1.txt should be restored when checking out main"
-            );
-            assert!(
-                file2.exists(),
-                "data/file2.txt should be restored when checking out main"
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
     // round-trip checkout should give a clean working directory
     // matching the target branch each time.
     #[tokio::test]

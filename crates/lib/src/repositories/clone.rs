@@ -396,7 +396,7 @@ mod tests {
     // Test for clone --all that checks to make sure we have all commits, all deleted files, etc
     #[tokio::test]
     async fn test_clone_all_push_all_full_commit_history() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        test::run_one_commit_sync_repo_test(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
 
             // Clone with the --all flag
@@ -440,7 +440,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_clone_all_push_all_modified_deleted_files() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+        test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
 
             // Create a new text file
@@ -517,32 +517,46 @@ mod tests {
 
     #[tokio::test]
     async fn test_clone_full() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|mut repo| async move {
-            // Track a file
-            let filename = "labels.txt";
-            let file_path = repo.path.join(filename);
+        test::run_empty_local_repo_test_async(|mut repo| async move {
+            // First commit: a single inline file
+            let file_path = repo.path.join("labels.txt");
+            test::write_txt_file_to_path(&file_path, "label_a\nlabel_b")?;
             repositories::add(&repo, &file_path).await?;
             repositories::commit(&repo, "Adding labels file")?;
 
+            // Second commit: inline `train` dir
             let train_path = repo.path.join("train");
+            util::fs::create_dir_all(&train_path)?;
+            for i in 0..2 {
+                test::write_txt_file_to_path(
+                    train_path.join(format!("train_{i}.txt")),
+                    format!("train {i}"),
+                )?;
+            }
             repositories::add(&repo, &train_path).await?;
             repositories::commit(&repo, "Adding train dir")?;
 
+            // Third commit: inline `test` dir
             let test_path = repo.path.join("test");
+            util::fs::create_dir_all(&test_path)?;
+            for i in 0..2 {
+                test::write_txt_file_to_path(
+                    test_path.join(format!("test_{i}.txt")),
+                    format!("test {i}"),
+                )?;
+            }
             repositories::add(&repo, &test_path).await?;
             repositories::commit(&repo, "Adding test dir")?;
 
             // Set the proper remote
             let remote = test::repo_remote_url_from(&repo.dirname());
             command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
             let remote_repo = test::create_remote_repo(&repo).await?;
-
-            // Push it
             repositories::push(&repo).await?;
 
-            // run another test with a new repo dir that we are going to sync to
+            let expected_files = util::fs::rcount_files_in_dir(&repo.path);
+
+            // Clone elsewhere and confirm the cloned tree has every committed file
             test::run_empty_dir_test_async(|new_repo_dir| async move {
                 let cloned_repo = repositories::clone_url(
                     &remote_repo.remote.url,
@@ -550,8 +564,7 @@ mod tests {
                 )
                 .await?;
                 let cloned_num_files = util::fs::rcount_files_in_dir(&cloned_repo.path);
-                // 4 test, 7 train, 1 labels
-                assert_eq!(12, cloned_num_files);
+                assert_eq!(expected_files, cloned_num_files);
 
                 api::client::repositories::delete(&remote_repo).await?;
 
