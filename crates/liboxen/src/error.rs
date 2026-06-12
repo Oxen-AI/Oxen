@@ -94,11 +94,6 @@ pub enum OxenError {
     #[error("Merkle store not initialized")]
     MerkleStoreNotInitialized,
 
-    /// A repository is misconfigured. Its Merkle tree store setting doesn't match the on-disk state.
-    /// The inner [`PathBuf`] is the local repository's root.
-    #[error("Repository {path} is configured with LMDB Merkle store but the on-disk LMDB files are not present.", path=.0.display())]
-    MisconfiguredMerkleLmdb(PathBuf),
-
     /// LMDB-backed Merkle store was requested on a repository configured for a
     /// virtual file system. LMDB requires a real, byte-addressable mmap target
     /// and does not work on VFS mounts.

@@ -30,12 +30,8 @@ pub async fn clone_repo(
 
     // save LocalRepository in .oxen directory
     let local_repo = {
-        let mut local_repo = LocalRepository::from_remote_with_merkle_store_kind(
-            remote_repo.clone(),
-            repo_path,
-            opts.merkle_store_kind,
-            opts.is_vfs,
-        )?;
+        let mut local_repo =
+            LocalRepository::from_remote(remote_repo.clone(), repo_path, opts.is_vfs)?;
         local_repo.version_store().init().await?;
         repo_path.clone_into(&mut local_repo.path);
         local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
@@ -94,12 +90,7 @@ pub async fn clone_repo_remote_mode(
     let name = format!("{}: {workspace_id}", branch_name.clone());
 
     // Save LocalRepository in .oxen directory
-    let mut local_repo = LocalRepository::from_remote_with_merkle_store_kind(
-        remote_repo.clone(),
-        repo_path,
-        opts.merkle_store_kind,
-        opts.is_vfs,
-    )?;
+    let mut local_repo = LocalRepository::from_remote(remote_repo.clone(), repo_path, opts.is_vfs)?;
     local_repo.version_store().init().await?;
     repo_path.clone_into(&mut local_repo.path);
     local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);

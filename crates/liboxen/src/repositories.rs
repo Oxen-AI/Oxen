@@ -4,7 +4,6 @@
 //!
 
 use crate::api::requests::RepoNew;
-use crate::config::repository_config::MerkleStoreKind;
 use crate::constants;
 use crate::constants::OXEN_HIDDEN_DIR;
 use crate::core;
@@ -218,7 +217,6 @@ fn is_valid_repo_name(name: &str) -> bool {
 pub async fn create(
     root_dir: &Path,
     new_repo: RepoNew,
-    merkle_store_kind: MerkleStoreKind,
     server_s3_opts: Option<&S3Opts>,
 ) -> Result<LocalRepositoryWithEntries, OxenError> {
     // Validate repo name
@@ -256,7 +254,6 @@ pub async fn create(
                 kind,
                 versions_path: None,
             }),
-        merkle_store_kind,
         ..Default::default()
     };
     let local_repo = LocalRepository::new_with_server_opts(&repo_dir, config, server_s3_opts)?;
@@ -363,7 +360,6 @@ pub fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenError> {
 mod tests {
     use crate::api::requests::RepoNew;
     use crate::config::UserConfig;
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::constants;
     use crate::error::OxenError;
     use crate::model::file::{FileContents, FileNew};
@@ -390,8 +386,7 @@ mod tests {
                 timestamp,
             };
             let repo_new = RepoNew::from_root_commit(namespace, name, root_commit);
-            let _repo =
-                repositories::create(&sync_dir, repo_new, MerkleStoreKind::default(), None).await?;
+            let _repo = repositories::create(&sync_dir, repo_new, None).await?;
 
             let repo_path = Path::new(&sync_dir)
                 .join(Path::new(namespace))
@@ -419,8 +414,7 @@ mod tests {
                 user,
             }];
             let repo_new = RepoNew::from_files(namespace, name, files, None);
-            let _repo =
-                repositories::create(&sync_dir, repo_new, MerkleStoreKind::default(), None).await?;
+            let _repo = repositories::create(&sync_dir, repo_new, None).await?;
 
             let repo_path = Path::new(&sync_dir)
                 .join(Path::new(namespace))
@@ -441,8 +435,7 @@ mod tests {
             let namespace: &str = "test-namespace";
             let name: &str = "test-repo-name";
             let repo_new = RepoNew::from_namespace_name(namespace, name, None);
-            let _repo =
-                repositories::create(&sync_dir, repo_new, MerkleStoreKind::default(), None).await?;
+            let _repo = repositories::create(&sync_dir, repo_new, None).await?;
 
             let repo_path = Path::new(&sync_dir)
                 .join(Path::new(namespace))
@@ -452,55 +445,6 @@ mod tests {
             // Test that we can successful load a repository from that dir
             let _repo = LocalRepository::from_dir(&repo_path)?;
 
-            Ok(())
-        })
-        .await
-    }
-
-    /// Default — when `RepoNew.merkle_store_kind` is `None`, the server-side
-    /// repo lands on the File backend, preserving every existing client.
-    #[tokio::test]
-    async fn test_create_defaults_to_file_merkle_store() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|sync_dir| async move {
-            let namespace = "test-namespace";
-            let name = "default-merkle-repo";
-            let repo_new = RepoNew::from_namespace_name(namespace, name, None);
-            let created =
-                repositories::create(&sync_dir, repo_new, MerkleStoreKind::default(), None).await?;
-            assert_eq!(
-                created.local_repo.merkle_store_kind(),
-                MerkleStoreKind::File,
-            );
-
-            let repo_path = Path::new(&sync_dir).join(namespace).join(name);
-            let reloaded = LocalRepository::from_dir(&repo_path)?;
-            assert_eq!(reloaded.merkle_store_kind(), MerkleStoreKind::File);
-            Ok(())
-        })
-        .await
-    }
-
-    /// Older clients send a JSON body with no `merkle_store_kind` field. The
-    /// `#[serde(default)]` on `Option<MerkleStoreKind>` keeps that
-    /// deserializing to `None`, and `repositories::create` falls through to
-    /// `File`.
-    #[tokio::test]
-    async fn test_create_deserialized_repo_new_without_field_defaults_to_file()
-    -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|sync_dir| async move {
-            // Pre-`merkle_store_kind` wire shape — old client missing the field.
-            let json = r#"{
-                "namespace": "test-namespace",
-                "name": "old-client-repo"
-            }"#;
-            let repo_new: RepoNew = serde_json::from_str(json).expect("parse RepoNew");
-
-            let created =
-                repositories::create(&sync_dir, repo_new, MerkleStoreKind::default(), None).await?;
-            assert_eq!(
-                created.local_repo.merkle_store_kind(),
-                MerkleStoreKind::File,
-            );
             Ok(())
         })
         .await
@@ -543,8 +487,7 @@ mod tests {
             let namespace = "test-namespace";
             let name = "repo with spaces";
             let repo_new = RepoNew::from_namespace_name(namespace, name, None);
-            let result =
-                repositories::create(&sync_dir, repo_new, MerkleStoreKind::default(), None).await;
+            let result = repositories::create(&sync_dir, repo_new, None).await;
 
             assert!(result.is_err(), "Expected error but got: {result:?}");
             match result.unwrap_err() {
@@ -565,8 +508,7 @@ mod tests {
             let namespace = "-invalid-namespace";
             let name = "valid-repo";
             let repo_new = RepoNew::from_namespace_name(namespace, name, None);
-            let result =
-                repositories::create(&sync_dir, repo_new, MerkleStoreKind::default(), None).await;
+            let result = repositories::create(&sync_dir, repo_new, None).await;
 
             assert!(result.is_err(), "Expected error but got: {result:?}");
             match result.unwrap_err() {
@@ -681,8 +623,7 @@ mod tests {
                 timestamp,
             };
             let repo_new = RepoNew::from_root_commit(old_namespace, name, root_commit);
-            let _repo =
-                repositories::create(&sync_dir, repo_new, MerkleStoreKind::default(), None).await?;
+            let _repo = repositories::create(&sync_dir, repo_new, None).await?;
 
             let old_namespace_repos = repositories::list_repos_in_namespace(&old_namespace_dir);
             let new_namespace_repos = repositories::list_repos_in_namespace(&new_namespace_dir);
