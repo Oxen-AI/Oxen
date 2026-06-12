@@ -19,6 +19,7 @@ use crate::error::OxenError;
 use crate::model::{Branch, Commit, LocalRepository};
 use crate::repositories;
 use crate::util;
+use crate::util::fs::AtomicFile;
 
 const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 
@@ -195,7 +196,7 @@ impl RefManager {
     // Write operations (from RefWriter)
 
     pub fn set_head(&self, name: &str) -> Result<(), OxenError> {
-        util::fs::atomic_write_to_path(&self.head_file, name.as_bytes())
+        AtomicFile::new(&self.head_file).write(name.as_bytes())
     }
 
     pub fn create_branch(
