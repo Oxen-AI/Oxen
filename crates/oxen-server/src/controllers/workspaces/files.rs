@@ -1,6 +1,6 @@
 use crate::errors::OxenHttpError;
 use crate::helpers::{file_stream_response, get_repo};
-use crate::params::{app_data, path_param};
+use crate::params::{app_data, client_must_use_multipart_staging, path_param};
 
 use liboxen::core;
 use liboxen::core::staged::get_staged_db_manager;
@@ -280,6 +280,19 @@ pub async fn add_version_files(
 ) -> Result<HttpResponse, OxenHttpError> {
     // Add file to staging
     let app_data = app_data(&req)?;
+
+    // This JSON endpoint, where the client pre-hashes content and the server stages metadata
+    // without reading it, is deprecated in favor of the multipart files endpoint (which lets the
+    // server compute all metadata). Reject up-to-date clients so they use the multipart path.
+    if client_must_use_multipart_staging(&req, app_data.test_mode) {
+        return Err(OxenHttpError::EndpointDeprecated(
+            "The JSON workspace-staging endpoint is deprecated. Upload file contents to the \
+             multipart workspace files endpoint (POST /workspaces/{id}/files/{path}) so the \
+             server can compute file metadata."
+                .into(),
+        ));
+    }
+
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
@@ -789,6 +802,43 @@ mod tests {
         let file_hash = util::hasher::hash_buffer(file_content.as_bytes());
         let stored = repo.version_store().get_version(&file_hash).await?;
         assert_eq!(stored, file_content.as_bytes());
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_add_version_files_returns_426_for_up_to_date_client() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Workspace-Deprecated-Staging";
+
+        // An up-to-date client (User-Agent at/above the deprecation release) is steered to the
+        // multipart endpoint with a 426. The gate fires before the repo/workspace lookup, so no
+        // repo setup is needed; test_mode must be off (the default) for the gate to be active.
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        let uri = format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/versions/data");
+
+        let req = actix_web::test::TestRequest::post()
+            .uri(&uri)
+            .insert_header((header::USER_AGENT, "Oxen/0.99.0 (test; tokio)"))
+            .set_json(serde_json::json!([]))
+            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+            .to_request();
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/versions/{directory}",
+                    web::post().to(controllers::workspaces::files::add_version_files),
+                ),
+        )
+        .await;
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::UPGRADE_REQUIRED);
 
         test::cleanup_sync_dir(&sync_dir)?;
         Ok(())

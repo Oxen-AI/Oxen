@@ -45,6 +45,7 @@ pub enum OxenHttpError {
     DatasetNotIndexed(PathBufError),
     DatasetAlreadyIndexed(PathBufError),
     UpdateRequired(StringError),
+    EndpointDeprecated(StringError),
     MigrationRequired(StringError),
     WorkspaceBehind(Box<WorkspaceBranch>),
     BasicError(StringError),
@@ -224,6 +225,18 @@ impl error::ResponseError for OxenHttpError {
                         "type": "update_required",
                         "detail": format!("Oxen CLI out of date. Pushing to OxenHub requires version >= {version_str}."),
                         "title": "Update Required",
+                    },
+                    "status": STATUS_ERROR,
+                    "status_message": MSG_UPDATE_REQUIRED,
+                });
+                HttpResponse::UpgradeRequired().json(error_json)
+            }
+            OxenHttpError::EndpointDeprecated(detail) => {
+                let error_json = json!({
+                    "error": {
+                        "type": "endpoint_deprecated",
+                        "detail": detail.to_string(),
+                        "title": "Endpoint Deprecated",
                     },
                     "status": STATUS_ERROR,
                     "status_message": MSG_UPDATE_REQUIRED,
