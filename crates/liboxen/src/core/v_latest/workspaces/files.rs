@@ -68,20 +68,23 @@ pub async fn rm(
 
 pub async fn add_version_file(
     workspace: &Workspace,
-    version_path: impl AsRef<Path>,
     dst_path: impl AsRef<Path>,
     file_hash: &str,
 ) -> Result<PathBuf, OxenError> {
-    // version_path is where the file is stored, dst_path is the relative path to the repo
-    // let version_path = version_path.as_ref();
     let dst_path = dst_path.as_ref();
-    // let workspace_repo = &workspace.workspace_repo;
-    // let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
+
+    // Materialize the version blob so the staging metadata computation has a local file to read.
+    // The returned guard cleans up any temp file once staging has read it.
+    let version_path = workspace
+        .base_repo
+        .version_store()
+        .materialize(file_hash, &workspace.dir())
+        .await?;
 
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
     stage_file_with_hash(
         workspace,
-        version_path.as_ref(),
+        &version_path,
         dst_path,
         file_hash,
         &staged_db_manager,
@@ -106,9 +109,11 @@ pub async fn add_version_files(
 
     let mut err_files: Vec<ErrorFileInfo> = vec![];
     let staged_db_manager = get_staged_db_manager(workspace_repo)?;
+    let dir = workspace.dir();
     for item in files_with_hash.iter() {
         let target_path = PathBuf::from(directory).join(&item.path);
-        let version_path = match version_store.get_version_path(&item.hash).await {
+        // The returned guard keeps any S3-materialized temp file alive until staging reads it below.
+        let version_path = match version_store.materialize(&item.hash, &dir).await {
             Ok(path) => path,
             Err(e) => {
                 let error = format!("Failed to resolve version path: {e}");
