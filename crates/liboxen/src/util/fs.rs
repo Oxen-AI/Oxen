@@ -20,6 +20,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::time::SystemTime;
 use tokio::io::AsyncReadExt;
 use tokio_stream::Stream;
 
@@ -291,6 +292,16 @@ impl AtomicTempFile {
         &mut self.tmp
     }
 
+    /// Record the mtime the published file should carry. Call this before [`commit`] so the
+    /// stamp is part of the atomic publish — after `commit`, mtime stamping on the canonical
+    /// path is no longer crash-safe. Leaves atime untouched (passing `None` for the atime
+    /// argument) so `noatime`-mounted filesystems don't surface a spurious `EPERM`.
+    fn set_mtime(&mut self, mtime: SystemTime) -> Result<(), OxenError> {
+        let ft = filetime::FileTime::from_system_time(mtime);
+        filetime::set_file_handle_times(self.tmp.as_file(), None, Some(ft))?;
+        Ok(())
+    }
+
     /// fsync the data, rename the temp file over `target`, then best-effort fsync the parent
     /// directory so the rename itself survives a crash. The parent fsync may fail on platforms
     /// that don't support fsync-on-directory (notably Windows), which is fine.
@@ -387,7 +398,7 @@ pub async fn atomic_write_from_async_reader<R>(
 where
     R: tokio::io::AsyncRead + Unpin + ?Sized,
 {
-    atomic_write_from_async_reader_inner(target, reader, None).await
+    atomic_write_from_async_reader_inner(target, reader, None, None).await
 }
 
 /// Like [`atomic_write_from_async_reader`], but hashes every streamed byte in-passing and only
@@ -405,13 +416,28 @@ pub async fn atomic_write_from_async_reader_verified<R>(
 where
     R: tokio::io::AsyncRead + Unpin + ?Sized,
 {
-    atomic_write_from_async_reader_inner(target, reader, Some(expected_hash)).await
+    atomic_write_from_async_reader_inner(target, reader, Some(expected_hash), None).await
+}
+
+/// Like [`atomic_write_from_async_reader`], but the published file carries `mtime`. The mtime
+/// is part of the atomic publish — a crash at any point leaves either the prior contents at
+/// `target` (if any) or the new contents already stamped, never a wrong-mtime file.
+pub async fn atomic_write_from_async_reader_with_mtime<R>(
+    target: &Path,
+    reader: &mut R,
+    mtime: SystemTime,
+) -> Result<(), OxenError>
+where
+    R: tokio::io::AsyncRead + Unpin + ?Sized,
+{
+    atomic_write_from_async_reader_inner(target, reader, None, Some(mtime)).await
 }
 
 async fn atomic_write_from_async_reader_inner<R>(
     target: &Path,
     reader: &mut R,
     expected_hash: Option<MerkleHash>,
+    mtime: Option<SystemTime>,
 ) -> Result<(), OxenError>
 where
     R: tokio::io::AsyncRead + Unpin + ?Sized,
@@ -476,6 +502,9 @@ where
                 });
             }
         }
+        if let Some(mtime) = mtime {
+            tmp.set_mtime(mtime)?;
+        }
         tmp.commit()
     });
 
@@ -527,6 +556,29 @@ where
         // Flush explicitly so any IO error propagates before `commit` does the rename.
         buf_writer.flush()?;
     }
+    tmp.commit()
+}
+
+/// Atomically copy `src` to `target` with the published file stamped with `mtime`. A crash at
+/// any point leaves either the prior contents at `target` (if any) or the new (correctly-
+/// stamped) contents, never a torn or wrong-mtime file. `src` and `target` must live on the
+/// same filesystem (POSIX `rename` is only atomic on one filesystem).
+pub fn atomic_copy_with_mtime(
+    src: &Path,
+    target: &Path,
+    mtime: SystemTime,
+) -> Result<(), OxenError> {
+    let mut src_file = File::open(src).map_err(|err| OxenError::file_error(src, err))?;
+    let mut tmp = AtomicTempFile::create(target)?;
+    {
+        let mut buf_writer =
+            std::io::BufWriter::with_capacity(constants::STREAMING_BUF_SIZE, tmp.as_writer());
+        std::io::copy(&mut src_file, &mut buf_writer)?;
+        // `std::io::BufWriter::Drop` attempts to flush but silently swallows errors.
+        // Flush explicitly so any IO error propagates before mtime + commit.
+        buf_writer.flush()?;
+    }
+    tmp.set_mtime(mtime)?;
     tmp.commit()
 }
 
@@ -2108,6 +2160,7 @@ mod tests {
     use crate::util;
 
     use std::path::Path;
+    use std::time::{Duration, SystemTime};
 
     #[test]
     fn file_path_relative_to_dir() -> Result<(), OxenError> {
@@ -2846,5 +2899,141 @@ def add(a, b):
             assert!(names.is_empty(), "directory should be empty: {names:?}");
             Ok(())
         })
+    }
+
+    /// Sub-second mtime to exercise nanosecond stamping. `SystemTime` arithmetic is the
+    /// same shape `restore_file` uses to assemble the merkle node's recorded mtime.
+    fn fixed_mtime() -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::new(1_700_000_000, 123_456_789)
+    }
+
+    #[test]
+    fn test_atomic_copy_with_mtime_round_trip() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let src = dir.join("src.bin");
+            let dst = dir.join("dst.bin");
+            let payload: Vec<u8> = (0..5_000u32).flat_map(u32::to_le_bytes).collect();
+            std::fs::write(&src, &payload)?;
+
+            let mtime = fixed_mtime();
+            util::fs::atomic_copy_with_mtime(&src, &dst, mtime)?;
+
+            // Bytes match...
+            assert_eq!(std::fs::read(&dst)?, payload);
+            // ... and mtime is stamped exactly (test platforms support nanosecond mtime).
+            let actual = std::fs::metadata(&dst)?.modified()?;
+            assert_eq!(actual, mtime);
+
+            // No leftover scratch siblings of `dst`.
+            let names: Vec<_> = std::fs::read_dir(dir)?
+                .filter_map(|e| e.ok().map(|e| e.file_name()))
+                .collect();
+            assert_eq!(names.len(), 2, "expected only src+dst, got: {names:?}");
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_atomic_copy_with_mtime_overwrites_existing() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let src = dir.join("src.bin");
+            let dst = dir.join("dst.bin");
+            std::fs::write(&src, b"new content")?;
+            std::fs::write(&dst, b"old content with different length")?;
+
+            util::fs::atomic_copy_with_mtime(&src, &dst, fixed_mtime())?;
+
+            assert_eq!(std::fs::read(&dst)?, b"new content");
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_atomic_copy_with_mtime_missing_source_leaves_no_scratch() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let src = dir.join("does-not-exist.bin");
+            let dst = dir.join("dst.bin");
+
+            let result = util::fs::atomic_copy_with_mtime(&src, &dst, fixed_mtime());
+            assert!(result.is_err(), "expected error for missing source");
+
+            // We open `src` first, so no temp file should ever appear next to `dst`.
+            assert!(!dst.exists());
+            let names: Vec<_> = std::fs::read_dir(dir)?
+                .filter_map(|e| e.ok().map(|e| e.file_name()))
+                .collect();
+            assert!(names.is_empty(), "directory should be empty: {names:?}");
+            Ok(())
+        })
+    }
+
+    #[tokio::test]
+    async fn test_atomic_write_from_async_reader_with_mtime_round_trip() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|dir| async move {
+            let target = dir.join("blob.bin");
+            let payload: Vec<u8> = (0..40_000u32).flat_map(u32::to_le_bytes).collect();
+            let mut reader = std::io::Cursor::new(payload.clone());
+
+            let mtime = fixed_mtime();
+            util::fs::atomic_write_from_async_reader_with_mtime(&target, &mut reader, mtime)
+                .await?;
+
+            assert_eq!(tokio::fs::read(&target).await?, payload);
+            let actual = tokio::fs::metadata(&target).await?.modified()?;
+            assert_eq!(actual, mtime);
+            Ok(())
+        })
+        .await
+    }
+
+    /// Earlier-than-expected EOF from the async reader path. With the channel hand-off
+    /// protocol the writer should bail without committing; nothing lands at `target`.
+    #[tokio::test]
+    async fn test_atomic_write_from_async_reader_with_mtime_cleans_up_on_read_failure()
+    -> Result<(), OxenError> {
+        use tokio::io::AsyncRead;
+        struct FailingReader {
+            yielded: bool,
+        }
+        impl AsyncRead for FailingReader {
+            fn poll_read(
+                mut self: std::pin::Pin<&mut Self>,
+                _cx: &mut std::task::Context<'_>,
+                buf: &mut tokio::io::ReadBuf<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                if !self.yielded {
+                    buf.put_slice(b"partial");
+                    self.yielded = true;
+                    std::task::Poll::Ready(Ok(()))
+                } else {
+                    std::task::Poll::Ready(Err(std::io::Error::other("synthetic read failure")))
+                }
+            }
+        }
+
+        test::run_empty_dir_test_async(|dir| async move {
+            let target = dir.join("blob.bin");
+            let mut reader = FailingReader { yielded: false };
+
+            let result = util::fs::atomic_write_from_async_reader_with_mtime(
+                &target,
+                &mut reader,
+                fixed_mtime(),
+            )
+            .await;
+            assert!(result.is_err(), "expected reader failure to surface");
+            assert!(
+                !target.exists(),
+                "target must not appear when stream aborts"
+            );
+
+            // Scratch sibling should be dropped (auto-cleanup) — no `.oxentmp.` leftovers.
+            let stragglers: Vec<_> = std::fs::read_dir(&dir)?
+                .filter_map(|e| e.ok().map(|e| e.file_name()))
+                .collect();
+            assert!(stragglers.is_empty(), "leftover scratch: {stragglers:?}");
+            Ok(())
+        })
+        .await
     }
 }

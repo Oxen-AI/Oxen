@@ -2,6 +2,7 @@ use std::fmt::Debug;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -357,12 +358,22 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// * `hash` - The content hash of the version file
     async fn version_location(&self, hash: &str) -> Result<VersionLocation, OxenError>;
 
-    /// Copy a versioned file from the version store to a destination path on the local filesystem
+    /// Copy a versioned file from the version store to a destination path on the local filesystem.
+    /// Missing parent directories of `dest_path` are created, so callers do not need to create them
+    /// beforehand. The publish is atomic, and the published file is stamped with `mtime` atomically
+    /// with the bytes — a crash at any point leaves either the prior contents at `dest_path` (if
+    /// any) or the new (correctly-stamped) contents, never a torn or wrong-mtime file.
     ///
     /// # Arguments
     /// * `hash` - The content hash of the version to retrieve
     /// * `dest_path` - Destination path to copy the file to
-    async fn copy_version_to_path(&self, hash: &str, dest_path: &Path) -> Result<(), OxenError>;
+    /// * `mtime` - mtime to stamp on the published file
+    async fn copy_version_to_path(
+        &self,
+        hash: &str,
+        dest_path: &Path,
+        mtime: SystemTime,
+    ) -> Result<(), OxenError>;
 
     /// Check if a version exists
     ///
