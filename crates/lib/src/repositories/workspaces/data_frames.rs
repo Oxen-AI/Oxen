@@ -544,7 +544,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -591,7 +591,7 @@ mod tests {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -670,7 +670,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -759,7 +759,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -851,7 +851,7 @@ mod tests {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -927,7 +927,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -992,7 +992,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -1078,7 +1078,7 @@ mod tests {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -1165,7 +1165,7 @@ mod tests {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let branch_name = "test-append";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
@@ -1236,7 +1236,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             // Try stage an append
             let path = Path::new("annotations")
                 .join("train")
@@ -1265,7 +1265,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move{
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let path = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
@@ -1477,7 +1477,7 @@ mod tests {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let branch = repositories::branches::create_checkout(&repo, "test-list-i64")?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
             let workspace_id = UserConfig::identifier()?;
@@ -1508,7 +1508,7 @@ mod tests {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let branch = repositories::branches::create_checkout(&repo, "test-list-str")?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
             let workspace_id = UserConfig::identifier()?;
@@ -1548,7 +1548,7 @@ mod tests {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let branch = repositories::branches::create_checkout(&repo, "test-list-u32")?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
             let workspace_id = UserConfig::identifier()?;
@@ -1579,7 +1579,7 @@ mod tests {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let branch = repositories::branches::create_checkout(&repo, "test-list-f64")?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
             let workspace_id = UserConfig::identifier()?;
