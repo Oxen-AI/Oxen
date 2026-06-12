@@ -1,5 +1,4 @@
 use bytes::BytesMut;
-use filetime::FileTime;
 use futures::StreamExt;
 use parking_lot::Mutex;
 use reqwest::Client;
@@ -39,28 +38,13 @@ const MAX_COMPRESSION_RATIO: u64 = 100; // Maximum allowed
 
 // TODO: Do we depreciate this, if we always upload to version store?
 pub async fn add(workspace: &Workspace, filepath: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
-    add_with_opts(workspace, filepath, false).await
-}
-
-pub async fn add_with_opts(
-    workspace: &Workspace,
-    filepath: impl AsRef<Path>,
-    update_timestamp: bool,
-) -> Result<PathBuf, OxenError> {
     let filepath = filepath.as_ref();
     let workspace_repo = &workspace.workspace_repo;
     let base_repo = &workspace.base_repo;
 
     // Stage the file using the repositories::add method
     let commit = workspace.commit.clone();
-    p_add_file(
-        base_repo,
-        workspace_repo,
-        &Some(commit),
-        filepath,
-        update_timestamp,
-    )
-    .await?;
+    p_add_file(base_repo, workspace_repo, &Some(commit), filepath).await?;
 
     // Return the relative path of the file in the workspace
     let relative_path = util::fs::path_relative_to_dir(filepath, &workspace_repo.path)?;
@@ -87,7 +71,6 @@ pub async fn add_version_file(
     version_path: impl AsRef<Path>,
     dst_path: impl AsRef<Path>,
     file_hash: &str,
-    update_timestamp: bool,
 ) -> Result<PathBuf, OxenError> {
     // version_path is where the file is stored, dst_path is the relative path to the repo
     // let version_path = version_path.as_ref();
@@ -103,7 +86,6 @@ pub async fn add_version_file(
         file_hash,
         &staged_db_manager,
         &Arc::new(Mutex::new(HashSet::new())),
-        update_timestamp,
     )
     .await?;
 
@@ -115,7 +97,6 @@ pub async fn add_version_files(
     workspace: &Workspace,
     files_with_hash: &[FileWithHash],
     directory: impl AsRef<str>,
-    update_timestamp: bool,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let version_store = repo.version_store();
 
@@ -147,7 +128,6 @@ pub async fn add_version_files(
             &item.hash,
             &staged_db_manager,
             &seen_dirs,
-            update_timestamp,
         )
         .await
         {
@@ -387,7 +367,6 @@ pub async fn import(
     directory: PathBuf,
     filename: Option<String>,
     workspace: &Workspace,
-    update_timestamp: bool,
     allow_loopback: bool,
 ) -> Result<(), OxenError> {
     let parsed_url =
@@ -413,7 +392,6 @@ pub async fn import(
         directory,
         filename,
         workspace,
-        update_timestamp,
         allow_loopback,
     )
     .await?;
@@ -485,7 +463,6 @@ async fn fetch_file(
     directory: PathBuf,
     caller_filename: Option<String>,
     workspace: &Workspace,
-    update_timestamp: bool,
     allow_loopback: bool,
 ) -> Result<(), OxenError> {
     let client = Client::builder()
@@ -658,16 +635,12 @@ async fn fetch_file(
 
         for file in files.iter() {
             log::debug!("file::import add file {file:?}");
-            let path =
-                repositories::workspaces::files::add_with_opts(workspace, file, update_timestamp)
-                    .await?;
+            let path = repositories::workspaces::files::add(workspace, file).await?;
             log::debug!("file::import add file ✅ success! staged file {path:?}");
         }
     } else {
         log::debug!("file::import add file {:?}", &filepath);
-        let path =
-            repositories::workspaces::files::add_with_opts(workspace, &save_path, update_timestamp)
-                .await?;
+        let path = repositories::workspaces::files::add(workspace, &save_path).await?;
         log::debug!("file::import add file ✅ success! staged file {path:?}");
     }
 
@@ -876,7 +849,6 @@ async fn p_add_file(
     workspace_repo: &LocalRepository,
     maybe_head_commit: &Option<Commit>,
     path: &Path,
-    update_timestamp: bool,
 ) -> Result<(), OxenError> {
     let version_store = base_repo.version_store();
     let mut maybe_dir_node = None;
@@ -897,23 +869,13 @@ async fn p_add_file(
     }
 
     // See if this is a new file or a modified file
-    let mut file_status = core::v_latest::add::determine_file_status(
+    let file_status = core::v_latest::add::determine_file_status(
         base_repo,
         &maybe_dir_node,
         &file_name,
         &full_path,
     )
     .await?;
-
-    // When update_timestamp is set, override Unmodified status to Modified
-    // and use the current time so the commit gets a new merkle tree hash
-    if update_timestamp && file_status.status == StagedEntryStatus::Unmodified {
-        log::info!(
-            "file {full_path:?} has not changed but update_timestamp is set - staging as modified"
-        );
-        file_status.status = StagedEntryStatus::Modified;
-        file_status.mtime = FileTime::now();
-    }
 
     // Store the file in the version store using the hash as the key
     let hash_str = file_status.hash.to_string();

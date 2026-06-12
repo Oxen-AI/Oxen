@@ -985,7 +985,6 @@ pub async fn stage_file_with_hash(
     hash: &str,
     staged_db_manager: &StagedDBManager,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
-    update_timestamp: bool,
 ) -> Result<(), OxenError> {
     let workspace_repo = &workspace.workspace_repo;
     let base_repo = &workspace.base_repo;
@@ -993,12 +992,7 @@ pub async fn stage_file_with_hash(
 
     let relative_path = util::fs::path_relative_to_dir(dst_path, base_repo.path.clone())?;
     let metadata = util::fs::metadata(data_path)?;
-    let mtime = if update_timestamp {
-        // Use current time to force a timestamp update
-        FileTime::now()
-    } else {
-        FileTime::from_last_modification_time(&metadata)
-    };
+    let mtime = FileTime::from_last_modification_time(&metadata);
     let maybe_file_node =
         repositories::tree::get_file_by_path(base_repo, head_commit, &relative_path)?;
 
@@ -1008,12 +1002,6 @@ pub async fn stage_file_with_hash(
             .is_modified_from_node(data_path, &file_node)
             .await?
         {
-            StagedEntryStatus::Modified
-        } else if update_timestamp {
-            // Force staging even though the content hasn't changed
-            log::info!(
-                "file {data_path:?} has not changed but update_timestamp is set - staging as modified"
-            );
             StagedEntryStatus::Modified
         } else {
             // Don't add the file if it hasn't changed

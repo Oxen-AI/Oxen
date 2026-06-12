@@ -667,7 +667,6 @@ async fn chunk_and_send_large_entries(
                     &*version_path,
                     None::<PathBuf>,
                     None,
-                    false,
                     Some(commit_entry.clone()),
                     Some(&bar),
                 )
