@@ -300,8 +300,6 @@ mod tests {
     use crate::model::merkle_tree::merkle_writer::MerkleWriter;
     use crate::repositories;
     use crate::test;
-    use crate::test::repo_prep::init_test_repo_merkle_init_version_store_async;
-    use crate::test::repo_prep::init_test_repo_with_merkle_store;
     use std::collections::HashSet;
 
     /// Pack just a parent commit (with one embedded child commit), unpack into
@@ -334,7 +332,7 @@ mod tests {
             // Fresh target repo backed by LMDB; unpack the bytes into it and
             // verify both the parent (with full link) and the child (with
             // minimal link) are observable.
-            let target_repo = init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
+            let target_repo = test::init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
             let target_store = target_repo.merkle_store()?;
             let installed = target_repo
                 .merkle_transport()?
@@ -365,7 +363,7 @@ mod tests {
     #[tokio::test]
     async fn test_lmdb_pack_unpacks_into_file_backend() -> Result<(), OxenError> {
         let source_repo =
-            init_test_repo_merkle_init_version_store_async(MerkleStoreKind::Lmdb).await?;
+            test::init_test_repo_merkle_init_version_store_async(MerkleStoreKind::Lmdb).await?;
         let parent_h = h("11111111111111111111111111111111");
         let child_h = h("22222222222222222222222222222222");
         let parent = commit_with_hash(&source_repo, parent_h);
@@ -420,7 +418,7 @@ mod tests {
             assert!(!buf.is_empty(), "expected pack_all to produce bytes");
 
             let target_repo =
-                init_test_repo_merkle_init_version_store_async(MerkleStoreKind::Lmdb).await?;
+                test::init_test_repo_merkle_init_version_store_async(MerkleStoreKind::Lmdb).await?;
             let installed = target_repo
                 .merkle_transport()?
                 .unpack(&mut &buf[..], UnpackOptions::Overwrite)?;
@@ -461,7 +459,7 @@ mod tests {
             // overall but no tar entries beyond the gzip terminator.
             // Easiest invariant to check: unpack into a fresh repo and assert
             // the reported hash set is empty.
-            let target_repo = init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
+            let target_repo = test::init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
             let installed = target_repo
                 .merkle_transport()?
                 .unpack(&mut &buf[..], UnpackOptions::Overwrite)?;
@@ -480,7 +478,7 @@ mod tests {
         with_test_backend(|_repo, backend| {
             let mut buf = Vec::new();
             backend.pack_all(&mut buf)?;
-            let target_repo = init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
+            let target_repo = test::init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
             let installed = target_repo
                 .merkle_transport()?
                 .unpack(&mut &buf[..], UnpackOptions::Overwrite)?;
@@ -507,7 +505,7 @@ mod tests {
             let mut buf = Vec::new();
             backend.pack_all(&mut buf)?;
 
-            let target_repo = init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
+            let target_repo = test::init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
             let installed = target_repo
                 .merkle_transport()?
                 .unpack(&mut &buf[..], UnpackOptions::Overwrite)?;
@@ -545,7 +543,7 @@ mod tests {
                 .finish()
                 .map_err(MerkleDbError::Io)?;
         }
-        let target_repo = init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
+        let target_repo = test::init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
         let err = target_repo
             .merkle_transport()?
             .unpack(&mut &buf[..], UnpackOptions::Overwrite)

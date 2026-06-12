@@ -108,7 +108,6 @@ opentelemetry = "0.31"
 opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic", "http-json", "trace"] }
 opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
 os_path = "0.8.0"
-page_size = "0.6.0"
 par-stream = { version = "0.10.2", features = ["runtime-tokio"] }
 parking_lot = "0.12.1"
 pathdiff = "0.2.3"
