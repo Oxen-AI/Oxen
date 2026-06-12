@@ -599,4 +599,59 @@ mod tests {
             Ok(())
         })
     }
+
+    /// Runs the export projection against a real `JSON[]` column to confirm the
+    /// array round-trips — its CASE unifies a `JSON[]` (`THEN`) with a scalar
+    /// `JSON` (`ELSE`), which only surfaces when the projection actually executes.
+    #[test]
+    fn test_export_executes_on_json_array_column() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_empty_dir_test(|dir| {
+            let conn = df_db::get_connection(&dir.join("db"))?;
+            conn.execute(
+                &format!("CREATE TABLE {TABLE_NAME} (name VARCHAR, tags JSON[])"),
+                [],
+            )?;
+            conn.execute(
+                &format!(
+                    "INSERT INTO {TABLE_NAME} VALUES ('a', ['{{\"k\":1}}', '[2,3]']), ('b', NULL)"
+                ),
+                [],
+            )?;
+
+            let projection = build_export_projection(&conn, TABLE_NAME)?;
+            assert_eq!(
+                projection,
+                format!("\"name\", {}", json_tolerant_export_expr("tags"))
+            );
+
+            let out = dir.join("out.jsonl");
+            let query = wrap_sql_for_export(
+                &format!("SELECT {projection} FROM {TABLE_NAME} ORDER BY name"),
+                &out,
+            );
+            // Must type-unify (JSON[] THEN vs scalar JSON ELSE) and execute.
+            conn.execute(&query, [])?;
+
+            // The valid array round-trips as a JSON array, not a stringified blob.
+            let content = std::fs::read_to_string(&out)?;
+            assert!(
+                content.contains("{\"name\":\"a\",\"tags\":[{\"k\":1},[2,3]]}"),
+                "expected the JSON[] value to round-trip as an array, got:\n{content}"
+            );
+
+            let count: i64 = conn.query_row(
+                &format!(
+                    "SELECT count(*) FROM read_json('{}')",
+                    out.to_string_lossy()
+                ),
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(count, 2);
+            Ok(())
+        })
+    }
 }
