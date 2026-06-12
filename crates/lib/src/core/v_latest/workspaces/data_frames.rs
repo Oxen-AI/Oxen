@@ -353,6 +353,20 @@ pub fn extract_file_node_to_working_dir(
         )?;
     }
 
+    // Export to a temp file in the same directory and rename into place.
+    // DuckDB's COPY truncates and writes the target in place; without the
+    // rename, a concurrent reader of the working path (e.g. another commit of
+    // the same workspace hashing/parsing the file) can observe a torn or
+    // empty file. The temp name keeps the real extension last so
+    // wrap_sql_for_export still picks the right output format.
+    let file_name = working_path
+        .file_name()
+        .ok_or_else(|| OxenError::basic_str(format!("Invalid export path: {working_path:?}")))?
+        .to_string_lossy()
+        .to_string();
+    let export_path =
+        working_path.with_file_name(format!(".{}.export-{}", std::process::id(), file_name));
+
     with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             let delete = Delete::new().delete_from(TABLE_NAME).where_clause(&format!(
@@ -365,12 +379,19 @@ pub fn extract_file_node_to_working_dir(
 
             let projection = build_export_projection(conn, TABLE_NAME)?;
             let sql = format!("SELECT {projection} FROM '{TABLE_NAME}'");
-            let query = wrap_sql_for_export(&sql, &working_path);
+            let query = wrap_sql_for_export(&sql, &export_path);
             log::debug!("extracting file node to working dir query: {query:?}");
             conn.execute(&query, [])?;
             Ok(())
         })
     })?;
+
+    // wrap_sql_for_export falls back to a bare SELECT (no COPY, no file) for
+    // extensions it doesn't know how to export; only rename when the COPY
+    // actually produced the temp file.
+    if export_path.exists() {
+        util::fs::rename(&export_path, &working_path)?;
+    }
 
     Ok(working_path)
 }
