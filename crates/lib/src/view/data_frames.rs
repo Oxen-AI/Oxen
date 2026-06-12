@@ -34,6 +34,16 @@ pub struct DataFrameRowChange {
 }
 
 #[derive(Deserialize, Serialize, Debug, ToSchema)]
+pub struct CreateDataFrameRequest {
+    /// Typed columns for the new (empty) data frame. Each entry is a column
+    /// name plus a `data_type` string per `DataType::from_string` (e.g. `str`, `i64`, `bool`).
+    pub schema: Vec<NewColumn>,
+    pub commit_message: Option<String>,
+    pub user_name: Option<String>,
+    pub user_email: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct FromDirectoryRequest {
     pub output_path: Option<String>,
     pub extra_columns: Option<Vec<NewColumn>>,

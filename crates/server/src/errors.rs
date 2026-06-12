@@ -278,6 +278,19 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::NotFound().json(error_json)
                     }
+                    OxenError::ResourceAlreadyExists(path) => {
+                        log::debug!("Resource already exists: {path}");
+                        let error_json = json!({
+                            "error": {
+                                "type": MSG_RESOURCE_ALREADY_EXISTS,
+                                "title": "Resource already exists",
+                                "detail": format!("A file or directory already exists at path: {}", path)
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_RESOURCE_ALREADY_EXISTS,
+                        });
+                        HttpResponse::Conflict().json(error_json)
+                    }
                     OxenError::BranchNotFound(branch) => {
                         let error_json = json!({
                             "error": {

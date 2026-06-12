@@ -49,7 +49,7 @@ use liboxen::view::compare::{
     CompareCommits, CompareCommitsResponse, CompareDupes, CompareEntries, CompareEntryResponse,
     CompareTabular, CompareTabularResponse, TabularCompareBody, TabularCompareTargetBody,
 };
-use liboxen::view::data_frames::FromDirectoryRequest;
+use liboxen::view::data_frames::{CreateDataFrameRequest, FromDirectoryRequest};
 use liboxen::view::diff::{DirDiffStatus, DirDiffTreeSummary, DirTreeDiffResponse};
 use liboxen::view::entries::{ListCommitEntryResponse, ResourceVersion};
 use liboxen::view::entry_metadata::EMetadataEntryResponseView;
@@ -203,6 +203,7 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
         crate::controllers::data_frames::get,
         crate::controllers::data_frames::index,
         crate::controllers::data_frames::from_directory,
+        crate::controllers::data_frames::create,
         // Directories
         crate::controllers::dir::get,
         // Metadata
@@ -254,6 +255,7 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
             crate::controllers::import::ZipUploadBody,
             crate::controllers::import::ImportFileBody,
             FromDirectoryRequest,
+            CreateDataFrameRequest,
             // Metadata Schemas
             EMetadataEntryResponseView,
             GenericMetadata, MetadataDir, MetadataText, MetadataImage,

@@ -240,6 +240,10 @@ pub enum OxenError {
     #[error("Resource not found: {0}")]
     ParsedResourceNotFound(PathBufError),
 
+    /// Tried to create an entry at a path that already exists in the commit tree.
+    #[error("A file or directory already exists at path: {0}")]
+    ResourceAlreadyExists(PathBufError),
+
     //
     // Versioning
     //

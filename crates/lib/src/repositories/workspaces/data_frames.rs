@@ -1,7 +1,9 @@
 use crate::core::df::tabular::write_df_parquet;
+use crate::model::data_frame::schema::Field;
 use crate::model::merkle_tree::node::FileNodeWithDir;
 use crate::view::data_frames::columns::NewColumn;
 use polars::frame::DataFrame;
+use polars::prelude::{Column, Series};
 
 use sql_query_builder::Select;
 
@@ -363,6 +365,50 @@ pub async fn from_directory(
     Ok(commit)
 }
 
+/// Create an empty (0-row) data frame with the given typed schema at `output_path`
+/// in the workspace, then commit it to `branch`.
+///
+/// The output format is inferred from the file extension; only `.parquet` is
+/// supported today. Returns [`OxenError::ResourceAlreadyExists`] if anything
+/// already exists at `output_path` in the workspace's commit tree.
+pub async fn create_empty(
+    repo: &LocalRepository,
+    workspace: &Workspace,
+    output_path: impl AsRef<Path>,
+    fields: &[Field],
+    new_commit: &NewCommitBody,
+    branch: &Branch,
+) -> Result<Commit, OxenError> {
+    let output_path = output_path.as_ref();
+    if repositories::tree::get_node_by_path(repo, &workspace.commit, output_path)?.is_some() {
+        return Err(OxenError::ResourceAlreadyExists(
+            output_path.to_path_buf().into(),
+        ));
+    }
+
+    let columns: Vec<Column> = fields
+        .iter()
+        .map(|field| {
+            let field = field.to_polars();
+            Column::Series(Series::new_empty(field.name().clone(), field.dtype()).into())
+        })
+        .collect();
+    let mut df = DataFrame::new(columns)?;
+
+    let full_output_path = workspace.dir().join(output_path);
+    let full_output_path = tokio::task::spawn_blocking(move || -> Result<PathBuf, OxenError> {
+        if let Some(parent) = full_output_path.parent() {
+            util::fs::create_dir_all(parent)?;
+        }
+        write_df_parquet(&mut df, &full_output_path)?;
+        Ok(full_output_path)
+    })
+    .await??;
+
+    repositories::workspaces::files::add(workspace, &full_output_path).await?;
+    repositories::workspaces::commit(workspace, new_commit, branch.name.as_str()).await
+}
+
 /// Determines the render function name for a given media type.
 /// Returns None if the type doesn't support rendering.
 fn render_function_for_media_type(data_type: &EntryDataType) -> Option<&'static str> {
@@ -532,10 +578,111 @@ mod tests {
     use crate::error::OxenError;
     use crate::model::NewCommitBody;
     use crate::model::diff::DiffResult;
+    use crate::model::metadata::generic_metadata::GenericMetadata;
     use crate::opts::DFOpts;
     use crate::repositories::workspaces;
     use crate::test;
     use crate::{repositories, util};
+
+    #[tokio::test]
+    async fn test_create_empty_data_frame() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let branch = repositories::branches::current_branch(&repo)?
+                .expect("repo should have a current branch");
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?
+                .expect("branch head commit should exist");
+            let workspace = workspaces::create_temporary(&repo, &commit).await?;
+
+            let fields = vec![
+                Field::new("prompt", "str"),
+                Field::new("score", "float"),
+                Field::new("is_valid", "bool"),
+            ];
+            let new_commit = NewCommitBody {
+                author: "Test User".to_string(),
+                email: "test@oxen.ai".to_string(),
+                message: "Create data/annotations.parquet".to_string(),
+            };
+            let path = Path::new("data").join("annotations.parquet");
+            let commit = workspaces::data_frames::create_empty(
+                &repo,
+                &workspace,
+                &path,
+                &fields,
+                &new_commit,
+                &branch,
+            )
+            .await?;
+            assert_eq!(commit.message, "Create data/annotations.parquet");
+
+            // The committed file should exist and carry the typed, 0-row schema
+            let file_node = repositories::tree::get_file_by_path(&repo, &commit, &path)?
+                .expect("created data frame should exist in the commit tree");
+            let Some(GenericMetadata::MetadataTabular(metadata)) = file_node.metadata() else {
+                panic!("created data frame should have tabular metadata");
+            };
+            assert_eq!(metadata.tabular.height, 0);
+            let schema_fields = &metadata.tabular.schema.fields;
+            assert_eq!(schema_fields.len(), 3);
+            assert_eq!(schema_fields[0].name, "prompt");
+            assert_eq!(schema_fields[0].dtype, "str");
+            assert_eq!(schema_fields[1].name, "score");
+            assert_eq!(schema_fields[1].dtype, "f32");
+            assert_eq!(schema_fields[2].name, "is_valid");
+            assert_eq!(schema_fields[2].dtype, "bool");
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_create_empty_data_frame_path_already_exists() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let branch = repositories::branches::current_branch(&repo)?
+                .expect("repo should have a current branch");
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?
+                .expect("branch head commit should exist");
+            let workspace = workspaces::create_temporary(&repo, &commit).await?;
+
+            let fields = vec![Field::new("prompt", "str")];
+            let new_commit = NewCommitBody {
+                author: "Test User".to_string(),
+                email: "test@oxen.ai".to_string(),
+                message: "Create annotations.parquet".to_string(),
+            };
+            let path = Path::new("annotations.parquet");
+            workspaces::data_frames::create_empty(
+                &repo,
+                &workspace,
+                path,
+                &fields,
+                &new_commit,
+                &branch,
+            )
+            .await?;
+
+            // Creating again at the same path on the new head should conflict
+            let branch = repositories::branches::current_branch(&repo)?
+                .expect("repo should have a current branch");
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?
+                .expect("branch head commit should exist");
+            let workspace = workspaces::create_temporary(&repo, &commit).await?;
+            let result = workspaces::data_frames::create_empty(
+                &repo,
+                &workspace,
+                path,
+                &fields,
+                &new_commit,
+                &branch,
+            )
+            .await;
+            assert!(matches!(result, Err(OxenError::ResourceAlreadyExists(_))));
+
+            Ok(())
+        })
+        .await
+    }
 
     #[tokio::test]
     async fn test_add_row() -> Result<(), OxenError> {

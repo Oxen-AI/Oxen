@@ -5,10 +5,11 @@ use crate::params::{app_data, parse_resource, path_param};
 
 use liboxen::constants;
 use liboxen::error::PathBufError;
+use liboxen::model::data_frame::schema::{DataType, Field};
 use liboxen::model::{DataFrameSize, NewCommitBody};
 use liboxen::opts::df_opts::DFOptsView;
 use liboxen::repositories;
-use liboxen::view::data_frames::FromDirectoryRequest;
+use liboxen::view::data_frames::{CreateDataFrameRequest, FromDirectoryRequest};
 use liboxen::view::entries::ResourceVersion;
 
 use actix_web::{HttpRequest, HttpResponse, web};
@@ -20,6 +21,8 @@ use liboxen::view::{
 
 use utoipa;
 use uuid::Uuid;
+
+use std::collections::HashSet;
 
 /// Get data frame slice
 #[utoipa::path(
@@ -173,6 +176,139 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     }
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
+}
+
+/// Returns true if the parsed data type can back a column of an empty data frame.
+/// Rejects `Unknown` (unrecognized `data_type` strings), `Null`, field-less structs,
+/// and lists of any of those.
+fn is_creatable_dtype(dtype: &DataType) -> bool {
+    match dtype {
+        DataType::Unknown | DataType::Null => false,
+        DataType::Struct(fields) => !fields.is_empty(),
+        DataType::List(inner) => is_creatable_dtype(inner),
+        _ => true,
+    }
+}
+
+/// Create an empty data frame
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/data_frames/create/{resource}",
+    tag = "Data Frames",
+    description = "Create an empty data frame with a typed schema and commit it to a branch. The output format is inferred from the file extension (only .parquet is supported today).",
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "CattleData"),
+        ("resource" = String, Path, description = "Output file path to create (including branch info)", example = "main/data/annotations.parquet"),
+    ),
+    request_body(
+        content = CreateDataFrameRequest,
+        description = "Typed schema for the new data frame, plus optional commit message and author.",
+        example = json!({
+            "schema": [
+                { "name": "prompt", "data_type": "str" },
+                { "name": "score", "data_type": "float" },
+                { "name": "is_valid", "data_type": "bool" }
+            ],
+            "commit_message": "Create data/annotations.parquet",
+            "user_name": "Bessie",
+            "user_email": "bessie@oxen.ai"
+        })
+    ),
+    responses(
+        (status = 200, description = "Data frame created and committed", body = CommitResponse),
+        (status = 400, description = "Invalid request body, schema, or unsupported file extension"),
+        (status = 404, description = "Repository or branch not found"),
+        (status = 409, description = "A file or directory already exists at the output path")
+    )
+)]
+pub async fn create(
+    req: HttpRequest,
+    body: String,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let repo = get_repo(app_data, namespace, repo_name)?;
+    let resource = parse_resource(&req, &repo)?;
+    let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
+    let branch = resource.clone().branch.ok_or(OxenHttpError::NotFound)?;
+    let path = resource.path.clone();
+
+    // Return validation failures through OxenHttpError::BadRequest so the response carries an
+    // `error.detail` field, which is what the frontend reads to surface the message.
+    let data: CreateDataFrameRequest = serde_json::from_str(&body).map_err(|err| {
+        log::error!("Unable to parse body. Err: {err}\n{body}");
+        OxenHttpError::BadRequest(format!("Invalid request body: {err}").into())
+    })?;
+
+    // The output format is inferred from the extension so other formats
+    // (.csv, .jsonl, ...) can be added later without an API change.
+    let extension = path.extension().and_then(|ext| ext.to_str());
+    if !extension.is_some_and(|ext| ext.eq_ignore_ascii_case("parquet")) {
+        return Err(OxenHttpError::BadRequest(
+            format!("Unsupported file extension for {path:?}. Only .parquet is supported.").into(),
+        ));
+    }
+
+    if data.schema.is_empty() {
+        return Err(OxenHttpError::BadRequest(
+            "Schema must contain at least one column.".into(),
+        ));
+    }
+
+    let mut seen_names: HashSet<String> = HashSet::new();
+    for column in &data.schema {
+        if column.name.trim().is_empty() {
+            return Err(OxenHttpError::BadRequest(
+                "Column names cannot be empty.".into(),
+            ));
+        }
+        if !seen_names.insert(column.name.to_lowercase()) {
+            return Err(OxenHttpError::BadRequest(
+                format!("Duplicate column name: '{}'", column.name).into(),
+            ));
+        }
+        if !is_creatable_dtype(&DataType::from_string(&column.data_type)) {
+            return Err(OxenHttpError::BadRequest(
+                format!(
+                    "Unknown data type '{}' for column '{}'",
+                    column.data_type, column.name
+                )
+                .into(),
+            ));
+        }
+    }
+
+    let fields: Vec<Field> = data
+        .schema
+        .iter()
+        .map(|column| Field::new(&column.name, &column.data_type))
+        .collect();
+
+    let commit_message = data
+        .commit_message
+        .unwrap_or_else(|| format!("Create {}", path.display()));
+    let new_commit = NewCommitBody {
+        author: data.user_name.unwrap_or("".to_string()),
+        email: data.user_email.unwrap_or("".to_string()),
+        message: commit_message,
+    };
+
+    let temp_workspace = repositories::workspaces::create_temporary(&repo, &commit).await?;
+    let commit = repositories::workspaces::data_frames::create_empty(
+        &repo,
+        &temp_workspace,
+        &path,
+        &fields,
+        &new_commit,
+        &branch,
+    )
+    .await?;
+    Ok(HttpResponse::Ok().json(CommitResponse {
+        status: StatusMessage::resource_created(),
+        commit,
+    }))
 }
 
 /// Create data frame from directory

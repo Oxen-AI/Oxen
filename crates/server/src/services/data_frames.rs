@@ -14,6 +14,10 @@ pub fn data_frames() -> Scope {
             web::post().to(controllers::data_frames::from_directory),
         )
         .route(
+            "/create/{resource:.*}",
+            web::post().to(controllers::data_frames::create),
+        )
+        .route(
             "/{resource:.*}",
             web::get().to(controllers::data_frames::get),
         )
