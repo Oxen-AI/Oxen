@@ -90,7 +90,7 @@ pub async fn create_nodes(
 
     // Pack -> duplex writer (sync) -> duplex reader (async) -> HTTP body stream.
     // 64 KiB duplex buffer mirrors the server-side streaming pattern in
-    // `crates/server/src/controllers/versions.rs`.
+    // `crates/oxen-server/src/controllers/versions.rs`.
     let (async_writer, async_reader) = tokio::io::duplex(64 * 1024);
     let repo = local_repo.clone();
     let progress_for_pack = Arc::clone(progress);

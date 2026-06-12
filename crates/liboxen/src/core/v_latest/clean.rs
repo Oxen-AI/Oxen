@@ -1,7 +1,7 @@
 //! # oxen clean (v_latest)
 //!
 //! Remove untracked files and directories from the working tree. See the `clean` module
-//! docs in `crates/lib/src/repositories/clean.rs` for behavior and the user-facing contract.
+//! docs in `crates/liboxen/src/repositories/clean.rs` for behavior and the user-facing contract.
 
 use std::path::{Path, PathBuf};
 

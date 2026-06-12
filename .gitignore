@@ -4,7 +4,7 @@ target/
 .oxen
 release/
 logs/
-crates/server/.env.local
+crates/oxen-server/.env.local
 *.py[cdo]
 *.swp
 # Nix outputs

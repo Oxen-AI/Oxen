@@ -153,7 +153,7 @@ Set where you want the data to be synced to. The default sync directory is `./da
 export SYNC_DIR=/path/to/sync/dir
 ```
 
-You can also create a .env.local file in the /crates/server directory which can contain the SYNC_DIR variable to avoid setting it every time you run the server.
+You can also create a .env.local file in the /crates/oxen-server directory which can contain the SYNC_DIR variable to avoid setting it every time you run the server.
 
 Run the server
 
@@ -188,7 +188,7 @@ Only main applications can initialize logging and set log levels.
 
 ## Prometheus Metrics
 `oxen-server` exposes a Prometheus-compatible metrics endpoint.
-See [Prometheus Metrics](../server/README.md#prometheus-metrics) for details.
+See [Prometheus Metrics](../oxen-server/README.md#prometheus-metrics) for details.
 
 ## Nix Flake
 If you have [Nix installed](https://github.com/DeterminateSystems/nix-installer)

@@ -38,7 +38,7 @@ To change, set the `SYNC_DIR` environment variable to a path:
 export SYNC_DIR=/path/to/sync/dir
 ```
 
-You can also create a `.env.local` file in the `crates/server/` directory which can contain the `SYNC_DIR` variable to avoid setting it every time you run the server.
+You can also create a `.env.local` file in the `crates/oxen-server/` directory which can contain the `SYNC_DIR` variable to avoid setting it every time you run the server.
 
 Run the server:
 ```bash

@@ -113,7 +113,7 @@ let (hash, _) = tokio::try_join!(reader, uploader)?;
 
 `tokio::sync::mpsc::Sender::blocking_send` and `Receiver::blocking_recv` exist for exactly this case — calling them from inside `spawn_blocking` is correct and does not deadlock the runtime. The bound is what produces backpressure on the producer: when the channel is full, `blocking_send` blocks until the consumer drains. (The consumer waiting when the channel is empty happens with any channel, bounded or not — that part isn't a consequence of the bound.)
 
-`S3VersionStore::store_version_from_reader` in `crates/lib/src/storage/s3.rs` is the canonical example of the multipart-upload variant of this pattern (bounded concurrency via `FuturesUnordered`, one upload task per part).
+`S3VersionStore::store_version_from_reader` in `crates/liboxen/src/storage/s3.rs` is the canonical example of the multipart-upload variant of this pattern (bounded concurrency via `FuturesUnordered`, one upload task per part).
 
 ### Rayon for CPU-parallel batch work
 
@@ -163,7 +163,7 @@ Use `std::fs` inside `spawn_blocking`, not `tokio::fs`.
 
 The exception is when the source or sink is genuinely async (an HTTP request body, an S3 stream). In that case, use the **Channel hand-off** pattern: the network side stays async, the disk side runs inside a long-lived `spawn_blocking`, and a channel bridges them.
 
-For unbounded-length streamed IO that goes through `AsyncRead` / `AsyncWrite`, wrap the write side in `tokio::io::BufWriter::with_capacity(10 * 1024 * 1024, ...)` rather than relying on `tokio::io::copy`'s 8 KB default. Always `flush().await?` the `BufWriter` before any downstream `sync_all` / rename / checksum step — `BufWriter`'s `Drop` does not auto-flush, so unflushed bytes are silently dropped. The canonical example is `store_version_to_path` in `crates/lib/src/storage/s3.rs`.
+For unbounded-length streamed IO that goes through `AsyncRead` / `AsyncWrite`, wrap the write side in `tokio::io::BufWriter::with_capacity(10 * 1024 * 1024, ...)` rather than relying on `tokio::io::copy`'s 8 KB default. Always `flush().await?` the `BufWriter` before any downstream `sync_all` / rename / checksum step — `BufWriter`'s `Drop` does not auto-flush, so unflushed bytes are silently dropped. The canonical example is `copy_version_to_path` in `crates/liboxen/src/storage/s3.rs`.
 
 ## CLI vs server
 
@@ -175,7 +175,7 @@ The CLI is structurally a request handler with exactly one request. The "don't t
 
 - The **escape hatch** (`Handle::block_on` inside `spawn_blocking`) is essentially harmless. Use it when it makes the code clearer.
 - **CPU-parallel batch work belongs in rayon, not the Tokio blocking pool.** This is doubly true in the CLI, where a single `oxen add` may want to hash tens of thousands of files in parallel. Tokio's blocking pool is the wrong tool for that; rayon is the right one.
-- `OXEN_STACK_SIZE` (in `crates/cli/src/main.rs`) sets a custom thread stack size for the Tokio runtime threads. This does **not** automatically propagate to the blocking pool or to rayon — if a deep-recursion workload moves into one of those, convert it to an iterative loop.
+- `OXEN_STACK_SIZE` (in `crates/oxen-cli/src/main.rs`) sets a custom thread stack size for the Tokio runtime threads. This does **not** automatically propagate to the blocking pool or to rayon — if a deep-recursion workload moves into one of those, convert it to an iterative loop.
 
 ### Server (`oxen-server`)
 

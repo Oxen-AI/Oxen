@@ -1,4 +1,4 @@
-# `crates/lib/src/util/` — leaf utilities, sync-first
+# `crates/liboxen/src/util/` — leaf utilities, sync-first
 
 Utilities in this directory are **leaf utilities**, not server- or client-operations. Follow the sync/async policy in [`../../../../docs/async_policy.md`](../../../../docs/async_policy.md):
 

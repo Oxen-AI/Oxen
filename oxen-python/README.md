@@ -87,7 +87,7 @@ uv run --verbose pytest -s tests/
 ```
 
 If you have already installed all dependencies, and you're not making any changes to
-[`liboxen`](../crates/lib), then you may use `--no-sync`:
+[`liboxen`](../crates/liboxen), then you may use `--no-sync`:
 
 ```bash
 uv run --no-sync pytest -s tests/
