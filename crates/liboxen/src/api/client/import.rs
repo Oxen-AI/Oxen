@@ -64,7 +64,6 @@ pub async fn import_url(
     directory: impl AsRef<str>,
     download_url: impl AsRef<str>,
     commit: &NewCommitBody,
-    update_timestamp: bool,
 ) -> Result<crate::model::Commit, OxenError> {
     let branch_name = branch_name.as_ref();
     let directory = directory.as_ref();
@@ -72,15 +71,12 @@ pub async fn import_url(
     let uri = format!("/import/{branch_name}/{directory}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
-    let mut body = serde_json::json!({
+    let body = serde_json::json!({
         "download_url": download_url.as_ref(),
         "name": commit.author,
         "email": commit.email,
         "message": commit.message,
     });
-    if update_timestamp {
-        body["update_timestamp"] = serde_json::Value::Bool(true);
-    }
 
     let client = client::new_for_url(&url)?;
     let response = client
@@ -108,7 +104,6 @@ mod tests {
     use crate::api;
 
     use std::io::Write;
-    use std::path::Path;
 
     #[tokio::test]
     async fn test_upload_zip_file() -> Result<(), OxenError> {
@@ -227,14 +222,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_import_url_with_update_timestamp() -> Result<(), OxenError> {
+    async fn test_import_url_reupload_unchanged_is_noop() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = DEFAULT_BRANCH_NAME;
 
-            // Serve stable, identical bytes from a local mock server so the three imports below
-            // hash to the same version, exercising re-import dedup. The oxen-server process
-            // performs the fetch, so it must run in test mode to permit the loopback target. The
-            // mock and server stay in scope for the whole closure so every GET is served.
+            // Serve stable, identical bytes from a local mock server so both imports below hash to
+            // the same version, exercising re-import dedup. The oxen-server process performs the
+            // fetch, so it must run in test mode to permit the loopback target. The mock and server
+            // stay in scope for the whole closure so every GET is served.
             let mut server = mockito::Server::new_async().await;
             let _mock = server
                 .mock("GET", "/images/bloxy_white_background.png")
@@ -259,59 +254,25 @@ mod tests {
                 "imported",
                 download_url,
                 &commit_body,
-                false,
             )
             .await?;
             assert!(!first_commit.id.is_empty());
 
-            // Second import of same file WITHOUT update_timestamp should fail (no changes)
+            // Second import of the same file should fail (no changes to commit)
             let result = api::client::import::import_url(
                 &remote_repo,
                 branch_name,
                 "imported",
                 download_url,
                 &NewCommitBody {
-                    message: "Second import no force".to_string(),
+                    message: "Second import".to_string(),
                     ..commit_body.clone()
                 },
-                false,
             )
             .await;
             assert!(
                 result.is_err(),
                 "Expected import to fail with no changes: {result:?}"
-            );
-
-            // Third import of same file WITH update_timestamp should succeed
-            let third_commit = api::client::import::import_url(
-                &remote_repo,
-                branch_name,
-                "imported",
-                download_url,
-                &NewCommitBody {
-                    message: "Force update import".to_string(),
-                    ..commit_body.clone()
-                },
-                true,
-            )
-            .await?;
-            assert_ne!(first_commit.id, third_commit.id);
-
-            // Verify latest_commit on the entry matches the update_timestamp commit
-            let entries =
-                api::client::dir::list(&remote_repo, branch_name, Path::new("imported"), 1, 100)
-                    .await?;
-            let file_entry = entries
-                .entries
-                .iter()
-                .find(|e| e.filename() == "bloxy_white_background.png")
-                .expect("Should find the imported file");
-            let latest_commit = file_entry
-                .latest_commit()
-                .expect("Entry should have latest_commit");
-            assert_eq!(
-                latest_commit.id, third_commit.id,
-                "latest_commit should match the update_timestamp commit"
             );
 
             Ok(remote_repo)
