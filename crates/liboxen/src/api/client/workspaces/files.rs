@@ -6,7 +6,7 @@ use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository, RemoteRepository};
 use crate::opts::GlobOpts;
 use crate::util::{self, concurrency};
-use crate::view::{ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash};
+use crate::view::{ErrorFileInfo, FilePathsResponse};
 use crate::{api, repositories, view, view::workspaces::ValidateUploadFeasibilityRequest};
 
 use futures_util::StreamExt;
@@ -29,12 +29,6 @@ use flate2::write::GzEncoder;
 
 const BASE_WAIT_TIME: usize = 300;
 const MAX_WAIT_TIME: usize = 10_000;
-
-#[derive(Debug)]
-pub struct UploadResult {
-    pub files_to_add: Vec<FileWithHash>,
-    pub err_files: Vec<ErrorFileInfo>,
-}
 
 /// All of the paths that failed to transfer to the remote repository during an upload operation.
 ///
@@ -656,102 +650,6 @@ pub(crate) async fn parallel_batched_small_file_upload(
     } else {
         Ok(vec![])
     }
-}
-
-// Unused since client staging moved to the multipart files endpoint (ENG-1121). We'll delete this
-// in ENG-1120 to make the current PR smaller and easier to review.
-//
-// Retry stage_files_to_workspace until successful or retry limit breached
-// If individual files fail, return them to be re-tried at the end
-pub async fn stage_files_to_workspace_with_retry(
-    remote_repo: &RemoteRepository,
-    client: Arc<reqwest::Client>,
-    workspace_id: impl AsRef<str>,
-    files_to_add: Arc<Vec<FileWithHash>>,
-    directory_str: impl AsRef<str>,
-    err_files: Vec<ErrorFileInfo>,
-) -> Result<Vec<ErrorFileInfo>, OxenError> {
-    let mut retry_count: usize = 0;
-    let directory_str = directory_str.as_ref();
-    let workspace_id = workspace_id.as_ref().to_string();
-    let max_retries = max_retries();
-
-    while retry_count < max_retries {
-        retry_count += 1;
-
-        match stage_files_to_workspace(
-            remote_repo,
-            client.clone(),
-            &workspace_id,
-            files_to_add.clone(),
-            directory_str,
-            err_files.clone(),
-        )
-        .await
-        {
-            // If successful, return individual files that failed to stage
-            Ok(stage_err_files) => {
-                return Ok(stage_err_files);
-            }
-            Err(e) => {
-                log::error!("Error staging files to workspace: {e:?}");
-                if retry_count == max_retries {
-                    return Err(OxenError::basic_str(format!(
-                        "failed to stage files to workspace after retries: {e:?}"
-                    )));
-                }
-            }
-        }
-
-        let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
-        sleep(Duration::from_millis(wait_time as u64)).await;
-    }
-
-    log::error!(
-        "Error: Failed to stage files_to_add: {:?}",
-        files_to_add.len()
-    );
-    Err(OxenError::basic_str(
-        "failed to stage files to workspace after retries",
-    ))
-}
-
-// Unused since client staging moved to the multipart files endpoint (ENG-1121). We'll delete this
-// in ENG-1120 to make the current PR smaller and easier to review.
-//
-// Stage files to the workspace, filtering out files that previously failed to upload to version store
-pub async fn stage_files_to_workspace(
-    remote_repo: &RemoteRepository,
-    client: Arc<reqwest::Client>,
-    workspace_id: impl AsRef<str>,
-    files_to_add: Arc<Vec<FileWithHash>>,
-    directory_str: impl AsRef<str>,
-    err_files: Vec<ErrorFileInfo>,
-) -> Result<Vec<ErrorFileInfo>, OxenError> {
-    let workspace_id = workspace_id.as_ref();
-    let directory_str = directory_str.as_ref();
-    let uri = format!("/workspaces/{workspace_id}/versions/{directory_str}");
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
-    let files_to_send = if !err_files.is_empty() {
-        let err_hashes: std::collections::HashSet<String> =
-            err_files.iter().map(|f| f.hash.clone()).collect();
-        files_to_add
-            .iter()
-            .filter(|f| !err_hashes.contains(&f.hash))
-            .cloned()
-            .collect()
-    } else {
-        files_to_add.to_vec()
-    };
-
-    log::debug!("Files to send: {:?}", files_to_send.len());
-
-    let response = client.post(&url).json(&files_to_send).send().await?;
-    let body = client::parse_json_body(&url, response).await?;
-    let response: ErrorFilesResponse = serde_json::from_str(&body)?;
-
-    Ok(response.err_files)
 }
 
 /// A file to stage via the multipart workspace files endpoint.
