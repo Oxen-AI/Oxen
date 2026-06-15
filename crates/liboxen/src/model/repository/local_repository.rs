@@ -2,9 +2,7 @@ use crate::config::RepositoryConfig;
 use crate::config::repository_config::MerkleStoreKind;
 use crate::constants::SHALLOW_FLAG;
 use crate::constants::{self, DEFAULT_VNODE_SIZE};
-use crate::core::db::merkle_node::LmdbBackend;
 use crate::core::db::merkle_node::file_backend::FileBackend;
-use crate::core::db::merkle_node::lmdb::lmdb_dir_location;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
@@ -85,42 +83,14 @@ impl LocalRepository {
     }
 
     /// Loads the Merkle store for the repository at the specified root path.
-    ///
-    /// Dispatches on `merkle_store_kind`:
-    ///   - [`MerkleStoreKind::File`] → [`FileBackend`], honouring `is_vfs`.
-    ///   - [`MerkleStoreKind::Lmdb`] → [`LmdbBackend`], rejecting `is_vfs == true`
-    ///     because LMDB's memory-mapped storage isn't safe on virtual file
-    ///     systems (the mmap pages may not back to a real, byte-addressable
-    ///     file). VFS-on-LMDB returns [`OxenError::MerkleStoreLmdbNotSupportedOnVfs`].
     fn load_merkle_store(
         repo_path: PathBuf,
         merkle_store_kind: MerkleStoreKind,
-        is_vfs: bool,
+        _is_vfs: bool,
     ) -> Result<Arc<dyn TransportableMerkleStore>, OxenError> {
-        let store: Arc<dyn TransportableMerkleStore> = match merkle_store_kind {
-            MerkleStoreKind::File => Arc::new(FileBackend { repo_path }),
-            MerkleStoreKind::Lmdb => {
-                if is_vfs {
-                    return Err(OxenError::MerkleStoreLmdbNotSupportedOnVfs);
-                }
-                // Canonicalize so two `LocalRepository`s opened with different
-                // path shapes for the same physical repo (e.g. `./repo` vs
-                // `/abs/repo`, trailing slash, symlinked parent) end up at the
-                // same `heed::Env`. heed/LMDB does not deduplicate `Env`
-                // handles, and two envs on one database directory is
-                // undefined behavior per LMDB.
-                let repo_path = util::fs::canonicalize(&repo_path)?;
-                let env_dir = lmdb_dir_location(&repo_path);
-                util::fs::create_dir_all(&env_dir)?;
-                let mut options = heed::EnvOpenOptions::new();
-                // 1 GiB ceiling — large enough for typical Merkle trees,
-                // small enough to keep sparse-file disk usage in check. Can
-                // be revisited if/when we have repos that exceed it.
-                options.map_size(1024 * 1024 * 1024);
-                Arc::new(LmdbBackend::new(repo_path, options)?)
-            }
-        };
-        Ok(store)
+        match merkle_store_kind {
+            MerkleStoreKind::File => Ok(Arc::new(FileBackend { repo_path })),
+        }
     }
 
     /// Obtain the Merkle tree store for this repository.
@@ -145,11 +115,6 @@ impl LocalRepository {
             .as_ref()
             .ok_or(OxenError::MerkleStoreNotInitialized)?;
         Ok(&**store)
-    }
-
-    /// The type of physical Merkle tree node store that this repository uses.
-    pub fn merkle_store_kind(&self) -> MerkleStoreKind {
-        self.merkle_store_kind
     }
 
     /// Get a reference to the storage configuration this repository was constructed with.
@@ -186,10 +151,6 @@ impl LocalRepository {
     ///
     /// Note: does NOT create the repo on disk or write the config file — just instantiates the
     /// struct. To load an existing repo from disk, use [`Self::from_dir`].
-    ///
-    /// Errors with [`OxenError::MerkleStoreLmdbNotSupportedOnVfs`] when
-    /// `config.merkle_store_kind == MerkleStoreKind::Lmdb && config.vfs == Some(true)`, since
-    /// LMDB's mmap is incompatible with virtual file systems.
     pub fn new(
         path: impl AsRef<Path>,
         config: RepositoryConfig,
@@ -705,7 +666,6 @@ mod tests {
 
     use crate::api::requests::RepoNew;
     use crate::config::RepositoryConfig;
-    use crate::config::repository_config::MerkleStoreKind;
     use crate::error::OxenError;
     use crate::model::LocalRepository;
     use crate::test;
@@ -881,204 +841,6 @@ mod tests {
             reloaded.storage_config().versions_path,
             custom.versions_path
         );
-
-        Ok(())
-    }
-
-    // ────────────────────────────────────────────────────────────────────────
-    // MerkleStoreKind plumbing — verify that a repo initialized with an
-    // explicit kind picks up the right backend and round-trips through
-    // `config.toml` on save+reload.
-    // ────────────────────────────────────────────────────────────────────────
-
-    /// Default — `LocalRepository::new` selects [`MerkleStoreKind::File`] so
-    /// the existing CLI/test behaviour is unchanged.
-    #[test]
-    fn test_new_defaults_to_file_merkle_store() -> Result<(), OxenError> {
-        let temp_dir = TempDir::new()?;
-        let repo = LocalRepository::new(temp_dir.path(), RepositoryConfig::default())?;
-        assert_eq!(repo.merkle_store_kind(), MerkleStoreKind::File);
-        Ok(())
-    }
-
-    /// Explicit constructor — passing [`MerkleStoreKind::Lmdb`] flips the
-    /// in-memory field over.
-    #[test]
-    fn test_new_with_merkle_store_kind_picks_lmdb() -> Result<(), OxenError> {
-        let temp_dir = TempDir::new()?;
-        let repo = LocalRepository::new(
-            temp_dir.path(),
-            RepositoryConfig {
-                merkle_store_kind: MerkleStoreKind::Lmdb,
-                ..Default::default()
-            },
-        )?;
-        assert_eq!(repo.merkle_store_kind(), MerkleStoreKind::Lmdb);
-        Ok(())
-    }
-
-    /// VFS + LMDB is rejected up-front. LMDB's memory mapping is not safe to
-    /// run on virtual file systems and silently degrading would be worse than
-    /// failing fast.
-    #[test]
-    fn test_new_with_merkle_store_kind_rejects_lmdb_on_vfs() -> Result<(), OxenError> {
-        let temp_dir = TempDir::new()?;
-        let result = LocalRepository::new(
-            temp_dir.path(),
-            RepositoryConfig {
-                min_version: Some("0.36.0".to_string()),
-                vfs: Some(true),
-                merkle_store_kind: MerkleStoreKind::Lmdb,
-                ..Default::default()
-            },
-        );
-        assert!(
-            matches!(result, Err(OxenError::MerkleStoreLmdbNotSupportedOnVfs)),
-            "expected MerkleStoreLmdbNotSupportedOnVfs, got {result:?}"
-        );
-        Ok(())
-    }
-
-    /// File backend has no such restriction.
-    #[test]
-    fn test_new_with_file_kind_accepts_vfs() -> Result<(), OxenError> {
-        let temp_dir = TempDir::new()?;
-        let repo = LocalRepository::new(
-            temp_dir.path(),
-            RepositoryConfig {
-                min_version: Some("0.36.0".to_string()),
-                vfs: Some(true),
-                merkle_store_kind: MerkleStoreKind::File,
-                ..Default::default()
-            },
-        )?;
-        assert!(repo.is_vfs());
-        assert_eq!(repo.merkle_store_kind(), MerkleStoreKind::File);
-        Ok(())
-    }
-
-    /// Round-trip through `config.toml`: a repo initialized with LMDB and
-    /// saved must reload with the same kind via [`LocalRepository::from_dir`].
-    ///
-    /// LMDB enforces "one [`heed::Env`] per process per path", so we record
-    /// the path, drop the original repo to close its env, then reload.
-    #[test]
-    fn test_lmdb_merkle_store_kind_round_trips_through_config_toml() -> Result<(), OxenError> {
-        let mut repo = test::init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
-        assert_eq!(repo.merkle_store_kind(), MerkleStoreKind::Lmdb);
-        // Release the inner LocalRepository (closing its LMDB env) without
-        // tearing down the on-disk dir, so we can reload from the same path.
-        let repo_path = repo.path.clone();
-        repo.drop_inner();
-
-        let reloaded = LocalRepository::from_dir(&repo_path)?;
-        assert_eq!(reloaded.merkle_store_kind(), MerkleStoreKind::Lmdb);
-        Ok(())
-    }
-
-    /// LMDB backend's on-disk env subdir is created when the repo is opened
-    /// with the LMDB merkle store — proves the dispatch hits the LMDB load arm.
-    #[test]
-    fn test_lmdb_init_creates_env_directory_under_oxen_hidden() -> Result<(), OxenError> {
-        let repo = test::init_test_repo_with_merkle_store(MerkleStoreKind::Lmdb)?;
-        let env_dir = crate::core::db::merkle_node::lmdb::lmdb_dir_location(&repo.path);
-        assert!(
-            env_dir.exists(),
-            "expected LMDB env dir to exist at {env_dir:?}"
-        );
-        Ok(())
-    }
-
-    /// End-to-end: add a file, commit, status — all the way through an
-    /// LMDB-backed [`LocalRepository`]. This is the smoke test the task
-    /// description calls out: "actions running on an LMDB-backed Merkle tree
-    /// store using `LocalRepository` must work as expected."
-    #[tokio::test]
-    async fn test_lmdb_add_commit_status_roundtrip() -> Result<(), OxenError> {
-        use crate::repositories;
-        use crate::util;
-        let repo =
-            test::init_test_repo_merkle_init_version_store_async(MerkleStoreKind::Lmdb).await?;
-        let text_path = repo.path.join("hello.txt");
-        util::fs::write_to_path(&text_path, "Hello LMDB")?;
-
-        repositories::add(&repo, &text_path).await?;
-        repositories::commit(&repo, "Adding hello.txt")?;
-
-        // The head commit should be queryable through the LMDB store.
-        let head = repositories::commits::head_commit(&repo)?;
-        let head_hash = head.hash().expect("commit hash");
-        assert!(
-            repo.merkle_store()?.exists(&head_hash)?,
-            "head commit {head_hash} must be readable through LMDB store"
-        );
-        Ok(())
-    }
-
-    /// Equivalent control against [`MerkleStoreKind::File`] — confirms the
-    /// add → commit → head-commit chain works the same way regardless of
-    /// backend. Same shape as the LMDB test so a future failure mode that
-    /// only appears for one backend stands out.
-    #[tokio::test]
-    async fn test_file_add_commit_status_roundtrip() -> Result<(), OxenError> {
-        use crate::repositories;
-        use crate::util;
-        let repo =
-            test::init_test_repo_merkle_init_version_store_async(MerkleStoreKind::File).await?;
-        let text_path = repo.path.join("hello.txt");
-        util::fs::write_to_path(&text_path, "Hello File")?;
-
-        repositories::add(&repo, &text_path).await?;
-        repositories::commit(&repo, "Adding hello.txt")?;
-
-        let head = repositories::commits::head_commit(&repo)?;
-        let head_hash = head.hash().expect("commit hash");
-        assert!(
-            repo.merkle_store()?.exists(&head_hash)?,
-            "head commit {head_hash} must be readable through file store"
-        );
-        Ok(())
-    }
-
-    /// Bigger smoke test: add 5 files, commit, add another file, commit,
-    /// status is clean both times, both commits are reachable from the LMDB
-    /// store, and history shows both commits.
-    #[tokio::test]
-    async fn test_lmdb_two_commits_history() -> Result<(), OxenError> {
-        use crate::repositories;
-        use crate::util;
-        let repo =
-            test::init_test_repo_merkle_init_version_store_async(MerkleStoreKind::Lmdb).await?;
-        let dir = repo.path.join("files");
-        util::fs::create_dir_all(&dir)?;
-        for i in 0..5 {
-            util::fs::write_to_path(dir.join(format!("f{i}.txt")), format!("file {i}"))?;
-        }
-        repositories::add(&repo, &dir).await?;
-        repositories::commit(&repo, "Add 5 files")?;
-
-        // Status clean after first commit.
-        let status1 = repositories::status(&repo).await?;
-        assert!(
-            status1.is_clean(),
-            "expected clean status after first commit, got {status1:?}"
-        );
-
-        // Second commit on top.
-        let extra = repo.path.join("README.md");
-        util::fs::write_to_path(&extra, "readme")?;
-        repositories::add(&repo, &extra).await?;
-        repositories::commit(&repo, "Add README")?;
-
-        let status2 = repositories::status(&repo).await?;
-        assert!(
-            status2.is_clean(),
-            "expected clean status after second commit, got {status2:?}"
-        );
-
-        // Two commits visible in history.
-        let all = repositories::commits::list_all(&repo)?;
-        assert_eq!(all.len(), 2, "expected two commits, got {}", all.len());
 
         Ok(())
     }

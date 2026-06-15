@@ -361,46 +361,28 @@ fn extract_tar_under<R: Read>(
     Ok(hashes)
 }
 
-/// Classification of a tar entry's path under `tree/nodes/`.
-///
-/// Used by [`classify_tar_entry_path`] (and originally extracted from
-/// [`extract_hash_from_entry_path`]) so that callers like the LMDB backend's
-/// transport implementation can dispatch on entry kind without re-implementing
-/// the path parsing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum TarEntryKind {
-    /// `tree/nodes` itself, or `tree/nodes/{prefix}` — intermediate dirs.
-    Intermediate,
-    /// `tree/nodes/{prefix}/{suffix}` — the hash-bearing dir.
-    HashDir(MerkleHash),
-    /// `tree/nodes/{prefix}/{suffix}/node`.
-    NodeFile(MerkleHash),
-    /// `tree/nodes/{prefix}/{suffix}/children`.
-    ChildrenFile(MerkleHash),
-}
-
-/// Inspect a fully-resolved tar entry destination path and classify it.
+/// Inspect a fully-resolved tar entry destination path and, if it identifies a Merkle
+/// node, return that node's hash.
 ///
 /// `dst_path` must be inside `<oxen_hidden>/tree/nodes/`. The path's segments after
 /// that prefix determine the entry kind:
 ///
 /// | Segments after `tree/nodes/` | Entry kind | Result |
 /// |---|---|---|
-/// | 0 (the `tree/nodes` dir itself) | intermediate dir | `Ok(Intermediate)` |
-/// | 1 (the `{prefix}` dir) | intermediate dir | `Ok(Intermediate)` |
-/// | 2 (`{prefix}/{suffix}` dir) | hash-bearing dir | `Ok(HashDir(hash))` (hash parsed from `{prefix}{suffix}` as hex u128) |
-/// | 3 (`{prefix}/{suffix}/node`) | leaf file | `Ok(NodeFile(hash))` |
-/// | 3 (`{prefix}/{suffix}/children`) | leaf file | `Ok(ChildrenFile(hash))` |
+/// | 0 (the `tree/nodes` dir itself) | intermediate dir | `Ok(None)` |
+/// | 1 (the `{prefix}` dir) | intermediate dir | `Ok(None)` |
+/// | 2 (`{prefix}/{suffix}` dir) | hash-bearing dir | `Ok(Some(hash))` (hash parsed from `{prefix}{suffix}` as hex u128) |
+/// | 3 (`{prefix}/{suffix}/node` or `.../children`) | leaf file | `Ok(None)` (hash already produced from the parent dir entry) |
 ///
 /// Anything else returns [`MerkleDbError::InvalidTarStructure`]. A `{prefix}/{suffix}`
 /// dir whose `{prefix}` & `{suffix}` don't hex-parse as a `u128` value returns a Err of
 /// [`MerkleDbError::InvalidNodeIdHex`]. Any non-UTF-8 path components in the tarball return
 /// an Err of [`MerkleDbError::InvalidTarStructure`]: the merkle layout should never produce
 /// a non-UTF-8 segment name.
-pub(crate) fn classify_tar_entry_path(
+fn extract_hash_from_entry_path(
     dst_path: &Path,
     oxen_hidden: &Path,
-) -> Result<TarEntryKind, MerkleDbError> {
+) -> Result<Option<MerkleHash>, MerkleDbError> {
     let tree_nodes_prefix = Path::new(TREE_DIR).join(NODES_DIR);
 
     // make a new InvalidTarStructure MerkleDbError instance
@@ -434,27 +416,18 @@ pub(crate) fn classify_tar_entry_path(
     match components.as_slice() {
         // `tree/nodes` itself, or `tree/nodes/{prefix}` — intermediate dirs
         // produced by `pack_all`. No hash to record.
-        [] | [_] => Ok(TarEntryKind::Intermediate),
+        [] | [_] => Ok(None),
         // `tree/nodes/{prefix}/{suffix}` — the hash-bearing dir. Parse
         // unconditionally; failure is a structured error.
         [prefix, suffix] => {
             let id = format!("{prefix}{suffix}");
             let hash_value = u128::from_str_radix(&id, 16)
                 .map_err(|source| MerkleDbError::InvalidNodeIdHex { id, source })?;
-            Ok(TarEntryKind::HashDir(MerkleHash::new(hash_value)))
+            Ok(Some(MerkleHash::new(hash_value)))
         }
-        // `tree/nodes/{prefix}/{suffix}/{node|children}` — leaf files.
-        [prefix, suffix, leaf] if *leaf == "node" || *leaf == "children" => {
-            let id = format!("{prefix}{suffix}");
-            let hash_value = u128::from_str_radix(&id, 16)
-                .map_err(|source| MerkleDbError::InvalidNodeIdHex { id, source })?;
-            let hash = MerkleHash::new(hash_value);
-            if *leaf == "node" {
-                Ok(TarEntryKind::NodeFile(hash))
-            } else {
-                Ok(TarEntryKind::ChildrenFile(hash))
-            }
-        }
+        // `tree/nodes/{prefix}/{suffix}/{node|children}` — leaf files. The
+        // hash is recorded when the parent dir entry is processed.
+        [_, _, leaf] if *leaf == "node" || *leaf == "children" => Ok(None),
         [_, _, other] => Err(invalid_structure(&format!(
             "leaf file under `tree/nodes/{{prefix}}/{{suffix}}/` must be `node` or `children`, got `{other}`"
         ))),
@@ -462,22 +435,6 @@ pub(crate) fn classify_tar_entry_path(
             "entry has more components than `tree/nodes/{prefix}/{suffix}/[node|children]`",
         )),
     }
-}
-
-/// Original "hash-only" view over [`classify_tar_entry_path`]. Returns
-/// `Some(hash)` only for the `{prefix}/{suffix}` hash-bearing directory; all
-/// other recognised entry shapes return `None`. Preserved so the existing
-/// `extract_tar_under` call site doesn't need to change.
-fn extract_hash_from_entry_path(
-    dst_path: &Path,
-    oxen_hidden: &Path,
-) -> Result<Option<MerkleHash>, MerkleDbError> {
-    Ok(match classify_tar_entry_path(dst_path, oxen_hidden)? {
-        TarEntryKind::HashDir(hash) => Some(hash),
-        TarEntryKind::Intermediate | TarEntryKind::NodeFile(_) | TarEntryKind::ChildrenFile(_) => {
-            None
-        }
-    })
 }
 
 /// Merkle tree node packing implementation for the [`FileBackend`].

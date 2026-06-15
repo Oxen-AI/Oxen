@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use strum::{Display, EnumIter, EnumString, IntoStaticStr, VariantArray, VariantNames};
 use thiserror::Error;
 use utoipa::ToSchema;
 
@@ -24,40 +23,19 @@ pub enum RepoConfigError {
     #[error("[RepositoryConfig] Failed to write config: {0}")]
     Write(Box<OxenError>),
 
-    #[error("[RepositoryConfig] Unsupported Merkle store kind: {kind}. Expected one of {tokens:?}.", kind=.0, tokens=<MerkleStoreKind as VariantNames>::VARIANTS)]
-    UnknownMerkleKind(#[from] strum::ParseError),
-
     #[error("Cannot obtain current directory.")]
     CurDir,
 }
 
 /// A sort of registry for known [`MerkleStore`] implementations that can be used by [`LocalRepository`].
 /// This enum serves as a configuration option in a repository's `config.toml`
-#[derive(
-    Serialize,
-    Deserialize,
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    ToSchema,
-    EnumString,
-    EnumIter,
-    VariantNames,
-    VariantArray,
-    Display,
-    IntoStaticStr,
-)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, ToSchema)]
 // TODO: remove Serialize + Deserialize derives. These are only necessary because `LocalRepository`
 //       requires them. Those bounds will eventually be dropped.
 #[serde(rename_all = "lowercase")]
-#[strum(serialize_all = "lowercase")] // WARNING!! must mirror serde's `rename_all`
 pub enum MerkleStoreKind {
     /// The [`FileBackend`] store.
     File,
-    /// The [`LmdbBackend`] store.
-    Lmdb,
 }
 
 /// The default is the original custom file format based Merkle tree node storage.
@@ -295,46 +273,6 @@ mod tests {
         assert!(
             !serialized.contains("versions_path"),
             "absent versions_path must be skipped on serialize; got:\n{serialized}"
-        );
-    }
-
-    macro_rules! toml_merkle {
-        ($kind:expr) => {
-            format!(
-                r#"
-                      remotes = []
-
-                      merkle_store_kind = "{}"
-
-                      [storage]
-                      kind = "local"
-                      versions_path = "/mnt/nfs/customer/.oxen/versions/files"
-                  "#,
-                $kind
-            )
-        };
-    }
-
-    #[test]
-    fn parse_ok_merkle_store() {
-        for kind in <MerkleStoreKind as VariantArray>::VARIANTS {
-            let config = RepositoryConfig::from_toml(&toml_merkle!(kind.to_string()));
-            assert!(
-                config.is_ok(),
-                "Could not handle known Merkle tree store kind ({kind}): {config:?}"
-            );
-            let config = config.unwrap();
-            assert_eq!(&config.merkle_store_kind, kind);
-        }
-    }
-
-    #[test]
-    fn parse_reject_unknown_merkle() {
-        let expect_fail =
-            RepositoryConfig::from_toml(&toml_merkle!("what_is_this_a_center_for_ants"));
-        assert!(
-            expect_fail.is_err(),
-            "expecting to not be able to parse an invalid merkle tree store value"
         );
     }
 }
