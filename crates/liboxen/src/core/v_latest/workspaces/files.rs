@@ -159,6 +159,68 @@ pub async fn add_version_files(
     Ok(err_files)
 }
 
+/// Stage a batch of version files into the workspace. Each entry is a destination path (already
+/// resolved and validated) paired with the hash of its content, which must already be in the
+/// version store.
+///
+/// Returns the destination paths that staged successfully, plus a per-file error for each that did
+/// not (content missing from the version store, or a staging failure).
+pub async fn add_version_files_at_paths(
+    workspace: &Workspace,
+    files: Vec<(PathBuf, String)>,
+) -> Result<(Vec<PathBuf>, Vec<ErrorFileInfo>), OxenError> {
+    let version_store = workspace.base_repo.version_store();
+    let dir = workspace.dir();
+    let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
+    let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+
+    let mut staged_paths = Vec::with_capacity(files.len());
+    let mut err_files = vec![];
+    for (dst_path, hash) in files {
+        // The returned guard keeps any S3-materialized temp file alive until staging reads it below.
+        let version_path = match version_store.materialize(&hash, &dir).await {
+            Ok(path) => path,
+            Err(e) => {
+                let error = format!("Failed to resolve version path: {e}");
+                log::error!("{error}");
+                err_files.push(ErrorFileInfo {
+                    hash,
+                    path: Some(dst_path),
+                    error,
+                });
+                continue;
+            }
+        };
+        match stage_file_with_hash(
+            workspace,
+            &version_path,
+            &dst_path,
+            &hash,
+            &staged_db_manager,
+            &seen_dirs,
+        )
+        .await
+        {
+            Ok(_) => staged_paths.push(dst_path),
+            Err(e) => {
+                let error = format!("Failed to add file to staged db: {e}");
+                log::error!("{error}");
+                err_files.push(ErrorFileInfo {
+                    hash,
+                    path: Some(dst_path),
+                    error,
+                });
+            }
+        }
+    }
+    log::debug!(
+        "add_version_files_at_paths complete with {} staged, {} err_files",
+        staged_paths.len(),
+        err_files.len()
+    );
+    Ok((staged_paths, err_files))
+}
+
 pub fn track_modified_data_frame(
     workspace: &Workspace,
     filepath: impl AsRef<Path>,
