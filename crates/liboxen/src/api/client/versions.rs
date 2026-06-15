@@ -593,6 +593,9 @@ pub async fn multipart_batch_upload(
     Ok(err_files)
 }
 
+// Unused since client staging moved to the multipart files endpoint (ENG-1121). We'll delete this
+// in ENG-1120 to make the current PR smaller and easier to review.
+#[allow(dead_code)]
 pub(crate) async fn workspace_multipart_batch_upload_versions(
     remote_repo: &RemoteRepository,
     local_or_base: Option<&LocalOrBase>,
@@ -720,6 +723,9 @@ pub(crate) async fn workspace_multipart_batch_upload_versions(
     })
 }
 
+// Unused since client staging moved to the multipart files endpoint (ENG-1121). We'll delete this
+// in ENG-1120 to make the current PR smaller and easier to review.
+#[allow(dead_code)]
 pub(crate) async fn workspace_multipart_batch_upload_parts_with_retry(
     remote_repo: &RemoteRepository,
     client: Arc<reqwest::Client>,
