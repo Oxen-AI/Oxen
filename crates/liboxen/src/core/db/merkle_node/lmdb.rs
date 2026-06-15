@@ -11,26 +11,12 @@ mod value_structs;
 /// The [`MerkleWriter`] implementation.
 mod writer;
 
-/// The cache of open `LMDB` environments in the process.
-pub(crate) mod cache;
-
 pub use lmdb_backend::LmdbBackend;
-pub(in crate::core::db::merkle_node::lmdb) use lmdb_backend::{
-    DEFAULT_LMDB_MMAP_SIZE, lmdb_backend_options,
-};
-// `lmdb_dir_location` is only consulted from `#[cfg(test)]` modules outside
-// the `lmdb` namespace (verifying that the LMDB env dir was created on
-// disk). The lib build target has no production user of it.
-#[cfg(test)]
 pub(crate) use lmdb_backend::lmdb_dir_location;
 
 use thiserror::Error;
 
-use crate::{
-    error::OxenError,
-    model::merkle_tree::{merkle_hash::HexHash, node_type::InvalidMerkleTreeNodeType},
-};
-use bytesize::ByteSize;
+use crate::model::merkle_tree::{merkle_hash::HexHash, node_type::InvalidMerkleTreeNodeType};
 
 /// Errors that the LMDB backend's operations can encounter.
 ///
@@ -92,18 +78,6 @@ pub enum LmdbError {
 
     #[error("Stored a child for (hex) hash ({0}) but node for hash does not exist.")]
     IntegrityNoHash(HexHash),
-
-    // ── Initialization Errors ────────────────────────────────────────────────
-    #[error(
-        "Cannot create LMDB mmap file of size {0}: it is larger than this system's supported memory."
-    )]
-    InitMmap(ByteSize),
-
-    #[error("Cannot create an absolute path for the LMDB mmap file: {0}")]
-    InitAbs(Box<OxenError>), // TODO: update to FsError when that refactoring PR lands
-
-    #[error("Cannot create directory for LMDB's memory mapped file: {0}")]
-    InitDir(Box<OxenError>), // TODO: update to FsError when that refactoring PR lands
 }
 
 #[cfg(test)]
@@ -176,13 +150,7 @@ mod tests {
         std::fs::create_dir_all(&env_dir).expect("env dir");
 
         let mut opts = EnvOpenOptions::new();
-        // 10 MiB is plenty for the test workloads and lets dozens of
-        // independent test envs coexist without exhausting virtual memory.
         opts.map_size(10 * 1024 * 1024);
-        // `LmdbBackend::new` opens two named databases (DB_NODES, DB_LINKS);
-        // production callers go through `lmdb_backend_options` which sets
-        // this. This test helper bypasses that path, so set it directly.
-        opts.max_dbs(2);
         LmdbBackend::new(test_root, opts).expect("open lmdb backend")
     }
 
