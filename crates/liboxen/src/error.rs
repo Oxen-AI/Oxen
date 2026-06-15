@@ -74,13 +74,6 @@ pub enum OxenError {
     )]
     NoNamespaceRepoInUrl(Uri),
 
-    /// When `get_fork_status` cannot obtain the fork status for a repository.
-    #[error("No fork status found.")]
-    ForkStatusNotFound,
-
-    #[error("A file already exists at the destination path: {0}")]
-    ForkDestinationExists(PathBuf),
-
     #[error("Could not create or find repository [{repo_id}]: {err}\n{body}")]
     FailCreateOrFindRemoteRepo {
         repo_id: String,
