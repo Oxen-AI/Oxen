@@ -1,4 +1,3 @@
-use async_tempfile::TempFile;
 use duckdb::Connection;
 
 use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL, EXCLUDE_OXEN_COLS, TABLE_NAME};
@@ -17,7 +16,6 @@ use crate::model::{
     Commit, EntryDataType, LocalRepository, MerkleHash, StagedEntryStatus, Workspace,
 };
 use crate::repositories;
-use crate::storage::version_store::VersionLocation;
 use crate::{error::OxenError, util};
 use std::path::{Path, PathBuf};
 
@@ -144,24 +142,11 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     let version_store = repo.version_store();
     let hash_str = file_hash.to_string();
 
-    // DuckDB's `read_*()` can only ingest a local filesystem path. Local stores expose the
-    // on-disk version file directly (zero copy); S3 streams the object to a temp file kept alive
-    // until indexing finishes (RAII cleanup on drop). The temp file is created in the workspace's
-    // DuckDB directory (`parent`) rather than the OS temp dir: that directory lives on the
-    // oxen-server data volume, which is sized to hold version files, whereas `/tmp` may be tiny.
-    let (version_path, _temp_file) = match version_store.version_location(&hash_str).await? {
-        VersionLocation::Local(path) => (path, None),
-        VersionLocation::S3 { .. } => {
-            let temp = TempFile::new_in(parent)
-                .await
-                .map_err(|e| OxenError::basic_str(format!("Failed to create temp file: {e}")))?;
-            let temp_path = temp.file_path().to_path_buf();
-            version_store
-                .copy_version_to_path(&hash_str, &temp_path)
-                .await?;
-            (temp_path, Some(temp))
-        }
-    };
+    // DuckDB's `read_*()` can only ingest a local filesystem path, so materialize the version file.
+    // The guard `version_file` is held on the async side (its drop runs after the blocking index
+    // below) so a materialized S3 temp outlives the read; the closure takes a plain path copy.
+    let version_file = version_store.materialize(&hash_str, parent).await?;
+    let version_path = version_file.to_pathbuf();
 
     log::debug!(
         "core::v_latest::index::workspaces::data_frames::index({path:?}) got version path: {version_path:?}"
@@ -176,7 +161,7 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
 
     // DuckDB indexing is blocking file IO plus a full parse, so run it off the async runtime per
     // the sync-core / async-edge policy. The DuckDB connection lives entirely inside the closure
-    // (it never crosses an `.await`), and `_temp_file` is held on the async side until the
+    // (it never crosses an `.await`), and `version_file` is held on the async side until the
     // blocking work finishes, so a materialized S3 temp file outlives the read.
     tokio::task::spawn_blocking(move || {
         with_df_db_manager(&db_path, |manager| {

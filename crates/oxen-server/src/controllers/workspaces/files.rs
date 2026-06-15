@@ -207,8 +207,6 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    let version_store = repo.version_store();
-
     let (upload_files, err_files) = save_parts(payload, &repo).await?;
     log::debug!("Save multiparts found {} err_files", err_files.len());
     log::debug!(
@@ -224,11 +222,9 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
             ));
         };
         let dst_path = PathBuf::from(&directory).join(file_name);
-        let version_path = version_store.get_version_path(&upload_file.hash).await?;
 
         let ret_file = match core::v_latest::workspaces::files::add_version_file(
             &workspace,
-            &version_path,
             &dst_path,
             &upload_file.hash,
         )
@@ -236,7 +232,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
         {
             Ok(ret_file) => ret_file,
             Err(e) => {
-                log::error!("Error adding file {version_path:?}: {e:?}");
+                log::error!("Error adding file {dst_path:?}: {e:?}");
                 continue;
             }
         };
