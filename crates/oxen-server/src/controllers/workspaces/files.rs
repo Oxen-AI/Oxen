@@ -2,6 +2,7 @@ use crate::errors::OxenHttpError;
 use crate::helpers::{file_stream_response, get_repo};
 use crate::params::{app_data, client_must_use_multipart_staging, path_param};
 
+use liboxen::constants::STREAM_SEGMENT_SIZE;
 use liboxen::core;
 use liboxen::core::staged::get_staged_db_manager;
 use liboxen::error::OxenError;
@@ -28,6 +29,11 @@ use std::io::Read as StdRead;
 use std::path::PathBuf;
 use std::sync::Arc;
 use utoipa;
+
+// Caps gzip decompression on this endpoint against decompression bombs. Gzipped parts come from the
+// client's small-file staging path, which sends nothing larger than one stream segment (bigger
+// files go to the chunked upload), so a decompressed part is capped at that threshold.
+const MAX_DECOMPRESSED_SIZE: u64 = STREAM_SEGMENT_SIZE;
 
 #[derive(utoipa::ToSchema)]
 pub struct FileUpload {
@@ -526,12 +532,24 @@ pub async fn save_parts(
                             "Decompressing gzipped data for file: {upload_filename_copy:?}"
                         );
 
-                        // Decompress the data if it is gzipped
-                        let mut decoder = GzDecoder::new(&field_bytes[..]);
+                        // Cap decompression so a gzip bomb can't exhaust memory: read at most one
+                        // byte past the limit, then reject if the cap was hit.
+                        let mut decoder =
+                            GzDecoder::new(&field_bytes[..]).take(MAX_DECOMPRESSED_SIZE + 1);
                         let mut decompressed_bytes: Vec<u8> = Vec::new();
                         decoder.read_to_end(&mut decompressed_bytes).map_err(|e| {
-                            OxenError::basic_str(format!("Failed to decompress gzipped data: {e}"))
+                            OxenError::internal_error(format!(
+                                "Failed to decompress gzipped data: {e}"
+                            ))
                         })?;
+
+                        let decompressed_size = decompressed_bytes.len() as u64;
+                        if decompressed_size > MAX_DECOMPRESSED_SIZE {
+                            return Err(OxenError::internal_error(format!(
+                                "Decompressed size {decompressed_size} exceeds the \
+                                 {MAX_DECOMPRESSED_SIZE} byte limit"
+                            )));
+                        }
 
                         // Hash file contents
                         let hash = hasher::hash_buffer(&decompressed_bytes);
