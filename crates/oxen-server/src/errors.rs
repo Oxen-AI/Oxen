@@ -525,6 +525,21 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::InternalServerError().json(error_json)
                     }
+                    OxenError::TabularExportMissingMetadata(path) => {
+                        let error_json = json!({
+                            "error": {
+                                "type": MSG_BAD_REQUEST,
+                                "title": "Cannot commit an empty data frame",
+                                "detail": format!(
+                                    "The data frame '{}' has no rows to commit (it may be empty after row deletions), so it has no tabular schema. Add at least one row before committing.",
+                                    path.to_string_lossy()
+                                )
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
                     OxenError::Basic(error) | OxenError::InternalError(error) => {
                         let error_json = json!({
                             "error": {

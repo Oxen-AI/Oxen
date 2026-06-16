@@ -203,6 +203,13 @@ pub enum OxenError {
         source: Box<OxenError>,
     },
 
+    /// A workspace commit's indexed tabular export has no schema to infer
+    /// (e.g. every row was staged for removal), so it carries no metadata.
+    #[error(
+        "Cannot commit data frame {0:?}: the exported file has no tabular metadata (it may be empty after row deletions). Refusing to commit a tabular file without metadata."
+    )]
+    TabularExportMissingMetadata(PathBuf),
+
     /// Adding a file into a workspace
     #[error("{0}")]
     ImportFileError(StringError),
@@ -788,6 +795,9 @@ impl OxenError {
             }
             S3BackendMissingServerOpts => {
                 "Set `[storage] s3_bucket = \"<your-bucket>\"` in the server's config TOML and restart oxen-server."
+            }
+            TabularExportMissingMetadata(_) => {
+                "The data frame has no rows to commit. Add at least one row, or discard the workspace edits, then retry."
             }
             _ => return None,
         }

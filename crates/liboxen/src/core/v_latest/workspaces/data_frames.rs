@@ -338,19 +338,20 @@ pub fn extract_file_node_to_working_dir(
         )?;
     }
 
-    // Export to a temp file in the same directory and rename into place.
-    // DuckDB's COPY truncates and writes the target in place; without the
-    // rename, a concurrent reader of the working path (e.g. another commit of
-    // the same workspace hashing/parsing the file) can observe a torn or
-    // empty file. The temp name keeps the real extension last so
-    // wrap_sql_for_export still picks the right output format.
+    // Export to a sibling temp file, then rename into place so a concurrent
+    // reader of the working path never sees a torn or partial export. The
+    // `.oxentmp.` infix lets fsck reclaim an orphan from a killed export; the
+    // real extension stays last so wrap_sql_for_export picks the right format.
     let file_name = working_path
         .file_name()
-        .ok_or_else(|| OxenError::basic_str(format!("Invalid export path: {working_path:?}")))?
+        .ok_or_else(|| OxenError::internal_error(format!("Invalid export path: {working_path:?}")))?
         .to_string_lossy()
         .to_string();
-    let export_path =
-        working_path.with_file_name(format!(".{}.export-{}", std::process::id(), file_name));
+    let export_path = working_path.with_file_name(format!(
+        ".oxentmp.{}.export-{}",
+        std::process::id(),
+        file_name
+    ));
 
     with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
@@ -372,9 +373,15 @@ pub fn extract_file_node_to_working_dir(
     })?;
 
     // wrap_sql_for_export falls back to a bare SELECT (no COPY, no file) for
-    // extensions it doesn't know how to export; only rename when the COPY
+    // extensions it doesn't know how to export; only publish when the COPY
     // actually produced the temp file.
     if export_path.exists() {
+        // fsync before the rename so a crash can't leave the published file
+        // pointing at unflushed bytes. Open writable: sync_all maps to
+        // FlushFileBuffers on Windows, which rejects a read-only handle.
+        let exported = std::fs::OpenOptions::new().write(true).open(&export_path)?;
+        exported.sync_all()?;
+        drop(exported);
         util::fs::rename(&export_path, &working_path)?;
     }
 
