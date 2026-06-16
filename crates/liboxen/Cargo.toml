@@ -74,6 +74,7 @@ futures = { workspace = true }
 futures-util = { workspace = true }
 glob = { workspace = true }
 glob-match = { workspace = true }
+heed = { workspace = true }
 http = { workspace = true }
 humantime = { workspace = true }
 ignore = { workspace = true }
@@ -95,6 +96,7 @@ opentelemetry = { workspace = true, optional = true }
 opentelemetry-otlp = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }
 os_path = { workspace = true }
+page_size = { workspace = true }
 par-stream = { workspace = true }
 parking_lot = { workspace = true }
 pathdiff = { workspace = true }

@@ -19,6 +19,7 @@ use crate::api::requests::RepoNew;
 use crate::command::migrate::Direction;
 use crate::config::repository_config::RepoConfigError;
 use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
+use crate::lmdb::LmdbLayerError;
 use crate::model::MerkleHash;
 use crate::model::ParsedResource;
 use crate::model::Schema;
@@ -324,6 +325,11 @@ pub enum OxenError {
 
     #[error("No such commit, dir, or vnode Merkle tree node with hash (hex): {0}")]
     MerkleNodeNotFound(HexHash),
+
+    /// An error from the reusable low-level LMDB layer (`crate::lmdb`). Kept as its own enum so
+    /// the layer's `heed::Error` payloads stay out of this top-level type; see `LmdbLayerError`.
+    #[error(transparent)]
+    LmdbLayer(#[from] LmdbLayerError),
 
     //
     // Schema
