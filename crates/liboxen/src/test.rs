@@ -1,10 +1,5 @@
-//! Helpers for Oxen's unit and integration tests
+//! Helpers for our unit and integration tests
 //!
-//!
-
-pub mod repo_guard;
-pub mod repo_prep;
-pub mod test_utils;
 
 use crate::api;
 use crate::api::requests::RepoNew;
@@ -14,21 +9,28 @@ use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::core;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
+use crate::model::Schema;
+use crate::model::User;
 use crate::model::data_frame::schema::Field;
-use crate::model::file::{FileContents, FileNew};
+use crate::model::file::FileContents;
+use crate::model::file::FileNew;
 use crate::model::merkle_tree::node::merkle_tree_node_cache;
-use crate::model::{LocalRepository, RemoteRepository, Schema, User};
+use crate::model::{LocalRepository, RemoteRepository};
 use crate::opts::RmOpts;
 use crate::repositories;
 use crate::util;
 use crate::util::telemetry::TracingGuard;
 
-use rand::{Rng, distributions::Alphanumeric};
-use std::fs::{File, OpenOptions};
+use rand::Rng;
+use rand::distributions::Alphanumeric;
+use std::fs::File;
+use std::fs::OpenOptions;
 use std::future::Future;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::Arc;
+use std::sync::LazyLock;
+use std::sync::Mutex;
 use tokio::time::sleep;
 use tracing::level_filters::LevelFilter;
 
@@ -58,13 +60,7 @@ pub fn test_host() -> String {
     }
 }
 
-/// Generate a string of `len` random alphanumeric characters.
-/// A length of zero means an empty string is returned.
-#[inline(always)]
-pub(crate) fn generate_random_string(len: usize) -> String {
-    if len == 0 {
-        return "".to_string();
-    }
+fn generate_random_string(len: usize) -> String {
     rand::thread_rng()
         .sample_iter(&Alphanumeric)
         .take(len)
@@ -305,6 +301,142 @@ where
     // Assert everything okay after we cleanup the repo dir
     assert!(result.is_ok());
     Ok(())
+}
+
+/// RAII cleanup for a test repo directory. Dropping the guard removes the
+/// directory via [`maybe_cleanup_repo`] (errors are swallowed since `Drop`
+/// can't surface them). The same call runs on the normal-exit path *and*
+/// during panic unwind.
+#[cfg(test)]
+pub struct RepoDirGuard {
+    repo_dir: PathBuf,
+}
+
+#[cfg(test)]
+impl RepoDirGuard {
+    pub fn new(repo_dir: PathBuf) -> Self {
+        Self { repo_dir }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.repo_dir
+    }
+}
+
+#[cfg(test)]
+impl Drop for RepoDirGuard {
+    fn drop(&mut self) {
+        if let Err(e) = maybe_cleanup_repo(&self.repo_dir) {
+            log::warn!("RepoDirGuard cleanup failed for {:?}: {e}", self.repo_dir);
+        }
+    }
+}
+
+/// RAII handle to a freshly-initialized test [`LocalRepository`]. Derefs to
+/// the inner `LocalRepository` so callers can use it as one transparently.
+///
+/// Drop order matters: `repo` is declared before `_guard` so that on drop
+/// the inner `LocalRepository` (and any resources it holds, like an LMDB
+/// `heed::Env`) is released *before* the [`RepoDirGuard`] removes the
+/// on-disk repo directory.
+#[cfg(test)]
+pub struct TestLocalRepo {
+    repo: Option<LocalRepository>,
+    _guard: RepoDirGuard,
+}
+
+#[cfg(test)]
+impl TestLocalRepo {
+    pub fn new(repo: LocalRepository) -> Self {
+        let repo_dir = repo.path.clone();
+        Self {
+            repo: Some(repo),
+            _guard: RepoDirGuard::new(repo_dir),
+        }
+    }
+
+    /// Drop the inner [`LocalRepository`] (e.g. to release an LMDB env)
+    /// while keeping the on-disk repo dir alive for further reads. The
+    /// directory itself is still removed when this handle is dropped.
+    pub fn drop_inner(&mut self) {
+        self.repo.take();
+    }
+}
+
+#[cfg(test)]
+impl std::ops::Deref for TestLocalRepo {
+    type Target = LocalRepository;
+    fn deref(&self) -> &Self::Target {
+        self.repo
+            .as_ref()
+            .expect("TestLocalRepo inner LocalRepository was already dropped via drop_inner")
+    }
+}
+
+/// Base directory under which LMDB-backed test repos are rooted.
+///
+/// LMDB depends on NT memory-section APIs that are not implemented by
+/// virtual filesystems. On Windows CI `OXEN_TEST_RUN_DIR=R:\test` is an
+/// ImDisk RAMDisk (a VFS) and opening an LMDB env there fails with
+/// `Os { code: 1, .. }` → "Incorrect function." Routing LMDB-backed test
+/// repos to the OS temp dir keeps the env on the host's real volume
+/// (NTFS on Windows runners). Mirrors `lmdb_test_root` in
+/// `crates/liboxen/src/core/db/merkle_node/lmdb.rs`, used by the low-level
+/// `LmdbBackend` tests.
+#[cfg(test)]
+fn lmdb_test_base() -> PathBuf {
+    std::env::temp_dir().join("oxen-lmdb-tests")
+}
+
+/// Create a fresh empty dir suitable for an LMDB-backed test repo and
+/// return a [`RepoDirGuard`] that removes it on Drop. The dir lives under
+/// [`lmdb_test_base`] rather than `OXEN_TEST_RUN_DIR` — see that fn's docs
+/// for why.
+#[cfg(test)]
+pub fn create_lmdb_safe_empty_dir() -> Result<RepoDirGuard, OxenError> {
+    let dir = create_prefixed_dir(lmdb_test_base(), "dir")?;
+    Ok(RepoDirGuard::new(dir))
+}
+
+/// Construct a fresh test repo dir, initialize a [`LocalRepository`] in it
+/// with the given [`crate::config::repository_config::MerkleStoreKind`], and
+/// return a [`TestLocalRepo`] that cleans the dir up on Drop. Mirrors the
+/// repo shape produced by the former
+/// `run_empty_local_repo_test_with_merkle_store` helper.
+///
+/// For `MerkleStoreKind::Lmdb` the repo dir is routed under
+/// [`lmdb_test_base`] so the LMDB env never lands on a VFS like Windows CI's
+/// ImDisk RAMDisk.
+#[cfg(test)]
+pub fn init_test_repo_with_merkle_store(
+    kind: crate::config::repository_config::MerkleStoreKind,
+) -> Result<TestLocalRepo, OxenError> {
+    use crate::config::repository_config::MerkleStoreKind;
+    init_test_env();
+    log::info!("<<<<< init_test_repo_with_merkle_store start ({kind:?})");
+    let repo_dir = match kind {
+        MerkleStoreKind::Lmdb => create_prefixed_dir(lmdb_test_base(), "repo")?,
+        MerkleStoreKind::File => create_repo_dir(test_run_dir())?,
+    };
+    let repo = repositories::init::init_with_version_and_merkle_store(
+        &repo_dir,
+        MinOxenVersion::LATEST,
+        kind,
+    )?;
+    log::info!(">>>>> init_test_repo_with_merkle_store ready");
+    Ok(TestLocalRepo::new(repo))
+}
+
+/// Async variant of [`init_test_repo_with_merkle_store`] — also initializes
+/// the version store, mirroring the former
+/// `run_empty_local_repo_test_with_merkle_store_async` helper.
+#[cfg(test)]
+pub async fn init_test_repo_merkle_init_version_store_async(
+    kind: crate::config::repository_config::MerkleStoreKind,
+) -> Result<TestLocalRepo, OxenError> {
+    let handle = init_test_repo_with_merkle_store(kind)?;
+    handle.version_store().init().await?;
+    Ok(handle)
 }
 
 pub async fn run_empty_local_repo_test_async<T, Fut>(test: T) -> Result<(), OxenError>
@@ -1787,48 +1919,45 @@ pub fn populate_nlp_dir(repo_dir: &Path) -> Result<(), OxenError> {
     Ok(())
 }
 
-/// Populates a directory with multiple differently typed files at some level of nesting.
-///
-/// Features:
-///   - has multiple content types (jpg, txt, md)
-///   - has a few large data files that we have to chunk and transfer
-///   - has multiple directory levels (annotations/train/one_shot.txt)
-///   - has files at top level (README.md)
-///   - has files without extensions (LICENSE)
-///   - has files/dirs at different levels with same names (annotations.txt)
-///
-/// --------------------
-/// Directory Structure:
-/// --------------------
-/// nlp/
-///   classification/
-///     annotations/
-///       train.tsv
-///       test.tsv
-///
-/// train/
-///   dog_1.jpg
-///   dog_2.jpg
-///   dog_3.jpg
-///   cat_1.jpg
-///   cat_2.jpg
-/// test/
-///   1.jpg
-///   2.jpg
-/// annotations/
-///   README.md
-///   train/
-///     bounding_box.csv
-///     one_shot.csv
-///     two_shot.csv
-///     annotations.txt
-///   test/
-///     annotations.csv
-/// prompts.jsonl
-/// labels.txt
-/// LICENSE
-/// README.md
 pub fn populate_dir_with_training_data(repo_dir: &Path) -> Result<(), OxenError> {
+    // Directory Structure
+    // Features:
+    //   - has multiple content types (jpg, txt, md)
+    //   - has a few large data files that we have to chunk and transfer
+    //   - has multiple directory levels (annotations/train/one_shot.txt)
+    //   - has files at top level (README.md)
+    //   - has files without extensions (LICENSE)
+    //   - has files/dirs at different levels with same names (annotations.txt)
+    //
+    // nlp/
+    //   classification/
+    //     annotations/
+    //       train.tsv
+    //       test.tsv
+    //
+    // train/
+    //   dog_1.jpg
+    //   dog_2.jpg
+    //   dog_3.jpg
+    //   cat_1.jpg
+    //   cat_2.jpg
+    // test/
+    //   1.jpg
+    //   2.jpg
+    // annotations/
+    //   README.md
+    //   train/
+    //     bounding_box.csv
+    //     one_shot.csv
+    //     two_shot.csv
+    //     annotations.txt
+    //   test/
+    //     annotations.csv
+    // prompts.jsonl
+    // labels.txt
+    // LICENSE
+    // README.md
+
     // README.md
     populate_readme(repo_dir)?;
 
@@ -1896,35 +2025,24 @@ pub fn populate_select_training_data(repo_dir: &Path, data: &str) -> Result<(), 
     Ok(())
 }
 
-/// Creates a new UUID4 named file  in the directory with the given content.
-///
-/// Returns the full file path. If `extension` is not none, then the filename will
-/// end with `".{extension}"`. Errors if the file cannot be created or written.
-/// Also errors if the `dir` does not exist and it cannot be created.
-pub fn add_file_to_dir(
-    dir: &Path,
-    contents: &[u8],
-    extension: Option<&str>,
-) -> Result<PathBuf, OxenError> {
-    std::fs::create_dir_all(dir)?;
+pub fn add_file_to_dir(dir: &Path, contents: &str, extension: &str) -> Result<PathBuf, OxenError> {
     // Generate random name, because tests run in parallel, then return that name
-    let filename = match extension {
-        Some(ext) => format!("{}.{ext}", uuid::Uuid::new_v4()),
-        None => uuid::Uuid::new_v4().to_string(),
-    };
-    let full_path = dir.join(filename);
-    std::fs::write(&full_path, contents)?;
+    let file_path = PathBuf::from(format!("{}.{extension}", uuid::Uuid::new_v4()));
+    let full_path = dir.join(file_path);
+    // println!("add_txt_file_to_dir: {:?} to {:?}", file_path, full_path);
+
+    let mut file = File::create(&full_path)?;
+    file.write_all(contents.as_bytes())?;
+
     Ok(full_path)
 }
 
-/// Writes the contents to a randomly named ".txt" file in the directory.
 pub fn add_txt_file_to_dir(dir: &Path, contents: &str) -> Result<PathBuf, OxenError> {
-    add_file_to_dir(dir, contents.as_bytes(), Some("txt"))
+    add_file_to_dir(dir, contents, "txt")
 }
 
-/// Writes the contents to a randomly named ".csv" file in the directory.
 pub fn add_csv_file_to_dir(dir: &Path, contents: &str) -> Result<PathBuf, OxenError> {
-    add_file_to_dir(dir, contents.as_bytes(), Some("csv"))
+    add_file_to_dir(dir, contents, "csv")
 }
 
 pub fn write_txt_file_to_path(

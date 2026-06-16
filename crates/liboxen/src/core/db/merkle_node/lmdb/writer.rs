@@ -451,12 +451,12 @@ mod tests {
 
             // First open: write, then drop the backend (env close).
             {
-                let backend = open_lmdb_at(&repo.path);
+                let backend = open_lmdb_at(repo.path.clone());
                 write_one(&backend, &commit, None)?;
             }
             // Second open: reopen, read.
             {
-                let backend = open_lmdb_at(&repo.path);
+                let backend = open_lmdb_at(repo.path.clone());
                 assert!(backend.exists(&commit_h)?);
                 assert!(backend.get_node(&commit_h)?.is_some());
             }

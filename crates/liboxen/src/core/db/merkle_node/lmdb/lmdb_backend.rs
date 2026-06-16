@@ -81,39 +81,13 @@ const _: () = assert!(
 // multiple of any common page size, so it would fail LMDB validation
 pub(crate) const DEFAULT_LMDB_MMAP_SIZE: ByteSize = ByteSize::gib(1);
 
-/// Configures LMDB options for the [`LmdbBackend`] with the given mmap file size.
-///
-/// If the file size is not a multiple of the OS's page size, then the value is
-/// rounded up to the nearest multiple of the page size. LMDB requires the mmap file
-/// to be a multiple of the page size.
-///
-/// If a size greater than the total addressible memory space is provided, then this
-/// function will return an [`LmdbError::InitMmap`] error.
 pub(crate) fn lmdb_backend_options(size: ByteSize) -> Result<EnvOpenOptions, LmdbError> {
-    // The only reason to reject a requested size outright is that it doesn't
-    // fit in this platform's `usize` (the type LMDB's `map_size` takes). On
-    // 64-bit targets this is effectively unreachable; on 32-bit it caps at
-    // ~4 GiB. If the size *does* fit but isn't a multiple of the current OS
-    // page size, round up to the next multiple — LMDB requires page-aligned
-    // map sizes, and silently accepting an unaligned value would surface as a
-    // confusing `EINVAL` from `mdb_env_set_mapsize`.
-    let requested = size.as_u64();
-    let map_size = usize::try_from(requested).map_err(|_| LmdbError::InitMmap(size))?;
-
-    let page_size = page_size::get();
-    let aligned = if map_size.is_multiple_of(page_size) {
-        map_size
-    } else {
-        let rounded = map_size.next_multiple_of(page_size);
-        log::warn!(
-            "LMDB map_size {map_size} is not a multiple of the OS page size {page_size}; \
-             rounding up to {rounded}",
-        );
-        rounded
-    };
-
     let mut options = EnvOpenOptions::new();
-    options.map_size(aligned);
+    let map_size = size.as_u64() as usize;
+    if DEFAULT_LMDB_MMAP_SIZE.as_u64() != (map_size as u64) {
+        return Err(LmdbError::InitMmap(size));
+    }
+    options.map_size(map_size);
     // for LmdbBackend's 2 `Database` fields
     options.max_dbs(2);
     Ok(options)
@@ -136,7 +110,10 @@ impl LmdbBackend {
     ///
     ///             If you're using this function, either use unique LMDB locations or drop this
     ///             struct before opening up the LMDB env again.
-    pub(crate) fn new(repo_root: PathBuf, options: EnvOpenOptions) -> Result<Self, LmdbError> {
+    pub(in crate::core::db::merkle_node::lmdb) fn new(
+        repo_root: PathBuf,
+        options: EnvOpenOptions,
+    ) -> Result<Self, LmdbError> {
         log::info!("Config for LMDB backend: {options:?}");
 
         let lmdb_env = {

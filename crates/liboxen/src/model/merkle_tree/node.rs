@@ -73,19 +73,6 @@ impl EMerkleTreeNode {
         )
     }
 
-    /// Borrow the inner typed node as a `&dyn TMerkleTreeNode` so it can be passed
-    /// to APIs (e.g., [`crate::model::merkle_tree::merkle_writer::MerkleWriteSession::create_node`])
-    /// that take a trait object instead of a concrete node type.
-    pub fn as_t_node(&self) -> &dyn TMerkleTreeNode {
-        match self {
-            EMerkleTreeNode::File(file) => file,
-            EMerkleTreeNode::Directory(dir) => dir,
-            EMerkleTreeNode::VNode(vnode) => vnode,
-            EMerkleTreeNode::FileChunk(file_chunk) => file_chunk,
-            EMerkleTreeNode::Commit(commit) => commit,
-        }
-    }
-
     /// Deserialize a Merkle tree node from its on-disk type marker and msgpack-encoded body.
     pub fn from_type_and_bytes(
         dtype: MerkleTreeNodeType,

@@ -96,7 +96,6 @@ opentelemetry = { workspace = true, optional = true }
 opentelemetry-otlp = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }
 os_path = { workspace = true }
-page_size = { workspace = true }
 par-stream = { workspace = true }
 parking_lot = { workspace = true }
 pathdiff = { workspace = true }
@@ -143,7 +142,6 @@ zerocopy = { workspace = true }
 zip = { workspace = true }
 
 [dev-dependencies]
-anyhow = { workspace = true }
 criterion = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
