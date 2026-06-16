@@ -215,9 +215,14 @@ pub async fn get(
         };
         log::debug!("video_thumbnail {video_thumbnail:?}");
 
-        let stream =
-            util::fs::handle_video_thumbnail(Arc::clone(&version_store), hash_str, video_thumbnail)
-                .await?;
+        let tmp_dir = util::fs::oxen_hidden_dir(&repo.path).join("tmp");
+        let stream = util::fs::handle_video_thumbnail(
+            Arc::clone(&version_store),
+            hash_str,
+            video_thumbnail,
+            &tmp_dir,
+        )
+        .await?;
 
         return Ok(file_stream_response("image/jpeg", &last_commit_id, None).streaming(stream));
     }

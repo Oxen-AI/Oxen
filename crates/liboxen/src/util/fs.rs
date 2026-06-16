@@ -1825,6 +1825,7 @@ async fn generate_video_thumbnail_version_store(
     video_hash: &str,
     derived_filename: &str,
     thumbnail: VideoThumbnail,
+    dir: &Path,
 ) -> Result<(), OxenError> {
     log::debug!(
         "generate thumbnail derived_filename {derived_filename} from video hash {video_hash}"
@@ -1836,8 +1837,11 @@ async fn generate_video_thumbnail_version_store(
         return Ok(());
     }
 
-    // Get the video file path from version store
-    let version_path = version_store.get_version_path(video_hash).await?;
+    // The thumbnails crate reads from a filesystem path, so materialize the video file. The guard
+    // `version_file` is held on the async side (its drop runs after the blocking generation below)
+    // so a materialized S3 temp outlives the read; the closure takes a plain path copy.
+    let version_file = version_store.materialize(video_hash, dir).await?;
+    let version_path = version_file.to_pathbuf();
 
     // Determine output dimensions
     // The thumbnails crate maintains aspect ratio, so we use max dimensions
@@ -1887,10 +1891,11 @@ pub async fn handle_video_thumbnail(
     version_store: Arc<dyn VersionStore>,
     file_hash: String,
     video_thumbnail: VideoThumbnail,
+    dir: &Path,
 ) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>, OxenError> {
     #[cfg(not(feature = "ffmpeg"))]
     {
-        let _ = (version_store, file_hash, video_thumbnail);
+        let _ = (version_store, file_hash, video_thumbnail, dir);
         Err(OxenError::ThumbnailingNotEnabled)
     }
 
@@ -1908,6 +1913,7 @@ pub async fn handle_video_thumbnail(
             &file_hash,
             &derived_filename,
             video_thumbnail,
+            dir,
         )
         .await?;
 
