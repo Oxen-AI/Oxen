@@ -589,8 +589,7 @@ mod tests {
     //
     // Retained for reference during review; never called at runtime.
     // These functions preserve the existing Merkle tree operations (both reading, writing,
-    // and tree packing & unpacking) **before** the refactor to use these MerkleStore and
-    // MerkleTransport traits.
+    // and tree packing & unpacking) **before** the refactor to use the MerkleStore trait.
     //
     // Tests use these here to ensure that we're backwards compatible and that older clients
     // and servers are inoperable with their newer counterparts.
@@ -1132,7 +1131,7 @@ mod tests {
             assert_eq!(
                 old_tree, new_tree,
                 "on-disk merkle node trees differ between old node_download_request \
-                 unpack and new MerkleUnpacker::unpack"
+                 unpack and new unpack"
             );
 
             // 2. Every installed hash must be readable through the new store.
