@@ -30,7 +30,7 @@ pub fn init_with_version(
     version: MinOxenVersion,
 ) -> Result<LocalRepository, OxenError> {
     let path = path.as_ref();
-    core::v_latest::init_with_version_default(path, version, false)
+    core::v_latest::init_with_version_default(path, version)
 }
 
 pub async fn init_with_storage_config(
@@ -46,7 +46,7 @@ pub async fn init_with_version_and_storage_config(
     storage_config: Option<StorageConfig>,
 ) -> Result<LocalRepository, OxenError> {
     let path = path.as_ref();
-    core::v_latest::init_with_version_and_storage_config(path, version, storage_config, false).await
+    core::v_latest::init_with_version_and_storage_config(path, version, storage_config).await
 }
 
 #[cfg(test)]

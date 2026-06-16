@@ -61,9 +61,6 @@ pub enum OxenError {
     #[error("Repository '{0}' already exists")]
     RepoAlreadyExists(Box<RepoNew>),
 
-    #[error("Oxen repository already exists: {0:?}")]
-    RepoAlreadyExistsAtPath(PathBuf),
-
     /// Error when creating a repository: repo names are restricted.
     #[error("Invalid repository or namespace name '{0}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+")]
     InvalidRepoName(StringError),
@@ -86,12 +83,6 @@ pub enum OxenError {
         err: serde_json::Error,
         body: String,
     },
-
-    // TODO: Once all serialization paths use `*View` instead of `Workspace`, which requires `LocalRepository`
-    //       to implement `Serializable`, then these *StoreNotInitialized errors can be deleted.,
-    /// The [`MerkleStore`] or [`TransportMerkle`] for a [`LocalRepository`] was not initialized before access.
-    #[error("Merkle store not initialized")]
-    MerkleStoreNotInitialized,
 
     /// An error stemming from an invalid [`RepositoryConfig`] value encountered during parsing or saving.
     #[error("{0}")]
@@ -257,6 +248,9 @@ pub enum OxenError {
     //
     // Version Store
     //
+    #[error("Version store not initialized")]
+    VersionStoreNotInitialized,
+
     /// An error uploading a file to the version store
     #[error("{0}")]
     Upload(StringError),

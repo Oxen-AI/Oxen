@@ -269,7 +269,7 @@ pub(crate) fn commit_dir_entries_with_parents(
         }
     }
 
-    let store = repo.merkle_store()?;
+    let store = repo.merkle_store();
     let session = store.begin()?;
     let mut commit_ns = session.create_node(&node, parent_id)?;
     write_commit_entries(
@@ -367,7 +367,7 @@ pub fn commit_dir_entries_new(
         }
     }
 
-    let store = repo.merkle_store()?;
+    let store = repo.merkle_store();
     let session = store.begin()?;
     let mut commit_ns = session.create_node(&node, parent_id)?;
 
@@ -483,7 +483,7 @@ pub fn commit_dir_entries(
         }
     }
 
-    let store = repo.merkle_store()?;
+    let store = repo.merkle_store();
     let session = store.begin()?;
     let mut commit_ns = session.create_node(&node, None)?;
     write_commit_entries(

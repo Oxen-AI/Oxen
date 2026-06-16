@@ -26,9 +26,8 @@ pub fn init_workspace_repo(
     let target_config_file = workspace_hidden_dir.join(constants::REPO_CONFIG_FILENAME);
     util::fs::copy(config_file, &target_config_file)?;
 
-    // Workspace inherits the parent repo's full config — min_version, merkle_store_kind, vfs,
-    // and storage — plus its server S3 opts so a workspace built from an LMDB/VFS/S3 repo lands
-    // on the same backends.
+    // Workspace inherits the parent repo's full config — min_version, vfs, and storage — plus its
+    // server S3 opts so a workspace built from a VFS/S3 repo lands on the same backends.
     let config = RepositoryConfig::from_file(&target_config_file)?;
     LocalRepository::new_with_server_opts(workspace_dir, config, repo.server_s3_opts())
 }
