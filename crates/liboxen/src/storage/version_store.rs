@@ -331,25 +331,6 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         derived_filename: &str,
     ) -> Result<bool, OxenError>;
 
-    /// Get a local filesystem path to a version file.
-    ///
-    /// The returned `LocalFilePath` is guaranteed to be readable on the local
-    /// filesystem. For local backends the path points into the version store
-    /// directly; for remote backends (e.g. S3) the file is downloaded to a
-    /// temporary location that is cleaned up when the `LocalFilePath` is dropped.
-    ///
-    /// **Callers must keep the returned value alive for as long as they use the
-    /// path.**
-    ///
-    /// **The returned file is read-only: callers MUST NOT alter it in any way.** For local stores
-    /// the path points straight at the blob inside the content-addressed version store, so mutating
-    /// it corrupts that blob for every reference to `hash` (its bytes would no longer match its
-    /// content hash). Copy the file elsewhere first if you need a mutable version.
-    ///
-    /// # Arguments
-    /// * `hash` - The content hash of the version file to retrieve
-    async fn get_version_path(&self, hash: &str) -> Result<LocalFilePath, OxenError>;
-
     /// Return a [`VersionLocation`] describing where the version file lives, in a form a
     /// cloud-aware reader can consume without materializing it to a temp file on local disk.
     ///
@@ -357,10 +338,10 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// stores return [`VersionLocation::S3`] carrying the s3:// URL plus the region and endpoint
     /// override the caller needs to configure Polars `CloudOptions` or DuckDB `httpfs`.
     ///
-    /// Prefer this over [`Self::get_version_path`] whenever the consumer has a cloud-aware
-    /// reader available (Polars `scan_*`, DuckDB `read_parquet`, …): `get_version_path`
-    /// materializes the entire version file to a temp file on S3, which is fine for small
-    /// files but OOMs at the multi-GB scale customers care about.
+    /// Prefer this over [`Self::materialize`] whenever the consumer has a cloud-aware
+    /// reader available (Polars `scan_*`, DuckDB `read_parquet`, …): on an S3-backed store
+    /// `materialize` copies the entire version file to local disk, which is fine for small
+    /// files but is needless IO at the multi-GB scale customers care about.
     ///
     /// Also reach for it instead of [`Self::materialize`] when the caller only ever runs against a
     /// local store (e.g. client/CLI paths, which hold no S3 backend): match
@@ -413,9 +394,6 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// the path points straight at the blob inside the content-addressed version store, so mutating
     /// it corrupts that blob for every reference to `hash` (its bytes would no longer match its
     /// content hash). Copy the file elsewhere first if you need a mutable version.
-    ///
-    /// Prefer this over [`Self::get_version_path`], which always writes to the OS temp dir and
-    /// buffers the whole blob in memory.
     ///
     /// # Arguments
     /// * `hash` - The content hash of the version file

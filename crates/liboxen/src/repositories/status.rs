@@ -110,9 +110,8 @@ mod tests {
                 .expect("hello.txt must be in HEAD's tree");
             let blob_hash = head_node.hash.to_string();
             let version_store = repo.version_store();
-            let blob_path = version_store.get_version_path(&blob_hash).await?;
-            assert!(blob_path.exists());
-            util::fs::remove_file(&*blob_path)?;
+            assert!(version_store.version_exists(&blob_hash).await?);
+            version_store.delete_version(&blob_hash).await?;
 
             let status_after = repositories::status(&repo).await?;
             assert!(
