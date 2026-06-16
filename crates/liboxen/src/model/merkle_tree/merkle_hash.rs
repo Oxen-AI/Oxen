@@ -122,7 +122,7 @@ impl HexHash {
     /// Produces a relative path for the 2-level directory structure used to store Merkle nodes.
     /// The first directory name is the first 3 characters of the hex-encoded hash. The second
     /// is the remaining characters.
-    pub(crate) fn node_db_prefix(&self) -> PathBuf {
+    pub fn node_db_prefix(&self) -> PathBuf {
         let hash_str = &self.0;
         const DIR_PREFIX_LEN: usize = 3;
         let dir_prefix = hash_str.chars().take(DIR_PREFIX_LEN).collect::<String>();

@@ -552,7 +552,7 @@ mod tests {
             session.finish()?;
             drop(store);
 
-            let store = repo.merkle_store();
+            let store = FileBackend::new(&repo);
             assert!(
                 store
                     .exists(commit_hash)
@@ -848,7 +848,9 @@ mod tests {
 
             for hash in &installed {
                 assert!(
-                    clone.merkle_store().exists(hash).expect("exists failed"),
+                    FileBackend::new(&clone)
+                        .exists(hash)
+                        .expect("exists failed"),
                     "expected installed hash {hash} to be readable"
                 );
             }
@@ -1037,15 +1039,13 @@ mod tests {
             // Every installed hash must be readable through both stores.
             for h in &new_hashes {
                 assert!(
-                    repo_old
-                        .merkle_store()
+                    FileBackend::new(&repo_old)
                         .exists(h)
                         .expect("old repo exists check failed"),
                     "hash {h} not readable in repo unpacked via legacy unpack_nodes"
                 );
                 assert!(
-                    repo_new
-                        .merkle_store()
+                    FileBackend::new(&repo_new)
                         .exists(h)
                         .expect("new repo exists check failed"),
                     "hash {h} not readable in repo unpacked via trait unpack"
@@ -1138,7 +1138,9 @@ mod tests {
             assert!(!installed.is_empty(), "trait unpack reported no hashes");
             for h in &installed {
                 assert!(
-                    repo_new.merkle_store().exists(h).expect("exists failed"),
+                    FileBackend::new(&repo_new)
+                        .exists(h)
+                        .expect("exists failed"),
                     "hash {h} not readable in repo unpacked via trait unpack"
                 );
             }
@@ -1533,7 +1535,7 @@ mod tests {
     #[test]
     fn test_exists_returns_false_for_missing_hash() -> Result<(), OxenError> {
         test::run_empty_local_repo_test(|repo| {
-            let store = repo.merkle_store();
+            let store = FileBackend::new(&repo);
             let missing = MerkleHash::new(0xDEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF_u128);
             assert!(
                 !store.exists(&missing).expect("exists must not error"),
@@ -1547,7 +1549,7 @@ mod tests {
     #[test]
     fn test_get_node_returns_none_for_missing_hash() -> Result<(), OxenError> {
         test::run_empty_local_repo_test(|repo| {
-            let store = repo.merkle_store();
+            let store = FileBackend::new(&repo);
             let missing = MerkleHash::new(0xDEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF_u128);
             assert!(
                 store
@@ -1569,7 +1571,7 @@ mod tests {
             let commit = CommitNode::default();
             let commit_hash = *commit.hash();
             {
-                let store = repo.merkle_store();
+                let store = FileBackend::new(&repo);
                 let session = store.begin().expect("begin failed");
                 let ns = session
                     .create_node(&commit, None)
@@ -1577,7 +1579,7 @@ mod tests {
                 ns.finish().expect("finish node session failed");
                 session.finish().expect("finish session failed");
             }
-            let store = repo.merkle_store();
+            let store = FileBackend::new(&repo);
             let children = store
                 .get_children(&commit_hash)
                 .expect("get_children must not error");
@@ -1595,7 +1597,7 @@ mod tests {
     #[test]
     fn test_writer_session_with_no_nodes() -> Result<(), OxenError> {
         test::run_empty_local_repo_test(|repo| {
-            let store = repo.merkle_store();
+            let store = FileBackend::new(&repo);
             let session = store.begin().expect("begin failed");
             session
                 .finish()
@@ -1742,7 +1744,7 @@ mod tests {
             );
             for h in &installed {
                 assert!(
-                    clone.merkle_store().exists(h).expect("exists failed"),
+                    FileBackend::new(&clone).exists(h).expect("exists failed"),
                     "hash {h} not readable in vfs-cloned repo"
                 );
             }

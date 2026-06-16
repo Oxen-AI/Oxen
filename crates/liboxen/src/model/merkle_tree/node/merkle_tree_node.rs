@@ -6,8 +6,8 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use super::*;
+use crate::core::db::merkle_node::MerkleNodeDB;
 use crate::error::OxenError;
-use crate::model::merkle_tree::merkle_reader::MerkleEntry;
 use crate::model::{LocalRepository, MerkleHash, MerkleTreeNodeType};
 
 use serde::{Deserialize, Serialize};
@@ -41,13 +41,14 @@ impl MerkleTreeNode {
 
     /// Private implementation that loads from disk without caching
     fn from_hash_uncached(repo: &LocalRepository, hash: &MerkleHash) -> Result<Self, OxenError> {
-        let MerkleEntry { node, parent_id } = repo
-            .merkle_store()
-            .get_node(hash)?
-            .ok_or_else(|| OxenError::MerkleNodeNotFound(hash.to_hex_hash()))?;
+        if !MerkleNodeDB::exists(&repo.path, hash) {
+            return Err(OxenError::MerkleNodeNotFound(hash.to_hex_hash()));
+        }
+        let node_db = MerkleNodeDB::open_read_only(&repo.path, hash)?;
+        let parent_id = node_db.parent_id;
         Ok(MerkleTreeNode {
             hash: *hash,
-            node,
+            node: node_db.node()?,
             parent_id,
             children: Vec::new(),
         })
@@ -76,15 +77,15 @@ impl MerkleTreeNode {
         repo: &LocalRepository,
         hash: &MerkleHash,
     ) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, OxenError> {
-        let store = repo.merkle_store();
-        // We don't return an error here because there are some situations where we won't have
-        // all of the node files. For example, when working in a subtree clone.
-        // However, parse/IO errors from an existing node DO still propagate.
-        if !store.exists(hash)? {
-            log::error!("[assuming no children] no child node db for {hash}");
+        // We don't return an error here because there are some situations where we won't have all
+        // the node files. For example, when working in a subtree clone. However, parse/IO errors
+        // from an existing node DO still propagate.
+        if !MerkleNodeDB::exists(&repo.path, hash) {
+            log::warn!("no child node db: {hash:?}");
             return Ok(Vec::new());
         }
-        repo.merkle_store().get_children(hash)
+        let mut node_db = MerkleNodeDB::open_read_only(&repo.path, hash)?;
+        Ok(node_db.map()?)
     }
 
     /// Check if the node is a leaf node (i.e. it has no children)

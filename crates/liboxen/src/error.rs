@@ -247,10 +247,6 @@ pub enum OxenError {
 
     //
     // Version Store
-    //
-    #[error("Version store not initialized")]
-    VersionStoreNotInitialized,
-
     /// An error uploading a file to the version store
     #[error("{0}")]
     Upload(StringError),
@@ -321,12 +317,6 @@ pub enum OxenError {
 
     #[error("No such commit, dir, or vnode Merkle tree node with hash (hex): {0}")]
     MerkleNodeNotFound(HexHash),
-
-    #[error(
-        "Unsupported node type adding to a child file. Only accept Commit, Directory, File, or VNode. Found: {0}"
-    )]
-    /// Contains the name of the incompatible type as reported by [`std::any::type_name_of_val`].
-    DisallowedNodeWrite(&'static str),
 
     //
     // Schema
@@ -798,6 +788,7 @@ impl OxenError {
                 | OxenError::ParsedResourceNotFound(_)
                 | OxenError::WorkspaceNotFound(_)
                 | OxenError::QueryableWorkspaceNotFound
+                | OxenError::MerkleNodeNotFound(_)
         )
     }
 
