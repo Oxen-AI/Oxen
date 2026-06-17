@@ -76,12 +76,6 @@ pub trait MerklePacker: Send + Sync {
     /// whole-tree pack on `main`. There is no legacy whole-tree variant, so this
     /// method does not accept [`PackOptions`].
     fn pack_all(&self, out: &mut dyn Write) -> Result<(), OxenError>;
-
-    /// Provide the total byte count necessary to store the set of Merkle hashes.
-    /// Used as an upper bound when packing nodes using [`Self::pack_nodes`],
-    /// sending them between client and server. This bound is used in the user-facing
-    /// progress bar so there's a known and meaningful ETA.
-    fn raw_byte_count(&self, hashes: &HashSet<MerkleHash>) -> u64;
 }
 
 /// Consume transport bytes and install the nodes they contain into the backend.

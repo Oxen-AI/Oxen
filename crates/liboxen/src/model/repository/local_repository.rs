@@ -4,7 +4,7 @@ use crate::constants::{self, DEFAULT_VNODE_SIZE};
 use crate::core::db::merkle_node::file_backend::FileBackend;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::merkle_tree::TransportableMerkleStore;
+use crate::model::merkle_tree::MerkleStore;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
 use crate::storage::{S3Opts, StorageConfig, VersionStore, create_version_store};
@@ -95,7 +95,7 @@ impl LocalRepository {
     // NOTE: When new backends (e.g. LMDB) are added, branch on the appropriate config
     // here and return a `Box::new(<that new backend>)`.
     #[inline]
-    fn load_merkle_store(repo_path: PathBuf, _is_vfs: bool) -> Box<dyn TransportableMerkleStore> {
+    fn load_merkle_store(repo_path: PathBuf, _is_vfs: bool) -> Box<dyn MerkleStore> {
         // TODO: Add reading config to select Merkle store implementation that
         //       the repository uses.
         //       => Right now, the only option is the FileBackend.
@@ -110,7 +110,7 @@ impl LocalRepository {
     /// Returns a boxed trait object so the trait surface stays simple and dyn-dispatch
     /// handles backend selection. Callers use it purely through the trait surface
     /// (read, write); backend selection is an implementation detail of this method.
-    pub fn merkle_store(&self) -> Box<dyn TransportableMerkleStore> {
+    pub fn merkle_store(&self) -> Box<dyn MerkleStore> {
         Self::load_merkle_store(self.path.clone(), self.is_vfs())
     }
 
