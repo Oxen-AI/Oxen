@@ -10,11 +10,12 @@ use crate::util;
 pub fn init(path: &Path) -> Result<LocalRepository, OxenError> {
     let hidden_dir = util::fs::oxen_hidden_dir(path);
     if hidden_dir.exists() {
-        return Err(OxenError::RepoAlreadyExistsAtPath(path.to_path_buf()));
+        let err = format!("Oxen repository already exists: {path:?}");
+        return Err(OxenError::basic_str(err));
     }
 
     // Cleanup the .oxen dir if init fails
-    match init_with_version_default(path, MinOxenVersion::LATEST, false) {
+    match init_with_version_default(path, MinOxenVersion::LATEST) {
         Ok(result) => Ok(result),
         Err(error) => {
             util::fs::remove_dir_all(hidden_dir)?;
@@ -27,18 +28,17 @@ pub fn init(path: &Path) -> Result<LocalRepository, OxenError> {
 pub fn init_with_version_default(
     path: &Path,
     version: MinOxenVersion,
-    is_vfs: bool,
 ) -> Result<LocalRepository, OxenError> {
     let hidden_dir = util::fs::oxen_hidden_dir(path);
 
     util::fs::create_dir_all(hidden_dir)?;
     if util::fs::config_filepath(path).try_exists()? {
-        return Err(OxenError::RepoAlreadyExistsAtPath(path.to_path_buf()));
+        let err = format!("Oxen repository already exists: {path:?}");
+        return Err(OxenError::basic_str(err));
     }
 
     let config = RepositoryConfig {
         min_version: Some(version.to_string()),
-        vfs: if is_vfs { Some(true) } else { None },
         ..Default::default()
     };
     let repo = LocalRepository::new(path, config)?;
@@ -51,19 +51,18 @@ pub async fn init_with_version_and_storage_config(
     path: &Path,
     version: MinOxenVersion,
     storage_config: Option<StorageConfig>,
-    is_vfs: bool,
 ) -> Result<LocalRepository, OxenError> {
     let hidden_dir = util::fs::oxen_hidden_dir(path);
 
     util::fs::create_dir_all(hidden_dir)?;
     if util::fs::config_filepath(path).try_exists()? {
-        return Err(OxenError::RepoAlreadyExistsAtPath(path.to_path_buf()));
+        let err = format!("Oxen repository already exists: {path:?}");
+        return Err(OxenError::basic_str(err));
     }
 
     let config = RepositoryConfig {
         min_version: Some(version.to_string()),
         storage: storage_config,
-        vfs: if is_vfs { Some(true) } else { None },
         ..Default::default()
     };
     let repo = LocalRepository::new(path, config)?;
