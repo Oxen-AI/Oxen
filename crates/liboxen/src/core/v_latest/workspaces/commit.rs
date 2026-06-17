@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex as StdMutex};
+use std::sync::{Arc, LazyLock, Mutex as StdMutex, PoisonError};
 use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio::sync::Mutex as TokioMutex;
@@ -27,27 +27,22 @@ use crate::view::merge::{MergeConflictFile, Mergeable};
 use filetime::FileTime;
 use indicatif::ProgressBar;
 
-// Serializes commits per workspace. A workspace commit reads the staged db,
-// exports indexed data frames into the working dir, writes the commit, then
-// wipes the staged db — none of it under a lock. Two concurrent commits of
-// the same workspace can therefore tear each other's data-frame export
-// mid-read or wipe staged entries out from under the other commit. Keyed by
-// the workspace repo path (unique per workspace); entries are dropped once no
-// commit holds or waits on the lock.
+// Serializes commits of the same workspace so two concurrent commits can't
+// tear each other's data-frame export mid-read or wipe the shared staged db.
+// Keyed by the workspace repo path; in-process, and entries are dropped once
+// no commit holds or waits on the lock.
 static COMMIT_LOCKS: LazyLock<StdMutex<HashMap<PathBuf, Arc<TokioMutex<()>>>>> =
     LazyLock::new(|| StdMutex::new(HashMap::new()));
 
 fn commit_lock_for(key: &Path) -> Arc<TokioMutex<()>> {
-    let mut locks = COMMIT_LOCKS
-        .lock()
-        .expect("workspace commit lock registry poisoned");
+    // Poisoning only means a holder panicked; the map of Arc handles is still
+    // sound, so recover the guard.
+    let mut locks = COMMIT_LOCKS.lock().unwrap_or_else(PoisonError::into_inner);
     locks.entry(key.to_path_buf()).or_default().clone()
 }
 
 fn cleanup_commit_lock(key: &Path) {
-    let mut locks = COMMIT_LOCKS
-        .lock()
-        .expect("workspace commit lock registry poisoned");
+    let mut locks = COMMIT_LOCKS.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(lock) = locks.get(key) {
         // The registry's reference is the only one left — no holder, no
         // waiter — so the entry can be dropped. A late-arriving committer
@@ -334,6 +329,7 @@ async fn export_tabular_data_frames(
                             workspace,
                             &exported_path,
                             dir_entry.status,
+                            file_node.data_type().clone(),
                         )
                         .await?;
 
@@ -367,6 +363,7 @@ async fn compute_staged_merkle_tree_node(
     workspace: &Workspace,
     path: &PathBuf,
     status: StagedEntryStatus,
+    data_type: EntryDataType,
 ) -> Result<StagedMerkleTreeNode, OxenError> {
     // This logic is copied from add.rs but add has some optimizations that make it hard to be reused here
     let metadata = util::fs::metadata(path)?;
@@ -375,9 +372,9 @@ async fn compute_staged_merkle_tree_node(
     let num_bytes = metadata.len();
     let hash = MerkleHash::new(hash);
 
-    // Get the data type of the file
+    // Use the committed node's data type for the guard below: an empty export
+    // can mime-detect as non-tabular.
     let mime_type = util::fs::file_mime_type(path);
-    let data_type = util::fs::datatype_from_mimetype(path, &mime_type);
     log::debug!("compute_staged_merkle_tree_node path: {path:?}");
     let mut metadata = repositories::metadata::get_file_metadata(path, &data_type)?;
     log::debug!("compute_staged_merkle_tree_node metadata: {metadata:?}");
@@ -389,10 +386,7 @@ async fn compute_staged_merkle_tree_node(
     // — an empty jsonl/csv has no schema to infer). Failing the commit keeps
     // the last good version readable.
     if data_type == EntryDataType::Tabular && metadata.is_none() {
-        return Err(OxenError::basic_str(format!(
-            "Cannot commit data frame {path:?}: the exported file could not be parsed as tabular data \
-             (it may be empty after row deletions). Refusing to commit a tabular file without metadata."
-        )));
+        return Err(OxenError::TabularExportMissingMetadata(path.clone()));
     }
 
     // Here we give priority to the staged schema, as it can contained metadata that was changed during the
