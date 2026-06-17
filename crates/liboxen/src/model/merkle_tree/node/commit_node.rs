@@ -9,7 +9,7 @@ use crate::core::v_old::v0_19_0::model::merkle_tree::node::commit_node::CommitNo
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository};
-use crate::model::{MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType};
+use crate::model::{MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType, TMerkleTreeNode};
 
 pub trait TCommitNode {
     fn node_type(&self) -> &MerkleTreeNodeType;
@@ -201,6 +201,8 @@ impl MerkleTreeNodeIdType for CommitNode {
         *self.node().hash()
     }
 }
+
+impl TMerkleTreeNode for CommitNode {}
 
 /// Debug is used for verbose multi-line output with println!("{:?}", node)
 impl fmt::Debug for CommitNode {

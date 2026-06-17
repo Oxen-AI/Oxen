@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType};
+use crate::model::{MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType, TMerkleTreeNode};
 
 use std::fmt;
 
@@ -41,6 +41,8 @@ impl MerkleTreeNodeIdType for FileChunkNode {
         self.hash
     }
 }
+
+impl TMerkleTreeNode for FileChunkNode {}
 
 /// Debug is used for verbose multi-line output with println!("{:?}", node)
 impl fmt::Debug for FileChunkNode {

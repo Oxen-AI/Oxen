@@ -7,6 +7,7 @@ use crate::model::merkle_tree::node::file_node_types::{FileChunkType, FileStorag
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{
     EntryDataType, LocalRepository, MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType,
+    TMerkleTreeNode,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -257,6 +258,8 @@ impl Hash for FileNode {
         self.hash().hash(state);
     }
 }
+
+impl TMerkleTreeNode for FileNode {}
 
 /// Debug is used for verbose multi-line output with println!("{:?}", node)
 impl fmt::Debug for FileNode {

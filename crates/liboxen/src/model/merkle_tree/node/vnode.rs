@@ -9,7 +9,9 @@ use crate::core::v_latest::model::merkle_tree::node::vnode::VNodeData as VNodeIm
 use crate::core::v_old::v0_19_0::model::merkle_tree::node::vnode::VNodeData as VNodeImplV0_19_0;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::{LocalRepository, MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType};
+use crate::model::{
+    LocalRepository, MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType, TMerkleTreeNode,
+};
 
 pub trait TVNode {
     fn node_type(&self) -> &MerkleTreeNodeType;
@@ -151,3 +153,5 @@ impl fmt::Display for VNode {
         write!(f, "")
     }
 }
+
+impl TMerkleTreeNode for VNode {}

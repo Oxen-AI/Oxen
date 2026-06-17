@@ -298,7 +298,7 @@ impl MerkleNodeDB {
 
     pub(crate) fn open_read_write(
         repo_path: &Path,
-        node: &dyn TMerkleTreeNode,
+        node: &impl TMerkleTreeNode,
         parent_id: Option<MerkleHash>,
     ) -> Result<Self, MerkleDbError> {
         let path = node_db_path(repo_path, &node.hash());
@@ -392,7 +392,7 @@ impl MerkleNodeDB {
     /// WARNING: Sets the internal dtype, node_id, parent_id of `self` to the values from `node`.
     fn write_node(
         &mut self,
-        node: &dyn TMerkleTreeNode,
+        node: &impl TMerkleTreeNode,
         parent_id: Option<MerkleHash>,
     ) -> Result<(), MerkleDbError> {
         if self.read_only {
@@ -420,7 +420,7 @@ impl MerkleNodeDB {
         }
 
         // Write data length
-        let buf = node.to_msgpack_bytes()?;
+        let buf = rmp_serde::to_vec(node)?;
         let data_len = buf.len() as u32;
         node_file.write_all(&data_len.to_le_bytes())?;
         log::trace!("write_node Wrote data length {}", data_len);
@@ -440,7 +440,7 @@ impl MerkleNodeDB {
     }
 
     /// Writes the content of a node's child as the child would appear in the `children` file.
-    pub(crate) fn add_child(&mut self, item: &dyn TMerkleTreeNode) -> Result<(), MerkleDbError> {
+    pub(crate) fn add_child(&mut self, item: &impl TMerkleTreeNode) -> Result<(), MerkleDbError> {
         if self.read_only {
             return Err(MerkleDbError::ReadOnly);
         }
@@ -452,7 +452,7 @@ impl MerkleNodeDB {
             return Err(MerkleDbError::WriteBeforeOpen);
         };
 
-        let buf = item.to_msgpack_bytes()?;
+        let buf = rmp_serde::to_vec(item)?;
         let data_len = buf.len() as u64;
         // log::debug!("--add_child-- node_file {:?}", node_file);
         // log::debug!("--add_child-- dtype {:?}", item.dtype());
