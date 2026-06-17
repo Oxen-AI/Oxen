@@ -2160,9 +2160,9 @@ mod tests {
     /// open each per-node DB read-only via the `MerkleStore` API, and capture
     /// the **deserialized** structured contents:
     ///
-    /// - `parent_id: Option<MerkleHash>` => from the per-node `node` file's
+    /// - `parent_id: Option<MerkleHash>`    — from the per-node `node` file's
     ///   fixed-size header (16 raw bytes; deterministic).
-    /// - `node: EMerkleTreeNode` => msgpack-decoded from the data
+    /// - `node: EMerkleTreeNode`            — msgpack-decoded from the data
     ///   section of the per-node `node` file. Decoding undoes the HashMap
     ///   key-order non-determinism described in the module-level comment.
     /// - `children: Vec<(MerkleHash, EMerkleTreeNode)>` — each child msgpack-
@@ -2185,7 +2185,6 @@ mod tests {
     /// `HashMap` on every call, so even running the previous-node-writing
     /// code twice can produce non-identical on-disk bytes for `DirNode`
     /// bodies.
-    ///
     /// The merkle hash is computed from raw fields (not msgpack), so node
     /// hashes are stable, but the byte image of the msgpack body is not.
     ///
@@ -2196,7 +2195,7 @@ mod tests {
     /// equivalence observable without changing the production map-typed
     /// fields to a deterministic container (e.g. `BTreeMap`) or to a
     /// fixed-seeded `BuildHasher`.
-    fn snapshot_tree_nodes_file_backend(
+    fn snapshot_tree_nodes(
         repo: &LocalRepository,
     ) -> Result<BTreeMap<MerkleHash, NodeSnapshot>, OxenError> {
         let nodes_dir = util::fs::oxen_hidden_dir(&repo.path)
@@ -2364,7 +2363,7 @@ mod tests {
                 commit_ns.finish()?;
                 session.finish()?;
             }
-            let snap_previous = snapshot_tree_nodes_file_backend(&repo)?;
+            let snap_previous = snapshot_tree_nodes(&repo)?;
             wipe_tree_nodes(&repo)?;
 
             // ── Run 2: updated node writing (production) ──────────────────────
@@ -2386,7 +2385,7 @@ mod tests {
                 commit_ns.finish()?;
                 session.finish()?;
             }
-            let snap_updated = snapshot_tree_nodes_file_backend(&repo)?;
+            let snap_updated = snapshot_tree_nodes(&repo)?;
 
             // ── Compare ────────────────────────────────────────────────────────
             //

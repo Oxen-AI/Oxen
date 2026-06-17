@@ -18,7 +18,6 @@ use tokio::task::JoinError;
 use crate::api::requests::RepoNew;
 use crate::command::migrate::Direction;
 use crate::config::repository_config::RepoConfigError;
-use crate::core::db::merkle_node::lmdb::LmdbError;
 use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
 use crate::model::MerkleHash;
 use crate::model::ParsedResource;
@@ -334,9 +333,6 @@ pub enum OxenError {
     )]
     /// Contains the name of the incompatible type as reported by [`std::any::type_name_of_val`].
     DisallowedNodeWrite(&'static str),
-
-    #[error("{0}")]
-    Lmdb(#[from] LmdbError),
 
     //
     // Schema
