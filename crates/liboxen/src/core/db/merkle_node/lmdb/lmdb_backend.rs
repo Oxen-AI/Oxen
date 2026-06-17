@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use bytesize::ByteSize;
 use heed::byteorder::LE;
 use heed::types::{Bytes, DecodeIgnore, U128};
 use heed::{AnyTls, Database, Env, EnvOpenOptions, WithTls};
@@ -8,8 +7,8 @@ use heed::{AnyTls, Database, Env, EnvOpenOptions, WithTls};
 use crate::constants::OXEN_HIDDEN_DIR;
 use crate::core::db::merkle_node::lmdb::LmdbError;
 use crate::core::db::merkle_node::lmdb::value_structs::{LmdbLink, LmdbNode};
+use crate::error::OxenError;
 use crate::model::MerkleHash;
-use crate::util;
 
 /// Keys are merkle hashes, which are `u128` values.
 /// MUST USE LITTLE ENDIAN (LE) so the byte layout matches
@@ -27,12 +26,11 @@ const DB_LINKS: &str = "merkle_links";
 /// Merkle tree node storage that is backed by LMDB.
 ///
 /// NOTE: DO NOT USE ON A VIRTUAL FILE SYSTEM !!
-///       DO NOT OPEN AN MORE THAN ONE [`LmdbBackend`] PER REPOSITORY IN A PROCESS.
 pub struct LmdbBackend {
     /// The filesystem location of the local repository.
     pub(super) repo_root: PathBuf,
     /// The LMDB environment that contains the [`Database`] fields.
-    pub(super) lmdb_env: Env<WithTls>,
+    pub(super) lmdb_env: Env<WithTls>, // note: WithTls makes this !Send. Use AnyTls if need to send between threads.
 
     /// Stores every kind of merkle tree node: any concrete [`MerkleTreeNode`].
     /// This includes files nodes! Note that there is no other data but the Merkle
@@ -53,74 +51,18 @@ pub struct LmdbBackend {
     pub(super) merkle_links: Database<KeyLmdb, ValueLmdb>,
 }
 
-// on every platform.
-const WORST_CASE_PAGE_SIZE_BYTES: u64 = 64 * 1024;
-const _: () = assert!(
-    ByteSize::gib(1)
-        .as_u64()
-        .is_multiple_of(WORST_CASE_PAGE_SIZE_BYTES),
-    "DEFAULT_LMDB_MMAP_SIZE must be aligned to the worst-case OS page size \
-     (64 KiB); change it to a multiple of 65536 if you adjust the value."
-);
-
-// 1 GiB ceiling — large enough for typical Merkle trees,
-// small enough to keep sparse-file disk usage in check. Can
-// be revisited if/when we have repos that exceed it.
-//
-// LMDB requires `map_size` to be a multiple of the OS page size. The OS
-// page size is a runtime value — there's no stable Rust API exposing it
-// in `const` — so we can't dynamically pick a "next multiple of page
-// size" here. Instead we hardcode 1 GiB (= 2^30 bytes), and `const-assert`
-// it's a multiple of the worst-case page size any real OS uses (64 KiB,
-// = 2^16, on PPC64; macOS arm64 is 16 KiB; x86_64 Linux/Windows is 4 KiB).
-// 2^30 is divisible by 2^16, so it's also divisible by 2^14 and 2^12,
-// which covers every real platform.
-//
-// Must use `gib` (binary, 2^30 = 1_073_741_824) and not `gb` (decimal
-// 10^9 = 1_000_000_000): 10^9 is not a power of two and is not a
-// multiple of any common page size, so it would fail LMDB validation
-pub(crate) const DEFAULT_LMDB_MMAP_SIZE: ByteSize = ByteSize::gib(1);
-
-pub(crate) fn lmdb_backend_options(size: ByteSize) -> Result<EnvOpenOptions, LmdbError> {
-    let mut options = EnvOpenOptions::new();
-    let map_size = size.as_u64() as usize;
-    if DEFAULT_LMDB_MMAP_SIZE.as_u64() != (map_size as u64) {
-        return Err(LmdbError::InitMmap(size));
-    }
-    options.map_size(map_size);
-    // for LmdbBackend's 2 `Database` fields
-    options.max_dbs(2);
-    Ok(options)
-}
-
 impl LmdbBackend {
-    /// Constructs a new LMDB environment and uses it as a Merkle tree node store.
-    ///
-    /// Saves the LMDB file to under the `.oxen/` directory of the supplied repository root
-    /// (`repo_root`). LMDB internally mmaps this file. This [`LmdbBackend`] struct holds on
-    /// to a mmap handle. This handle is dropped when this struct is dropped.
-    ///
-    /// **NOT THE PUBLIC ENTRY POINT.** All in-crate construction must go through
-    /// [`crate::core::db::merkle_node::lmdb::cache::get_or_open`], which serializes
-    /// opens process-wide and shares one `Arc<LmdbBackend>` across overlapping callers.
-    ///
-    /// **SAFETY**: LMDB rejects opening the same env directory twice in one process. The
-    ///             [`lmdb::cache::get_or_open`] function caches weak references to [`LmdbBackend`]
-    ///             instances and their LMDB environment.
-    ///
-    ///             If you're using this function, either use unique LMDB locations or drop this
-    ///             struct before opening up the LMDB env again.
-    pub(in crate::core::db::merkle_node::lmdb) fn new(
-        repo_root: PathBuf,
-        options: EnvOpenOptions,
-    ) -> Result<Self, LmdbError> {
-        log::info!("Config for LMDB backend: {options:?}");
+    pub fn new(repo_root: PathBuf, options: EnvOpenOptions) -> Result<Self, OxenError> {
+        let options = {
+            let mut options = options;
+            options.max_dbs(2);
+            log::debug!("Config for LMDB backend: {options:?}");
+            options
+        };
 
         let lmdb_env = {
             let db_location = lmdb_dir_location(&repo_root);
-            util::fs::create_dir_all(&db_location).map_err(|e| LmdbError::InitDir(Box::new(e)))?;
-
-            log::info!("Opening LMDB backend at: {}", db_location.display());
+            log::debug!("Opening LMDB backend at: {}", db_location.display());
             // SAFETY: LMDB uses a memory mapped file. If this file is modified in or out of process,
             //         it can cause undefined behavior. There is nothing else in the Oxen codebase that
             //         modifies this mmap'd file. Nothing else access `db_location` except for this code.
@@ -130,6 +72,7 @@ impl LmdbBackend {
             unsafe { options.open(db_location).map_err(LmdbError::Access)? }
         };
 
+        // create these two key-value tables
         let mut wtxn = lmdb_env.write_txn().map_err(LmdbError::Access)?;
         let merkle_tree_nodes = lmdb_env
             .create_database::<KeyLmdb, ValueLmdb>(&mut wtxn, Some(DB_NODES))
@@ -138,6 +81,9 @@ impl LmdbBackend {
             .create_database::<KeyLmdb, ValueLmdb>(&mut wtxn, Some(DB_LINKS))
             .map_err(LmdbError::Write)?;
         wtxn.commit().map_err(LmdbError::Write)?;
+        log::debug!(
+            "Ensure tables '{DB_NODES}' (Merkle nodes) and '{DB_LINKS}' (tree connections) exist"
+        );
 
         Ok(Self {
             repo_root,
@@ -260,26 +206,6 @@ impl LmdbBackend {
         };
         Ok(Some(LmdbLink::decode(bytes)?))
     }
-
-    // /// Flushes LMDB to disk and closes the underlying LMDB environment for this process.
-    // pub fn close(self) -> Result<(), heed::Error> {
-    //     log::info!("Preparing to close LMDB");
-    //     // drop everything but the LMDB env: we prepare that for closing and wait on it instead
-    //     let LmdbBackend { repo_root:_ , lmdb_env, merkle_tree_nodes: _, merkle_links: _ } = self;
-    //     lmdb_env.force_sync()?;
-    //     let signal_event = lmdb_env.prepare_for_closing();
-    //     log::info!("Waiting for the LMDB environment to close");
-    //     signal_event.wait();
-    //     Ok(())
-    // }
-}
-
-impl Drop for LmdbBackend {
-    fn drop(&mut self) {
-        if let Err(e) = self.lmdb_env.force_sync() {
-            log::error!("Could not flush LMDB state to disk! Error: {e}");
-        }
-    }
 }
 
 /// The name of the LMDB directory as it exists in the repository's `.oxen/` hidden directory.
@@ -287,11 +213,6 @@ impl Drop for LmdbBackend {
 const OXEN_LMDB_MERKLE_DIR: &str = "lmdb_merkle_tree_store";
 
 /// The complete filepath to the LMDB file for the given repository.
-///
-/// `pub(crate)` because test modules outside the `lmdb` namespace (e.g.
-/// `repositories::tests`, `local_repository::tests`) consult it to assert
-/// that the env directory was created on disk. The actual production
-/// users are inside `lmdb/` and would only need `pub(super)`.
 pub(crate) fn lmdb_dir_location(repo_root: &Path) -> PathBuf {
     repo_root.join(OXEN_HIDDEN_DIR).join(OXEN_LMDB_MERKLE_DIR)
 }
