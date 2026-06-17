@@ -55,7 +55,6 @@ impl AccessKeyManager {
             // Just generating a random UUID for now
             let secret = uuid::Uuid::new_v4();
             let key = hex::encode(secret.as_bytes());
-            log::debug!("Got secret key: {key}");
             AtomicFile::new(&secret_file).write(key.as_bytes())?;
         }
 

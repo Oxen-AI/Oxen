@@ -4,7 +4,7 @@ use std::str::{self, Utf8Error};
 use std::sync::{Arc, LazyLock};
 
 use lru::LruCache;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use rocksdb::{DB, IteratorMode};
 
 use crate::constants::{OXEN_HIDDEN_DIR, WORKSPACE_NAME_INDEX_DIR, WORKSPACES_DIR};
@@ -16,8 +16,10 @@ use crate::util;
 
 const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 
-// Static cache of DB instances with LRU eviction
-static DB_INSTANCES: LazyLock<Mutex<LruCache<PathBuf, Arc<DB>>>> =
+// Static cache of DB instances with LRU eviction. The inner `RwLock<DB>` lets
+// compound read-modify-write sequences (e.g. `put_if_absent`) run under exclusive
+// access. Never hold the guard across `.await`.
+static DB_INSTANCES: LazyLock<Mutex<LruCache<PathBuf, Arc<RwLock<DB>>>>> =
     LazyLock::new(|| Mutex::new(LruCache::new(DB_CACHE_SIZE)));
 
 #[derive(Debug, thiserror::Error)]
@@ -86,7 +88,7 @@ pub fn remove_from_cache_with_children(repository_path: &Path) {
 }
 
 pub struct WorkspaceNameIndex {
-    db: Arc<DB>,
+    db: Arc<RwLock<DB>>,
 }
 
 /// Returns a [`WorkspaceNameIndex`] handle for the given repository.
@@ -107,7 +109,7 @@ pub fn get_index(repo: &LocalRepository) -> Result<WorkspaceNameIndex, WsError> 
 
     let opts = db::key_val::opts::default();
     let db = DB::open(&opts, dunce::simplified(&dir)).map_err(WsError::OpenError)?;
-    let arc_db = Arc::new(db);
+    let arc_db = Arc::new(RwLock::new(db));
     instances.put(dir, arc_db.clone());
     Ok(WorkspaceNameIndex { db: arc_db })
 }
@@ -115,7 +117,8 @@ pub fn get_index(repo: &LocalRepository) -> Result<WorkspaceNameIndex, WsError> 
 impl WorkspaceNameIndex {
     /// Get workspace ID by name. O(1).
     pub fn get_id_by_name(&self, name: &str) -> Result<Option<String>, WsError> {
-        match self.db.get(name.as_bytes()) {
+        let db = self.db.read();
+        match db.get(name.as_bytes()) {
             Ok(Some(value)) => Ok(Some(String::from(
                 str::from_utf8(&value).map_err(|e| WsError::NonUtf8Key(name.to_string(), e))?,
             ))),
@@ -126,7 +129,8 @@ impl WorkspaceNameIndex {
 
     /// Check if a name exists in the index. O(1).
     pub fn has_name(&self, name: &str) -> Result<bool, OxenError> {
-        match self.db.get_pinned(name.as_bytes()) {
+        let db = self.db.read();
+        match db.get_pinned(name.as_bytes()) {
             Ok(Some(_)) => Ok(true),
             Ok(None) => Ok(false),
             Err(err) => Err(OxenError::basic_str(format!(
@@ -137,42 +141,48 @@ impl WorkspaceNameIndex {
 
     /// Insert a name -> workspace_id mapping.
     pub fn put(&self, name: &str, workspace_id: &str) -> Result<(), WsError> {
-        self.db
-            .put(name.as_bytes(), workspace_id.as_bytes())
-            .map_err(|e| WsError::PutError(name.to_string(), e))?;
-        Ok(())
+        let db = self.db.write();
+        Self::put_locked(&db, name, workspace_id)
+    }
+
+    /// Insert the (name, workspace_id) mapping if `name` is not already present.
+    /// Returns `Ok(None)` on success, or `Ok(Some(existing_id))` if `name` was
+    /// already taken. The get-then-put runs under a single write lock so two
+    /// concurrent callers cannot both observe an absent name and both insert.
+    pub fn put_if_absent(&self, name: &str, workspace_id: &str) -> Result<Option<String>, WsError> {
+        let db = self.db.write();
+        if let Some(existing) = db
+            .get(name.as_bytes())
+            .map_err(|e| WsError::LookupErr(name.to_string(), e))?
+        {
+            let existing_id = str::from_utf8(&existing)
+                .map_err(|e| WsError::NonUtf8Key(name.to_string(), e))?
+                .to_string();
+            return Ok(Some(existing_id));
+        }
+        Self::put_locked(&db, name, workspace_id)?;
+        Ok(None)
     }
 
     /// Remove a name from the index.
     pub fn delete(&self, name: &str) -> Result<(), WsError> {
-        self.db
-            .delete(name.as_bytes())
+        let db = self.db.write();
+        db.delete(name.as_bytes())
             .map_err(|e| WsError::DeleteError(name.to_string(), e))?;
         Ok(())
     }
 
     /// Remove all entries from the index.
     pub fn clear(&self) -> Result<(), WsError> {
-        let iter = self.db.iterator(IteratorMode::Start);
-        for item in iter {
-            match item {
-                Ok((key, _)) => {
-                    self.db.delete(&key).map_err(|e| {
-                        WsError::PutError(String::from_utf8_lossy(&key).to_string(), e)
-                    })?;
-                }
-                Err(err) => {
-                    return Err(WsError::IterationError(err));
-                }
-            }
-        }
-        Ok(())
+        let db = self.db.write();
+        Self::clear_locked(&db)
     }
 
     /// List all (name, workspace_id) entries for debugging/testing.
     #[cfg(test)]
     pub fn list(&self) -> Result<Vec<(String, String)>, WsError> {
-        let iter = self.db.iterator(IteratorMode::Start);
+        let db = self.db.read();
+        let iter = db.iterator(IteratorMode::Start);
         let mut results = Vec::new();
         for item in iter {
             match item {
@@ -197,15 +207,18 @@ impl WorkspaceNameIndex {
     /// Rebuild the index from existing workspace configs on disk.
     /// Clears all existing entries first, then scans `.oxen/workspaces/` directories.
     pub fn rebuild_from_disk(&self, repo: &LocalRepository) -> Result<(), WsError> {
-        self.clear()?;
-
         let workspaces_dir = repo.path.join(OXEN_HIDDEN_DIR).join(WORKSPACES_DIR);
-        if !workspaces_dir.exists() {
-            return Ok(());
-        }
+        let workspace_dirs = if workspaces_dir.exists() {
+            util::fs::list_dirs_in_dir(&workspaces_dir)
+                .map_err(|e| WsError::ListWsErr(Box::new(e)))?
+        } else {
+            Vec::new()
+        };
 
-        let workspace_dirs = util::fs::list_dirs_in_dir(&workspaces_dir)
-            .map_err(|e| WsError::ListWsErr(Box::new(e)))?;
+        // Hold the write lock across clear + every put so a concurrent reader
+        // never sees the index in a half-rebuilt state.
+        let db = self.db.write();
+        Self::clear_locked(&db)?;
 
         for workspace_dir in workspace_dirs {
             let config_path = workspace_dir
@@ -236,10 +249,32 @@ impl WorkspaceNameIndex {
             };
 
             if let (Some(name), Some(id)) = (&config.workspace_name, &config.workspace_id) {
-                self.put(name, id)?;
+                Self::put_locked(&db, name, id)?;
             }
         }
 
+        Ok(())
+    }
+
+    fn put_locked(db: &DB, name: &str, workspace_id: &str) -> Result<(), WsError> {
+        db.put(name.as_bytes(), workspace_id.as_bytes())
+            .map_err(|e| WsError::PutError(name.to_string(), e))
+    }
+
+    fn clear_locked(db: &DB) -> Result<(), WsError> {
+        let iter = db.iterator(IteratorMode::Start);
+        for item in iter {
+            match item {
+                Ok((key, _)) => {
+                    db.delete(&key).map_err(|e| {
+                        WsError::PutError(String::from_utf8_lossy(&key).to_string(), e)
+                    })?;
+                }
+                Err(err) => {
+                    return Err(WsError::IterationError(err));
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -318,6 +353,67 @@ mod tests {
             assert_eq!(entries.len(), 2);
             assert!(entries.contains(&("alpha".to_string(), "id-a".to_string())));
             assert!(entries.contains(&("beta".to_string(), "id-b".to_string())));
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_put_if_absent_inserts_on_first_call() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let idx = get_index(&repo)?;
+            let result = idx.put_if_absent("alpha", "id-a")?;
+            assert_eq!(result, None);
+            assert_eq!(idx.get_id_by_name("alpha")?, Some("id-a".to_string()));
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_put_if_absent_returns_existing_on_collision() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let idx = get_index(&repo)?;
+            assert_eq!(idx.put_if_absent("alpha", "id-a")?, None);
+
+            // Second insert for the same name must report the existing id and
+            // must NOT overwrite the stored value.
+            let result = idx.put_if_absent("alpha", "id-b")?;
+            assert_eq!(result, Some("id-a".to_string()));
+            assert_eq!(idx.get_id_by_name("alpha")?, Some("id-a".to_string()));
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_put_if_absent_exactly_one_winner() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let idx = std::sync::Arc::new(get_index(&repo)?);
+
+            let mut handles = Vec::new();
+            for i in 0..10 {
+                let idx = idx.clone();
+                let id = format!("id-{i}");
+                handles.push(tokio::task::spawn_blocking(move || {
+                    idx.put_if_absent("shared-name", &id)
+                        .map(|existing| (id, existing))
+                }));
+            }
+
+            let mut winner_count = 0;
+            let mut winner_id = None;
+            for handle in handles {
+                let (id, existing) = handle.await.expect("task panic")?;
+                if existing.is_none() {
+                    winner_count += 1;
+                    winner_id = Some(id);
+                }
+            }
+
+            assert_eq!(winner_count, 1, "exactly one put_if_absent caller wins");
+            let stored = idx.get_id_by_name("shared-name")?;
+            assert_eq!(stored, winner_id, "the winner's id is the one persisted");
             Ok(())
         })
         .await

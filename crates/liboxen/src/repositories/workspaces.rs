@@ -157,13 +157,32 @@ pub async fn create_with_name(
     is_editable: bool,
 ) -> Result<Workspace, OxenError> {
     let workspace_id = workspace_id.as_ref();
+
+    // Materialize the name index before `create_on_disk` so the one-time
+    // `rebuild_from_disk` doesn't observe (and pre-claim) the workspace we are
+    // about to create — which would make the closing `put_if_absent` look like
+    // a collision against ourselves.
+    if workspace_name.is_some() {
+        ensure_name_index(base_repo).await?;
+    }
+
     let workspace = create_on_disk(base_repo, commit, workspace_id, workspace_name, is_editable)?;
 
-    // Update the name index (async: rebuild_from_disk may run on a blocking thread)
+    // `put_if_absent` closes the TOCTOU between `validate_create_constraints`'s
+    // `has_name` check and the write — two concurrent `create_with_name` calls
+    // for the same name will both pass validation, but only one wins the atomic
+    // insert; the loser rolls back its just-created workspace dir.
     if let Some(ref name) = workspace.name {
-        ensure_name_index(base_repo).await?;
         let idx = workspace_name_index::get_index(base_repo)?;
-        idx.put(name, workspace_id)?;
+        if idx.put_if_absent(name, workspace_id)?.is_some() {
+            if let Err(e) = util::fs::remove_dir_all(&workspace.workspace_repo.path) {
+                log::error!(
+                    "Failed to clean up workspace dir {:?} after losing name-index race: {e}",
+                    workspace.workspace_repo.path
+                );
+            }
+            return Err(OxenError::WorkspaceAlreadyExists(name.to_string()));
+        }
     }
 
     Ok(workspace)
@@ -1077,6 +1096,73 @@ mod tests {
             }
 
             Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_create_with_name_exactly_one_succeeds() -> Result<(), OxenError> {
+        const NUM_TASKS: usize = 10;
+        const SHARED_NAME: &str = "shared-workspace-name";
+
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+
+            let mut handles = Vec::with_capacity(NUM_TASKS);
+            for i in 0..NUM_TASKS {
+                let repo = repo.clone();
+                let commit = commit.clone();
+                handles.push(tokio::spawn(async move {
+                    let workspace_id = format!("ws-id-{i}");
+                    create_with_name(
+                        &repo,
+                        &commit,
+                        &workspace_id,
+                        Some(SHARED_NAME.to_string()),
+                        true,
+                    )
+                    .await
+                }));
+            }
+
+            let mut winners = Vec::new();
+            let mut already_exists_count = 0;
+            for handle in handles {
+                match handle.await.expect("task panicked") {
+                    Ok(ws) => winners.push(ws),
+                    Err(OxenError::WorkspaceAlreadyExists(_)) => already_exists_count += 1,
+                    Err(e) => return Err(e),
+                }
+            }
+
+            assert_eq!(winners.len(), 1, "exactly one create_with_name must win");
+            assert_eq!(
+                already_exists_count,
+                NUM_TASKS - 1,
+                "every loser must return WorkspaceAlreadyExists",
+            );
+
+            // The winner's workspace dir must still be on disk; loser dirs are rolled back.
+            let winner = &winners[0];
+            assert!(winner.workspace_repo.path.exists());
+            for i in 0..NUM_TASKS {
+                let loser_id = format!("ws-id-{i}");
+                if loser_id == winner.id {
+                    continue;
+                }
+                let loser_id_hash = util::hasher::hash_str_sha256(&loser_id);
+                let loser_dir = Workspace::workspace_dir(&repo, &loser_id_hash);
+                assert!(
+                    !loser_dir.exists(),
+                    "loser workspace dir {loser_dir:?} should have been rolled back",
+                );
+            }
+
+            // The index maps the name to the winner.
+            let idx = workspace_name_index::get_index(&repo)?;
+            assert_eq!(idx.get_id_by_name(SHARED_NAME)?, Some(winner.id.clone()));
+
+            Ok(())
         })
         .await
     }

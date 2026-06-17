@@ -86,7 +86,9 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
                     status: SizeStatus::Error,
                     size: 0,
                 };
-                let _ = AtomicFile::new(&path_clone).write(size.to_string().as_bytes());
+                if let Err(e) = AtomicFile::new(&path_clone).write(size.to_string().as_bytes()) {
+                    log::error!("Failed to write size error status: {e}");
+                }
             }
         }
     });
