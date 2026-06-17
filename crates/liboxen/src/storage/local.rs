@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use crate::constants::{VERSION_CHUNK_FILE_NAME, VERSION_CHUNKS_DIR, VERSION_FILE_NAME};
 use crate::error::OxenError;
 use crate::model::MerkleHash;
-use crate::storage::version_store::{LocalFilePath, VersionLocation, VersionStore};
+use crate::storage::version_store::{VersionLocation, VersionStore};
 use crate::util::fs::AtomicFile;
 use crate::util::{concurrency, hasher};
 use crate::view::versions::CleanCorruptedVersionsResult;
@@ -194,10 +194,6 @@ impl VersionStore for LocalVersionStore {
                 _ => Err(err)?,
             },
         }
-    }
-
-    async fn get_version_path(&self, hash: &str) -> Result<LocalFilePath, OxenError> {
-        Ok(LocalFilePath::Stable(self.version_path(hash)))
     }
 
     async fn version_location(&self, hash: &str) -> Result<VersionLocation, OxenError> {

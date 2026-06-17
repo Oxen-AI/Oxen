@@ -1,5 +1,4 @@
 use crate::error::OxenError;
-use async_tempfile::TempFile;
 use async_trait::async_trait;
 use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::error::SdkError;
@@ -12,12 +11,12 @@ use log;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::SystemTime;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
 use tokio::sync::OnceCell;
 use tokio_stream::Stream;
 use tokio_util::io::StreamReader;
 
-use super::version_store::{LocalFilePath, VersionLocation, VersionStore};
+use super::version_store::{VersionLocation, VersionStore};
 use crate::constants::VERSION_FILE_NAME;
 use crate::util::fs::AtomicFile;
 use crate::util::hasher;
@@ -610,18 +609,6 @@ impl VersionStore for S3VersionStore {
                 "derived_exists failed with S3 head_object error: {err:?}"
             ))),
         }
-    }
-
-    async fn get_version_path(&self, hash: &str) -> Result<LocalFilePath, OxenError> {
-        // TODO: This needs to be updated to handle large files that won't fit in memory
-        let data = self.get_version(hash).await?;
-        let mut tmp = TempFile::new()
-            .await
-            .map_err(|e| OxenError::basic_str(format!("Failed to create temp file: {e}")))?;
-        tmp.write_all(&data)
-            .await
-            .map_err(|e| OxenError::basic_str(format!("Failed to write temp file: {e}")))?;
-        Ok(LocalFilePath::Temp(tmp))
     }
 
     async fn version_location(&self, hash: &str) -> Result<VersionLocation, OxenError> {

@@ -1325,12 +1325,13 @@ mod tests {
                 .expect("second.txt must be reachable from the second commit's tree");
                 let blob_hash = second_node.hash.to_string();
                 let version_store = cloned_repo.version_store();
-                let blob_path = version_store.get_version_path(&blob_hash).await?;
-                assert!(blob_path.exists(), "blob should be present after clone");
-                util::fs::remove_file(&*blob_path)?;
-                let blob_path_after_wipe = version_store.get_version_path(&blob_hash).await?;
                 assert!(
-                    !blob_path_after_wipe.exists(),
+                    version_store.version_exists(&blob_hash).await?,
+                    "blob should be present after clone"
+                );
+                version_store.delete_version(&blob_hash).await?;
+                assert!(
+                    !version_store.version_exists(&blob_hash).await?,
                     "blob should be gone after wipe"
                 );
 
@@ -1339,9 +1340,8 @@ mod tests {
                 repositories::pull(&cloned_repo).await?;
 
                 // Blob is back in the version store.
-                let blob_path_after_pull = version_store.get_version_path(&blob_hash).await?;
                 assert!(
-                    blob_path_after_pull.exists(),
+                    version_store.version_exists(&blob_hash).await?,
                     "pull should have re-fetched the wiped blob"
                 );
 

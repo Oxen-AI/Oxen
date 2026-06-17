@@ -522,6 +522,7 @@ fn add_exclude_to_sql(sql: &str) -> Result<String, DataFrameError> {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+    use std::time::SystemTime;
 
     use serde_json::json;
 
@@ -815,7 +816,7 @@ mod tests {
                 .expect("file should exist in commit");
             let file_1_csv = repo.path.join("version_1.csv");
             version_store
-                .copy_version_to_path(&node_1.hash().to_string(), &file_1_csv)
+                .copy_version_to_path(&node_1.hash().to_string(), &file_1_csv, SystemTime::now())
                 .await?;
             log::debug!("copied file 1 to {file_1_csv:?}");
 
@@ -823,7 +824,7 @@ mod tests {
                 .expect("file should exist in commit_2");
             let file_2_csv = repo.path.join("version_2.csv");
             version_store
-                .copy_version_to_path(&node_2.hash().to_string(), &file_2_csv)
+                .copy_version_to_path(&node_2.hash().to_string(), &file_2_csv, SystemTime::now())
                 .await?;
             log::debug!("copied file 2 to {file_2_csv:?}");
             let diff_result =
@@ -1424,11 +1425,14 @@ mod tests {
             // The committed file round-trips: re-read it and confirm every row survived.
             let entry = repositories::entries::get_commit_entry(&repo, &commit, path)?.unwrap();
             let version_store = repo.version_store();
-            let version_file = version_store.get_version_path(&entry.hash).await?;
             let extension = entry.path.extension().unwrap().to_str().unwrap();
-            let data_frame =
-                df::tabular::read_df_with_extension(version_file, extension, &DFOpts::empty())
-                    .await?;
+            let data_frame = df::tabular::read_version_df(
+                &version_store,
+                &entry.hash,
+                extension,
+                &DFOpts::empty(),
+            )
+            .await?;
             assert_eq!(data_frame.height(), 3);
             assert!(data_frame.column("error_details").is_ok());
             Ok(())
