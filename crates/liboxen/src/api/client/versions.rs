@@ -1,16 +1,15 @@
 use crate::api;
 use crate::api::client;
-use crate::api::client::internal_types::LocalOrBase;
 use crate::constants::{max_retries, stream_segment_size};
 use crate::error::OxenError;
 use crate::model::{CommitEntry, LocalRepository, MerkleHash, RemoteRepository};
-use crate::util::{self, concurrency, hasher};
+use crate::util::{self, concurrency};
 use crate::view::versions::{
     CleanCorruptedVersionsResponse, CompleteVersionUploadRequest, CompletedFileUpload,
     CreateVersionUploadRequest, MultipartLargeFileUpload, MultipartLargeFileUploadStatus,
     VersionFile, VersionFileResponse,
 };
-use crate::view::{ErrorFileInfo, ErrorFilesResponse, FileWithHash};
+use crate::view::{ErrorFileInfo, ErrorFilesResponse};
 
 use crate::core::progress::push_progress::PushProgress;
 use async_compression::tokio::bufread::GzipDecoder;
@@ -34,20 +33,12 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::Semaphore;
 use tokio::time::sleep;
 
-use crate::repositories;
-
 // Multipart upload strategy, based off of AWS S3 Multipart Upload and huggingface hf_transfer
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html
 // https://github.com/huggingface/hf_transfer/blob/main/src/lib.rs#L104
 const BASE_WAIT_TIME: usize = 300;
 const MAX_WAIT_TIME: usize = 10_000;
 const PARALLEL_FAILURES: usize = 63;
-
-#[derive(Debug, Default)]
-pub struct UploadResult {
-    pub files_to_add: Vec<FileWithHash>,
-    pub err_files: Vec<ErrorFileInfo>,
-}
 
 /// Get the size of a version
 pub async fn get(
@@ -591,231 +582,6 @@ pub async fn multipart_batch_upload(
     err_files.extend(response.err_files);
 
     Ok(err_files)
-}
-
-// Unused since client staging moved to the multipart files endpoint (ENG-1121). We'll delete this
-// in ENG-1120 to make the current PR smaller and easier to review.
-#[allow(dead_code)]
-pub(crate) async fn workspace_multipart_batch_upload_versions(
-    remote_repo: &RemoteRepository,
-    local_or_base: Option<&LocalOrBase>,
-    client: Arc<reqwest::Client>,
-    paths: Vec<PathBuf>,
-    result: UploadResult,
-) -> Result<UploadResult, OxenError> {
-    // save the errorred files info for retry
-    let mut err_files: Vec<ErrorFileInfo> = vec![];
-    // keep track of the files hash
-    let mut files_to_add: Vec<FileWithHash> = vec![];
-
-    // generate retry hashes if it's not the first try
-    let retry_hashes: HashSet<String> = if result.err_files.is_empty() {
-        HashSet::new()
-    } else {
-        result.err_files.iter().map(|f| f.hash.clone()).collect()
-    };
-
-    // generate a map of the file paths to hashes
-    let path_to_hash: HashMap<PathBuf, String> = result
-        .files_to_add
-        .iter()
-        .map(|f| (f.path.clone(), f.hash.clone()))
-        .collect();
-
-    let (repo_or_base_path, head_commit_local_repo_maybe) = match local_or_base {
-        Some(LocalOrBase::Local(local_repo)) => {
-            let head_commit_maybe = repositories::commits::head_commit_maybe(local_repo)?;
-            (
-                local_repo.path.clone(),
-                head_commit_maybe.map(|head_commit| (head_commit, local_repo)),
-            )
-        }
-        Some(LocalOrBase::Base(base_dir)) => (base_dir.clone(), None),
-        None => (PathBuf::new(), None),
-    };
-
-    let form = {
-        let mut form = reqwest::multipart::Form::new();
-
-        for path in paths {
-            let relative_path = util::fs::path_relative_to_dir(&path, &repo_or_base_path)?;
-            // Skip adding files already present in tree
-            if let Some((ref head_commit, local_repo)) = head_commit_local_repo_maybe
-                && let Some(file_node) =
-                    repositories::tree::get_file_by_path(local_repo, head_commit, &relative_path)?
-                && !local_repo.is_modified_from_node(&path, &file_node).await?
-            {
-                continue;
-            }
-
-            // if it's not the first try
-            if !result.err_files.is_empty() {
-                // if the file doesn't have a hash it failed, so we need to retry it
-                if let Some(hash) = path_to_hash.get(&path) {
-                    // check if the file is in the retry list. if not, skip
-                    if !retry_hashes.contains(hash) {
-                        continue;
-                    }
-                }
-            }
-
-            let Some(_file_name) = path.file_name() else {
-                return Err(OxenError::basic_str(format!("Invalid file path: {path:?}")));
-            };
-
-            let file = std::fs::read(&path).map_err(|e| {
-                OxenError::basic_str(format!("Failed to read file '{path:?}': {e}"))
-            })?;
-
-            let hash = hasher::hash_buffer(&file);
-
-            // Workspaces expect just the file name, while remote-mode repos expect the relative path
-            // TODO: Refactor this into separate modules later, but for now, remote-mode repos will always have
-            //       a local_repo, whereas workspaces will have local_repo be None
-            files_to_add.push(FileWithHash {
-                hash: hash.clone(),
-                path: match local_or_base {
-                    Some(_) => relative_path,
-                    None => PathBuf::from(path.file_name().unwrap()),
-                },
-            });
-
-            // gzip the file
-            let compressed_bytes: Vec<u8> = {
-                let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-                std::io::copy(&mut file.as_slice(), &mut encoder)?;
-                match encoder.finish() {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        log::error!("Failed to finish gzip for file {}: {}", &hash, e);
-                        // When uploading to the version store, we use the hash as the file identifier. The path is not needed.
-                        err_files.push(ErrorFileInfo {
-                            hash: hash.clone(),
-                            path: None,
-                            error: format!("Failed to finish gzip for file {}: {}", &hash, e),
-                        });
-                        continue;
-                    }
-                }
-            };
-
-            let file_part = reqwest::multipart::Part::bytes(compressed_bytes)
-                .file_name(hash)
-                .mime_str("application/gzip")?;
-
-            form = form.part("file[]", file_part);
-        }
-
-        form
-    };
-
-    let url = api::endpoint::url_from_repo(remote_repo, "/versions")?;
-    let response = client.post(&url).multipart(form).send().await?;
-    let body = client::parse_json_body(&url, response).await?;
-
-    let response: ErrorFilesResponse = serde_json::from_str(&body)?;
-    log::debug!("workspace_multipart_batch_upload got response: {response:?}");
-    err_files.extend(response.err_files);
-
-    Ok(UploadResult {
-        files_to_add,
-        err_files,
-    })
-}
-
-// Unused since client staging moved to the multipart files endpoint (ENG-1121). We'll delete this
-// in ENG-1120 to make the current PR smaller and easier to review.
-#[allow(dead_code)]
-pub(crate) async fn workspace_multipart_batch_upload_parts_with_retry(
-    remote_repo: &RemoteRepository,
-    client: Arc<reqwest::Client>,
-    form: reqwest::multipart::Form,
-    files_to_retry: &mut Vec<FileWithHash>,
-    local_or_base: Option<&LocalOrBase>,
-) -> Result<Vec<ErrorFileInfo>, OxenError> {
-    log::debug!("Beginning workspace multipart batch upload");
-    let uri = ("/versions").to_string();
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
-    let mut retry_count: usize = 1;
-    let max_retries = max_retries();
-
-    // Upload the processed version files
-    let response = client.post(&url).multipart(form).send().await?;
-    let mut upload_result: UploadResult = match client::parse_json_body(&url, response).await {
-        Ok(body) => {
-            let result: ErrorFilesResponse = serde_json::from_str(&body)?;
-            // Remove successfully uploaded files from files_to_retry
-            let err_file_hashes: Vec<String> =
-                result.err_files.iter().map(|f| f.hash.clone()).collect();
-            files_to_retry.retain(|f| err_file_hashes.contains(&f.hash));
-
-            UploadResult {
-                files_to_add: vec![],
-                err_files: result.err_files,
-            }
-        }
-        Err(e) => {
-            log::error!("failed to upload version files: {e:?}");
-            UploadResult {
-                files_to_add: files_to_retry.clone(),
-                err_files: vec![],
-            }
-        }
-    };
-
-    // If files fail, rebuild parts for the err_files and retry
-    while (!files_to_retry.is_empty()) && retry_count < max_retries {
-        retry_count += 1;
-
-        let paths = files_to_retry.iter().map(|f| f.path.clone()).collect();
-
-        upload_result = match workspace_multipart_batch_upload_versions(
-            remote_repo,
-            local_or_base,
-            client.clone(),
-            paths,
-            upload_result,
-        )
-        .await
-        {
-            Ok(upload_result) => {
-                let err_file_hashes: Vec<String> = upload_result
-                    .err_files
-                    .iter()
-                    .map(|f| f.hash.clone())
-                    .collect();
-                files_to_retry.retain(|f| err_file_hashes.contains(&f.hash));
-
-                upload_result
-            }
-            Err(e) => {
-                // TODO: Consider converting this to a debug log
-                log::error!("failed to upload version files after {retry_count} retries: {e:?}");
-
-                // Note: `files_to_add` and `err_files` aren't actually used by
-                // workspace_multipart_batch_upload to process retry files differently
-                // Hence, these fields can be empty
-                UploadResult {
-                    files_to_add: vec![],
-                    err_files: vec![],
-                }
-            }
-        };
-
-        if !files_to_retry.is_empty() {
-            let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
-            sleep(Duration::from_millis(wait_time as u64)).await;
-        }
-    }
-
-    if !files_to_retry.is_empty() {
-        return Err(OxenError::basic_str(format!(
-            "Failed to upload version files after {max_retries} retries"
-        )));
-    }
-
-    Ok(upload_result.err_files)
 }
 
 pub fn exponential_backoff(base_wait_time: usize, n: usize, max: usize) -> usize {
