@@ -187,7 +187,7 @@ mod tests {
             .await?;
 
             let mut indexing_status = EmbeddingStatus::NotIndexed;
-            let mut max_retries = 100; // just so it doesn't hang forever
+            let mut max_retries = 1000; // 10ms * 1000 = 10s total budget
             while indexing_status != EmbeddingStatus::Complete && max_retries > 0 {
                 let result = api::client::workspaces::data_frames::embeddings::get(
                     &remote_repo,
@@ -203,8 +203,9 @@ mod tests {
                 assert_eq!(response.columns[0].vector_length, 3);
                 indexing_status = response.columns[0].status.clone();
 
-                // sleep for 1 second
-                sleep(std::time::Duration::from_secs(1)).await;
+                // Poll interval — indexing is sub-second; the 10ms × 1000 schedule caps the
+                // total wait at ~10s while reacting to completion within a frame.
+                sleep(std::time::Duration::from_millis(10)).await;
 
                 max_retries -= 1;
             }
@@ -387,7 +388,7 @@ mod tests {
             .await?;
 
             let mut indexing_status = EmbeddingStatus::NotIndexed;
-            let mut max_retries = 100; // just so it doesn't hang forever
+            let mut max_retries = 1000; // 10ms * 1000 = 10s total budget
             while indexing_status != EmbeddingStatus::Complete && max_retries > 0 {
                 let result = api::client::workspaces::data_frames::embeddings::get(
                     &remote_repo,
@@ -399,8 +400,9 @@ mod tests {
                 let response = result.unwrap();
                 indexing_status = response.columns[0].status.clone();
 
-                // sleep for 1 second
-                sleep(std::time::Duration::from_secs(1)).await;
+                // Poll interval — indexing is sub-second; the 10ms × 1000 schedule caps the
+                // total wait at ~10s while reacting to completion within a frame.
+                sleep(std::time::Duration::from_millis(10)).await;
 
                 max_retries -= 1;
             }
@@ -470,7 +472,7 @@ mod tests {
             .await?;
 
             let mut indexing_status = EmbeddingStatus::NotIndexed;
-            let mut max_retries = 100; // just so it doesn't hang forever
+            let mut max_retries = 1000; // 10ms * 1000 = 10s total budget
             while indexing_status != EmbeddingStatus::Complete && max_retries > 0 {
                 let result = api::client::workspaces::data_frames::embeddings::get(
                     &remote_repo,
@@ -483,8 +485,9 @@ mod tests {
                 let response = result.unwrap();
                 indexing_status = response.columns[0].status.clone();
 
-                // sleep for 1 second
-                sleep(std::time::Duration::from_secs(1)).await;
+                // Poll interval — indexing is sub-second; the 10ms × 1000 schedule caps the
+                // total wait at ~10s while reacting to completion within a frame.
+                sleep(std::time::Duration::from_millis(10)).await;
 
                 max_retries -= 1;
             }
