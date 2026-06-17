@@ -303,140 +303,32 @@ where
     Ok(())
 }
 
-/// RAII cleanup for a test repo directory. Dropping the guard removes the
-/// directory via [`maybe_cleanup_repo`] (errors are swallowed since `Drop`
-/// can't surface them). The same call runs on the normal-exit path *and*
-/// during panic unwind.
-#[cfg(test)]
-pub struct RepoDirGuard {
-    repo_dir: PathBuf,
-}
-
-#[cfg(test)]
-impl RepoDirGuard {
-    pub fn new(repo_dir: PathBuf) -> Self {
-        Self { repo_dir }
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.repo_dir
-    }
-}
-
-#[cfg(test)]
-impl Drop for RepoDirGuard {
-    fn drop(&mut self) {
-        if let Err(e) = maybe_cleanup_repo(&self.repo_dir) {
-            log::warn!("RepoDirGuard cleanup failed for {:?}: {e}", self.repo_dir);
-        }
-    }
-}
-
-/// RAII handle to a freshly-initialized test [`LocalRepository`]. Derefs to
-/// the inner `LocalRepository` so callers can use it as one transparently.
-///
-/// Drop order matters: `repo` is declared before `_guard` so that on drop
-/// the inner `LocalRepository` (and any resources it holds, like an LMDB
-/// `heed::Env`) is released *before* the [`RepoDirGuard`] removes the
-/// on-disk repo directory.
-#[cfg(test)]
-pub struct TestLocalRepo {
-    repo: Option<LocalRepository>,
-    _guard: RepoDirGuard,
-}
-
-#[cfg(test)]
-impl TestLocalRepo {
-    pub fn new(repo: LocalRepository) -> Self {
-        let repo_dir = repo.path.clone();
-        Self {
-            repo: Some(repo),
-            _guard: RepoDirGuard::new(repo_dir),
-        }
-    }
-
-    /// Drop the inner [`LocalRepository`] (e.g. to release an LMDB env)
-    /// while keeping the on-disk repo dir alive for further reads. The
-    /// directory itself is still removed when this handle is dropped.
-    pub fn drop_inner(&mut self) {
-        self.repo.take();
-    }
-}
-
-#[cfg(test)]
-impl std::ops::Deref for TestLocalRepo {
-    type Target = LocalRepository;
-    fn deref(&self) -> &Self::Target {
-        self.repo
-            .as_ref()
-            .expect("TestLocalRepo inner LocalRepository was already dropped via drop_inner")
-    }
-}
-
-/// Base directory under which LMDB-backed test repos are rooted.
-///
-/// LMDB depends on NT memory-section APIs that are not implemented by
-/// virtual filesystems. On Windows CI `OXEN_TEST_RUN_DIR=R:\test` is an
-/// ImDisk RAMDisk (a VFS) and opening an LMDB env there fails with
-/// `Os { code: 1, .. }` → "Incorrect function." Routing LMDB-backed test
-/// repos to the OS temp dir keeps the env on the host's real volume
-/// (NTFS on Windows runners). Mirrors `lmdb_test_root` in
-/// `crates/liboxen/src/core/db/merkle_node/lmdb.rs`, used by the low-level
-/// `LmdbBackend` tests.
-#[cfg(test)]
-fn lmdb_test_base() -> PathBuf {
-    std::env::temp_dir().join("oxen-lmdb-tests")
-}
-
-/// Create a fresh empty dir suitable for an LMDB-backed test repo and
-/// return a [`RepoDirGuard`] that removes it on Drop. The dir lives under
-/// [`lmdb_test_base`] rather than `OXEN_TEST_RUN_DIR` — see that fn's docs
-/// for why.
-#[cfg(test)]
-pub fn create_lmdb_safe_empty_dir() -> Result<RepoDirGuard, OxenError> {
-    let dir = create_prefixed_dir(lmdb_test_base(), "dir")?;
-    Ok(RepoDirGuard::new(dir))
-}
-
-/// Construct a fresh test repo dir, initialize a [`LocalRepository`] in it
-/// with the given [`crate::config::repository_config::MerkleStoreKind`], and
-/// return a [`TestLocalRepo`] that cleans the dir up on Drop. Mirrors the
-/// repo shape produced by the former
-/// `run_empty_local_repo_test_with_merkle_store` helper.
-///
-/// For `MerkleStoreKind::Lmdb` the repo dir is routed under
-/// [`lmdb_test_base`] so the LMDB env never lands on a VFS like Windows CI's
-/// ImDisk RAMDisk.
-#[cfg(test)]
-pub fn init_test_repo_with_merkle_store(
-    kind: crate::config::repository_config::MerkleStoreKind,
-) -> Result<TestLocalRepo, OxenError> {
-    use crate::config::repository_config::MerkleStoreKind;
+pub fn run_empty_local_repo_test_w_version<T>(
+    version: MinOxenVersion,
+    test: T,
+) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
+{
     init_test_env();
-    log::info!("<<<<< init_test_repo_with_merkle_store start ({kind:?})");
-    let repo_dir = match kind {
-        MerkleStoreKind::Lmdb => create_prefixed_dir(lmdb_test_base(), "repo")?,
-        MerkleStoreKind::File => create_repo_dir(test_run_dir())?,
-    };
-    let repo = repositories::init::init_with_version_and_merkle_store(
-        &repo_dir,
-        MinOxenVersion::LATEST,
-        kind,
-    )?;
-    log::info!(">>>>> init_test_repo_with_merkle_store ready");
-    Ok(TestLocalRepo::new(repo))
-}
+    log::info!("<<<<< run_empty_local_repo_test start");
+    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo = repositories::init::init_with_version(&repo_dir, version)?;
 
-/// Async variant of [`init_test_repo_with_merkle_store`] — also initializes
-/// the version store, mirroring the former
-/// `run_empty_local_repo_test_with_merkle_store_async` helper.
-#[cfg(test)]
-pub async fn init_test_repo_merkle_init_version_store_async(
-    kind: crate::config::repository_config::MerkleStoreKind,
-) -> Result<TestLocalRepo, OxenError> {
-    let handle = init_test_repo_with_merkle_store(kind)?;
-    handle.version_store().init().await?;
-    Ok(handle)
+    log::info!(">>>>> run_empty_local_repo_test running test");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match test(repo) {
+        Ok(_) => {}
+        Err(err) => {
+            panic!("Error running test. Err: {err}");
+        }
+    }));
+
+    // Remove repo dir
+    maybe_cleanup_repo(&repo_dir)?;
+
+    // Assert everything okay after we cleanup the repo dir
+    assert!(result.is_ok());
+    Ok(())
 }
 
 pub async fn run_empty_local_repo_test_async<T, Fut>(test: T) -> Result<(), OxenError>

@@ -94,16 +94,6 @@ pub enum OxenError {
     #[error("Merkle store not initialized")]
     MerkleStoreNotInitialized,
 
-    /// LMDB-backed Merkle store was requested on a repository configured for a
-    /// virtual file system. LMDB requires a real, byte-addressable mmap target
-    /// and does not work on VFS mounts.
-    #[error(
-        "LMDB-backed Merkle store is not supported on virtual file systems. \
-         Either use the file-backed store (the default) or initialize the \
-         repository without --vfs."
-    )]
-    MerkleStoreLmdbNotSupportedOnVfs,
-
     /// An error stemming from an invalid [`RepositoryConfig`] value encountered during parsing or saving.
     #[error("{0}")]
     RepoConfig(#[from] RepoConfigError),

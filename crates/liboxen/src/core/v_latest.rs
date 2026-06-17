@@ -30,9 +30,6 @@ pub mod workspaces;
 
 pub use add::add;
 pub use commits::commit;
-pub use init::{
-    init, init_with_version_and_merkle_store, init_with_version_and_storage_config,
-    init_with_version_default, init_with_version_storage_and_merkle_store,
-};
+pub use init::{init, init_with_version_and_storage_config, init_with_version_default};
 pub use pull::{pull, pull_all, pull_remote_branch};
 pub use rm::rm;

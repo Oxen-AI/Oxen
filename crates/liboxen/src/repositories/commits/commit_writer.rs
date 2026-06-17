@@ -281,9 +281,6 @@ pub(crate) fn commit_dir_entries_with_parents(
         &dir_hashes,
         &vnode_entries,
     )?;
-    // Explicit finish: required by the [`MerkleWriteSession`] / [`NodeWriteSession`]
-    // contract. The LMDB backend buffers writes until `finish()` runs, so a missing
-    // call silently drops the commit's merkle data.
     commit_ns.finish()?;
     session.finish()?;
 
@@ -383,7 +380,6 @@ pub fn commit_dir_entries_new(
         &dir_hashes,
         &vnode_entries,
     )?;
-    // Explicit finish: see the matching note in `commit_dir_entries_with_parents`.
     commit_ns.finish()?;
     session.finish()?;
 
@@ -499,7 +495,6 @@ pub fn commit_dir_entries(
         &dir_hashes,
         &vnode_entries,
     )?;
-    // Explicit finish: see the matching note in `commit_dir_entries_with_parents`.
     commit_ns.finish()?;
     session.finish()?;
 
