@@ -215,31 +215,31 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
         upload_files.len(),
     );
 
-    let mut ret_files = vec![];
+    let base_dir = PathBuf::from(&directory);
+    let mut files_to_stage = Vec::with_capacity(upload_files.len());
     for upload_file in upload_files {
-        let Some(file_name) = upload_file.path.file_name() else {
-            return Err(OxenHttpError::BadRequest(
-                format!("Invalid upload file path: {:?}", upload_file.path).into(),
-            ));
-        };
-        let dst_path = PathBuf::from(&directory).join(file_name);
-
-        let ret_file = match core::v_latest::workspaces::files::add_version_file(
-            &workspace,
-            &dst_path,
-            &upload_file.hash,
-        )
-        .await
-        {
-            Ok(ret_file) => ret_file,
+        // The multipart filename is the staging path relative to `directory`. Normalize the full
+        // destination so subdirectories are preserved while rejecting absolute paths and `..`
+        // traversal from either the untrusted `directory` or the filename. An empty or `.`
+        // directory normalizes to the workspace root.
+        let joined = base_dir.join(&upload_file.path);
+        let dst_path = match util::fs::validate_and_normalize_path(&joined) {
+            Ok(dst_path) => dst_path,
             Err(e) => {
-                log::error!("Error adding file {dst_path:?}: {e:?}");
-                continue;
+                return Err(OxenHttpError::BadRequest(
+                    format!("Invalid staging path {joined:?}: {e}").into(),
+                ));
             }
         };
+        files_to_stage.push((dst_path, upload_file.hash));
+    }
 
-        ret_files.push(ret_file);
-        log::info!("Successfully staged file {upload_file:?}");
+    // Stage the whole batch under one staged-db handle rather than reopening it per file.
+    let (ret_files, stage_err_files) =
+        core::v_latest::workspaces::files::add_version_files_at_paths(&workspace, files_to_stage)
+            .await?;
+    for err in &stage_err_files {
+        log::error!("Error staging file {:?}: {}", err.path, err.error);
     }
 
     Ok(HttpResponse::Ok().json(FilePathsResponse {
@@ -821,6 +821,189 @@ mod tests {
         let file_hash = util::hasher::hash_buffer(file_content.as_bytes());
         let stored = repo.version_store().get_version(&file_hash).await?;
         assert_eq!(stored, file_content.as_bytes());
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_controllers_workspace_files_add_preserves_subdirectory() -> Result<(), OxenError>
+    {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Workspace-Add-Nested";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let hello_file = repo.path.join("hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file).await?;
+        let commit = repositories::commit(&repo, "First commit")?;
+
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
+
+        // The multipart filename carries a subdirectory; the server must preserve the nesting under
+        // the target directory rather than flattening it to the basename.
+        let (body, headers) = create_form_data_payload_and_headers(
+            "file[]",
+            Some("nested/dog.txt".to_string()),
+            Some(mime::TEXT_PLAIN),
+            Bytes::from("nested contents"),
+        );
+
+        let uri = format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/data");
+
+        let req = actix_web::test::TestRequest::post()
+            .uri(&uri)
+            .app_data(OxenAppData::new(sync_dir.to_path_buf()));
+        let req = headers
+            .into_iter()
+            .fold(req, |req, hdr| req.insert_header(hdr))
+            .set_payload(body)
+            .to_request();
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path:.*}",
+                    web::post().to(controllers::workspaces::files::add),
+                ),
+        )
+        .await;
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let response: FilePathsResponse = serde_json::from_slice(&bytes)?;
+        assert!(
+            response
+                .paths
+                .contains(&std::path::PathBuf::from("data/nested/dog.txt")),
+            "expected the subdirectory preserved as data/nested/dog.txt, got {:?}",
+            response.paths
+        );
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_controllers_workspace_files_add_rejects_path_traversal() -> Result<(), OxenError>
+    {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Workspace-Add-Traversal";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let hello_file = repo.path.join("hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file).await?;
+        let commit = repositories::commit(&repo, "First commit")?;
+
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
+
+        // A multipart filename that escapes the target directory with `..` must be rejected, not
+        // staged at an out-of-tree path.
+        let (body, headers) = create_form_data_payload_and_headers(
+            "file[]",
+            Some("../escape.txt".to_string()),
+            Some(mime::TEXT_PLAIN),
+            Bytes::from("malicious"),
+        );
+
+        let uri = format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/data");
+
+        let req = actix_web::test::TestRequest::post()
+            .uri(&uri)
+            .app_data(OxenAppData::new(sync_dir.to_path_buf()));
+        let req = headers
+            .into_iter()
+            .fold(req, |req, hdr| req.insert_header(hdr))
+            .set_payload(body)
+            .to_request();
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path:.*}",
+                    web::post().to(controllers::workspaces::files::add),
+                ),
+        )
+        .await;
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_controllers_workspace_files_add_stages_at_root_for_empty_directory()
+    -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Workspace-Add-Root";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let hello_file = repo.path.join("hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file).await?;
+        let commit = repositories::commit(&repo, "First commit")?;
+
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
+
+        // An empty target directory stages at the workspace root: the destination is just the
+        // (normalized) filename with no directory prefix.
+        let (body, headers) = create_form_data_payload_and_headers(
+            "file[]",
+            Some("root.txt".to_string()),
+            Some(mime::TEXT_PLAIN),
+            Bytes::from("root contents"),
+        );
+
+        // Trailing slash with an empty {path:.*} segment -- the URI the client builds for the root.
+        let uri = format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/");
+
+        let req = actix_web::test::TestRequest::post()
+            .uri(&uri)
+            .app_data(OxenAppData::new(sync_dir.to_path_buf()));
+        let req = headers
+            .into_iter()
+            .fold(req, |req, hdr| req.insert_header(hdr))
+            .set_payload(body)
+            .to_request();
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path:.*}",
+                    web::post().to(controllers::workspaces::files::add),
+                ),
+        )
+        .await;
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let response: FilePathsResponse = serde_json::from_slice(&bytes)?;
+        assert!(
+            response
+                .paths
+                .contains(&std::path::PathBuf::from("root.txt")),
+            "expected staging at the workspace root (root.txt with no prefix), got {:?}",
+            response.paths
+        );
 
         test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
