@@ -6,7 +6,7 @@ use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository, RemoteRepository};
 use crate::opts::GlobOpts;
 use crate::util::{self, concurrency};
-use crate::view::{ErrorFileInfo, ErrorFilesResponse, FileWithHash};
+use crate::view::{ErrorFileInfo, FilePathsResponse};
 use crate::{api, repositories, view, view::workspaces::ValidateUploadFeasibilityRequest};
 
 use futures_util::StreamExt;
@@ -24,18 +24,11 @@ use tokio::time::{Duration, sleep};
 use futures::stream;
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::util::hasher;
 use flate2::Compression;
 use flate2::write::GzEncoder;
 
 const BASE_WAIT_TIME: usize = 300;
 const MAX_WAIT_TIME: usize = 10_000;
-
-#[derive(Debug)]
-pub struct UploadResult {
-    pub files_to_add: Vec<FileWithHash>,
-    pub err_files: Vec<ErrorFileInfo>,
-}
 
 /// All of the paths that failed to transfer to the remote repository during an upload operation.
 ///
@@ -50,25 +43,6 @@ pub async fn add(
     directory: impl AsRef<str>,
     paths: Vec<PathBuf>,
     local_repo: &Option<LocalRepository>,
-) -> Result<UploadFails, OxenError> {
-    add_with_opts(
-        remote_repo,
-        workspace_id,
-        directory,
-        paths,
-        local_repo,
-        false,
-    )
-    .await
-}
-
-pub async fn add_with_opts(
-    remote_repo: &RemoteRepository,
-    workspace_id: impl AsRef<str>,
-    directory: impl AsRef<str>,
-    paths: Vec<PathBuf>,
-    local_repo: &Option<LocalRepository>,
-    update_timestamp: bool,
 ) -> Result<UploadFails, OxenError> {
     let workspace_id = workspace_id.as_ref();
     let directory = directory.as_ref();
@@ -102,7 +76,6 @@ pub async fn add_with_opts(
             .clone()
             .map(|local| LocalOrBase::Local(Box::new(local.clone())))
             .as_ref(),
-        update_timestamp,
     )
     .await;
 
@@ -207,7 +180,6 @@ pub async fn add_files(
         //    for a single API call.
         paths,
         Some(&base_dir_enum),
-        false,
     )
     .await
     {
@@ -242,7 +214,6 @@ pub async fn upload_single_file(
         directory,
         vec![path.to_path_buf()],
         None,
-        false,
     )
     .await?;
 
@@ -258,7 +229,6 @@ async fn upload_multiple_files(
     directory: impl AsRef<Path>,
     paths: Vec<PathBuf>,
     local_or_base: Option<&LocalOrBase>,
-    update_timestamp: bool,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     if paths.is_empty() {
         return Ok(vec![]);
@@ -334,7 +304,6 @@ async fn upload_multiple_files(
             &path,
             Some(&dst_dir),
             Some(workspace_id.to_string()),
-            update_timestamp,
             None,
             None,
         )
@@ -361,7 +330,6 @@ async fn upload_multiple_files(
         small_files,
         small_files_size,
         local_or_base,
-        update_timestamp,
     )
     .await?;
 
@@ -377,7 +345,6 @@ pub(crate) async fn parallel_batched_small_file_upload(
     small_files: Vec<(PathBuf, u64)>,
     small_files_size: u64,
     local_or_base: Option<&LocalOrBase>,
-    update_timestamp: bool,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     if small_files.is_empty() {
         return Ok(vec![]);
@@ -410,9 +377,6 @@ pub(crate) async fn parallel_batched_small_file_upload(
 
     // Represents unprocessed batches
     type PieceOfWork = Vec<(PathBuf, u64)>;
-
-    // Represents processed batches
-    type ProcessedBatch = (Vec<reqwest::multipart::Part>, Vec<FileWithHash>, u64);
 
     // Split files into batches
     let mut file_batches: Vec<PieceOfWork> = Vec::new();
@@ -488,12 +452,11 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                 )?;
 
                                 // In remote-mode repos, skip adding files already present in
-                                // the tree unless update_timestamp is set. Done here in async
-                                // context (rather than inside `spawn_blocking` below) so the
-                                // mtime-tolerance comparison can `.await`.
-                                if !update_timestamp
-                                    && let Some((ref head_commit, ref local_repository)) =
-                                        head_commit_local_repo_maybe_clone
+                                // the tree and unmodified. Done here in async context (rather
+                                // than inside `spawn_blocking` below) so the mtime-tolerance
+                                // comparison can `.await`.
+                                if let Some((ref head_commit, ref local_repository)) =
+                                    head_commit_local_repo_maybe_clone
                                     && let Some(file_node) = repositories::tree::get_file_by_path(
                                         local_repository,
                                         head_commit,
@@ -507,71 +470,45 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                     continue;
                                 }
 
-                                let file_data_maybe: Option<(
-                                    reqwest::multipart::Part,
-                                    String,
-                                    PathBuf,
-                                    u64,
-                                )> = tokio::task::spawn_blocking(move || {
+                                let file_data_maybe = tokio::task::spawn_blocking(move || {
                                     // When preserve_paths is set or in remote-mode repos, use the
-                                    // full relative path. Otherwise use just the filename.
+                                    // full relative path. Otherwise use just the filename. The
+                                    // server reads this as the staging path and computes the
+                                    // content hash itself.
                                     let staging_path = if keep_relative_paths {
                                         relative_path
                                     } else {
-                                        PathBuf::from(relative_path.file_name().unwrap())
+                                        let file_name =
+                                            relative_path.file_name().ok_or_else(|| {
+                                                OxenError::internal_error(format!(
+                                                    "Invalid file path '{path:?}': no file name"
+                                                ))
+                                            })?;
+                                        PathBuf::from(file_name)
                                     };
 
                                     let file = std::fs::read(&path).map_err(|e| {
-                                        OxenError::basic_str(format!(
+                                        OxenError::internal_error(format!(
                                             "Failed to read file '{path:?}': {e}"
                                         ))
                                     })?;
 
-                                    let hash = hasher::hash_buffer(&file);
+                                    let file_part = build_gzip_staging_part(&file, &staging_path)?;
 
-                                    let compressed_bytes: Vec<u8> = {
-                                        let mut encoder =
-                                            GzEncoder::new(Vec::new(), Compression::default());
-
-                                        std::io::copy(&mut file.as_slice(), &mut encoder).map_err(
-                                            |e| {
-                                                OxenError::basic_str(format!(
-                                                    "Failed to copy file '{path:?}' to encoder: {e}"
-                                                ))
-                                            },
-                                        )?;
-
-                                        match encoder.finish() {
-                                            Ok(bytes) => bytes,
-                                            Err(e) => {
-                                                // If compressing a file fails, cancel the operation
-                                                return Err(OxenError::basic_str(format!(
-                                                    "Failed to finish gzip for file {}: {}",
-                                                    &hash, e
-                                                )));
-                                            }
-                                        }
-                                    };
-
-                                    let file_part =
-                                        reqwest::multipart::Part::bytes(compressed_bytes)
-                                            .file_name(hash.clone())
-                                            .mime_str("application/gzip")?;
-
-                                    Ok(Some((file_part, hash, staging_path, size)))
+                                    Ok::<_, OxenError>(Some((file_part, path, staging_path, size)))
                                 })
                                 .await??;
 
-                                let (file_part, file_hash, file_path, file_size) =
+                                let (file_part, disk_path, staging_path, file_size) =
                                     match file_data_maybe {
                                         Some(data) => data,
                                         None => continue,
                                     };
 
                                 batch_parts.push(file_part);
-                                files_to_stage.push(FileWithHash {
-                                    hash: file_hash,
-                                    path: file_path,
+                                files_to_stage.push(FileToStage {
+                                    disk_path,
+                                    staging_path,
                                 });
 
                                 batch_size += file_size;
@@ -579,8 +516,11 @@ pub(crate) async fn parallel_batched_small_file_upload(
 
                             // Once all the files in the batch are processed,
                             // Send them to the receiver for upload
-                            let processed_batch: ProcessedBatch =
-                                (batch_parts, files_to_stage, batch_size);
+                            let processed_batch = GzippedBatch {
+                                batch_parts,
+                                files_to_stage,
+                                batch_size,
+                            };
                             match tx_clone.send(processed_batch).await {
                                 Ok(_) => Ok(()),
                                 Err(e) => Err(OxenError::basic_str(format!("{e:?}"))),
@@ -601,7 +541,6 @@ pub(crate) async fn parallel_batched_small_file_upload(
     let workspace_id_clone = workspace_id.clone();
     let remote_repo_clone = remote_repo.clone();
     let directory_clone = directory.clone();
-    let local_or_base_clone = local_or_base.cloned();
 
     let consumer_err_files = Arc::clone(&err_files);
     let consumer_errors = Arc::clone(&errors);
@@ -611,114 +550,59 @@ pub(crate) async fn parallel_batched_small_file_upload(
     let consumer_handle = tokio::spawn(async move {
         let rx_stream = ReceiverStream::new(rx);
         rx_stream
-            .for_each_concurrent(
-                worker_count,
-                |processed_batch| {
+            .for_each_concurrent(worker_count, |processed_batch| {
+                let client_clone = client_clone.clone();
+                let remote_repo_clone = remote_repo_clone.clone();
+                let workspace_id_clone = workspace_id_clone.clone();
+                let directory_str = directory_clone.clone();
 
-                    let client_clone = client_clone.clone();
-                    let remote_repo_clone = remote_repo_clone.clone();
-                    let workspace_id_clone = workspace_id_clone.clone();
-                    let directory_str = directory_clone.clone();
-                    let local_or_base_clone = local_or_base_clone.clone();
+                let err_files_clone = Arc::clone(&consumer_err_files);
+                let errors = Arc::clone(&consumer_errors);
+                let bar = Arc::clone(&progress_clone);
 
-                    let err_files_clone = Arc::clone(&consumer_err_files);
-                    let errors = Arc::clone(&consumer_errors);
-                    let bar = Arc::clone(&progress_clone);
+                async move {
+                    let result: Result<(), OxenError> = async move {
+                        let GzippedBatch {
+                            batch_parts,
+                            files_to_stage,
+                            batch_size,
+                        } = processed_batch;
+                        let num_entries = batch_parts.len();
 
-                    async move {
-                        let result: Result<(), OxenError> = async move {
-                            let (current_batch_parts, files_to_stage, current_batch_size) = processed_batch;
-                            let num_entries = current_batch_parts.len();
-
-                            // Build the multipart form
-                            let mut form = reqwest::multipart::Form::new();
-                            for part in current_batch_parts {
-                                form = form.part("file[]", part);
-                            }
-
-                            let mut files_to_retry = files_to_stage.clone();
-                            match api::client::versions::workspace_multipart_batch_upload_parts_with_retry(
-                                &remote_repo_clone,
-                                Arc::clone(&client_clone),
-                                form,
-                                &mut files_to_retry,
-                                local_or_base_clone.as_ref(),
-                            )
-                            .await
-                            {
-                                Ok(upload_err_files) => {
-                                    if !upload_err_files.is_empty() {
-                                        let mut err_files = err_files_clone.lock();
-                                        err_files.extend(upload_err_files.clone());
-                                    }
-
-                                    log::debug!(
-                                        "Version file upload successful with {:?} err files. Beginning staging for {:?} files",
-                                        upload_err_files.len(),
-                                        files_to_stage.len()
-                                    );
-                                    match stage_files_to_workspace_with_retry(
-                                        &remote_repo_clone,
-                                        client_clone,
-                                        &workspace_id_clone,
-                                        Arc::new(files_to_stage),
-                                        &directory_str,
-                                        upload_err_files,
-                                        update_timestamp,
-                                    )
-                                    .await
-                                    {
-                                        // If the staging operation returned successfully, record the err_files for re-upload
-                                        Ok(staging_err_files) => {
-                                            log::debug!("Successfully staged files to workspace with errs {:?}", staging_err_files.len());
-
-                                            bar.add_bytes(current_batch_size);
-                                            bar.add_files(num_entries as u64);
-
-                                            if !staging_err_files.is_empty() {
-                                                let mut err_files = err_files_clone.lock();
-                                                err_files.extend(staging_err_files.clone());
-                                            }
-                                        }
-                                        // If staging failed, cancel the operation
-                                        Err(e) => {
-                                            log::error!("failed to stage files to workspace: {e}");
-                                            return Err(OxenError::basic_str(format!(
-                                                "failed to stage to workspace: {e}"
-                                            )));
-                                        }
-                                    }
-
-                                    Ok(())
-                                }
-                                // If uploading the version files fails, cancel the operation
-                                Err(e) => {
-                                    let mut err_files = err_files_clone.lock();
-                                    err_files.extend(
-                                        files_to_stage
-                                            .iter()
-                                            .map(|f| ErrorFileInfo {
-                                                hash: f.hash.clone(),
-                                                path: Some(f.path.clone()),
-                                                error: format!("{e:?}"),
-                                            })
-                                            .collect::<Vec<ErrorFileInfo>>()
-                                    );
-
-                                    log::error!("failed to upload version files to workspace: {e}");
-                                    Err(OxenError::basic_str(format!(
-                                        "failed to upload version files to workspace: {e}"
-                                    )))
-                                }
-                            }
-                        }.await;
-
-                        if let Err(e) = result {
-                            errors.lock().push(OxenError::basic_str(format!("{e:?}")));
+                        // Stage the batch in one multipart request to the workspace files
+                        // endpoint, which hashes the content, stores it, and stages it with
+                        // server-computed metadata.
+                        let mut form = reqwest::multipart::Form::new();
+                        for part in batch_parts {
+                            form = form.part("file[]", part);
                         }
+
+                        let staging_err_files = stage_multipart_batch_to_workspace_with_retry(
+                            &remote_repo_clone,
+                            client_clone,
+                            &workspace_id_clone,
+                            &directory_str,
+                            form,
+                            files_to_stage,
+                        )
+                        .await?;
+
+                        bar.add_bytes(batch_size);
+                        bar.add_files(num_entries as u64);
+
+                        if !staging_err_files.is_empty() {
+                            err_files_clone.lock().extend(staging_err_files);
+                        }
+
+                        Ok(())
+                    }
+                    .await;
+
+                    if let Err(e) = result {
+                        errors.lock().push(OxenError::basic_str(format!("{e:?}")));
                     }
                 }
-            )
+            })
             .await;
     });
 
@@ -768,101 +652,188 @@ pub(crate) async fn parallel_batched_small_file_upload(
     }
 }
 
-// Retry stage_files_to_workspace until successful or retry limit breached
-// If individual files fail, return them to be re-tried at the end
-pub async fn stage_files_to_workspace_with_retry(
-    remote_repo: &RemoteRepository,
-    client: Arc<reqwest::Client>,
-    workspace_id: impl AsRef<str>,
-    files_to_add: Arc<Vec<FileWithHash>>,
-    directory_str: impl AsRef<str>,
-    err_files: Vec<ErrorFileInfo>,
-    update_timestamp: bool,
-) -> Result<Vec<ErrorFileInfo>, OxenError> {
-    let mut retry_count: usize = 0;
-    let directory_str = directory_str.as_ref();
-    let workspace_id = workspace_id.as_ref().to_string();
-    let max_retries = max_retries();
-
-    while retry_count < max_retries {
-        retry_count += 1;
-
-        match stage_files_to_workspace(
-            remote_repo,
-            client.clone(),
-            &workspace_id,
-            files_to_add.clone(),
-            directory_str,
-            err_files.clone(),
-            update_timestamp,
-        )
-        .await
-        {
-            // If successful, return individual files that failed to stage
-            Ok(stage_err_files) => {
-                return Ok(stage_err_files);
-            }
-            Err(e) => {
-                log::error!("Error staging files to workspace: {e:?}");
-                if retry_count == max_retries {
-                    return Err(OxenError::basic_str(format!(
-                        "failed to stage files to workspace after retries: {e:?}"
-                    )));
-                }
-            }
-        }
-
-        let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
-        sleep(Duration::from_millis(wait_time as u64)).await;
-    }
-
-    log::error!(
-        "Error: Failed to stage files_to_add: {:?}",
-        files_to_add.len()
-    );
-    Err(OxenError::basic_str(
-        "failed to stage files to workspace after retries",
-    ))
+/// A file to stage via the multipart workspace files endpoint.
+#[derive(Clone, Debug)]
+struct FileToStage {
+    /// Local path to re-read the file from on retry.
+    disk_path: PathBuf,
+    /// Path relative to the request directory, sent as the multipart filename.
+    staging_path: PathBuf,
 }
 
-// Stage files to the workspace, filtering out files that previously failed to upload to version store
-pub async fn stage_files_to_workspace(
+/// A gzipped batch ready to upload: the pre-gzipped multipart parts, the files they were built from
+/// (kept to reconcile what staged and to rebuild the form on retry), and the batch's total byte
+/// size.
+struct GzippedBatch {
+    batch_parts: Vec<reqwest::multipart::Part>,
+    files_to_stage: Vec<FileToStage>,
+    batch_size: u64,
+}
+
+/// The multipart filename for a file's staging path: forward-slashed so subdirectories round-trip
+/// regardless of the client's platform. This is the exact token sent over the wire and the input
+/// the server normalizes, so [`expected_staged_path`] derives the reconciliation key from it too —
+/// keep the two in lockstep.
+fn staging_filename(staging_path: &Path) -> String {
+    util::fs::linux_path_str(&staging_path.to_string_lossy())
+}
+
+/// The path the workspace `files` endpoint stages a file at (and echoes back in its response),
+/// given the request `directory` and the file's staging path. This MUST mirror the server `add`
+/// handler: it stages at `directory.join(validate_and_normalize_path(<multipart filename>))`.
+///
+/// Used to reconcile which files staged. Deriving the key the same way the server does — rather
+/// than joining the raw `staging_path` — keeps client and server in agreement across path
+/// normalization (`.` components, separators) so a file that staged isn't misread as failed.
+fn expected_staged_path(directory: &str, staging_path: &Path) -> Result<PathBuf, OxenError> {
+    let normalized = util::fs::validate_and_normalize_path(staging_filename(staging_path))?;
+    Ok(Path::new(directory).join(normalized))
+}
+
+/// Build a gzipped multipart part whose filename is the staging path. The server reads the filename
+/// as the destination path (relative to the request directory) and computes the content hash itself.
+fn build_gzip_staging_part(
+    bytes: &[u8],
+    staging_path: &Path,
+) -> Result<reqwest::multipart::Part, OxenError> {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    std::io::Write::write_all(&mut encoder, bytes).map_err(|e| {
+        OxenError::internal_error(format!("Failed to gzip '{}': {e}", staging_path.display()))
+    })?;
+    let compressed = encoder.finish().map_err(|e| {
+        OxenError::internal_error(format!(
+            "Failed to finish gzip for '{}': {e}",
+            staging_path.display()
+        ))
+    })?;
+    Ok(reqwest::multipart::Part::bytes(compressed)
+        .file_name(staging_filename(staging_path))
+        .mime_str("application/gzip")?)
+}
+
+/// Rebuild a multipart form for the workspace files endpoint by reading and gzipping each file
+/// fresh from disk. Used to retry the files that have not staged yet.
+fn build_workspace_files_form(
+    files_to_stage: &[FileToStage],
+) -> Result<reqwest::multipart::Form, OxenError> {
+    let mut form = reqwest::multipart::Form::new();
+    for file in files_to_stage {
+        let bytes = std::fs::read(&file.disk_path).map_err(|e| {
+            OxenError::internal_error(format!("Failed to read file '{:?}': {e}", file.disk_path))
+        })?;
+        form = form.part(
+            "file[]",
+            build_gzip_staging_part(&bytes, &file.staging_path)?,
+        );
+    }
+    Ok(form)
+}
+
+/// POST a multipart form to the workspace files endpoint and return the staging paths the server
+/// reports as staged (each is the full path: `directory` joined with the file's staging path).
+async fn post_workspace_files_batch(
+    client: &reqwest::Client,
+    url: &str,
+    form: reqwest::multipart::Form,
+) -> Result<Vec<PathBuf>, OxenError> {
+    let response = client.post(url).multipart(form).send().await?;
+    let body = client::parse_json_body(url, response).await?;
+    let response: FilePathsResponse = serde_json::from_str(&body)?;
+    Ok(response.paths)
+}
+
+/// Return the files the server did NOT stage, comparing each against [`expected_staged_path`]
+/// (the same normalize-then-join the server applies) rather than the raw `directory.join(staging)`,
+/// so a file that staged under a normalized name isn't misread as failed.
+fn unstaged_files(
+    files: Vec<FileToStage>,
+    staged: &[PathBuf],
+    directory: &str,
+) -> Vec<FileToStage> {
+    let staged: HashSet<&PathBuf> = staged.iter().collect();
+    files
+        .into_iter()
+        .filter(
+            |file| match expected_staged_path(directory, &file.staging_path) {
+                Ok(expected) => !staged.contains(&expected),
+                // If the staging path won't normalize, the server would have rejected it too; there is
+                // no path it could have staged at, so treat it as unstaged.
+                Err(_) => true,
+            },
+        )
+        .collect()
+}
+
+/// Upload and stage a batch of files into a workspace via the multipart files endpoint, which
+/// hashes the content, stores it, and stages it with server-computed metadata. `form` is the
+/// pre-gzipped batch for the first attempt; `files_to_stage` reconciles what staged and rebuilds the
+/// form on retry. Returns per-file errors for anything still unstaged after the request succeeds;
+/// returns Err only on a persistent transport failure (aborting the operation).
+async fn stage_multipart_batch_to_workspace_with_retry(
     remote_repo: &RemoteRepository,
     client: Arc<reqwest::Client>,
-    workspace_id: impl AsRef<str>,
-    files_to_add: Arc<Vec<FileWithHash>>,
-    directory_str: impl AsRef<str>,
-    err_files: Vec<ErrorFileInfo>,
-    update_timestamp: bool,
+    workspace_id: &str,
+    directory: &str,
+    form: reqwest::multipart::Form,
+    files_to_stage: Vec<FileToStage>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
-    let workspace_id = workspace_id.as_ref();
-    let directory_str = directory_str.as_ref();
-    let uri = if update_timestamp {
-        format!("/workspaces/{workspace_id}/versions/{directory_str}?update_timestamp=true")
-    } else {
-        format!("/workspaces/{workspace_id}/versions/{directory_str}")
-    };
+    let uri = format!("/workspaces/{workspace_id}/files/{directory}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+    let max_retries = max_retries();
 
-    let files_to_send = if !err_files.is_empty() {
-        let err_hashes: std::collections::HashSet<String> =
-            err_files.iter().map(|f| f.hash.clone()).collect();
-        files_to_add
-            .iter()
-            .filter(|f| !err_hashes.contains(&f.hash))
-            .cloned()
-            .collect()
-    } else {
-        files_to_add.to_vec()
+    // First attempt uses the pre-gzipped form built by the producer.
+    let mut transport_error = None;
+    let mut remaining = match post_workspace_files_batch(&client, &url, form).await {
+        Ok(staged) => unstaged_files(files_to_stage, &staged, directory),
+        Err(e) => {
+            log::error!("Failed to stage multipart batch to workspace: {e}");
+            transport_error = Some(e);
+            files_to_stage
+        }
     };
 
-    log::debug!("Files to send: {:?}", files_to_send.len());
+    let mut retry_count: usize = 1;
+    while !remaining.is_empty() && retry_count < max_retries {
+        retry_count += 1;
+        let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
+        sleep(Duration::from_millis(wait_time as u64)).await;
 
-    let response = client.post(&url).json(&files_to_send).send().await?;
-    let body = client::parse_json_body(&url, response).await?;
-    let response: ErrorFilesResponse = serde_json::from_str(&body)?;
+        // Re-reading and gzipping from disk is blocking FS + CPU work, so keep it off the runtime.
+        let files_for_form = remaining.clone();
+        let form = tokio::task::spawn_blocking(move || build_workspace_files_form(&files_for_form))
+            .await??;
+        remaining = match post_workspace_files_batch(&client, &url, form).await {
+            Ok(staged) => {
+                transport_error = None;
+                unstaged_files(remaining, &staged, directory)
+            }
+            Err(e) => {
+                log::error!(
+                    "Failed to stage multipart batch to workspace (retry {retry_count}): {e}"
+                );
+                transport_error = Some(e);
+                remaining
+            }
+        };
+    }
 
-    Ok(response.err_files)
+    // A persistent transport failure aborts the operation, matching the prior staging behavior.
+    if let Some(e) = transport_error
+        && !remaining.is_empty()
+    {
+        return Err(e);
+    }
+
+    // Files the server accepted the request for but did not stage are per-file failures. The server
+    // computes the hash, so it is unknown to the client here; the staging path identifies the file.
+    Ok(remaining
+        .into_iter()
+        .map(|file| ErrorFileInfo {
+            hash: String::new(),
+            path: Some(file.staging_path),
+            error: "File was not staged by the workspace files endpoint".to_string(),
+        })
+        .collect())
 }
 
 // TODO: Merge this with 'rm_files'
@@ -1142,6 +1113,84 @@ mod tests {
     use std::path::Path;
     use tempfile::TempDir;
     use uuid;
+
+    #[test]
+    fn test_expected_staged_path_mirrors_server_normalization() {
+        // The reconciliation key must match what the server stages at and echoes back:
+        // directory.join(validate_and_normalize_path(<forward-slashed filename>)).
+        assert_eq!(
+            super::expected_staged_path("data", Path::new("img.jpg")).unwrap(),
+            PathBuf::from("data/img.jpg"),
+        );
+        // Subdirectory preserved.
+        assert_eq!(
+            super::expected_staged_path("data", Path::new("train/img.jpg")).unwrap(),
+            PathBuf::from("data/train/img.jpg"),
+        );
+        // `.` components are normalized away server-side; a raw directory.join(staging_path) would
+        // have produced "data/train/./img.jpg" and failed to reconcile.
+        assert_eq!(
+            super::expected_staged_path("data", Path::new("train/./img.jpg")).unwrap(),
+            PathBuf::from("data/train/img.jpg"),
+        );
+        // A backslash in the name (a Windows client's separator, a literal on this unix test box)
+        // is forward-slashed before normalization, matching the server's view.
+        assert_eq!(
+            super::expected_staged_path("data", Path::new("train\\img.jpg")).unwrap(),
+            PathBuf::from("data/train/img.jpg"),
+        );
+    }
+
+    #[test]
+    fn test_unstaged_files_recognizes_server_normalized_paths() {
+        let files = vec![
+            super::FileToStage {
+                disk_path: PathBuf::from("/tmp/a"),
+                staging_path: PathBuf::from("img.jpg"),
+            },
+            super::FileToStage {
+                disk_path: PathBuf::from("/tmp/b"),
+                staging_path: PathBuf::from("train/img.jpg"),
+            },
+            super::FileToStage {
+                disk_path: PathBuf::from("/tmp/c"),
+                staging_path: PathBuf::from("train/./nested.jpg"),
+            },
+        ];
+        // What the server reports as staged: directory-joined and normalized.
+        let staged = vec![
+            PathBuf::from("data/img.jpg"),
+            PathBuf::from("data/train/img.jpg"),
+            PathBuf::from("data/train/nested.jpg"),
+        ];
+        let remaining = super::unstaged_files(files, &staged, "data");
+        assert!(
+            remaining.is_empty(),
+            "all staged files should reconcile, got unstaged: {remaining:?}"
+        );
+    }
+
+    #[test]
+    fn test_unstaged_files_reports_files_the_server_skipped() {
+        let files = vec![
+            super::FileToStage {
+                disk_path: PathBuf::from("/tmp/a"),
+                staging_path: PathBuf::from("kept.jpg"),
+            },
+            super::FileToStage {
+                disk_path: PathBuf::from("/tmp/b"),
+                staging_path: PathBuf::from("train/dropped.jpg"),
+            },
+        ];
+        // Server staged only the first file.
+        let staged = vec![PathBuf::from("data/kept.jpg")];
+        let remaining = super::unstaged_files(files, &staged, "data");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(
+            remaining[0].staging_path,
+            PathBuf::from("train/dropped.jpg")
+        );
+    }
 
     #[tokio::test]
     async fn test_stage_single_file() -> Result<(), OxenError> {

@@ -1,6 +1,7 @@
 use crate::error::OxenError;
 use crate::model::User;
 use crate::util;
+use crate::util::fs::AtomicFile;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -92,7 +93,7 @@ impl UserConfig {
 
     pub fn save(&self, path: &Path) -> Result<(), OxenError> {
         let toml = toml::to_string(&self)?;
-        util::fs::atomic_write_to_path(path, toml.as_bytes())?;
+        AtomicFile::new(path).write(toml.as_bytes())?;
         Ok(())
     }
 }

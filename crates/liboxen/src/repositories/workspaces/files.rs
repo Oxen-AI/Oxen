@@ -8,8 +8,6 @@ pub use crate::core::v_latest::workspaces::files::exists;
 
 pub use crate::core::v_latest::workspaces::files::add;
 
-pub use crate::core::v_latest::workspaces::files::add_with_opts;
-
 pub use crate::core::v_latest::workspaces::files::rm;
 
 pub use crate::core::v_latest::workspaces::files::unstage;
@@ -20,7 +18,6 @@ pub async fn import(
     directory: PathBuf,
     filename: Option<String>,
     workspace: &Workspace,
-    update_timestamp: bool,
     allow_loopback: bool,
 ) -> Result<(), OxenError> {
     core::v_latest::workspaces::files::import(
@@ -29,7 +26,6 @@ pub async fn import(
         directory,
         filename,
         workspace,
-        update_timestamp,
         allow_loopback,
     )
     .await?;
@@ -217,7 +213,6 @@ mod tests {
                     std::path::PathBuf::from("data"),
                     None,
                     &workspace,
-                    false,
                     false,
                 )
                 .await;

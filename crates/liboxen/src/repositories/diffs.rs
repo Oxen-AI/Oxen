@@ -1273,20 +1273,25 @@ pub async fn get_cached_diff(
     let right_entry = compare_entry_2.unwrap();
 
     // TODO this should be cached
-    let left_version_path = repositories::revisions::get_version_file_from_commit_id(
+    let version_store = repo.version_store();
+    let left_full_df = tabular::maybe_read_version_df(
         repo,
-        left_entry.commit_id,
+        &version_store,
+        &left_entry.hash,
         &left_entry.path,
+        &left_entry.commit_id,
+        &DFOpts::empty(),
     )
     .await?;
-    let left_full_df = tabular::read_df(&*left_version_path, DFOpts::empty()).await?;
-    let right_version_path = repositories::revisions::get_version_file_from_commit_id(
+    let right_full_df = tabular::maybe_read_version_df(
         repo,
-        right_entry.commit_id,
+        &version_store,
+        &right_entry.hash,
         &right_entry.path,
+        &right_entry.commit_id,
+        &DFOpts::empty(),
     )
     .await?;
-    let right_full_df = tabular::read_df(&*right_version_path, DFOpts::empty()).await?;
 
     let schema_diff = TabularSchemaDiff::from_schemas(
         &Schema::from_polars(left_full_df.schema()),

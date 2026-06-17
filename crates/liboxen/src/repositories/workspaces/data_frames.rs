@@ -522,6 +522,7 @@ fn add_exclude_to_sql(sql: &str) -> Result<String, DataFrameError> {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+    use std::time::SystemTime;
 
     use serde_json::json;
 
@@ -533,9 +534,9 @@ mod tests {
     use crate::model::NewCommitBody;
     use crate::model::diff::DiffResult;
     use crate::opts::DFOpts;
+    use crate::repositories;
     use crate::repositories::workspaces;
     use crate::test;
-    use crate::{repositories, util};
 
     #[tokio::test]
     async fn test_add_row() -> Result<(), OxenError> {
@@ -810,23 +811,21 @@ mod tests {
             };
             let commit_2 = workspaces::commit(&workspace, &new_commit, branch_name).await?;
 
-            let file_1 = repositories::revisions::get_version_file_from_commit_id(
-                &repo, &commit.id, &file_path,
-            )
-            .await?;
-            // copy the file to the same path but with .csv as the extension
-            let file_1_csv = file_1.with_extension("csv");
-            util::fs::copy(&*file_1, &file_1_csv)?;
+            let version_store = repo.version_store();
+            let node_1 = repositories::tree::get_file_by_path(&repo, &commit, &file_path)?
+                .expect("file should exist in commit");
+            let file_1_csv = repo.path.join("version_1.csv");
+            version_store
+                .copy_version_to_path(&node_1.hash().to_string(), &file_1_csv, SystemTime::now())
+                .await?;
             log::debug!("copied file 1 to {file_1_csv:?}");
 
-            let file_2 = repositories::revisions::get_version_file_from_commit_id(
-                &repo,
-                commit_2.id,
-                &file_path,
-            )
-            .await?;
-            let file_2_csv = file_2.with_extension("csv");
-            util::fs::copy(&*file_2, &file_2_csv)?;
+            let node_2 = repositories::tree::get_file_by_path(&repo, &commit_2, &file_path)?
+                .expect("file should exist in commit_2");
+            let file_2_csv = repo.path.join("version_2.csv");
+            version_store
+                .copy_version_to_path(&node_2.hash().to_string(), &file_2_csv, SystemTime::now())
+                .await?;
             log::debug!("copied file 2 to {file_2_csv:?}");
             let diff_result =
                 repositories::diffs::diff_files(file_1_csv, file_2_csv, vec![], vec![], vec![])
@@ -840,6 +839,67 @@ mod tests {
                 }
                 _ => panic!("Expected tabular diff result"),
             }
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_commit_all_rows_deleted_jsonl_fails_instead_of_corrupting()
+    -> Result<(), OxenError> {
+        // Skip duckdb if on windows
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Commit a single-row jsonl data frame
+            let file_path = Path::new("data.jsonl");
+            let full_path = repo.path.join(file_path);
+            util::fs::write_to_path(
+                &full_path,
+                "{\"prompt\": \"hello\", \"status\": \"bootstrap\"}\n",
+            )?;
+            repositories::add(&repo, &full_path).await?;
+            let commit = repositories::commit(&repo, "add data.jsonl")?;
+
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+
+            // Index the dataset and stage a removal of its only row
+            workspaces::data_frames::index(&repo, &workspace, file_path).await?;
+
+            let mut page_opts = DFOpts::empty();
+            page_opts.page = Some(0);
+            page_opts.page_size = Some(10);
+            let staged_df = workspaces::data_frames::query(&workspace, file_path, &page_opts)?;
+            let id_to_delete = staged_df.column(OXEN_ID_COL)?.get(0)?.to_string();
+            let id_to_delete = id_to_delete.replace('"', "");
+            workspaces::data_frames::rows::delete(&repo, &workspace, file_path, &id_to_delete)?;
+
+            // Committing now would export an empty jsonl file — no schema can
+            // be inferred from it, so the commit must fail instead of writing
+            // a Tabular FileNode with no metadata (which would make every
+            // subsequent read fail with "File node does not have metadata").
+            let new_commit = NewCommitBody {
+                author: "author".to_string(),
+                email: "email".to_string(),
+                message: "Delete all rows".to_string(),
+            };
+            let result = workspaces::commit(&workspace, &new_commit, DEFAULT_BRANCH_NAME).await;
+            assert!(
+                result.is_err(),
+                "commit of an empty tabular export must fail, got {result:?}"
+            );
+
+            // The previously committed version must still be fully readable.
+            let file_node = repositories::tree::get_file_by_path(&repo, &commit, file_path)?
+                .expect("original file node should still exist");
+            assert!(
+                file_node.metadata().is_some(),
+                "original committed file node should still have tabular metadata"
+            );
 
             Ok(())
         })
@@ -1365,11 +1425,14 @@ mod tests {
             // The committed file round-trips: re-read it and confirm every row survived.
             let entry = repositories::entries::get_commit_entry(&repo, &commit, path)?.unwrap();
             let version_store = repo.version_store();
-            let version_file = version_store.get_version_path(&entry.hash).await?;
             let extension = entry.path.extension().unwrap().to_str().unwrap();
-            let data_frame =
-                df::tabular::read_df_with_extension(version_file, extension, &DFOpts::empty())
-                    .await?;
+            let data_frame = df::tabular::read_version_df(
+                &version_store,
+                &entry.hash,
+                extension,
+                &DFOpts::empty(),
+            )
+            .await?;
             assert_eq!(data_frame.height(), 3);
             assert!(data_frame.column("error_details").is_ok());
             Ok(())

@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex as StdMutex, PoisonError};
 use tokio::fs::File;
 use tokio::io::BufReader;
+use tokio::sync::Mutex as TokioMutex;
 
 use crate::constants::STAGED_DIR;
 use crate::core;
@@ -25,12 +27,54 @@ use crate::view::merge::{MergeConflictFile, Mergeable};
 use filetime::FileTime;
 use indicatif::ProgressBar;
 
+// Serializes commits of the same workspace so two concurrent commits can't
+// tear each other's data-frame export mid-read or wipe the shared staged db.
+// Keyed by the workspace repo path; in-process, and entries are dropped once
+// no commit holds or waits on the lock.
+static COMMIT_LOCKS: LazyLock<StdMutex<HashMap<PathBuf, Arc<TokioMutex<()>>>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+fn commit_lock_for(key: &Path) -> Arc<TokioMutex<()>> {
+    // Poisoning only means a holder panicked; the map of Arc handles is still
+    // sound, so recover the guard.
+    let mut locks = COMMIT_LOCKS.lock().unwrap_or_else(PoisonError::into_inner);
+    locks.entry(key.to_path_buf()).or_default().clone()
+}
+
+fn cleanup_commit_lock(key: &Path) {
+    let mut locks = COMMIT_LOCKS.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(lock) = locks.get(key) {
+        // The registry's reference is the only one left — no holder, no
+        // waiter — so the entry can be dropped. A late-arriving committer
+        // simply gets a fresh mutex, which is equivalent since nobody holds
+        // this one.
+        if Arc::strong_count(lock) == 1 {
+            locks.remove(key);
+        }
+    }
+}
+
 pub async fn commit(
     workspace: &Workspace,
     new_commit: &NewCommitBody,
     branch_name: impl AsRef<str>,
 ) -> Result<Commit, OxenError> {
-    let branch_name = branch_name.as_ref();
+    let lock_key = workspace.workspace_repo.path.clone();
+    let lock = commit_lock_for(&lock_key);
+    let result = {
+        let _guard = lock.lock().await;
+        commit_inner(workspace, new_commit, branch_name.as_ref()).await
+    };
+    drop(lock);
+    cleanup_commit_lock(&lock_key);
+    result
+}
+
+async fn commit_inner(
+    workspace: &Workspace,
+    new_commit: &NewCommitBody,
+    branch_name: &str,
+) -> Result<Commit, OxenError> {
     let repo = &workspace.base_repo;
     let commit = &workspace.commit;
 
@@ -285,6 +329,7 @@ async fn export_tabular_data_frames(
                             workspace,
                             &exported_path,
                             dir_entry.status,
+                            file_node.data_type().clone(),
                         )
                         .await?;
 
@@ -318,6 +363,7 @@ async fn compute_staged_merkle_tree_node(
     workspace: &Workspace,
     path: &PathBuf,
     status: StagedEntryStatus,
+    data_type: EntryDataType,
 ) -> Result<StagedMerkleTreeNode, OxenError> {
     // This logic is copied from add.rs but add has some optimizations that make it hard to be reused here
     let metadata = util::fs::metadata(path)?;
@@ -326,12 +372,22 @@ async fn compute_staged_merkle_tree_node(
     let num_bytes = metadata.len();
     let hash = MerkleHash::new(hash);
 
-    // Get the data type of the file
+    // Use the committed node's data type for the guard below: an empty export
+    // can mime-detect as non-tabular.
     let mime_type = util::fs::file_mime_type(path);
-    let data_type = util::fs::datatype_from_mimetype(path, &mime_type);
     log::debug!("compute_staged_merkle_tree_node path: {path:?}");
     let mut metadata = repositories::metadata::get_file_metadata(path, &data_type)?;
     log::debug!("compute_staged_merkle_tree_node metadata: {metadata:?}");
+
+    // A tabular file we cannot parse must never be committed: a FileNode with
+    // data_type Tabular and no metadata makes every subsequent read of the
+    // file fail with "File node does not have metadata". This happens when
+    // the exported data frame is empty (e.g. all rows were staged as removed
+    // — an empty jsonl/csv has no schema to infer). Failing the commit keeps
+    // the last good version readable.
+    if data_type == EntryDataType::Tabular && metadata.is_none() {
+        return Err(OxenError::TabularExportMissingMetadata(path.clone()));
+    }
 
     // Here we give priority to the staged schema, as it can contained metadata that was changed during the
     if let Ok(Some(staged_schema)) =
@@ -386,4 +442,109 @@ async fn compute_staged_merkle_tree_node(
         status,
         node: MerkleTreeNode::from_file(file_node),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::repositories;
+    use crate::test;
+    use crate::util;
+
+    #[tokio::test]
+    async fn test_commit_lock_registry_shares_and_cleans_up() -> Result<(), OxenError> {
+        let key = PathBuf::from("test-commit-lock-registry");
+
+        // Two lookups for the same key must return the same underlying mutex.
+        let lock_a = commit_lock_for(&key);
+        let lock_b = commit_lock_for(&key);
+        let guard = lock_a.lock().await;
+        assert!(
+            lock_b.try_lock().is_err(),
+            "second handle should contend on the same mutex"
+        );
+        drop(guard);
+        assert!(lock_b.try_lock().is_ok());
+
+        // A different key gets an independent mutex.
+        let other = commit_lock_for(Path::new("test-commit-lock-registry-other"));
+        let _guard = lock_a.lock().await;
+        assert!(other.try_lock().is_ok());
+
+        // Once all handles are dropped, cleanup removes the entry.
+        drop(_guard);
+        drop(lock_a);
+        drop(lock_b);
+        cleanup_commit_lock(&key);
+        let registry = COMMIT_LOCKS.lock().unwrap();
+        assert!(!registry.contains_key(&key));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_commits_to_same_workspace_are_serialized() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let head = repositories::commits::head_commit(&repo)?;
+            let workspace = repositories::workspaces::create_with_name(
+                &repo,
+                &head,
+                "concurrent-commit-test",
+                Some("concurrent-commit-test-ws".to_string()),
+                true,
+            )
+            .await?;
+
+            // Stage two files in the same workspace.
+            for name in ["file1.txt", "file2.txt"] {
+                let path = workspace.workspace_repo.path.join(name);
+                util::fs::write_to_path(&path, format!("content of {name}"))?;
+                repositories::workspaces::files::add(&workspace, &path).await?;
+            }
+
+            let body_one = NewCommitBody {
+                author: "author".to_string(),
+                email: "email".to_string(),
+                message: "concurrent commit one".to_string(),
+            };
+            let body_two = NewCommitBody {
+                author: "author".to_string(),
+                email: "email".to_string(),
+                message: "concurrent commit two".to_string(),
+            };
+
+            // Without the per-workspace lock these interleave: one commit
+            // wipes the staged db (or rewrites the data-frame exports) while
+            // the other is mid-commit. With the lock they serialize: the
+            // first to acquire commits everything staged, the second finds a
+            // clean staged db and reports "No changes to commit".
+            let (result_one, result_two) = tokio::join!(
+                commit(&workspace, &body_one, "main"),
+                commit(&workspace, &body_two, "main"),
+            );
+
+            let ok_count = [result_one.is_ok(), result_two.is_ok()]
+                .iter()
+                .filter(|ok| **ok)
+                .count();
+            assert_eq!(
+                ok_count, 1,
+                "exactly one commit should land, got: {result_one:?} / {result_two:?}"
+            );
+
+            // Both staged files must be present at the branch head.
+            let branch = repositories::branches::get_by_name(&repo, "main")?;
+            let head = repositories::commits::get_by_id(&repo, &branch.commit_id)?
+                .expect("branch head commit should exist");
+            for name in ["file1.txt", "file2.txt"] {
+                assert!(
+                    repositories::tree::get_file_by_path(&repo, &head, Path::new(name))?.is_some(),
+                    "{name} should be committed at the branch head"
+                );
+            }
+
+            Ok(())
+        })
+        .await
+    }
 }

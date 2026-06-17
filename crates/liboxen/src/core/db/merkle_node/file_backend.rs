@@ -17,7 +17,7 @@ use crate::model::merkle_tree::merkle_writer::{
 };
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::{LocalRepository, MerkleHash, TMerkleTreeNode};
-use crate::util;
+use crate::util::fs::AtomicFile;
 
 /// File-based Merkle node store backend. Implements the [`MerkleStore`] trait.
 ///
@@ -284,8 +284,8 @@ fn write_all_tar<W: Write>(
 /// - `overwrite_existing == false` skips them; matches
 ///   `repositories::tree::unpack_nodes`'s upload-consumer behaviour.
 ///
-/// File-entry payloads are written through [`util::fs::atomic_write_from_reader_sync`]
-/// (the sync analog of `atomic_write_from_reader`, sharing the `AtomicTempFile` write-
+/// File-entry payloads are written through [`util::fs::atomic_stream_sync`]
+/// (the sync analog of `atomic_stream`, sharing the `AtomicTempFile` write-
 /// temp-then-rename pattern). A crash or cancellation mid-write leaves either the prior
 /// contents (or nothing) at the destination — never a half-written file. Directory
 /// entries are created with `std::fs::create_dir_all`; tar's per-entry mtime/perms are
@@ -341,7 +341,8 @@ fn extract_tar_under<R: Read>(
         if entry_type.is_dir() {
             std::fs::create_dir_all(&dst_path)?;
         } else {
-            util::fs::atomic_write_from_reader(&dst_path, &mut file)
+            AtomicFile::new(&dst_path)
+                .stream(&mut file)
                 .map_err(|err| MerkleDbError::FsTransport(Box::new(err)))?;
         }
 
@@ -531,6 +532,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::model::Commit;
     use crate::model::merkle_tree::node::{CommitNode, DirNode};
+    use crate::util;
     use crate::{repositories, test};
 
     /// Simply test that we can write a node with a child and read it.

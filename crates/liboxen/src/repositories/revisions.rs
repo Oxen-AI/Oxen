@@ -18,6 +18,3 @@ pub fn get(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<Option<C
     let commit = repositories::commits::get_by_id(repo, &commit_id)?;
     Ok(commit)
 }
-
-/// Get the version file path from a commit id
-pub use crate::core::v_latest::revisions::get_version_file_from_commit_id;

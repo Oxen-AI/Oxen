@@ -188,37 +188,38 @@ pub fn resolve_branch(repo: &LocalRepository, name: &str) -> Result<Option<Branc
     }
 }
 
-fn user_cli_is_out_of_date(user_agent: &str) -> bool {
+/// Whether the User-Agent identifies an Oxen client (not Postman, not some other tool).
+fn is_oxen_user_agent(user_agent: &str) -> bool {
     // Bypass for postman requests - TODO, make this more robust or only in dev
     if user_agent.contains("Postman") {
         return false;
     }
+    user_agent.to_lowercase().contains("oxen")
+}
 
-    // check if the user agent contains oxen
-    if !user_agent.to_lowercase().contains("oxen") {
-        // Not an oxen user agent
+/// Parse the client's Oxen version from its User-Agent. Returns `None` when the agent is not an
+/// Oxen client or its version can't be parsed.
+fn client_oxen_version(user_agent: &str) -> Option<OxenVersion> {
+    if !is_oxen_user_agent(user_agent) {
+        return None;
+    }
+
+    let parts: Vec<&str> = user_agent.split('/').collect();
+    let version = REGEX_USER_AGENT_VERSION_NUMBER
+        .find(parts.get(1)?)
+        .map(|m| m.as_str())?;
+    OxenVersion::from_str(version).ok()
+}
+
+fn user_cli_is_out_of_date(user_agent: &str) -> bool {
+    if !is_oxen_user_agent(user_agent) {
+        // Not an oxen user agent; nothing to gate.
         return false;
     }
 
-    // And if the version is less than the minimum version
-    let parts: Vec<&str> = user_agent.split('/').collect();
-
-    if parts.len() <= 1 {
-        // Can't parse version from user agent
+    // An oxen client whose version can't be parsed is treated as out of date.
+    let Some(user_cli_version) = client_oxen_version(user_agent) else {
         return true;
-    }
-
-    let Some(version) = REGEX_USER_AGENT_VERSION_NUMBER
-        .find(parts[1])
-        .map(|m| m.as_str())
-    else {
-        // Can't parse version from user agent
-        return true;
-    };
-
-    let user_cli_version = match OxenVersion::from_str(version) {
-        Ok(v) => v,
-        Err(_) => return true,
     };
 
     let min_oxen_version = match OxenVersion::from_str(constants::MIN_OXEN_VERSION.as_str()) {
@@ -226,8 +227,96 @@ fn user_cli_is_out_of_date(user_agent: &str) -> bool {
         Err(_) => return true,
     };
 
-    if min_oxen_version > user_cli_version {
-        return true;
+    min_oxen_version > user_cli_version
+}
+
+/// Whether the requesting client must stop using the deprecated JSON workspace-staging endpoint
+/// (`add_version_files`) and switch to the multipart files endpoint. True only for an Oxen client
+/// at or above the deprecation release. Requests with no User-Agent, a non-Oxen agent, an
+/// unparseable version, or in server test mode are allowed through, so browsers, proxies, and the
+/// in-repo test client keep working.
+pub fn client_must_use_multipart_staging(req: &HttpRequest, test_mode: bool) -> bool {
+    if test_mode {
+        return false;
     }
-    false
+
+    let Some(user_agent) = req
+        .headers()
+        .get("user-agent")
+        .and_then(|ua| ua.to_str().ok())
+    else {
+        return false;
+    };
+
+    let Some(client_version) = client_oxen_version(user_agent) else {
+        return false;
+    };
+
+    // Release that deprecated the JSON staging endpoint; see docs/deprecations.md. Inlined (not a
+    // named constant) so the gating version is visible right here at the check.
+    let Ok(deprecated_at) = OxenVersion::from_str("0.51.0") else {
+        return false;
+    };
+    client_version >= deprecated_at
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::test::TestRequest;
+
+    fn request_with_user_agent(user_agent: &str) -> HttpRequest {
+        TestRequest::default()
+            .insert_header(("user-agent", user_agent))
+            .to_http_request()
+    }
+
+    #[test]
+    fn test_client_oxen_version_parses_oxen_agent() {
+        let version = client_oxen_version("Oxen/0.51.0 (macos; tokio)");
+        assert_eq!(version, Some(OxenVersion::from_str("0.51.0").unwrap()));
+    }
+
+    #[test]
+    fn test_client_oxen_version_ignores_non_oxen_agent() {
+        assert_eq!(client_oxen_version("Mozilla/5.0 (browser)"), None);
+        assert_eq!(client_oxen_version("PostmanRuntime/7.0.0"), None);
+    }
+
+    #[test]
+    fn test_deprecated_staging_gate_rejects_at_or_above_deprecation_version() {
+        // The gate compares against the inlined deprecation release (0.51.0).
+        let req = request_with_user_agent("Oxen/0.51.0 (macos; tokio)");
+        assert!(client_must_use_multipart_staging(&req, false));
+
+        let req = request_with_user_agent("Oxen/0.60.0 (linux; tokio)");
+        assert!(client_must_use_multipart_staging(&req, false));
+    }
+
+    #[test]
+    fn test_deprecated_staging_gate_allows_older_clients() {
+        let req = request_with_user_agent("Oxen/0.50.0 (macos; tokio)");
+        assert!(!client_must_use_multipart_staging(&req, false));
+
+        let req = request_with_user_agent("Oxen/0.50.4 (macos; tokio)");
+        assert!(!client_must_use_multipart_staging(&req, false));
+    }
+
+    #[test]
+    fn test_deprecated_staging_gate_allows_non_oxen_and_missing_agents() {
+        // Browsers / proxies (no oxen User-Agent) must keep using this endpoint.
+        let req = request_with_user_agent("Mozilla/5.0 (browser)");
+        assert!(!client_must_use_multipart_staging(&req, false));
+
+        let req = TestRequest::default().to_http_request();
+        assert!(!client_must_use_multipart_staging(&req, false));
+    }
+
+    #[test]
+    fn test_deprecated_staging_gate_bypassed_in_test_mode() {
+        // The in-repo test client reports the crate version, which crosses the gate once a release
+        // bumps it; test mode keeps the suite green.
+        let req = request_with_user_agent("Oxen/0.60.0 (linux; tokio)");
+        assert!(!client_must_use_multipart_staging(&req, true));
+    }
 }

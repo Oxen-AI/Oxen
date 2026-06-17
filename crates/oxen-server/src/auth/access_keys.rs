@@ -1,6 +1,7 @@
 use liboxen::error::OxenError;
 use liboxen::model::User;
 use liboxen::util;
+use liboxen::util::fs::AtomicFile;
 
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use rocksdb::{DBWithThreadMode, LogLevel, MultiThreaded, Options};
@@ -55,7 +56,7 @@ impl AccessKeyManager {
             let secret = uuid::Uuid::new_v4();
             let key = hex::encode(secret.as_bytes());
             log::debug!("Got secret key: {key}");
-            util::fs::atomic_write_to_path(&secret_file, key.as_bytes())?;
+            AtomicFile::new(&secret_file).write(key.as_bytes())?;
         }
 
         let db = if read_only {

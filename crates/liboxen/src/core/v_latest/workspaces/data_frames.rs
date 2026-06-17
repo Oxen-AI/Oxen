@@ -1,4 +1,3 @@
-use async_tempfile::TempFile;
 use duckdb::Connection;
 
 use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL, EXCLUDE_OXEN_COLS, TABLE_NAME};
@@ -10,6 +9,7 @@ use parking_lot::Mutex;
 use sql_query_builder::Delete;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode};
 use crate::model::staged_row_status::StagedRowStatus;
@@ -17,7 +17,7 @@ use crate::model::{
     Commit, EntryDataType, LocalRepository, MerkleHash, StagedEntryStatus, Workspace,
 };
 use crate::repositories;
-use crate::storage::version_store::VersionLocation;
+use crate::util::fs::AtomicFile;
 use crate::{error::OxenError, util};
 use std::path::{Path, PathBuf};
 
@@ -144,24 +144,11 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     let version_store = repo.version_store();
     let hash_str = file_hash.to_string();
 
-    // DuckDB's `read_*()` can only ingest a local filesystem path. Local stores expose the
-    // on-disk version file directly (zero copy); S3 streams the object to a temp file kept alive
-    // until indexing finishes (RAII cleanup on drop). The temp file is created in the workspace's
-    // DuckDB directory (`parent`) rather than the OS temp dir: that directory lives on the
-    // oxen-server data volume, which is sized to hold version files, whereas `/tmp` may be tiny.
-    let (version_path, _temp_file) = match version_store.version_location(&hash_str).await? {
-        VersionLocation::Local(path) => (path, None),
-        VersionLocation::S3 { .. } => {
-            let temp = TempFile::new_in(parent)
-                .await
-                .map_err(|e| OxenError::basic_str(format!("Failed to create temp file: {e}")))?;
-            let temp_path = temp.file_path().to_path_buf();
-            version_store
-                .copy_version_to_path(&hash_str, &temp_path)
-                .await?;
-            (temp_path, Some(temp))
-        }
-    };
+    // DuckDB's `read_*()` can only ingest a local filesystem path, so materialize the version file.
+    // The guard `version_file` is held on the async side (its drop runs after the blocking index
+    // below) so a materialized S3 temp outlives the read; the closure takes a plain path copy.
+    let version_file = version_store.materialize(&hash_str, parent).await?;
+    let version_path = version_file.to_pathbuf();
 
     log::debug!(
         "core::v_latest::index::workspaces::data_frames::index({path:?}) got version path: {version_path:?}"
@@ -176,7 +163,7 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
 
     // DuckDB indexing is blocking file IO plus a full parse, so run it off the async runtime per
     // the sync-core / async-edge policy. The DuckDB connection lives entirely inside the closure
-    // (it never crosses an `.await`), and `_temp_file` is held on the async side until the
+    // (it never crosses an `.await`), and `version_file` is held on the async side until the
     // blocking work finishes, so a materialized S3 temp file outlives the read.
     tokio::task::spawn_blocking(move || {
         with_df_db_manager(&db_path, |manager| {
@@ -198,7 +185,7 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     // Save the current commit id so we know if the branch has advanced
     let commit_path =
         repositories::workspaces::data_frames::previous_commit_ref_path(workspace, path);
-    util::fs::atomic_write_to_path(&commit_path, commit.id.as_bytes())?;
+    AtomicFile::new(&commit_path).write(commit.id.as_bytes())?;
 
     Ok(())
 }
@@ -247,14 +234,17 @@ pub async fn rename(
     if staged_entry.is_none() {
         let workspace_file_path = workspace.workspace_repo.path.join(new_path);
 
-        // Export the file from the version path to the new path
+        // Export the file from the version path to the new path, setting mtime from merkle record
         if let Some(existing_file_node) =
             repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
         {
             let version_store = workspace.base_repo.version_store();
             let hash = existing_file_node.hash().to_string();
+            let mtime = SystemTime::UNIX_EPOCH
+                + Duration::from_secs(existing_file_node.last_modified_seconds() as u64)
+                + Duration::from_nanos(existing_file_node.last_modified_nanoseconds() as u64);
             version_store
-                .copy_version_to_path(&hash, &workspace_file_path)
+                .copy_version_to_path(&hash, &workspace_file_path, mtime)
                 .await?;
         }
 
@@ -353,6 +343,21 @@ pub fn extract_file_node_to_working_dir(
         )?;
     }
 
+    // Export to a sibling temp file, then rename into place so a concurrent
+    // reader of the working path never sees a torn or partial export. The
+    // `.oxentmp.` infix lets fsck reclaim an orphan from a killed export; the
+    // real extension stays last so wrap_sql_for_export picks the right format.
+    let file_name = working_path
+        .file_name()
+        .ok_or_else(|| OxenError::internal_error(format!("Invalid export path: {working_path:?}")))?
+        .to_string_lossy()
+        .to_string();
+    let export_path = working_path.with_file_name(format!(
+        ".oxentmp.{}.export-{}",
+        std::process::id(),
+        file_name
+    ));
+
     with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             let delete = Delete::new().delete_from(TABLE_NAME).where_clause(&format!(
@@ -365,12 +370,25 @@ pub fn extract_file_node_to_working_dir(
 
             let projection = build_export_projection(conn, TABLE_NAME)?;
             let sql = format!("SELECT {projection} FROM '{TABLE_NAME}'");
-            let query = wrap_sql_for_export(&sql, &working_path);
+            let query = wrap_sql_for_export(&sql, &export_path);
             log::debug!("extracting file node to working dir query: {query:?}");
             conn.execute(&query, [])?;
             Ok(())
         })
     })?;
+
+    // wrap_sql_for_export falls back to a bare SELECT (no COPY, no file) for
+    // extensions it doesn't know how to export; only publish when the COPY
+    // actually produced the temp file.
+    if export_path.exists() {
+        // fsync before the rename so a crash can't leave the published file
+        // pointing at unflushed bytes. Open writable: sync_all maps to
+        // FlushFileBuffers on Windows, which rejects a read-only handle.
+        let exported = std::fs::OpenOptions::new().write(true).open(&export_path)?;
+        exported.sync_all()?;
+        drop(exported);
+        util::fs::rename(&export_path, &working_path)?;
+    }
 
     Ok(working_path)
 }
@@ -596,6 +614,61 @@ mod tests {
                 |row| row.get(0),
             )?;
             assert_eq!(count, 3);
+            Ok(())
+        })
+    }
+
+    /// Runs the export projection against a real `JSON[]` column to confirm the
+    /// array round-trips — its CASE unifies a `JSON[]` (`THEN`) with a scalar
+    /// `JSON` (`ELSE`), which only surfaces when the projection actually executes.
+    #[test]
+    fn test_export_executes_on_json_array_column() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_empty_dir_test(|dir| {
+            let conn = df_db::get_connection(&dir.join("db"))?;
+            conn.execute(
+                &format!("CREATE TABLE {TABLE_NAME} (name VARCHAR, tags JSON[])"),
+                [],
+            )?;
+            conn.execute(
+                &format!(
+                    "INSERT INTO {TABLE_NAME} VALUES ('a', ['{{\"k\":1}}', '[2,3]']), ('b', NULL)"
+                ),
+                [],
+            )?;
+
+            let projection = build_export_projection(&conn, TABLE_NAME)?;
+            assert_eq!(
+                projection,
+                format!("\"name\", {}", json_tolerant_export_expr("tags"))
+            );
+
+            let out = dir.join("out.jsonl");
+            let query = wrap_sql_for_export(
+                &format!("SELECT {projection} FROM {TABLE_NAME} ORDER BY name"),
+                &out,
+            );
+            // Must type-unify (JSON[] THEN vs scalar JSON ELSE) and execute.
+            conn.execute(&query, [])?;
+
+            // The valid array round-trips as a JSON array, not a stringified blob.
+            let content = std::fs::read_to_string(&out)?;
+            assert!(
+                content.contains("{\"name\":\"a\",\"tags\":[{\"k\":1},[2,3]]}"),
+                "expected the JSON[] value to round-trip as an array, got:\n{content}"
+            );
+
+            let count: i64 = conn.query_row(
+                &format!(
+                    "SELECT count(*) FROM read_json('{}')",
+                    out.to_string_lossy()
+                ),
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(count, 2);
             Ok(())
         })
     }

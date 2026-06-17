@@ -112,21 +112,14 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
                     "Workspace not found: {workspace_id}"
                 ))));
             };
-            let version_path = version_store.get_version_path(&version_id).await?;
             let dst_path = if let Some(dst_dir) = &file.dst_dir {
                 dst_dir.join(file.file_name.clone())
             } else {
                 PathBuf::from(file.file_name.clone())
             };
 
-            core::v_latest::workspaces::files::add_version_file(
-                &workspace,
-                &*version_path,
-                &dst_path,
-                &version_id,
-                request.update_timestamp,
-            )
-            .await?;
+            core::v_latest::workspaces::files::add_version_file(&workspace, &dst_path, &version_id)
+                .await?;
         }
 
         return Ok(HttpResponse::Ok().json(StatusMessage::resource_found()));

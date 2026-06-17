@@ -1,5 +1,4 @@
 use bytes::BytesMut;
-use filetime::FileTime;
 use futures::StreamExt;
 use parking_lot::Mutex;
 use reqwest::Client;
@@ -39,28 +38,13 @@ const MAX_COMPRESSION_RATIO: u64 = 100; // Maximum allowed
 
 // TODO: Do we depreciate this, if we always upload to version store?
 pub async fn add(workspace: &Workspace, filepath: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
-    add_with_opts(workspace, filepath, false).await
-}
-
-pub async fn add_with_opts(
-    workspace: &Workspace,
-    filepath: impl AsRef<Path>,
-    update_timestamp: bool,
-) -> Result<PathBuf, OxenError> {
     let filepath = filepath.as_ref();
     let workspace_repo = &workspace.workspace_repo;
     let base_repo = &workspace.base_repo;
 
     // Stage the file using the repositories::add method
     let commit = workspace.commit.clone();
-    p_add_file(
-        base_repo,
-        workspace_repo,
-        &Some(commit),
-        filepath,
-        update_timestamp,
-    )
-    .await?;
+    p_add_file(base_repo, workspace_repo, &Some(commit), filepath).await?;
 
     // Return the relative path of the file in the workspace
     let relative_path = util::fs::path_relative_to_dir(filepath, &workspace_repo.path)?;
@@ -84,26 +68,27 @@ pub async fn rm(
 
 pub async fn add_version_file(
     workspace: &Workspace,
-    version_path: impl AsRef<Path>,
     dst_path: impl AsRef<Path>,
     file_hash: &str,
-    update_timestamp: bool,
 ) -> Result<PathBuf, OxenError> {
-    // version_path is where the file is stored, dst_path is the relative path to the repo
-    // let version_path = version_path.as_ref();
     let dst_path = dst_path.as_ref();
-    // let workspace_repo = &workspace.workspace_repo;
-    // let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
+
+    // Materialize the version blob so the staging metadata computation has a local file to read.
+    // The returned guard cleans up any temp file once staging has read it.
+    let version_path = workspace
+        .base_repo
+        .version_store()
+        .materialize(file_hash, &workspace.dir())
+        .await?;
 
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
     stage_file_with_hash(
         workspace,
-        version_path.as_ref(),
+        &version_path,
         dst_path,
         file_hash,
         &staged_db_manager,
         &Arc::new(Mutex::new(HashSet::new())),
-        update_timestamp,
     )
     .await?;
 
@@ -115,7 +100,6 @@ pub async fn add_version_files(
     workspace: &Workspace,
     files_with_hash: &[FileWithHash],
     directory: impl AsRef<str>,
-    update_timestamp: bool,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let version_store = repo.version_store();
 
@@ -125,9 +109,11 @@ pub async fn add_version_files(
 
     let mut err_files: Vec<ErrorFileInfo> = vec![];
     let staged_db_manager = get_staged_db_manager(workspace_repo)?;
+    let dir = workspace.dir();
     for item in files_with_hash.iter() {
         let target_path = PathBuf::from(directory).join(&item.path);
-        let version_path = match version_store.get_version_path(&item.hash).await {
+        // The returned guard keeps any S3-materialized temp file alive until staging reads it below.
+        let version_path = match version_store.materialize(&item.hash, &dir).await {
             Ok(path) => path,
             Err(e) => {
                 let error = format!("Failed to resolve version path: {e}");
@@ -147,7 +133,6 @@ pub async fn add_version_files(
             &item.hash,
             &staged_db_manager,
             &seen_dirs,
-            update_timestamp,
         )
         .await
         {
@@ -172,6 +157,68 @@ pub async fn add_version_files(
         err_files.len()
     );
     Ok(err_files)
+}
+
+/// Stage a batch of version files into the workspace. Each entry is a destination path (already
+/// resolved and validated) paired with the hash of its content, which must already be in the
+/// version store.
+///
+/// Returns the destination paths that staged successfully, plus a per-file error for each that did
+/// not (content missing from the version store, or a staging failure).
+pub async fn add_version_files_at_paths(
+    workspace: &Workspace,
+    files: Vec<(PathBuf, String)>,
+) -> Result<(Vec<PathBuf>, Vec<ErrorFileInfo>), OxenError> {
+    let version_store = workspace.base_repo.version_store();
+    let dir = workspace.dir();
+    let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
+    let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+
+    let mut staged_paths = Vec::with_capacity(files.len());
+    let mut err_files = vec![];
+    for (dst_path, hash) in files {
+        // The returned guard keeps any S3-materialized temp file alive until staging reads it below.
+        let version_path = match version_store.materialize(&hash, &dir).await {
+            Ok(path) => path,
+            Err(e) => {
+                let error = format!("Failed to resolve version path: {e}");
+                log::error!("{error}");
+                err_files.push(ErrorFileInfo {
+                    hash,
+                    path: Some(dst_path),
+                    error,
+                });
+                continue;
+            }
+        };
+        match stage_file_with_hash(
+            workspace,
+            &version_path,
+            &dst_path,
+            &hash,
+            &staged_db_manager,
+            &seen_dirs,
+        )
+        .await
+        {
+            Ok(_) => staged_paths.push(dst_path),
+            Err(e) => {
+                let error = format!("Failed to add file to staged db: {e}");
+                log::error!("{error}");
+                err_files.push(ErrorFileInfo {
+                    hash,
+                    path: Some(dst_path),
+                    error,
+                });
+            }
+        }
+    }
+    log::debug!(
+        "add_version_files_at_paths complete with {} staged, {} err_files",
+        staged_paths.len(),
+        err_files.len()
+    );
+    Ok((staged_paths, err_files))
 }
 
 pub fn track_modified_data_frame(
@@ -387,7 +434,6 @@ pub async fn import(
     directory: PathBuf,
     filename: Option<String>,
     workspace: &Workspace,
-    update_timestamp: bool,
     allow_loopback: bool,
 ) -> Result<(), OxenError> {
     let parsed_url =
@@ -413,7 +459,6 @@ pub async fn import(
         directory,
         filename,
         workspace,
-        update_timestamp,
         allow_loopback,
     )
     .await?;
@@ -485,7 +530,6 @@ async fn fetch_file(
     directory: PathBuf,
     caller_filename: Option<String>,
     workspace: &Workspace,
-    update_timestamp: bool,
     allow_loopback: bool,
 ) -> Result<(), OxenError> {
     let client = Client::builder()
@@ -658,16 +702,12 @@ async fn fetch_file(
 
         for file in files.iter() {
             log::debug!("file::import add file {file:?}");
-            let path =
-                repositories::workspaces::files::add_with_opts(workspace, file, update_timestamp)
-                    .await?;
+            let path = repositories::workspaces::files::add(workspace, file).await?;
             log::debug!("file::import add file ✅ success! staged file {path:?}");
         }
     } else {
         log::debug!("file::import add file {:?}", &filepath);
-        let path =
-            repositories::workspaces::files::add_with_opts(workspace, &save_path, update_timestamp)
-                .await?;
+        let path = repositories::workspaces::files::add(workspace, &save_path).await?;
         log::debug!("file::import add file ✅ success! staged file {path:?}");
     }
 
@@ -876,7 +916,6 @@ async fn p_add_file(
     workspace_repo: &LocalRepository,
     maybe_head_commit: &Option<Commit>,
     path: &Path,
-    update_timestamp: bool,
 ) -> Result<(), OxenError> {
     let version_store = base_repo.version_store();
     let mut maybe_dir_node = None;
@@ -897,23 +936,13 @@ async fn p_add_file(
     }
 
     // See if this is a new file or a modified file
-    let mut file_status = core::v_latest::add::determine_file_status(
+    let file_status = core::v_latest::add::determine_file_status(
         base_repo,
         &maybe_dir_node,
         &file_name,
         &full_path,
     )
     .await?;
-
-    // When update_timestamp is set, override Unmodified status to Modified
-    // and use the current time so the commit gets a new merkle tree hash
-    if update_timestamp && file_status.status == StagedEntryStatus::Unmodified {
-        log::info!(
-            "file {full_path:?} has not changed but update_timestamp is set - staging as modified"
-        );
-        file_status.status = StagedEntryStatus::Modified;
-        file_status.mtime = FileTime::now();
-    }
 
     // Store the file in the version store using the hash as the key
     let hash_str = file_status.hash.to_string();

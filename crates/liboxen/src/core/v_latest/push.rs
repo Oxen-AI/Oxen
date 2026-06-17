@@ -16,6 +16,7 @@ use crate::model::{
 };
 
 use crate::opts::PushOpts;
+use crate::storage::VersionLocation;
 use crate::util::concurrency;
 use crate::{api, repositories};
 
@@ -652,10 +653,23 @@ async fn chunk_and_send_large_entries(
                     break;
                 };
 
-                let version_path = match version_store.get_version_path(&commit_entry.hash).await {
+                // Client push runs against the local repo store; a non-local store is unreachable
+                // here (the CLI has no S3 backend), so resolve the on-disk path and surface a
+                // non-local store as an error rather than fetching it.
+                let version_path = version_store
+                    .version_location(&commit_entry.hash)
+                    .await
+                    .and_then(|location| match location {
+                        VersionLocation::Local(path) => Ok(path),
+                        _ => Err(OxenError::internal_error(format!(
+                            "client push requires a local version store for {}",
+                            commit_entry.hash
+                        ))),
+                    });
+                let version_path = match version_path {
                     Ok(path) => path,
                     Err(e) => {
-                        log::error!("Failed to get version path: {e}");
+                        log::error!("Failed to resolve local version path: {e}");
                         should_stop.store(true, Ordering::Relaxed);
                         *first_error.lock().await = Some(e.to_string());
                         break;
@@ -667,7 +681,6 @@ async fn chunk_and_send_large_entries(
                     &*version_path,
                     None::<PathBuf>,
                     None,
-                    false,
                     Some(commit_entry.clone()),
                     Some(&bar),
                 )

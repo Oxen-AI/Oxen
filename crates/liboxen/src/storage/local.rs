@@ -1,12 +1,14 @@
 use std;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::constants::{VERSION_CHUNK_FILE_NAME, VERSION_CHUNKS_DIR, VERSION_FILE_NAME};
 use crate::error::OxenError;
 use crate::model::MerkleHash;
-use crate::storage::version_store::{LocalFilePath, VersionLocation, VersionStore};
-use crate::util::{self, concurrency, hasher};
+use crate::storage::version_store::{VersionLocation, VersionStore};
+use crate::util::fs::AtomicFile;
+use crate::util::{concurrency, hasher};
 use crate::view::versions::CleanCorruptedVersionsResult;
 
 use async_trait::async_trait;
@@ -19,6 +21,7 @@ use tokio::fs::{self, File, metadata};
 use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 use tokio::sync::Semaphore;
+use tokio::task::spawn_blocking;
 use tokio_stream::Stream;
 use tokio_util::io::ReaderStream;
 
@@ -89,12 +92,10 @@ impl VersionStore for LocalVersionStore {
 
         if !version_path.exists() {
             let expected_hash: MerkleHash = hash.parse()?;
-            util::fs::atomic_write_from_async_reader_verified(
-                &version_path,
-                &mut *reader,
-                expected_hash,
-            )
-            .await?;
+            AtomicFile::new(&version_path)
+                .with_hash(expected_hash)
+                .stream_async(&mut *reader)
+                .await?;
         }
 
         Ok(())
@@ -108,8 +109,10 @@ impl VersionStore for LocalVersionStore {
         }
 
         let expected_hash: MerkleHash = hash.parse()?;
-        tokio::task::spawn_blocking(move || {
-            util::fs::atomic_write_to_path_verified(&version_path, &data, expected_hash)
+        spawn_blocking(move || {
+            AtomicFile::new(&version_path)
+                .with_hash(expected_hash)
+                .write(&data)
         })
         .await??;
 
@@ -124,8 +127,7 @@ impl VersionStore for LocalVersionStore {
     ) -> Result<(), OxenError> {
         let path = self.version_dir(orig_hash).join(derived_filename);
         let path_for_log = path.clone();
-        tokio::task::spawn_blocking(move || util::fs::atomic_write_to_path(&path, &derived_data))
-            .await??;
+        spawn_blocking(move || AtomicFile::new(&path).write(&derived_data)).await??;
         log::debug!("Saved derived version file {path_for_log:?}");
         Ok(())
     }
@@ -194,16 +196,17 @@ impl VersionStore for LocalVersionStore {
         }
     }
 
-    async fn get_version_path(&self, hash: &str) -> Result<LocalFilePath, OxenError> {
-        Ok(LocalFilePath::Stable(self.version_path(hash)))
-    }
-
     async fn version_location(&self, hash: &str) -> Result<VersionLocation, OxenError> {
         Ok(VersionLocation::Local(self.version_path(hash)))
     }
 
     // TODO: (CleanCut) Do we need to make sure the destination path is outside the version store?
-    async fn copy_version_to_path(&self, hash: &str, dest_path: &Path) -> Result<(), OxenError> {
+    async fn copy_version_to_path(
+        &self,
+        hash: &str,
+        dest_path: &Path,
+        mtime: SystemTime,
+    ) -> Result<(), OxenError> {
         let version_path = self.version_path(hash);
         log::debug!("copying version path: {version_path:?} to {dest_path:?}");
         // Distinguish "the version-store blob is missing" from generic copy errors so the
@@ -219,7 +222,13 @@ impl VersionStore for LocalVersionStore {
                 });
             }
         }
-        util::fs::copy_mkdir(&version_path, dest_path).await?;
+        let dest_path = dest_path.to_path_buf();
+        spawn_blocking(move || {
+            AtomicFile::new(&dest_path)
+                .with_mtime(mtime)
+                .copy_from(&version_path)
+        })
+        .await??;
         Ok(())
     }
 
@@ -282,8 +291,7 @@ impl VersionStore for LocalVersionStore {
             return Ok(());
         }
 
-        tokio::task::spawn_blocking(move || util::fs::atomic_write_to_path(&chunk_path, &data))
-            .await??;
+        spawn_blocking(move || AtomicFile::new(&chunk_path).write(&data)).await??;
 
         Ok(())
     }
@@ -354,19 +362,17 @@ impl VersionStore for LocalVersionStore {
 
         // Run the full read-chunks + atomic-write + cleanup sequence in one `spawn_blocking`
         // closure: chain each chunk file as a sync `Read` and pipe the concatenation through
-        // `atomic_write_from_reader_verified` so the rename only happens if the reassembled
-        // bytes hash to the file's canonical hash.
-        tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
+        // `AtomicFile::stream` with the expected hash so the rename only happens if the
+        // reassembled bytes hash to the file's canonical hash.
+        spawn_blocking(move || -> Result<(), OxenError> {
             let mut combined: Box<dyn std::io::Read> = Box::new(std::io::empty());
             for chunk_path in &chunk_paths {
                 let chunk_file = std::fs::File::open(chunk_path)?;
                 combined = Box::new(std::io::Read::chain(combined, chunk_file));
             }
-            util::fs::atomic_write_from_reader_verified(
-                &version_path,
-                &mut combined,
-                expected_hash,
-            )?;
+            AtomicFile::new(&version_path)
+                .with_hash(expected_hash)
+                .stream(&mut combined)?;
 
             if chunks_dir.exists() {
                 std::fs::remove_dir_all(&chunks_dir)?;
@@ -510,9 +516,7 @@ impl VersionStore for LocalVersionStore {
 
                         // Compute hash in blocking thread
                         let actual_hash =
-                            match tokio::task::spawn_blocking(move || hasher::hash_buffer(&data))
-                                .await
-                            {
+                            match spawn_blocking(move || hasher::hash_buffer(&data)).await {
                                 Ok(h) => h,
                                 Err(_) => {
                                     log::debug!(
@@ -882,5 +886,56 @@ mod tests {
                 .await
                 .unwrap()
         );
+    }
+
+    /// `copy_version_to_path` must land bytes + stamp the mtime atomically. This is the
+    /// working-tree publish path that `restore_file` (oxen pull/checkout/restore) drives —
+    /// losing the mtime here is what defeats the `oxen status` size+mtime fast path.
+    #[tokio::test]
+    async fn test_copy_version_to_path_with_mtime_stamps_atomically() {
+        let (_temp_dir, store) = setup().await;
+        let data = b"working-tree publish content";
+        let hash = hasher::hash_buffer(data);
+        store
+            .store_version(&hash, Bytes::from_static(data))
+            .await
+            .unwrap();
+
+        let dest_dir = TempDir::new().unwrap();
+        let dest_path = dest_dir.path().join("subdir/output.bin");
+        let mtime = SystemTime::UNIX_EPOCH + std::time::Duration::new(1_700_000_000, 123_456_789);
+
+        store
+            .copy_version_to_path(&hash, &dest_path, mtime)
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read(&dest_path).unwrap(), data);
+        let actual = std::fs::metadata(&dest_path).unwrap().modified().unwrap();
+        assert_eq!(actual, mtime);
+    }
+
+    /// Missing source hash surfaces as `VersionStoreDataMissing` and the call must not
+    /// leave a scratch sibling or zero-byte file next to the destination.
+    #[tokio::test]
+    async fn test_copy_version_to_path_missing_version() {
+        let (_temp_dir, store) = setup().await;
+        let dest_dir = TempDir::new().unwrap();
+        let dest_path = dest_dir.path().join("out.bin");
+        let mtime = SystemTime::UNIX_EPOCH + std::time::Duration::new(1_700_000_000, 0);
+
+        let result = store
+            .copy_version_to_path("0000000000000000", &dest_path, mtime)
+            .await;
+        assert!(matches!(
+            result,
+            Err(OxenError::VersionStoreDataMissing { .. })
+        ));
+        assert!(!dest_path.exists());
+        let names: Vec<_> = std::fs::read_dir(dest_dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.file_name()))
+            .collect();
+        assert!(names.is_empty(), "leftover entries: {names:?}");
     }
 }

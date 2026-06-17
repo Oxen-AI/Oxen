@@ -2,6 +2,7 @@ use std::fmt::Debug;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -20,9 +21,9 @@ use crate::view::versions::CleanCorruptedVersionsResult;
 
 /// A local filesystem path to a version file.
 ///
-/// The path is guaranteed to be readable on the local filesystem, but callers must NOT assume it is
+/// The path is guaranteed to be readable on the local filesystem, but callers MUST NOT assume it is
 /// stable: non-local backends (e.g. S3) materialize the file into a temporary location that is
-/// cleaned up when this value is dropped.
+/// cleaned up when this value is dropped. Callers must treat the file as read-only.
 ///
 /// - Implements `Deref<Target = Path>` so that `&LocalFilePath` can be passed directly to any
 ///   function that accepts `&Path`.
@@ -31,9 +32,12 @@ use crate::view::versions::CleanCorruptedVersionsResult;
 ///
 /// TODO: See how many of our own functions can be updated to accept LocalFilePath directly. Perhaps we can remove the need for `AsRef<Path>`.
 pub enum LocalFilePath {
-    /// A stable path (e.g. from `LocalVersionStore`) that outlives this value.
+    /// A stable path (e.g. from `LocalVersionStore`) that outlives this value. It points at the
+    /// blob inside the content-addressed version store, so callers must treat it as read-only:
+    /// mutating it corrupts the stored content for every reference to that hash.
     Stable(PathBuf),
-    /// A temporary file that is deleted when this value is dropped.
+    /// A temporary file that is deleted when this value is dropped. Callers must treat it as
+    /// read-only.
     Temp(async_tempfile::TempFile),
 }
 
@@ -327,20 +331,6 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         derived_filename: &str,
     ) -> Result<bool, OxenError>;
 
-    /// Get a local filesystem path to a version file.
-    ///
-    /// The returned `LocalFilePath` is guaranteed to be readable on the local
-    /// filesystem. For local backends the path points into the version store
-    /// directly; for remote backends (e.g. S3) the file is downloaded to a
-    /// temporary location that is cleaned up when the `LocalFilePath` is dropped.
-    ///
-    /// **Callers must keep the returned value alive for as long as they use the
-    /// path.**
-    ///
-    /// # Arguments
-    /// * `hash` - The content hash of the version file to retrieve
-    async fn get_version_path(&self, hash: &str) -> Result<LocalFilePath, OxenError>;
-
     /// Return a [`VersionLocation`] describing where the version file lives, in a form a
     /// cloud-aware reader can consume without materializing it to a temp file on local disk.
     ///
@@ -348,21 +338,82 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// stores return [`VersionLocation::S3`] carrying the s3:// URL plus the region and endpoint
     /// override the caller needs to configure Polars `CloudOptions` or DuckDB `httpfs`.
     ///
-    /// Prefer this over [`Self::get_version_path`] whenever the consumer has a cloud-aware
-    /// reader available (Polars `scan_*`, DuckDB `read_parquet`, …): `get_version_path`
-    /// materializes the entire version file to a temp file on S3, which is fine for small
-    /// files but OOMs at the multi-GB scale customers care about.
+    /// Prefer this over [`Self::materialize`] whenever the consumer has a cloud-aware
+    /// reader available (Polars `scan_*`, DuckDB `read_parquet`, …): on an S3-backed store
+    /// `materialize` copies the entire version file to local disk, which is fine for small
+    /// files but is needless IO at the multi-GB scale customers care about.
+    ///
+    /// Also reach for it instead of [`Self::materialize`] when the caller only ever runs against a
+    /// local store (e.g. client/CLI paths, which hold no S3 backend): match
+    /// [`VersionLocation::Local`] for the path and return an error for any other backend, so an
+    /// unexpected non-local store fails loudly rather than triggering a silent download.
     ///
     /// # Arguments
     /// * `hash` - The content hash of the version file
     async fn version_location(&self, hash: &str) -> Result<VersionLocation, OxenError>;
 
-    /// Copy a versioned file from the version store to a destination path on the local filesystem
+    /// Copy a versioned file from the version store to a destination path on the local filesystem.
+    /// Missing parent directories of `dest_path` are created, so callers do not need to create them
+    /// beforehand. The publish is atomic, and the published file is stamped with `mtime` atomically
+    /// with the bytes — a crash at any point leaves either the prior contents at `dest_path` (if
+    /// any) or the new (correctly-stamped) contents, never a torn or wrong-mtime file.
     ///
     /// # Arguments
     /// * `hash` - The content hash of the version to retrieve
     /// * `dest_path` - Destination path to copy the file to
-    async fn copy_version_to_path(&self, hash: &str, dest_path: &Path) -> Result<(), OxenError>;
+    /// * `mtime` - mtime to stamp on the published file
+    async fn copy_version_to_path(
+        &self,
+        hash: &str,
+        dest_path: &Path,
+        mtime: SystemTime,
+    ) -> Result<(), OxenError>;
+
+    /// Materialize the version file for `hash` to a readable local path, placing any temporary
+    /// copy under `dir`.
+    ///
+    /// **Use this only when you need direct read access to a version file's bytes through a
+    /// filesystem path** — typically an external library that takes a path and only reads from it
+    /// (e.g. DuckDB `read_*`, an ffmpeg invocation). For remote stores it forces a full local copy
+    /// (network download plus a disk write on the data volume), so it is the most expensive way to
+    /// reach the data. Under any other condition, find a cheaper path: read via
+    /// [`Self::version_location`] with a cloud-aware reader (Polars `scan_*` with `CloudOptions`,
+    /// DuckDB `httpfs`) or stream the bytes — and if an internal caller only takes a `&Path` just to
+    /// read the file, prefer refactoring it to accept a `Read` handle (or `version_location`)
+    /// rather than reaching for `materialize`. And for a caller that can never run against a remote
+    /// store (client/CLI-only paths), prefer [`Self::version_location`] and the
+    /// [`VersionLocation::Local`] path with an explicit error on any non-local store: `materialize`
+    /// would otherwise silently download on a backend that is supposed to be unreachable there.
+    ///
+    /// Local-backed stores return the on-disk version path directly (zero copy); remote stores
+    /// (e.g. S3) stream the object into a temp file under `dir`, carried alive by the returned
+    /// [`LocalFilePath::Temp`] guard. `dir` must live on the data volume, not the OS temp dir, so
+    /// large blobs cannot exhaust a small `/tmp`.
+    ///
+    /// **The returned file is read-only: callers MUST NOT alter it in any way.** For local stores
+    /// the path points straight at the blob inside the content-addressed version store, so mutating
+    /// it corrupts that blob for every reference to `hash` (its bytes would no longer match its
+    /// content hash). Copy the file elsewhere first if you need a mutable version.
+    ///
+    /// # Arguments
+    /// * `hash` - The content hash of the version file
+    /// * `dir` - Directory on the data volume to hold any temporary copy
+    async fn materialize(&self, hash: &str, dir: &Path) -> Result<LocalFilePath, OxenError> {
+        match self.version_location(hash).await? {
+            VersionLocation::Local(path) => Ok(LocalFilePath::Stable(path)),
+            VersionLocation::S3 { .. } => {
+                util::fs::create_dir_all(dir)?;
+                let temp = async_tempfile::TempFile::new_in(dir).await.map_err(|e| {
+                    OxenError::basic_str(format!("Failed to create temp file: {e}"))
+                })?;
+                // Materialized temp file is read-only and short-lived (DuckDB ingest / ffmpeg
+                // / similar). Mtime is irrelevant for read-only consumers, so stamp with `now`.
+                self.copy_version_to_path(hash, temp.file_path(), SystemTime::now())
+                    .await?;
+                Ok(LocalFilePath::Temp(temp))
+            }
+        }
+    }
 
     /// Check if a version exists
     ///
