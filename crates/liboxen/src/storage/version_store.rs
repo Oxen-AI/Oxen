@@ -362,6 +362,11 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// materializes the entire version file to a temp file on S3, which is fine for small
     /// files but OOMs at the multi-GB scale customers care about.
     ///
+    /// Also reach for it instead of [`Self::materialize`] when the caller only ever runs against a
+    /// local store (e.g. client/CLI paths, which hold no S3 backend): match
+    /// [`VersionLocation::Local`] for the path and return an error for any other backend, so an
+    /// unexpected non-local store fails loudly rather than triggering a silent download.
+    ///
     /// # Arguments
     /// * `hash` - The content hash of the version file
     async fn version_location(&self, hash: &str) -> Result<VersionLocation, OxenError>;
@@ -394,7 +399,10 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// [`Self::version_location`] with a cloud-aware reader (Polars `scan_*` with `CloudOptions`,
     /// DuckDB `httpfs`) or stream the bytes — and if an internal caller only takes a `&Path` just to
     /// read the file, prefer refactoring it to accept a `Read` handle (or `version_location`)
-    /// rather than reaching for `materialize`.
+    /// rather than reaching for `materialize`. And for a caller that can never run against a remote
+    /// store (client/CLI-only paths), prefer [`Self::version_location`] and the
+    /// [`VersionLocation::Local`] path with an explicit error on any non-local store: `materialize`
+    /// would otherwise silently download on a backend that is supposed to be unreachable there.
     ///
     /// Local-backed stores return the on-disk version path directly (zero copy); remote stores
     /// (e.g. S3) stream the object into a temp file under `dir`, carried alive by the returned
