@@ -716,6 +716,7 @@ mod tests {
             [storage]
             backends = ["local", "s3"]
             s3_bucket = "my-bucket"
+            s3_region = "us-west-1"
             "#
         )
         .unwrap();
@@ -724,6 +725,7 @@ mod tests {
             r#"
             backends = ["local", "s3"]
             s3_bucket = "my-bucket"
+            s3_region = "us-west-1"
             "#,
         )
         .unwrap();
