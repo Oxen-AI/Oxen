@@ -302,6 +302,18 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::NotFound().json(error_json)
                     }
+                    OxenError::MerkleNodeNotFound(hash) => {
+                        let error_json = json!({
+                            "error": {
+                                "type": MSG_RESOURCE_NOT_FOUND,
+                                "title": "Merkle node not found",
+                                "detail": format!("Could not find Merkle tree node with hash: {hash}")
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_RESOURCE_NOT_FOUND,
+                        });
+                        HttpResponse::NotFound().json(error_json)
+                    }
                     OxenError::PathDoesNotExist(path) => {
                         log::debug!("Path does not exist: {path}");
                         let error_json = json!({
