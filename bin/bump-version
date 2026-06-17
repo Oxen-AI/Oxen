@@ -11,7 +11,13 @@ set -euo pipefail
 
 # Get current version from the main Cargo.toml
 get_current_version() {
-    cargo pkgid -p liboxen | cut -f2 -d@
+    # cargo pkgid emits "<source>#<version>" when the crate name matches its
+    # path's final segment, and "<source>#<name>@<version>" otherwise. Strip
+    # everything up to the last '#', then drop any optional "<name>@" prefix.
+    local pkgid
+    pkgid=$(cargo pkgid -p liboxen)
+    pkgid="${pkgid##*#}"
+    echo "${pkgid##*@}"
 }
 
 # Parse and validate semver format
