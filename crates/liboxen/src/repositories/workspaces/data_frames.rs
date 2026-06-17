@@ -533,9 +533,9 @@ mod tests {
     use crate::model::NewCommitBody;
     use crate::model::diff::DiffResult;
     use crate::opts::DFOpts;
+    use crate::repositories;
     use crate::repositories::workspaces;
     use crate::test;
-    use crate::{repositories, util};
 
     #[tokio::test]
     async fn test_add_row() -> Result<(), OxenError> {
@@ -810,23 +810,21 @@ mod tests {
             };
             let commit_2 = workspaces::commit(&workspace, &new_commit, branch_name).await?;
 
-            let file_1 = repositories::revisions::get_version_file_from_commit_id(
-                &repo, &commit.id, &file_path,
-            )
-            .await?;
-            // copy the file to the same path but with .csv as the extension
-            let file_1_csv = file_1.with_extension("csv");
-            util::fs::copy(&*file_1, &file_1_csv)?;
+            let version_store = repo.version_store();
+            let node_1 = repositories::tree::get_file_by_path(&repo, &commit, &file_path)?
+                .expect("file should exist in commit");
+            let file_1_csv = repo.path.join("version_1.csv");
+            version_store
+                .copy_version_to_path(&node_1.hash().to_string(), &file_1_csv)
+                .await?;
             log::debug!("copied file 1 to {file_1_csv:?}");
 
-            let file_2 = repositories::revisions::get_version_file_from_commit_id(
-                &repo,
-                commit_2.id,
-                &file_path,
-            )
-            .await?;
-            let file_2_csv = file_2.with_extension("csv");
-            util::fs::copy(&*file_2, &file_2_csv)?;
+            let node_2 = repositories::tree::get_file_by_path(&repo, &commit_2, &file_path)?
+                .expect("file should exist in commit_2");
+            let file_2_csv = repo.path.join("version_2.csv");
+            version_store
+                .copy_version_to_path(&node_2.hash().to_string(), &file_2_csv)
+                .await?;
             log::debug!("copied file 2 to {file_2_csv:?}");
             let diff_result =
                 repositories::diffs::diff_files(file_1_csv, file_2_csv, vec![], vec![], vec![])

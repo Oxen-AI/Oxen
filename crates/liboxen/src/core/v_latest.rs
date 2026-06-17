@@ -22,7 +22,6 @@ pub mod pull;
 pub mod push;
 pub mod resource;
 pub mod restore;
-pub mod revisions;
 pub mod rm;
 pub mod stats;
 pub mod status;
