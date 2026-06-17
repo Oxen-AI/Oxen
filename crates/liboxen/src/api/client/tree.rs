@@ -363,10 +363,10 @@ pub async fn download_trees_between(
 }
 
 /// Download a merkle-tree tarball from the remote repository and unpack it into the
-/// local store. Streams the response body straight into the `MerkleUnpacker` so nothing
+/// local store. Streams the response body straight into the unpacker so nothing
 /// buffers the whole payload in memory.
 ///
-/// The VFS branch is preserved but no longer lives here: `FileBackend::unpack` handles
+/// The VFS branch is preserved but no longer lives here: the `unpack` free function handles
 /// the `is_vfs` case internally (tempdir + `copy_dir_all` dance). That keeps the client
 /// logic generic across backends.
 async fn node_download_request(

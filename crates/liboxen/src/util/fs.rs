@@ -513,7 +513,7 @@ where
 
 /// Sync counterpart to [`atomic_write_from_reader`]. Same write-temp-then-rename guarantees,
 /// driven by `std::io` so it's callable from sync code paths that can't host a tokio runtime
-/// (e.g. impls of sync traits like [`MerkleUnpacker`]).
+/// (e.g. the sync merkle-node unpack path).
 pub(crate) fn atomic_write_from_reader<R>(target: &Path, reader: &mut R) -> Result<(), OxenError>
 where
     R: std::io::Read + ?Sized,
