@@ -7,7 +7,8 @@ use crate::constants::{VERSION_CHUNK_FILE_NAME, VERSION_CHUNKS_DIR, VERSION_FILE
 use crate::error::OxenError;
 use crate::model::MerkleHash;
 use crate::storage::version_store::{LocalFilePath, VersionLocation, VersionStore};
-use crate::util::{self, concurrency, hasher};
+use crate::util::fs::AtomicFile;
+use crate::util::{concurrency, hasher};
 use crate::view::versions::CleanCorruptedVersionsResult;
 
 use async_trait::async_trait;
@@ -20,6 +21,7 @@ use tokio::fs::{self, File, metadata};
 use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 use tokio::sync::Semaphore;
+use tokio::task::spawn_blocking;
 use tokio_stream::Stream;
 use tokio_util::io::ReaderStream;
 
@@ -90,12 +92,10 @@ impl VersionStore for LocalVersionStore {
 
         if !version_path.exists() {
             let expected_hash: MerkleHash = hash.parse()?;
-            util::fs::atomic_write_from_async_reader_verified(
-                &version_path,
-                &mut *reader,
-                expected_hash,
-            )
-            .await?;
+            AtomicFile::new(&version_path)
+                .with_hash(expected_hash)
+                .stream_async(&mut *reader)
+                .await?;
         }
 
         Ok(())
@@ -109,8 +109,10 @@ impl VersionStore for LocalVersionStore {
         }
 
         let expected_hash: MerkleHash = hash.parse()?;
-        tokio::task::spawn_blocking(move || {
-            util::fs::atomic_write_to_path_verified(&version_path, &data, expected_hash)
+        spawn_blocking(move || {
+            AtomicFile::new(&version_path)
+                .with_hash(expected_hash)
+                .write(&data)
         })
         .await??;
 
@@ -125,8 +127,7 @@ impl VersionStore for LocalVersionStore {
     ) -> Result<(), OxenError> {
         let path = self.version_dir(orig_hash).join(derived_filename);
         let path_for_log = path.clone();
-        tokio::task::spawn_blocking(move || util::fs::atomic_write_to_path(&path, &derived_data))
-            .await??;
+        spawn_blocking(move || AtomicFile::new(&path).write(&derived_data)).await??;
         log::debug!("Saved derived version file {path_for_log:?}");
         Ok(())
     }
@@ -226,8 +227,10 @@ impl VersionStore for LocalVersionStore {
             }
         }
         let dest_path = dest_path.to_path_buf();
-        tokio::task::spawn_blocking(move || {
-            util::fs::atomic_copy_with_mtime(&version_path, &dest_path, mtime)
+        spawn_blocking(move || {
+            AtomicFile::new(&dest_path)
+                .with_mtime(mtime)
+                .copy_from(&version_path)
         })
         .await??;
         Ok(())
@@ -292,8 +295,7 @@ impl VersionStore for LocalVersionStore {
             return Ok(());
         }
 
-        tokio::task::spawn_blocking(move || util::fs::atomic_write_to_path(&chunk_path, &data))
-            .await??;
+        spawn_blocking(move || AtomicFile::new(&chunk_path).write(&data)).await??;
 
         Ok(())
     }
@@ -364,19 +366,17 @@ impl VersionStore for LocalVersionStore {
 
         // Run the full read-chunks + atomic-write + cleanup sequence in one `spawn_blocking`
         // closure: chain each chunk file as a sync `Read` and pipe the concatenation through
-        // `atomic_write_from_reader_verified` so the rename only happens if the reassembled
-        // bytes hash to the file's canonical hash.
-        tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
+        // `AtomicFile::stream` with the expected hash so the rename only happens if the
+        // reassembled bytes hash to the file's canonical hash.
+        spawn_blocking(move || -> Result<(), OxenError> {
             let mut combined: Box<dyn std::io::Read> = Box::new(std::io::empty());
             for chunk_path in &chunk_paths {
                 let chunk_file = std::fs::File::open(chunk_path)?;
                 combined = Box::new(std::io::Read::chain(combined, chunk_file));
             }
-            util::fs::atomic_write_from_reader_verified(
-                &version_path,
-                &mut combined,
-                expected_hash,
-            )?;
+            AtomicFile::new(&version_path)
+                .with_hash(expected_hash)
+                .stream(&mut combined)?;
 
             if chunks_dir.exists() {
                 std::fs::remove_dir_all(&chunks_dir)?;
@@ -520,9 +520,7 @@ impl VersionStore for LocalVersionStore {
 
                         // Compute hash in blocking thread
                         let actual_hash =
-                            match tokio::task::spawn_blocking(move || hasher::hash_buffer(&data))
-                                .await
-                            {
+                            match spawn_blocking(move || hasher::hash_buffer(&data)).await {
                                 Ok(h) => h,
                                 Err(_) => {
                                     log::debug!(

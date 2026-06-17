@@ -17,6 +17,7 @@ use crate::model::{
     Commit, EntryDataType, LocalRepository, MerkleHash, StagedEntryStatus, Workspace,
 };
 use crate::repositories;
+use crate::util::fs::AtomicFile;
 use crate::{error::OxenError, util};
 use std::path::{Path, PathBuf};
 
@@ -184,7 +185,7 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     // Save the current commit id so we know if the branch has advanced
     let commit_path =
         repositories::workspaces::data_frames::previous_commit_ref_path(workspace, path);
-    util::fs::atomic_write_to_path(&commit_path, commit.id.as_bytes())?;
+    AtomicFile::new(&commit_path).write(commit.id.as_bytes())?;
 
     Ok(())
 }

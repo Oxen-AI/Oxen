@@ -7,6 +7,7 @@ use crate::core::merge;
 use crate::error::OxenError;
 use crate::model::{Commit, EntryMergeConflict, LocalRepository};
 use crate::util;
+use crate::util::fs::AtomicFile;
 
 use rocksdb::DB;
 
@@ -36,8 +37,8 @@ pub fn write_conflicts_to_disk(
     let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
     let merge_head_path = hidden_dir.join(MERGE_HEAD_FILE);
     let orig_head_path = hidden_dir.join(ORIG_HEAD_FILE);
-    util::fs::atomic_write_to_path(&merge_head_path, merge_commit.id.as_bytes())?;
-    util::fs::atomic_write_to_path(&orig_head_path, base_commit.id.as_bytes())?;
+    AtomicFile::new(&merge_head_path).write(merge_commit.id.as_bytes())?;
+    AtomicFile::new(&orig_head_path).write(base_commit.id.as_bytes())?;
 
     for conflict in conflicts.iter() {
         let key = conflict.base_entry.path.to_str().unwrap();
