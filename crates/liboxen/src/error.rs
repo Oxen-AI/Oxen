@@ -314,7 +314,7 @@ pub enum OxenError {
     #[error("{0}")]
     MerkleTreeError(#[from] InvalidMerkleTreeNodeType),
 
-    /// An error from the [`FileBackend`] implementation of a [`MerkleStore`].
+    /// An error from the on-disk Merkle node database.
     #[error("{0}")]
     MerkleDbError(#[from] MerkleDbError),
 

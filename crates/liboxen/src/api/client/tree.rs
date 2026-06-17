@@ -8,7 +8,6 @@ use tokio_util::io::{ReaderStream, StreamReader, SyncIoBridge};
 
 use crate::api;
 use crate::api::client;
-use crate::core::db::merkle_node::file_backend::{pack_nodes, pack_nodes_byte_estimate, unpack};
 use crate::core::progress::push_progress::PushProgress;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
@@ -17,6 +16,7 @@ use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
 use crate::opts::download_tree_opts::DownloadTreeOpts;
 use crate::opts::fetch_opts::FetchOpts;
+use crate::repositories::tree::{pack_nodes, pack_nodes_byte_estimate, unpack};
 use crate::view::tree::MerkleHashResponse;
 use crate::view::tree::merkle_hashes::MerkleHashes;
 use crate::view::{MerkleHashesResponse, StatusMessage};
@@ -383,7 +383,8 @@ async fn node_download_request(
     let res = client::handle_non_json_response(url, res).await?;
 
     // async Stream<Item = Result<Bytes, _>> → AsyncRead → sync Read, bridged across
-    // the spawn_blocking boundary so the sync trait consumes streamed bytes incrementally.
+    // the spawn_blocking boundary so the blocking `unpack` consumes streamed bytes
+    // incrementally.
     let async_reader = StreamReader::new(res.bytes_stream().map_err(std::io::Error::other));
     let mut sync_reader = SyncIoBridge::new(async_reader);
 
