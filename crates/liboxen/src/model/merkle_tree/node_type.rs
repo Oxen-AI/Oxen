@@ -32,7 +32,7 @@ pub enum MerkleTreeNodeType {
     /// Directories can be very large, so we split their contents into (potentially) multiple
     /// virtual directory nodes: a `VNode`. A `VNode` is like a directory: it contains some
     /// number of files and directories. It is always a subset of a real directory. If a
-    /// directory has multiple `VNode` children, these children form a strict paritioning.
+    /// directory has multiple `VNode` children, these children form a strict partitioning.
     VNode,
 
     /// A chunk of a file in the repository. (TODO: unused at this point, but planned)
@@ -67,7 +67,7 @@ impl MerkleTreeNodeType {
     changed for existing `MerkleTreeNode` variants.
 
     **NEW** variants can be added without a migration. New variants must have an incremented `u8`
-    value to not conflcit with any existing variants. Older repositories will still be able to be
+    value to not conflict with any existing variants. Older repositories will still be able to be
     read by newer variants: they will simply not contain nodes of the new variant.
 
     If there is some **OTHER** backwards-incompatible change with how the repository data is stored
@@ -116,31 +116,10 @@ pub trait MerkleTreeNodeIdType {
 
 /// Trait for things that are Merkle tree nodes.
 ///
-/// Critical functionality is to be able to serialize node, compute a stable merkle hash, and
+/// Critical functionality is to be able to serialize the node, compute a stable merkle hash, and
 /// identify the node as a `MerkleTreeNodeType`. The Debug & Display constraints are for
 /// convenience.
-///
-/// Since this trait is used as a parameter for generic functions, it must be object-safe. This
-/// means that it cannot extend `Serialize` since that has a `<S: Serializer>` parameter on the
-/// `serialize` method, which causes the type to not be implementable as a vtable lookup.
-///
-/// This is why the trait contains a manual serialization (`to_msgpack_bytes`) method. For types
-/// that do implement `Serialize`, there's a blanket implementation that delegates the `serialize`
-/// call to the `to_msgpack_bytes` method.
-pub trait TMerkleTreeNode: MerkleTreeNodeIdType + Debug + Display {
-    /// Serialize this node to a MsgPack byte array.
-    fn to_msgpack_bytes(&self) -> Result<Vec<u8>, rmp_serde::encode::Error>;
-}
-
-/// Blanket implementation for Merkle tree nodes that implement serde's `Serialize` trait.
-impl<T: Serialize + MerkleTreeNodeIdType + Debug + Display> TMerkleTreeNode for T {
-    /// Uses serde to serialize this node.
-    fn to_msgpack_bytes(&self) -> Result<Vec<u8>, rmp_serde::encode::Error> {
-        let mut buf = Vec::new();
-        let x = self.serialize(&mut rmp_serde::Serializer::new(&mut buf));
-        x.map(|_| buf)
-    }
-}
+pub trait TMerkleTreeNode: MerkleTreeNodeIdType + Serialize + Debug + Display {}
 
 #[cfg(test)]
 mod tests {
