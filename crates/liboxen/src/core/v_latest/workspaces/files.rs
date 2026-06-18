@@ -169,16 +169,33 @@ pub async fn add_version_files_at_paths(
     workspace: &Workspace,
     files: Vec<(PathBuf, String)>,
 ) -> Result<(Vec<PathBuf>, Vec<ErrorFileInfo>), OxenError> {
+    // Overlap the per-file version-store materializations -- an S3 object download per file, or a
+    // zero-IO path return for the local store -- so a large batch isn't bottlenecked on serial
+    // downloads. `buffered` keeps results in input order; staging below stays serial because it
+    // shares one StagedDBManager write lock and one `seen_dirs` set, so it consumes the
+    // materialized files one at a time. At most this many materialized temp files are held at once.
+    const MATERIALIZE_CONCURRENCY: usize = 16;
+
     let version_store = workspace.base_repo.version_store();
     let dir = workspace.dir();
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
 
-    let mut staged_paths = Vec::with_capacity(files.len());
+    let num_files = files.len();
+    let version_store = &version_store;
+    let dir = dir.as_path();
+    let mut materialized =
+        futures::stream::iter(files.into_iter().map(move |(dst_path, hash)| async move {
+            // The returned guard keeps any S3-materialized temp file alive until staging reads it.
+            let result = version_store.materialize(&hash, dir).await;
+            (dst_path, hash, result)
+        }))
+        .buffered(MATERIALIZE_CONCURRENCY);
+
+    let mut staged_paths = Vec::with_capacity(num_files);
     let mut err_files = vec![];
-    for (dst_path, hash) in files {
-        // The returned guard keeps any S3-materialized temp file alive until staging reads it below.
-        let version_path = match version_store.materialize(&hash, &dir).await {
+    while let Some((dst_path, hash, materialize_result)) = materialized.next().await {
+        let version_path = match materialize_result {
             Ok(path) => path,
             Err(e) => {
                 let error = format!("Failed to resolve version path: {e}");
