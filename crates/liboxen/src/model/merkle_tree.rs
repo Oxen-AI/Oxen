@@ -5,13 +5,9 @@ pub mod merkle_writer;
 pub mod node;
 pub mod node_type;
 
-use std::fmt::Debug;
-
 pub use crate::model::merkle_tree::merkle_hash::MerkleHash;
 pub use crate::model::merkle_tree::merkle_reader::MerkleReader;
-pub use crate::model::merkle_tree::merkle_transport::{
-    MerklePacker, MerkleTransport, MerkleUnpacker, PackOptions, UnpackOptions,
-};
+pub use crate::model::merkle_tree::merkle_transport::{PackOptions, UnpackOptions};
 pub use crate::model::merkle_tree::merkle_writer::MerkleWriter;
 pub use crate::model::merkle_tree::node::merkle_tree_node_cache;
 pub use crate::model::merkle_tree::node_type::{
@@ -31,12 +27,3 @@ pub trait MerkleStore: MerkleReader + MerkleWriter {}
 /// automatically a [`MerkleStore`]. The `?Sized` bound lets the marker apply
 /// to `dyn MerkleStore` itself.
 impl<T: MerkleReader + MerkleWriter + ?Sized> MerkleStore for T {}
-
-/// A [`MerkleStore`] that can also pack and unpack Merkle tree nodes for transport.
-pub trait TransportableMerkleStore: MerkleStore + MerkleTransport + Debug {}
-
-/// Any type that is a [`MerkleStore`] and a [`MerkleTransport`] is automatically a
-/// [`TransportableMerkleStore`]. The `?Sized` bound lets the marker apply to
-/// `dyn TransportableMerkleStore` itself. [`Debug`] is required since this is
-/// used in [`LocalRepository`] and that struct has a [`Debug`] derive.
-impl<T: MerkleStore + MerkleTransport + ?Sized + Debug> TransportableMerkleStore for T {}

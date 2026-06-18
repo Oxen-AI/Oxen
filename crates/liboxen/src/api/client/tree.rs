@@ -8,6 +8,7 @@ use tokio_util::io::{ReaderStream, StreamReader, SyncIoBridge};
 
 use crate::api;
 use crate::api::client;
+use crate::core::db::merkle_node::file_backend::{pack_nodes, pack_nodes_byte_estimate, unpack};
 use crate::core::progress::push_progress::PushProgress;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
@@ -85,7 +86,7 @@ pub async fn create_nodes(
     // Extend the progress bar's total length by the uncompressed bytes on disk for
     // these Merkle tree nodes. The [`CountingWriter`] will update the progress bar
     // each time we write the uncompressed bytes of a Merkle tree node.
-    let estimated_upload_bytes = local_repo.merkle_transport()?.raw_byte_count(&nodes);
+    let estimated_upload_bytes = pack_nodes_byte_estimate(local_repo, &nodes);
     progress.inc_total_bytes(estimated_upload_bytes);
 
     // Pack -> duplex writer (sync) -> duplex reader (async) -> HTTP body stream.
@@ -99,7 +100,8 @@ pub async fn create_nodes(
             inner: SyncIoBridge::new(async_writer),
             progress: progress_for_pack,
         };
-        repo.merkle_transport()?.pack_nodes(
+        pack_nodes(
+            &repo,
             &nodes,
             // Legacy client-push wire format: required so older `oxen-server` deployments
             // (which pre-pend `tree/nodes/` server-side at install time) install entries
@@ -361,10 +363,10 @@ pub async fn download_trees_between(
 }
 
 /// Download a merkle-tree tarball from the remote repository and unpack it into the
-/// local store. Streams the response body straight into the `MerkleUnpacker` so nothing
+/// local store. Streams the response body straight into the unpacker so nothing
 /// buffers the whole payload in memory.
 ///
-/// The VFS branch is preserved but no longer lives here: `FileBackend::unpack` handles
+/// The VFS branch is preserved but no longer lives here: the `unpack` free function handles
 /// the `is_vfs` case internally (tempdir + `copy_dir_all` dance). That keeps the client
 /// logic generic across backends.
 async fn node_download_request(
@@ -387,9 +389,8 @@ async fn node_download_request(
 
     let repo = local_repo.clone();
     tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
-        repo.merkle_transport()?
-            // Download path: overwrite existing files on disk
-            .unpack(&mut sync_reader, UnpackOptions::Overwrite)?;
+        // Download path: overwrite existing files on disk
+        unpack(&repo, &mut sync_reader, UnpackOptions::Overwrite)?;
         Ok(())
     })
     .await

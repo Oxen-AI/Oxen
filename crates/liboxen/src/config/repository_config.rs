@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
-use utoipa::ToSchema;
 
 use crate::constants::{DEFAULT_VNODE_SIZE, MIN_OXEN_VERSION};
 use crate::error::OxenError;
@@ -28,24 +27,6 @@ pub enum RepoConfigError {
     CurDir,
 }
 
-/// A sort of registry for known [`MerkleStore`] implementations that can be used by [`LocalRepository`].
-/// This enum serves as a configuration option in a repository's `config.toml`
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, ToSchema)]
-// TODO: remove Serialize + Deserialize derives. These are only necessary because `LocalRepository`
-//       requires them. Those bounds will eventually be dropped.
-#[serde(rename_all = "lowercase")]
-pub enum MerkleStoreKind {
-    /// The [`FileBackend`] store.
-    File,
-}
-
-/// The default is the original custom file format based Merkle tree node storage.
-impl Default for MerkleStoreKind {
-    fn default() -> Self {
-        Self::File
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RepositoryConfig {
     // this is the current remote name
@@ -67,15 +48,11 @@ pub struct RepositoryConfig {
     /// Currently used only for remote mode
     pub workspace_name: Option<String>,
     pub workspaces: Option<Vec<String>>,
-    /// The type of Merkle tree node storage that the repository uses.
-    #[serde(default)]
-    pub merkle_store_kind: MerkleStoreKind,
 }
 
 impl Default for RepositoryConfig {
     /// Default matches what `oxen init` writes to a fresh repo's `config.toml`: the current
-    /// `MIN_OXEN_VERSION`, the default vnode size, the default Merkle store backend, and `None`
-    /// for every per-repo override.
+    /// `MIN_OXEN_VERSION`, the default vnode size, and `None` for every per-repo override.
     fn default() -> Self {
         RepositoryConfig {
             remote_name: None,
@@ -89,7 +66,6 @@ impl Default for RepositoryConfig {
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
-            merkle_store_kind: MerkleStoreKind::default(),
         }
     }
 }
