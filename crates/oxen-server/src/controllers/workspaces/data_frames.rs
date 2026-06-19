@@ -107,8 +107,16 @@ pub async fn get(
     opts = df_opts_query::parse_opts(&query, &mut opts);
     opts.path = Some(file_path.clone());
 
-    opts.page = Some(query.page.unwrap_or(constants::DEFAULT_PAGE_NUM));
-    opts.page_size = Some(query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE));
+    // Clamp pagination to the valid 1-based domain once, when read: downstream a 0 page derives an
+    // empty "0..0" slice that panics and a 0 page_size breaks the slice, the total_pages division,
+    // and the indexed branch's SQL LIMIT.
+    opts.page = Some(query.page.unwrap_or(constants::DEFAULT_PAGE_NUM).max(1));
+    opts.page_size = Some(
+        query
+            .page_size
+            .unwrap_or(constants::DEFAULT_PAGE_SIZE)
+            .max(1),
+    );
 
     let is_indexed = repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)?;
 
@@ -122,6 +130,22 @@ pub async fn get(
             commit: Some(commit.clone()),
             branch: None,
         };
+
+        // The read path paginates only via opts.slice, not page/page_size, so convert the requested
+        // page into a slice before reading (as controllers::data_frames::get does). Without it the
+        // read returns the whole frame regardless of the page. Skip if slice/row is set.
+        if opts.slice_indices().is_none() {
+            let page = opts.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
+            let page_size = opts.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
+            // page/page_size are clamped to >= 1 when read. Cap start so end = start + page_size
+            // can't overflow and stays strictly greater, preserving slice()'s start < end invariant
+            // even for an absurd page number (which then just yields an empty page).
+            let start = page_size
+                .saturating_mul(page - 1)
+                .min(usize::MAX - page_size);
+            let end = start + page_size;
+            opts.slice = Some(format!("{start}..{end}"));
+        }
 
         let data_frame_slice =
             repositories::data_frames::get_slice(&repo, &resource.clone(), &resource.path, &opts)
@@ -1034,6 +1058,204 @@ mod tests {
         let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
         let resp = actix_web::test::call_service(&app, req).await;
         assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    /// GET a page of a workspace data frame through the `get` handler.
+    async fn get_data_frame_page(
+        sync_dir: &std::path::Path,
+        namespace: &str,
+        repo_name: &str,
+        workspace_id: &str,
+        file_path: &str,
+        page: usize,
+        page_size: usize,
+    ) -> WorkspaceJsonDataFrameViewResponse {
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/resource/{path:.*}",
+                    web::get().to(controllers::workspaces::data_frames::get),
+                ),
+        )
+        .await;
+
+        let uri = format!(
+            "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/resource/{file_path}?page={page}&page_size={page_size}"
+        );
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        let bytes = actix_http::body::to_bytes(resp.into_body())
+            .await
+            .expect("could not read response body");
+        serde_json::from_slice(&bytes).expect("could not deserialize data frame response")
+    }
+
+    /// Number of rows the response carries in its view (the size of the returned page).
+    fn page_row_count(response: &WorkspaceJsonDataFrameViewResponse) -> usize {
+        let data_frame = response
+            .data_frame
+            .as_ref()
+            .expect("expected a data frame in the response");
+        let array_len = data_frame
+            .view
+            .data
+            .as_array()
+            .expect("expected the view data to be a JSON array")
+            .len();
+        // The reported view height and the serialized row array must agree.
+        assert_eq!(array_len, data_frame.view.size.height);
+        array_len
+    }
+
+    /// An unindexed workspace data frame larger than the requested `page_size` must paginate:
+    /// each page returns at most `page_size` rows and an out-of-range page returns zero rows so
+    /// pagination terminates. Regression test for the unindexed branch returning the full frame on
+    /// every page. Also asserts the indexed branch paginates identically so the two paths stay in
+    /// lockstep.
+    #[actix_web::test]
+    async fn test_get_unindexed_data_frame_paginates() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Name";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        // Commit a CSV with 25 rows — larger than the page_size of 10 we request below.
+        let csv_dir = repo.path.join("data");
+        util::fs::create_dir_all(&csv_dir)?;
+        let csv_path = csv_dir.join("history.csv");
+        let mut csv = String::from("id,label\n");
+        for i in 0..25 {
+            csv.push_str(&format!("{i},label_{i}\n"));
+        }
+        util::fs::write_to_path(&csv_path, &csv)?;
+        repositories::add(&repo, &csv_path).await?;
+        let commit = repositories::commit(&repo, "Add 25-row CSV")?;
+
+        let file_path = "data/history.csv";
+
+        // A workspace created from the commit but not yet indexed, so the GET handler takes the
+        // unindexed read path. We index this same workspace later to exercise the indexed branch
+        // (a commit can only have one non-editable workspace, so we reuse it).
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        let workspace = repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
+
+        // Unindexed branch: page 1 of 10 → exactly 10 rows, and total_pages/total_entries
+        // reflect the full frame.
+        let page_1 = get_data_frame_page(
+            &sync_dir,
+            namespace,
+            repo_name,
+            &workspace_id,
+            file_path,
+            1,
+            10,
+        )
+        .await;
+        assert!(!page_1.is_indexed);
+        assert_eq!(page_row_count(&page_1), 10);
+        let pagination = &page_1.data_frame.as_ref().unwrap().view.pagination;
+        assert_eq!(pagination.total_pages, 3);
+        assert_eq!(pagination.total_entries, 25);
+
+        // Page 3 → the remaining 5 rows.
+        let page_3 = get_data_frame_page(
+            &sync_dir,
+            namespace,
+            repo_name,
+            &workspace_id,
+            file_path,
+            3,
+            10,
+        )
+        .await;
+        assert_eq!(page_row_count(&page_3), 5);
+
+        // Page 4 is past the end → 0 rows. This is the case a pager relies on to terminate.
+        let page_4 = get_data_frame_page(
+            &sync_dir,
+            namespace,
+            repo_name,
+            &workspace_id,
+            file_path,
+            4,
+            10,
+        )
+        .await;
+        assert_eq!(page_row_count(&page_4), 0);
+        let pagination = &page_4.data_frame.as_ref().unwrap().view.pagination;
+        assert_eq!(pagination.total_pages, 3);
+        assert_eq!(pagination.total_entries, 25);
+
+        // Out-of-domain pagination inputs are clamped to the 1-based domain rather than panicking
+        // or returning the whole frame: page 0 is read as page 1 (10 rows)...
+        let page_zero = get_data_frame_page(
+            &sync_dir,
+            namespace,
+            repo_name,
+            &workspace_id,
+            file_path,
+            0,
+            10,
+        )
+        .await;
+        assert_eq!(page_row_count(&page_zero), 10);
+        // ...and page_size 0 is read as page_size 1 (a single row), not the full 25-row frame.
+        let zero_page_size = get_data_frame_page(
+            &sync_dir,
+            namespace,
+            repo_name,
+            &workspace_id,
+            file_path,
+            1,
+            0,
+        )
+        .await;
+        assert_eq!(page_row_count(&zero_page_size), 1);
+        assert_eq!(
+            zero_page_size
+                .data_frame
+                .as_ref()
+                .unwrap()
+                .view
+                .pagination
+                .total_entries,
+            25
+        );
+
+        // Index the same workspace so the GET handler now takes the SQL branch. It must return
+        // identically sized pages so the two paths stay in lockstep (guards against regressing the
+        // SQL pagination).
+        repositories::workspaces::data_frames::index(
+            &repo,
+            &workspace,
+            std::path::Path::new(file_path),
+        )
+        .await?;
+
+        for (page, expected_rows) in [(1, 10), (3, 5), (4, 0)] {
+            let indexed_page = get_data_frame_page(
+                &sync_dir,
+                namespace,
+                repo_name,
+                &workspace_id,
+                file_path,
+                page,
+                10,
+            )
+            .await;
+            assert!(indexed_page.is_indexed);
+            assert_eq!(page_row_count(&indexed_page), expected_rows);
+            let pagination = &indexed_page.data_frame.as_ref().unwrap().view.pagination;
+            assert_eq!(pagination.total_pages, 3);
+            assert_eq!(pagination.total_entries, 25);
+        }
 
         test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
