@@ -1,9 +1,9 @@
 //! Leaf error type for the low-level LMDB layer, bridged into `OxenError` via the
 //! `#[from]`-derived `OxenError::LmdbLayer` variant (the same module-local-enum pattern as
-//! `LmdbError`, `MerkleDbError`, and `RepoConfigError`).
+//! `MerkleDbError` and `RepoConfigError`).
 //!
 //! A dedicated enum, rather than variants on `OxenError`, for two reasons. It keeps `heed::Error`
-//! (carried by `Open`/`Txn`/`Read`/`Write`) out of the top-level `OxenError` surface, so
+//! (carried by `Open`/`Txn`/`Read`/`Write`/`Copy`) out of the top-level `OxenError` surface, so
 //! the heed dependency stays contained to this layer. And it keeps this cohesive cluster of
 //! low-level infra errors — none of which a public-API caller branches on — together and out of
 //! the already-large `OxenError`, while still letting in-layer code branch on a specific heed
@@ -61,6 +61,13 @@ pub enum LmdbLayerError {
          store; increase it and rebuild."
     )]
     MapFull { capacity: ByteSize },
+
+    #[error("Could not copy LMDB environment to {dst}: {source}")]
+    Copy {
+        dst: PathBuf,
+        #[source]
+        source: heed::Error,
+    },
 }
 
 impl LmdbLayerError {

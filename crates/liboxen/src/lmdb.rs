@@ -16,11 +16,14 @@
 //!   * [`handle_cache`] — [`LmdbEnvRegistry`] (the ONE path-keyed, weak-retention env cache that
 //!     enforces "at most one live env per canonical path") plus [`open_shared_env`], the
 //!     process-global entry point a store calls instead of standing up its own registry.
+//!   * [`store`] — the `LmdbStore` default-method lifecycle trait: an implementor supplies the
+//!     env + database hook and inherits `read`/`write`/`snapshot_to`; its domain ops stay inherent.
 
 pub mod handle_cache;
 pub mod lmdb_db;
 pub mod lmdb_env;
 pub mod lmdb_error;
+pub mod store;
 pub mod txn;
 
 pub use handle_cache::{LmdbEnvRegistry, open_shared_env, shared_env_is_live};
