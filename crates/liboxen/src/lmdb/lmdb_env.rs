@@ -18,10 +18,10 @@
 //! repo." This makes the registry's identity model unambiguous.
 
 use std::fs::create_dir_all;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use bytesize::ByteSize;
-use heed::{CompactionOption, Env, EnvOpenOptions, WithoutTls};
+use heed::{Env, EnvOpenOptions, WithoutTls};
 
 use super::lmdb_error::LmdbLayerError;
 
@@ -35,12 +35,6 @@ pub type LmdbEnv = Env<WithoutTls>;
 /// Default reader-lock-table size for `LmdbEnvConfig::new`. Generous because the server can hold
 /// many concurrent readers; stores expecting few readers can set `max_readers` smaller directly.
 const DEFAULT_MAX_READERS: u32 = 1024;
-
-/// The name LMDB gives the data file inside an env directory.
-// Used only by `copy_lmdb_env_to_dir`; drop this `allow` together with the one on that function
-// once a non-test `LmdbStore` implementor exists.
-#[allow(dead_code)]
-const LMDB_DATA_FILE: &str = "data.mdb";
 
 /// Tunables for opening one LMDB env. Field meanings are backend-shaped so future stores reuse the
 /// same surface. This layer deliberately defines **no** default `map_size`: it is a per-store
@@ -74,7 +68,7 @@ impl LmdbEnvConfig {
 /// Build page-aligned `EnvOpenOptions<WithoutTls>` (rounds size up to runtime page size, sets
 /// max_dbs + max_readers, selects `WithoutTls`). Opens WITHOUT `MDB_NOSYNC`/`MDB_NOMETASYNC`, so
 /// each `RwTxn::commit` fsyncs — commit is the durability boundary; no drop-time `force_sync` is
-/// needed (see `copy_lmdb_env_to_dir`). Errors only if the size doesn't fit in `usize`.
+/// needed. Errors only if the size doesn't fit in `usize`.
 fn build_options(config: &LmdbEnvConfig) -> Result<EnvOpenOptions<WithoutTls>, LmdbLayerError> {
     // LMDB requires `map_size` to be a multiple of the OS page size; round up rather than
     // surface a confusing `EINVAL` from `mdb_env_set_mapsize`.
@@ -122,34 +116,6 @@ pub(in crate::lmdb) fn open_lmdb_env(
         source,
     })?;
     Ok(lmdb_env)
-}
-
-/// Copy the env's data file to `dst_dir` (fork snapshots), returning the path of the copied data
-/// file. The copy runs under its own read txn, so a live env is copied point-in-time
-/// consistently; LMDB durability is per-`commit`, so a snapshot taken after a committed write
-/// needs no `force_sync`. Compaction is hard-wired off (`CompactionOption::Disabled`) rather than
-/// exposed as a parameter: the compacting path runs a page-size-dependent free-page check that
-/// fails `MDB_INCOMPATIBLE` on multi-sub-DB envs, and no store wants it.
-// `pub(crate)`: an internal layer primitive backing `LmdbStore::snapshot_to`. Until a non-test
-// store implements `LmdbStore`, its only callers are that trait's default method and tests, so drop
-// this `#[allow(dead_code)]` (and the one on `LMDB_DATA_FILE`) once an implementor lands.
-#[allow(dead_code)]
-pub(crate) fn copy_lmdb_env_to_dir(
-    lmdb_env: &LmdbEnv,
-    dst_dir: &Path,
-) -> Result<PathBuf, LmdbLayerError> {
-    create_dir_all(dst_dir).map_err(|source| LmdbLayerError::CreateDir {
-        path: dst_dir.to_path_buf(),
-        source,
-    })?;
-    let dst = dst_dir.join(LMDB_DATA_FILE);
-    lmdb_env
-        .copy_to_path(&dst, CompactionOption::Disabled)
-        .map_err(|source| LmdbLayerError::Copy {
-            dst: dst.clone(),
-            source,
-        })?;
-    Ok(dst)
 }
 
 #[cfg(test)]
