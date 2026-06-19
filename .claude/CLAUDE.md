@@ -118,7 +118,7 @@ oxen push origin main               # Push to remote
 
 # Making Changes
 
-- This repository is **public**. Do not mention Oxen's private/internal repositories — by name or description — in code comments, doc-comments, error messages, commit messages, PR titles or descriptions, or any other code or documentation committed here. Keep references to private repos out of public artifacts entirely; if internal context is genuinely needed, point to the relevant Linear issue rather than inlining private-repo details.
+- This repository is **public**. Do not mention Oxen's private/internal repositories — by name or description — in code comments, doc-comments, error messages, commit messages, PR titles or descriptions, or any other code or documentation committed here. Keep references to private repos out of public artifacts entirely; if internal context is genuinely needed, point to the relevant Linear issue rather than inlining private-repo details. This also bars describing a private/internal system's behavior as the justification for a change — even when the system is not named (e.g. "a downstream client loops forever without this"); describe what the code in this repo does and guarantees instead.
 - When changing something that is documented in nearby code, or appears in any markdown files in the repository, update the affected documentation.
 - When prompted to always do something a certain way in general, add an entry to this section of the CLAUDE.md file.
 - When calling `get_staged_db_manager`, follow the doc comment on that function: drop the returned `StagedDBManager` as soon as possible (via a block scope or explicit `drop()`) to avoid holding the shared database handle longer than necessary.
