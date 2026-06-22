@@ -1,6 +1,7 @@
 use crate::config::RepositoryConfig;
 use crate::constants::SHALLOW_FLAG;
 use crate::constants::{self, DEFAULT_VNODE_SIZE};
+use crate::core::db::merkle_node::{MerkleNodeStore, create_merkle_node_store};
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
@@ -48,6 +49,10 @@ pub struct LocalRepository {
     server_s3_opts: Option<S3Opts>,
     /// Built from `storage_config` + `server_s3_opts` at construction. Never replaced.
     version_store: Arc<dyn VersionStore>,
+    /// Where Merkle tree nodes are read from and written to. Built from the repo path at
+    /// construction and never replaced, mirroring `version_store`. The backend (file vs. another
+    /// engine) is a property of the repo chosen once in `create_merkle_node_store`.
+    merkle_node_store: Arc<dyn MerkleNodeStore>,
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +100,11 @@ impl LocalRepository {
         Arc::clone(&self.version_store)
     }
 
+    /// Get a handle to the Merkle node store backing this repo's tree nodes.
+    pub(crate) fn merkle_node_store(&self) -> Arc<dyn MerkleNodeStore> {
+        Arc::clone(&self.merkle_node_store)
+    }
+
     /// Load a repository from the current directory
     /// this traverses up the directory tree until it finds a .oxen/ directory
     pub fn from_current_dir() -> Result<LocalRepository, OxenError> {
@@ -128,6 +138,7 @@ impl LocalRepository {
         let path = path.as_ref().to_path_buf();
         let storage_config = config.storage.unwrap_or_default();
         let version_store = create_version_store(&path, &storage_config, server_s3_opts)?;
+        let merkle_node_store = create_merkle_node_store(&path)?;
         Ok(LocalRepository {
             path,
             remote_name: config.remote_name,
@@ -143,6 +154,7 @@ impl LocalRepository {
             storage_config,
             server_s3_opts: server_s3_opts.cloned(),
             version_store,
+            merkle_node_store,
         })
     }
 
@@ -166,6 +178,7 @@ impl LocalRepository {
         let path = std::env::current_dir()?.join(view.name);
         let storage_config = StorageConfig::default();
         let version_store = create_version_store(&path, &storage_config, None)?;
+        let merkle_node_store = create_merkle_node_store(&path)?;
         Ok(LocalRepository {
             path,
             remotes: vec![],
@@ -181,6 +194,7 @@ impl LocalRepository {
             storage_config,
             server_s3_opts: None,
             version_store,
+            merkle_node_store,
         })
     }
 
@@ -188,6 +202,7 @@ impl LocalRepository {
         let path = path.to_owned();
         let storage_config = StorageConfig::default();
         let version_store = create_version_store(&path, &storage_config, None)?;
+        let merkle_node_store = create_merkle_node_store(&path)?;
         Ok(LocalRepository {
             path,
             remotes: vec![repo.remote],
@@ -203,6 +218,7 @@ impl LocalRepository {
             storage_config,
             server_s3_opts: None,
             version_store,
+            merkle_node_store,
         })
     }
 
