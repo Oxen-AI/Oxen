@@ -19,9 +19,6 @@ pub(crate) struct FsMerkleNodeStore {
     repo_path: PathBuf,
 }
 
-// `new` is unconsumed until `MerkleNodeDB` delegates to a `MerkleNodeStore` (exercised by the tests
-// below meanwhile); the trait impl methods carry the rest. Drop the allow when a consumer lands.
-#[allow(dead_code)]
 impl FsMerkleNodeStore {
     pub(crate) fn new(repo_path: impl Into<PathBuf>) -> Self {
         Self {

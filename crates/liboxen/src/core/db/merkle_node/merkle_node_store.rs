@@ -12,9 +12,8 @@
 //! untouched. Keeping the bytes identical across engines is what makes a future engine-to-engine
 //! bridge trivial.
 //!
-//! This module is the reusable foundation; nothing consumes it yet. `MerkleNodeDB` is rewired to
-//! read and write through a `MerkleNodeStore` in a follow-up change, mirroring how the low-level
-//! `lmdb` layer landed before it had a consumer.
+//! [`MerkleNodeDB`](super::merkle_node_db) reads and writes through a `MerkleNodeStore`;
+//! [`FsMerkleNodeStore`](super::fs_merkle_node_store) is the only implementation today.
 
 use std::fmt::Debug;
 
@@ -34,8 +33,6 @@ use super::merkle_node_db::MerkleDbError;
 ///
 /// `Debug` is required (like [`VersionStore`](crate::storage::VersionStore)) so a store can be held
 /// by `#[derive(Debug)]` types such as `LocalRepository`.
-// Unconsumed until `MerkleNodeDB` delegates to it; see the module docs. Drop the allow then.
-#[allow(dead_code)]
 pub(crate) trait MerkleNodeStore: Debug + Send + Sync {
     /// Whether a node has been written for `hash`.
     fn exists(&self, hash: &MerkleHash) -> Result<bool, MerkleDbError>;
