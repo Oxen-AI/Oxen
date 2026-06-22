@@ -76,15 +76,17 @@ impl TryFrom<StoragePolicyRaw> for StoragePolicy {
         let default = raw.backends[0];
         let local = raw.backends.contains(&StorageKind::Local);
         let s3 = if raw.backends.contains(&StorageKind::S3) {
-            if raw.s3_bucket.is_empty() {
+            let bucket = raw.s3_bucket.trim();
+            if bucket.is_empty() {
                 return Err(StoragePolicyError::EmptyS3Bucket);
             }
-            if raw.s3_region.is_empty() {
+            let region = raw.s3_region.trim();
+            if region.is_empty() {
                 return Err(StoragePolicyError::EmptyS3Region);
             }
             Some(S3Opts {
-                bucket: raw.s3_bucket,
-                region: raw.s3_region,
+                bucket: bucket.to_string(),
+                region: region.to_string(),
             })
         } else {
             // Orphan bucket/region (set when S3 isn't in backends) is silently dropped so
