@@ -46,22 +46,25 @@ For example, data for a vnode of hash 1234 with two children:
     {dir data node}
 */
 
-use std::fs::File;
 use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
-use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use bytes::{Bytes, BytesMut};
 
 use crate::constants;
 use crate::error::OxenError;
 use crate::model::MerkleHash;
 use crate::model::merkle_tree::node_type::InvalidMerkleTreeNodeType;
-use crate::util;
 
 use crate::model::merkle_tree::node::{
     EMerkleTreeNode, MerkleTreeNode, MerkleTreeNodeType, TMerkleTreeNode,
 };
+
+use super::fs_merkle_node_store::FsMerkleNodeStore;
+use super::merkle_node_store::MerkleNodeStore;
 
 pub(crate) const NODE_FILE: &str = "node";
 pub(crate) const CHILDREN_FILE: &str = "children";
@@ -138,10 +141,6 @@ impl MerkleDbError {
         Self::DirCreate(Box::new(err))
     }
 
-    fn open(err: OxenError) -> Self {
-        Self::Open(Box::new(err))
-    }
-
     pub(crate) fn fs_transport(err: OxenError) -> Self {
         Self::FsTransport(Box::new(err))
     }
@@ -157,20 +156,9 @@ struct MerkleNodeLookup {
 }
 
 impl MerkleNodeLookup {
-    fn load(node_table_file: &mut File) -> Result<Self, MerkleDbError> {
-        // log::debug!("MerkleNodeLookup.load() {:?}", node_table_file);
-        let mut file_data = Vec::new();
-        node_table_file.read_to_end(&mut file_data)?;
-        // log::debug!(
-        //     "MerkleNodeLookup.load() read file_data: {}",
-        //     file_data.len()
-        // );
-        Self::deserialize(file_data)
-    }
-
-    /// Takes the on-disk bytes of a `node` file and deserializes it into a [`MerkleNodeLookup`].
+    /// Takes the bytes of a node's `node` blob and deserializes it into a [`MerkleNodeLookup`].
     #[inline(always)]
-    fn deserialize(file_data: Vec<u8>) -> Result<Self, MerkleDbError> {
+    fn deserialize(file_data: Bytes) -> Result<Self, MerkleDbError> {
         // Create a cursor to iterate over data
         let mut cursor = std::io::Cursor::new(file_data);
 
@@ -254,25 +242,45 @@ impl MerkleNodeLookup {
     }
 }
 
+/// Reads and writes a single Merkle tree node and its children list.
+///
+/// The on-engine format is owned here (the `node` blob header + child lookup table, and the
+/// concatenated `children` blob); *where* those two blobs are persisted is delegated to a
+/// [`MerkleNodeStore`]. In read-write mode the blobs are accumulated in memory and persisted as one
+/// unit by [`close`](Self::close) — there is no incremental flushing, so a node is written exactly
+/// once and atomically. A write-mode db dropped without `close` discards its buffers unwritten (see
+/// the `Drop` impl) rather than risk persisting a partial node.
+///
+/// The constructors take a `repo_path` and resolve the file backend internally; a later change
+/// hands the store in from the repo so the backend (file vs. another engine) is selected once at
+/// repository construction.
 pub(crate) struct MerkleNodeDB {
     pub dtype: MerkleTreeNodeType,
     pub node_id: MerkleHash,
     pub parent_id: Option<MerkleHash>,
     read_only: bool,
-    node_file: Option<File>,
-    children_file: Option<File>,
+    store: Arc<dyn MerkleNodeStore>,
+    /// `node` blob accumulator (header + child lookup entries). `Some` in read-write mode until the
+    /// node is persisted, then `None`.
+    node_buf: Option<BytesMut>,
+    /// `children` blob accumulator (concatenated child node data). `Some`/`None` in lockstep with
+    /// `node_buf`.
+    children_buf: Option<BytesMut>,
+    /// True once the write buffers have been persisted by `close`. A write-mode db must reach this
+    /// state before being dropped; `Drop` checks it to detect (and assert on) a forgotten `close`.
+    flushed: bool,
+    /// Decoded `node` blob; `Some` only in read-only mode.
     lookup: Option<MerkleNodeLookup>,
-    data: Vec<u8>,
+    /// Running length of `children_buf`, written into each child's lookup entry.
     data_offset: u64,
 }
 
 impl MerkleNodeDB {
     pub fn data(&self) -> Vec<u8> {
-        if let Some(lookup) = &self.lookup {
-            return lookup.data.to_owned();
-        }
-
-        self.data.to_owned()
+        self.lookup
+            .as_ref()
+            .map(|lookup| lookup.data.to_owned())
+            .unwrap_or_default()
     }
 
     pub fn node(&self) -> Result<EMerkleTreeNode, MerkleDbError> {
@@ -287,17 +295,41 @@ impl MerkleNodeDB {
         EMerkleTreeNode::from_type_and_bytes(dtype, data)
     }
 
+    /// Whether a node has been written for `hash`. A store error is reported as `false`, mirroring
+    /// `Path::exists()` (which the file backend is built on).
     pub(crate) fn exists(repo_path: &Path, hash: &MerkleHash) -> bool {
-        let db_path = node_db_path(repo_path, hash);
-        db_path.join(NODE_FILE).exists() && db_path.join(CHILDREN_FILE).exists()
+        Self::fs_store(repo_path).exists(hash).unwrap_or(false)
+    }
+
+    /// The file backend for the repo at `repo_path`. Resolved per-open for now; a later change has
+    /// the repo own a single store and hand it in.
+    fn fs_store(repo_path: &Path) -> Arc<dyn MerkleNodeStore> {
+        Arc::new(FsMerkleNodeStore::new(repo_path))
     }
 
     pub(crate) fn open_read_only(
         repo_path: &Path,
         hash: &MerkleHash,
     ) -> Result<Self, MerkleDbError> {
-        let path = node_db_path(repo_path, hash);
-        Self::open(path, true, *hash)
+        let store = Self::fs_store(repo_path);
+        let node_bytes = store.read_node(hash)?;
+        let lookup = MerkleNodeLookup::deserialize(node_bytes)?;
+        let dtype = MerkleTreeNodeType::from_u8(lookup.data_type)?;
+        // A zero parent id round-trips as `Some(MerkleHash::new(0))`, matching the historical
+        // behavior that callers (e.g. `MerkleTreeNode::from_hash_uncached`) read directly.
+        let parent_id = Some(MerkleHash::new(lookup.parent_id));
+        Ok(Self {
+            dtype,
+            node_id: *hash,
+            parent_id,
+            read_only: true,
+            store,
+            node_buf: None,
+            children_buf: None,
+            flushed: true,
+            lookup: Some(lookup),
+            data_offset: 0,
+        })
     }
 
     pub(crate) fn open_read_write(
@@ -305,94 +337,45 @@ impl MerkleNodeDB {
         node: &impl TMerkleTreeNode,
         parent_id: Option<MerkleHash>,
     ) -> Result<Self, MerkleDbError> {
-        let path = node_db_path(repo_path, &node.hash());
-        if !path.exists() {
-            util::fs::create_dir_all(&path).map_err(MerkleDbError::dir_create)?;
-        }
-        log::debug!("open_read_write merkle node db at {}", path.display());
-        let mut db = Self::open(path, false, node.hash())?;
+        let mut db = Self {
+            dtype: node.node_type(),
+            node_id: node.hash(),
+            parent_id,
+            read_only: false,
+            store: Self::fs_store(repo_path),
+            node_buf: Some(BytesMut::new()),
+            children_buf: Some(BytesMut::new()),
+            flushed: false,
+            lookup: None,
+            data_offset: 0,
+        };
         db.write_node(node, parent_id)?;
         Ok(db)
     }
 
-    /// The `node_id: MerkleHash` **MUST** be the same one that the `path` was derived from!
-    fn open(path: PathBuf, read_only: bool, node_id: MerkleHash) -> Result<Self, MerkleDbError> {
-        // mkdir if not exists
-        if !path.exists() {
-            util::fs::create_dir_all(&path).map_err(MerkleDbError::dir_create)?;
+    /// Persist the buffered node and children blobs through the store. Call before the node is read
+    /// back. A second call after a successful flush errors with [`MerkleDbError::CloseBeforeOpen`].
+    /// A write-mode db dropped without calling this discards its buffers unwritten rather than
+    /// persisting a partial node.
+    pub(crate) fn close(&mut self) -> Result<(), MerkleDbError> {
+        if self.read_only {
+            return Ok(());
         }
-
-        let node_path = path.join(NODE_FILE);
-        let children_path = path.join(CHILDREN_FILE);
-
-        // log::debug!(
-        //     "Opening merkle node db read_only {} at {}",
-        //     read_only,
-        //     path.display()
-        // );
-        let (lookup, node_file, children_file): (
-            Option<MerkleNodeLookup>,
-            Option<File>,
-            Option<File>,
-        ) = if read_only {
-            let mut node_file = util::fs::open_file(node_path).map_err(MerkleDbError::open)?;
-            let children_file = util::fs::open_file(children_path).map_err(MerkleDbError::open)?;
-            // log::debug!("Opened merkle node db read_only at {}", path.display());
-            (
-                Some(MerkleNodeLookup::load(&mut node_file)?),
-                Some(node_file),
-                Some(children_file),
-            )
-        } else {
-            // self.lookup does not exist yet if we are writing (only write once)
-            let node_file = File::create(node_path)?;
-            let children_file = File::create(children_path)?;
-            (None, Some(node_file), Some(children_file))
-        };
-
-        let dtype = match lookup.as_ref() {
-            Some(l) => MerkleTreeNodeType::from_u8(l.data_type)?,
-            None => MerkleTreeNodeType::Commit,
-        };
-
-        let parent_id = lookup.as_ref().map(|l| l.parent_id);
-        Ok(Self {
-            read_only,
-            node_file,
-            children_file,
-            lookup,
-            data: vec![],
-            dtype,
-            node_id,
-            parent_id: parent_id.map(MerkleHash::new),
-            data_offset: 0,
-        })
+        self.flush()
     }
 
-    /// Closes the open node and children file handles.
-    /// WARNING: Sets the internal node_file, children_file, and lookup to None.
-    pub(crate) fn close(&mut self) -> Result<(), MerkleDbError> {
-        if let Some(node_file) = &mut self.node_file {
-            node_file.flush()?;
-            node_file.sync_data()?;
-        } else {
+    fn flush(&mut self) -> Result<(), MerkleDbError> {
+        let (Some(node_buf), Some(children_buf)) = (self.node_buf.take(), self.children_buf.take())
+        else {
             return Err(MerkleDbError::CloseBeforeOpen);
-        }
-
-        if let Some(children_file) = &mut self.children_file {
-            children_file.flush()?;
-            children_file.sync_data()?;
-        } else {
-            return Err(MerkleDbError::CloseBeforeOpen);
-        }
-
-        self.node_file = None;
-        self.children_file = None;
-        self.lookup = None;
+        };
+        self.store
+            .write_node(&self.node_id, node_buf.freeze(), children_buf.freeze())?;
+        self.flushed = true;
         Ok(())
     }
 
-    /// Writes the content of the Merkle tree node according to the specific `node` file format.
+    /// Writes the node header (type, parent id, data) into the `node` blob buffer.
     /// WARNING: Sets the internal dtype, node_id, parent_id of `self` to the values from `node`.
     fn write_node(
         &mut self,
@@ -407,72 +390,60 @@ impl MerkleNodeDB {
             return Err(MerkleDbError::IllegalOperationWriteSizeFirst);
         }
 
-        let Some(node_file) = self.node_file.as_mut() else {
+        let Some(node_buf) = self.node_buf.as_mut() else {
             return Err(MerkleDbError::WriteBeforeOpen);
         };
 
         log::trace!("write_node node: {}", node);
 
-        node_file.write_all(&node.node_type().to_u8().to_le_bytes())?;
+        node_buf.extend_from_slice(&node.node_type().to_u8().to_le_bytes());
 
         // Write parent id
         if let Some(parent_id) = parent_id {
-            node_file.write_all(&parent_id.to_le_bytes())?;
+            node_buf.extend_from_slice(&parent_id.to_le_bytes());
         } else {
             // write 16 bytes, each is zero => write a 0_u128
-            node_file.write_all(&[0u8; 16])?;
+            node_buf.extend_from_slice(&[0u8; 16]);
         }
 
         // Write data length
         let buf = rmp_serde::to_vec(node)?;
         let data_len = buf.len() as u32;
-        node_file.write_all(&data_len.to_le_bytes())?;
+        node_buf.extend_from_slice(&data_len.to_le_bytes());
         log::trace!("write_node Wrote data length {}", data_len);
 
         // Write data
-        node_file.write_all(&buf)?;
+        node_buf.extend_from_slice(&buf);
 
         self.dtype = node.node_type();
         self.node_id = node.hash();
         self.parent_id = parent_id;
-        // log::debug!(
-        //     "write_node wrote id {} dtype: {:?}",
-        //     node.hash(),
-        //     node.node_type()
-        // );
         Ok(())
     }
 
-    /// Writes the content of a node's child as the child would appear in the `children` file.
+    /// Appends a child: its lookup entry to the `node` blob and its data to the `children` blob.
     pub(crate) fn add_child(&mut self, item: &impl TMerkleTreeNode) -> Result<(), MerkleDbError> {
         if self.read_only {
             return Err(MerkleDbError::ReadOnly);
         }
 
-        let Some(node_file) = self.node_file.as_mut() else {
+        let data_offset = self.data_offset;
+        let Some(node_buf) = self.node_buf.as_mut() else {
             return Err(MerkleDbError::WriteBeforeOpen);
         };
-        let Some(children_file) = self.children_file.as_mut() else {
+        let Some(children_buf) = self.children_buf.as_mut() else {
             return Err(MerkleDbError::WriteBeforeOpen);
         };
 
         let buf = rmp_serde::to_vec(item)?;
         let data_len = buf.len() as u64;
-        // log::debug!("--add_child-- node_file {:?}", node_file);
-        // log::debug!("--add_child-- dtype {:?}", item.dtype());
-        // log::debug!("--add_child-- hash {:x}", item.id());
-        // log::debug!("--add_child-- data_offset {}", self.data_offset);
-        // log::debug!("--add_child-- data_len {}", data_len);
-        // log::debug!("--add_child-- child {}", item);
 
-        node_file.write_all(&item.node_type().to_u8().to_le_bytes())?;
-        node_file.write_all(&item.hash().to_le_bytes())?; // id of child
-        node_file.write_all(&self.data_offset.to_le_bytes())?;
-        node_file.write_all(&data_len.to_le_bytes())?;
+        node_buf.extend_from_slice(&item.node_type().to_u8().to_le_bytes());
+        node_buf.extend_from_slice(&item.hash().to_le_bytes()); // id of child
+        node_buf.extend_from_slice(&data_offset.to_le_bytes());
+        node_buf.extend_from_slice(&data_len.to_le_bytes());
 
-        // log::debug!("--add_child-- children_file {:?}", children_file);
-        // log::debug!("--add_child-- buf.len() {}", buf.len());
-        children_file.write_all(&buf)?;
+        children_buf.extend_from_slice(&buf);
 
         self.data_offset += data_len;
 
@@ -484,22 +455,18 @@ impl MerkleNodeDB {
         let Some(lookup) = self.lookup.as_ref() else {
             return Err(MerkleDbError::ReadBeforeOpen);
         };
-        let Some(children_file) = self.children_file.as_mut() else {
-            return Err(MerkleDbError::WriteBeforeOpen);
-        };
 
         // Parse the node parent id
         let data_type = MerkleTreeNodeType::from_u8(lookup.data_type)?;
         let parent_id = MerkleTreeNode::deserialize_id(&lookup.data, data_type)?;
 
-        let mut file_data = Vec::new();
-        children_file.read_to_end(&mut file_data)?;
-        // log::debug!("Loading merkle node db map got {} bytes", file_data.len());
+        let children_bytes = self.store.read_children(&self.node_id)?;
+        // log::debug!("Loading merkle node db map got {} bytes", children_bytes.len());
 
         let mut ret: Vec<(MerkleHash, MerkleTreeNode)> =
             Vec::with_capacity(lookup.num_children as usize);
 
-        let mut cursor = std::io::Cursor::new(file_data);
+        let mut cursor = std::io::Cursor::new(children_bytes);
         // Iterate over offsets and read the data
         for (hash, (dtype, offset, len)) in lookup.offsets.iter() {
             // log::debug!("Loading dtype {:?}", MerkleTreeNodeType::from_u8(*dtype));
@@ -520,5 +487,34 @@ impl MerkleNodeDB {
         }
 
         Ok(ret)
+    }
+}
+
+impl Drop for MerkleNodeDB {
+    /// A write-mode db must be explicitly `close`d so its buffered node is persisted as one unit and
+    /// any persist error can propagate. `Drop` deliberately does **not** flush: a flush here could
+    /// only ever persist whatever children happened to be buffered before an early return — a
+    /// silently truncated node. Instead the buffers are dropped unwritten (no write is issued), so a
+    /// forgotten `close()` trips a debug assertion (failing the test) rather than corrupting the
+    /// store; in release it is logged and the node is simply never written, surfacing downstream as
+    /// a missing node.
+    fn drop(&mut self) {
+        // Normal drop: read-only, already flushed, or buffers already taken — nothing to do.
+        if self.read_only || self.flushed || self.node_buf.is_none() {
+            return;
+        }
+        // Reached Drop in write mode without close(): a bug. Don't mask an in-flight panic by
+        // panicking again while unwinding.
+        if !std::thread::panicking() {
+            debug_assert!(
+                false,
+                "MerkleNodeDB for node {} dropped without close(); buffered node discarded unwritten",
+                self.node_id
+            );
+        }
+        log::error!(
+            "MerkleNodeDB for node {} dropped without close(); buffered node discarded unwritten",
+            self.node_id
+        );
     }
 }
