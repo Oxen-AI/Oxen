@@ -45,28 +45,12 @@ jobs:
       fail-fast: false
 
     steps:
-      - name: Free up disk space
-        if: matrix.platform == 'linux'
-        run: |
-          echo "=== Before cleanup ==="
-          df -h
-
-          # Remove unnecessary tools and files to free up space
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/share/swift
-          sudo rm -rf /usr/local/share/powershell
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-
-          # Clean apt cache
-          sudo apt-get clean
-
-          echo "=== After cleanup ==="
-          df -h
-
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Free up disk space
+        if: matrix.platform == 'linux'
+        uses: ./.github/actions/free-disk-space
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v6
@@ -208,28 +192,12 @@ jobs:
       fail-fast: false
 
     steps:
-      - name: Free up disk space
-        if: matrix.platform == 'linux'
-        run: |
-          echo "=== Before cleanup ==="
-          df -h
-
-          # Remove unnecessary tools and files to free up space
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/share/swift
-          sudo rm -rf /usr/local/share/powershell
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-
-          # Clean apt cache
-          sudo apt-get clean
-
-          echo "=== After cleanup ==="
-          df -h
-
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Free up disk space
+        if: matrix.platform == 'linux'
+        uses: ./.github/actions/free-disk-space
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v6
