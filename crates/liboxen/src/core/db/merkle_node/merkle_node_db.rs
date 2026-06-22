@@ -63,8 +63,8 @@ use crate::model::merkle_tree::node::{
     EMerkleTreeNode, MerkleTreeNode, MerkleTreeNodeType, TMerkleTreeNode,
 };
 
-const NODE_FILE: &str = "node";
-const CHILDREN_FILE: &str = "children";
+pub(crate) const NODE_FILE: &str = "node";
+pub(crate) const CHILDREN_FILE: &str = "children";
 
 /// An absolute path to the directory for the Merkle node's `node` and `children` files.
 pub(crate) fn node_db_path(repo_path: &Path, hash: &MerkleHash) -> PathBuf {
@@ -134,12 +134,16 @@ pub enum MerkleDbError {
 }
 
 impl MerkleDbError {
-    fn dir_create(err: OxenError) -> Self {
+    pub(crate) fn dir_create(err: OxenError) -> Self {
         Self::DirCreate(Box::new(err))
     }
 
     fn open(err: OxenError) -> Self {
         Self::Open(Box::new(err))
+    }
+
+    pub(crate) fn fs_transport(err: OxenError) -> Self {
+        Self::FsTransport(Box::new(err))
     }
 }
 
