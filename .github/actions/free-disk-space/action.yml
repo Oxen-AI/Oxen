@@ -1,0 +1,29 @@
+name: Free up disk space
+description: >
+  Reclaim disk space on a GitHub-hosted Ubuntu runner by removing large
+  preinstalled toolchains our Rust/Python builds never use (dotnet, swift,
+  powershell, android, ghc). Heavy Cargo builds — notably the workspace
+  package/verify in the publish workflow, which compiles the dependency tree
+  once per publishable crate — can otherwise exhaust the runner's small root
+  partition. Requires the repository to be checked out first (it is a local
+  composite action) and a Linux runner (it uses sudo + apt).
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        echo "=== Before cleanup ==="
+        df -h
+
+        # Remove large preinstalled toolchains our builds don't use.
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/share/swift
+        sudo rm -rf /usr/local/share/powershell
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+
+        # Clean apt cache
+        sudo apt-get clean
+
+        echo "=== After cleanup ==="
+        df -h
