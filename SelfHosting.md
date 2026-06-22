@@ -82,7 +82,7 @@ s3_region = "us-west-1"      # required iff "s3" is in backends
 ```
 
 - **`backends`** — a list of which storage kinds this server is willing to host. The valid values are `"local"` (local-filesystem version storage) and `"s3"` (S3 version storage), spelled in lowercase. The first element is the server's default: when a client creates a new repo without specifying a kind, the server uses that. Each kind must appear at most once; the list must be non-empty.
-- **`s3_bucket`** — the S3 bucket the server uses for any S3-backed repo. Required when `"s3"` appears in `backends` and rejected when it doesn't. Each repo gets the prefix `{namespace}/{name}/` inside this bucket; the prefix is not configurable per repo.
+- **`s3_bucket`** — the S3 bucket the server uses for any S3-backed repo. Required when `"s3"` appears in `backends`; silently ignored when it doesn't. Each repo gets the prefix `{namespace}/{name}/` inside this bucket; the prefix is not configurable per repo.
   - **`s3_region`** — the AWS region the bucket lives in (e.g. `us-west-1`). Required when `"s3"` appears in `backends`. The server uses it to build the S3 client directly rather than detecting it at runtime; if it's wrong, startup fails when the bucket reachability check runs.
 
 Omitting the `[storage]` section entirely is equivalent to:
