@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
@@ -142,10 +143,13 @@ pub fn init_tracing(app_name: &str, default: LevelFilter) -> Result<TracingGuard
         .map(|v| parse_fmt_span(&v))
         .unwrap_or(FmtSpan::NONE);
 
-    // Always: human-readable stderr output (with optional span events)
+    // Always: human-readable stderr output (with optional span events).
+    // ANSI color codes only when stderr is a terminal, so redirected output
+    // (files, CloudWatch) stays clean instead of carrying escape sequences.
     let stderr_layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
         .with_target(true)
+        .with_ansi(std::io::stderr().is_terminal())
         .with_span_events(span_events);
 
     let maybe_log_dir = match std::env::var("OXEN_LOG_DIR").ok() {
