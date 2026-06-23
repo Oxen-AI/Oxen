@@ -13,7 +13,7 @@
 //! while a store with a small, known bound (e.g. a refs index) sets a much more conservative value.
 //!
 //! ONE LOGICAL STORE PER ENV. Each env hosts the databases of a SINGLE logical store; `max_dbs` is
-//! sized to that store's database count (a one-database store uses `max_dbs = 1`). The handle cache's
+//! sized to that store's database count (a one-database store uses `max_dbs = 1`). The env registry's
 //! "single live handle per canonical path" invariant therefore means "one env per logical store per
 //! repo." This makes the registry's identity model unambiguous.
 
@@ -92,8 +92,8 @@ fn build_options(config: &LmdbEnvConfig) -> Result<EnvOpenOptions<WithoutTls>, L
 }
 
 /// Open (creating the dir first if needed) an LMDB env at `dir`. Dir creation precedes the open so
-/// the caller never has to pre-create it; this also makes the handle cache's open-on-miss work for
-/// a brand-new repo (see `handle_cache.rs`).
+/// the caller never has to pre-create it; this also makes the env registry's open-on-miss work for
+/// a brand-new repo (see `env_registry.rs`).
 ///
 /// `LmdbEnvRegistry::get_or_open` is the only way to open an env from outside this module: the
 /// registry deduplicates so overlapping opens of one path share a single env and do not hit
@@ -115,7 +115,7 @@ pub(in crate::lmdb) fn open_lmdb_env(
     // (this process or another) safe: in-process it returns `EnvAlreadyOpened` (surfaced as
     // `Open`) rather than creating a second live mmap, and cross-process LMDB is MVCC-safe for
     // concurrent opens by design. So soundness rests on the lockfile, not on any caller
-    // discipline — the `handle_cache` registry only *deduplicates* (to avoid the
+    // discipline — the `env_registry` only *deduplicates* (to avoid the
     // `EnvAlreadyOpened` error on the normal path), it is not what makes this sound.
     let lmdb_env = unsafe { options.open(dir) }.map_err(|source| LmdbLayerError::Open {
         path: dir.to_path_buf(),
