@@ -63,7 +63,6 @@ use crate::model::merkle_tree::node::{
     EMerkleTreeNode, MerkleTreeNode, MerkleTreeNodeType, TMerkleTreeNode,
 };
 
-use super::fs_merkle_node_store::FsMerkleNodeStore;
 use super::merkle_node_store::MerkleNodeStore;
 
 pub(crate) const NODE_FILE: &str = "node";
@@ -249,10 +248,6 @@ impl MerkleNodeLookup {
 /// [`MerkleNodeStore`]. In read-write mode the blobs are accumulated in memory and persisted as one
 /// unit by [`close`](Self::close) (or by `Drop` as a fallback) — there is no incremental flushing,
 /// so a node is written exactly once and atomically.
-///
-/// The constructors take a `repo_path` and resolve the file backend internally; a later change
-/// hands the store in from the repo so the backend (file vs. another engine) is selected once at
-/// repository construction.
 pub(crate) struct MerkleNodeDB {
     pub dtype: MerkleTreeNodeType,
     pub node_id: MerkleHash,
@@ -293,23 +288,10 @@ impl MerkleNodeDB {
         EMerkleTreeNode::from_type_and_bytes(dtype, data)
     }
 
-    /// Whether a node has been written for `hash`. A store error is reported as `false`, mirroring
-    /// `Path::exists()` (which the file backend is built on).
-    pub(crate) fn exists(repo_path: &Path, hash: &MerkleHash) -> bool {
-        Self::fs_store(repo_path).exists(hash).unwrap_or(false)
-    }
-
-    /// The file backend for the repo at `repo_path`. Resolved per-open for now; a later change has
-    /// the repo own a single store and hand it in.
-    fn fs_store(repo_path: &Path) -> Arc<dyn MerkleNodeStore> {
-        Arc::new(FsMerkleNodeStore::new(repo_path))
-    }
-
     pub(crate) fn open_read_only(
-        repo_path: &Path,
+        store: Arc<dyn MerkleNodeStore>,
         hash: &MerkleHash,
     ) -> Result<Self, MerkleDbError> {
-        let store = Self::fs_store(repo_path);
         let node_bytes = store.read_node(hash)?;
         let lookup = MerkleNodeLookup::deserialize(node_bytes)?;
         let dtype = MerkleTreeNodeType::from_u8(lookup.data_type)?;
@@ -331,7 +313,7 @@ impl MerkleNodeDB {
     }
 
     pub(crate) fn open_read_write(
-        repo_path: &Path,
+        store: Arc<dyn MerkleNodeStore>,
         node: &impl TMerkleTreeNode,
         parent_id: Option<MerkleHash>,
     ) -> Result<Self, MerkleDbError> {
@@ -340,7 +322,7 @@ impl MerkleNodeDB {
             node_id: node.hash(),
             parent_id,
             read_only: false,
-            store: Self::fs_store(repo_path),
+            store,
             node_buf: Some(BytesMut::new()),
             children_buf: Some(BytesMut::new()),
             flushed: false,

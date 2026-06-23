@@ -16,11 +16,15 @@
 //! [`FsMerkleNodeStore`](super::fs_merkle_node_store) is the only implementation today.
 
 use std::fmt::Debug;
+use std::path::Path;
+use std::sync::Arc;
 
 use bytes::Bytes;
 
+use crate::error::OxenError;
 use crate::model::MerkleHash;
 
+use super::fs_merkle_node_store::FsMerkleNodeStore;
 use super::merkle_node_db::MerkleDbError;
 
 /// Engine-agnostic persistence for Merkle tree node bytes, keyed by [`MerkleHash`]. A node is two
@@ -51,4 +55,15 @@ pub(crate) trait MerkleNodeStore: Debug + Send + Sync {
         node: Bytes,
         children: Bytes,
     ) -> Result<(), MerkleDbError>;
+}
+
+/// Build the node store for the repo rooted at `repo_path`.
+///
+/// Mirrors [`create_version_store`](crate::storage::create_version_store): the backend is chosen
+/// here, once, at repository construction. Today it is always the on-disk [`FsMerkleNodeStore`] —
+/// this is the single seam where config/env-driven backend selection will later plug in.
+pub(crate) fn create_merkle_node_store(
+    repo_path: &Path,
+) -> Result<Arc<dyn MerkleNodeStore>, OxenError> {
+    Ok(Arc::new(FsMerkleNodeStore::new(repo_path)))
 }
