@@ -118,6 +118,6 @@ The store (an `Arc<LmdbEnv>` plus `LmdbDb`s) is `Send + Sync`, so wrap it in `Ar
 - `lmdb_env.rs` — `LmdbEnv` (heed `Env<WithoutTls>`), `LmdbEnvConfig`, the open primitive, and `copy_lmdb_env_to_dir` (backing `snapshot_to`).
 - `lmdb_db.rs` — `LmdbDb` (the raw-bytes key / opaque-value accessor and its full-scan `iter`) plus `open_db`, the one-line single-database open.
 - `txn.rs` — `with_read_txn` / `with_write_txn`, the only sanctioned read/write entry points, and the txn-lifetime rule.
-- `handle_cache.rs` — `LmdbEnvRegistry` plus `open_shared_env` / `shared_env_is_live`: the path-keyed, weak-retention env cache and its process-global accessors.
+- `env_registry.rs` — `LmdbEnvRegistry` plus `open_shared_env` / `shared_env_is_live`: the path-keyed, weak-retention env cache and its process-global accessors.
 - `store.rs` — `LmdbStore`: the default-method lifecycle trait you implement.
 - `lmdb_error.rs` — `LmdbLayerError`, the leaf error bridged into `OxenError`.
