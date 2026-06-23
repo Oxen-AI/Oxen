@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use crate::constants::{VERSION_CHUNK_FILE_NAME, VERSION_CHUNKS_DIR, VERSION_FILE_NAME};
 use crate::error::OxenError;
 use crate::model::MerkleHash;
-use crate::storage::version_store::{VersionLocation, VersionStore};
+use crate::storage::version_store::{BoxedByteStream, VersionLocation, VersionStore};
 use crate::util::fs::AtomicFile;
 use crate::util::{concurrency, hasher};
 use crate::view::versions::CleanCorruptedVersionsResult;
@@ -22,7 +22,6 @@ use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 use tokio::sync::Semaphore;
 use tokio::task::spawn_blocking;
-use tokio_stream::Stream;
 use tokio_util::io::ReaderStream;
 
 /// Local filesystem implementation of version storage
@@ -154,11 +153,7 @@ impl VersionStore for LocalVersionStore {
         Ok(metadata.len())
     }
 
-    async fn get_version_stream(
-        &self,
-        hash: &str,
-    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
-    {
+    async fn get_version_stream(&self, hash: &str) -> Result<BoxedByteStream, OxenError> {
         let path = self.version_path(hash);
         let file = File::open(&path).await?;
         let reader = BufReader::new(file);
@@ -171,8 +166,7 @@ impl VersionStore for LocalVersionStore {
         &self,
         orig_hash: &str,
         derived_filename: &str,
-    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
-    {
+    ) -> Result<BoxedByteStream, OxenError> {
         let path = self.version_dir(orig_hash).join(derived_filename);
         let file = File::open(&path).await?;
         let reader = BufReader::new(file);

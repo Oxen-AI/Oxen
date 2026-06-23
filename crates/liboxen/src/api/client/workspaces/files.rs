@@ -1112,6 +1112,7 @@ mod tests {
 
     use std::path::Path;
     use tempfile::TempDir;
+    use tokio_stream::StreamExt;
     use uuid;
 
     #[test]
@@ -2094,8 +2095,17 @@ mod tests {
             assert!(new_file.is_some(), "File should exist at new path");
 
             // Verify the actual file content is accessible at the new path
-            let file_bytes =
-                api::client::file::get_file(&remote_repo, branch_name, new_path).await?;
+            let mut stream = api::client::file::get_file(
+                &remote_repo,
+                branch_name,
+                Path::new(new_path),
+                api::client::file::GetFileOpts::default(),
+            )
+            .await?;
+            let mut file_bytes = Vec::new();
+            while let Some(chunk) = stream.next().await {
+                file_bytes.extend_from_slice(&chunk?);
+            }
             assert!(
                 !file_bytes.is_empty(),
                 "File content should not be empty at new path"
