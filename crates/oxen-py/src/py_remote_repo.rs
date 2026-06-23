@@ -6,7 +6,7 @@ use liboxen::config::UserConfig;
 use liboxen::error::OxenError;
 use liboxen::model::commit::NewCommitBody;
 use liboxen::model::file::{FileContents, FileNew};
-use liboxen::model::{Remote, RemoteRepository};
+use liboxen::model::{Remote, RemoteRepository, User};
 use liboxen::opts::{PaginateOpts, SortOpts};
 use liboxen::storage::StorageKind;
 use liboxen::{api, repositories};
@@ -492,9 +492,15 @@ impl PyRemoteRepo {
         }
     }
 
-    fn merge(&mut self, base_branch: String, head_branch: String) -> Result<PyCommit, PyOxenError> {
+    fn merge(
+        &mut self,
+        base_branch: String,
+        head_branch: String,
+        user: PyUser,
+    ) -> Result<PyCommit, PyOxenError> {
+        let author: User = user.into();
         let result = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            api::client::merger::merge(&self.repo, &base_branch, &head_branch).await
+            api::client::merger::merge(&self.repo, &base_branch, &head_branch, &author).await
         })?;
 
         // Make sure to advance internal commit id

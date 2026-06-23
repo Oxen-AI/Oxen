@@ -20,7 +20,7 @@ use crate::model::merkle_tree::node::StagedMerkleTreeNode;
 use crate::model::merkle_tree::node::commit_node::CommitNodeOpts;
 use crate::model::merkle_tree::node::file_node::FileNode;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
-use crate::model::{Branch, Commit, LocalRepository};
+use crate::model::{Branch, Commit, LocalRepository, User};
 use crate::model::{MerkleHash, PartialNode};
 use crate::repositories;
 use crate::repositories::commits::commit_writer;
@@ -219,6 +219,8 @@ pub async fn list_conflicts_between_commits(
 /// Server-side merge: merge a branch into a base branch.
 /// Updates the base branch ref on success. Does not modify the working directory or HEAD.
 ///
+/// `author` attributes the merge commit to the user who initiated the merge.
+///
 /// See the docs for merge_commits for details on how three-way merging works, including definitions
 /// of the terms used.
 ///
@@ -229,6 +231,7 @@ pub async fn merge_into_base(
     repo: &LocalRepository,
     merge_branch: &Branch,
     base_branch: &Branch,
+    author: &User,
 ) -> Result<Commit, OxenError> {
     log::debug!("merge_into_base merge {merge_branch} into {base_branch}");
 
@@ -253,7 +256,7 @@ pub async fn merge_into_base(
     } else if commits.is_fast_forward_merge() {
         Ok(commits.merge)
     } else {
-        server_three_way_merge(repo, &commits).await
+        server_three_way_merge(repo, &commits, author).await
     };
 
     if let Ok(ref commit) = result {
@@ -268,6 +271,7 @@ pub async fn merge_into_base(
 async fn server_three_way_merge(
     repo: &LocalRepository,
     merge_commits: &MergeCommits,
+    author: &User,
 ) -> Result<Commit, OxenError> {
     log::debug!(
         "server_three_way_merge: base commit {} -> merge commit {}",
@@ -300,7 +304,7 @@ async fn server_three_way_merge(
             merge_commits.merge.id,
             merge_commits.base.id,
         );
-        return create_empty_merge_commit(repo, merge_commits);
+        return create_empty_merge_commit(repo, merge_commits, author);
     }
 
     // 2. Build dir_entries HashMap (parent dir -> staged nodes) for the commit writer
@@ -329,15 +333,10 @@ async fn server_three_way_merge(
         }
     }
 
-    // TODO: This is reading the server's local user config, but we should use the user/email
-    // that initiated the merge request. If initiated from the client, the client should send it's
-    // local user. If initiated from the hub, the hub should send the user/email of the user who
-    // initiated the merge request.
-    let cfg = UserConfig::get()?;
     let new_commit = crate::model::NewCommitBody {
         message: merge_commits.commit_message(),
-        author: cfg.name.clone(),
-        email: cfg.email.clone(),
+        author: author.name.clone(),
+        email: author.email.clone(),
     };
 
     let parent_ids = vec![
@@ -461,7 +460,12 @@ pub async fn merge_commit_into_base_on_branch(
     } else if merge_commits.is_fast_forward_merge() {
         Ok(merge_commits.merge)
     } else {
-        server_three_way_merge(repo, &merge_commits).await
+        // Attribute the merge commit to the author of the incoming commit (the user who pushed).
+        let author = User {
+            name: merge_commit.author.clone(),
+            email: merge_commit.email.clone(),
+        };
+        server_three_way_merge(repo, &merge_commits, &author).await
     };
 
     if let Ok(ref commit) = result {
@@ -948,8 +952,15 @@ async fn merge_commits(
 
         if !checkout.writes_to_disk() {
             // Server-safe: use the server three-way merge path which operates
-            // only on tree data and never touches the working directory.
-            return server_three_way_merge(repo, merge_commits).await.map(Some);
+            // only on tree data and never touches the working directory. Attribute the merge
+            // commit to the author of the incoming commit.
+            let author = User {
+                name: merge_commits.merge.author.clone(),
+                email: merge_commits.merge.email.clone(),
+            };
+            return server_three_way_merge(repo, merge_commits, &author)
+                .await
+                .map(Some);
         }
 
         let analysis = find_merge_conflicts(repo, merge_commits, checkout).await?;
@@ -978,7 +989,8 @@ Found {} conflicts, please resolve them before merging.
                 // 3-way no-delta behavior). Skips the staging path since there's nothing to stage,
                 // and advances HEAD afterward since `commit_dir_entries_with_parents` and the
                 // empty-merge-commit helper don't update HEAD on their own.
-                let commit = create_empty_merge_commit(repo, merge_commits)?;
+                let author = UserConfig::get()?.to_user();
+                let commit = create_empty_merge_commit(repo, merge_commits, &author)?;
                 with_ref_manager(repo, |manager| manager.set_head_commit_id(&commit.id))?;
                 commit
             } else {
@@ -1042,8 +1054,10 @@ async fn create_merge_commit(
 fn create_empty_merge_commit(
     repo: &LocalRepository,
     merge_commits: &MergeCommits,
+    author: &User,
 ) -> Result<Commit, OxenError> {
-    let cfg = UserConfig::get()?;
+    let author_name = author.name.clone();
+    let author_email = author.email.clone();
     let timestamp = time::OffsetDateTime::now_utc();
     let new_commit_data = NewCommit {
         parent_ids: vec![
@@ -1051,8 +1065,8 @@ fn create_empty_merge_commit(
             merge_commits.merge.id.clone(),
         ],
         message: merge_commits.commit_message(),
-        author: cfg.name.clone(),
-        email: cfg.email.clone(),
+        author: author_name.clone(),
+        email: author_email.clone(),
         timestamp,
     };
     let commit_id = commit_writer::compute_commit_id(&new_commit_data)?;
@@ -1067,8 +1081,8 @@ fn create_empty_merge_commit(
             // CommitNode.parent_ids holds parent commit hashes (matches `create_empty_commit`
             // in core/v_latest/commits.rs).
             parent_ids: vec![base_commit_hash, merge_commit_hash],
-            email: cfg.email.clone(),
-            author: cfg.name.clone(),
+            email: author_email,
+            author: author_name,
             message: merge_commits.commit_message(),
             timestamp,
         },
