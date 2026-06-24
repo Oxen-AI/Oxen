@@ -20,7 +20,13 @@ impl RunCmd for InfoCmd {
         Command::new(NAME)
             .about("Get metadata information about a file such as the oxen hash, data type, etc.")
             .arg(Arg::new("path").required(false))
-            .arg(Arg::new("revision").required(false))
+            .arg(
+                Arg::new("revision")
+                    .long("revision")
+                    .short('r')
+                    .help("Read metadata as of this branch or commit instead of the working tree.")
+                    .action(clap::ArgAction::Set),
+            )
             .arg(
                 Arg::new("verbose")
                     .long("verbose")
@@ -58,7 +64,14 @@ impl RunCmd for InfoCmd {
 
         // Look up from the current dir for .oxen directory
         let repository = LocalRepository::from_current_dir()?;
-        let metadata = repositories::metadata::get_cli(&repository, &path, &path)?;
+        // With a revision, read metadata from that commit's merkle tree; without one, describe
+        // the working-tree file on disk.
+        let metadata = match &opts.revision {
+            Some(revision) => {
+                repositories::metadata::get_cli_at_revision(&repository, &path, revision)?
+            }
+            None => repositories::metadata::get_cli(&repository, &path, &path)?,
+        };
 
         if opts.output_as_json {
             let json = serde_json::to_string(&metadata)?;
