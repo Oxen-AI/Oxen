@@ -22,7 +22,7 @@ impl RunCmd for CatCmd {
             .arg(
                 Arg::new("path")
                     .required(true)
-                    .help("Path to the file, relative to the repository root or current directory"),
+                    .help("Path to the file, relative to the current directory"),
             )
             .arg(
                 Arg::new("revision")
