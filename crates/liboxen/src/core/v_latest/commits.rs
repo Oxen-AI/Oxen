@@ -290,10 +290,12 @@ pub fn create_empty_commit(
     )?;
 
     let parent_id = Some(existing_node.hash);
-    let mut commit_db = MerkleNodeDB::open_read_write(&repo.path, &commit_node, parent_id)?;
+    let mut commit_db =
+        MerkleNodeDB::open_read_write(repo.merkle_node_store(), &commit_node, parent_id)?;
     // There should always be one child, the root directory
     let dir_node = existing_node.children.first().unwrap().dir()?;
     commit_db.add_child(&dir_node)?;
+    commit_db.close()?;
 
     // Copy the dir hashes db to the new commit
     repositories::tree::cp_dir_hashes_to(repo, &existing_commit_id, commit_node.hash())?;
@@ -370,8 +372,10 @@ pub fn create_initial_commit(
     )?;
 
     // Open the commit database and add the root directory
-    let mut commit_db = MerkleNodeDB::open_read_write(&repo.path, &commit_node, None)?;
+    let mut commit_db =
+        MerkleNodeDB::open_read_write(repo.merkle_node_store(), &commit_node, None)?;
     commit_db.add_child(&dir_node)?;
+    commit_db.close()?;
 
     // Initialize the dir_hash_db with the root directory hash
     let commit_id_string = commit_id.to_string();

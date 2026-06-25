@@ -12,16 +12,19 @@
 //! untouched. Keeping the bytes identical across engines is what makes a future engine-to-engine
 //! bridge trivial.
 //!
-//! This module is the reusable foundation; nothing consumes it yet. `MerkleNodeDB` is rewired to
-//! read and write through a `MerkleNodeStore` in a follow-up change, mirroring how the low-level
-//! `lmdb` layer landed before it had a consumer.
+//! [`MerkleNodeDB`](super::merkle_node_db) reads and writes through a `MerkleNodeStore`;
+//! [`FsMerkleNodeStore`](super::fs_merkle_node_store) is the only implementation today.
 
 use std::fmt::Debug;
+use std::path::Path;
+use std::sync::Arc;
 
 use bytes::Bytes;
 
+use crate::error::OxenError;
 use crate::model::MerkleHash;
 
+use super::fs_merkle_node_store::FsMerkleNodeStore;
 use super::merkle_node_db::MerkleDbError;
 
 /// Engine-agnostic persistence for Merkle tree node bytes, keyed by [`MerkleHash`]. A node is two
@@ -34,8 +37,6 @@ use super::merkle_node_db::MerkleDbError;
 ///
 /// `Debug` is required (like [`VersionStore`](crate::storage::VersionStore)) so a store can be held
 /// by `#[derive(Debug)]` types such as `LocalRepository`.
-// Unconsumed until `MerkleNodeDB` delegates to it; see the module docs. Drop the allow then.
-#[allow(dead_code)]
 pub(crate) trait MerkleNodeStore: Debug + Send + Sync {
     /// Whether a node has been written for `hash`.
     fn exists(&self, hash: &MerkleHash) -> Result<bool, MerkleDbError>;
@@ -54,4 +55,15 @@ pub(crate) trait MerkleNodeStore: Debug + Send + Sync {
         node: Bytes,
         children: Bytes,
     ) -> Result<(), MerkleDbError>;
+}
+
+/// Build the node store for the repo rooted at `repo_path`.
+///
+/// Mirrors [`create_version_store`](crate::storage::create_version_store): the backend is chosen
+/// here, once, at repository construction. Today it is always the on-disk [`FsMerkleNodeStore`] —
+/// this is the single seam where config/env-driven backend selection will later plug in.
+pub(crate) fn create_merkle_node_store(
+    repo_path: &Path,
+) -> Result<Arc<dyn MerkleNodeStore>, OxenError> {
+    Ok(Arc::new(FsMerkleNodeStore::new(repo_path)))
 }

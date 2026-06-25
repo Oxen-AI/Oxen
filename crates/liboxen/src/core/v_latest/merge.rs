@@ -1084,14 +1084,18 @@ fn create_empty_merge_commit(
                 merge_commits.base.id
             ))
         })?;
-    let mut commit_db =
-        MerkleNodeDB::open_read_write(&repo.path, &commit_node, Some(base_node.hash))?;
+    let mut commit_db = MerkleNodeDB::open_read_write(
+        repo.merkle_node_store(),
+        &commit_node,
+        Some(base_node.hash),
+    )?;
     let root_dir = base_node
         .children
         .first()
         .expect("base commit must have a root dir as its first child")
         .dir()?;
     commit_db.add_child(&root_dir)?;
+    commit_db.close()?;
 
     // Copy base's path -> dir hash mapping so path-based tree lookups work for the new commit.
     repositories::tree::cp_dir_hashes_to(repo, &base_commit_hash, commit_node.hash())?;
