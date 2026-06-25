@@ -1247,7 +1247,7 @@ fn p_write_tree(
 ) -> Result<(), OxenError> {
     let parent_id = node.parent_id;
 
-    let mut db = MerkleNodeDB::open_read_write(&repo.path, node_impl, parent_id)?;
+    let mut db = MerkleNodeDB::open_read_write(repo.merkle_node_store(), node_impl, parent_id)?;
     for child in &node.children {
         match &child.node {
             EMerkleTreeNode::VNode(vnode) => {
@@ -2115,7 +2115,7 @@ mod tests {
 
             for hash in &installed {
                 assert!(
-                    MerkleNodeDB::exists(&clone.path, hash),
+                    clone.merkle_node_store().exists(hash)?,
                     "expected installed hash {hash} to be readable"
                 );
             }
@@ -2304,11 +2304,11 @@ mod tests {
             // Every installed hash must be readable through both stores.
             for h in &new_hashes {
                 assert!(
-                    MerkleNodeDB::exists(&repo_old.path, h),
+                    repo_old.merkle_node_store().exists(h)?,
                     "hash {h} not readable in repo unpacked via legacy unpack_nodes"
                 );
                 assert!(
-                    MerkleNodeDB::exists(&repo_new.path, h),
+                    repo_new.merkle_node_store().exists(h)?,
                     "hash {h} not readable in repo unpacked via unpack"
                 );
             }
@@ -2399,7 +2399,7 @@ mod tests {
             assert!(!installed.is_empty(), "unpack reported no hashes");
             for h in &installed {
                 assert!(
-                    MerkleNodeDB::exists(&repo_new.path, h),
+                    repo_new.merkle_node_store().exists(h)?,
                     "hash {h} not readable in repo unpacked via unpack"
                 );
             }
@@ -2928,7 +2928,7 @@ mod tests {
             );
             for h in &installed {
                 assert!(
-                    MerkleNodeDB::exists(&clone.path, h),
+                    clone.merkle_node_store().exists(h)?,
                     "hash {h} not readable in vfs-cloned repo"
                 );
             }
