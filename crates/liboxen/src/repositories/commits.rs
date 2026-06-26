@@ -297,6 +297,40 @@ mod tests {
         .await
     }
 
+    /// A real add/commit and read-back works end-to-end when the repo's Merkle nodes are backed by
+    /// the LMDB store instead of the filesystem — proving the backend is interchangeable for the
+    /// commit and tree-read paths, and that nodes land in the LMDB env (not the FS node tree).
+    #[tokio::test]
+    async fn test_commit_through_lmdb_backend() -> Result<(), OxenError> {
+        use crate::core::db::merkle_node::lmdb_merkle_node_store::LmdbMerkleNodeStore;
+        use std::sync::Arc;
+
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Back this repo's tree nodes with the LMDB store on its own path.
+            let lmdb = Arc::new(LmdbMerkleNodeStore::new(&repo.path)?);
+            let repo = LocalRepository::new_with_merkle_node_store_for_testing(&repo, lmdb);
+
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello LMDB")?;
+            repositories::add(&repo, &hello_file).await?;
+            let commit = repositories::commit(&repo, "commit through lmdb")?;
+
+            // The commit/dir/vnode/file nodes round-trip through the LMDB backend.
+            let root = repositories::tree::get_root_with_children(&repo, &commit)?
+                .expect("root node readable from lmdb");
+            assert!(!root.children.is_empty());
+            let file_node = repositories::tree::get_file_by_path(&repo, &commit, "hello.txt")?
+                .expect("file node readable from lmdb");
+            assert_eq!(file_node.name(), "hello.txt");
+
+            // Nodes went to the LMDB env, not the filesystem node tree.
+            assert!(LmdbMerkleNodeStore::exists_on_disk(&repo.path));
+            assert!(!repo.path.join(".oxen").join("tree").join("nodes").exists());
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_commit_removed_file() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
