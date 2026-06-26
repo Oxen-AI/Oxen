@@ -9,7 +9,9 @@ use liboxen::view::MerkleHashesResponse;
 use liboxen::view::StatusMessage;
 use liboxen::view::tree::MerkleHashResponse;
 use liboxen::view::tree::merkle_hashes::MerkleHashes;
+use tokio_util::io::{ReaderStream, SyncIoBridge};
 
+use std::io::Write;
 use std::path::PathBuf;
 
 use liboxen::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
@@ -23,6 +25,11 @@ use crate::helpers::get_repo;
 use crate::params::TreeDepthQuery;
 use crate::params::parse_resource;
 use crate::params::{app_data, path_param};
+
+/// Duplex buffer between the blocking packer and the response body for the full-tree download.
+const TREE_DOWNLOAD_BUFFER_SIZE: usize = 2 * 1024 * 1024;
+/// Buffer that batches the sync packer's writes before they cross into the duplex.
+const TREE_PACK_WRITE_BUFFER_SIZE: usize = 10 * 1024 * 1024;
 
 #[tracing::instrument(skip_all)]
 pub async fn get_node_by_id(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
@@ -193,10 +200,54 @@ pub async fn download_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, 
     let name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(app_data, namespace, name)?;
 
-    // Download the entire tree
-    let buffer = repositories::tree::compress_tree(&repository)?;
+    // Stream the entire tree tarball straight into the response body so the server never
+    // buffers the whole (potentially huge) tree in memory.
+    Ok(stream_tarball(move |out| {
+        repositories::tree::pack_tree(&repository, out)
+    }))
+}
 
-    Ok(HttpResponse::Ok().body(buffer))
+/// Stream a tar-gz produced by `pack` straight into the HTTP response body.
+///
+/// The packer is sync + blocking (`tar` + `flate2`), so it runs on a `spawn_blocking` worker
+/// that writes into one end of a `tokio::io::duplex`; the response body reads the other end,
+/// so packing and sending progress together with back-pressure and the whole tarball never
+/// lives in memory at once. A large `BufWriter` batches the packer's writes into the duplex to
+/// keep the per-write hand-off across the blocking boundary cheap (and is flushed explicitly —
+/// the bridged writer's EOF on drop is what signals end-of-stream to the reader).
+fn stream_tarball<F>(pack: F) -> HttpResponse
+where
+    F: FnOnce(&mut dyn Write) -> Result<(), OxenError> + Send + 'static,
+{
+    let (writer, reader) = tokio::io::duplex(TREE_DOWNLOAD_BUFFER_SIZE);
+    let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    tokio::task::spawn_blocking(move || {
+        let mut buf_writer = std::io::BufWriter::with_capacity(
+            TREE_PACK_WRITE_BUFFER_SIZE,
+            SyncIoBridge::new(writer),
+        );
+        let result =
+            pack(&mut buf_writer).and_then(|()| buf_writer.flush().map_err(OxenError::from));
+        if let Err(e) = result {
+            log::error!("stream_tarball pack failed: {e}");
+            error_tx.send(e).ok();
+        }
+        // Dropping `buf_writer` drops the bridged duplex writer, signalling EOF to the reader.
+    });
+
+    let stream = ReaderStream::new(reader).map(move |chunk| {
+        // The HTTP 200 is already sent by the time the packer can fail, so a mid-stream error
+        // surfaces by truncating the body; relay it so upstream logs name the real cause.
+        if let Ok(err) = error_rx.try_recv() {
+            return Err(OxenHttpError::from(err));
+        }
+        chunk.map_err(OxenHttpError::from)
+    });
+
+    HttpResponse::Ok()
+        .content_type("application/gzip")
+        .streaming(stream)
 }
 
 #[tracing::instrument(skip_all)]

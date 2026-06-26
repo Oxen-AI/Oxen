@@ -842,13 +842,13 @@ pub fn cp_dir_hashes_to(
     Ok(())
 }
 
-pub fn compress_tree(repository: &LocalRepository) -> Result<Vec<u8>, OxenError> {
-    let mut buffer = Vec::new();
-    let store = repository.merkle_node_store();
-    write_all_tar(store.as_ref(), &mut buffer, true)?;
-    let total_size: u64 = u64::try_from(buffer.len()).unwrap_or(u64::MAX);
-    log::debug!("Compressed entire tree size is {}", ByteSize::b(total_size));
-    Ok(buffer)
+/// Pack the entire merkle tree into `out` as a tar-gz stream (server-canonical layout),
+/// enumerating every node through the store. Sync and blocking: intended to run inside a
+/// `spawn_blocking` worker that bridges `out` to an async response body, so the whole-tree
+/// download never has to buffer the tarball in memory.
+pub fn pack_tree(repo: &LocalRepository, out: &mut dyn Write) -> Result<(), OxenError> {
+    let store = repo.merkle_node_store();
+    write_all_tar(store.as_ref(), out, true).map_err(OxenError::from)
 }
 
 pub fn compress_nodes(
@@ -1193,7 +1193,7 @@ fn extract_hash_from_entry_path(
 
     match components.as_slice() {
         // `tree/nodes` itself, or `tree/nodes/{prefix}` — intermediate dirs
-        // produced by `pack_all`. No hash to record.
+        // produced by `pack_tree`. No hash to record.
         [] | [_] => Ok(None),
         // `tree/nodes/{prefix}/{suffix}` — the hash-bearing dir. Parse
         // unconditionally; failure is a structured error.
@@ -1226,17 +1226,6 @@ pub(crate) fn pack_nodes(
 ) -> Result<(), OxenError> {
     let store = repo.merkle_node_store();
     write_hashes_tar(store.as_ref(), hashes, opts, out, true).map_err(OxenError::from)
-}
-
-/// Pack every node the store holds into `out` as a tar-gz stream.
-/// Always emits the server-canonical layout. Only the f5 wire-compat tests pack the whole
-/// tree through this path; the server's full-tree download goes through
-/// `repositories::tree::compress_tree`.
-#[cfg(test)]
-pub(crate) fn pack_all(repo: &LocalRepository, out: &mut dyn Write) -> Result<(), OxenError> {
-    let store = repo.merkle_node_store();
-    write_all_tar(store.as_ref(), out, true)?;
-    Ok(())
 }
 
 /// Estimate the **uncompressed** packed node tar payload.
@@ -2167,8 +2156,8 @@ mod tests {
     async fn test_transport_round_trip() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test(|repo| {
             let mut packed = Vec::new();
-            pack_all(&repo, &mut packed).expect("pack_all failed");
-            assert!(!packed.is_empty(), "pack_all produced empty buffer");
+            pack_tree(&repo, &mut packed).expect("pack_tree failed");
+            assert!(!packed.is_empty(), "pack_tree produced empty buffer");
 
             let tmp = tempfile::TempDir::new()?;
             let clone = repositories::init(tmp.path())?;
@@ -2226,14 +2215,14 @@ mod tests {
 
             let new_pack_method = {
                 let mut via_pack = Vec::new();
-                pack_all(&repo, &mut via_pack).expect("pack_all failed");
+                pack_tree(&repo, &mut via_pack).expect("pack_tree failed");
                 via_pack
             };
 
             assert_eq!(
                 list_tar_entries(&old_pack_method),
                 list_tar_entries(&new_pack_method),
-                "tar entry set differs between compress_tree helper and pack_all"
+                "tar entry set differs between compress_tree helper and pack_tree"
             );
             Ok(())
         })
@@ -2404,7 +2393,7 @@ mod tests {
     }
 
     /// Behavioural parity for the download-side unpack path. Pack a server-canonical
-    /// tarball (the kind a server emits via `compress_tree` on `main` / `pack_all`
+    /// tarball (the kind a server emits via `pack_tree` for the full-tree download
     /// today), feed the **same** bytes to:
     ///   - the old client unpack: `node_download_request_unpack_old` (the verbatim
     ///     `unpack_async_tar_archive` install from `main`'s `node_download_request`),
@@ -2417,8 +2406,8 @@ mod tests {
     async fn test_node_download_request_unpack_unchanged() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|repo| async move {
             let mut packed = Vec::new();
-            pack_all(&repo, &mut packed).expect("pack_all failed");
-            assert!(!packed.is_empty(), "pack_all produced empty buffer");
+            pack_tree(&repo, &mut packed).expect("pack_tree failed");
+            assert!(!packed.is_empty(), "pack_tree produced empty buffer");
 
             // Old client install path (mirror of node_download_request on main).
             let tmp_old = tempfile::TempDir::new()?;
@@ -2975,8 +2964,8 @@ mod tests {
     async fn test_unpack_via_vfs_branch() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test(|repo| {
             let mut packed = Vec::new();
-            pack_all(&repo, &mut packed).expect("pack_all failed");
-            assert!(!packed.is_empty(), "pack_all produced empty buffer");
+            pack_tree(&repo, &mut packed).expect("pack_tree failed");
+            assert!(!packed.is_empty(), "pack_tree produced empty buffer");
 
             let tmp = tempfile::TempDir::new()?;
             let mut clone = repositories::init(tmp.path())?;
