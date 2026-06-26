@@ -19,10 +19,11 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use super::{Direction, Migrate};
+use crate::config::RepositoryConfig;
 use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
-use crate::core::db::merkle_node::MerkleNodeStore;
 use crate::core::db::merkle_node::fs_merkle_node_store::FsMerkleNodeStore;
 use crate::core::db::merkle_node::lmdb_merkle_node_store::LmdbMerkleNodeStore;
+use crate::core::db::merkle_node::{MerkleNodeBackend, MerkleNodeStore};
 use crate::error::OxenError;
 use crate::model::{LocalRepository, MerkleHash};
 use crate::util;
@@ -49,7 +50,10 @@ impl Migrate for MerkleNodesToLmdbMigration {
         direction: Direction,
         repo: &LocalRepository,
     ) -> Result<bool, OxenError> {
-        let on_lmdb = LmdbMerkleNodeStore::exists_on_disk(&repo.path);
+        // Gate on the repo's resolved backend (config first), not raw on-disk evidence: `up` keeps
+        // the FS tree as a backup and `down` may leave an orphan env on a crash, so disk presence
+        // alone doesn't tell us which backend the repo is actually using.
+        let on_lmdb = repo.merkle_node_backend() == MerkleNodeBackend::Lmdb;
         Ok(match direction {
             // Can move to LMDB only if the repo isn't already on it.
             Direction::Up => !on_lmdb,
@@ -75,17 +79,30 @@ fn fs_nodes_dir(repo_path: &Path) -> PathBuf {
         .join(NODES_DIR)
 }
 
-/// FS → LMDB. Build the LMDB env in a temp sibling directory, populate and verify it, then
-/// atomically rename it into place. The filesystem node tree is kept as a backup.
+/// FS → LMDB. Build the LMDB env in a temp sibling directory, populate and verify it, atomically
+/// rename it into place, then record LMDB as the repo's backend in `config.toml`. The filesystem
+/// node tree is kept as a backup.
 ///
-/// Building in a temp dir is what makes a crash safe: `create_merkle_node_store` prefers an existing
-/// LMDB env over the FS tree, so a half-populated env at the final path would be selected and
-/// strand the repo. Until the rename, the complete FS tree remains the repo's backend.
+/// `config.toml` is the authoritative backend record, so the repo only actually switches to LMDB on
+/// the config write at the end. Until then it still resolves to the complete, kept FS tree — so a
+/// crash before the config write leaves the repo safely on the filesystem, and re-running finishes
+/// the switch via the already-published-env fast path below.
+///
+/// Building in a temp dir keeps the env at its final path complete-or-absent (an atomic rename
+/// publishes it), so config and on-disk evidence never disagree in a way that strands the repo.
 ///
 /// Nothing is cleaned up on error. A leftover temp env from a previous failed run is reported rather
 /// than deleted, and a failure mid-build leaves the partial temp env in place for inspection.
 fn migrate_fs_to_lmdb(repo: &LocalRepository) -> Result<(), OxenError> {
     let final_dir = LmdbMerkleNodeStore::env_dir(&repo.path);
+
+    // Idempotent fast path: if the env is already published (e.g. a previous run crashed after the
+    // rename but before the config write), the data move is done — just make config authoritative.
+    if LmdbMerkleNodeStore::exists_on_disk(&repo.path) {
+        set_config_backend(&repo.path, MerkleNodeBackend::Lmdb)?;
+        return Ok(());
+    }
+
     let temp_dir = final_dir.with_extension("building");
 
     // Don't silently delete a leftover temp env from a previous failed run — this migration never
@@ -117,8 +134,10 @@ fn migrate_fs_to_lmdb(repo: &LocalRepository) -> Result<(), OxenError> {
     // repo's backend, so a crash before it never strands the repo on a half-built env.
     util::fs::rename(&temp_dir, &final_dir)?;
 
-    // The FS node tree is intentionally kept as a backup. `create_merkle_node_store` prefers the
-    // LMDB env, so the repo runs on LMDB from now on while the source directory stays untouched.
+    // Switch the repo to LMDB. config is authoritative, so this is the step that actually takes
+    // effect; the FS node tree is intentionally kept as a backup.
+    set_config_backend(&repo.path, MerkleNodeBackend::Lmdb)?;
+
     log::info!(
         "Migrated {} merkle nodes from the filesystem backend to LMDB (filesystem node tree kept at {})",
         expected.len(),
@@ -127,11 +146,15 @@ fn migrate_fs_to_lmdb(repo: &LocalRepository) -> Result<(), OxenError> {
     Ok(())
 }
 
-/// LMDB → FS. Copy every node into the FS backend and verify before removing the LMDB env.
+/// LMDB → FS. Copy every node into the FS backend, verify, record Filesystem as the backend in
+/// `config.toml`, then remove the LMDB env.
 ///
-/// The LMDB env stays the repo's backend (and source of truth) until the very end, so a crash
-/// mid-migration leaves it intact and `create_merkle_node_store` keeps preferring it; re-running
-/// completes the move idempotently. Nothing is cleaned up on error.
+/// The config write happens *before* removing the env, and that ordering is load-bearing: config is
+/// authoritative, so writing Filesystem first means a crash after it leaves config=Filesystem with
+/// the FS tree already verified-complete (the orphan env is harmless and ignored). Removing the env
+/// first would risk a crash leaving config=Lmdb with no env, which the next load would resolve by
+/// creating a fresh *empty* env. Until the config write, the repo stays resolved to LMDB, so a crash
+/// before it leaves the env intact and re-running completes the move. Nothing is cleaned up on error.
 fn migrate_lmdb_to_fs(repo: LocalRepository) -> Result<(), OxenError> {
     // Release the repo's own (LMDB-resolved) store handle up front so we control the env's lifetime
     // and can remove its directory at the end on every platform (an open env can't be removed on
@@ -155,7 +178,10 @@ fn migrate_lmdb_to_fs(repo: LocalRepository) -> Result<(), OxenError> {
 
     verify_migrated(&fs.list_hashes()?, &expected, "LMDB→FS")?;
 
-    // Only now remove the env, so `create_merkle_node_store` falls back to the filesystem backend.
+    // Switch the repo back to the filesystem backend before removing the env (see the ordering note
+    // above). config is authoritative, so this is the step that actually takes effect.
+    set_config_backend(&repo_path, MerkleNodeBackend::Filesystem)?;
+
     if lmdb_dir.exists() {
         util::fs::remove_dir_all(&lmdb_dir)?;
     }
@@ -163,6 +189,17 @@ fn migrate_lmdb_to_fs(repo: LocalRepository) -> Result<(), OxenError> {
         "Migrated {} merkle nodes from LMDB to the filesystem backend",
         expected.len()
     );
+    Ok(())
+}
+
+/// Persist the repo's Merkle node backend to `config.toml`, leaving the rest of the config intact.
+/// This is the authoritative record `create_merkle_node_store` resolves from, so each direction
+/// writes it as the step that actually switches the backend.
+fn set_config_backend(repo_path: &Path, backend: MerkleNodeBackend) -> Result<(), OxenError> {
+    let config_path = util::fs::config_filepath(repo_path);
+    let mut config = RepositoryConfig::from_file(&config_path)?;
+    config.merkle_node_backend = Some(backend);
+    config.save(&config_path)?;
     Ok(())
 }
 
@@ -235,10 +272,15 @@ mod tests {
                 );
             }
 
-            // Reloading the repo resolves to LMDB (preferred over the kept FS tree) and the tree
-            // still reads back.
+            // `up` recorded LMDB in config, so a reloaded repo actually resolves to the LMDB
+            // backend (not just "the env exists on disk") and the tree reads back through it.
             {
                 let reloaded = LocalRepository::from_dir(&repo.path)?;
+                assert_eq!(
+                    reloaded.merkle_node_backend(),
+                    MerkleNodeBackend::Lmdb,
+                    "config must make the repo resolve to LMDB after up"
+                );
                 let root = repositories::tree::get_root_with_children(&reloaded, &commit)?
                     .expect("root readable through lmdb after migration");
                 assert!(!root.children.is_empty());
@@ -253,6 +295,12 @@ mod tests {
             assert!(
                 !LmdbMerkleNodeStore::exists_on_disk(&repo.path),
                 "LMDB env should be removed after down"
+            );
+            // config records Filesystem again, so a reloaded repo resolves back to the FS backend.
+            assert_eq!(
+                LocalRepository::from_dir(&repo.path)?.merkle_node_backend(),
+                MerkleNodeBackend::Filesystem,
+                "config must make the repo resolve to Filesystem after down"
             );
             let restored: HashSet<MerkleHash> = FsMerkleNodeStore::new(&repo.path)
                 .list_hashes()?
