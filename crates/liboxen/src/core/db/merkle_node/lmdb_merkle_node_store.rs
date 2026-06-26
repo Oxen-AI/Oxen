@@ -59,9 +59,14 @@ impl std::fmt::Debug for LmdbMerkleNodeStore {
 impl LmdbMerkleNodeStore {
     /// Open (creating if absent) the LMDB merkle node env for the repo rooted at `repo_path`.
     pub(crate) fn new(repo_path: &Path) -> Result<Self, OxenError> {
-        let dir = Self::env_dir(repo_path);
+        Self::new_at(&Self::env_dir(repo_path))
+    }
+
+    /// Open (creating if absent) an LMDB merkle node env at an explicit directory. Used by the
+    /// FS→LMDB migration to build the env in a temp dir before atomically publishing it.
+    pub(crate) fn new_at(env_dir: &Path) -> Result<Self, OxenError> {
         let config = LmdbEnvConfig::new(MAX_DBS, MERKLE_NODE_MAP_SIZE);
-        let env = open_shared_env(&dir, &config)?;
+        let env = open_shared_env(env_dir, &config)?;
         let db = open_db(&env, NODES_DB_NAME)?;
         Ok(Self { env, db })
     }
@@ -72,7 +77,8 @@ impl LmdbMerkleNodeStore {
         Self::env_dir(repo_path).join(LMDB_DATA_FILE).exists()
     }
 
-    fn env_dir(repo_path: &Path) -> PathBuf {
+    /// The env directory for the repo rooted at `repo_path` (`.oxen/tree/nodes_lmdb`).
+    pub(crate) fn env_dir(repo_path: &Path) -> PathBuf {
         repo_path
             .join(constants::OXEN_HIDDEN_DIR)
             .join(constants::TREE_DIR)
