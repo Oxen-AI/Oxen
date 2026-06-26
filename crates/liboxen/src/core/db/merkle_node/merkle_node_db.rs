@@ -95,6 +95,8 @@ pub enum MerkleDbError {
     // wrappers
     #[error("Error writing to a node or children file: {0}")]
     Io(#[from] std::io::Error),
+    #[error("LMDB merkle node store error: {0}")]
+    Lmdb(#[from] crate::lmdb::LmdbLayerError),
     #[error("Cannot encode a Merkle node: {0}")]
     Encode(#[from] rmp_serde::encode::Error),
     #[error("Cannot decode a Merkle node: {0}")]
