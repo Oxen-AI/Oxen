@@ -269,7 +269,7 @@ pub(crate) fn commit_dir_entries_with_parents(
         }
     }
 
-    let mut commit_db = MerkleNodeDB::open_read_write(&repo.path, &node, parent_id)?;
+    let mut commit_db = MerkleNodeDB::open_read_write(repo.merkle_node_store(), &node, parent_id)?;
     write_commit_entries(
         repo,
         commit_id,
@@ -278,6 +278,7 @@ pub(crate) fn commit_dir_entries_with_parents(
         &dir_hashes,
         &vnode_entries,
     )?;
+    commit_db.close()?;
 
     Ok(node.to_commit())
 }
@@ -362,7 +363,7 @@ pub fn commit_dir_entries_new(
         }
     }
 
-    let mut commit_db = MerkleNodeDB::open_read_write(&repo.path, &node, parent_id)?;
+    let mut commit_db = MerkleNodeDB::open_read_write(repo.merkle_node_store(), &node, parent_id)?;
 
     write_commit_entries(
         repo,
@@ -372,6 +373,7 @@ pub fn commit_dir_entries_new(
         &dir_hashes,
         &vnode_entries,
     )?;
+    commit_db.close()?;
 
     // Remove all the directories that are staged for removal
     cache_invalidate_dir_hash_db(&dir_hash_db, dir_entries.values())?;
@@ -473,7 +475,7 @@ pub fn commit_dir_entries(
         }
     }
 
-    let mut commit_db = MerkleNodeDB::open_read_write(&repo.path, &node, None)?;
+    let mut commit_db = MerkleNodeDB::open_read_write(repo.merkle_node_store(), &node, None)?;
     write_commit_entries(
         repo,
         commit_id,
@@ -482,6 +484,7 @@ pub fn commit_dir_entries(
         &dir_hashes,
         &vnode_entries,
     )?;
+    commit_db.close()?;
 
     // Remove all the directories that are staged for removal
     cache_invalidate_dir_hash_db(&dir_hash_db, dir_entries.values())?;
@@ -778,17 +781,22 @@ fn write_commit_entries(
         root_path.to_str().unwrap(),
         &dir_node.hash().to_string(),
     )?;
-    let dir_db = MerkleNodeDB::open_read_write(&repo.path, &dir_node, Some(commit_id))?;
+    let dir_db =
+        MerkleNodeDB::open_read_write(repo.merkle_node_store(), &dir_node, Some(commit_id))?;
+    let mut maybe_dir_db = Some(dir_db);
     r_create_dir_node(
         repo,
         commit_id,
-        &mut Some(dir_db),
+        &mut maybe_dir_db,
         dir_hash_db,
         dir_hashes,
         entries,
         root_path,
         &mut total_written,
     )?;
+    if let Some(mut dir_db) = maybe_dir_db {
+        dir_db.close()?;
+    }
 
     // The dir_hash_db was pre-populated from the previous commit, so
     // removed directories still have stale entries that must be deleted;
@@ -860,7 +868,7 @@ fn r_create_dir_node(
         // );
 
         let mut vnode_db = MerkleNodeDB::open_read_write(
-            &repo.path,
+            repo.merkle_node_store(),
             &vnode_obj,
             maybe_dir_db.as_ref().map(|db| db.node_id),
         )?;
@@ -883,7 +891,7 @@ fn r_create_dir_node(
                         // if the vnode is new, we need a new dir db
                         // let mut child_db = if maybe_vnode_db.is_some() {
                         let mut child_db = Some(MerkleNodeDB::open_read_write(
-                            &repo.path,
+                            repo.merkle_node_store(),
                             &dir_node,
                             Some(vnode.id),
                         )?);
@@ -898,6 +906,9 @@ fn r_create_dir_node(
                             &dir_path,
                             total_written,
                         )?;
+                        if let Some(mut child_db) = child_db {
+                            child_db.close()?;
+                        }
                         dir_node
                     } else {
                         // log::debug!("r_create_dir_node skipping {:?}", dir_path);
@@ -961,6 +972,7 @@ fn r_create_dir_node(
                 }
             }
         }
+        vnode_db.close()?;
     }
 
     log::debug!("Finished processing dir {path:?} total written {total_written} entries");
