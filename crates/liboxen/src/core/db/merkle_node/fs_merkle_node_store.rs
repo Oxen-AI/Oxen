@@ -42,8 +42,6 @@ impl FsMerkleNodeStore {
 }
 
 /// Parse a hex node id and push it onto `hashes`, logging and skipping a non-hex name.
-// Only reached via `list_hashes`, whose transport consumer lands in the next PR of this stack.
-#[allow(dead_code)]
 fn push_hash(hashes: &mut Vec<MerkleHash>, id: &str) {
     match u128::from_str_radix(id, 16) {
         Ok(value) => hashes.push(MerkleHash::new(value)),
