@@ -830,6 +830,86 @@ pub fn list_between(
     Ok(results)
 }
 
+/// List commits reachable from `head` but not from `base` (equivalent to git's
+/// `base..head`), ordered so that a commit always appears before its parents.
+///
+/// [`list_between`] stops only when it reaches the single `base` commit, so a
+/// merge commit in `head`'s history drags in every ancestor along its other
+/// parent, including commits that already live on `base`. This instead computes
+/// the exact set `reachable(head) \ reachable(base)`.
+///
+/// Why it's correct, independent of the early exit: we seed the walk from both
+/// tips and push the parents of every commit we pop, so left to run dry the walk
+/// visits all of `reachable(head) ∪ reachable(base)`, marks everything reachable
+/// from `base` as `on_base`, and emits the rest, which is exactly
+/// `reachable(head) \ reachable(base)`.
+///
+/// `head_only_remaining` is purely an optimization. It counts the commits in the
+/// heap that are reachable from `head` but not (yet) known to be on `base`. Every
+/// such commit reaches `head` through a path of head-only commits (if any commit
+/// on that path were on `base`, this one would be too), so the walk pushes and
+/// counts all of them before the count can fall to zero. Once it does, every
+/// head-only commit has already been emitted and only base ancestors remain, so
+/// stopping changes nothing about the result, only how far we walk.
+pub fn list_between_exclusive(
+    repo: &LocalRepository,
+    base: &Commit,
+    head: &Commit,
+) -> Result<Vec<Commit>, OxenError> {
+    let mut heap: BinaryHeap<TimestampedCommit> = BinaryHeap::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut on_base: HashSet<String> = HashSet::new();
+    let mut head_only_remaining: usize = 0;
+    let mut results = vec![];
+
+    seen.insert(base.id.clone());
+    on_base.insert(base.id.clone());
+    heap.push(TimestampedCommit(base.clone()));
+
+    if seen.insert(head.id.clone()) {
+        head_only_remaining += 1;
+        heap.push(TimestampedCommit(head.clone()));
+    }
+
+    while head_only_remaining > 0 {
+        let Some(TimestampedCommit(commit)) = heap.pop() else {
+            break; // unreachable while the count is positive; a safety net
+        };
+        let commit_on_base = on_base.contains(&commit.id);
+        if !commit_on_base {
+            head_only_remaining -= 1;
+        }
+
+        for parent_id in &commit.parent_ids {
+            let Some(parent) = get_by_hash(repo, &parent_id.parse()?)? else {
+                continue;
+            };
+            let first_visit = seen.insert(parent.id.clone());
+
+            if commit_on_base {
+                // The parent descends from base too. If a head path had already
+                // queued it as head-only, reclassify it and drop it from the count.
+                let newly_on_base = on_base.insert(parent.id.clone());
+                if newly_on_base && !first_visit {
+                    head_only_remaining -= 1;
+                }
+                if first_visit {
+                    heap.push(TimestampedCommit(parent));
+                }
+            } else if first_visit {
+                head_only_remaining += 1;
+                heap.push(TimestampedCommit(parent));
+            }
+        }
+
+        if !commit_on_base {
+            results.push(commit);
+        }
+    }
+
+    Ok(results)
+}
+
 /// Retrieve entries with filepaths matching a provided glob pattern
 pub fn search_entries(
     repo: &LocalRepository,
