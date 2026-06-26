@@ -174,6 +174,20 @@ impl LocalRepository {
         }
     }
 
+    /// Test-only constructor: clone an existing repo but back it with a caller-supplied Merkle node
+    /// store. Lets a test point a repo at a specific backend (e.g. an LMDB store on the repo's own
+    /// path) and exercise real commits/reads through it.
+    #[cfg(test)]
+    pub(crate) fn new_with_merkle_node_store_for_testing(
+        base: &LocalRepository,
+        merkle_node_store: Arc<dyn MerkleNodeStore>,
+    ) -> Self {
+        LocalRepository {
+            merkle_node_store,
+            ..base.clone()
+        }
+    }
+
     pub fn from_view(view: RepositoryView) -> Result<LocalRepository, OxenError> {
         let path = std::env::current_dir()?.join(view.name);
         let storage_config = StorageConfig::default();
