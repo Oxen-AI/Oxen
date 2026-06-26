@@ -8,11 +8,6 @@
 //! `write_node` puts both under one write transaction, so a node is never observable with only one
 //! blob (the same atomicity the FS backend gets from writing both files before anything reads).
 
-// The store is not yet wired into repo construction (that lands in the follow-up backend-selection
-// change), so outside of its own unit tests nothing constructs or queries it yet. Remove this once
-// `create_merkle_node_store` can return this backend.
-#![allow(dead_code)]
-
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
