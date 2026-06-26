@@ -160,6 +160,17 @@ impl MerkleNodeStore for FsMerkleNodeStore {
             .map_err(MerkleDbError::fs_transport)?;
         Ok(())
     }
+
+    fn delete(&self, hash: &MerkleHash) -> Result<(), MerkleDbError> {
+        // Remove the node's directory (both `node` and `children` files). An empty `{prefix}`
+        // shard dir may be left behind; `list_hashes` ignores it, matching the prior behavior.
+        let dir = node_db_path(&self.repo_path, hash);
+        match std::fs::remove_dir_all(&dir) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(MerkleDbError::Io(e)),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -222,6 +233,16 @@ mod tests {
             store.node_byte_sizes(&missing),
             Err(MerkleDbError::MissingNodeDir(_))
         ));
+
+        // Delete removes a node; deleting an absent node is idempotent.
+        store.delete(&hash)?;
+        assert!(!store.exists(&hash)?, "node should be gone after delete");
+        store.delete(&missing)?;
+        assert_eq!(
+            store.list_hashes()?,
+            vec![leaf],
+            "only the surviving node remains after delete"
+        );
         Ok(())
     }
 
