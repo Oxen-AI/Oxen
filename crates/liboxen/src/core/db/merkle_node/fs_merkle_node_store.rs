@@ -2,10 +2,12 @@
 //! `.oxen/tree/nodes/<sha-3>/<sha-rest>/{node,children}` (see [`node_db_path`]). This is the
 //! default backend and preserves the historical on-disk format byte-for-byte.
 
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use bytes::Bytes;
 
+use crate::constants;
 use crate::model::MerkleHash;
 use crate::util;
 use crate::util::fs::AtomicFile;
@@ -39,6 +41,16 @@ impl FsMerkleNodeStore {
     }
 }
 
+/// Parse a hex node id and push it onto `hashes`, logging and skipping a non-hex name.
+// Only reached via `list_hashes`, whose transport consumer lands in the next PR of this stack.
+#[allow(dead_code)]
+fn push_hash(hashes: &mut Vec<MerkleHash>, id: &str) {
+    match u128::from_str_radix(id, 16) {
+        Ok(value) => hashes.push(MerkleHash::new(value)),
+        Err(_) => log::warn!("Skipping non-hex merkle node dir {id}"),
+    }
+}
+
 impl MerkleNodeStore for FsMerkleNodeStore {
     fn exists(&self, hash: &MerkleHash) -> Result<bool, MerkleDbError> {
         let dir = node_db_path(&self.repo_path, hash);
@@ -53,6 +65,83 @@ impl MerkleNodeStore for FsMerkleNodeStore {
     fn read_children(&self, hash: &MerkleHash) -> Result<Bytes, MerkleDbError> {
         let path = node_db_path(&self.repo_path, hash).join(CHILDREN_FILE);
         Self::read_blob(&path, hash)
+    }
+
+    fn node_byte_sizes(&self, hash: &MerkleHash) -> Result<(u64, u64), MerkleDbError> {
+        let dir = node_db_path(&self.repo_path, hash);
+        let node_len = match std::fs::metadata(dir.join(NODE_FILE)) {
+            Ok(meta) => meta.len(),
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                return Err(MerkleDbError::MissingNodeDir(*hash));
+            }
+            Err(e) => return Err(MerkleDbError::Io(e)),
+        };
+        // `write_node` always writes both files, so a missing children file means a childless
+        // node whose blob is empty; treat it as zero-length rather than an error.
+        let children_len = match std::fs::metadata(dir.join(CHILDREN_FILE)) {
+            Ok(meta) => meta.len(),
+            Err(e) if e.kind() == ErrorKind::NotFound => 0,
+            Err(e) => return Err(MerkleDbError::Io(e)),
+        };
+        Ok((node_len, children_len))
+    }
+
+    fn list_hashes(&self) -> Result<Vec<MerkleHash>, MerkleDbError> {
+        let nodes_dir = self
+            .repo_path
+            .join(constants::OXEN_HIDDEN_DIR)
+            .join(constants::TREE_DIR)
+            .join(constants::NODES_DIR);
+
+        // A repo with no committed nodes (e.g. freshly init'd) has no nodes dir yet.
+        let prefix_entries = match std::fs::read_dir(&nodes_dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(MerkleDbError::Io(e)),
+        };
+
+        // `node_db_prefix` splits the hex hash into `{prefix}` (first 3 chars) and `{suffix}`
+        // (the rest), so a node normally lives at `{prefix}/{suffix}/{node,children}`. When the
+        // hex hash is 3 chars or shorter the suffix is empty and the `node`/`children` files sit
+        // directly under the prefix dir, so a prefix dir may hold both: subdirs (each a suffix)
+        // and the leaf files of the short-hash node sharing that prefix.
+        //
+        // `DirEntry::file_type` does not follow symlinks, so symlinked entries report as neither
+        // file nor dir and are skipped — Oxen does not track symlinks.
+        let mut hashes = Vec::new();
+        for prefix_entry in prefix_entries {
+            let prefix_entry = prefix_entry.map_err(MerkleDbError::Io)?;
+            if !prefix_entry
+                .file_type()
+                .map_err(MerkleDbError::Io)?
+                .is_dir()
+            {
+                continue;
+            }
+            let Some(prefix) = prefix_entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let mut prefix_is_node_dir = false;
+            for inner_entry in std::fs::read_dir(prefix_entry.path()).map_err(MerkleDbError::Io)? {
+                let inner_entry = inner_entry.map_err(MerkleDbError::Io)?;
+                let file_type = inner_entry.file_type().map_err(MerkleDbError::Io)?;
+                if file_type.is_dir() {
+                    // A suffix dir: the hash is `{prefix}{suffix}`.
+                    let Some(suffix) = inner_entry.file_name().to_str().map(str::to_owned) else {
+                        continue;
+                    };
+                    push_hash(&mut hashes, &format!("{prefix}{suffix}"));
+                } else if file_type.is_file() && inner_entry.file_name().to_str() == Some(NODE_FILE)
+                {
+                    // The leaf files live directly under the prefix dir: the hash is `{prefix}`.
+                    prefix_is_node_dir = true;
+                }
+            }
+            if prefix_is_node_dir {
+                push_hash(&mut hashes, &prefix);
+            }
+        }
+        Ok(hashes)
     }
 
     fn write_node(
@@ -103,10 +192,26 @@ mod tests {
         assert_eq!(store.read_node(&hash)?, node);
         assert_eq!(store.read_children(&hash)?, children);
 
+        // Byte sizes are reported without reading the blobs.
+        assert_eq!(
+            store.node_byte_sizes(&hash)?,
+            (node.len() as u64, children.len() as u64)
+        );
+
         // An empty children blob (childless node) round-trips too.
         let leaf = MerkleHash::new(0x42);
         store.write_node(&leaf, Bytes::from_static(b"leaf"), Bytes::new())?;
         assert!(store.read_children(&leaf)?.is_empty());
+        assert_eq!(store.node_byte_sizes(&leaf)?, (4, 0));
+
+        // Enumeration returns exactly the written hashes, regardless of order.
+        let listed: std::collections::HashSet<MerkleHash> =
+            store.list_hashes()?.into_iter().collect();
+        assert_eq!(
+            listed,
+            std::collections::HashSet::from([hash, leaf]),
+            "list_hashes should return exactly the written nodes"
+        );
 
         // A never-written node is reported absent and reads as MissingNodeDir.
         let missing = MerkleHash::new(0xdead_beef);
@@ -115,6 +220,19 @@ mod tests {
             store.read_node(&missing),
             Err(MerkleDbError::MissingNodeDir(_))
         ));
+        assert!(matches!(
+            store.node_byte_sizes(&missing),
+            Err(MerkleDbError::MissingNodeDir(_))
+        ));
+        Ok(())
+    }
+
+    /// `list_hashes` on a repo path with no nodes dir yet returns empty rather than erroring.
+    #[test]
+    fn fs_store_list_hashes_empty_when_no_nodes_dir() -> Result<(), OxenError> {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let store = FsMerkleNodeStore::new(dir.path());
+        assert!(store.list_hashes()?.is_empty());
         Ok(())
     }
 }
