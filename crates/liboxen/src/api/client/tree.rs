@@ -523,8 +523,10 @@ mod tests {
             let remote_repo_clone = remote_repo.clone();
             let download_repo_path_1 = local_repo.path.join("download_repo_test_1");
             let download_repo_path_2 = local_repo.path.join("download_repo_test_2");
-            let download_local_repo_1 = repositories::init(&download_repo_path_1)?;
-            let download_local_repo_2 = repositories::init(&download_repo_path_2)?;
+            // FS-pinned: this test counts node directories under the on-disk `tree/nodes` layout,
+            // which only the filesystem backend produces.
+            let download_local_repo_1 = test::init_fs_merkle_backend(&download_repo_path_1)?;
+            let download_local_repo_2 = test::init_fs_merkle_backend(&download_repo_path_2)?;
             api::client::tree::download_tree_from_path(
                 &download_local_repo_1,
                 &remote_repo_clone,
@@ -592,7 +594,9 @@ mod tests {
             let commit = repositories::commits::head_commit(&local_repo)?;
             let remote_repo_clone = remote_repo.clone();
             let download_repo_path = local_repo.path.join("download_repo_test_1");
-            let download_local_repo = repositories::init(&download_repo_path)?;
+            // FS-pinned: this test counts node directories under the on-disk `tree/nodes` layout,
+            // which only the filesystem backend produces.
+            let download_local_repo = test::init_fs_merkle_backend(&download_repo_path)?;
             let mut fetch_opts = FetchOpts::new();
             fetch_opts.remote = remote_repo_clone.url().to_string();
             api::client::tree::download_trees_from(
@@ -623,7 +627,7 @@ mod tests {
             assert!(dir_count > 33);
 
             let download_repo_path_2 = local_repo.path.join("download_repo_test_2");
-            let download_local_repo_2 = repositories::init(&download_repo_path_2)?;
+            let download_local_repo_2 = test::init_fs_merkle_backend(&download_repo_path_2)?;
             let fetch_opts = FetchOpts {
                 subtree_paths: Some(vec![PathBuf::from("annotations/test")]),
                 depth: Some(1),
