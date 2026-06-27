@@ -22,7 +22,6 @@ use std::sync::Arc;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
-use crate::constants;
 use crate::error::OxenError;
 use crate::model::MerkleHash;
 
@@ -35,8 +34,9 @@ use super::merkle_node_db::MerkleDbError;
 /// without a migration.
 ///
 /// Persisted per-repo as `merkle_node_backend` in `config.toml` (serialized lowercase:
-/// `"filesystem"` / `"lmdb"`), which is the authoritative record of a repo's backend — see
-/// [`create_merkle_node_store`] for how it's resolved.
+/// `"filesystem"` / `"lmdb"`), which records a repo's backend unless overridden by the
+/// `OXEN_MERKLE_NODE_BACKEND` environment variable — see [`create_merkle_node_store`] for how it's
+/// resolved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MerkleNodeBackend {
@@ -46,19 +46,23 @@ pub enum MerkleNodeBackend {
     Lmdb,
 }
 
-/// The global default backend for *newly created* repos, read once from the
-/// `OXEN_MERKLE_NODE_BACKEND` environment variable (`"lmdb"` selects LMDB; anything else, or
-/// unset, selects the filesystem backend). This is the global configuration switch; it only
-/// affects repos that don't already have node data on disk — an existing repo always resolves to
-/// the backend its data is already in (see [`create_merkle_node_store`]).
+/// The global backend override, read from the `OXEN_MERKLE_NODE_BACKEND` environment variable
+/// (`"lmdb"` selects LMDB, `"filesystem"` selects the filesystem backend). When set, it takes
+/// precedence over every per-repo signal — the persisted config and the on-disk node data alike
+/// (see [`create_merkle_node_store`]). Setting it to a backend that disagrees with where a repo's
+/// nodes actually live will make that repo read from an empty store, so it is a deliberate global
+/// switch, not a safety net.
 const MERKLE_NODE_BACKEND_ENV: &str = "OXEN_MERKLE_NODE_BACKEND";
 
 impl MerkleNodeBackend {
-    /// The global default backend from the environment (defaults to [`Filesystem`]).
-    fn from_env() -> Self {
+    /// The backend named by the environment, or `None` when the variable is unset or empty.
+    /// `"lmdb"` selects LMDB; any other non-empty value selects the filesystem backend.
+    fn from_env() -> Option<Self> {
         match std::env::var(MERKLE_NODE_BACKEND_ENV) {
-            Ok(value) if value.eq_ignore_ascii_case("lmdb") => MerkleNodeBackend::Lmdb,
-            _ => MerkleNodeBackend::Filesystem,
+            Ok(value) if value.trim().is_empty() => None,
+            Ok(value) if value.eq_ignore_ascii_case("lmdb") => Some(MerkleNodeBackend::Lmdb),
+            Ok(_) => Some(MerkleNodeBackend::Filesystem),
+            Err(_) => None,
         }
     }
 }
@@ -112,18 +116,16 @@ pub(crate) trait MerkleNodeStore: Debug + Send + Sync {
 /// whose config predates the field). Returns the store alongside the backend it resolved to, so the
 /// caller can persist the choice.
 ///
-/// Resolution is config first, then on-disk evidence, then the global default — so a repo always
-/// resolves to the backend its data is already in, and the global [`OXEN_MERKLE_NODE_BACKEND`]
-/// switch can never silently strand an existing repo's nodes:
-///   1. The persisted `config.toml` backend, if set — the authoritative record.
-///   2. Otherwise an existing LMDB env on disk → LMDB.
-///   3. Otherwise an existing on-disk filesystem node tree → filesystem.
-///   4. Otherwise (a fresh repo with no node data yet) → the global default from the environment.
+/// The backend comes from exactly two places: the [`OXEN_MERKLE_NODE_BACKEND`] environment override
+/// and the persisted `config.toml` value. The environment override wins when set; otherwise the
+/// config value is used; otherwise the filesystem default applies. The choice is never inferred from
+/// node data on disk, so pointing either knob at a backend that disagrees with where a repo's nodes
+/// actually live makes the repo read from an empty store.
 pub(crate) fn create_merkle_node_store(
     repo_path: &Path,
     configured: Option<MerkleNodeBackend>,
 ) -> Result<(Arc<dyn MerkleNodeStore>, MerkleNodeBackend), OxenError> {
-    let backend = resolve_backend(repo_path, configured);
+    let backend = resolve_backend(MerkleNodeBackend::from_env(), configured);
     let store: Arc<dyn MerkleNodeStore> = match backend {
         MerkleNodeBackend::Lmdb => Arc::new(LmdbMerkleNodeStore::new(repo_path)?),
         MerkleNodeBackend::Filesystem => Arc::new(FsMerkleNodeStore::new(repo_path)),
@@ -131,95 +133,53 @@ pub(crate) fn create_merkle_node_store(
     Ok((store, backend))
 }
 
-/// Decide a repo's backend: the persisted config value if set, else on-disk evidence, else the
-/// global default for a repo with no node data yet. See [`create_merkle_node_store`] for the
-/// ordering rationale.
-fn resolve_backend(repo_path: &Path, configured: Option<MerkleNodeBackend>) -> MerkleNodeBackend {
-    if let Some(backend) = configured {
-        backend
-    } else if LmdbMerkleNodeStore::exists_on_disk(repo_path) {
-        MerkleNodeBackend::Lmdb
-    } else if fs_nodes_exist_on_disk(repo_path) {
-        MerkleNodeBackend::Filesystem
-    } else {
-        MerkleNodeBackend::from_env()
-    }
-}
-
-/// Whether the repo has filesystem-backend node data on disk. The `.oxen/tree/nodes` dir is created
-/// lazily on the first node write, so its presence with any entry means the repo is using (or has
-/// used) the filesystem backend.
-fn fs_nodes_exist_on_disk(repo_path: &Path) -> bool {
-    let nodes_dir = repo_path
-        .join(constants::OXEN_HIDDEN_DIR)
-        .join(constants::TREE_DIR)
-        .join(constants::NODES_DIR);
-    std::fs::read_dir(&nodes_dir)
-        .map(|mut entries| entries.next().is_some())
-        .unwrap_or(false)
+/// Decide a repo's backend: the environment override if set, else the persisted config value, else
+/// the filesystem default. See [`create_merkle_node_store`] for the rationale.
+fn resolve_backend(
+    env_override: Option<MerkleNodeBackend>,
+    configured: Option<MerkleNodeBackend>,
+) -> MerkleNodeBackend {
+    env_override
+        .or(configured)
+        .unwrap_or(MerkleNodeBackend::Filesystem)
 }
 
 #[cfg(test)]
 mod tests {
-    use bytes::Bytes;
-
     use super::*;
-    use crate::model::MerkleHash;
 
-    /// With no persisted config (`None`), `resolve_backend` picks from on-disk evidence: an existing
-    /// LMDB env resolves to LMDB, and an existing filesystem node tree resolves to the filesystem
-    /// backend — regardless of the global default. (The fresh-repo case falls through to `from_env`,
-    /// exercised implicitly elsewhere.)
+    /// The environment override wins over the persisted config, and over both backends.
     #[test]
-    fn resolve_backend_follows_on_disk_evidence() {
-        // An LMDB env on disk → Lmdb.
-        let lmdb_dir = tempfile::tempdir().expect("create temp dir");
-        LmdbMerkleNodeStore::new(lmdb_dir.path()).expect("open lmdb store");
+    fn resolve_backend_env_override_wins() {
         assert_eq!(
-            resolve_backend(lmdb_dir.path(), None),
-            MerkleNodeBackend::Lmdb
-        );
-
-        // A written filesystem node → Filesystem.
-        let fs_dir = tempfile::tempdir().expect("create temp dir");
-        let fs = FsMerkleNodeStore::new(fs_dir.path());
-        fs.write_node(
-            &MerkleHash::new(0x1234),
-            Bytes::from_static(b"node"),
-            Bytes::from_static(b"children"),
-        )
-        .expect("write fs node");
-        assert_eq!(
-            resolve_backend(fs_dir.path(), None),
+            resolve_backend(
+                Some(MerkleNodeBackend::Filesystem),
+                Some(MerkleNodeBackend::Lmdb)
+            ),
             MerkleNodeBackend::Filesystem
+        );
+        assert_eq!(
+            resolve_backend(
+                Some(MerkleNodeBackend::Lmdb),
+                Some(MerkleNodeBackend::Filesystem)
+            ),
+            MerkleNodeBackend::Lmdb
         );
     }
 
-    /// A persisted config backend is authoritative: it wins over on-disk evidence pointing the other
-    /// way. (The migration relies on this to switch a repo's backend by writing config.)
+    /// With no environment override, the persisted config decides; with neither, the filesystem
+    /// default applies.
     #[test]
-    fn resolve_backend_config_wins_over_evidence() {
-        // LMDB env on disk, but config says Filesystem → Filesystem.
-        let lmdb_dir = tempfile::tempdir().expect("create temp dir");
-        LmdbMerkleNodeStore::new(lmdb_dir.path()).expect("open lmdb store");
+    fn resolve_backend_falls_back_to_config_then_default() {
         assert_eq!(
-            resolve_backend(lmdb_dir.path(), Some(MerkleNodeBackend::Filesystem)),
-            MerkleNodeBackend::Filesystem
-        );
-
-        // Filesystem node on disk, but config says Lmdb → Lmdb.
-        let fs_dir = tempfile::tempdir().expect("create temp dir");
-        FsMerkleNodeStore::new(fs_dir.path())
-            .write_node(
-                &MerkleHash::new(0x1234),
-                Bytes::from_static(b"node"),
-                Bytes::from_static(b"children"),
-            )
-            .expect("write fs node");
-        assert_eq!(
-            resolve_backend(fs_dir.path(), Some(MerkleNodeBackend::Lmdb)),
+            resolve_backend(None, Some(MerkleNodeBackend::Lmdb)),
             MerkleNodeBackend::Lmdb
         );
+        assert_eq!(
+            resolve_backend(None, Some(MerkleNodeBackend::Filesystem)),
+            MerkleNodeBackend::Filesystem
+        );
+        assert_eq!(resolve_backend(None, None), MerkleNodeBackend::Filesystem);
     }
 
     /// `MerkleNodeBackend` serializes to the lowercase tokens persisted in `config.toml`.
