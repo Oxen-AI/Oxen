@@ -30,9 +30,6 @@ const MAX_DBS: u32 = 1;
 /// Sparse upper bound on the env's mapped size — LMDB reserves this much address space but only
 /// occupies what is written, so it is sized generously to avoid `MDB_MAP_FULL` on large repos.
 const MERKLE_NODE_MAP_SIZE: ByteSize = ByteSize::gib(256);
-/// LMDB's data file name within the env directory (a stable LMDB convention); used only to detect
-/// an existing LMDB store without opening (and thereby creating) the env.
-const LMDB_DATA_FILE: &str = "data.mdb";
 
 /// Tag byte selecting a node's `node` blob within its composite key.
 const NODE_TAG: u8 = 0;
@@ -71,6 +68,7 @@ impl LmdbMerkleNodeStore {
         Ok(Self { env, db })
     }
 
+<<<<<<< ENG-1159/migrate-fs-lmdb
     /// Whether an LMDB merkle node env already exists on disk for `repo_path`. Checks the data file
     /// directly so the caller can pick a backend without opening (and creating) an env.
     pub(crate) fn exists_on_disk(repo_path: &Path) -> bool {
@@ -79,6 +77,9 @@ impl LmdbMerkleNodeStore {
 
     /// The env directory for the repo rooted at `repo_path` (`.oxen/tree/nodes_lmdb`).
     pub(crate) fn env_dir(repo_path: &Path) -> PathBuf {
+=======
+    fn env_dir(repo_path: &Path) -> PathBuf {
+>>>>>>> ENG-1159/lmdb-backend-e2e-test
         repo_path
             .join(constants::OXEN_HIDDEN_DIR)
             .join(constants::TREE_DIR)
@@ -247,16 +248,6 @@ mod tests {
         store.delete(&missing)?;
         assert_eq!(store.list_hashes()?, vec![leaf]);
 
-        Ok(())
-    }
-
-    /// `exists_on_disk` is false until an env has been created, then true.
-    #[test]
-    fn lmdb_store_exists_on_disk_reflects_creation() -> Result<(), OxenError> {
-        let dir = tempfile::tempdir().expect("create temp dir");
-        assert!(!LmdbMerkleNodeStore::exists_on_disk(dir.path()));
-        let _store = LmdbMerkleNodeStore::new(dir.path())?;
-        assert!(LmdbMerkleNodeStore::exists_on_disk(dir.path()));
         Ok(())
     }
 
