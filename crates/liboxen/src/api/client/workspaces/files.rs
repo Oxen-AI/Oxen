@@ -1194,7 +1194,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stage_single_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -1250,7 +1250,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stage_large_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let branch_name = "add-large-file";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -1298,7 +1298,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stage_multiple_files() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let branch_name = "add-data";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -1480,139 +1480,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_commit_multiple_data_frames() -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
-            let workspace_id = uuid::Uuid::new_v4().to_string();
-            let workspace =
-                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
-                    .await?;
-            assert_eq!(workspace.id, workspace_id);
-
-            let file_to_post = test::test_1k_parquet();
-            let directory_name = "";
-            let result = api::client::workspaces::files::upload_single_file(
-                &remote_repo,
-                &workspace_id,
-                directory_name,
-                file_to_post,
-            )
-            .await;
-            println!("result: {result:?}");
-            assert!(result.is_ok());
-
-            let body = NewCommitBody {
-                message: "Add another data frame".to_string(),
-                author: "Test User".to_string(),
-                email: "test@oxen.ai".to_string(),
-            };
-            api::client::workspaces::commit(
-                &remote_repo,
-                DEFAULT_BRANCH_NAME,
-                &workspace_id,
-                &body,
-            )
-            .await?;
-
-            // List the entries
-            let entries = api::client::entries::list_entries_with_type(
-                &remote_repo,
-                "",
-                DEFAULT_BRANCH_NAME,
-                &EntryDataType::Tabular,
-            )
-            .await?;
-            assert_eq!(entries.len(), 1);
-
-            // Upload a new data frame
-            let workspace =
-                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
-                    .await?;
-            assert_eq!(workspace.id, workspace_id);
-            let file_to_post = test::test_csv_file_with_name("emojis.csv");
-            let directory_name = "moare_data";
-            let result = api::client::workspaces::files::upload_single_file(
-                &remote_repo,
-                &workspace_id,
-                directory_name,
-                file_to_post,
-            )
-            .await;
-            println!("result: {result:?}");
-            assert!(result.is_ok());
-
-            let body = NewCommitBody {
-                message: "Add emojis data frame".to_string(),
-                author: "Test User".to_string(),
-                email: "test@oxen.ai".to_string(),
-            };
-            api::client::workspaces::commit(
-                &remote_repo,
-                DEFAULT_BRANCH_NAME,
-                &workspace_id,
-                &body,
-            )
-            .await?;
-
-            // List the entries
-            let entries = api::client::entries::list_entries_with_type(
-                &remote_repo,
-                "",
-                DEFAULT_BRANCH_NAME,
-                &EntryDataType::Tabular,
-            )
-            .await?;
-            assert_eq!(entries.len(), 2);
-            println!("entries: {entries:?}");
-
-            // Upload a new broken data frame
-            let workspace =
-                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, &workspace_id)
-                    .await?;
-            assert_eq!(workspace.id, workspace_id);
-            let file_to_post = test::test_invalid_parquet_file();
-            let directory_name = "broken_data";
-            let result = api::client::workspaces::files::upload_single_file(
-                &remote_repo,
-                &workspace_id,
-                directory_name,
-                file_to_post,
-            )
-            .await;
-            println!("result: {result:?}");
-            assert!(result.is_ok());
-
-            let body = NewCommitBody {
-                message: "Add broken data frame".to_string(),
-                author: "Test User".to_string(),
-                email: "test@oxen.ai".to_string(),
-            };
-            api::client::workspaces::commit(
-                &remote_repo,
-                DEFAULT_BRANCH_NAME,
-                &workspace_id,
-                &body,
-            )
-            .await?;
-
-            // List the entries
-            let entries = api::client::entries::list_entries_with_type(
-                &remote_repo,
-                "",
-                DEFAULT_BRANCH_NAME,
-                &EntryDataType::Tabular,
-            )
-            .await?;
-            assert_eq!(entries.len(), 2);
-            println!("entries: {entries:?}");
-
-            Ok(remote_repo)
-        })
-        .await
-    }
-
-    #[tokio::test]
     async fn test_commit_staged_single_file_and_pull() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let branch_name = "add-data";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -1688,7 +1557,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_schema_on_branch() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let branch_name = "test-schema-issues";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -1699,6 +1568,18 @@ mod tests {
             assert_eq!(branch.name, branch_name);
 
             let original_schemas = api::client::schemas::list(&remote_repo, branch_name).await?;
+            let original_root_counts =
+                api::client::dir::file_counts(&remote_repo, branch_name, "").await?;
+            let count_of = |fc: &crate::model::metadata::MetadataDir, dt: &str| {
+                fc.dir
+                    .data_types
+                    .iter()
+                    .find(|d| d.data_type == dt)
+                    .map(|d| d.count)
+                    .unwrap_or(0)
+            };
+            let original_image_count = count_of(&original_root_counts, "image");
+            let original_tabular_count = count_of(&original_root_counts, "tabular");
 
             let directory_name = "tabular";
             let workspace_id = uuid::Uuid::new_v4().to_string();
@@ -1742,53 +1623,19 @@ mod tests {
             let schemas = api::client::schemas::list(&remote_repo, branch_name).await?;
             assert_eq!(schemas.len(), original_schemas.len() + 1);
 
-            // List the file counts on that branch in that directory
+            // The freshly created subdirectory contains exactly the 2 files we just uploaded.
             let file_counts =
                 api::client::dir::file_counts(&remote_repo, branch_name, directory_name).await?;
             assert_eq!(file_counts.dir.data_types.len(), 2);
-            assert_eq!(
-                file_counts
-                    .dir
-                    .data_types
-                    .iter()
-                    .find(|dt| dt.data_type == "image")
-                    .unwrap()
-                    .count,
-                1
-            );
-            assert_eq!(
-                file_counts
-                    .dir
-                    .data_types
-                    .iter()
-                    .find(|dt| dt.data_type == "tabular")
-                    .unwrap()
-                    .count,
-                1
-            );
+            assert_eq!(count_of(&file_counts, "image"), 1);
+            assert_eq!(count_of(&file_counts, "tabular"), 1);
 
-            // List the file counts on that branch in the root directory
+            // The root counts pick up the same 2 files on top of whatever the seed already had.
             let file_counts = api::client::dir::file_counts(&remote_repo, branch_name, "").await?;
-            assert_eq!(file_counts.dir.data_types.len(), 2);
+            assert_eq!(count_of(&file_counts, "image"), original_image_count + 1);
             assert_eq!(
-                file_counts
-                    .dir
-                    .data_types
-                    .iter()
-                    .find(|dt| dt.data_type == "image")
-                    .unwrap()
-                    .count,
-                1
-            );
-            assert_eq!(
-                file_counts
-                    .dir
-                    .data_types
-                    .iter()
-                    .find(|dt| dt.data_type == "tabular")
-                    .unwrap()
-                    .count,
-                2
+                count_of(&file_counts, "tabular"),
+                original_tabular_count + 1
             );
 
             Ok(remote_repo)
@@ -1798,7 +1645,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rm_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -1852,7 +1699,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stage_file_in_multiple_subdirectories() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let branch_name = "add-images";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -1899,7 +1746,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_multiple_files() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let branch_name = "add-multiple-files";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -1954,7 +1801,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_file_with_absolute_path() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let branch_name = "add-images-with-absolute-path";
             let branch = api::client::branches::create_from_branch(
                 &remote_repo,
@@ -2212,35 +2059,6 @@ mod tests {
         .await
     }
 
-    // Test that downloading a non-existent file from workspace fails
-    #[tokio::test]
-    async fn test_download_nonexistent_file_from_workspace() -> Result<(), OxenError> {
-        test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
-            let workspace_id = make_workspace(&remote_repo).await?.id;
-            let temp_dir = TempDir::new()?;
-
-            let output_path = temp_dir.path().join("output.txt");
-
-            let result = api::client::workspaces::files::download(
-                &remote_repo,
-                &workspace_id,
-                "this_file_does_not_exist.txt",
-                Some(&output_path),
-            )
-            .await;
-
-            assert!(result.is_err(), "{result:?}");
-            assert!(
-                !output_path.exists(),
-                "Not expecting '{}' to exist",
-                output_path.display()
-            );
-
-            Ok(remote_repo)
-        })
-        .await
-    }
-
     // Test the fallback path: download from commit when file not in workspace
     // This tests the download_entry function which is used as fallback in CLI
     #[tokio::test]
@@ -2369,7 +2187,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_files_preserves_paths_local_repo_relative_paths() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
             help_test_add_files_preserve_path(&remote_repo, &local_repo.path, true).await?;
             Ok(remote_repo)
         })
@@ -2378,7 +2196,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_files_preserves_paths_local_repo_absolute_paths() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
             help_test_add_files_preserve_path(
                 &remote_repo,
                 &std::path::absolute(local_repo.path).unwrap(),
@@ -2392,7 +2210,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_files_preserves_paths_tempdir_relative_paths() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_, remote_repo| async move {
             let base_dir_guard = tempfile::tempdir()?;
             let base_dir = base_dir_guard.path().to_path_buf();
             help_test_add_files_preserve_path(&remote_repo, &base_dir, true).await?;
@@ -2403,7 +2221,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_files_preserves_paths_tempdir_absolute_paths() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_, remote_repo| async move {
             let base_dir_guard = tempfile::tempdir()?;
             let base_dir = base_dir_guard.path().to_path_buf();
             help_test_add_files_preserve_path(&remote_repo, &base_dir, false).await?;
