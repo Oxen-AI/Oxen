@@ -19,6 +19,12 @@ use crate::storage::{LocalVersionStore, S3Opts, S3VersionStore};
 use crate::util;
 use crate::view::versions::CleanCorruptedVersionsResult;
 
+/// A boxed, `Send + Unpin` stream of byte chunks, each an `io::Result`.
+///
+/// The shared return type of the version store's streaming reads and the
+/// client-side file streamer.
+pub type BoxedByteStream = Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>;
+
 /// A local filesystem path to a version file.
 ///
 /// The path is guaranteed to be readable on the local filesystem, but callers MUST NOT assume it is
@@ -288,10 +294,7 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     ///
     /// # Arguments
     /// * `hash` - The content hash of the version to retrieve
-    async fn get_version_stream(
-        &self,
-        hash: &str,
-    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>;
+    async fn get_version_stream(&self, hash: &str) -> Result<BoxedByteStream, OxenError>;
 
     /// Get the size in bytes of a derived file (e.g., resized image, video thumbnail).
     ///
@@ -318,7 +321,7 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         &self,
         orig_hash: &str,
         derived_filename: &str,
-    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>;
+    ) -> Result<BoxedByteStream, OxenError>;
 
     /// Check if a derived file exists
     ///

@@ -1,3 +1,4 @@
+use liboxen::api::client::file::{GetFileOpts, get_file};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -10,6 +11,7 @@ use liboxen::model::{Remote, RemoteRepository, User};
 use liboxen::opts::{PaginateOpts, SortOpts};
 use liboxen::storage::StorageKind;
 use liboxen::{api, repositories};
+use tokio_stream::StreamExt;
 
 use std::borrow::Cow;
 use std::path::PathBuf;
@@ -253,10 +255,16 @@ impl PyRemoteRepo {
 
     fn get_file(&self, remote_path: PathBuf, revision: &str) -> Result<Cow<'_, [u8]>, PyOxenError> {
         let bytes = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            api::client::file::get_file(&self.repo, &revision, &remote_path).await
+            let mut stream =
+                get_file(&self.repo, revision, &remote_path, GetFileOpts::default()).await?;
+            let mut bytes = Vec::new();
+            while let Some(chunk) = stream.next().await {
+                bytes.extend_from_slice(&chunk?);
+            }
+            Ok::<_, OxenError>(bytes)
         })?;
 
-        Ok(bytes.to_vec().into())
+        Ok(bytes.into())
     }
 
     fn put_file(

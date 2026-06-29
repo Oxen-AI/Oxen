@@ -16,7 +16,7 @@ use tokio::sync::OnceCell;
 use tokio_stream::Stream;
 use tokio_util::io::StreamReader;
 
-use super::version_store::{VersionLocation, VersionStore};
+use super::version_store::{BoxedByteStream, VersionLocation, VersionStore};
 use crate::constants::VERSION_FILE_NAME;
 use crate::util::fs::AtomicFile;
 use crate::util::hasher;
@@ -555,11 +555,7 @@ impl VersionStore for S3VersionStore {
         Ok(size)
     }
 
-    async fn get_version_stream(
-        &self,
-        hash: &str,
-    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
-    {
+    async fn get_version_stream(&self, hash: &str) -> Result<BoxedByteStream, OxenError> {
         let client = self.client().await?;
         let key = self.generate_key(hash);
 
@@ -580,8 +576,7 @@ impl VersionStore for S3VersionStore {
         &self,
         orig_hash: &str,
         derived_filename: &str,
-    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
-    {
+    ) -> Result<BoxedByteStream, OxenError> {
         let client = self.client().await?;
         let key = format!("{}/{}", self.version_dir(orig_hash), derived_filename);
 
