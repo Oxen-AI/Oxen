@@ -1,11 +1,13 @@
 use async_trait::async_trait;
 use clap::{Arg, Command};
 use liboxen::model::LocalRepository;
-use liboxen::{repositories, util};
+use liboxen::repositories;
+use std::path::Path;
 use tokio::io::AsyncWriteExt;
 use tokio_stream::StreamExt;
 
 use crate::cmd::RunCmd;
+use crate::helpers::path_relative_to_repo;
 
 pub const NAME: &str = "cat";
 pub struct CatCmd;
@@ -43,12 +45,7 @@ impl RunCmd for CatCmd {
             .get_one::<String>("revision")
             .ok_or_else(|| anyhow::anyhow!("Must supply a revision"))?;
 
-        // Resolve the user-supplied path to a repo-relative path. Joining an absolute path
-        // onto the current dir yields the absolute path, so this handles both absolute and
-        // current-dir-relative inputs. Don't canonicalize — the file need not exist in the
-        // working tree, only in the revision.
-        let current_dir = std::env::current_dir()?;
-        let repo_path = util::fs::path_relative_to_dir(current_dir.join(path), &repository.path)?;
+        let repo_path = path_relative_to_repo(&repository, Path::new(path))?;
 
         let mut stream = repositories::revisions::get_version_stream_from_revision(
             &repository,

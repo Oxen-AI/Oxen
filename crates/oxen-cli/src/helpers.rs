@@ -4,10 +4,12 @@ use liboxen::config::AuthConfig;
 use liboxen::constants;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
+use liboxen::util;
 use liboxen::util::oxen_version::OxenVersion;
 
 use colored::Colorize;
 
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 pub fn get_scheme_and_host_or_default() -> Result<(String, String), OxenError> {
@@ -105,4 +107,10 @@ pub fn check_repo_migration_needed(repo: &LocalRepository) -> Result<(), OxenErr
     Err(OxenError::MigrationRequired(
         "Error: Migration required".to_string().into(),
     ))
+}
+
+/// Resolves a user-supplied path (current-dir-relative or absolute) to a repository-relative path.
+pub fn path_relative_to_repo(repo: &LocalRepository, path: &Path) -> Result<PathBuf, OxenError> {
+    let current_dir = std::env::current_dir()?;
+    util::fs::path_relative_to_dir(current_dir.join(path), &repo.path)
 }

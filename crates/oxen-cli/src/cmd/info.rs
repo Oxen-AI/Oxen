@@ -7,6 +7,7 @@ use liboxen::opts::InfoOpts;
 use liboxen::repositories;
 
 use crate::cmd::RunCmd;
+use crate::helpers::path_relative_to_repo;
 pub const NAME: &str = "info";
 pub struct InfoCmd;
 
@@ -64,11 +65,13 @@ impl RunCmd for InfoCmd {
 
         // Look up from the current dir for .oxen directory
         let repository = LocalRepository::from_current_dir()?;
-        // With a revision, read metadata from that commit's merkle tree; without one, describe
-        // the working-tree file on disk.
+        // With a revision, read metadata from that commit's merkle tree (which is keyed by
+        // repo-relative paths); without one, describe the working-tree file on disk at the path
+        // as given.
         let metadata = match &opts.revision {
             Some(revision) => {
-                repositories::metadata::get_cli_at_revision(&repository, &path, revision)?
+                let repo_path = path_relative_to_repo(&repository, &path)?;
+                repositories::metadata::get_cli_at_revision(&repository, &repo_path, revision)?
             }
             None => repositories::metadata::get_cli(&repository, &path, &path)?,
         };
