@@ -173,7 +173,8 @@ pub async fn restore(
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
 
-    let db = changes_db::get_changes_db(&column_changes_path)?;
+    // Arc may cross `.await`; the guards taken below must not.
+    let handle = changes_db::get_changes_db(&column_changes_path)?;
 
     log::debug!("restore_column() got db_path: {db_path:?}");
 
@@ -183,9 +184,9 @@ pub async fn restore(
         file_path,
     )?;
 
-    if let Some(change) =
-        column_changes_db::get_data_frame_column_change(&db, &column_to_restore.name)?
-    {
+    let maybe_change =
+        column_changes_db::get_data_frame_column_change(&handle.read(), &column_to_restore.name)?;
+    if let Some(change) = maybe_change {
         match change.operation.as_str() {
             "added" => {
                 log::debug!("restore_column() column is added, deleting");
@@ -206,7 +207,7 @@ pub async fn restore(
                     manager.with_conn(|conn| columns::delete_column(conn, &column_to_delete))
                 })?;
                 columns::revert_column_changes(
-                    &db,
+                    &handle.write(),
                     &change
                         .column_after
                         .ok_or_else(|| {
@@ -251,7 +252,7 @@ pub async fn restore(
                     manager.with_conn(|conn| columns::add_column(conn, &new_column))
                 })?;
                 columns::revert_column_changes(
-                    &db,
+                    &handle.write(),
                     &change
                         .column_before
                         .ok_or_else(|| {
@@ -313,7 +314,7 @@ pub async fn restore(
                     })
                 })?;
                 columns::revert_column_changes(
-                    &db,
+                    &handle.write(),
                     &change
                         .column_after
                         .clone()
