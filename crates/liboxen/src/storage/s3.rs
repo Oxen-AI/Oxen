@@ -107,6 +107,24 @@ impl S3VersionStore {
         }
     }
 
+    /// Verify the configured bucket exists and is reachable with the current credentials and
+    /// region (HeadBucket). Object read/write permission is not probed.
+    async fn check_bucket_accessible(&self) -> Result<(), OxenError> {
+        let client = self.client().await?;
+        client
+            .head_bucket()
+            .bucket(&self.bucket)
+            .send()
+            .await
+            .map_err(|err| {
+                OxenError::internal_error(format!(
+                    "Cannot access S3 bucket '{}': {err}",
+                    self.bucket
+                ))
+            })?;
+        Ok(())
+    }
+
     #[cfg(test)]
     pub fn new_with_client(
         client: Arc<Client>,
@@ -216,51 +234,49 @@ impl S3VersionStore {
     }
 }
 
+/// Verify the S3 bucket named in `opts` exists and is reachable with the server's configured
+/// credentials and region. Called at server startup so a misconfigured bucket fails the boot
+/// loudly instead of surfacing as a 500 on the first request.
+///
+/// Reachability only: per-repo object write access is validated when each repo's store is
+/// initialized (see [`VersionStore::init`]).
+pub async fn verify_s3_bucket_reachable(opts: &S3Opts) -> Result<(), OxenError> {
+    // The bucket-level HeadBucket probe ignores the object-key prefix.
+    S3VersionStore::new(opts.bucket.clone(), "")
+        .check_bucket_accessible()
+        .await
+}
+
 #[async_trait]
 impl VersionStore for S3VersionStore {
     async fn init(&self) -> Result<(), OxenError> {
+        // Reachability + read access.
+        self.check_bucket_accessible().await?;
+
+        // Write access: round-trip a small sentinel object under this store's prefix.
         let client = self.client().await?;
-
-        // Check permission to write to S3
-        match client.head_bucket().bucket(&self.bucket).send().await {
-            Ok(result) => {
-                log::debug!("Successfully got S3 bucket {result:?}");
-                let test_key = format!("{}/_permission_check", self.prefix);
-                let body = ByteStream::from("permission-check".as_bytes().to_vec());
-
-                match client
-                    .put_object()
-                    .bucket(&self.bucket)
-                    .key(&test_key)
-                    .body(body)
-                    .send()
-                    .await
-                {
-                    Ok(_) => {
-                        client
-                            .delete_object()
-                            .bucket(&self.bucket)
-                            .key(&test_key)
-                            .send()
-                            .await
-                            .map_err(|err| {
-                                OxenError::basic_str(format!(
-                                    "Failed to delete _permission_check: {err}"
-                                ))
-                            })?;
-                        Ok(())
-                    }
-                    // Surface the error from S3
-                    Err(err) => Err(OxenError::basic_str(format!(
-                        "S3 write permission check failed: {err}",
-                    ))),
-                }
-            }
-            Err(err) => Err(OxenError::basic_str(format!(
-                "Cannot access S3 bucket '{}': {err}",
-                self.bucket
-            ))),
-        }
+        let test_key = format!("{}/_permission_check", self.prefix);
+        let body = ByteStream::from("permission-check".as_bytes().to_vec());
+        client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(&test_key)
+            .body(body)
+            .send()
+            .await
+            .map_err(|err| {
+                OxenError::basic_str(format!("S3 write permission check failed: {err}"))
+            })?;
+        client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(&test_key)
+            .send()
+            .await
+            .map_err(|err| {
+                OxenError::basic_str(format!("Failed to delete _permission_check: {err}"))
+            })?;
+        Ok(())
     }
 
     /// Streams file content to S3 without writing to disk.
@@ -1021,8 +1037,10 @@ mod tests {
     use std::net::SocketAddr;
     use tokio::net::TcpListener;
 
-    async fn setup() -> (
-        S3VersionStore,
+    /// Spin up an in-process s3s server on a loopback port. The returned temp dir and join handle
+    /// must be kept alive for the server's lifetime.
+    async fn spawn_s3s() -> (
+        SocketAddr,
         async_tempfile::TempDir,
         tokio::task::JoinHandle<()>,
     ) {
@@ -1051,6 +1069,16 @@ mod tests {
                 });
             }
         });
+
+        (addr, tmp, server_handle)
+    }
+
+    async fn setup() -> (
+        S3VersionStore,
+        async_tempfile::TempDir,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let (addr, tmp, server_handle) = spawn_s3s().await;
 
         let client = build_test_client(addr);
         client
@@ -1081,6 +1109,32 @@ mod tests {
             .force_path_style(true)
             .build();
         Client::from_conf(config)
+    }
+
+    #[tokio::test]
+    async fn test_check_bucket_accessible_succeeds() {
+        let (store, _tmp, _server) = setup().await;
+        store.check_bucket_accessible().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_check_bucket_accessible_fails_for_missing_bucket() {
+        // Server is up but this bucket was never created -- the probe must error so the boot
+        // hard-fails rather than letting a misconfigured bucket through.
+        let (addr, _tmp, _server) = spawn_s3s().await;
+        let store = S3VersionStore::new_with_client(
+            Arc::new(build_test_client(addr)),
+            "missing-bucket".to_string(),
+            "test-namespace/test-repo".to_string(),
+            Some(format!("http://{addr}")),
+        );
+        assert!(store.check_bucket_accessible().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_init_round_trips_permission_check() {
+        let (store, _tmp, _server) = setup().await;
+        store.init().await.unwrap();
     }
 
     #[tokio::test]

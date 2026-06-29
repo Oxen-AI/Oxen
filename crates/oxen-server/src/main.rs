@@ -471,6 +471,13 @@ async fn server() -> Result<(), ServerError> {
             println!("🐂 v{VERSION}");
             println!("{SUPPORT}");
 
+            // Fail fast if the configured S3 bucket is unreachable, rather than letting the first
+            // request 500. Local-only servers carry no S3 opts and skip the probe.
+            if let Some(s3_opts) = server_config.storage.s3() {
+                log::info!("Verifying S3 bucket '{}' is reachable...", s3_opts.bucket);
+                liboxen::storage::verify_s3_bucket_reachable(s3_opts).await?;
+            }
+
             start(
                 &ip,
                 port,
