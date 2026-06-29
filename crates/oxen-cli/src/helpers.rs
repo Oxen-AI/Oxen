@@ -9,7 +9,7 @@ use liboxen::util::oxen_version::OxenVersion;
 
 use colored::Colorize;
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 
 pub fn get_scheme_and_host_or_default() -> Result<(String, String), OxenError> {
@@ -112,5 +112,74 @@ pub fn check_repo_migration_needed(repo: &LocalRepository) -> Result<(), OxenErr
 /// Resolves a user-supplied path (current-dir-relative or absolute) to a repository-relative path.
 pub fn path_relative_to_repo(repo: &LocalRepository, path: &Path) -> Result<PathBuf, OxenError> {
     let current_dir = std::env::current_dir()?;
-    util::fs::path_relative_to_dir(current_dir.join(path), &repo.path)
+    path_relative_to_repo_from(&current_dir, &repo.path, path)
+}
+
+/// Maps `path` to a `repo_path`-relative path, resolving `.`/`..` against `current_dir`.
+fn path_relative_to_repo_from(
+    current_dir: &Path,
+    repo_path: &Path,
+    path: &Path,
+) -> Result<PathBuf, OxenError> {
+    let joined = current_dir.join(path);
+    // Resolve `.`/`..` lexically; canonicalizing would require the file to exist on disk.
+    let mut normalized = PathBuf::new();
+    for component in joined.components() {
+        match component {
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::CurDir => {}
+            component => normalized.push(component),
+        }
+    }
+    util::fs::path_relative_to_dir(normalized, repo_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::path_relative_to_repo_from;
+    use std::path::{Path, PathBuf};
+
+    fn assert_repo_relative(current_dir: &str, repo: &str, input: &str, expected: &str) {
+        let got =
+            path_relative_to_repo_from(Path::new(current_dir), Path::new(repo), Path::new(input))
+                .expect("path resolution should succeed for valid inputs");
+        assert_eq!(
+            got,
+            PathBuf::from(expected),
+            "cwd={current_dir} repo={repo} input={input}"
+        );
+    }
+
+    #[test]
+    fn maps_normal_relative_and_absolute_paths() {
+        // Relative input from the repo root.
+        assert_repo_relative("/repo", "/repo", "data.txt", "data.txt");
+        assert_repo_relative("/repo", "/repo", "a/b.txt", "a/b.txt");
+        // Relative input from a subdirectory picks up the subdirectory prefix.
+        assert_repo_relative("/repo/sub", "/repo", "data.txt", "sub/data.txt");
+        assert_repo_relative(
+            "/repo/sub",
+            "/repo",
+            "nested/data.txt",
+            "sub/nested/data.txt",
+        );
+        // Absolute input maps straight to repo-relative regardless of the current dir.
+        assert_repo_relative("/repo/sub", "/repo", "/repo/a/b.txt", "a/b.txt");
+    }
+
+    #[test]
+    fn resolves_dot_and_parent_dir_lexically() {
+        // `.` is a no-op.
+        assert_repo_relative("/repo/sub", "/repo", "./data.txt", "sub/data.txt");
+        // `..` climbs out of the current subdirectory.
+        assert_repo_relative("/repo/sub", "/repo", "../data.txt", "data.txt");
+        // Multiple `..`.
+        assert_repo_relative("/repo/a/b", "/repo", "../../data.txt", "data.txt");
+        // `..` mixed with normal segments.
+        assert_repo_relative("/repo/sub", "/repo", "../other/data.txt", "other/data.txt");
+        // `..` embedded in an absolute input.
+        assert_repo_relative("/repo/sub", "/repo", "/repo/sub/../data.txt", "data.txt");
+    }
 }
