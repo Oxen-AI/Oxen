@@ -324,7 +324,13 @@ mod tests {
             assert_eq!(file_node.name(), "hello.txt");
 
             // Nodes went to the LMDB env, not the filesystem node tree.
-            assert!(LmdbMerkleNodeStore::exists_on_disk(&repo.path));
+            assert!(
+                repo.path
+                    .join(".oxen")
+                    .join("tree")
+                    .join("nodes_lmdb")
+                    .exists()
+            );
             assert!(!repo.path.join(".oxen").join("tree").join("nodes").exists());
             Ok(())
         })
