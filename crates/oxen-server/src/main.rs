@@ -52,7 +52,6 @@ use liboxen::view::data_frames::FromDirectoryRequest;
 use liboxen::view::diff::{DirDiffStatus, DirDiffTreeSummary, DirTreeDiffResponse};
 use liboxen::view::entries::{ListCommitEntryResponse, ResourceVersion};
 use liboxen::view::entry_metadata::EMetadataEntryResponseView;
-use liboxen::view::fork::{ForkRequest, ForkStartResponse, ForkStatus};
 use liboxen::view::merge::{
     MergeConflictFile, MergeResult, MergeSuccessResponse, Mergeable, MergeableResponse,
 };
@@ -185,9 +184,6 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
         crate::controllers::diff::get_df_diff,
         crate::controllers::diff::delete_df_diff,
         crate::controllers::diff::get_derived_df,
-        // Fork
-        crate::controllers::fork::fork,
-        crate::controllers::fork::get_status,
         // Files (Repository)
         crate::controllers::file::get,
         crate::controllers::file::put,
@@ -242,8 +238,6 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
             CompareCommits, CompareCommitsResponse, CompareDupes, CompareEntries, CompareEntryResponse,
             CompareTabular, CompareTabularResponse, DirDiffStatus, DirDiffTreeSummary, DirTreeDiffResponse,
             TabularCompareBody, TabularCompareTargetBody,
-            // Fork Schemas
-            ForkRequest, ForkStartResponse, ForkStatus,
             // File/Entry Schemas
             CommitEntryVersion, ResourceVersion, PaginatedEntryVersions, PaginatedEntryVersionsResponse,
             FilePathsResponse, ErrorFilesResponse, ErrorFileInfo, FileWithHash,
