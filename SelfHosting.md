@@ -78,10 +78,12 @@ The full schema for the file is a single `[storage]` table:
 [storage]
 backends = ["local", "s3"]   # required; first element is the server default
 s3_bucket = "my-oxen-bucket" # required iff "s3" is in backends
+s3_region = "us-west-1"      # required iff "s3" is in backends
 ```
 
 - **`backends`** — a list of which storage kinds this server is willing to host. The valid values are `"local"` (local-filesystem version storage) and `"s3"` (S3 version storage), spelled in lowercase. The first element is the server's default: when a client creates a new repo without specifying a kind, the server uses that. Each kind must appear at most once; the list must be non-empty.
-- **`s3_bucket`** — the S3 bucket the server uses for any S3-backed repo. Required when `"s3"` appears in `backends` and rejected when it doesn't. Each repo gets the prefix `{namespace}/{name}/` inside this bucket; the prefix is not configurable per repo.
+- **`s3_bucket`** — the S3 bucket the server uses for any S3-backed repo. Required when `"s3"` appears in `backends`; silently ignored when it doesn't. Each repo gets the prefix `{namespace}/{name}/` inside this bucket; the prefix is not configurable per repo.
+  - **`s3_region`** — the AWS region the bucket lives in (e.g. `us-west-1`). Required when `"s3"` appears in `backends`. The server uses it to build the S3 client directly rather than detecting it at runtime; if it's wrong, startup fails when the bucket reachability check runs.
 
 Omitting the `[storage]` section entirely is equivalent to:
 
@@ -90,7 +92,7 @@ Omitting the `[storage]` section entirely is equivalent to:
 backends = ["local"]
 ```
 
-The server validates the config at startup and exits with a clear error if anything is wrong (empty `backends`, duplicate entries, S3 listed without `s3_bucket`, etc.). It will not run with an invalid config.
+The server validates the config at startup and exits with a clear error if anything is wrong (empty `backends`, duplicate entries, S3 listed without `s3_bucket` or `s3_region`, etc.). When the S3 backend is enabled it also probes the configured bucket at startup (a `HeadBucket` call) and refuses to boot if the bucket is unreachable — wrong region, missing credentials, or no permission. It will not run with an invalid config.
 
 A few example configurations:
 
@@ -105,6 +107,7 @@ backends = ["local"]
 [storage]
 backends = ["s3"]
 s3_bucket = "oxen-prod-versions"
+s3_region = "us-west-1"
 ```
 
 ```toml
@@ -113,6 +116,7 @@ s3_bucket = "oxen-prod-versions"
 [storage]
 backends = ["local", "s3"]
 s3_bucket = "oxen-prod-versions"
+s3_region = "us-west-1"
 ```
 
 ```toml
@@ -120,9 +124,10 @@ s3_bucket = "oxen-prod-versions"
 [storage]
 backends = ["s3", "local"]
 s3_bucket = "oxen-prod-versions"
+s3_region = "us-west-1"
 ```
 
-S3 backends require valid AWS credentials in the server's environment, picked up by the AWS SDK in the usual way (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `~/.aws/credentials` / instance role / etc.). The bucket region is auto-detected on first use.
+S3 backends require valid AWS credentials in the server's environment, picked up by the AWS SDK in the usual way (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `~/.aws/credentials` / instance role / etc.). The bucket region comes from `s3_region` in the config above.
 
 ### Per-repo `.oxen/config.toml`
 
