@@ -10,6 +10,7 @@ use std::io::{Read, Write};
 use std::net::IpAddr;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use tokio::sync::mpsc;
 use url::Url;
 use zip::ZipArchive;
 
@@ -169,32 +170,45 @@ pub async fn add_version_files_at_paths(
     workspace: &Workspace,
     files: Vec<(PathBuf, String)>,
 ) -> Result<(Vec<PathBuf>, Vec<ErrorFileInfo>), OxenError> {
-    // Overlap the per-file version-store materializations -- an S3 object download per file, or a
-    // zero-IO path return for the local store -- so a large batch isn't bottlenecked on serial
-    // downloads. `buffered` keeps results in input order; staging below stays serial because it
-    // shares one StagedDBManager write lock and one `seen_dirs` set, so it consumes the
-    // materialized files one at a time. At most this many materialized temp files are held at once.
+    // Materialize files in a background task -- an S3 object download per file, or a zero-IO path
+    // return for the local store -- with bounded concurrency, while staging them serially here:
+    // staging shares one StagedDBManager write lock and one `seen_dirs` set, so it can't run in
+    // parallel. Results arrive in input order over a bounded channel that backpressures the
+    // producer, so materialization keeps running ahead during staging. At most 2 ×
+    // MATERIALIZE_CONCURRENCY temp files exist at once: up to MATERIALIZE_CONCURRENCY in-flight
+    // inside the buffered stream plus up to MATERIALIZE_CONCURRENCY queued in the channel.
     const MATERIALIZE_CONCURRENCY: usize = 16;
 
     let version_store = workspace.base_repo.version_store();
-    let dir = workspace.dir();
+    let dir = Arc::new(workspace.dir());
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
 
     let num_files = files.len();
-    let version_store = &version_store;
-    let dir = dir.as_path();
-    let mut materialized =
-        futures::stream::iter(files.into_iter().map(move |(dst_path, hash)| async move {
-            // The returned guard keeps any S3-materialized temp file alive until staging reads it.
-            let result = version_store.materialize(&hash, dir).await;
-            (dst_path, hash, result)
-        }))
-        .buffered(MATERIALIZE_CONCURRENCY);
+    let (tx, mut rx) = mpsc::channel(MATERIALIZE_CONCURRENCY);
+    let producer = tokio::spawn(async move {
+        let mut materialized = futures::stream::iter(files)
+            .map(move |(dst_path, hash)| {
+                let version_store = version_store.clone();
+                let dir = dir.clone(); // Arc clone — refcount bump, not a heap allocation
+                async move {
+                    // The returned guard keeps any S3-materialized temp file alive until staging
+                    // reads it.
+                    let result = version_store.materialize(&hash, dir.as_path()).await;
+                    (dst_path, hash, result)
+                }
+            })
+            .buffered(MATERIALIZE_CONCURRENCY);
+        while let Some(item) = materialized.next().await {
+            if tx.send(item).await.is_err() {
+                break; // the staging side went away; stop materializing
+            }
+        }
+    });
 
     let mut staged_paths = Vec::with_capacity(num_files);
     let mut err_files = vec![];
-    while let Some((dst_path, hash, materialize_result)) = materialized.next().await {
+    while let Some((dst_path, hash, materialize_result)) = rx.recv().await {
         let version_path = match materialize_result {
             Ok(path) => path,
             Err(e) => {
@@ -230,6 +244,13 @@ pub async fn add_version_files_at_paths(
             }
         }
     }
+
+    // The producer drops `tx` once it has materialized every file, which ends the loop above;
+    // join it to surface a panic rather than leaving a detached task.
+    if let Err(e) = producer.await {
+        log::error!("version materialization task failed: {e}");
+    }
+
     log::debug!(
         "add_version_files_at_paths complete with {} staged, {} err_files",
         staged_paths.len(),
