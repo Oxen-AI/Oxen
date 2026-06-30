@@ -1145,7 +1145,25 @@ fn extract_tar_under<R: Read>(
             continue;
         };
 
-        // Read the (small) blob into memory and buffer it until its sibling arrives.
+        // Bound the per-entry allocation before reading. A `tar` entry's reader is capped at
+        // the header's declared `size`, so a hostile (or corrupt) archive can otherwise declare
+        // an enormous blob and drive `read_to_end` into an unbounded allocation. Legitimate
+        // `node`/`children` blobs are at most tens of MB (a vnode holds `DEFAULT_VNODE_SIZE`
+        // children by default), so a generous ceiling rejects bombs without breaking real data.
+        const MAX_MERKLE_TAR_ENTRY_SIZE: u64 = 1024 * 1024 * 1024; // 1 GiB
+        let declared_size = file.header().size()?;
+        if declared_size > MAX_MERKLE_TAR_ENTRY_SIZE {
+            return Err(MerkleDbError::OversizedTarEntry {
+                path: entry_path.display().to_string(),
+                size: declared_size,
+                max: MAX_MERKLE_TAR_ENTRY_SIZE,
+            });
+        }
+
+        // Read the (small) blob into memory and buffer it until its sibling arrives. Grow the
+        // buffer on demand rather than pre-sizing from `declared_size`: the header size is
+        // untrusted and may far exceed the real content, so pre-allocating it would let a near-
+        // empty entry still force a (bounded but large) allocation.
         let mut buf = Vec::new();
         file.read_to_end(&mut buf)?;
         let bytes = Bytes::from(buf);

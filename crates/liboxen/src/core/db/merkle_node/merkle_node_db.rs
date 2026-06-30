@@ -115,6 +115,10 @@ pub enum MerkleDbError {
     UnsupportedTarEntry { path: String },
     #[error("Path traversal detected in merkle tar entry: {0}")]
     PathTraversal(String),
+    #[error(
+        "Merkle tar entry {path} declares {size} bytes, exceeding the {max}-byte per-entry limit"
+    )]
+    OversizedTarEntry { path: String, size: u64, max: u64 },
     /// The merkle tarball entry's path doesn't have the expected
     /// `tree/nodes/{prefix}/{suffix}/[node|children]` shape. Either the path is
     /// shorter or longer than expected, or the leaf file isn't `node`/`children`,
