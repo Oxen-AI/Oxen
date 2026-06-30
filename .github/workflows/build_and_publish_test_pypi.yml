@@ -53,7 +53,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.commit }}
           sparse-checkout: oxen-python/pyproject.toml
@@ -145,7 +145,7 @@ jobs:
 
     steps:
       - name: Download all wheel artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: wheels-*
           merge-multiple: true
@@ -155,7 +155,7 @@ jobs:
         run: ls -la wheels/
 
       - name: Publish to Test PyPI
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         env:
           MATURIN_PYPI_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}
         with:
