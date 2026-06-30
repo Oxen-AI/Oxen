@@ -124,11 +124,17 @@ impl MerkleNodeStore for FsMerkleNodeStore {
                 let inner_entry = inner_entry.map_err(MerkleDbError::Io)?;
                 let file_type = inner_entry.file_type().map_err(MerkleDbError::Io)?;
                 if file_type.is_dir() {
-                    // A suffix dir: the hash is `{prefix}{suffix}`.
+                    // A suffix dir: the hash is `{prefix}{suffix}`, but only if it actually holds a
+                    // node blob — `write_node` always writes `NODE_FILE`, so a suffix dir without
+                    // one is not a node (matching `exists`/`node_byte_sizes`).
                     let Some(suffix) = inner_entry.file_name().to_str().map(str::to_owned) else {
                         continue;
                     };
-                    push_hash(&mut hashes, &format!("{prefix}{suffix}"));
+                    match std::fs::metadata(inner_entry.path().join(NODE_FILE)) {
+                        Ok(_) => push_hash(&mut hashes, &format!("{prefix}{suffix}")),
+                        Err(e) if e.kind() == ErrorKind::NotFound => {}
+                        Err(e) => return Err(MerkleDbError::Io(e)),
+                    }
                 } else if file_type.is_file() && inner_entry.file_name().to_str() == Some(NODE_FILE)
                 {
                     // The leaf files live directly under the prefix dir: the hash is `{prefix}`.
@@ -162,14 +168,23 @@ impl MerkleNodeStore for FsMerkleNodeStore {
     }
 
     fn delete(&self, hash: &MerkleHash) -> Result<(), MerkleDbError> {
-        // Remove the node's directory (both `node` and `children` files). An empty `{prefix}`
-        // shard dir may be left behind; `list_hashes` ignores it, matching the prior behavior.
+        // Remove only this node's two files. A short hash whose suffix is empty stores its
+        // files directly in the `{prefix}` shard alongside sibling suffix subdirs, so removing
+        // the whole dir would wipe those unrelated nodes — delete the files individually instead.
+        // Deleting an absent node is idempotent.
         let dir = node_db_path(&self.repo_path, hash);
-        match std::fs::remove_dir_all(&dir) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(MerkleDbError::Io(e)),
+        for file in [NODE_FILE, CHILDREN_FILE] {
+            match std::fs::remove_file(dir.join(file)) {
+                Ok(()) => {}
+                Err(e) if e.kind() == ErrorKind::NotFound => {}
+                Err(e) => return Err(MerkleDbError::Io(e)),
+            }
         }
+        // Best-effort cleanup: prune the node dir only if it is now empty. `remove_dir` fails
+        // (and is ignored) when the dir still holds sibling suffix subdirs. An empty `{prefix}`
+        // shard dir may be left behind; `list_hashes` ignores it, matching the prior behavior.
+        let _ = std::fs::remove_dir(&dir);
+        Ok(())
     }
 }
 
@@ -243,6 +258,32 @@ mod tests {
             vec![leaf],
             "only the surviving node remains after delete"
         );
+        Ok(())
+    }
+
+    /// Deleting a short-hash node (whose files share the `{prefix}` shard with longer-hash
+    /// siblings) must remove only that node, leaving the siblings intact.
+    #[test]
+    fn fs_store_delete_preserves_prefix_shard_siblings() -> Result<(), OxenError> {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let store = FsMerkleNodeStore::new(dir.path());
+
+        // `short` hashes to "abc" (3 hex chars), so its files live directly in the shard dir.
+        // `sibling` shares that "abc" prefix but has a non-empty suffix subdir under it.
+        let short = MerkleHash::new(0xabc);
+        let sibling = MerkleHash::new(0xabc_def);
+        let body = Bytes::from_static(b"blob");
+        store.write_node(&short, body.clone(), Bytes::new())?;
+        store.write_node(&sibling, body.clone(), Bytes::new())?;
+
+        store.delete(&short)?;
+
+        assert!(!store.exists(&short)?, "short-hash node should be deleted");
+        assert!(
+            store.exists(&sibling)?,
+            "sibling sharing the prefix shard must survive"
+        );
+        assert_eq!(store.list_hashes()?, vec![sibling]);
         Ok(())
     }
 
