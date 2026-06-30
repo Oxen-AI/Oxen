@@ -65,6 +65,9 @@ pub(crate) trait MerkleNodeStore: Debug + Send + Sync {
         node: Bytes,
         children: Bytes,
     ) -> Result<(), MerkleDbError>;
+
+    /// Remove the node for `hash` (both blobs). Idempotent: deleting an absent node is `Ok`.
+    fn delete(&self, hash: &MerkleHash) -> Result<(), MerkleDbError>;
 }
 
 /// Build the node store for the repo rooted at `repo_path`.
