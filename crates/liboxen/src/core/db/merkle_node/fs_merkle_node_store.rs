@@ -126,11 +126,17 @@ impl MerkleNodeStore for FsMerkleNodeStore {
                 let inner_entry = inner_entry.map_err(MerkleDbError::Io)?;
                 let file_type = inner_entry.file_type().map_err(MerkleDbError::Io)?;
                 if file_type.is_dir() {
-                    // A suffix dir: the hash is `{prefix}{suffix}`.
+                    // A suffix dir: the hash is `{prefix}{suffix}`, but only if it actually holds a
+                    // node blob — `write_node` always writes `NODE_FILE`, so a suffix dir without
+                    // one is not a node (matching `exists`/`node_byte_sizes`).
                     let Some(suffix) = inner_entry.file_name().to_str().map(str::to_owned) else {
                         continue;
                     };
-                    push_hash(&mut hashes, &format!("{prefix}{suffix}"));
+                    match std::fs::metadata(inner_entry.path().join(NODE_FILE)) {
+                        Ok(_) => push_hash(&mut hashes, &format!("{prefix}{suffix}")),
+                        Err(e) if e.kind() == ErrorKind::NotFound => {}
+                        Err(e) => return Err(MerkleDbError::Io(e)),
+                    }
                 } else if file_type.is_file() && inner_entry.file_name().to_str() == Some(NODE_FILE)
                 {
                     // The leaf files live directly under the prefix dir: the hash is `{prefix}`.
