@@ -53,6 +53,7 @@ jobs:
         uses: ./.github/actions/free-disk-space
 
       - name: Configure AWS Credentials
+        if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name }}
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ env.AWS_ROLE }}
@@ -200,6 +201,7 @@ jobs:
         uses: ./.github/actions/free-disk-space
 
       - name: Configure AWS Credentials
+        if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name }}
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ env.AWS_ROLE }}
