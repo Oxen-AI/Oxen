@@ -39,9 +39,11 @@ use crate::storage::version_store::VersionStore;
 use crate::view::health::DiskUsage;
 use crate::{constants, repositories, util};
 use filetime::FileTime;
+#[cfg(feature = "ffmpeg")]
+use image::{DynamicImage, ImageBuffer, Rgb};
 use image::{ImageFormat, ImageReader};
 #[cfg(feature = "ffmpeg")]
-use thumbnails::Thumbnailer;
+use video_rs::decode::Decoder;
 
 // Deprecated
 pub fn oxen_hidden_dir(repo_path: impl AsRef<Path>) -> PathBuf {
@@ -1462,8 +1464,20 @@ pub async fn resize_cache_image_version_store(
     Ok((stream, content_length))
 }
 
-/// Generate a video thumbnail using thumbnails crate.
-/// This function extracts a frame from the video and saves it as an image thumbnail.
+/// Initialize the FFmpeg/libav globals once per process for video decoding.
+#[cfg(feature = "ffmpeg")]
+fn ensure_video_decoding_initialized() -> Result<(), OxenError> {
+    static INIT: OnceLock<()> = OnceLock::new();
+    if INIT.get().is_none() {
+        video_rs::init().map_err(|e| {
+            OxenError::internal_error(format!("Failed to initialize video decoding: {e}"))
+        })?;
+        let _ = INIT.set(());
+    }
+    Ok(())
+}
+
+/// Generate a video's JPEG thumbnail with video-rs (FFmpeg) and store it in the version store.
 #[cfg(feature = "ffmpeg")]
 async fn generate_video_thumbnail_version_store(
     version_store: Arc<dyn VersionStore>,
@@ -1482,14 +1496,13 @@ async fn generate_video_thumbnail_version_store(
         return Ok(());
     }
 
-    // The thumbnails crate reads from a filesystem path, so materialize the video file. The guard
+    // video-rs decodes from a filesystem path, so materialize the video file. The guard
     // `version_file` is held on the async side (its drop runs after the blocking generation below)
     // so a materialized S3 temp outlives the read; the closure takes a plain path copy.
     let version_file = version_store.materialize(video_hash, dir).await?;
     let version_path = version_file.to_pathbuf();
 
-    // Determine output dimensions
-    // The thumbnails crate maintains aspect ratio, so we use max dimensions
+    // Output dimensions bound the thumbnail; `DynamicImage::thumbnail` preserves aspect ratio.
     let (output_width, output_height) = match (thumbnail.width, thumbnail.height) {
         (Some(w), Some(h)) => (w, h),
         (Some(w), None) => (w, w), // Use width for both if only width specified
@@ -1497,25 +1510,34 @@ async fn generate_video_thumbnail_version_store(
         (None, None) => (320, 240),
     };
 
-    // Note: The thumbnails crate doesn't support timestamp selection directly.
-    // It extracts from the beginning of the video.
-    // If timestamp support is needed, we may need to use ffmpeg directly or another approach.
-    let _timestamp = thumbnail.timestamp.unwrap_or(1.0);
-
-    // Run blocking ffmpeg thumbnail generation on a separate thread
+    // The thumbnail is taken from the first decoded frame; thumbnail.timestamp is not yet honored.
     let buf = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, OxenError> {
-        // Create thumbnailer with specified dimensions
-        let thumbnailer = Thumbnailer::new(output_width, output_height);
+        ensure_video_decoding_initialized()?;
 
-        // Generate thumbnail from video file
-        let thumb_image = thumbnailer
-            .get(&version_path)
-            .map_err(|e| OxenError::basic_str(format!("Failed to generate thumbnail: {e}.")))?;
+        let mut decoder = Decoder::new(version_path.as_path()).map_err(|e| {
+            OxenError::internal_error(format!("Failed to open video for thumbnailing: {e}"))
+        })?;
+
+        let (width, height) = decoder.size();
+        let (_timestamp, frame) = decoder
+            .decode()
+            .map_err(|e| OxenError::internal_error(format!("Failed to decode video frame: {e}")))?;
+
+        // video-rs hands back an RGB frame as a contiguous (height, width, 3) ndarray.
+        let pixels = frame
+            .as_slice()
+            .ok_or_else(|| OxenError::internal_error("Decoded video frame was not contiguous"))?;
+        let img: ImageBuffer<Rgb<u8>, Vec<u8>> =
+            ImageBuffer::from_raw(width, height, pixels.to_vec()).ok_or_else(|| {
+                OxenError::internal_error("Failed to build image buffer from video frame")
+            })?;
+
+        let thumb = DynamicImage::ImageRgb8(img).thumbnail(output_width, output_height);
 
         let mut buf = Vec::new();
-        thumb_image
+        thumb
             .write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Jpeg)
-            .map_err(|e| OxenError::basic_str(format!("Failed to encode thumbnail: {e}")))?;
+            .map_err(|e| OxenError::internal_error(format!("Failed to encode thumbnail: {e}")))?;
         Ok(buf)
     })
     .await??;

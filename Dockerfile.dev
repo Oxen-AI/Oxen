@@ -6,14 +6,21 @@ RUN apt-get update && apt-get install -y \
     cmake \
     pkg-config \
     libssl-dev \
-    libavcodec-dev \
-    libavformat-dev \
-    libavfilter-dev \
-    libavdevice-dev \
-    libavutil-dev \
+    curl \
+    ca-certificates \
+    xz-utils \
     libjpeg-turbo-progs \
     libpng-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# FFmpeg 8 for the `ffmpeg` video-thumbnail feature, installed via the shared helper. Pins live in
+# tool-versions.env, the single source of truth shared with Linux dev (bin/install-prereqs) and CI.
+ARG TARGETARCH
+COPY bin/install-ffmpeg tool-versions.env /tmp/ffmpeg-install/
+RUN FFMPEG_ARCH="$TARGETARCH" TOOL_VERSIONS_FILE=/tmp/ffmpeg-install/tool-versions.env \
+    bash /tmp/ffmpeg-install/install-ffmpeg \
+    && rm -rf /tmp/ffmpeg-install
+ENV PKG_CONFIG_PATH="/opt/ffmpeg/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
 RUN cargo install cargo-chef
 
@@ -40,11 +47,11 @@ RUN apt-get update \
     && apt-get install -y \
     openssl \
     ca-certificates \
-    libavutil-dev \
-    libavformat-dev \
-    libavdevice-dev \
-    libavfilter-dev \
     && rm -rfv /var/lib/apt/lists/*
+
+# FFmpeg 8 shared libraries for the `ffmpeg` video-thumbnail feature (see base stage).
+COPY --from=builder /opt/ffmpeg/lib /opt/ffmpeg/lib
+RUN echo /opt/ffmpeg/lib > /etc/ld.so.conf.d/ffmpeg.conf && ldconfig
 
 WORKDIR /oxen-server
 

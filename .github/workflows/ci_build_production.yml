@@ -37,10 +37,14 @@ jobs:
           cache-all-crates: true
           cache-on-failure: true
 
-      - name: Install FFmpeg dev libraries
+      - name: Install FFmpeg 8
+        # Install FFmpeg 8 (the `production` feature enables `ffmpeg`) and point pkg-config
+        # at it for the build and clippy steps below.
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev pkg-config
+          sudo apt-get install -y clang pkg-config
+          bash bin/install-ffmpeg
+          echo "PKG_CONFIG_PATH=/opt/ffmpeg/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
 
       - name: Build with production features
         run: cargo build --workspace --features production

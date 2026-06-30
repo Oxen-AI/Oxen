@@ -3,11 +3,20 @@ FROM rust:1.94-bookworm AS builder
 USER root
 RUN apt-get update
 RUN apt-get install -y apt-utils
-RUN apt-get install -y clang libavcodec-dev libavformat-dev libavfilter-dev libavdevice-dev libavutil-dev openssl libssl-dev pkg-config
+RUN apt-get install -y clang openssl libssl-dev pkg-config
 
 RUN apt-get update \
-    && apt-get -y install curl build-essential clang cmake pkg-config libjpeg-turbo-progs libpng-dev \
+    && apt-get -y install curl ca-certificates xz-utils build-essential clang cmake pkg-config libjpeg-turbo-progs libpng-dev \
     && rm -rfv /var/lib/apt/lists/*
+
+# FFmpeg 8 for the `ffmpeg` video-thumbnail feature, installed via the shared helper. Pins live in
+# tool-versions.env, the single source of truth shared with Linux dev (bin/install-prereqs) and CI.
+ARG TARGETARCH
+COPY bin/install-ffmpeg tool-versions.env /tmp/ffmpeg-install/
+RUN FFMPEG_ARCH="$TARGETARCH" TOOL_VERSIONS_FILE=/tmp/ffmpeg-install/tool-versions.env \
+    bash /tmp/ffmpeg-install/install-ffmpeg \
+    && rm -rf /tmp/ffmpeg-install
+ENV PKG_CONFIG_PATH="/opt/ffmpeg/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
 # ENV MAGICK_VERSION 7.1
 
@@ -56,8 +65,12 @@ RUN cargo build --workspace --exclude oxen-py --release --features liboxen/ffmpe
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
-    && apt-get install -y openssl libavutil-dev libavformat-dev libavdevice-dev \
+    && apt-get install -y openssl \
     && rm -rfv /var/lib/apt/lists/*
+
+# FFmpeg 8 shared libraries for the `ffmpeg` video-thumbnail feature (see builder stage).
+COPY --from=builder /opt/ffmpeg/lib /opt/ffmpeg/lib
+RUN echo /opt/ffmpeg/lib > /etc/ld.so.conf.d/ffmpeg.conf && ldconfig
 
 WORKDIR /oxen-server
 COPY --from=builder /usr/src/oxen-server/target/release/oxen /usr/local/bin
