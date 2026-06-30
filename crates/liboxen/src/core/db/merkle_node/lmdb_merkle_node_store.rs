@@ -131,25 +131,31 @@ impl MerkleNodeStore for LmdbMerkleNodeStore {
             let node = db
                 .get(txn, &Self::key(hash, NODE_TAG))?
                 .ok_or(MerkleDbError::MissingNodeDir(*hash))?;
-            // `write_node` always writes both keys, so a missing children key means a childless
-            // node whose blob is empty; treat it as zero-length rather than an error.
-            let children_len = db
+            // `write_node` always writes both keys (a childless node still gets an empty children
+            // blob), so a missing children key is an incomplete record, not a childless node;
+            // report it as missing rather than as a valid zero-length blob.
+            let children = db
                 .get(txn, &Self::key(hash, CHILDREN_TAG))?
-                .map_or(0, |blob| blob.len() as u64);
-            Ok((node.len() as u64, children_len))
+                .ok_or(MerkleDbError::MissingNodeDir(*hash))?;
+            Ok((node.len() as u64, children.len() as u64))
         })
     }
 
     fn list_hashes(&self) -> Result<Vec<MerkleHash>, MerkleDbError> {
         self.read(|db, txn| {
             let mut hashes = Vec::new();
-            // Each node contributes two keys; count the node-tagged one so each hash appears once.
+            // Each complete node contributes two keys; key off the node-tagged one so each hash
+            // appears once, and require the children key to also be present so an incomplete
+            // record (node key without its children key) is not reported as a valid node.
             for item in db.iter(txn)? {
                 let (key, _value) = item?;
                 if key.len() == KEY_LEN && key[16] == NODE_TAG {
                     let mut hash_le = [0u8; 16];
                     hash_le.copy_from_slice(&key[..16]);
-                    hashes.push(MerkleHash::new(u128::from_le_bytes(hash_le)));
+                    let hash = MerkleHash::new(u128::from_le_bytes(hash_le));
+                    if db.contains(txn, &Self::key(&hash, CHILDREN_TAG))? {
+                        hashes.push(hash);
+                    }
                 }
             }
             Ok(hashes)

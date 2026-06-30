@@ -1145,7 +1145,25 @@ fn extract_tar_under<R: Read>(
             continue;
         };
 
-        // Read the (small) blob into memory and buffer it until its sibling arrives.
+        // Bound the per-entry allocation before reading. A `tar` entry's reader is capped at
+        // the header's declared `size`, so a hostile (or corrupt) archive can otherwise declare
+        // an enormous blob and drive `read_to_end` into an unbounded allocation. Legitimate
+        // `node`/`children` blobs are at most tens of MB (a vnode holds `DEFAULT_VNODE_SIZE`
+        // children by default), so a generous ceiling rejects bombs without breaking real data.
+        const MAX_MERKLE_TAR_ENTRY_SIZE: u64 = 1024 * 1024 * 1024; // 1 GiB
+        let declared_size = file.header().size()?;
+        if declared_size > MAX_MERKLE_TAR_ENTRY_SIZE {
+            return Err(MerkleDbError::OversizedTarEntry {
+                path: entry_path.display().to_string(),
+                size: declared_size,
+                max: MAX_MERKLE_TAR_ENTRY_SIZE,
+            });
+        }
+
+        // Read the (small) blob into memory and buffer it until its sibling arrives. Grow the
+        // buffer on demand rather than pre-sizing from `declared_size`: the header size is
+        // untrusted and may far exceed the real content, so pre-allocating it would let a near-
+        // empty entry still force a (bounded but large) allocation.
         let mut buf = Vec::new();
         file.read_to_end(&mut buf)?;
         let bytes = Bytes::from(buf);
@@ -1168,6 +1186,22 @@ fn extract_tar_under<R: Read>(
             installed.insert(hash);
         }
     }
+
+    // EOF validation: a well-formed archive pairs every `node` blob with its `children` blob and
+    // drains `pending` as each pair completes. Any leftover entry means the archive was truncated
+    // or malformed, so fail rather than silently accepting a half-written node.
+    if let Some((hash, (node, _children))) = pending.into_iter().next() {
+        let missing = if node.is_some() {
+            NODE_FILE
+        } else {
+            CHILDREN_FILE
+        };
+        return Err(MerkleDbError::IncompleteNode {
+            hash,
+            missing: missing.to_string(),
+        });
+    }
+
     Ok(installed)
 }
 
@@ -1265,22 +1299,26 @@ pub(crate) fn pack_nodes(
 /// Per node the wire layout is one directory entry plus the `node` and `children` blob
 /// files, so the estimate sums those blob sizes (read from the store without materializing
 /// the bytes) plus tar's fixed-size overhead (one 512-byte header per file/directory entry,
-/// file content padded to 512-byte multiples). It ignores the gzip ratio because the merkle
-/// `node` and `children` blobs are mostly random-looking hash bytes, which compress to
-/// ~1.0× — so this uncompressed total is a tight upper bound on the post-gzip bytes that
-/// will flow over the wire.
+/// file content padded to 512-byte multiples). Every tar stream also ends with a two-block
+/// (2 × 512-byte) zero-filled trailer, so the estimate starts from that fixed overhead. It
+/// ignores the gzip ratio because the merkle `node` and `children` blobs are mostly
+/// random-looking hash bytes, which compress to ~1.0× — so this uncompressed total is a
+/// tight upper bound on the post-gzip bytes that will flow over the wire.
 ///
 /// Hashes absent from the store contribute 0, matching the silent-skip semantics of
-/// [`pack_nodes`].
+/// [`pack_nodes`]; a request with no present hashes still estimates the fixed trailer
+/// overhead, since `pack_nodes` emits a (non-empty) tar stream regardless.
 pub(crate) fn pack_nodes_byte_estimate(
     repo: &LocalRepository,
     hashes: &HashSet<MerkleHash>,
 ) -> u64 {
     const TAR_HEADER_BYTES: u64 = 512;
     const TAR_BLOCK_SIZE: u64 = 512;
+    // Two zero-filled blocks terminate every tar stream.
+    const TAR_TRAILER_BYTES: u64 = 2 * TAR_BLOCK_SIZE;
 
     let store = repo.merkle_node_store();
-    let mut total: u64 = 0;
+    let mut total: u64 = TAR_TRAILER_BYTES;
     for hash in hashes {
         let Ok((node_len, children_len)) = store.node_byte_sizes(hash) else {
             continue;
@@ -2971,7 +3009,8 @@ mod tests {
     /// 1. for a present hash, the estimate is non-zero;
     /// 2. the estimate is >= the actual gzipped output (i.e., usable as a progress total
     ///    that the upload won't blow past).
-    /// 3. for an absent hash, the estimate contributes 0 (matches `pack_nodes`'s skip).
+    /// 3. for an absent hash, the estimate contributes 0 beyond the fixed tar trailer
+    ///    (matches `pack_nodes`'s skip).
     #[tokio::test]
     async fn test_pack_nodes_byte_estimate_is_upper_bound() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test(|repo| {
@@ -2993,13 +3032,14 @@ mod tests {
                 buf.len()
             );
 
-            // Absent hash: should contribute 0 to the estimate.
+            // Absent hash: should contribute 0 beyond the fixed tar trailer (2 × 512).
+            const TAR_TRAILER_BYTES: u64 = 1024;
             let absent = MerkleHash::new(0xDEAD_BEEF_DEAD_BEEF_DEAD_BEEF_DEAD_BEEF_u128);
             let absent_only: HashSet<_> = HashSet::from_iter([absent]);
             assert_eq!(
                 pack_nodes_byte_estimate(&repo, &absent_only),
-                0,
-                "absent hash should contribute 0 to the estimate"
+                TAR_TRAILER_BYTES,
+                "absent hash should contribute only the fixed tar trailer to the estimate"
             );
 
             // Mixed: head + absent should equal head-only.

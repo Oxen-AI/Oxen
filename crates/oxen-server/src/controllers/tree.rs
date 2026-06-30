@@ -1,6 +1,6 @@
 use actix_web::{HttpRequest, HttpResponse, web};
 use bytesize::ByteSize;
-use futures_util::stream::StreamExt as _;
+use futures_util::stream::{self, StreamExt as _};
 use liboxen::core::node_sync_status;
 use liboxen::error::OxenError;
 use liboxen::model::Commit;
@@ -212,42 +212,51 @@ pub async fn download_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, 
 /// The packer is sync + blocking (`tar` + `flate2`), so it runs on a `spawn_blocking` worker
 /// that writes into one end of a `tokio::io::duplex`; the response body reads the other end,
 /// so packing and sending progress together with back-pressure and the whole tarball never
-/// lives in memory at once. A large `BufWriter` batches the packer's writes into the duplex to
-/// keep the per-write hand-off across the blocking boundary cheap (and is flushed explicitly —
-/// the bridged writer's EOF on drop is what signals end-of-stream to the reader).
+/// lives in memory at once. A large `BufWriter` batches the packer's writes across the
+/// blocking boundary.
+///
+/// A pack failure — error or panic — becomes the stream's terminal item rather than being lost:
+/// the HTTP 200 is already sent, so it truncates the body instead of changing the status, and the
+/// cause is always logged.
 fn stream_tarball<F>(pack: F) -> HttpResponse
 where
     F: FnOnce(&mut dyn Write) -> Result<(), OxenError> + Send + 'static,
 {
     let (writer, reader) = tokio::io::duplex(TREE_DOWNLOAD_BUFFER_SIZE);
-    let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel();
 
-    tokio::task::spawn_blocking(move || {
+    let pack_handle = tokio::task::spawn_blocking(move || {
         let mut buf_writer = std::io::BufWriter::with_capacity(
             TREE_PACK_WRITE_BUFFER_SIZE,
             SyncIoBridge::new(writer),
         );
         let result =
             pack(&mut buf_writer).and_then(|()| buf_writer.flush().map_err(OxenError::from));
-        if let Err(e) = result {
-            log::error!("stream_tarball pack failed: {e}");
-            error_tx.send(e).ok();
-        }
         // Dropping `buf_writer` drops the bridged duplex writer, signalling EOF to the reader.
+        drop(buf_writer);
+        result
     });
 
-    let stream = ReaderStream::new(reader).map(move |chunk| {
-        // The HTTP 200 is already sent by the time the packer can fail, so a mid-stream error
-        // surfaces by truncating the body; relay it so upstream logs name the real cause.
-        if let Ok(err) = error_rx.try_recv() {
-            return Err(OxenHttpError::from(err));
-        }
-        chunk.map_err(OxenHttpError::from)
-    });
+    // After the body bytes drain (reader EOF), await the worker and surface its error — or a
+    // panic — as the stream's final item. The worker has finished by then, so the await is ready.
+    let body = ReaderStream::new(reader)
+        .map(|chunk| chunk.map_err(OxenHttpError::from))
+        .chain(stream::once(async move {
+            match pack_handle.await {
+                Ok(Ok(())) => Ok(web::Bytes::new()),
+                Ok(Err(e)) => {
+                    log::error!("stream_tarball pack failed: {e}");
+                    Err(OxenHttpError::from(e))
+                }
+                Err(join_err) => {
+                    log::error!("stream_tarball pack task panicked: {join_err}");
+                    Err(OxenHttpError::InternalServerError)
+                }
+            }
+        }));
 
     HttpResponse::Ok()
         .content_type("application/gzip")
-        .streaming(stream)
+        .streaming(body)
 }
 
 #[tracing::instrument(skip_all)]
