@@ -449,10 +449,28 @@ pub fn init_fs_merkle_backend(path: &Path) -> Result<LocalRepository, OxenError>
     Ok(repo)
 }
 
+/// Whether a filesystem-pinned test must skip because the global `OXEN_MERKLE_NODE_BACKEND` override
+/// selects LMDB. The wire-format byte-compat oracles and the FS→LMDB migration source read the
+/// on-disk `tree/nodes` layout that only the filesystem backend produces. The env override outranks
+/// the per-repo config that [`init_fs_merkle_backend`] persists (see `resolve_backend` in
+/// `core::db::merkle_node`), so under it these tests cannot pin the filesystem backend and must skip
+/// rather than fail. Logs the skip, keyed by the nextest thread name (the test's path). The CI
+/// filesystem job leaves the variable unset, so they still run there.
+pub fn skip_fs_pinned_under_lmdb() -> bool {
+    if matches!(MerkleNodeBackend::from_env(), Some(MerkleNodeBackend::Lmdb)) {
+        let handle = std::thread::current();
+        let name = handle.name().unwrap_or("filesystem-pinned test");
+        log::warn!("skipping `{name}`: OXEN_MERKLE_NODE_BACKEND forces the LMDB backend");
+        return true;
+    }
+    false
+}
+
 /// Like [`run_one_commit_local_repo_test_async`], but pins the repo to the filesystem Merkle node
 /// backend regardless of the global `OXEN_MERKLE_NODE_BACKEND` default (see
-/// [`init_fs_merkle_backend`]). For empty repos, use [`run_empty_dir_test_async`] +
-/// [`init_fs_merkle_backend`] directly.
+/// [`init_fs_merkle_backend`]). Skips when the env override forces LMDB (see
+/// [`skip_fs_pinned_under_lmdb`]). For empty repos, use [`run_empty_dir_test_async`] +
+/// [`init_fs_merkle_backend`] directly, guarding the body with [`skip_fs_pinned_under_lmdb`].
 pub async fn run_one_commit_local_repo_test_async_fs_backend<T, Fut>(
     test: T,
 ) -> Result<(), OxenError>
@@ -461,6 +479,9 @@ where
     Fut: Future<Output = Result<(), OxenError>>,
 {
     init_test_env();
+    if skip_fs_pinned_under_lmdb() {
+        return Ok(());
+    }
     let repo_dir = create_repo_dir(test_run_dir())?;
     let repo = init_fs_merkle_backend(&repo_dir)?;
 

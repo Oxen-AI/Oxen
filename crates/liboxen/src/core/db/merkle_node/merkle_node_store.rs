@@ -57,7 +57,7 @@ const MERKLE_NODE_BACKEND_ENV: &str = "OXEN_MERKLE_NODE_BACKEND";
 impl MerkleNodeBackend {
     /// The backend named by the environment, or `None` when the variable is unset or empty.
     /// `"lmdb"` selects LMDB; any other non-empty value selects the filesystem backend.
-    fn from_env() -> Option<Self> {
+    pub(crate) fn from_env() -> Option<Self> {
         match std::env::var(MERKLE_NODE_BACKEND_ENV) {
             Ok(value) if value.trim().is_empty() => None,
             Ok(value) if value.eq_ignore_ascii_case("lmdb") => Some(MerkleNodeBackend::Lmdb),
