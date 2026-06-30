@@ -59,7 +59,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_commit_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -123,7 +123,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_commit_several_times() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -320,7 +320,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_cannot_commit_without_staged_files() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -335,8 +335,8 @@ mod tests {
                 let initial_len = commits.len();
 
                 // Modify a file, but do not add it
-                let labels_path = cloned_repo.path.join(Path::new("labels.txt"));
-                util::fs::write_to_path(&labels_path, "changing this guy, but not committing")?;
+                let readme_path = cloned_repo.path.join(Path::new("README.md"));
+                util::fs::write_to_path(&readme_path, "changing this guy, but not committing")?;
 
                 // Try to commit, which should fail because nothing is staged
                 let cfg = UserConfig::get()?;
@@ -516,7 +516,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_commit_invalid_parquet_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
