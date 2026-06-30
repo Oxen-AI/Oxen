@@ -8,11 +8,6 @@
 //! `write_node` puts both under one write transaction, so a node is never observable with only one
 //! blob (the same atomicity the FS backend gets from writing both files before anything reads).
 
-// The store is not yet wired into repo construction (that lands in the follow-up backend-selection
-// change), so outside of its own unit tests nothing constructs or queries it yet. Remove this once
-// `create_merkle_node_store` can return this backend.
-#![allow(dead_code)]
-
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -35,9 +30,6 @@ const MAX_DBS: u32 = 1;
 /// Sparse upper bound on the env's mapped size — LMDB reserves this much address space but only
 /// occupies what is written, so it is sized generously to avoid `MDB_MAP_FULL` on large repos.
 const MERKLE_NODE_MAP_SIZE: ByteSize = ByteSize::gib(256);
-/// LMDB's data file name within the env directory (a stable LMDB convention); used only to detect
-/// an existing LMDB store without opening (and thereby creating) the env.
-const LMDB_DATA_FILE: &str = "data.mdb";
 
 /// Tag byte selecting a node's `node` blob within its composite key.
 const NODE_TAG: u8 = 0;
@@ -69,12 +61,6 @@ impl LmdbMerkleNodeStore {
         let env = open_shared_env(&dir, &config)?;
         let db = open_db(&env, NODES_DB_NAME)?;
         Ok(Self { env, db })
-    }
-
-    /// Whether an LMDB merkle node env already exists on disk for `repo_path`. Checks the data file
-    /// directly so the caller can pick a backend without opening (and creating) an env.
-    pub(crate) fn exists_on_disk(repo_path: &Path) -> bool {
-        Self::env_dir(repo_path).join(LMDB_DATA_FILE).exists()
     }
 
     fn env_dir(repo_path: &Path) -> PathBuf {
@@ -252,16 +238,6 @@ mod tests {
         store.delete(&missing)?;
         assert_eq!(store.list_hashes()?, vec![leaf]);
 
-        Ok(())
-    }
-
-    /// `exists_on_disk` is false until an env has been created, then true.
-    #[test]
-    fn lmdb_store_exists_on_disk_reflects_creation() -> Result<(), OxenError> {
-        let dir = tempfile::tempdir().expect("create temp dir");
-        assert!(!LmdbMerkleNodeStore::exists_on_disk(dir.path()));
-        let _store = LmdbMerkleNodeStore::new(dir.path())?;
-        assert!(LmdbMerkleNodeStore::exists_on_disk(dir.path()));
         Ok(())
     }
 
