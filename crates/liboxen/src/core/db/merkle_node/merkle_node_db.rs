@@ -115,6 +115,10 @@ pub enum MerkleDbError {
     UnsupportedTarEntry { path: String },
     #[error("Path traversal detected in merkle tar entry: {0}")]
     PathTraversal(String),
+    #[error(
+        "Merkle tar entry {path} declares {size} bytes, exceeding the {max}-byte per-entry limit"
+    )]
+    OversizedTarEntry { path: String, size: u64, max: u64 },
     /// The merkle tarball entry's path doesn't have the expected
     /// `tree/nodes/{prefix}/{suffix}/[node|children]` shape. Either the path is
     /// shorter or longer than expected, or the leaf file isn't `node`/`children`,
@@ -133,6 +137,10 @@ pub enum MerkleDbError {
     MissingNodeDir(MerkleHash),
     #[error("Missing oxen tree/nodes dir in this repository")]
     MissingTreeNodesDir,
+    /// The tar archive ended while a node still had only one of its two
+    /// (`node`, `children`) blobs, so the archive is truncated or malformed.
+    #[error("Incomplete merkle node {hash} in tar archive: missing {missing} blob")]
+    IncompleteNode { hash: MerkleHash, missing: String },
 }
 
 impl MerkleDbError {

@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use bytesize::ByteSize;
 use flate2::Compression;
 use flate2::read::GzDecoder;
@@ -25,7 +26,6 @@ use crate::model::{
     Commit, EntryDataType, LocalRepository, MerkleHash, MerkleTreeNodeType, PartialNode,
     TMerkleTreeNode,
 };
-use crate::util::fs::AtomicFile;
 use crate::{repositories, util};
 
 /// This will return the MerkleTreeNode with type CommitNode if the Commit exists
@@ -897,10 +897,11 @@ pub fn unpack_nodes(
     repository: &LocalRepository,
     buffer: &[u8],
 ) -> Result<HashSet<MerkleHash>, OxenError> {
-    // The server-side upload consumer skips entries that already exist on disk.
+    // The server-side upload consumer leaves nodes already present in the store untouched.
     let mut reader: &[u8] = buffer;
     let oxen_hidden = repository.path.join(OXEN_HIDDEN_DIR);
-    extract_tar_under(&mut reader, &oxen_hidden, false).map_err(OxenError::from)
+    let store = repository.merkle_node_store();
+    extract_tar_under(&mut reader, &oxen_hidden, store.as_ref(), false).map_err(OxenError::from)
 }
 
 /// Pack the tar-gz wire format for a set of merkle hashes into `out`, using the
@@ -1044,43 +1045,47 @@ fn write_all_tar<W: Write>(
     Ok(())
 }
 
-/// Unpack a tar-gz wire stream into `oxen_hidden` (the repository's `.oxen/` directory).
+/// Unpack a tar-gz wire stream into the repo's Merkle node `store`.
 ///
 /// Tolerates two historical tarball layouts so that either a new or legacy client can talk
-/// to the on-disk node store:
+/// to the store:
 ///   - **Server-style** (emitted by [`write_hashes_tar`] / [`write_all_tar`] and the old
 ///     `compress_*` helpers): entries carry the full `tree/nodes/{prefix}/{suffix}/{node,children}`
-///     prefix. Joined directly under `oxen_hidden`.
+///     prefix.
 ///   - **Legacy client-push style** (emitted by the old `api::client::tree::create_nodes`):
 ///     entries start at `{prefix}/{suffix}/{node,children}` with no `tree/nodes/` prefix.
-///     Prepended under `oxen_hidden/tree/nodes/`.
 ///
-/// Returns the set of hashes parsed from the tarball.
+/// Each node is two leaf entries (`node` + `children`). They are buffered per hash and
+/// persisted as a unit through [`MerkleNodeStore::write_node`] once both are present, so the
+/// install is engine-agnostic and a node is never observable with only one blob. Directory
+/// entries carry no bytes and are ignored — the store recreates whatever structure it needs.
+///
+/// `oxen_hidden` (the repo's `.oxen/` dir) is used only to classify entry paths via
+/// [`extract_hash_from_entry_path`]; nothing is written to it directly.
+///
+/// Returns the set of hashes that were written.
 ///
 /// Behaviour controls (to provide a backwards-compatible format that older clients & servers speak):
-/// - `overwrite_existing == true` overwrites entries whose destination already exists;
-///   matches `util::fs::unpack_async_tar_archive`'s download-path behaviour.
-/// - `overwrite_existing == false` skips them; matches
+/// - `overwrite_existing == true` rewrites nodes already present in the store; matches the
+///   download-path behaviour.
+/// - `overwrite_existing == false` leaves existing nodes untouched; matches
 ///   `repositories::tree::unpack_nodes`'s upload-consumer behaviour.
-///
-/// File-entry payloads are written through [`AtomicFile::stream`] (the write-temp-then-
-/// rename pattern). A crash or cancellation mid-write leaves either the prior
-/// contents (or nothing) at the destination — never a half-written file. Directory
-/// entries are created with `std::fs::create_dir_all`; tar's per-entry mtime/perms are
-/// intentionally not preserved (the merkle store doesn't rely on either, and dropping
-/// them lets us avoid the full `tar::Entry::unpack` path).
 ///
 /// Errors:
 /// - Entries that aren't regular files or directories return [`MerkleDbError::UnsupportedTarEntry`].
 /// - Entries whose path contains a `..` component return [`MerkleDbError::PathTraversal`].
-///
-/// Both checks mirror `util::fs::unpack_async_tar_archive`.
 fn extract_tar_under<R: Read>(
     reader: R,
     oxen_hidden: &Path,
+    store: &dyn MerkleNodeStore,
     overwrite_existing: bool,
 ) -> Result<HashSet<MerkleHash>, MerkleDbError> {
-    let mut hashes: HashSet<MerkleHash> = HashSet::new();
+    let mut installed: HashSet<MerkleHash> = HashSet::new();
+    // A node's two blobs may arrive as separate (and not necessarily adjacent) tar entries,
+    // so buffer them per hash and write once both are present. In a well-formed tarball a
+    // node's entries are contiguous, so this holds ~one node at a time.
+    let mut pending: HashMap<MerkleHash, (Option<Bytes>, Option<Bytes>)> = HashMap::new();
+
     let decoder = GzDecoder::new(reader);
     let mut archive = Archive::new(decoder);
     let entries = archive.entries().map_err(MerkleDbError::CannotReadMerkle)?;
@@ -1105,38 +1110,99 @@ fn extract_tar_under<R: Read>(
                 path: path.display().to_string(),
             });
         }
-        // Server-style entries already contain `tree/nodes/...`; join directly.
-        // Legacy client-push entries begin at `{prefix}/{suffix}/...`; prepend `tree/nodes/`.
-        let dst_path = if path.starts_with(&tree_nodes_prefix) {
+        // Resolve to the canonical `<oxen_hidden>/tree/nodes/...` form so one classifier handles
+        // both wire layouts: server-style entries already carry `tree/nodes/...`; legacy
+        // client-push entries begin at `{prefix}/{suffix}/...` and get the prefix prepended.
+        let entry_path = if path.starts_with(&tree_nodes_prefix) {
             oxen_hidden.join(&path)
         } else {
             oxen_hidden.join(&tree_nodes_prefix).join(&path)
         };
-        if dst_path.exists() && !overwrite_existing {
-            log::info!("Node already exists at {dst_path:?}, skipping");
+
+        // Validate the entry's shape; this propagates the structured errors for malformed
+        // paths (non-hex ids, unexpected depth, unknown leaf names).
+        extract_hash_from_entry_path(&entry_path, oxen_hidden)?;
+
+        // Directory entries carry no bytes; the store recreates structure in `write_node`.
+        if entry_type.is_dir() {
             continue;
         }
-        if entry_type.is_dir() {
-            std::fs::create_dir_all(&dst_path)?;
-        } else {
-            AtomicFile::new(&dst_path)
-                .stream(&mut file)
-                .map_err(|err| MerkleDbError::FsTransport(Box::new(err)))?;
+
+        // A regular file under `tree/nodes` is a `node` or `children` leaf, and its hash is the
+        // `{prefix}/{suffix}` parent directory.
+        let Some(is_node) = entry_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n == NODE_FILE)
+        else {
+            continue;
+        };
+        let hash = match entry_path.parent() {
+            Some(parent) => extract_hash_from_entry_path(parent, oxen_hidden)?,
+            None => None,
+        };
+        let Some(hash) = hash else {
+            continue;
+        };
+
+        // Bound the per-entry allocation before reading. A `tar` entry's reader is capped at
+        // the header's declared `size`, so a hostile (or corrupt) archive can otherwise declare
+        // an enormous blob and drive `read_to_end` into an unbounded allocation. Legitimate
+        // `node`/`children` blobs are at most tens of MB (a vnode holds `DEFAULT_VNODE_SIZE`
+        // children by default), so a generous ceiling rejects bombs without breaking real data.
+        const MAX_MERKLE_TAR_ENTRY_SIZE: u64 = 1024 * 1024 * 1024; // 1 GiB
+        let declared_size = file.header().size()?;
+        if declared_size > MAX_MERKLE_TAR_ENTRY_SIZE {
+            return Err(MerkleDbError::OversizedTarEntry {
+                path: entry_path.display().to_string(),
+                size: declared_size,
+                max: MAX_MERKLE_TAR_ENTRY_SIZE,
+            });
         }
 
-        // Extract the merkle hash from this entry's path, if it identifies one.
-        //
-        // After the path-resolution above, `dst_path` is of the form
-        // `<oxen_hidden>/tree/nodes/<rest>`. We classify entries by the SHAPE
-        // of `<rest>`, never by whether components happen to be hex. We assume that
-        // we have the hex-encoded hash as the `{prefix}/{suffix}` dirs.
-        if let Some(hash) = extract_hash_from_entry_path(&dst_path, oxen_hidden)? {
-            hashes.insert(hash);
+        // Read the (small) blob into memory and buffer it until its sibling arrives. Grow the
+        // buffer on demand rather than pre-sizing from `declared_size`: the header size is
+        // untrusted and may far exceed the real content, so pre-allocating it would let a near-
+        // empty entry still force a (bounded but large) allocation.
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf)?;
+        let bytes = Bytes::from(buf);
+        let slot = pending.entry(hash).or_insert((None, None));
+        if is_node {
+            slot.0 = Some(bytes);
+        } else {
+            slot.1 = Some(bytes);
         }
-        // If we can't extract a path, it's because we're looking at a node or children file.
-        // We will have already obtained the hash from the directory, so this is ok!
+
+        // Wait until both blobs have arrived (clone is a cheap `Bytes` refcount bump).
+        let (Some(node), Some(children)) = slot.clone() else {
+            continue;
+        };
+        pending.remove(&hash);
+
+        // Persist the node as a unit through the store.
+        if overwrite_existing || !store.exists(&hash)? {
+            store.write_node(&hash, node, children)?;
+            installed.insert(hash);
+        }
     }
-    Ok(hashes)
+
+    // EOF validation: a well-formed archive pairs every `node` blob with its `children` blob and
+    // drains `pending` as each pair completes. Any leftover entry means the archive was truncated
+    // or malformed, so fail rather than silently accepting a half-written node.
+    if let Some((hash, (node, _children))) = pending.into_iter().next() {
+        let missing = if node.is_some() {
+            NODE_FILE
+        } else {
+            CHILDREN_FILE
+        };
+        return Err(MerkleDbError::IncompleteNode {
+            hash,
+            missing: missing.to_string(),
+        });
+    }
+
+    Ok(installed)
 }
 
 /// Inspect a fully-resolved tar entry destination path and, if it identifies a Merkle
@@ -1268,9 +1334,9 @@ pub(crate) fn pack_nodes_byte_estimate(
     total
 }
 
-/// Unpack a tar-gz wire stream into the repo's `.oxen/`, applying `opts`'s existing-file
-/// policy. File-entry payloads are written through [`AtomicFile::stream`]
-/// (write-temp-then-rename), so a crash mid-write never leaves a half-written file.
+/// Unpack a tar-gz wire stream into the repo's Merkle node store, applying `opts`'s
+/// existing-node policy. Each node is persisted atomically through
+/// [`MerkleNodeStore::write_node`].
 pub(crate) fn unpack(
     repo: &LocalRepository,
     reader: &mut dyn Read,
@@ -1278,7 +1344,9 @@ pub(crate) fn unpack(
 ) -> Result<HashSet<MerkleHash>, OxenError> {
     let overwrite_existing = matches!(opts, UnpackOptions::Overwrite);
     let oxen_hidden = repo.path.join(OXEN_HIDDEN_DIR);
-    extract_tar_under(reader, &oxen_hidden, overwrite_existing).map_err(OxenError::from)
+    let store = repo.merkle_node_store();
+    extract_tar_under(reader, &oxen_hidden, store.as_ref(), overwrite_existing)
+        .map_err(OxenError::from)
 }
 
 /// Write a node to disk
