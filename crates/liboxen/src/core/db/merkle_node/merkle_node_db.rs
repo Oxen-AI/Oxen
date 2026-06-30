@@ -139,6 +139,10 @@ pub enum MerkleDbError {
     MissingNodeDir(MerkleHash),
     #[error("Missing oxen tree/nodes dir in this repository")]
     MissingTreeNodesDir,
+    /// The tar archive ended while a node still had only one of its two
+    /// (`node`, `children`) blobs, so the archive is truncated or malformed.
+    #[error("Incomplete merkle node {hash} in tar archive: missing {missing} blob")]
+    IncompleteNode { hash: MerkleHash, missing: String },
 }
 
 impl MerkleDbError {

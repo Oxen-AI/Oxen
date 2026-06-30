@@ -1186,6 +1186,22 @@ fn extract_tar_under<R: Read>(
             installed.insert(hash);
         }
     }
+
+    // EOF validation: a well-formed archive pairs every `node` blob with its `children` blob and
+    // drains `pending` as each pair completes. Any leftover entry means the archive was truncated
+    // or malformed, so fail rather than silently accepting a half-written node.
+    if let Some((hash, (node, _children))) = pending.into_iter().next() {
+        let missing = if node.is_some() {
+            NODE_FILE
+        } else {
+            CHILDREN_FILE
+        };
+        return Err(MerkleDbError::IncompleteNode {
+            hash,
+            missing: missing.to_string(),
+        });
+    }
+
     Ok(installed)
 }
 
