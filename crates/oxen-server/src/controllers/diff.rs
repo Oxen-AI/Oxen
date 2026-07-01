@@ -76,7 +76,8 @@ pub async fn commits(
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
 
-    let commits = repositories::commits::list_between(&repository, &base_commit, &head_commit)?;
+    let commits =
+        repositories::commits::list_between_exclusive(&repository, &base_commit, &head_commit)?;
     let (paginated, pagination) = util::paginate(commits, page, page_size);
 
     let compare = CompareCommits {
