@@ -44,8 +44,8 @@ set -euo pipefail
 if [ -n "$FEATURE_ARGS" ] && [ "$(uname)" = "Linux" ]; then
     if [ -d /opt/ffmpeg/lib/pkgconfig ]; then
         export PKG_CONFIG_PATH="/opt/ffmpeg/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-    elif ! pkg-config --exists libavutil 2>/dev/null; then
-        echo "ERROR: --ffmpeg needs FFmpeg 8 dev libraries, but none were found."
+    elif ! pkg-config --atleast-version=60 libavutil 2>/dev/null; then
+        echo "ERROR: --ffmpeg needs FFmpeg 8 dev libraries (libavutil >= 60), not found."
         echo "       Run bin/install-prereqs to install them under /opt/ffmpeg"
         echo "       (apt's FFmpeg is too old for ffmpeg-sys-next 8)."
         exit 1

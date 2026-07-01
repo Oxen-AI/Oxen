@@ -3,10 +3,10 @@ FROM rust:1.94-bookworm AS builder
 USER root
 RUN apt-get update
 RUN apt-get install -y apt-utils
-RUN apt-get install -y clang openssl libssl-dev pkg-config
+RUN apt-get install -y --no-install-recommends clang openssl libssl-dev pkg-config
 
 RUN apt-get update \
-    && apt-get -y install curl ca-certificates xz-utils build-essential clang cmake pkg-config libjpeg-turbo-progs libpng-dev \
+    && apt-get -y install --no-install-recommends curl ca-certificates xz-utils build-essential clang cmake pkg-config libjpeg-turbo-progs libpng-dev \
     && rm -rfv /var/lib/apt/lists/*
 
 # FFmpeg 8 for the `ffmpeg` video-thumbnail feature, installed via the shared helper. Pins live in
@@ -65,7 +65,7 @@ RUN cargo build --workspace --exclude oxen-py --release --features liboxen/ffmpe
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
-    && apt-get install -y openssl \
+    && apt-get install -y --no-install-recommends openssl \
     && rm -rfv /var/lib/apt/lists/*
 
 # FFmpeg 8 shared libraries for the `ffmpeg` video-thumbnail feature (see builder stage).

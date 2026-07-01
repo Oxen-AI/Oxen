@@ -1467,14 +1467,10 @@ pub async fn resize_cache_image_version_store(
 /// Initialize the FFmpeg/libav globals once per process for video decoding.
 #[cfg(feature = "ffmpeg")]
 fn ensure_video_decoding_initialized() -> Result<(), OxenError> {
-    static INIT: OnceLock<()> = OnceLock::new();
-    if INIT.get().is_none() {
-        video_rs::init().map_err(|e| {
-            OxenError::internal_error(format!("Failed to initialize video decoding: {e}"))
-        })?;
-        let _ = INIT.set(());
-    }
-    Ok(())
+    static INIT: OnceLock<Result<(), String>> = OnceLock::new();
+    INIT.get_or_init(|| video_rs::init().map_err(|e| e.to_string()))
+        .clone()
+        .map_err(|e| OxenError::internal_error(format!("Failed to initialize video decoding: {e}")))
 }
 
 /// Generate a video's JPEG thumbnail with video-rs (FFmpeg) and store it in the version store.

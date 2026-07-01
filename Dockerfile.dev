@@ -1,6 +1,6 @@
 FROM rust:1.94-bookworm AS base
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     clang \
     lld \
     cmake \
@@ -44,7 +44,7 @@ RUN cargo build -p oxen-server --features liboxen/ffmpeg,liboxen/perf-logging
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
-    && apt-get install -y \
+    && apt-get install -y --no-install-recommends \
     openssl \
     ca-certificates \
     && rm -rfv /var/lib/apt/lists/*
