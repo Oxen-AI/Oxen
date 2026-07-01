@@ -30,6 +30,9 @@ const MAX_DBS: u32 = 1;
 /// Sparse upper bound on the env's mapped size — LMDB reserves this much address space but only
 /// occupies what is written, so it is sized generously to avoid `MDB_MAP_FULL` on large repos.
 const MERKLE_NODE_MAP_SIZE: ByteSize = ByteSize::gib(256);
+/// LMDB's data file name within the env directory (a stable LMDB convention); used only to detect
+/// an existing LMDB store without opening (and thereby creating) the env.
+const LMDB_DATA_FILE: &str = "data.mdb";
 
 /// Tag byte selecting a node's `node` blob within its composite key.
 const NODE_TAG: u8 = 0;
@@ -56,14 +59,26 @@ impl std::fmt::Debug for LmdbMerkleNodeStore {
 impl LmdbMerkleNodeStore {
     /// Open (creating if absent) the LMDB merkle node env for the repo rooted at `repo_path`.
     pub(crate) fn new(repo_path: &Path) -> Result<Self, OxenError> {
-        let dir = Self::env_dir(repo_path);
+        Self::new_at(&Self::env_dir(repo_path))
+    }
+
+    /// Open (creating if absent) an LMDB merkle node env at an explicit directory. Used by the
+    /// FS→LMDB migration to build the env in a temp dir before atomically publishing it.
+    pub(crate) fn new_at(env_dir: &Path) -> Result<Self, OxenError> {
         let config = LmdbEnvConfig::new(MAX_DBS, MERKLE_NODE_MAP_SIZE);
-        let env = open_shared_env(&dir, &config)?;
+        let env = open_shared_env(env_dir, &config)?;
         let db = open_db(&env, NODES_DB_NAME)?;
         Ok(Self { env, db })
     }
 
-    fn env_dir(repo_path: &Path) -> PathBuf {
+    /// Whether an LMDB merkle node env already exists on disk for `repo_path`. Checks the data file
+    /// directly so the caller can pick a backend without opening (and creating) an env.
+    pub(crate) fn exists_on_disk(repo_path: &Path) -> bool {
+        Self::env_dir(repo_path).join(LMDB_DATA_FILE).exists()
+    }
+
+    /// The env directory for the repo rooted at `repo_path` (`.oxen/tree/nodes_lmdb`).
+    pub(crate) fn env_dir(repo_path: &Path) -> PathBuf {
         repo_path
             .join(constants::OXEN_HIDDEN_DIR)
             .join(constants::TREE_DIR)

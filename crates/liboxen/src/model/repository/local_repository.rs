@@ -108,6 +108,11 @@ impl LocalRepository {
         Arc::clone(&self.merkle_node_store)
     }
 
+    /// The backend this repo's Merkle node store resolved to (see `create_merkle_node_store`).
+    pub(crate) fn merkle_node_backend(&self) -> MerkleNodeBackend {
+        self.merkle_node_backend
+    }
+
     /// Load a repository from the current directory
     /// this traverses up the directory tree until it finds a .oxen/ directory
     pub fn from_current_dir() -> Result<LocalRepository, OxenError> {
