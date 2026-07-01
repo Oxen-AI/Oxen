@@ -58,11 +58,7 @@ pub fn get_scheme_and_host_from_url(url: &str) -> Result<(String, String), OxenE
 // kick in. Auth token and UA string are read once per key during the first
 // build and then baked into the client — they're not part of the key, so a
 // mid-process auth or runtime-config change won't invalidate the cache.
-//
-// Bypassed under `test` / `test-utils` — a shared client across every test in
-// one process lets stale connection-pool state (server-closed but
-// client-cached sockets, HTTP/2 stream backlog) leak from one test into the
-// next, surfacing as 408/network failures under `cargo test`.
+// Not compiled under `test` / `test-utils`.
 #[cfg(not(any(test, feature = "test-utils")))]
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
 struct ClientCacheKey {

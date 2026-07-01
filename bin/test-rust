@@ -22,8 +22,7 @@
 #
 # Logs (Rust runs — overwritten each invocation):
 #   ./data/test/oxen-server.log     # oxen-server subprocess stdout+stderr
-#   ./data/test/cargo-test.log      # cargo test's stderr (indicatif progress bars, any
-#                                     tracing that leaks around libtest's per-thread capture)
+#   ./data/test/cargo-test.log      # cargo test's stderr
 
 # Check for flags
 FEATURE_ARGS=""
@@ -211,8 +210,7 @@ fi
 
 export OXEN_TEST_HOST="localhost:${OXEN_PORT}"
 
-# Route the server's stdout/stderr to a log file so its tracing output doesn't interleave
-# with libtest's per-test progress on the terminal. Tail the file to debug server-side failures.
+# Route the server's stdout/stderr to a log file. Tail it to debug server-side failures.
 SERVER_LOG="./data/test/oxen-server.log"
 mkdir -p "$(dirname "$SERVER_LOG")"
 echo "==> Starting oxen-server on port ${OXEN_PORT} (logs at ${SERVER_LOG})..."
@@ -252,13 +250,8 @@ if [ "$RUN_PYTHON" = true ]; then
         pytest -s tests "$@"
     )
 else
-    # Run Rust tests. Redirect stderr to a log file: libtest's per-test progress and summary
-    # write to stdout, so the terminal still shows those. The noisy things that libtest can't
-    # capture — `indicatif` progress bars (direct TTY drawing), any `tracing` output emitted on
-    # tokio worker threads that don't inherit libtest's per-thread capture, C-library writes to
-    # stderr — go to the log file. `indicatif` also auto-hides itself once it detects the
-    # redirected non-TTY stderr, so most progress-bar output goes away entirely rather than being
-    # written to the log at all. Tail the log to debug what would have shown on stderr.
+    # Route cargo test's stderr to a log — direct-handle writes libtest can't capture
+    # (indicatif, tokio-worker tracing, C libraries) land there instead of the terminal.
     CARGO_TEST_LOG="./data/test/cargo-test.log"
     mkdir -p "$(dirname "$CARGO_TEST_LOG")"
     echo "==> Running tests with 'cargo test --workspace --no-fail-fast $FEATURE_ARGS -- $*' (stderr at ${CARGO_TEST_LOG}) ..."

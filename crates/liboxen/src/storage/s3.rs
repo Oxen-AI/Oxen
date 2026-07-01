@@ -1054,9 +1054,7 @@ mod tests {
     ) {
         let (addr, tmp, server_handle) = spawn_s3s().await;
 
-        // Unique bucket per test — `polars-io`'s cloud-store cache is keyed by bucket, so any two
-        // cloud_reads tests sharing a bucket name will collide on a stale endpoint (the first
-        // test's torn-down `s3s` port). A per-test bucket sidesteps the cache entirely.
+        // Unique bucket per test — `polars-io` caches its cloud-store client by bucket.
         let bucket = format!("test-bucket-{}", uuid::Uuid::new_v4());
 
         let client = build_test_client(addr);
@@ -1655,10 +1653,6 @@ mod tests {
     /// Tabular reads served directly from S3 via `tabular::read_version_df`. Exercises the Polars
     /// cloud-scan paths (Parquet/CSV/TSV/JSONL/IPC), the in-memory JSON path, and head-sample CSV
     /// dialect sniffing — all against the s3s fixture.
-    ///
-    /// Each test's `setup()` mints a UUID-tagged bucket so `polars-io`'s cloud-store cache (keyed
-    /// by bucket) never collides — without that, a second `test_read_s3_jsonl*` reuses the first
-    /// test's cached client and dials its now-dead loopback port.
     mod cloud_reads {
         use super::*;
         use crate::core::df::tabular;

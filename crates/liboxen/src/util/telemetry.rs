@@ -145,10 +145,9 @@ pub fn init_tracing(app_name: &str, default: LevelFilter) -> Result<TracingGuard
         .unwrap_or(FmtSpan::NONE);
 
     // Always: human-readable stderr output (with optional span events).
-    // In production, ANSI color codes only when stderr is a terminal, so redirected output
-    // (files, CloudWatch) stays clean instead of carrying escape sequences.
-    // In test / test-utils builds, route through `TestWriter` so libtest captures the output
-    // instead of it interleaving with test progress on the raw terminal.
+    // Production writes to `std::io::stderr` with ANSI when stderr is a terminal, so
+    // redirected output (files, CloudWatch) stays clean instead of carrying escape sequences.
+    // Test / `test-utils` writes through `TestWriter`, which routes into libtest's capture.
     #[cfg(any(test, feature = "test-utils"))]
     let stderr_layer = tracing_subscriber::fmt::layer()
         .with_writer(tracing_subscriber::fmt::TestWriter::default())

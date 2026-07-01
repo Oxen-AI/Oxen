@@ -451,6 +451,7 @@ mod tests {
     /// Concurrent `record_row_change` calls for the same `row_id` serialize: the final stored value
     /// matches exactly one writer, with no torn state.
     #[test]
+    #[serial_test::serial(rocksdb_flock)]
     fn test_concurrent_record_row_change_same_row_id_serializes() -> Result<(), OxenError> {
         const NUM_THREADS: usize = 16;
 

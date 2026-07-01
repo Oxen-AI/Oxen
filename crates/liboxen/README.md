@@ -265,16 +265,16 @@ You can use [bin/test-rust](./bin/test-rust) to run tests. It will set up config
 bin/test-rust
 ```
 
-It can be faster (in terms of compilation and runtime) to run a specific test. To run a specific library test:
+It can be faster (in terms of compilation and runtime) to run a specific test. To run a specific test by name:
 
 ```bash
-bin/test-rust --lib test_get_metadata_text_readme
+bin/test-rust test_get_metadata_text_readme
 ```
 
 To run with all debug output and run a specific test
 
 ```bash
-env RUST_LOG=warn,liboxen=debug,integration_test=debug bin/test-rust --no-capture test_command_push_clone_pull_push
+env RUST_LOG=warn,liboxen=debug,integration_test=debug bin/test-rust --nocapture test_command_push_clone_pull_push
 ```
 
 To explicitly set the port for the `oxen-server` used in tests, set `OXEN_PORT`:
