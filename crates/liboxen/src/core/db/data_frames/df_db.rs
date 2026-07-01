@@ -312,6 +312,24 @@ pub fn table_exists(conn: &duckdb::Connection, table_name: &str) -> Result<bool,
     Ok(exists)
 }
 
+/// Returns true only if `table_name` exists and contains every Oxen tracking
+/// column (`OXEN_COLS`). A table missing any of them is only partially indexed:
+/// the workspace read path projects the tracking columns, so a query against
+/// such a table fails to bind. Callers use this to treat a partial table as not
+/// indexed and rebuild it rather than serving an unqueryable one.
+pub fn table_is_fully_indexed(
+    conn: &duckdb::Connection,
+    table_name: &str,
+) -> Result<bool, duckdb::Error> {
+    if !table_exists(conn, table_name)? {
+        return Ok(false);
+    }
+    let schema = get_schema(conn, table_name)?;
+    Ok(OXEN_COLS
+        .iter()
+        .all(|col| schema.fields.iter().any(|field| field.name == *col)))
+}
+
 /// Create a table from a set of oxen fields with data types.
 fn p_create_table_if_not_exists(
     conn: &duckdb::Connection,
