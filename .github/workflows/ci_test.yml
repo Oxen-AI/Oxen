@@ -170,6 +170,11 @@ jobs:
           Start-Process ".\target\debug\oxen-server.exe" -ArgumentList "start","--test"
           cargo nextest run --workspace --profile ci
 
+      - name: Run oxen rust tests with LMDB backend
+        env:
+          OXEN_MERKLE_NODE_BACKEND: lmdb
+        run: cargo nextest run --workspace --profile ci --no-fail-fast
+
   python-test:
     name: Python Tests
     runs-on: ${{ matrix.os }}
