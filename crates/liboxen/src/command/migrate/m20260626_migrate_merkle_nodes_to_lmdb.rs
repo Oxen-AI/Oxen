@@ -97,8 +97,20 @@ fn migrate_fs_to_lmdb(repo: &LocalRepository) -> Result<(), OxenError> {
     let final_dir = LmdbMerkleNodeStore::env_dir(&repo.path);
 
     // Idempotent fast path: if the env is already published (e.g. a previous run crashed after the
-    // rename but before the config write), the data move is done — just make config authoritative.
+    // rename but before the config write), the data move may be done. But disk presence alone isn't
+    // enough — a stale env can outlive its source (e.g. a `down` that failed to remove the env,
+    // after which new commits landed only in the FS tree). Switching config to LMDB over a stale env
+    // would silently strand those nodes, so verify the published env still holds exactly the current
+    // FS node set before making config authoritative; otherwise fail and require manual cleanup.
     if LmdbMerkleNodeStore::exists_on_disk(&repo.path) {
+        let fs = FsMerkleNodeStore::new(&repo.path);
+        let expected: HashSet<MerkleHash> = fs.list_hashes()?.into_iter().collect();
+        let published = LmdbMerkleNodeStore::new(&repo.path)?;
+        verify_migrated(
+            &published.list_hashes()?,
+            &expected,
+            "FS→LMDB (already published)",
+        )?;
         set_config_backend(&repo.path, MerkleNodeBackend::Lmdb)?;
         return Ok(());
     }
