@@ -96,6 +96,8 @@ pub async fn import_url(
 mod tests {
     use crate::test;
     use bytes::Bytes;
+    use std::path::Path;
+    use tokio_stream::StreamExt;
 
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
@@ -146,15 +148,20 @@ mod tests {
             let commit = result.unwrap();
             assert!(commit.message.contains("Upload test ZIP"));
 
-            let bytes =
-                api::client::file::get_file(&remote_repo, branch_name, "images/image1.png").await;
+            let mut stream = api::client::file::get_file(
+                &remote_repo,
+                branch_name,
+                Path::new("images/image1.png"),
+                api::client::file::GetFileOpts::default(),
+            )
+            .await?;
+            let mut bytes = Vec::new();
+            while let Some(chunk) = stream.next().await {
+                bytes.extend_from_slice(&chunk?);
+            }
 
-            assert!(bytes.is_ok());
-            assert!(!bytes.as_ref().unwrap().is_empty());
-            assert_eq!(
-                bytes.as_ref().unwrap(),
-                &Bytes::from_static(b"fake png data 1")
-            );
+            assert!(!bytes.is_empty());
+            assert_eq!(bytes, Bytes::from_static(b"fake png data 1"));
 
             Ok(remote_repo)
         })
@@ -198,23 +205,33 @@ mod tests {
             let commit = result.unwrap();
             assert!(commit.message.contains("Upload test ZIP in empty repo"));
 
-            let bytes =
-                api::client::file::get_file(&remote_repo, branch_name, "images/image1.png").await;
+            let mut stream = api::client::file::get_file(
+                &remote_repo,
+                branch_name,
+                Path::new("images/image1.png"),
+                api::client::file::GetFileOpts::default(),
+            )
+            .await?;
+            let mut bytes = Vec::new();
+            while let Some(chunk) = stream.next().await {
+                bytes.extend_from_slice(&chunk?);
+            }
 
-            assert!(bytes.is_ok());
-            assert_eq!(
-                bytes.as_ref().unwrap(),
-                &Bytes::from_static(b"fake png data 1")
-            );
+            assert_eq!(bytes, Bytes::from_static(b"fake png data 1"));
 
-            let bytes_2 =
-                api::client::file::get_file(&remote_repo, branch_name, "images/image2.png").await;
+            let mut stream_2 = api::client::file::get_file(
+                &remote_repo,
+                branch_name,
+                Path::new("images/image2.png"),
+                api::client::file::GetFileOpts::default(),
+            )
+            .await?;
+            let mut bytes_2 = Vec::new();
+            while let Some(chunk) = stream_2.next().await {
+                bytes_2.extend_from_slice(&chunk?);
+            }
 
-            assert!(bytes_2.is_ok());
-            assert_eq!(
-                bytes_2.as_ref().unwrap(),
-                &Bytes::from_static(b"fake png data 2")
-            );
+            assert_eq!(bytes_2, Bytes::from_static(b"fake png data 2"));
 
             Ok(remote_repo)
         })

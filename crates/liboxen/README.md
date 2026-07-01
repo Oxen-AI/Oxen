@@ -321,13 +321,13 @@ curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"name": "MyRepo"}' "http://$
 Create the docker image
 
 ```bash
-docker build -t oxen/server:0.50.6 .
+docker build -t oxen/server:0.51.1 .
 ```
 
 Run a container on port 3000 with a local filesystem mounted from /var/oxen/data on the host to /var/oxen/data in the container.
 
 ```bash
-docker run -d -v /var/oxen/data:/var/oxen/data -p 3000:3001 --name oxen oxen/server:0.50.6
+docker run -d -v /var/oxen/data:/var/oxen/data -p 3000:3001 --name oxen oxen/server:0.51.1
 ```
 
 Or use docker compose
@@ -358,15 +358,21 @@ Which would then store the benchmark under `target/criterion/add`
 
 ## Enable ffmpeg
 
-To enable thumbnailing for videos, you will have to build with ffmpeg enabled
+To enable thumbnailing for videos, you will have to build with ffmpeg enabled. This needs FFmpeg 8
+libraries on the host.
+
+On macOS, install them with Homebrew:
 
 ```bash
-brew install ffmpeg@7
+brew install ffmpeg
 cargo build --workspace --all-features
 ```
 
-Or for a specific crate:
+On Linux, run `bin/install-prereqs` — apt ships an older FFmpeg, so it installs a pinned FFmpeg 8
+build under `/opt/ffmpeg`. Build the feature through `bin/test-rust --ffmpeg` (which points
+pkg-config at that prefix), or set `PKG_CONFIG_PATH` yourself:
 
 ```bash
+export PKG_CONFIG_PATH=/opt/ffmpeg/lib/pkgconfig:$PKG_CONFIG_PATH
 cargo build -p oxen-server --features liboxen/ffmpeg
 ```

@@ -34,6 +34,8 @@ struct StoragePolicyRaw {
     backends: Vec<StorageKind>,
     #[serde(default)]
     s3_bucket: String,
+    #[serde(default)]
+    s3_region: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -51,6 +53,11 @@ pub(crate) enum StoragePolicyError {
     /// bucket name (or with an empty one).
     #[error("Storage policy: s3 bucket cannot be empty when the s3 backend is allowed")]
     EmptyS3Bucket,
+
+    /// `StoragePolicy` rejected an admin config that includes the S3 backend without a
+    /// region (or with an empty one).
+    #[error("Storage policy: s3 region cannot be empty when the s3 backend is allowed")]
+    EmptyS3Region,
 }
 
 impl TryFrom<StoragePolicyRaw> for StoragePolicy {
@@ -72,11 +79,15 @@ impl TryFrom<StoragePolicyRaw> for StoragePolicy {
             if raw.s3_bucket.is_empty() {
                 return Err(StoragePolicyError::EmptyS3Bucket);
             }
+            if raw.s3_region.is_empty() {
+                return Err(StoragePolicyError::EmptyS3Region);
+            }
             Some(S3Opts {
                 bucket: raw.s3_bucket,
+                region: raw.s3_region,
             })
         } else {
-            // Orphan bucket (set when S3 isn't in backends) is silently dropped so
+            // Orphan bucket/region (set when S3 isn't in backends) is silently dropped so
             // admins toggling backends on/off during config iteration don't trip a
             // validation error.
             None
@@ -148,9 +159,12 @@ impl StoragePolicy {
 mod tests {
     use super::*;
 
+    const TEST_REGION: &str = "us-west-1";
+
     fn s3_opts(bucket: &str) -> S3Opts {
         S3Opts {
             bucket: bucket.to_string(),
+            region: TEST_REGION.to_string(),
         }
     }
 
@@ -158,6 +172,7 @@ mod tests {
         StoragePolicyRaw {
             backends,
             s3_bucket: s3_bucket.to_string(),
+            s3_region: TEST_REGION.to_string(),
         }
     }
 
@@ -328,6 +343,7 @@ mod tests {
         let toml_str = r#"
             backends = ["local", "s3"]
             s3_bucket = "my-bucket"
+            s3_region = "us-west-1"
         "#;
         let c: StoragePolicy = toml::from_str(toml_str).unwrap();
         assert!(c.local);
@@ -338,6 +354,7 @@ mod tests {
         let toml_str = r#"
             backends = ["s3", "local"]
             s3_bucket = "my-bucket"
+            s3_region = "us-west-1"
         "#;
         let c: StoragePolicy = toml::from_str(toml_str).unwrap();
         assert!(c.local);
@@ -350,6 +367,7 @@ mod tests {
         let toml_str = r#"
             backends = ["s3"]
             s3_bucket = "my-bucket"
+            s3_region = "us-west-1"
         "#;
         let c: StoragePolicy = toml::from_str(toml_str).unwrap();
         assert!(!c.local);
@@ -369,6 +387,18 @@ mod tests {
         assert!(
             err.to_string().contains("s3 bucket cannot be empty"),
             "expected EmptyS3Bucket message, got: {err}",
+        );
+
+        let err = toml::from_str::<StoragePolicy>(
+            r#"
+            backends = ["s3"]
+            s3_bucket = "my-bucket"
+        "#,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("s3 region cannot be empty"),
+            "expected EmptyS3Region message, got: {err}",
         );
 
         let err = toml::from_str::<StoragePolicy>(r#"backends = ["local", "local"]"#).unwrap_err();

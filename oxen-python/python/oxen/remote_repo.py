@@ -606,7 +606,8 @@ class RemoteRepo:
             head_branch: `str`
                 The head branch to merge
         """
-        commit = self._repo.merge(base_branch, head_branch)
+        user = oxen_user.current_user()
+        commit = self._repo.merge(base_branch, head_branch, user)
         return commit
 
     def mergeable(self, base_branch: str, head_branch: str):

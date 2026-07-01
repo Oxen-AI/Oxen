@@ -5,11 +5,22 @@ use crate::params::{app_data, parse_base_head, path_param, resolve_base_head_bra
 use actix_web::{HttpRequest, HttpResponse};
 
 use liboxen::error::OxenError;
+use liboxen::model::User;
 use liboxen::repositories;
 use liboxen::view::StatusMessage;
 use liboxen::view::merge::{
     MergeConflictFile, MergeResult, MergeSuccessResponse, Mergeable, MergeableResponse,
 };
+
+/// Parse the merge author (the user who initiated the merge) from the request body. Returns `None`
+/// when the body is not a `User` with both a non-empty name and email.
+fn parse_merge_author(body: &str) -> Option<User> {
+    let user: User = serde_json::from_str(body).ok()?;
+    if user.name.trim().is_empty() || user.email.trim().is_empty() {
+        return None;
+    }
+    Some(user)
+}
 
 /// Check if branches are mergeable
 #[utoipa::path(
@@ -80,17 +91,34 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
         ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
         ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
     ),
+    request_body(
+        content = inline(User),
+        description = "Author for the merge commit (the user initiating the merge). Required: \
+            name and email must both be present and non-empty.",
+        example = json!({ "name": "bessie", "email": "bessie@oxen.ai" })
+    ),
     responses(
         (status = 200, description = "Branches merged successfully", body = MergeSuccessResponse),
         (status = 409, description = "Merge conflict", body = StatusMessage),
         (status = 404, description = "Repository or one of the revisions not found"),
+        (status = 400, description = "Missing merge author (name and email)"),
     )
 )]
-pub async fn merge(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+pub async fn merge(
+    req: HttpRequest,
+    body: String,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
     let base_head = path_param(&req, "base_head")?.to_string();
+
+    // The user who initiated the merge authors the merge commit, and is required.
+    let Some(author) = parse_merge_author(&body) else {
+        return Err(OxenHttpError::BadRequest(
+            "A merge author (name and email) is required".into(),
+        ));
+    };
 
     // Get the repository or return error
     let repo = get_repo(app_data, namespace, name)?;
@@ -110,7 +138,7 @@ pub async fn merge(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     let head_commit = repositories::commits::get_by_id(&repo, &head_branch.commit_id)?.unwrap();
 
     let merge_commit =
-        repositories::merge::merge_into_base(&repo, &head_branch, &base_branch).await?;
+        repositories::merge::merge_into_base(&repo, &head_branch, &base_branch, &author).await?;
 
     let response = MergeSuccessResponse {
         status: StatusMessage::resource_found(),

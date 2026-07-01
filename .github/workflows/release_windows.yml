@@ -72,7 +72,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Create release directory
         run: mkdir ${{ github.workspace }}\release
@@ -119,7 +119,7 @@ jobs:
           Compress-Archive -Path "${{ github.workspace }}\release\*" -DestinationPath "${{ github.workspace }}\release\oxen-windows-${{ inputs.ARCHITECTURE }}-release.zip"
 
       - name: Upload all artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: oxen-windows-release-${{ inputs.ARCHITECTURE }}.zip
           path: ${{ github.workspace }}\release\oxen-windows-${{ inputs.ARCHITECTURE }}-release.zip
