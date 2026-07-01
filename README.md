@@ -159,13 +159,11 @@ Once you have rust, install the following developer tools:
 - [`cargo-machete`](https://github.com/bnjbvr/cargo-machete): identify and remove unused dependencies
 - [`cargo-llvm-cov`](https://crates.io/crates/cargo-llvm-cov): calculate test code coverage
 - [`cargo-sort`](https://crates.io/crates/cargo-sort): ensure `Cargo.toml` files are organized
-- [`cargo-nextest`](https://crates.io/crates/cargo-nextest): run unit tests
 
-You can install all of these at once with the following commands:
+You can install all of these at once with the following command:
 
 ```bash
 cargo install bacon cargo-machete cargo-llvm-cov cargo-sort
-cargo install --locked cargo-nextest
 ```
 
 Make sure [`cmake`](https://cmake.org/download/) is installed. `cmake` can be installed on macOS with:

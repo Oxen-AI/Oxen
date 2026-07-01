@@ -51,7 +51,7 @@ cargo build --workspace                           # Debug build
 ```
 
 ### Testing
-Use the `bin/test-rust` script to run the tests — do not invoke `cargo test` or `cargo nextest run` directly. The script builds the workspace, raises the file-handle limit, sets up a ramdisk for test data, starts `oxen-server` on a free port, runs the suite with `cargo nextest run`, and tears everything down on exit. Its full usage is documented in a comment at the top of the script.
+Use the `bin/test-rust` script to run the tests — do not invoke `cargo test` directly. The script builds the workspace, raises the file-handle limit, sets up a ramdisk for test data, starts `oxen-server` on a free port, runs the suite with `cargo test --workspace --no-fail-fast`, and tears everything down on exit. Its full usage is documented in a comment at the top of the script.
 ```bash
 bin/test-rust                         # Build and run all Rust tests
 bin/test-rust test_function_name      # Run only Rust tests matching test_function_name
@@ -61,7 +61,8 @@ bin/test-rust -p -k test_init         # Run Python tests matching test_init
 - The script starts `oxen-server` itself, so you do not need to start it separately.
 - It does not install prerequisites by default. If a dependency is missing, run `bin/install-prereqs` (or re-run with `bin/test-rust --install-deps`).
 - If the ramdisk cannot be mounted, pass `--no-ramdisk` to run against the regular filesystem.
-- Arguments after the script's own flags are forwarded to `cargo nextest run` (or `pytest` with `-p`).
+- Arguments after the script's own flags are forwarded after `--` to the libtest binaries (or `pytest` under `-p`).
+- Output the terminal doesn't show goes to two log files, both overwritten per run: `./data/test/oxen-server.log` (server subprocess stdout+stderr) and `./data/test/cargo-test.log` (cargo test's stderr — indicatif progress bars, and any `tracing` output emitted from tokio worker or `spawn_blocking` threads that don't inherit libtest's per-thread capture). Check these first when the terminal report doesn't explain a failure.
 
 ### Testing with Debug Output
 ```bash
@@ -162,3 +163,4 @@ oxen push origin main               # Push to remote
 - When possible, put tests in the higher-level `repositories` module rather than the lower-level, version-specific implementation.
     - e.g., Tests should go in `repositories/commits.rs` rather than `core/v_latest/commits.rs`.
 - Tests create unique temporary directories and clean up automatically
+- Tests share one process per crate under `cargo test`, so any per-process state (env vars, `OnceLock` / `LazyLock` / `OnceCell` singletons, cached HTTP clients / connection pools, static caches keyed by name) can leak from one test into the next. New tests must not depend on per-process state that isn't explicitly re-initialized: don't `std::env::set_var` in a test body without a scoped restore (or a `Once`-guarded write of a constant), don't cache anything at process scope that's keyed on values a sibling test might reuse (e.g. bucket names, workspace names, repo names — use UUID-derived values), and don't build `LazyLock`s whose init reads state a sibling test might have already read at a different value. When a test genuinely needs exclusive access to a process-wide singleton (a DB-cache flush, a global counter), gate it with `#[serial_test::serial(named_key)]` — pair every test that touches the same singleton on the same key. Canonical examples: the s3 cloud_reads tests mint UUID-tagged buckets in `setup()` so `polars-io`'s cloud-store cache can't collide; the `df_db` flush tests share `#[serial_test::serial(df_db_cache)]`.

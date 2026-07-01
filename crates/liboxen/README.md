@@ -251,7 +251,7 @@ You can also increase the number of open files your system allows ulimit before 
 ulimit -n 10240
 ```
 
-Then you can run the tests with the `cargo test` or `cargo nextest` (preferred) directly. To run all tests with the default number of threads:
+Then you can run the tests with `cargo test` directly. To run all tests with the default number of threads:
 
 ```bash
 cargo test --workspace -- --test-threads=$(getconf _NPROCESSORS_ONLN)
@@ -259,7 +259,7 @@ cargo test --workspace -- --test-threads=$(getconf _NPROCESSORS_ONLN)
 
 ## Automatic Test Setup
 
-You can use [bin/test-rust](./bin/test-rust) to run tests. It will set up config files, build and run an oxen-server, run the tests against it, and shutdown the server. Any arguments passed to `test-rust` will be passed to `cargo nextest run`, so you can use it to run specific tests or set test threads.
+You can use [bin/test-rust](./bin/test-rust) to run tests. It will set up config files, build and run an oxen-server, run the tests against it, and shutdown the server. Any arguments passed to `test-rust` are forwarded after `--` to the libtest binaries, so you can use it to run specific tests or set test threads.
 
 ```bash
 bin/test-rust

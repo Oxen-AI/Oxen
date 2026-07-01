@@ -1054,17 +1054,17 @@ mod tests {
     ) {
         let (addr, tmp, server_handle) = spawn_s3s().await;
 
+        // Unique bucket per test — `polars-io`'s cloud-store cache is keyed by bucket, so any two
+        // cloud_reads tests sharing a bucket name will collide on a stale endpoint (the first
+        // test's torn-down `s3s` port). A per-test bucket sidesteps the cache entirely.
+        let bucket = format!("test-bucket-{}", uuid::Uuid::new_v4());
+
         let client = build_test_client(addr);
-        client
-            .create_bucket()
-            .bucket("test-bucket")
-            .send()
-            .await
-            .unwrap();
+        client.create_bucket().bucket(&bucket).send().await.unwrap();
 
         let store = S3VersionStore::new_with_client(
             Arc::new(client),
-            "test-bucket".to_string(),
+            bucket,
             "us-west-1".to_string(),
             "test-namespace/test-repo".to_string(),
             Some(format!("http://{addr}")),
@@ -1127,7 +1127,7 @@ mod tests {
             } => {
                 assert_eq!(
                     url,
-                    format!("s3://test-bucket/test-namespace/test-repo/{hash}/data")
+                    format!("s3://{}/test-namespace/test-repo/{hash}/data", store.bucket)
                 );
                 assert_eq!(region, "us-west-1");
                 let endpoint = endpoint_url.expect("test setup configures a loopback endpoint");
@@ -1655,6 +1655,10 @@ mod tests {
     /// Tabular reads served directly from S3 via `tabular::read_version_df`. Exercises the Polars
     /// cloud-scan paths (Parquet/CSV/TSV/JSONL/IPC), the in-memory JSON path, and head-sample CSV
     /// dialect sniffing — all against the s3s fixture.
+    ///
+    /// Each test's `setup()` mints a UUID-tagged bucket so `polars-io`'s cloud-store cache (keyed
+    /// by bucket) never collides — without that, a second `test_read_s3_jsonl*` reuses the first
+    /// test's cached client and dials its now-dead loopback port.
     mod cloud_reads {
         use super::*;
         use crate::core::df::tabular;
