@@ -39,13 +39,16 @@ done
 
 set -euo pipefail
 
-# On macOS, ffmpeg@7 is keg-only, so Homebrew does not symlink its pkgconfig dir onto the
-# default pkg-config search path. ffmpeg-sys-next locates libav* via pkg-config, so without
-# this the `ffmpeg` feature build fails with "system library libavutil was not found".
-if [[ "$FEATURE_ARGS" == *ffmpeg* ]] && [ "$(uname)" = "Darwin" ] && command -v brew &>/dev/null; then
-    FFMPEG_PREFIX="$(brew --prefix ffmpeg@7 2>/dev/null)"
-    if [ -n "$FFMPEG_PREFIX" ] && [ -d "$FFMPEG_PREFIX/lib/pkgconfig" ]; then
-        export PKG_CONFIG_PATH="$FFMPEG_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+# On Linux the `ffmpeg` feature links FFmpeg 8 from /opt/ffmpeg (installed by bin/install-prereqs);
+# point pkg-config at it. macOS gets FFmpeg 8 from Homebrew, already on the default pkg-config path.
+if [ -n "$FEATURE_ARGS" ] && [ "$(uname)" = "Linux" ]; then
+    if [ -d /opt/ffmpeg/lib/pkgconfig ]; then
+        export PKG_CONFIG_PATH="/opt/ffmpeg/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+    elif ! pkg-config --atleast-version=60 libavutil 2>/dev/null; then
+        echo "ERROR: --ffmpeg needs FFmpeg 8 dev libraries (libavutil >= 60), not found."
+        echo "       Run bin/install-prereqs to install them under /opt/ffmpeg"
+        echo "       (apt's FFmpeg is too old for ffmpeg-sys-next 8)."
+        exit 1
     fi
 fi
 
