@@ -256,6 +256,10 @@ async fn list_and_push_missing_files(
     let missing_files =
         api::client::commits::list_missing_files(remote_repo, base_commit, &head_commit.id).await?;
 
+    if missing_files.is_empty() {
+        return Ok(());
+    }
+
     if let Some(commit_entry) = missing_files.first() {
         let version_store = repo.version_store();
         if !version_store.version_exists(&commit_entry.hash).await? {
