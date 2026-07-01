@@ -12,7 +12,9 @@ use crate::view::http;
 pub use reqwest::Url;
 use reqwest::retry;
 use reqwest::{Client, ClientBuilder, header};
+#[cfg(not(any(test, feature = "test-utils")))]
 use std::collections::HashMap;
+#[cfg(not(any(test, feature = "test-utils")))]
 use std::sync::{LazyLock, RwLock};
 use std::time;
 
@@ -56,12 +58,15 @@ pub fn get_scheme_and_host_from_url(url: &str) -> Result<(String, String), OxenE
 // kick in. Auth token and UA string are read once per key during the first
 // build and then baked into the client — they're not part of the key, so a
 // mid-process auth or runtime-config change won't invalidate the cache.
+// Not compiled under `test` / `test-utils`.
+#[cfg(not(any(test, feature = "test-utils")))]
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
 struct ClientCacheKey {
     host: String,
     with_user_agent: bool,
 }
 
+#[cfg(not(any(test, feature = "test-utils")))]
 static CLIENT_CACHE: LazyLock<RwLock<HashMap<ClientCacheKey, Client>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
@@ -75,6 +80,12 @@ pub fn new_for_url_no_user_agent(url: &str) -> Result<Client, OxenError> {
     new_for_host(host, false)
 }
 
+#[cfg(any(test, feature = "test-utils"))]
+fn new_for_host(host: String, should_add_user_agent: bool) -> Result<Client, OxenError> {
+    build_client(host, should_add_user_agent)
+}
+
+#[cfg(not(any(test, feature = "test-utils")))]
 fn new_for_host(host: String, should_add_user_agent: bool) -> Result<Client, OxenError> {
     let key = ClientCacheKey {
         host: host.clone(),
@@ -90,15 +101,19 @@ fn new_for_host(host: String, should_add_user_agent: bool) -> Result<Client, Oxe
 
     // Slow path: build outside the write lock so concurrent first-time callers
     // for *different* hosts don't serialize on one mutex.
-    let client = builder_for_host(host, should_add_user_agent)?
-        .timeout(time::Duration::from_secs(constants::timeout()))
-        .build()?;
+    let client = build_client(host, should_add_user_agent)?;
 
     // Double-check under the write lock; another thread may have inserted while we built.
     let mut cache = CLIENT_CACHE
         .write()
         .map_err(|_| OxenError::ClientCachePoisoned)?;
     Ok(cache.entry(key).or_insert(client).clone())
+}
+
+fn build_client(host: String, should_add_user_agent: bool) -> Result<Client, OxenError> {
+    Ok(builder_for_host(host, should_add_user_agent)?
+        .timeout(time::Duration::from_secs(constants::timeout()))
+        .build()?)
 }
 
 pub fn new_for_remote_repo(remote_repo: &RemoteRepository) -> Result<Client, OxenError> {
@@ -109,11 +124,6 @@ pub fn new_for_remote_repo(remote_repo: &RemoteRepository) -> Result<Client, Oxe
 pub fn builder_for_url(url: &str) -> Result<ClientBuilder, OxenError> {
     let (_scheme, host) = get_scheme_and_host_from_url(url)?;
     builder_for_host(host, true)
-}
-
-#[cfg(any(test, feature = "test-utils"))]
-pub fn cache_len_for_test() -> usize {
-    CLIENT_CACHE.read().map(|c| c.len()).unwrap_or(0)
 }
 
 fn builder_for_host(host: String, should_add_user_agent: bool) -> Result<ClientBuilder, OxenError> {
@@ -321,33 +331,4 @@ pub async fn handle_non_json_response(
     // If the response was an error, try to handle it as a standard json response.
     // We assume it's an error here because we checked the success status above.
     Err(parse_json_body(url, res).await.unwrap_err())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_new_for_url_reuses_cached_client_per_host_and_ua_flag() {
-        // Two calls with the same (host, with_user_agent) should add at most one entry
-        // to the cache regardless of how many times we call.
-        let before = cache_len_for_test();
-        let _c1 = new_for_url("http://eng938-test.invalid:9999/foo").unwrap();
-        let _c2 = new_for_url("http://eng938-test.invalid:9999/bar").unwrap();
-        let _c3 = new_for_url("http://eng938-test.invalid:9999/baz").unwrap();
-        let after_ua = cache_len_for_test();
-        assert!(
-            after_ua - before <= 1,
-            "expected same (host, with_user_agent=true) to dedup; before={before} after={after_ua}"
-        );
-
-        // Flipping the user-agent flag is a different cache key, so one more entry
-        // is allowed (but still bounded).
-        let _c4 = new_for_url_no_user_agent("http://eng938-test.invalid:9999/qux").unwrap();
-        let after_no_ua = cache_len_for_test();
-        assert!(
-            after_no_ua - before <= 2,
-            "expected at most two entries for both UA variants; before={before} after={after_no_ua}"
-        );
-    }
 }

@@ -773,7 +773,9 @@ mod tests {
         .await
     }
 
+    // Serialized: DuckDB's first-use JSON-extension auto-install races on Windows file locks.
     #[tokio::test]
+    #[serial_test::serial(duckdb_extension)]
     async fn test_download_workspace_data_frames_to_different_format() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();

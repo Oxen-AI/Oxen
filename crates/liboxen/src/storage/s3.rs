@@ -1054,17 +1054,15 @@ mod tests {
     ) {
         let (addr, tmp, server_handle) = spawn_s3s().await;
 
+        // Unique bucket per test — `polars-io` caches its cloud-store client by bucket.
+        let bucket = format!("test-bucket-{}", uuid::Uuid::new_v4());
+
         let client = build_test_client(addr);
-        client
-            .create_bucket()
-            .bucket("test-bucket")
-            .send()
-            .await
-            .unwrap();
+        client.create_bucket().bucket(&bucket).send().await.unwrap();
 
         let store = S3VersionStore::new_with_client(
             Arc::new(client),
-            "test-bucket".to_string(),
+            bucket,
             "us-west-1".to_string(),
             "test-namespace/test-repo".to_string(),
             Some(format!("http://{addr}")),
@@ -1127,7 +1125,7 @@ mod tests {
             } => {
                 assert_eq!(
                     url,
-                    format!("s3://test-bucket/test-namespace/test-repo/{hash}/data")
+                    format!("s3://{}/test-namespace/test-repo/{hash}/data", store.bucket)
                 );
                 assert_eq!(region, "us-west-1");
                 let endpoint = endpoint_url.expect("test setup configures a loopback endpoint");

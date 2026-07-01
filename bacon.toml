@@ -65,15 +65,6 @@ need_stdout = false
 command = ["cargo", "test", "--workspace"]
 need_stdout = true
 
-[jobs.nextest]
-command = [
-    "cargo", "nextest", "run",
-    "--workspace",
-    "--hide-progress-bar", "--failure-output", "final"
-]
-need_stdout = true
-analyzer = "nextest"
-
 [jobs.doc]
 command = ["cargo", "doc", "--workspace", "--no-deps"]
 need_stdout = false

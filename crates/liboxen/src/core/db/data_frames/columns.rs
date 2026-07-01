@@ -198,6 +198,7 @@ mod tests {
     /// matches exactly one writer's complete record (or is empty after an added-then-deleted
     /// collapse), with no mixed fields.
     #[test]
+    #[serial_test::serial(rocksdb_flock)]
     fn test_concurrent_record_column_change_same_column_serializes() -> Result<(), OxenError> {
         const NUM_THREADS: usize = 16;
         const COLUMN: &str = "shared-col";

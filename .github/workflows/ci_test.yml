@@ -68,8 +68,8 @@ jobs:
           # main, a poisoned cache from one main run persists across PR runs
           # until something changes the cache key — that's the proximal cause of
           # the intermittent rustup-init failure described on the shell setting
-          # above. cargo-nextest is the only bin we'd otherwise cache here and
-          # it's already installed by taiki-e/install-action, so the cost is nil.
+          # above. Nothing else in ~/.cargo/bin is worth caching, so the cost is
+          # nil.
           cache-bin: false
 
       - name: Install Python
@@ -83,11 +83,6 @@ jobs:
           brew update
           brew install redis pkg-config
           brew services start redis
-
-      - name: Install nextest runner
-        uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
-        with:
-          tool: nextest@0.9.114
 
       # Ramdisk for test data
       - name: Setup ramdisk (Linux)
@@ -111,7 +106,8 @@ jobs:
         if: matrix.platform == 'windows'
         run: |
           choco install imdisk -y
-          imdisk -a -s 16G -m R: -p "/fs:ntfs /q /y"
+          # 24 GB (of the 32 GB runner), leaving 8 GB for Windows + the test process.
+          imdisk -a -s 24G -m R: -p "/fs:ntfs /q /y"
           echo "OXEN_TEST_RUN_DIR=R:\test" >> $env:GITHUB_ENV
           echo "SYNC_DIR=R:\sync" >> $env:GITHUB_ENV
           mkdir R:\test
@@ -148,13 +144,13 @@ jobs:
         if: matrix.platform != 'windows'
         run: |
           ./target/debug/oxen-server start --test &
-          cargo nextest run --workspace --profile ci
+          cargo test --workspace --no-fail-fast
 
       - name: Run oxen rust tests (Windows)
         if: matrix.platform == 'windows'
         run: |
           Start-Process ".\target\debug\oxen-server.exe" -ArgumentList "start","--test"
-          cargo nextest run --workspace --profile ci
+          cargo test --workspace --no-fail-fast
 
   python-test:
     name: Python Tests
