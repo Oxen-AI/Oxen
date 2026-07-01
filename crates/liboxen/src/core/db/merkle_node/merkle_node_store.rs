@@ -16,7 +16,7 @@
 //! [`FsMerkleNodeStore`](super::fs_merkle_node_store) is the only implementation today.
 
 use std::fmt::Debug;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -108,6 +108,14 @@ pub(crate) trait MerkleNodeStore: Debug + Send + Sync {
 
     /// Remove the node for `hash` (both blobs). Idempotent: deleting an absent node is `Ok`.
     fn delete(&self, hash: &MerkleHash) -> Result<(), MerkleDbError>;
+
+    /// Copy the store's durable state into `dst_dir` for archiving, returning the file written.
+    ///
+    /// The copy is point-in-time consistent even while the store is in use and omits any
+    /// runtime-only files (e.g. an LMDB lock file). Backends whose on-disk representation is a tree
+    /// of plain files (the filesystem backend) return `None` — those files are archived directly
+    /// from their location and need no separate snapshot.
+    fn snapshot_for_archive(&self, dst_dir: &Path) -> Result<Option<PathBuf>, MerkleDbError>;
 }
 
 /// Build the node store for the repo rooted at `repo_path`, choosing the backend once at repo

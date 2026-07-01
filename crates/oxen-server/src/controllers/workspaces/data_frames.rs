@@ -755,7 +755,7 @@ mod tests {
         assert!(body.contains("col_b"));
 
         // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 
@@ -813,7 +813,7 @@ mod tests {
         assert!(response.data_frame.is_none());
 
         // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 
@@ -860,7 +860,7 @@ mod tests {
         assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
 
         // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 
@@ -914,7 +914,7 @@ mod tests {
         assert!(response.data_frame.is_none());
 
         // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 
@@ -963,7 +963,7 @@ mod tests {
         assert!(!response.is_indexed);
         assert!(response.data_frame.is_none());
 
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 
@@ -1016,7 +1016,7 @@ mod tests {
         assert!(!response.is_indexed);
         assert!(response.data_frame.is_none());
 
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 
@@ -1059,7 +1059,7 @@ mod tests {
         let resp = actix_web::test::call_service(&app, req).await;
         assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
 
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 
@@ -1257,7 +1257,7 @@ mod tests {
             assert_eq!(pagination.total_entries, 25);
         }
 
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 }

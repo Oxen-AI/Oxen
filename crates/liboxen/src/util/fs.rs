@@ -576,11 +576,39 @@ pub fn create_dir(src: impl AsRef<Path>) -> Result<(), OxenError> {
 /// Wrapper around the util::fs::remove_dir_all command to tell us which file it failed on
 pub fn remove_dir_all(src: impl AsRef<Path>) -> Result<(), OxenError> {
     let src = src.as_ref();
-    match std::fs::remove_dir_all(src) {
+    match remove_dir_all_impl(src) {
         Ok(_) => Ok(()),
         Err(err) => {
             log::error!("remove_dir_all {src:?} {err}");
             Err(OxenError::file_error(src, err))
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn remove_dir_all_impl(src: &Path) -> std::io::Result<()> {
+    std::fs::remove_dir_all(src)
+}
+
+/// On Windows a file that is still open or memory-mapped cannot be deleted; the OS returns
+/// `ERROR_SHARING_VIOLATION` (os error 32). This most often happens when a handle owner (e.g. an
+/// LMDB env) has just been dropped but the OS has not finished releasing the mapping. Retry a few
+/// times with a short backoff so the transient lock clears. A handle that is *genuinely* still held
+/// will exhaust the retries and surface the original error — callers must still drop their handles
+/// before removing the directory.
+#[cfg(windows)]
+fn remove_dir_all_impl(src: &Path) -> std::io::Result<()> {
+    const SHARING_VIOLATION: i32 = 32;
+    const MAX_ATTEMPTS: u32 = 10;
+    let mut attempt = 0;
+    loop {
+        match std::fs::remove_dir_all(src) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.raw_os_error() == Some(SHARING_VIOLATION) && attempt < MAX_ATTEMPTS => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(50 * u64::from(attempt)));
+            }
+            Err(e) => return Err(e),
         }
     }
 }
