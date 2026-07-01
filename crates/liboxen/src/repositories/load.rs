@@ -76,7 +76,7 @@ mod tests {
 
             // Save to a path
             let save_path = repo.path.join(Path::new("backup.tar.gz"));
-            repositories::save(&repo, &save_path)?;
+            repositories::save(repo, &save_path)?;
 
             assert!(save_path.exists());
 
@@ -101,7 +101,7 @@ mod tests {
 
                 // Save to a path
                 let save_path = dir.join(Path::new("backup.tar.gz"));
-                repositories::save(&repo, &save_path)?;
+                repositories::save(repo, &save_path)?;
 
                 // Load from a path and hydrate
                 let loaded_repo_path = dir.join(Path::new("loaded_repo"));
@@ -133,7 +133,7 @@ mod tests {
 
                 // Save to a path
                 let save_path = dir.join(Path::new("backup.tar.gz"));
-                repositories::save(&repo, &save_path)?;
+                repositories::save(repo, &save_path)?;
 
                 // Load from a path and hydrate
                 let loaded_repo_path = dir.join(Path::new("loaded_repo"));
@@ -194,7 +194,7 @@ mod tests {
 
                 // Save to a path
                 let save_path = dir.join(Path::new("backup.tar.gz"));
-                repositories::save(&repo, &save_path)?;
+                repositories::save(repo, &save_path)?;
 
                 // Load from a path and hydrate
                 let loaded_repo_path = dir.join(Path::new("loaded_repo"));

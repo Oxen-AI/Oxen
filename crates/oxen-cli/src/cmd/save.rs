@@ -44,7 +44,7 @@ impl RunCmd for SaveCmd {
             .ok_or_else(|| OxenError::local_repo_not_found(repo_path))?;
         let repo = LocalRepository::from_dir(&repo_dir)?;
 
-        repositories::save(&repo, output_path)?;
+        repositories::save(repo, output_path)?;
 
         Ok(())
     }
