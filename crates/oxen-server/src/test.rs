@@ -34,6 +34,15 @@ pub fn cleanup_sync_dir(sync_dir: &Path) -> Result<(), OxenError> {
     Ok(())
 }
 
+/// Drop `repo` before removing `sync_dir`, then clean up. Under the LMDB Merkle-node backend a
+/// `LocalRepository` holds its env's `data.mdb`/`lock.mdb` memory-mapped for its whole lifetime;
+/// on Windows those mapped files cannot be deleted, so the owner must be dropped before the
+/// directory is removed. Consuming `repo` makes that ordering compiler-enforced.
+pub fn cleanup_repo_and_sync_dir(repo: LocalRepository, sync_dir: &Path) -> Result<(), OxenError> {
+    drop(repo);
+    cleanup_sync_dir(sync_dir)
+}
+
 pub fn create_local_repo(
     sync_dir: &Path,
     namespace: &str,

@@ -4,9 +4,11 @@
 use crate::api;
 use crate::api::requests::RepoNew;
 use crate::command;
+use crate::config::RepositoryConfig;
 use crate::constants;
 use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::core;
+use crate::core::db::merkle_node::MerkleNodeBackend;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::Schema;
@@ -418,6 +420,85 @@ where
     maybe_cleanup_repo(&repo_dir)?;
 
     // Assert everything okay after we cleanup the repo dir
+    assert!(result);
+    Ok(())
+}
+
+/// Init a repo pinned to the filesystem Merkle node backend, ignoring the global
+/// `OXEN_MERKLE_NODE_BACKEND` default. For tests whose assertions read the on-disk `tree/nodes`
+/// layout — the wire-format byte-compat oracles and the FS→LMDB migration source — which only the
+/// filesystem backend produces. Persists `merkle_node_backend = filesystem` to `config.toml`, the
+/// authoritative record `create_merkle_node_store` resolves from. Pair with
+/// [`run_empty_dir_test_async`] for empty repos, or use
+/// [`run_one_commit_local_repo_test_async_fs_backend`] when one committed file is needed.
+pub fn init_fs_merkle_backend(path: &Path) -> Result<LocalRepository, OxenError> {
+    let hidden_dir = util::fs::oxen_hidden_dir(path);
+    util::fs::create_dir_all(&hidden_dir)?;
+    if util::fs::config_filepath(path).try_exists()? {
+        return Err(OxenError::basic_str(format!(
+            "Oxen repository already exists: {path:?}"
+        )));
+    }
+    let config = RepositoryConfig {
+        min_version: Some(constants::MIN_OXEN_VERSION.to_string()),
+        merkle_node_backend: Some(MerkleNodeBackend::Filesystem),
+        ..Default::default()
+    };
+    let repo = LocalRepository::new(path, config)?;
+    repo.save()?;
+    Ok(repo)
+}
+
+/// Whether a filesystem-pinned test must skip because the global `OXEN_MERKLE_NODE_BACKEND` override
+/// selects LMDB. The wire-format byte-compat oracles and the FS→LMDB migration source read the
+/// on-disk `tree/nodes` layout that only the filesystem backend produces. The env override outranks
+/// the per-repo config that [`init_fs_merkle_backend`] persists (see `resolve_backend` in
+/// `core::db::merkle_node`), so under it these tests cannot pin the filesystem backend and must skip
+/// rather than fail. Logs the skip, keyed by the nextest thread name (the test's path). The CI
+/// filesystem job leaves the variable unset, so they still run there.
+pub fn skip_fs_pinned_under_lmdb() -> bool {
+    if matches!(MerkleNodeBackend::from_env(), Some(MerkleNodeBackend::Lmdb)) {
+        let handle = std::thread::current();
+        let name = handle.name().unwrap_or("filesystem-pinned test");
+        log::warn!("skipping `{name}`: OXEN_MERKLE_NODE_BACKEND forces the LMDB backend");
+        return true;
+    }
+    false
+}
+
+/// Like [`run_one_commit_local_repo_test_async`], but pins the repo to the filesystem Merkle node
+/// backend regardless of the global `OXEN_MERKLE_NODE_BACKEND` default (see
+/// [`init_fs_merkle_backend`]). Skips when the env override forces LMDB (see
+/// [`skip_fs_pinned_under_lmdb`]). For empty repos, use [`run_empty_dir_test_async`] +
+/// [`init_fs_merkle_backend`] directly, guarding the body with [`skip_fs_pinned_under_lmdb`].
+pub async fn run_one_commit_local_repo_test_async_fs_backend<T, Fut>(
+    test: T,
+) -> Result<(), OxenError>
+where
+    T: FnOnce(LocalRepository) -> Fut,
+    Fut: Future<Output = Result<(), OxenError>>,
+{
+    init_test_env();
+    if skip_fs_pinned_under_lmdb() {
+        return Ok(());
+    }
+    let repo_dir = create_repo_dir(test_run_dir())?;
+    let repo = init_fs_merkle_backend(&repo_dir)?;
+
+    let txt = generate_random_string(20);
+    let file_path = add_txt_file_to_dir(&repo_dir, &txt)?;
+    repositories::add(&repo, &file_path).await?;
+    repositories::commit(&repo, "Init commit")?;
+
+    let result = match test(repo).await {
+        Ok(_) => true,
+        Err(err) => {
+            eprintln!("Error running test. Err: {err}");
+            false
+        }
+    };
+
+    maybe_cleanup_repo(&repo_dir)?;
     assert!(result);
     Ok(())
 }

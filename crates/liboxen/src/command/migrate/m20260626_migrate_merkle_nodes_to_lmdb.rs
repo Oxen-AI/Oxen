@@ -247,7 +247,13 @@ mod tests {
     /// migrates back down to the filesystem — with the same node set throughout.
     #[tokio::test]
     async fn test_merkle_nodes_migrate_fs_to_lmdb_keeps_source_and_back() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        // FS-pinned: this exercises the FS→LMDB direction, so the repo must start on the filesystem
+        // backend regardless of the global `OXEN_MERKLE_NODE_BACKEND` default.
+        if test::skip_fs_pinned_under_lmdb() {
+            return Ok(());
+        }
+        test::run_empty_dir_test_async(|dir| async move {
+            let repo = test::init_fs_merkle_backend(&dir)?;
             // Commit a file so the repo has filesystem-backed merkle nodes.
             let file = repo.path.join("a.txt");
             util::fs::write_to_path(&file, "hello")?;
@@ -332,7 +338,13 @@ mod tests {
     /// temp dir is left in place for inspection.
     #[tokio::test]
     async fn test_up_reports_leftover_temp_env_without_cleanup() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+        // FS-pinned: `up` must start from the filesystem backend (not already on LMDB) for the
+        // leftover-temp-env guard to be the thing under test, regardless of the global default.
+        if test::skip_fs_pinned_under_lmdb() {
+            return Ok(());
+        }
+        test::run_empty_dir_test_async(|dir| async move {
+            let repo = test::init_fs_merkle_backend(&dir)?;
             let file = repo.path.join("a.txt");
             util::fs::write_to_path(&file, "hello")?;
             repositories::add(&repo, &file).await?;
