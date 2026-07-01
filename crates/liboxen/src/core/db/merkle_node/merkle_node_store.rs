@@ -47,6 +47,20 @@ pub(crate) trait MerkleNodeStore: Debug + Send + Sync {
     /// The `children` blob for `hash` (concatenated child nodes); empty for a childless node.
     fn read_children(&self, hash: &MerkleHash) -> Result<Bytes, MerkleDbError>;
 
+    /// The byte lengths of the `(node, children)` blobs for `hash`, without materializing the
+    /// blobs. Returns [`MerkleDbError::MissingNodeDir`] when the node is absent. Lets the
+    /// transport-size estimate size the wire payload without reading every node into memory.
+    // The transport consumer lands in the next PR of this stack; allow until then.
+    #[allow(dead_code)]
+    fn node_byte_sizes(&self, hash: &MerkleHash) -> Result<(u64, u64), MerkleDbError>;
+
+    /// The hashes of every node currently persisted. Ordering is unspecified. Used by the
+    /// whole-tree transport path to enumerate what to pack, so there is exactly one path from
+    /// stored bytes to the wire — no backend-specific directory walking outside the store.
+    // The transport consumer lands in the next PR of this stack; allow until then.
+    #[allow(dead_code)]
+    fn list_hashes(&self) -> Result<Vec<MerkleHash>, MerkleDbError>;
+
     /// Persist both blobs for `hash` as one unit. Implementations make this atomic so a node is
     /// never observable with only one of its two blobs present.
     fn write_node(
