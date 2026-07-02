@@ -100,11 +100,20 @@ jobs:
       - name: Build oxen binaries
         run: |
           refreshenv
+          Write-Host "post-refreshenv: RUSTC_WRAPPER=[$env:RUSTC_WRAPPER] CMAKE_C=[$env:CMAKE_C_COMPILER_LAUNCHER]"
+          $env:RUSTC_WRAPPER = "sccache"
+          $env:CMAKE_C_COMPILER_LAUNCHER = "sccache"
+          $env:CMAKE_CXX_COMPILER_LAUNCHER = "sccache"
+          Write-Host "sccache path: $((Get-Command sccache -ErrorAction SilentlyContinue).Source)"
+          sccache --version
           cargo build --workspace --exclude oxen-py --release
 
       - name: Build Python wheels
         run: |
           refreshenv
+          $env:RUSTC_WRAPPER = "sccache"
+          $env:CMAKE_C_COMPILER_LAUNCHER = "sccache"
+          $env:CMAKE_CXX_COMPILER_LAUNCHER = "sccache"
           uv python install ${{ inputs.PYTHON_VERSIONS }}
 
           cd ${{ github.workspace }}\oxen-python
