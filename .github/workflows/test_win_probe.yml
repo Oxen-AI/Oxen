@@ -3,9 +3,7 @@
 name: 🧪 Win sccache probe
 
 on:
-  push:
-    branches:
-      - eric/cache-ci-builds
+  workflow_dispatch:
 
 permissions:
   id-token: write

@@ -102,15 +102,11 @@ jobs:
       - name: Build oxen binaries
         run: |
           refreshenv
-          $scc = (Get-Command sccache).Source
-          Write-Host "sccache resolved: $scc"
-          $env:RUSTC_WRAPPER = $scc
-          $env:CMAKE_C_COMPILER_LAUNCHER = $scc
-          $env:CMAKE_CXX_COMPILER_LAUNCHER = $scc
-          cargo build --workspace --exclude oxen-py --release -v 2>&1 | Tee-Object C:\cargo-v.log | Out-Null
-          Write-Host "=== first rustc invocations (wrapper works if 'sccache' present) ==="
-          Select-String -Path C:\cargo-v.log -Pattern "Running" | Select-Object -First 3 | ForEach-Object { $_.Line.Substring(0,[Math]::Min(320,$_.Line.Length)) }
-          Write-Host "=== sccache stats AFTER binaries ==="
+          $env:RUSTC_WRAPPER = "sccache"
+          $env:CMAKE_C_COMPILER_LAUNCHER = "sccache"
+          $env:CMAKE_CXX_COMPILER_LAUNCHER = "sccache"
+          cmd /c "sccache --start-server"
+          cargo build --workspace --exclude oxen-py --release
           sccache --show-stats
 
       - name: Build Python wheels

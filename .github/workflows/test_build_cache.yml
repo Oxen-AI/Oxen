@@ -3,7 +3,9 @@
 name: 🧪 Test build cache
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - eric/cache-ci-builds
 
 permissions:
   id-token: write
