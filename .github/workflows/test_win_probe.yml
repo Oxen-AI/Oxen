@@ -1,0 +1,101 @@
+# Temporary: fast probe of whether cargo honors RUSTC_WRAPPER=sccache on the
+# Windows runner. Trivial crate, no vcpkg, small log. Remove when done.
+name: 🧪 Win sccache probe
+
+on:
+  push:
+    branches:
+      - eric/cache-ci-builds
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  EC2_IMAGE_ID: ami-0cfb2e47dd591ebdb
+  EC2_INSTANCE_TYPE: m7i.4xlarge
+
+jobs:
+  start-runner:
+    name: Start runner
+    runs-on: ubuntu-latest
+    outputs:
+      label: ${{ steps.start.outputs.label }}
+      ec2-instance-id: ${{ steps.start.outputs.ec2-instance-id }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::213020545630:role/github-runner-role
+          role-duration-seconds: 900
+          aws-region: us-west-1
+      - name: Start EC2 runner
+        id: start
+        uses: Oxen-AI/ec2-github-runner-windows@v1
+        with:
+          mode: start
+          github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          ec2-image-id: ${{ env.EC2_IMAGE_ID }}
+          ec2-instance-type: ${{ env.EC2_INSTANCE_TYPE }}
+          ec2-os: windows
+          startup-timeout-minutes: 10
+          subnet-id: subnet-0e28805edbdad482f
+          security-group-id: sg-09c8aa5830122d671
+          iam-role-name: github-runner-instance-profile
+          aws-resource-tags: >
+            [
+              {"Key": "Name", "Value": "ec2-github-runner"}
+            ]
+
+  probe:
+    name: Probe
+    needs: start-runner
+    runs-on: ${{ needs.start-runner.outputs.label }}
+    defaults:
+      run:
+        shell: powershell
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_BUCKET: oxen-ci-build-cache
+      SCCACHE_REGION: us-west-1
+      SCCACHE_IDLE_TIMEOUT: "0"
+    steps:
+      - name: Install rustup + sccache
+        run: choco install -y rustup.install sccache
+
+      - name: Probe cargo wrapper
+        run: |
+          refreshenv
+          $scc = (Get-Command sccache).Source
+          Write-Host "PROBE sccache-path: $scc"
+          Write-Host "PROBE RUSTC_WRAPPER: $env:RUSTC_WRAPPER"
+          cmd /c "cargo new C:\wtest --bin"
+          Set-Location C:\wtest
+          cmd /c "cargo build -v > C:\probe.log 2>&1"
+          Write-Host "PROBE cargo exit: $LASTEXITCODE"
+          Write-Host "PROBE running-lines:"
+          Select-String -Path C:\probe.log -Pattern "Running" | ForEach-Object { $_.Line }
+          Write-Host "PROBE stats (compile requests > 0 means wrapper engaged):"
+          sccache --show-stats
+
+  stop-runner:
+    name: Stop runner
+    needs:
+      - start-runner
+      - probe
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::213020545630:role/github-runner-role
+          role-duration-seconds: 900
+          aws-region: us-west-1
+      - name: Stop EC2 runner
+        uses: Oxen-AI/ec2-github-runner-windows@v1
+        with:
+          mode: stop
+          github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          label: ${{ needs.start-runner.outputs.label }}
+          ec2-instance-id: ${{ needs.start-runner.outputs.ec2-instance-id }}
