@@ -1315,7 +1315,10 @@ mod tests {
     /// a JSON value, polars surfaces that as a quoted VARCHAR, JsonWriter
     /// escapes the quotes again). The fix rewrites JSON[] columns to
     /// VARCHAR[] at index time. This test goes through that path end-to-end.
+    ///
+    /// Serialized: DuckDB's first-use JSON-extension auto-install races on Windows file locks.
     #[test]
+    #[serial_test::serial(duckdb_extension)]
     fn test_rows_modify_row_round_trip_preserves_json_array_strings() -> Result<(), OxenError> {
         use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL};
         use crate::core::db::data_frames::rows;
