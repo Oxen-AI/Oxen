@@ -57,6 +57,7 @@ jobs:
           startup-timeout-minutes: 10
           subnet-id: subnet-0e28805edbdad482f
           security-group-id: sg-09c8aa5830122d671
+          iam-role-name: github-runner-instance-profile
           aws-resource-tags: >
             [
               {"Key": "Name", "Value": "ec2-github-runner"}
@@ -70,6 +71,14 @@ jobs:
       run:
         shell: powershell
 
+    env:
+      RUSTC_WRAPPER: sccache
+      CMAKE_C_COMPILER_LAUNCHER: sccache
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
+      SCCACHE_BUCKET: oxen-ci-build-cache
+      SCCACHE_REGION: us-west-1
+      CARGO_INCREMENTAL: "0"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -79,7 +88,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          choco install -y cmake llvm uv rustup.install
+          choco install -y cmake llvm uv rustup.install sccache
           # Install vcpkg for FFmpeg development libraries
           git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
           cd C:\vcpkg
@@ -104,6 +113,12 @@ jobs:
           foreach ($version in $versions) {
               uvx maturin build --release --interpreter "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-$version.*\python.exe"
           }
+
+      - name: sccache stats
+        if: always()
+        run: |
+          refreshenv
+          sccache --show-stats
 
       - name: Create zip with oxen binaries
         run: |
