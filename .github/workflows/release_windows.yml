@@ -78,6 +78,7 @@ jobs:
       SCCACHE_BUCKET: oxen-ci-build-cache
       SCCACHE_REGION: us-west-1
       CARGO_INCREMENTAL: "0"
+      SCCACHE_ERROR_LOG: C:\sccache.log
 
     steps:
       - name: Checkout
@@ -100,13 +101,16 @@ jobs:
       - name: Build oxen binaries
         run: |
           refreshenv
-          Write-Host "post-refreshenv: RUSTC_WRAPPER=[$env:RUSTC_WRAPPER] CMAKE_C=[$env:CMAKE_C_COMPILER_LAUNCHER]"
           $env:RUSTC_WRAPPER = "sccache"
           $env:CMAKE_C_COMPILER_LAUNCHER = "sccache"
           $env:CMAKE_CXX_COMPILER_LAUNCHER = "sccache"
-          Write-Host "sccache path: $((Get-Command sccache -ErrorAction SilentlyContinue).Source)"
-          sccache --version
-          cargo build --workspace --exclude oxen-py --release
+          sccache --stop-server 2>$null
+          sccache --start-server
+          Write-Host "=== sccache stats BEFORE binaries ==="
+          sccache --show-stats
+          cargo build --workspace --exclude oxen-py --release --verbose
+          Write-Host "=== sccache stats AFTER binaries ==="
+          sccache --show-stats
 
       - name: Build Python wheels
         run: |
@@ -128,6 +132,11 @@ jobs:
         run: |
           refreshenv
           sccache --show-stats
+
+      - name: sccache error log
+        if: always()
+        run: |
+          if (Test-Path C:\sccache.log) { Get-Content C:\sccache.log } else { Write-Host "no sccache error log" }
 
       - name: Create zip with oxen binaries
         run: |
