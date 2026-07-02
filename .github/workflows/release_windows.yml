@@ -104,11 +104,9 @@ jobs:
           $env:RUSTC_WRAPPER = "sccache"
           $env:CMAKE_C_COMPILER_LAUNCHER = "sccache"
           $env:CMAKE_CXX_COMPILER_LAUNCHER = "sccache"
-          sccache --stop-server 2>$null
-          sccache --start-server
           Write-Host "=== sccache stats BEFORE binaries ==="
           sccache --show-stats
-          cargo build --workspace --exclude oxen-py --release --verbose
+          cargo build --workspace --exclude oxen-py --release
           Write-Host "=== sccache stats AFTER binaries ==="
           sccache --show-stats
 
