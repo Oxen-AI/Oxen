@@ -1,5 +1,5 @@
-# Temporary: validates the sccache build cache on the Linux release runner.
-# Triggers on every push to the branch below, calling the real release_linux.yml.
+# Temporary: validates the sccache build cache across all release platforms.
+# Triggers on every push to the branch below, calling the real release_*.yml.
 # Remove before merging.
 name: 🧪 Test build cache
 
@@ -23,3 +23,20 @@ jobs:
       RELEASE_VERSION: "0.0.0-cache-test"
     secrets:
       GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+
+  windows_x86_64:
+    uses: ./.github/workflows/release_windows.yml
+    with:
+      ARCHITECTURE: x86_64
+      AWS_ROLE: arn:aws:iam::213020545630:role/github-runner-role
+      AWS_REGION: us-west-1
+      PYTHON_VERSIONS: "3.11"
+    secrets:
+      GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+
+  macos:
+    uses: ./.github/workflows/release_macos.yml
+    with:
+      PYTHON_VERSIONS: "3.11"
+      AWS_ROLE: arn:aws:iam::213020545630:role/github-runner-role
+      AWS_REGION: us-west-1
