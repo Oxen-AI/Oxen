@@ -96,6 +96,8 @@ jobs:
     uses: ./.github/workflows/release_macos.yml
     with:
       PYTHON_VERSIONS: ${{ needs.set_env.outputs.python_versions }}
+      AWS_ROLE: ${{ needs.set_env.outputs.aws_role }}
+      AWS_REGION: ${{ needs.set_env.outputs.aws_region }}
 
   release_windows_x86_64:
     name: Windows x86_64
