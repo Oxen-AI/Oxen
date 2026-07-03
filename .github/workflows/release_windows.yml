@@ -73,15 +73,23 @@ jobs:
 
     env:
       RUSTC_WRAPPER: sccache
+      # cc-rs (duckdb/rocksdb/zstd bundled builds) intercepts via CC/CXX;
+      # cmake-driven builds (aws-lc) need the launcher vars plus a generator
+      # that honors them (Visual Studio generators ignore launchers).
+      CC: sccache cl
+      CXX: sccache cl
       CMAKE_C_COMPILER_LAUNCHER: sccache
       CMAKE_CXX_COMPILER_LAUNCHER: sccache
+      CMAKE_GENERATOR: Ninja
       SCCACHE_BUCKET: oxen-ci-build-cache
       SCCACHE_REGION: us-west-1
+      # vcpkg rebuilds FFmpeg from source on every ephemeral runner without this
+      VCPKG_BINARY_SOURCES: clear;x-aws,s3://oxen-ci-build-cache/vcpkg/,readwrite
       CARGO_INCREMENTAL: "0"
-      CARGO_BUILD_JOBS: "4"
       SCCACHE_ERROR_LOG: C:\sccache.log
       SCCACHE_IDLE_TIMEOUT: "0"
-      SCCACHE_LOG: info
+      # sccache=debug logs crate names per request, to attribute cache misses
+      SCCACHE_LOG: warn,sccache=debug
 
     steps:
       - name: Checkout
@@ -90,9 +98,20 @@ jobs:
       - name: Create release directory
         run: mkdir ${{ github.workspace }}\release
 
+      - name: Exclude build paths from Windows Defender
+        run: |
+          try {
+            Set-MpPreference -ExclusionPath @("C:\Windows\System32\actions-runner", "C:\Users\Administrator\.cargo", "C:\Users\Administrator\.rustup", "C:\vcpkg", "C:\ProgramData\chocolatey", "$env:TEMP")
+            Set-MpPreference -ExclusionProcess @("rustc.exe", "cargo.exe", "sccache.exe", "cl.exe", "link.exe", "cmake.exe", "ninja.exe", "python.exe", "git.exe")
+            Write-Host "Defender exclusions applied"
+          } catch {
+            Write-Host "Defender exclusions unavailable: $_"
+          }
+
       - name: Install dependencies
         run: |
-          choco install -y cmake llvm uv rustup.install
+          choco install -y cmake llvm uv rustup.install ninja nasm
+          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { choco install -y awscli }
           # Install sccache 0.16 to a machine-PATH dir so it survives refreshenv
           Invoke-WebRequest -Uri "https://github.com/mozilla/sccache/releases/download/v0.16.0/sccache-v0.16.0-x86_64-pc-windows-msvc.zip" -OutFile C:\sccache.zip
           Expand-Archive -Path C:\sccache.zip -DestinationPath C:\sccache-dl -Force
@@ -111,8 +130,11 @@ jobs:
         run: |
           refreshenv
           $env:RUSTC_WRAPPER = "sccache"
+          $env:CC = "sccache cl"
+          $env:CXX = "sccache cl"
           $env:CMAKE_C_COMPILER_LAUNCHER = "sccache"
           $env:CMAKE_CXX_COMPILER_LAUNCHER = "sccache"
+          $env:CMAKE_GENERATOR = "Ninja"
           cmd /c "sccache --start-server"
           cargo build --workspace --exclude oxen-py --release
           sccache --show-stats
@@ -121,8 +143,11 @@ jobs:
         run: |
           refreshenv
           $env:RUSTC_WRAPPER = "sccache"
+          $env:CC = "sccache cl"
+          $env:CXX = "sccache cl"
           $env:CMAKE_C_COMPILER_LAUNCHER = "sccache"
           $env:CMAKE_CXX_COMPILER_LAUNCHER = "sccache"
+          $env:CMAKE_GENERATOR = "Ninja"
           uv python install ${{ inputs.PYTHON_VERSIONS }}
 
           cd ${{ github.workspace }}\oxen-python
@@ -141,7 +166,13 @@ jobs:
       - name: sccache error log
         if: always()
         run: |
-          if (Test-Path C:\sccache.log) { Get-Content C:\sccache.log } else { Write-Host "no sccache error log" }
+          if (Test-Path C:\sccache.log) {
+            $lines = Get-Content C:\sccache.log
+            Write-Host "sccache.log: $($lines.Count) lines (full file in artifact)"
+            $lines | Select-String -Pattern ' WARN | ERROR ' | Select-Object -First 60 | ForEach-Object { $_.Line }
+            Write-Host "--- tail ---"
+            $lines | Select-Object -Last 40
+          } else { Write-Host "no sccache error log" }
 
       - name: Upload sccache server log
         if: always()
