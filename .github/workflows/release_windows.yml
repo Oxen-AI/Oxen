@@ -111,7 +111,12 @@ jobs:
       - name: Install dependencies
         run: |
           choco install -y cmake llvm uv rustup.install ninja nasm
-          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { choco install -y awscli }
+          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
+            choco install -y awscli
+            # choco appends to the machine PATH; this process needs it now for vcpkg's x-aws
+            $env:Path = "C:\Program Files\Amazon\AWSCLIV2;$env:Path"
+          }
+          aws --version
           # Install sccache 0.16 to a machine-PATH dir so it survives refreshenv
           Invoke-WebRequest -Uri "https://github.com/mozilla/sccache/releases/download/v0.16.0/sccache-v0.16.0-x86_64-pc-windows-msvc.zip" -OutFile C:\sccache.zip
           Expand-Archive -Path C:\sccache.zip -DestinationPath C:\sccache-dl -Force
