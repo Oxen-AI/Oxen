@@ -140,17 +140,33 @@ jobs:
           .\target\debug\oxen-server.exe add-user --email ox@oxen.ai --name Ox --output user_config.toml
           copy user_config.toml data\test\config\user_config.toml
 
-      - name: Run oxen rust tests (Linux/macOS)
-        if: matrix.platform != 'windows'
+      # macOS runs `cargo test`: a single test process amortizes per-test startup and wins there.
+      # Linux and Windows run nextest, whose process-per-test isolation avoids the shared-process
+      # lock/global-state contention that makes one `cargo test` process ~1.5-2.3x slower on those
+      # runners (measured on this branch's CI).
+      - name: Install nextest runner (Linux/Windows)
+        if: matrix.platform != 'macos'
+        uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
+        with:
+          tool: nextest@0.9.114
+
+      - name: Run oxen rust tests (macOS, cargo test)
+        if: matrix.platform == 'macos'
         run: |
           ./target/debug/oxen-server start --test &
           cargo test --workspace --no-fail-fast
 
-      - name: Run oxen rust tests (Windows)
+      - name: Run oxen rust tests (Linux, nextest)
+        if: matrix.platform == 'linux'
+        run: |
+          ./target/debug/oxen-server start --test &
+          cargo nextest run --workspace --profile ci
+
+      - name: Run oxen rust tests (Windows, nextest)
         if: matrix.platform == 'windows'
         run: |
           Start-Process ".\target\debug\oxen-server.exe" -ArgumentList "start","--test"
-          cargo test --workspace --no-fail-fast
+          cargo nextest run --workspace --profile ci
 
   python-test:
     name: Python Tests
