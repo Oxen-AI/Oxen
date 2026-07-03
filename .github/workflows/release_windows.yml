@@ -78,6 +78,7 @@ jobs:
       SCCACHE_BUCKET: oxen-ci-build-cache
       SCCACHE_REGION: us-west-1
       CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: "4"
       SCCACHE_ERROR_LOG: C:\sccache.log
       SCCACHE_IDLE_TIMEOUT: "0"
       SCCACHE_LOG: info
