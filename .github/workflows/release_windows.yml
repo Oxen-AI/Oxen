@@ -80,6 +80,7 @@ jobs:
       CARGO_INCREMENTAL: "0"
       SCCACHE_ERROR_LOG: C:\sccache.log
       SCCACHE_IDLE_TIMEOUT: "0"
+      SCCACHE_LOG: info
 
     steps:
       - name: Checkout
@@ -134,6 +135,15 @@ jobs:
         if: always()
         run: |
           if (Test-Path C:\sccache.log) { Get-Content C:\sccache.log } else { Write-Host "no sccache error log" }
+
+      - name: Upload sccache server log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sccache-server-log-windows
+          path: C:\sccache.log
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Create zip with oxen binaries
         run: |

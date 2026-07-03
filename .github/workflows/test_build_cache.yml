@@ -1,5 +1,7 @@
-# Temporary: validates the sccache build cache. Windows-only while debugging its
-# interception; restore linux + macos jobs for the final warm run. Remove before merging.
+# Temporary: validates the sccache build cache. Runs in parallel:
+#   - windows release build (capturing the sccache server log as an artifact)
+#   - linux + macos WHEEL builders (the test-pypi "hours" flow) with sccache
+# Remove before merging.
 name: 🧪 Test build cache
 
 on:
@@ -21,3 +23,24 @@ jobs:
       PYTHON_VERSIONS: "3.11"
     secrets:
       GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+
+  linux_wheels:
+    uses: ./.github/workflows/build_wheels_linux.yml
+    with:
+      ARCHITECTURE: x86_64
+      AWS_ROLE: arn:aws:iam::213020545630:role/github-runner-role
+      AWS_REGION: us-west-1
+      PYTHON_VERSIONS: "3.11"
+      CHECKOUT_REF: eric/cache-ci-builds
+      VERSION_OVERRIDE: "0.51.1.dev0"
+    secrets:
+      GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+
+  macos_wheels:
+    uses: ./.github/workflows/build_wheels_macos.yml
+    with:
+      PYTHON_VERSIONS: "3.11"
+      CHECKOUT_REF: eric/cache-ci-builds
+      VERSION_OVERRIDE: "0.51.1.dev0"
+      AWS_ROLE: arn:aws:iam::213020545630:role/github-runner-role
+      AWS_REGION: us-west-1
