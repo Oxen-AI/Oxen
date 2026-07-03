@@ -81,6 +81,10 @@ jobs:
       CMAKE_C_COMPILER_LAUNCHER: sccache
       CMAKE_CXX_COMPILER_LAUNCHER: sccache
       CMAKE_GENERATOR: Ninja
+      # aws-lc-sys's cc builder misdetects the compiler family behind the
+      # sccache wrapper and emits GCC-builtin calls that MSVC can't link;
+      # its cmake path probes the toolchain correctly (and NASM is installed)
+      AWS_LC_SYS_CMAKE_BUILDER: "1"
       SCCACHE_BUCKET: oxen-ci-build-cache
       SCCACHE_REGION: us-west-1
       # vcpkg rebuilds FFmpeg from source on every ephemeral runner without this
@@ -155,9 +159,12 @@ jobs:
           $env:CMAKE_C_COMPILER_LAUNCHER = "sccache"
           $env:CMAKE_CXX_COMPILER_LAUNCHER = "sccache"
           $env:CMAKE_GENERATOR = "Ninja"
+          $env:AWS_LC_SYS_CMAKE_BUILDER = "1"
           cmd /c "sccache --start-server"
           cargo build --workspace --exclude oxen-py --release
+          $cargoExit = $LASTEXITCODE
           sccache --show-stats
+          exit $cargoExit
 
       - name: Build Python wheels
         run: |
@@ -174,6 +181,7 @@ jobs:
           $env:CMAKE_C_COMPILER_LAUNCHER = "sccache"
           $env:CMAKE_CXX_COMPILER_LAUNCHER = "sccache"
           $env:CMAKE_GENERATOR = "Ninja"
+          $env:AWS_LC_SYS_CMAKE_BUILDER = "1"
           uv python install ${{ inputs.PYTHON_VERSIONS }}
 
           cd ${{ github.workspace }}\oxen-python
@@ -181,6 +189,7 @@ jobs:
           $versions = "${{ inputs.PYTHON_VERSIONS }}" -split ' '
           foreach ($version in $versions) {
               uvx maturin build --release --interpreter "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-$version.*\python.exe"
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
       - name: sccache stats
