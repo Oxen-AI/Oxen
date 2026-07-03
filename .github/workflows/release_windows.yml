@@ -148,16 +148,16 @@ jobs:
           $env:RUSTC_WRAPPER = ""
           mkdir C:\pmprobe | Out-Null
           Set-Location C:\pmprobe
-          cargo new pm --lib | Out-Null
+          cmd /c "cargo new pm --lib 2>nul"
           Add-Content pm\Cargo.toml "`n[lib]`nproc-macro = true"
           Set-Content pm\src\lib.rs "use proc_macro::TokenStream;`n#[proc_macro]`npub fn noop(input: TokenStream) -> TokenStream { input }"
           Set-Location pm
           foreach ($flags in @("-Clink-arg=/Brepro", "")) {
             $env:RUSTFLAGS = $flags
-            cargo build --release 2>$null | Out-Null
+            cmd /c "cargo build --release 2>nul"
             Copy-Item target\release\pm.dll C:\pmprobe\a.dll -Force
-            cargo clean | Out-Null
-            cargo build --release 2>$null | Out-Null
+            cargo clean
+            cmd /c "cargo build --release 2>nul"
             $h1 = (Get-FileHash C:\pmprobe\a.dll).Hash
             $h2 = (Get-FileHash target\release\pm.dll).Hash
             Write-Host "PROBE flags='$flags' same=$($h1 -eq $h2) h1=$($h1.Substring(0,16)) h2=$($h2.Substring(0,16))"
@@ -225,7 +225,7 @@ jobs:
       - name: Fingerprint build artifacts
         if: always()
         run: |
-          Get-ChildItem ${{ github.workspace }}\target\release\deps\* -Include *.dll,*.rlib | Get-FileHash -Algorithm SHA256 | ForEach-Object { "FPR $($_.Hash.Substring(0,20)) $(Split-Path $_.Path -Leaf)" } | Sort-Object
+          Get-ChildItem ${{ github.workspace }}\target\release\deps\* -Include *.dll,*.rlib -ErrorAction SilentlyContinue | Get-FileHash -Algorithm SHA256 | ForEach-Object { "FPR $($_.Hash.Substring(0,20)) $(Split-Path $_.Path -Leaf)" } | Sort-Object
 
       - name: sccache error log
         if: always()
