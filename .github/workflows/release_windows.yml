@@ -91,7 +91,13 @@ jobs:
 
       - name: Install dependencies
         run: |
-          choco install -y cmake llvm uv rustup.install sccache
+          choco install -y cmake llvm uv rustup.install
+          # Install sccache 0.16 to a machine-PATH dir so it survives refreshenv
+          Invoke-WebRequest -Uri "https://github.com/mozilla/sccache/releases/download/v0.16.0/sccache-v0.16.0-x86_64-pc-windows-msvc.zip" -OutFile C:\sccache.zip
+          Expand-Archive -Path C:\sccache.zip -DestinationPath C:\sccache-dl -Force
+          Copy-Item C:\sccache-dl\sccache-v0.16.0-x86_64-pc-windows-msvc\sccache.exe C:\ProgramData\chocolatey\bin\sccache.exe -Force
+          # Widen the Windows ephemeral TCP port range (sccache client<->server IPC is TCP localhost)
+          netsh int ipv4 set dynamicport tcp start=10000 num=55000
           # Install vcpkg for FFmpeg development libraries
           git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
           cd C:\vcpkg
