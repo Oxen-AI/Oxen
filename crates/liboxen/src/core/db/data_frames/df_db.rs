@@ -1233,12 +1233,11 @@ mod tests {
 
             flush_all_df_db_connections();
 
-            // Cache must be drained — every Arc removed, every connection dropped.
-            assert_eq!(
-                DF_DB_INSTANCES.read().len(),
-                0,
-                "cache should be empty after flush"
-            );
+            // Don't assert the global cache length here. Under `cargo test` this process is shared
+            // with other df_db tests that populate `DF_DB_INSTANCES` in parallel (they sit on
+            // different serial keys), so its length isn't this test's to observe. A sibling can
+            // insert between the flush and the read. That the flush dropped our own connection is
+            // proven below, where the reopen only succeeds because the file lock was released.
 
             // Reopen WITHOUT going through recovery (no stale-WAL handling needed
             // because flush already CHECKPOINTed): data must still be present.
