@@ -142,6 +142,30 @@ jobs:
           # Set VCPKG_ROOT for cargo to find FFmpeg libraries
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
+      - name: Probe proc-macro dll determinism
+        run: |
+          refreshenv
+          $env:RUSTC_WRAPPER = ""
+          mkdir C:\pmprobe | Out-Null
+          Set-Location C:\pmprobe
+          cargo new pm --lib | Out-Null
+          Add-Content pm\Cargo.toml "`n[lib]`nproc-macro = true"
+          Set-Content pm\src\lib.rs "use proc_macro::TokenStream;`n#[proc_macro]`npub fn noop(input: TokenStream) -> TokenStream { input }"
+          Set-Location pm
+          foreach ($flags in @("-Clink-arg=/Brepro", "")) {
+            $env:RUSTFLAGS = $flags
+            cargo build --release 2>$null | Out-Null
+            Copy-Item target\release\pm.dll C:\pmprobe\a.dll -Force
+            cargo clean | Out-Null
+            cargo build --release 2>$null | Out-Null
+            $h1 = (Get-FileHash C:\pmprobe\a.dll).Hash
+            $h2 = (Get-FileHash target\release\pm.dll).Hash
+            Write-Host "PROBE flags='$flags' same=$($h1 -eq $h2) h1=$($h1.Substring(0,16)) h2=$($h2.Substring(0,16))"
+            if ($h1 -ne $h2) { fc.exe /b C:\pmprobe\a.dll target\release\pm.dll | Select-Object -First 10 }
+            cargo clean | Out-Null
+          }
+          exit 0
+
       - name: Build oxen binaries
         run: |
           refreshenv
@@ -197,6 +221,11 @@ jobs:
         run: |
           refreshenv
           sccache --show-stats
+
+      - name: Fingerprint build artifacts
+        if: always()
+        run: |
+          Get-ChildItem ${{ github.workspace }}\target\release\deps\* -Include *.dll,*.rlib | Get-FileHash -Algorithm SHA256 | ForEach-Object { "FPR $($_.Hash.Substring(0,20)) $(Split-Path $_.Path -Leaf)" } | Sort-Object
 
       - name: sccache error log
         if: always()
