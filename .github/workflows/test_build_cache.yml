@@ -1,5 +1,5 @@
-# Temporary: validates the sccache build cache. Currently measuring the legs
-# without warm numbers: macOS release, Linux arm64 release, Linux arm64 wheels.
+# Temporary: validates the sccache build cache. Currently exercising the
+# publish verify-build cache (package + s3 restore/save, uploads omitted).
 # Remove before merging.
 name: 🧪 Test build cache
 
@@ -12,33 +12,51 @@ permissions:
   id-token: write
   contents: read
 
+defaults:
+  run:
+    shell: bash -leo pipefail {0}
+
 jobs:
-  macos:
-    uses: ./.github/workflows/release_macos.yml
-    with:
-      PYTHON_VERSIONS: "3.11"
-      AWS_ROLE: arn:aws:iam::213020545630:role/github-runner-role
-      AWS_REGION: us-west-1
-
-  linux_arm64:
-    uses: ./.github/workflows/release_linux.yml
-    with:
-      ARCHITECTURE: arm64
-      AWS_ROLE: arn:aws:iam::213020545630:role/github-runner-role
-      AWS_REGION: us-west-1
-      PYTHON_VERSIONS: "3.11"
-      RELEASE_VERSION: "0.0.0-cache-test"
-    secrets:
-      GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
-
-  linux_arm64_wheels:
-    uses: ./.github/workflows/build_wheels_linux.yml
-    with:
-      ARCHITECTURE: arm64
-      AWS_ROLE: arn:aws:iam::213020545630:role/github-runner-role
-      AWS_REGION: us-west-1
-      PYTHON_VERSIONS: "3.11"
-      CHECKOUT_REF: eric/cache-ci-builds
-      VERSION_OVERRIDE: "0.0.0.dev0"
-    secrets:
-      GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+  pkgverify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Free up disk space
+        uses: ./.github/actions/free-disk-space
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::213020545630:role/github-runner-role
+          role-duration-seconds: 3600
+          aws-region: us-west-1
+      - name: Restore verify dependency tree
+        run: |
+          KEY=$(printf '%s|%s|pkgverify-v1' "$(rustc -V)" "$(sha256sum Cargo.lock | cut -d' ' -f1)" | sha256sum | cut -c1-32)
+          echo "PKGVERIFY_KEY=$KEY" >> "$GITHUB_ENV"
+          if aws s3 cp "s3://oxen-ci-build-cache/pkgverify/$KEY.tar.zst" /tmp/pkgverify.tar.zst 2>/dev/null; then
+            tar --zstd -xf /tmp/pkgverify.tar.zst -C /
+            echo "pkgverify restore hit ($KEY)"
+          else
+            echo "pkgverify restore miss ($KEY)"
+          fi
+      - name: Package and verify crates
+        env:
+          CARGO_PROFILE_DEV_DEBUG: "0"
+          CARGO_INCREMENTAL: "0"
+        run: |
+          cargo package --workspace --exclude oxen-py --target-dir "${{ github.workspace }}/target-verify"
+      - name: Save verify dependency tree
+        run: |
+          if [ -f /tmp/pkgverify.tar.zst ]; then
+            echo "pkgverify cache already present"
+            exit 0
+          fi
+          tar --zstd -cf /tmp/pkgverify-out.tar.zst -C / \
+            "${GITHUB_WORKSPACE#/}/target-verify/debug/deps" \
+            "${GITHUB_WORKSPACE#/}/target-verify/debug/build" \
+            "${GITHUB_WORKSPACE#/}/target-verify/debug/.fingerprint" \
+            "${HOME#/}/.cargo/registry/src" \
+            "${HOME#/}/.cargo/registry/cache"
+          aws s3 cp /tmp/pkgverify-out.tar.zst "s3://oxen-ci-build-cache/pkgverify/$PKGVERIFY_KEY.tar.zst"
+          echo "pkgverify saved ($PKGVERIFY_KEY)"
