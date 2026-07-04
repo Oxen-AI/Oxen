@@ -146,25 +146,38 @@ jobs:
         run: |
           refreshenv
           $env:RUSTC_WRAPPER = ""
-          mkdir C:\pmprobe | Out-Null
-          Set-Location C:\pmprobe
-          cmd /c "cargo new pm --lib 2>nul"
-          Add-Content pm\Cargo.toml "`n[lib]`nproc-macro = true"
-          Set-Content pm\src\lib.rs "use proc_macro::TokenStream;`n#[proc_macro]`npub fn noop(input: TokenStream) -> TokenStream { input }"
-          Set-Location pm
+          mkdir C:\pmp2 | Out-Null
+          Set-Location C:\pmp2
+          cmd /c "cargo new consumer --lib 2>nul"
+          Set-Location consumer
+          Add-Content Cargo.toml "serde = { version = `"1`", features = [`"derive`"] }`npaste = `"1`"`n`n[profile.release]`ncodegen-units = 1`nlto = true`nopt-level = `"s`"`nstrip = true"
+          Set-Content src\lib.rs "#[derive(serde::Serialize)] pub struct S { pub x: i32 }"
           foreach ($flags in @("-Clink-arg=/Brepro", "")) {
             $env:RUSTFLAGS = $flags
             cmd /c "cargo build --release 2>nul"
-            Copy-Item target\release\pm.dll C:\pmprobe\a.dll -Force
+            Copy-Item target\release\deps\serde_derive-*.dll C:\pmp2\sd1.dll -Force
+            Copy-Item target\release\deps\paste-*.dll C:\pmp2\p1.dll -Force
             cargo clean
             cmd /c "cargo build --release 2>nul"
-            $h1 = (Get-FileHash C:\pmprobe\a.dll).Hash
-            $h2 = (Get-FileHash target\release\pm.dll).Hash
-            Write-Host "PROBE flags='$flags' same=$($h1 -eq $h2) h1=$($h1.Substring(0,16)) h2=$($h2.Substring(0,16))"
-            if ($h1 -ne $h2) { fc.exe /b C:\pmprobe\a.dll target\release\pm.dll | Select-Object -First 10 }
-            cargo clean | Out-Null
+            $sd2 = (Get-ChildItem target\release\deps\serde_derive-*.dll).FullName
+            $p2 = (Get-ChildItem target\release\deps\paste-*.dll).FullName
+            $sdSame = (Get-FileHash C:\pmp2\sd1.dll).Hash -eq (Get-FileHash $sd2).Hash
+            $pSame = (Get-FileHash C:\pmp2\p1.dll).Hash -eq (Get-FileHash $p2).Hash
+            Write-Host "PROBE2 flags='$flags' serde_derive_same=$sdSame paste_same=$pSame"
+            if (-not $sdSame) { fc.exe /b C:\pmp2\sd1.dll $sd2 | Select-Object -First 25 }
+            if (-not $pSame) { fc.exe /b C:\pmp2\p1.dll $p2 | Select-Object -First 25 }
+            Copy-Item $sd2 "C:\pmp2\serde_derive-run-flags$($flags.Length).dll" -Force
+            Copy-Item $p2 "C:\pmp2\paste-run-flags$($flags.Length).dll" -Force
+            cargo clean
           }
           exit 0
+
+      - name: Upload probe dlls
+        uses: actions/upload-artifact@v7
+        with:
+          name: probe-dlls-windows
+          path: C:\pmp2\*.dll
+          retention-days: 1
 
       - name: Build oxen binaries
         run: |
