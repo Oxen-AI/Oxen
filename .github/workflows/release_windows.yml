@@ -103,6 +103,7 @@ jobs:
           $versions = "${{ inputs.PYTHON_VERSIONS }}" -split ' '
           foreach ($version in $versions) {
               uvx maturin build --release --interpreter "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-$version.*\python.exe"
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
       - name: Create zip with oxen binaries
