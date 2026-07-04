@@ -142,42 +142,28 @@ jobs:
           # Set VCPKG_ROOT for cargo to find FFmpeg libraries
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
-      - name: Probe proc-macro dll determinism
+      - name: Restore host tool outputs
         run: |
           refreshenv
-          $env:RUSTC_WRAPPER = ""
-          mkdir C:\pmp2 | Out-Null
-          Set-Location C:\pmp2
-          cmd /c "cargo new consumer --lib 2>nul"
-          Set-Location consumer
-          Add-Content Cargo.toml "serde = { version = `"1`", features = [`"derive`"] }`npaste = `"1`"`n`n[profile.release]`ncodegen-units = 1`nlto = true`nopt-level = `"s`"`nstrip = true"
-          Set-Content src\lib.rs "#[derive(serde::Serialize)] pub struct S { pub x: i32 }"
-          foreach ($flags in @("-Clink-arg=/Brepro", "")) {
-            $env:RUSTFLAGS = $flags
-            cmd /c "cargo build --release 2>nul"
-            Copy-Item target\release\deps\serde_derive-*.dll C:\pmp2\sd1.dll -Force
-            Copy-Item target\release\deps\paste-*.dll C:\pmp2\p1.dll -Force
-            cargo clean
-            cmd /c "cargo build --release 2>nul"
-            $sd2 = (Get-ChildItem target\release\deps\serde_derive-*.dll).FullName
-            $p2 = (Get-ChildItem target\release\deps\paste-*.dll).FullName
-            $sdSame = (Get-FileHash C:\pmp2\sd1.dll).Hash -eq (Get-FileHash $sd2).Hash
-            $pSame = (Get-FileHash C:\pmp2\p1.dll).Hash -eq (Get-FileHash $p2).Hash
-            Write-Host "PROBE2 flags='$flags' serde_derive_same=$sdSame paste_same=$pSame"
-            if (-not $sdSame) { fc.exe /b C:\pmp2\sd1.dll $sd2 | Select-Object -First 25 }
-            if (-not $pSame) { fc.exe /b C:\pmp2\p1.dll $p2 | Select-Object -First 25 }
-            Copy-Item $sd2 "C:\pmp2\serde_derive-run-flags$($flags.Length).dll" -Force
-            Copy-Item $p2 "C:\pmp2\paste-run-flags$($flags.Length).dll" -Force
-            cargo clean
+          # Proc-macro dlls never link byte-identically across runs (their PE
+          # content varies even with /Brepro), and sccache hashes them into every
+          # direct consumer's key. Restoring the previous run's dlls plus cargo's
+          # .fingerprint dirs makes cargo treat them as Fresh, so the same bytes
+          # feed downstream hashes every run. Units whose outputs are absent
+          # (all rlibs) stay dirty and rebuild through sccache as usual.
+          $lock = (Get-FileHash Cargo.lock -Algorithm SHA256).Hash
+          $rv = (cmd /c "rustc -V 2>nul") -join ''
+          $keySrc = "$rv|$lock|-Clink-arg=/Brepro|v1"
+          $sha = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes($keySrc))).Replace("-","").Substring(0,32)
+          echo "HOSTDLL_KEY=$sha" >> $env:GITHUB_ENV
+          cmd /c "aws s3 cp s3://oxen-ci-build-cache/hostdlls/$sha.tgz C:\hostdlls.tgz 2>nul"
+          if (Test-Path C:\hostdlls.tgz) {
+            New-Item -ItemType Directory -Force -Path ${{ github.workspace }}\target\release | Out-Null
+            tar -xzf C:\hostdlls.tgz -C ${{ github.workspace }}\target\release
+            Write-Host "HOSTDLL restore hit ($sha)"
+          } else {
+            Write-Host "HOSTDLL restore miss ($sha)"
           }
-          exit 0
-
-      - name: Upload probe dlls
-        uses: actions/upload-artifact@v7
-        with:
-          name: probe-dlls-windows
-          path: C:\pmp2\*.dll
-          retention-days: 1
 
       - name: Build oxen binaries
         run: |
@@ -202,6 +188,17 @@ jobs:
           $cargoExit = $LASTEXITCODE
           sccache --show-stats
           exit $cargoExit
+
+      - name: Save host tool outputs
+        run: |
+          if (Test-Path C:\hostdlls.tgz) { Write-Host "HOSTDLL cache already present"; exit 0 }
+          Set-Location ${{ github.workspace }}\target\release
+          $list = @(Get-ChildItem deps\*.dll -ErrorAction SilentlyContinue; Get-ChildItem deps\libblake3-*.rlib -ErrorAction SilentlyContinue; Get-ChildItem deps\libpsm-*.rlib -ErrorAction SilentlyContinue) | ForEach-Object { "deps/$($_.Name)" }
+          $list += ".fingerprint"
+          $list | Set-Content C:\hostdll-list.txt
+          tar -czf C:\hostdlls-out.tgz -T C:\hostdll-list.txt
+          aws s3 cp C:\hostdlls-out.tgz s3://oxen-ci-build-cache/hostdlls/$env:HOSTDLL_KEY.tgz
+          Write-Host "HOSTDLL saved ($env:HOSTDLL_KEY)"
 
       - name: Build Python wheels
         run: |
