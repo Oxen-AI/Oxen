@@ -97,10 +97,7 @@ jobs:
       CFLAGS: /Brepro
       CXXFLAGS: /Brepro
       CARGO_INCREMENTAL: "0"
-      SCCACHE_ERROR_LOG: C:\sccache.log
       SCCACHE_IDLE_TIMEOUT: "0"
-      # sccache=debug logs crate names per request, to attribute cache misses
-      SCCACHE_LOG: warn,sccache=debug
 
     steps:
       - name: Checkout
@@ -109,14 +106,17 @@ jobs:
       - name: Create release directory
         run: mkdir ${{ github.workspace }}\release
 
-      - name: Exclude build paths from Windows Defender
+      - name: Disable Windows Defender for build (ephemeral runner)
         run: |
           try {
+            # Same configuration GitHub applies to its hosted runner images
+            Set-MpPreference -DisableRealtimeMonitoring $true -DisableArchiveScanning $true -DisableBehaviorMonitoring $true -DisableIOAVProtection $true -DisableScriptScanning $true -MAPSReporting 0 -PUAProtection 0 -ScanAvgCPULoadFactor 5
             Set-MpPreference -ExclusionPath @("C:\Windows\System32\actions-runner", "C:\Users\Administrator\.cargo", "C:\Users\Administrator\.rustup", "C:\vcpkg", "C:\ProgramData\chocolatey", "$env:TEMP")
             Set-MpPreference -ExclusionProcess @("rustc.exe", "cargo.exe", "sccache.exe", "cl.exe", "link.exe", "cmake.exe", "ninja.exe", "python.exe", "git.exe")
-            Write-Host "Defender exclusions applied"
+            $s = Get-MpComputerStatus
+            Write-Host "Defender: RealTimeProtection=$($s.RealTimeProtectionEnabled) TamperProtected=$($s.IsTamperProtected)"
           } catch {
-            Write-Host "Defender exclusions unavailable: $_"
+            Write-Host "Defender configuration unavailable: $_"
           }
 
       - name: Install dependencies
@@ -132,8 +132,6 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/mozilla/sccache/releases/download/v0.16.0/sccache-v0.16.0-x86_64-pc-windows-msvc.zip" -OutFile C:\sccache.zip
           Expand-Archive -Path C:\sccache.zip -DestinationPath C:\sccache-dl -Force
           Copy-Item C:\sccache-dl\sccache-v0.16.0-x86_64-pc-windows-msvc\sccache.exe C:\ProgramData\chocolatey\bin\sccache.exe -Force
-          # Widen the Windows ephemeral TCP port range (sccache client<->server IPC is TCP localhost)
-          netsh int ipv4 set dynamicport tcp start=10000 num=55000
           # Install vcpkg for FFmpeg development libraries
           git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
           cd C:\vcpkg
@@ -185,11 +183,6 @@ jobs:
           $env:CMAKE_GENERATOR = "Ninja"
           $env:AWS_LC_SYS_CMAKE_BUILDER = "1"
           cmd /c "sccache --start-server"
-          # Temporary: surface cargo's dirty reason for one restored proc-macro
-          $env:CARGO_LOG = "cargo::core::compiler::fingerprint=debug"
-          cmd /c "cargo build --release -p serde_derive 2>C:\fpdebug.log"
-          Select-String -Path C:\fpdebug.log -Pattern 'dirty|stale|fingerprint error' | Select-Object -First 20 | ForEach-Object { $_.Line }
-          Remove-Item Env:\CARGO_LOG
           cargo build --workspace --exclude oxen-py --release
           $cargoExit = $LASTEXITCODE
           sccache --show-stats
@@ -237,31 +230,6 @@ jobs:
         run: |
           refreshenv
           sccache --show-stats
-
-      - name: Fingerprint build artifacts
-        if: always()
-        run: |
-          Get-ChildItem ${{ github.workspace }}\target\release\deps\* -Include *.dll,*.rlib -ErrorAction SilentlyContinue | Get-FileHash -Algorithm SHA256 | ForEach-Object { "FPR $($_.Hash.Substring(0,20)) $(Split-Path $_.Path -Leaf)" } | Sort-Object
-
-      - name: sccache error log
-        if: always()
-        run: |
-          if (Test-Path C:\sccache.log) {
-            $lines = Get-Content C:\sccache.log
-            Write-Host "sccache.log: $($lines.Count) lines (full file in artifact)"
-            $lines | Select-String -Pattern ' WARN | ERROR ' | Select-Object -First 60 | ForEach-Object { $_.Line }
-            Write-Host "--- tail ---"
-            $lines | Select-Object -Last 40
-          } else { Write-Host "no sccache error log" }
-
-      - name: Upload sccache server log
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: sccache-server-log-windows
-          path: C:\sccache.log
-          if-no-files-found: warn
-          retention-days: 1
 
       - name: Create zip with oxen binaries
         run: |
