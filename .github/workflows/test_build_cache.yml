@@ -1,5 +1,5 @@
-# Temporary: validates the sccache build cache. Windows-only while fixing its
-# server IPC under concurrency; restore linux+macos jobs for the final run.
+# Temporary: validates the sccache build cache. Currently measuring the legs
+# without warm numbers: macOS release, Linux arm64 release, Linux arm64 wheels.
 # Remove before merging.
 name: 🧪 Test build cache
 
@@ -13,12 +13,32 @@ permissions:
   contents: read
 
 jobs:
-  windows_x86_64:
-    uses: ./.github/workflows/release_windows.yml
+  macos:
+    uses: ./.github/workflows/release_macos.yml
     with:
-      ARCHITECTURE: x86_64
+      PYTHON_VERSIONS: "3.11"
+      AWS_ROLE: arn:aws:iam::213020545630:role/github-runner-role
+      AWS_REGION: us-west-1
+
+  linux_arm64:
+    uses: ./.github/workflows/release_linux.yml
+    with:
+      ARCHITECTURE: arm64
       AWS_ROLE: arn:aws:iam::213020545630:role/github-runner-role
       AWS_REGION: us-west-1
       PYTHON_VERSIONS: "3.11"
+      RELEASE_VERSION: "0.0.0-cache-test"
+    secrets:
+      GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+
+  linux_arm64_wheels:
+    uses: ./.github/workflows/build_wheels_linux.yml
+    with:
+      ARCHITECTURE: arm64
+      AWS_ROLE: arn:aws:iam::213020545630:role/github-runner-role
+      AWS_REGION: us-west-1
+      PYTHON_VERSIONS: "3.11"
+      CHECKOUT_REF: eric/cache-ci-builds
+      VERSION_OVERRIDE: "0.0.0.dev0"
     secrets:
       GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
