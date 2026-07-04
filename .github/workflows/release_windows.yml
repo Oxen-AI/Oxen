@@ -160,6 +160,10 @@ jobs:
           if (Test-Path C:\hostdlls.tgz) {
             New-Item -ItemType Directory -Force -Path ${{ github.workspace }}\target\release | Out-Null
             tar -xzf C:\hostdlls.tgz -C ${{ github.workspace }}\target\release
+            # Registry sources were extracted moments ago, so restored outputs
+            # must be newer than them or cargo marks the units dirty
+            $now = Get-Date
+            Get-ChildItem ${{ github.workspace }}\target\release -Recurse -File | ForEach-Object { $_.LastWriteTime = $now }
             Write-Host "HOSTDLL restore hit ($sha)"
           } else {
             Write-Host "HOSTDLL restore miss ($sha)"
@@ -185,6 +189,11 @@ jobs:
           $env:CMAKE_GENERATOR = "Ninja"
           $env:AWS_LC_SYS_CMAKE_BUILDER = "1"
           cmd /c "sccache --start-server"
+          # Temporary: surface cargo's dirty reason for one restored proc-macro
+          $env:CARGO_LOG = "cargo::core::compiler::fingerprint=debug"
+          cmd /c "cargo build --release -p serde_derive 2>C:\fpdebug.log"
+          Select-String -Path C:\fpdebug.log -Pattern 'dirty|stale|fingerprint error' | Select-Object -First 20 | ForEach-Object { $_.Line }
+          Remove-Item Env:\CARGO_LOG
           cargo build --workspace --exclude oxen-py --release
           $cargoExit = $LASTEXITCODE
           sccache --show-stats
