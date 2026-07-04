@@ -142,31 +142,27 @@ jobs:
           # Set VCPKG_ROOT for cargo to find FFmpeg libraries
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
-      - name: Restore host tool outputs
+      - name: Restore dependency build tree
         run: |
           refreshenv
-          # Proc-macro dlls never link byte-identically across runs (their PE
-          # content varies even with /Brepro), and sccache hashes them into every
-          # direct consumer's key. Restoring the previous run's dlls plus cargo's
-          # .fingerprint dirs makes cargo treat them as Fresh, so the same bytes
-          # feed downstream hashes every run. Units whose outputs are absent
-          # (all rlibs) stay dirty and rebuild through sccache as usual.
+          # Proc-macro dlls never link byte-identically across runs (PE content
+          # varies even with /Brepro), and sccache hashes them into every direct
+          # consumer's key, so those consumers and everything above them miss
+          # every run. Restoring the dependency slice of target\release plus the
+          # registry trees (mtimes preserved, so cargo's staleness math holds)
+          # makes cargo reuse the previous run's dlls verbatim; workspace crates
+          # stay dirty via fresh checkout mtimes and rebuild as usual.
           $lock = (Get-FileHash Cargo.lock -Algorithm SHA256).Hash
           $rv = (cmd /c "rustc -V 2>nul") -join ''
-          $keySrc = "$rv|$lock|-Clink-arg=/Brepro|v1"
+          $keySrc = "$rv|$lock|-Clink-arg=/Brepro|v2"
           $sha = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes($keySrc))).Replace("-","").Substring(0,32)
-          echo "HOSTDLL_KEY=$sha" >> $env:GITHUB_ENV
-          cmd /c "aws s3 cp s3://oxen-ci-build-cache/hostdlls/$sha.tgz C:\hostdlls.tgz 2>nul"
-          if (Test-Path C:\hostdlls.tgz) {
-            New-Item -ItemType Directory -Force -Path ${{ github.workspace }}\target\release | Out-Null
-            tar -xzf C:\hostdlls.tgz -C ${{ github.workspace }}\target\release
-            # Registry sources were extracted moments ago, so restored outputs
-            # must be newer than them or cargo marks the units dirty
-            $now = Get-Date
-            Get-ChildItem ${{ github.workspace }}\target\release -Recurse -File | ForEach-Object { $_.LastWriteTime = $now }
-            Write-Host "HOSTDLL restore hit ($sha)"
+          echo "DEPTREE_KEY=$sha" >> $env:GITHUB_ENV
+          cmd /c "aws s3 cp s3://oxen-ci-build-cache/deptree/$sha.tar C:\deptree.tar 2>nul"
+          if (Test-Path C:\deptree.tar) {
+            tar -xf C:\deptree.tar -C C:\
+            Write-Host "DEPTREE restore hit ($sha)"
           } else {
-            Write-Host "HOSTDLL restore miss ($sha)"
+            Write-Host "DEPTREE restore miss ($sha)"
           }
           exit 0
 
@@ -199,17 +195,16 @@ jobs:
           sccache --show-stats
           exit $cargoExit
 
-      - name: Save host tool outputs
+      - name: Save dependency build tree
         run: |
-          if (Test-Path C:\hostdlls.tgz) { Write-Host "HOSTDLL cache already present"; exit 0 }
+          if (Test-Path C:\deptree.tar) { Write-Host "DEPTREE cache already present"; exit 0 }
           refreshenv
-          Set-Location ${{ github.workspace }}\target\release
-          $list = @(Get-ChildItem deps\*.dll -ErrorAction SilentlyContinue; Get-ChildItem deps\libblake3-*.rlib -ErrorAction SilentlyContinue; Get-ChildItem deps\libpsm-*.rlib -ErrorAction SilentlyContinue) | ForEach-Object { "deps/$($_.Name)" }
-          $list += ".fingerprint"
-          $list | Set-Content C:\hostdll-list.txt
-          tar -czf C:\hostdlls-out.tgz -T C:\hostdll-list.txt
-          aws s3 cp C:\hostdlls-out.tgz s3://oxen-ci-build-cache/hostdlls/$env:HOSTDLL_KEY.tgz
-          Write-Host "HOSTDLL saved ($env:HOSTDLL_KEY)"
+          $rel = "${{ github.workspace }}\target\release".Substring(3) -replace '\\','/'
+          $list = @("$rel/.fingerprint", "$rel/deps", "$rel/build", "Users/Administrator/.cargo/registry/src", "Users/Administrator/.cargo/registry/cache")
+          $list | Set-Content C:\deptree-list.txt
+          tar -cf C:\deptree-out.tar -C C:\ -T C:\deptree-list.txt
+          aws s3 cp C:\deptree-out.tar s3://oxen-ci-build-cache/deptree/$env:DEPTREE_KEY.tar
+          Write-Host "DEPTREE saved ($env:DEPTREE_KEY)"
 
       - name: Build Python wheels
         run: |
