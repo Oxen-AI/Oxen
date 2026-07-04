@@ -50,13 +50,13 @@ jobs:
         run: |
           if [ -f /tmp/pkgverify.tar.zst ]; then
             echo "pkgverify cache already present"
-            exit 0
+          else
+            tar --zstd -cf /tmp/pkgverify-out.tar.zst -C / \
+              "${GITHUB_WORKSPACE#/}/target-verify/debug/deps" \
+              "${GITHUB_WORKSPACE#/}/target-verify/debug/build" \
+              "${GITHUB_WORKSPACE#/}/target-verify/debug/.fingerprint" \
+              "${HOME#/}/.cargo/registry/src" \
+              "${HOME#/}/.cargo/registry/cache"
+            aws s3 cp /tmp/pkgverify-out.tar.zst "s3://oxen-ci-build-cache/pkgverify/$PKGVERIFY_KEY.tar.zst"
+            echo "pkgverify saved ($PKGVERIFY_KEY)"
           fi
-          tar --zstd -cf /tmp/pkgverify-out.tar.zst -C / \
-            "${GITHUB_WORKSPACE#/}/target-verify/debug/deps" \
-            "${GITHUB_WORKSPACE#/}/target-verify/debug/build" \
-            "${GITHUB_WORKSPACE#/}/target-verify/debug/.fingerprint" \
-            "${HOME#/}/.cargo/registry/src" \
-            "${HOME#/}/.cargo/registry/cache"
-          aws s3 cp /tmp/pkgverify-out.tar.zst "s3://oxen-ci-build-cache/pkgverify/$PKGVERIFY_KEY.tar.zst"
-          echo "pkgverify saved ($PKGVERIFY_KEY)"
