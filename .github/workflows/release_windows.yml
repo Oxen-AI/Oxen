@@ -164,6 +164,7 @@ jobs:
           } else {
             Write-Host "HOSTDLL restore miss ($sha)"
           }
+          exit 0
 
       - name: Build oxen binaries
         run: |
