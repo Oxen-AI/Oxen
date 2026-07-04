@@ -193,6 +193,7 @@ jobs:
       - name: Save host tool outputs
         run: |
           if (Test-Path C:\hostdlls.tgz) { Write-Host "HOSTDLL cache already present"; exit 0 }
+          refreshenv
           Set-Location ${{ github.workspace }}\target\release
           $list = @(Get-ChildItem deps\*.dll -ErrorAction SilentlyContinue; Get-ChildItem deps\libblake3-*.rlib -ErrorAction SilentlyContinue; Get-ChildItem deps\libpsm-*.rlib -ErrorAction SilentlyContinue) | ForEach-Object { "deps/$($_.Name)" }
           $list += ".fingerprint"
