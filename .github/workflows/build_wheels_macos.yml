@@ -39,7 +39,7 @@ jobs:
       RUSTC_WRAPPER: sccache
       CMAKE_C_COMPILER_LAUNCHER: sccache
       CMAKE_CXX_COMPILER_LAUNCHER: sccache
-      SCCACHE_BUCKET: oxen-ci-build-cache
+      SCCACHE_BUCKET: oxen-release-build-cache
       SCCACHE_REGION: us-west-1
       CARGO_INCREMENTAL: "0"
     steps:
