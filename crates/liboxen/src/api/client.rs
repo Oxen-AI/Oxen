@@ -291,6 +291,18 @@ fn parse_status_and_message(
                 return Err(OxenError::authentication(msg));
             }
 
+            // A 402 is a quota/billing failure — lift it to a first-class quota error so
+            // callers match on the concept rather than string-matching an HTTP status.
+            if status == reqwest::StatusCode::PAYMENT_REQUIRED {
+                let message = response.full_err_msg();
+                let message = if message.trim().is_empty() {
+                    "Your account is out of storage quota.".to_string()
+                } else {
+                    message
+                };
+                return Err(OxenError::quota_exceeded(message));
+            }
+
             // Preserve the HTTP status so retry loops can classify the failure
             // (4xx => fatal, 5xx => retryable) without string-matching the message.
             Err(OxenError::HttpStatusError {

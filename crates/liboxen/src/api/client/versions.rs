@@ -161,7 +161,7 @@ async fn create_multipart_large_file_upload(
         .body(body)
         .send()
         .await?;
-    response.error_for_status()?;
+    client::handle_non_json_response(&url, response).await?;
 
     Ok(MultipartLargeFileUpload {
         local_path: file_path.to_path_buf(),
@@ -427,7 +427,7 @@ async fn upload_chunk(
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
 
     let response = client
-        .put(url)
+        .put(&url)
         .header(CONTENT_LENGTH, bytes_transferred)
         .body(reqwest::Body::wrap_stream(FramedRead::new(
             chunk,
@@ -435,7 +435,7 @@ async fn upload_chunk(
         )))
         .send()
         .await?;
-    let response = response.error_for_status()?;
+    let response = client::handle_non_json_response(&url, response).await?;
     let mut headers = HashMap::new();
     for (name, value) in response.headers().into_iter() {
         headers.insert(

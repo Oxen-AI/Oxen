@@ -602,6 +602,12 @@ pub enum OxenError {
         status: http::StatusCode,
     },
 
+    /// The server responded with 402 Payment Required — the account has exhausted its
+    /// storage/usage quota. Carries the human-readable message from the response body (or a
+    /// default) so it reads as a first-class quota failure rather than a raw HTTP status.
+    #[error("{0}")]
+    QuotaExceeded(StringError),
+
     /// The bulk versions download endpoint reported that one or more requested content
     /// blobs are absent from the server's version store. The full list of missing
     /// hashes is carried on the variant so the client can surface every missing blob
@@ -709,6 +715,9 @@ impl OxenError {
             LocalRepoNotFound(_) => "Run `oxen init` to create a new repository here.",
             Authentication(_) => {
                 "Check your token with `oxen config --auth <HOST> <TOKEN>` and try again."
+            }
+            QuotaExceeded(_) => {
+                "You've reached your plan's usage limit. Upgrade your plan at https://oxen.ai to continue."
             }
             RemoteRepoNotFound(_) => {
                 "Verify the remote URL is correct. Check your remotes with `oxen remote -v`."
@@ -826,6 +835,7 @@ impl OxenError {
             OxenError::HttpStatusError { status, .. }
             | OxenError::HttpDeserializeError { status, .. } => is_fatal_http_status(*status),
             OxenError::HTTP(req_err) => req_err.status().is_some_and(is_fatal_http_status),
+            OxenError::QuotaExceeded(_) => true,
             OxenError::VersionsMissingOnServer { .. } => true,
             OxenError::VersionStoreDataMissing { .. } => true,
             OxenError::UnknownRemoteResponseStatus(_) => true,
@@ -842,6 +852,11 @@ impl OxenError {
     /// Make a new OxenError::Authentication error.
     pub fn authentication(s: impl AsRef<str>) -> Self {
         OxenError::Authentication(StringError::from(s.as_ref()))
+    }
+
+    /// Make a new OxenError::QuotaExceeded error.
+    pub fn quota_exceeded(s: impl AsRef<str>) -> Self {
+        OxenError::QuotaExceeded(StringError::from(s.as_ref()))
     }
 
     /// Make a new OxenError::InvalidVersion error.
@@ -1262,6 +1277,26 @@ mod tests {
         assert!(msg.contains("2 version blob"), "missing count: {msg}");
         assert!(msg.contains("abc"), "missing first hash: {msg}");
         assert!(msg.contains("def"), "missing second hash: {msg}");
+    }
+
+    #[test]
+    fn quota_exceeded_is_fatal_and_hints_at_upgrade() {
+        let err = OxenError::quota_exceeded("You are out of storage quota.");
+        assert!(
+            err.is_fatal_for_retry(),
+            "402 quota is a permanent condition and must not be retried"
+        );
+        assert!(
+            format!("{err}").contains("out of storage quota"),
+            "server message should be preserved in Display"
+        );
+        let hint = err
+            .hint()
+            .expect("quota error should carry an upgrade hint");
+        assert!(
+            hint.contains("Upgrade your plan"),
+            "hint should point the user at upgrading: {hint}"
+        );
     }
 
     #[test]
