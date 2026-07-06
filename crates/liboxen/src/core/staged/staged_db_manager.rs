@@ -24,10 +24,7 @@ use crate::model::merkle_tree::node::{
 };
 use crate::util;
 
-#[cfg(not(any(test, feature = "test-utils")))]
 const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
-#[cfg(any(test, feature = "test-utils"))]
-const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(1000).unwrap();
 
 // Static cache of DB instances with LRU eviction
 static DB_INSTANCES: LazyLock<RwLock<LruCache<PathBuf, Arc<RwLock<DB>>>>> =
