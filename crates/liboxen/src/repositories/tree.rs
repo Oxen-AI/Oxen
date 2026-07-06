@@ -1074,6 +1074,8 @@ fn write_all_tar<W: Write>(
 /// Errors:
 /// - Entries that aren't regular files or directories return [`MerkleDbError::UnsupportedTarEntry`].
 /// - Entries whose path contains a `..` component return [`MerkleDbError::PathTraversal`].
+/// - A node whose `node`/`children` blobs are not adjacent (interleaved with another node's
+///   blobs, or cut off by EOF) returns [`MerkleDbError::IncompleteNode`].
 fn extract_tar_under<R: Read>(
     reader: R,
     oxen_hidden: &Path,
@@ -1081,10 +1083,13 @@ fn extract_tar_under<R: Read>(
     overwrite_existing: bool,
 ) -> Result<HashSet<MerkleHash>, MerkleDbError> {
     let mut installed: HashSet<MerkleHash> = HashSet::new();
-    // A node's two blobs may arrive as separate (and not necessarily adjacent) tar entries,
-    // so buffer them per hash and write once both are present. In a well-formed tarball a
-    // node's entries are contiguous, so this holds ~one node at a time.
-    let mut pending: HashMap<MerkleHash, (Option<Bytes>, Option<Bytes>)> = HashMap::new();
+    // A node's two blobs arrive as separate tar entries. Every producer writes them adjacent
+    // (possibly separated by directory entries, and in either order — legacy packers go through
+    // `append_dir_all`, which does not guarantee intra-directory file order), so buffer at most
+    // one node at a time and fail fast if a blob for a different node arrives while one is still
+    // incomplete. Buffering more than one would let a hostile archive interleave unpaired blobs
+    // and exhaust memory before the post-loop completeness check runs.
+    let mut pending: Option<(MerkleHash, Option<Bytes>, Option<Bytes>)> = None;
 
     let decoder = GzDecoder::new(reader);
     let mut archive = Archive::new(decoder);
@@ -1167,18 +1172,32 @@ fn extract_tar_under<R: Read>(
         let mut buf = Vec::new();
         file.read_to_end(&mut buf)?;
         let bytes = Bytes::from(buf);
-        let slot = pending.entry(hash).or_insert((None, None));
-        if is_node {
-            slot.0 = Some(bytes);
-        } else {
-            slot.1 = Some(bytes);
+        match &mut pending {
+            Some((pending_hash, node, _children)) if *pending_hash != hash => {
+                return Err(incomplete_node_error(*pending_hash, node.is_some()));
+            }
+            Some((_, node, children)) => {
+                if is_node {
+                    *node = Some(bytes);
+                } else {
+                    *children = Some(bytes);
+                }
+            }
+            None => {
+                pending = Some(if is_node {
+                    (hash, Some(bytes), None)
+                } else {
+                    (hash, None, Some(bytes))
+                });
+            }
         }
 
         // Wait until both blobs have arrived (clone is a cheap `Bytes` refcount bump).
-        let (Some(node), Some(children)) = slot.clone() else {
-            continue;
+        let (node, children) = match &pending {
+            Some((_, Some(node), Some(children))) => (node.clone(), children.clone()),
+            _ => continue,
         };
-        pending.remove(&hash);
+        pending = None;
 
         // Persist the node as a unit through the store.
         if overwrite_existing || !store.exists(&hash)? {
@@ -1188,21 +1207,23 @@ fn extract_tar_under<R: Read>(
     }
 
     // EOF validation: a well-formed archive pairs every `node` blob with its `children` blob and
-    // drains `pending` as each pair completes. Any leftover entry means the archive was truncated
+    // clears `pending` as each pair completes. A leftover entry means the archive was truncated
     // or malformed, so fail rather than silently accepting a half-written node.
-    if let Some((hash, (node, _children))) = pending.into_iter().next() {
-        let missing = if node.is_some() {
-            NODE_FILE
-        } else {
-            CHILDREN_FILE
-        };
-        return Err(MerkleDbError::IncompleteNode {
-            hash,
-            missing: missing.to_string(),
-        });
+    if let Some((hash, node, _children)) = pending {
+        return Err(incomplete_node_error(hash, node.is_some()));
     }
 
     Ok(installed)
+}
+
+/// Error for a node whose two blobs never both arrived, naming the blob that is missing given
+/// whether the `node` blob is the one present.
+fn incomplete_node_error(hash: MerkleHash, has_node: bool) -> MerkleDbError {
+    let missing = if has_node { CHILDREN_FILE } else { NODE_FILE };
+    MerkleDbError::IncompleteNode {
+        hash,
+        missing: missing.to_string(),
+    }
 }
 
 /// Inspect a fully-resolved tar entry destination path and, if it identifies a Merkle
