@@ -55,6 +55,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          persist-credentials: false
           ref: ${{ inputs.commit }}
           sparse-checkout: oxen-python/pyproject.toml
           sparse-checkout-cone-mode: false
