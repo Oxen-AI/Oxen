@@ -32,7 +32,10 @@ use std::sync::{Arc, LazyLock};
 
 use sql_query_builder as sql;
 
+#[cfg(not(any(test, feature = "test-utils")))]
 const DF_DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
+#[cfg(any(test, feature = "test-utils"))]
+const DF_DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(1000).unwrap();
 
 // Static cache of DuckDB instances with LRU eviction
 static DF_DB_INSTANCES: LazyLock<RwLock<LruCache<PathBuf, Arc<Mutex<duckdb::Connection>>>>> =
