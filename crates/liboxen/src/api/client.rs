@@ -12,9 +12,7 @@ use crate::view::http;
 pub use reqwest::Url;
 use reqwest::retry;
 use reqwest::{Client, ClientBuilder, header};
-#[cfg(not(any(test, feature = "test-utils")))]
 use std::collections::HashMap;
-#[cfg(not(any(test, feature = "test-utils")))]
 use std::sync::{LazyLock, RwLock};
 use std::time;
 
@@ -58,15 +56,14 @@ pub fn get_scheme_and_host_from_url(url: &str) -> Result<(String, String), OxenE
 // kick in. Auth token and UA string are read once per key during the first
 // build and then baked into the client — they're not part of the key, so a
 // mid-process auth or runtime-config change won't invalidate the cache.
-// Not compiled under `test` / `test-utils`.
-#[cfg(not(any(test, feature = "test-utils")))]
+// Under `test` / `test-utils` the cached client is built with
+// `pool_max_idle_per_host(0)`, so connection state cannot leak between tests.
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
 struct ClientCacheKey {
     host: String,
     with_user_agent: bool,
 }
 
-#[cfg(not(any(test, feature = "test-utils")))]
 static CLIENT_CACHE: LazyLock<RwLock<HashMap<ClientCacheKey, Client>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
@@ -80,12 +77,6 @@ pub fn new_for_url_no_user_agent(url: &str) -> Result<Client, OxenError> {
     new_for_host(host, false)
 }
 
-#[cfg(any(test, feature = "test-utils"))]
-fn new_for_host(host: String, should_add_user_agent: bool) -> Result<Client, OxenError> {
-    build_client(host, should_add_user_agent)
-}
-
-#[cfg(not(any(test, feature = "test-utils")))]
 fn new_for_host(host: String, should_add_user_agent: bool) -> Result<Client, OxenError> {
     let key = ClientCacheKey {
         host: host.clone(),
@@ -111,9 +102,11 @@ fn new_for_host(host: String, should_add_user_agent: bool) -> Result<Client, Oxe
 }
 
 fn build_client(host: String, should_add_user_agent: bool) -> Result<Client, OxenError> {
-    Ok(builder_for_host(host, should_add_user_agent)?
-        .timeout(time::Duration::from_secs(constants::timeout()))
-        .build()?)
+    let builder = builder_for_host(host, should_add_user_agent)?
+        .timeout(time::Duration::from_secs(constants::timeout()));
+    #[cfg(any(test, feature = "test-utils"))]
+    let builder = builder.pool_max_idle_per_host(0);
+    Ok(builder.build()?)
 }
 
 pub fn new_for_remote_repo(remote_repo: &RemoteRepository) -> Result<Client, OxenError> {
@@ -147,9 +140,12 @@ fn builder_for_host(host: String, should_add_user_agent: bool) -> Result<ClientB
             // to only retry specific server errors in the future if that is not true.
             //
             // * info (100's), success (200's), redirection (300's), and client errors (400's)
-            //   don't make sense to retry. We'll only retry server errors (500's).
+            //   don't make sense to retry — except 408 Request Timeout, which is a signal that the
+            //   server didn't process the request. We'll retry server errors (500's) and 408s.
             match req_rep.status() {
-                Some(status_code) if status_code.is_server_error() => req_rep.retryable(), // retry
+                Some(s) if s.is_server_error() || s == reqwest::StatusCode::REQUEST_TIMEOUT => {
+                    req_rep.retryable()
+                }
                 _ => req_rep.success(), // this means don't retry, and is the only other valid return value from the closure
             }
         });
