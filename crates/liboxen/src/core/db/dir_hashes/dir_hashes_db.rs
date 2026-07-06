@@ -11,7 +11,10 @@ use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
+#[cfg(not(any(test, feature = "test-utils")))]
 const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
+#[cfg(any(test, feature = "test-utils"))]
+const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(1000).unwrap();
 
 /// Paired-lock cache for per-commit `dir_hash_db` RocksDB handles. The two fields solve
 /// disjoint problems — see each field. A single process-global instance ([`CACHE`]) is used;
