@@ -1100,7 +1100,11 @@ mod tests {
         .await
     }
 
+    // DIAGNOSTIC: serialized to test whether this flake is cross-test contamination via the
+    // process-wide `DB_INSTANCES` LRU cache in `workspace_name_index`. If the flake goes away
+    // with this marker, root-cause is confirmed as cache-eviction-during-race.
     #[tokio::test]
+    #[serial_test::serial(workspace_name_index_race_diagnostic)]
     async fn test_concurrent_create_with_name_exactly_one_succeeds() -> Result<(), OxenError> {
         const NUM_TASKS: usize = 10;
         const SHARED_NAME: &str = "shared-workspace-name";
