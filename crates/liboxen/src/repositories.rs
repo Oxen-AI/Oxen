@@ -631,6 +631,11 @@ mod tests {
             assert_eq!(old_namespace_repos.count(), 1);
             assert_eq!(new_namespace_repos.count(), 0);
 
+            // Drop the repo to release its LMDB env before the transfer: on Windows
+            // `transfer_namespace` renames via copy-then-remove-source, and a mapped env file
+            // can't be removed while this repo holds it open.
+            drop(_repo);
+
             // Transfer to new namespace
             let updated_repo = repositories::transfer_namespace(
                 &sync_dir,

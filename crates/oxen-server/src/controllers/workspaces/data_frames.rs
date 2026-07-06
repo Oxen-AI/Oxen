@@ -755,6 +755,7 @@ mod tests {
         assert!(body.contains("col_b"));
 
         // cleanup
+        drop(workspace);
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
@@ -813,6 +814,7 @@ mod tests {
         assert!(response.data_frame.is_none());
 
         // cleanup
+        drop(workspace);
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
@@ -1016,6 +1018,7 @@ mod tests {
         assert!(!response.is_indexed);
         assert!(response.data_frame.is_none());
 
+        drop(workspace);
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
@@ -1257,6 +1260,7 @@ mod tests {
             assert_eq!(pagination.total_entries, 25);
         }
 
+        drop(workspace);
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
