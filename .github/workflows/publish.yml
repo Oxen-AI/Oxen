@@ -57,6 +57,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Free up disk space
         uses: ./.github/actions/free-disk-space
       - name: Package and verify crates

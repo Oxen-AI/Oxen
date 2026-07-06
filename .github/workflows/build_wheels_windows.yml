@@ -81,6 +81,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          persist-credentials: false
           ref: ${{ inputs.CHECKOUT_REF }}
 
       - name: Patch version in pyproject.toml and Cargo.toml
