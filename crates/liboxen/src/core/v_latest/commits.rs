@@ -831,7 +831,7 @@ pub fn list_between(
 }
 
 /// List commits reachable from `head` but not from `base` (equivalent to git's
-/// `base..head`), ordered so that a commit always appears before its parents.
+/// `base..head`), ordered newest-first by commit timestamp.
 ///
 /// [`list_between`] stops only when it reaches the single `base` commit, so a
 /// merge commit in `head`'s history drags in every ancestor along its other
