@@ -526,22 +526,20 @@ async fn push_commits(
                     .await;
 
                     if let Err(err) = result {
-                        let err_str = format!("Error pushing commit {id:?}: {err}");
-                        errors.lock().await.push(OxenError::basic_str(err_str));
+                        // Keep the structured error intact so callers (ultimately the CLI) can
+                        // classify it; the commit id only matters for the log, not the error type.
+                        log::error!("Error pushing commit {id:?}: {err}");
+                        errors.lock().await.push(err);
                     }
                 }
             },
         )
         .await;
 
-    let errors = errors.lock().await;
-    if !errors.is_empty() {
-        let error_messages: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
-        return Err(OxenError::basic_str(format!(
-            "Failed to push {} commit(s):\n{}",
-            errors.len(),
-            error_messages.join("\n")
-        )));
+    // Bubble one error up unchanged so callers can classify it (e.g. the CLI maps a quota
+    // error to a friendly hint). Every per-commit failure was logged above with its commit id.
+    if let Some(err) = errors.lock().await.pop() {
+        return Err(err);
     }
 
     Ok(())
@@ -599,14 +597,18 @@ pub async fn push_entries(
             Ok(())
         }
         (Err(err), Ok(_)) => {
-            let err = format!("Error syncing large entries: {err}");
-            Err(OxenError::basic_str(err))
+            log::error!("Error syncing large entries: {err}");
+            Err(err)
         }
         (Ok(_), Err(err)) => {
-            let err = format!("Error syncing small entries: {err}");
-            Err(OxenError::basic_str(err))
+            log::error!("Error syncing small entries: {err}");
+            Err(err)
         }
-        _ => Err(OxenError::basic_str("Unknown error syncing entries")),
+        (Err(large_err), Err(small_err)) => {
+            log::error!("Error syncing small entries: {small_err}");
+            log::error!("Error syncing large entries: {large_err}");
+            Err(large_err)
+        }
     }
 }
 
@@ -643,7 +645,7 @@ async fn chunk_and_send_large_entries(
         entries.len()
     );
     let should_stop = Arc::new(AtomicBool::new(false));
-    let first_error = Arc::new(Mutex::new(None::<String>));
+    let first_error = Arc::new(Mutex::new(None::<OxenError>));
     let mut handles = vec![];
 
     for worker in 0..worker_count {
@@ -682,7 +684,7 @@ async fn chunk_and_send_large_entries(
                     Err(e) => {
                         log::error!("Failed to resolve local version path: {e}");
                         should_stop.store(true, Ordering::Relaxed);
-                        *first_error.lock().await = Some(e.to_string());
+                        *first_error.lock().await = Some(e);
                         break;
                     }
                 };
@@ -712,7 +714,7 @@ async fn chunk_and_send_large_entries(
                             err
                         );
                         should_stop.store(true, Ordering::Relaxed);
-                        *first_error.lock().await = Some(err.to_string());
+                        *first_error.lock().await = Some(err);
                         break;
                     }
                 }
@@ -728,8 +730,8 @@ async fn chunk_and_send_large_entries(
         }
     }
 
-    if let Some(err) = first_error.lock().await.clone() {
-        return Err(OxenError::basic_str(err));
+    if let Some(err) = first_error.lock().await.take() {
+        return Err(err);
     }
 
     log::debug!("All large file tasks done. :-)");
@@ -802,7 +804,7 @@ async fn bundle_and_send_small_entries(
     // Error handling similar to `chunk_and_send_large_entries`
     use std::sync::atomic::{AtomicBool, Ordering};
     let should_stop = Arc::new(AtomicBool::new(false));
-    let first_error = Arc::new(Mutex::new(None::<String>));
+    let first_error = Arc::new(Mutex::new(None::<OxenError>));
     let mut handles = vec![];
 
     for worker in 0..worker_count {
@@ -828,7 +830,7 @@ async fn bundle_and_send_small_entries(
                     Err(e) => {
                         log::error!("Failed to compute entries size: {e}");
                         should_stop.store(true, Ordering::Relaxed);
-                        *first_error.lock().await = Some(e.to_string());
+                        *first_error.lock().await = Some(e);
                         finished_queue.pop().await;
                         break;
                     }
@@ -849,7 +851,7 @@ async fn bundle_and_send_small_entries(
                     }
                     Err(e) => {
                         should_stop.store(true, Ordering::Relaxed);
-                        *first_error.lock().await = Some(e.to_string());
+                        *first_error.lock().await = Some(e);
                         finished_queue.pop().await;
                         break;
                     }
@@ -866,8 +868,8 @@ async fn bundle_and_send_small_entries(
         }
     }
 
-    if let Some(err) = first_error.lock().await.clone() {
-        return Err(OxenError::basic_str(err));
+    if let Some(err) = first_error.lock().await.take() {
+        return Err(err);
     }
 
     sleep(Duration::from_millis(100)).await;
