@@ -1626,6 +1626,11 @@ pub fn added_objects(
         None => None,
     };
 
+    // Equal content-addressed roots mean identical trees, so head adds nothing.
+    if base_root == Some(head_root) {
+        return Ok(Some(AddedObjects::default()));
+    }
+
     let mut added = AddedObjects::default();
     collect_added_from_dir(
         repo,
@@ -1883,6 +1888,26 @@ mod tests {
             assert!(
                 missing.versions.contains(&b_hash),
                 "added-but-missing blob must be flagged: {missing:?}"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    // Identical base and head add nothing: the walk must return empty, not the shared root + vnodes.
+    #[tokio::test]
+    async fn test_added_objects_is_empty_when_base_equals_head() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let a_path = repo.path.join("a.txt");
+            test::write_txt_file_to_path(&a_path, "alpha")?;
+            repositories::add(&repo, &a_path).await?;
+            let commit = repositories::commit(&repo, "add a.txt")?;
+
+            let added = added_objects(&repo, Some(&commit), &commit)?.expect("head tree present");
+            assert!(
+                added.nodes.is_empty() && added.versions.is_empty(),
+                "identical base/head must add nothing, got: {added:?}"
             );
 
             Ok(())
