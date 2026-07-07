@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::core::db::dir_hashes::dir_hashes_db::dir_hash_db_path;
 use crate::core::refs::with_ref_manager;
 use crate::core::v_latest::branches::OnConflict;
 use crate::error::OxenError;
@@ -119,24 +120,34 @@ pub fn update(
     })
 }
 
-/// Return `Err(ReachableObjectsMissing)` unless every merkle node and version blob that `head`
-/// adds relative to `base` is present in this repository.
+/// Reject the ref advance unless the server can fully serve `head`: every merkle node and version
+/// blob it adds relative to `base` is present (else `ReachableObjectsMissing`), and its
+/// directory-hash index — needed to resolve the tree by path — exists (else `DirHashIndexMissing`).
 ///
-/// Server ref-advance paths call this before moving a ref, so it can never point at a commit whose
-/// content the server lacks. Local/CLI branch ops skip it — a local clone is the source of truth.
+/// Server ref-advance paths call this before moving a ref, so it can never point at a commit the
+/// server can't serve. Local/CLI branch ops skip it — a local clone is the source of truth.
 pub async fn verify_reachable_objects(
     repo: &LocalRepository,
     base: Option<&Commit>,
     head: &Commit,
 ) -> Result<(), OxenError> {
     let missing = repositories::tree::find_missing_added_objects(repo, base, head).await?;
-    if missing.is_empty() {
-        return Ok(());
+    if !missing.is_empty() {
+        return Err(OxenError::ReachableObjectsMissing {
+            missing_nodes: missing.nodes.len(),
+            missing_versions: missing.versions.len(),
+        });
     }
-    Err(OxenError::ReachableObjectsMissing {
-        missing_nodes: missing.nodes.len(),
-        missing_versions: missing.versions.len(),
-    })
+
+    // Path-based serving also needs the commit's dir-hashes index — require it even when every
+    // referenced object is present.
+    if !dir_hash_db_path(repo, head).exists() {
+        return Err(OxenError::DirHashIndexMissing {
+            commit: head.id.clone(),
+        });
+    }
+
+    Ok(())
 }
 
 /// Verify that advancing a ref to `commit_id` wouldn't point at a commit missing reachable
@@ -658,6 +669,66 @@ mod tests {
             assert!(
                 merge_result.is_err(),
                 "merging in a commit with a missing added blob must be rejected"
+            );
+
+            crate::api::client::repositories::delete(&remote_repo).await?;
+            Ok(())
+        })
+        .await
+    }
+
+    // The gate also refuses a commit whose objects are all present but whose dir-hashes index is
+    // missing — the tree can't be served by path without it. The check lives in the shared
+    // `verify_reachable_objects`, so exercising the update gate covers all three ref-advance paths.
+    #[tokio::test]
+    async fn test_ref_advance_gate_requires_dir_hashes() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async {
+            let mut repo = repo;
+
+            let a_path = repo.path.join("a.txt");
+            test::write_txt_file_to_path(&a_path, "alpha")?;
+            repositories::add(&repo, &a_path).await?;
+            let commit1 = repositories::commit(&repo, "add a.txt")?;
+
+            let remote = test::repo_remote_url_from(&repo.dirname());
+            crate::command::config::set_remote(
+                &mut repo,
+                crate::constants::DEFAULT_REMOTE_NAME,
+                &remote,
+            )?;
+            let remote_repo = test::create_remote_repo(&repo).await?;
+            repositories::push(&repo).await?;
+
+            // commit2 is pushed complete: every node and blob it adds is on the server.
+            let b_path = repo.path.join("b.txt");
+            test::write_txt_file_to_path(&b_path, "beta")?;
+            repositories::add(&repo, &b_path).await?;
+            let commit2 = repositories::commit(&repo, "add b.txt")?;
+            repositories::push(&repo).await?;
+
+            // Reset main to commit1, then remove commit2's dir-hashes index on the server.
+            crate::api::client::branches::update(&remote_repo, DEFAULT_BRANCH_NAME, &commit1)
+                .await?;
+            let server = server_repo(&repo.dirname())?;
+            let dir_hashes =
+                crate::core::db::dir_hashes::dir_hashes_db::dir_hash_db_path(&server, &commit2);
+            util::fs::remove_dir_all(&dir_hashes)?;
+
+            // Re-advancing main to commit2 must be rejected even though its objects are all
+            // present, and main must stay at commit1.
+            let result =
+                crate::api::client::branches::update(&remote_repo, DEFAULT_BRANCH_NAME, &commit2)
+                    .await;
+            assert!(
+                result.is_err(),
+                "advance onto a commit missing its dir-hashes index must be rejected"
+            );
+            let head = crate::api::client::branches::get_by_name(&remote_repo, DEFAULT_BRANCH_NAME)
+                .await?
+                .expect("main exists");
+            assert_eq!(
+                head.commit_id, commit1.id,
+                "a rejected advance must not move main"
             );
 
             crate::api::client::repositories::delete(&remote_repo).await?;

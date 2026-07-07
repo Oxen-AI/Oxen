@@ -612,6 +612,13 @@ pub enum OxenError {
         missing_nodes: usize,
         missing_versions: usize,
     },
+    /// A branch-ref advance was rejected because the new commit's directory-hash index
+    /// (`.oxen/history/<id>/dir_hashes`) is absent, so the server can't resolve the commit's tree
+    /// by path even when every referenced object is present. A full re-push repopulates it.
+    #[error(
+        "Commit {commit} is missing its directory index on the server, so its tree can't be served by path. Re-push the commit to repopulate the index."
+    )]
+    DirHashIndexMissing { commit: String },
 
     /// An `OxenResponse` arrived with `status == "warning"`: the request succeeded but
     /// the server attached an advisory message.
@@ -772,6 +779,9 @@ impl OxenError {
             | ReachableObjectsMissing { .. } => {
                 "If a content blob is missing on the server, run `oxen push --missing-files` from a clone with the full local history to repair it."
             }
+            DirHashIndexMissing { .. } => {
+                "Re-push the commit from a clone with the full local history to repopulate the server's directory index."
+            }
             UnsupportedRepoVersion(_) => {
                 "Use an older Oxen release to migrate this repository up to the current format, then retry with this CLI."
             }
@@ -834,6 +844,7 @@ impl OxenError {
             OxenError::HTTP(req_err) => req_err.status().is_some_and(is_fatal_http_status),
             OxenError::VersionsMissingOnServer { .. } => true,
             OxenError::ReachableObjectsMissing { .. } => true,
+            OxenError::DirHashIndexMissing { .. } => true,
             OxenError::VersionStoreDataMissing { .. } => true,
             OxenError::UnknownRemoteResponseStatus(_) => true,
             _ => false,

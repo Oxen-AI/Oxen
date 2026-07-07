@@ -675,6 +675,24 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::BadRequest().json(error_json)
                     }
+                    OxenError::DirHashIndexMissing { commit } => {
+                        log::warn!(
+                            "Refusing branch advance: commit {commit} is missing its directory index"
+                        );
+                        let error_json = json!({
+                            "error": {
+                                "type": "dir_hash_index_missing",
+                                "title": "Commit directory index missing on server",
+                                "detail": format!(
+                                    "Refusing to advance the branch: commit {commit} is missing its directory index on the server, so its tree can't be served by path. Re-push the commit to repopulate it."
+                                ),
+                                "commit": commit,
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
                     err => {
                         // Surface the error's message so unmapped variants return a real reason
                         // instead of a bare "internal_server_error" that lives only in the logs.
