@@ -21,7 +21,12 @@ use crate::repositories;
 use crate::util;
 use crate::util::fs::AtomicFile;
 
+#[cfg(not(any(test, feature = "test-utils")))]
 const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
+// Larger under test: sibling-test load evicts our entry between `with_ref_manager` calls,
+// and the next opener collides with the still-held RocksDB `LOCK` on `.oxen/refs`.
+#[cfg(any(test, feature = "test-utils"))]
+const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(1000).unwrap();
 
 // Static cache of DB instances with LRU eviction. Each entry wraps the DB in a
 // `RwLock` so compound read-modify-write sequences (e.g. `create_branch`'s
