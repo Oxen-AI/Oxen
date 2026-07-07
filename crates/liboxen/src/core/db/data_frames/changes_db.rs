@@ -36,7 +36,13 @@ use crate::core::db;
 use crate::core::db::data_frames::DataFrameError;
 use crate::error::OxenError;
 
+#[cfg(not(any(test, feature = "test-utils")))]
 const CHANGES_DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
+// Larger under test: `open_and_cache`'s uncached fallback lets a second `DB::open` on the
+// same path collide on RocksDB's `LOCK`, breaking bootstrap-plus-workers concurrency tests
+// under cross-test cache pressure.
+#[cfg(any(test, feature = "test-utils"))]
+const CHANGES_DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(1000).unwrap();
 
 /// Global LRU cache of open change-tracking RocksDB handles, keyed by db path.
 /// `Mutex` rather than `RwLock` because `LruCache::get` requires `&mut self` to
