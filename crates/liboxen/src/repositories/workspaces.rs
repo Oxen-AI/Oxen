@@ -1100,11 +1100,11 @@ mod tests {
         .await
     }
 
-    // DIAGNOSTIC: serialized to test whether this flake is cross-test contamination via the
-    // process-wide `DB_INSTANCES` LRU cache in `workspace_name_index`. If the flake goes away
-    // with this marker, root-cause is confirmed as cache-eviction-during-race.
+    // Serialized: the atomicity check requires all tasks to share one `Arc<RwLock<DB>>`; under
+    // sibling-test load, `workspace_name_index`'s process-wide LRU can evict and hand out a
+    // fresh Arc, breaking `put_if_absent`'s single-writer guarantee.
     #[tokio::test]
-    #[serial_test::serial(workspace_name_index_race_diagnostic)]
+    #[serial_test::serial(workspace_name_index)]
     async fn test_concurrent_create_with_name_exactly_one_succeeds() -> Result<(), OxenError> {
         const NUM_TASKS: usize = 10;
         const SHARED_NAME: &str = "shared-workspace-name";
