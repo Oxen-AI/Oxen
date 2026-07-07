@@ -602,6 +602,17 @@ pub enum OxenError {
     #[error("{}", format_versions_missing_on_server(hashes))]
     VersionsMissingOnServer { hashes: Vec<String> },
 
+    /// A branch-ref advance was rejected because the new commit references merkle nodes or
+    /// version blobs that aren't present on the server. Only counts are carried — the recovery
+    /// path (`oxen push --missing-files`) re-derives which objects to re-push.
+    #[error(
+        "Commit references {missing_nodes} merkle node(s) and {missing_versions} version blob(s) the server is missing. Re-push the missing objects with `oxen push --missing-files`."
+    )]
+    ReachableObjectsMissing {
+        missing_nodes: usize,
+        missing_versions: usize,
+    },
+
     /// An `OxenResponse` arrived with `status == "warning"`: the request succeeded but
     /// the server attached an advisory message.
     #[error("Remote Warning: {0}")]
@@ -756,7 +767,9 @@ impl OxenError {
             WorkspaceStagedDbCorrupted { .. } => {
                 "Recreate the workspace: `oxen workspace delete <id>` then re-create it."
             }
-            DownloadBatchExhausted { .. } | VersionsMissingOnServer { .. } => {
+            DownloadBatchExhausted { .. }
+            | VersionsMissingOnServer { .. }
+            | ReachableObjectsMissing { .. } => {
                 "If a content blob is missing on the server, run `oxen push --missing-files` from a clone with the full local history to repair it."
             }
             UnsupportedRepoVersion(_) => {
@@ -820,6 +833,7 @@ impl OxenError {
             | OxenError::HttpDeserializeError { status, .. } => is_fatal_http_status(*status),
             OxenError::HTTP(req_err) => req_err.status().is_some_and(is_fatal_http_status),
             OxenError::VersionsMissingOnServer { .. } => true,
+            OxenError::ReachableObjectsMissing { .. } => true,
             OxenError::VersionStoreDataMissing { .. } => true,
             OxenError::UnknownRemoteResponseStatus(_) => true,
             _ => false,

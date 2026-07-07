@@ -119,6 +119,45 @@ pub fn update(
     })
 }
 
+/// Return `Err(ReachableObjectsMissing)` unless every merkle node and version blob that `head`
+/// adds relative to `base` is present in this repository.
+///
+/// Server ref-advance paths call this before moving a ref, so it can never point at a commit whose
+/// content the server lacks. Local/CLI branch ops skip it — a local clone is the source of truth.
+pub async fn verify_reachable_objects(
+    repo: &LocalRepository,
+    base: Option<&Commit>,
+    head: &Commit,
+) -> Result<(), OxenError> {
+    let missing = repositories::tree::find_missing_added_objects(repo, base, head).await?;
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(OxenError::ReachableObjectsMissing {
+        missing_nodes: missing.nodes.len(),
+        missing_versions: missing.versions.len(),
+    })
+}
+
+/// Verify that advancing a ref to `commit_id` wouldn't point at a commit missing reachable
+/// objects, scoping the check to what it adds over `base_branch`'s head. A commit that doesn't
+/// exist yet is left for the ref-advance op to reject; a missing base branch checks the whole tree.
+pub async fn verify_advance_to(
+    repo: &LocalRepository,
+    commit_id: &str,
+    base_branch: &str,
+) -> Result<(), OxenError> {
+    let Some(head_commit) = repositories::commits::get_by_id(repo, commit_id)? else {
+        return Ok(());
+    };
+    let base_commit = get_by_name(repo, base_branch).ok().and_then(|branch| {
+        repositories::commits::get_by_id(repo, &branch.commit_id)
+            .ok()
+            .flatten()
+    });
+    verify_reachable_objects(repo, base_commit.as_ref(), &head_commit).await
+}
+
 /// Delete a local branch
 pub fn delete(repo: &LocalRepository, name: impl AsRef<str>) -> Result<Branch, OxenError> {
     let name = name.as_ref();
@@ -506,6 +545,122 @@ mod tests {
             let leftover_branches = repositories::branches::list(&repo)?;
             assert_eq!(og_branches.len(), leftover_branches.len());
 
+            Ok(())
+        })
+        .await
+    }
+
+    /// Open the server-side repository for a pushed remote so a test can mutate its on-disk
+    /// version store. `bin/test-rust` starts oxen-server against `$SYNC_DIR`, inherited by the
+    /// test process; repos live under `<SYNC_DIR>/<namespace>/<name>`.
+    fn server_repo(name: &str) -> Result<crate::model::LocalRepository, OxenError> {
+        let sync_dir =
+            std::path::PathBuf::from(std::env::var("SYNC_DIR").map_err(|_| {
+                OxenError::basic_str("SYNC_DIR not set; run tests via bin/test-rust")
+            })?);
+        repositories::get_by_namespace_and_name(
+            &sync_dir,
+            crate::constants::DEFAULT_NAMESPACE,
+            name,
+            None,
+        )?
+        .ok_or_else(|| OxenError::basic_str(format!("server repo not found for {name}")))
+    }
+
+    // Every server ref-advance path — branch update, new-branch create, and push-time merge —
+    // must refuse to point a ref at a commit whose newly-added blob is missing.
+    #[tokio::test]
+    async fn test_ref_advance_gates_reject_incomplete_commit() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async {
+            let mut repo = repo;
+
+            // commit1 is complete; commit2 adds b.txt.
+            let a_path = repo.path.join("a.txt");
+            test::write_txt_file_to_path(&a_path, "alpha")?;
+            repositories::add(&repo, &a_path).await?;
+            let commit1 = repositories::commit(&repo, "add a.txt")?;
+
+            let remote = test::repo_remote_url_from(&repo.dirname());
+            crate::command::config::set_remote(
+                &mut repo,
+                crate::constants::DEFAULT_REMOTE_NAME,
+                &remote,
+            )?;
+            let remote_repo = test::create_remote_repo(&repo).await?;
+            repositories::push(&repo).await?;
+
+            let b_path = repo.path.join("b.txt");
+            test::write_txt_file_to_path(&b_path, "beta")?;
+            repositories::add(&repo, &b_path).await?;
+            let commit2 = repositories::commit(&repo, "add b.txt")?;
+            repositories::push(&repo).await?;
+
+            // The server loses b.txt's blob — referenced only by commit2.
+            let b_hash = repositories::tree::get_node_by_path(&repo, &commit2, "b.txt")?
+                .expect("b.txt in commit2")
+                .file()?
+                .hash()
+                .to_string();
+            let server = server_repo(&repo.dirname())?;
+            server.version_store().delete_version(&b_hash).await?;
+
+            // Resetting back to the complete commit1 is allowed (it adds nothing missing).
+            crate::api::client::branches::update(&remote_repo, DEFAULT_BRANCH_NAME, &commit1)
+                .await?;
+            let head = crate::api::client::branches::get_by_name(&remote_repo, DEFAULT_BRANCH_NAME)
+                .await?
+                .expect("main exists");
+            assert_eq!(head.commit_id, commit1.id);
+
+            // update gate: re-advancing main to commit2 must be rejected.
+            let update_result =
+                crate::api::client::branches::update(&remote_repo, DEFAULT_BRANCH_NAME, &commit2)
+                    .await;
+            assert!(
+                update_result.is_err(),
+                "update onto a commit with a missing added blob must be rejected"
+            );
+            let head = crate::api::client::branches::get_by_name(&remote_repo, DEFAULT_BRANCH_NAME)
+                .await?
+                .expect("main exists");
+            assert_eq!(
+                head.commit_id, commit1.id,
+                "update must not advance main onto an incomplete commit"
+            );
+
+            // create gate: creating a new branch at commit2 (main is at the complete commit1) must
+            // be rejected, and the branch must not be created.
+            let create_result = crate::api::client::branches::create_from_commit(
+                &remote_repo,
+                "at-commit2",
+                &commit2,
+            )
+            .await;
+            assert!(
+                create_result.is_err(),
+                "creating a branch at a commit with a missing added blob must be rejected"
+            );
+            assert!(
+                crate::api::client::branches::get_by_name(&remote_repo, "at-commit2")
+                    .await?
+                    .is_none(),
+                "a rejected create must not leave the branch behind"
+            );
+
+            // merge gate: a push-time merge of commit2 into main (at commit1) must be rejected.
+            let merge_result = crate::api::client::branches::maybe_create_merge(
+                &remote_repo,
+                DEFAULT_BRANCH_NAME,
+                &commit2.id,
+                &commit1.id,
+            )
+            .await;
+            assert!(
+                merge_result.is_err(),
+                "merging in a commit with a missing added blob must be rejected"
+            );
+
+            crate::api::client::repositories::delete(&remote_repo).await?;
             Ok(())
         })
         .await
