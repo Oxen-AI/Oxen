@@ -197,8 +197,15 @@ mod tests {
     /// Concurrent `record_column_change` calls on the same column serialize: the final state
     /// matches exactly one writer's complete record (or is empty after an added-then-deleted
     /// collapse), with no mixed fields.
+    ///
+    /// `rocksdb_flock` serializes against the row-changes twin on macOS (single-writer
+    /// flock). `changes_db` serializes against any future test that touches the
+    /// `changes_db` LRU: the invariant check requires all workers to share one
+    /// `Arc<RwLock<DB>>`, and when the cache is full-with-pinned-entries `open_and_cache`
+    /// falls back to opening uncached — workers then each open a fresh handle and collide
+    /// on RocksDB's `LOCK`.
     #[test]
-    #[serial_test::serial(rocksdb_flock)]
+    #[serial_test::serial(rocksdb_flock, changes_db)]
     fn test_concurrent_record_column_change_same_column_serializes() -> Result<(), OxenError> {
         const NUM_THREADS: usize = 16;
         const COLUMN: &str = "shared-col";
