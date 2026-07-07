@@ -600,15 +600,14 @@ async fn start(
         );
     }
 
-    // Under `--test`, install DuckDB extensions up front. Concurrent first-use autoloads
-    // race on the extension file's temp→final rename on Windows (`Could not move file:
-    // Access is denied`); preinstalling closes that window before actix hands out any
-    // request threads.
-    if test_mode {
-        match liboxen::core::df::duckdb_setup::preload_extensions() {
-            Ok(()) => log::info!("DuckDB extensions preloaded for test mode"),
-            Err(e) => log::error!("Failed to preload DuckDB extensions: {e}"),
-        }
+    // Install DuckDB extensions before actix hands out any request threads. oxen-server
+    // is a single-instance deploy, so every restart drains pent-up client retries into a
+    // burst of concurrent first-use requests; two of them triggering autoload at once
+    // race on the extension file's temp→final rename (`Could not move file: Access is
+    // denied` on Windows, similar timing hazards elsewhere).
+    match liboxen::core::df::duckdb_setup::preload_extensions() {
+        Ok(()) => log::info!("DuckDB extensions preloaded"),
+        Err(e) => log::error!("Failed to preload DuckDB extensions: {e}"),
     }
 
     let data = app_data::OxenAppData {
