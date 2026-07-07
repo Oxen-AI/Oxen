@@ -197,6 +197,14 @@ impl DfDBManager {
     }
 }
 
+/// Open a DuckDB connection at `path`. All library-managed DuckDB connections
+/// are opened through this function.
+// The one sanctioned `Connection::open` call; disallowed elsewhere (see clippy.toml).
+#[allow(clippy::disallowed_methods)]
+fn open_duckdb_connection(path: &Path) -> Result<duckdb::Connection, duckdb::Error> {
+    duckdb::Connection::open(path)
+}
+
 /// Get a connection to a duckdb database.
 ///
 /// If the database has a stale or corrupt WAL file (e.g. from a prior crash or
@@ -216,7 +224,7 @@ pub fn get_connection(path: &Path) -> Result<duckdb::Connection, DataFrameError>
     let wal_path = wal_path_for(path);
 
     // Happy path — open succeeds on the first try.
-    let initial_err = match duckdb::Connection::open(path) {
+    let initial_err = match open_duckdb_connection(path) {
         Ok(conn) => return open_success(conn, path),
         Err(e) => e,
     };
@@ -242,7 +250,7 @@ pub fn get_connection(path: &Path) -> Result<duckdb::Connection, DataFrameError>
     );
     remove_file_if_exists(&wal_path);
 
-    if let Ok(conn) = duckdb::Connection::open(path) {
+    if let Ok(conn) = open_duckdb_connection(path) {
         log::info!("get_connection: Recovery succeeded after WAL removal for {path:?}");
         return open_success(conn, path);
     }
@@ -949,6 +957,11 @@ pub fn record_batches_to_polars_df(records: Vec<RecordBatch>) -> Result<DataFram
 
 #[cfg(test)]
 mod tests {
+    // Fixtures below open raw/foreign DuckDB databases (planting WALs, setting
+    // pragmas) to exercise `get_connection`, intentionally bypassing the managed
+    // `open_duckdb_connection` helper.
+    #![allow(clippy::disallowed_methods)]
+
     use crate::test;
 
     use super::*;
