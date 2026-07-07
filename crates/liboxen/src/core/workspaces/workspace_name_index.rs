@@ -14,7 +14,13 @@ use crate::model::LocalRepository;
 use crate::model::workspace::WorkspaceConfig;
 use crate::util;
 
+#[cfg(not(any(test, feature = "test-utils")))]
 const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
+// Larger under test: sibling-test load can evict this LRU's entry between two
+// `get_index` calls in a concurrency test, handing out a fresh `Arc<RwLock<DB>>`
+// that breaks `put_if_absent`'s shared-writer atomicity.
+#[cfg(any(test, feature = "test-utils"))]
+const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(1000).unwrap();
 
 // Static cache of DB instances with LRU eviction. The inner `RwLock<DB>` lets
 // compound read-modify-write sequences (e.g. `put_if_absent`) run under exclusive

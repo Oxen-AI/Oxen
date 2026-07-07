@@ -1100,11 +1100,10 @@ mod tests {
         .await
     }
 
-    // Serialized: the atomicity check requires all tasks to share one `Arc<RwLock<DB>>`; under
-    // sibling-test load, `workspace_name_index`'s process-wide LRU can evict and hand out a
-    // fresh Arc, breaking `put_if_absent`'s single-writer guarantee.
+    // The atomicity check requires all tasks to share one `Arc<RwLock<DB>>`, so
+    // `workspace_name_index`'s LRU carries a larger cap under test cfg to keep sibling-test
+    // pressure from evicting our entry mid-race.
     #[tokio::test]
-    #[serial_test::serial(workspace_name_index)]
     async fn test_concurrent_create_with_name_exactly_one_succeeds() -> Result<(), OxenError> {
         const NUM_TASKS: usize = 10;
         const SHARED_NAME: &str = "shared-workspace-name";
