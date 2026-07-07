@@ -696,10 +696,11 @@ mod tests {
 
     // ----- list_between_exclusive: helpers -----
     //
-    // Octopus merges (>2 parents) and disjoint histories aren't exercised because
-    // Oxen never produces them: `merge` is pairwise, so commits have at most two
-    // parents, and every repo shares a single root. The algorithm still handles
-    // them structurally (it loops over all parents and seeds from both tips).
+    // Octopus merges (>2 parents) aren't exercised because Oxen never produces them:
+    // `merge` is pairwise, so commits have at most two parents. Disjoint histories can
+    // occur (`pull` merges unrelated histories) but are awkward to build with the test
+    // helpers; the algorithm handles them structurally, as a pure set difference
+    // between the two tips' reachable sets.
 
     async fn add_commit(repo: &LocalRepository, name: &str) -> Result<Commit, OxenError> {
         let path = repo.path.join(format!("{name}.txt"));
