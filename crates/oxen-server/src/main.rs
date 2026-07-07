@@ -600,6 +600,17 @@ async fn start(
         );
     }
 
+    // Under `--test`, install DuckDB extensions up front. Concurrent first-use autoloads
+    // race on the extension file's temp→final rename on Windows (`Could not move file:
+    // Access is denied`); preinstalling closes that window before actix hands out any
+    // request threads.
+    if test_mode {
+        match liboxen::core::df::duckdb_setup::preload_extensions() {
+            Ok(()) => log::info!("DuckDB extensions preloaded for test mode"),
+            Err(e) => log::error!("Failed to preload DuckDB extensions: {e}"),
+        }
+    }
+
     let data = app_data::OxenAppData {
         path: PathBuf::from(sync_dir),
         config,
