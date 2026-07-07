@@ -1668,23 +1668,29 @@ pub async fn find_missing_added_objects(
     base: Option<&Commit>,
     head: &Commit,
 ) -> Result<MissingReachableObjects, OxenError> {
-    let Some(added) = added_objects(repo, base, head)? else {
-        // No root dir node for head means the commit's tree wasn't uploaded at all.
-        return Ok(MissingReachableObjects {
-            nodes: vec![head.hash()?.to_string()],
-            versions: vec![],
-        });
-    };
+    // Sync core: the merkle walk and node-existence probes are sync FS/DB IO — one blocking unit.
+    let walk_repo = repo.clone();
+    let base = base.cloned();
+    let head = head.clone();
+    let (missing_nodes, added_versions) =
+        tokio::task::spawn_blocking(move || -> Result<(Vec<String>, Vec<String>), OxenError> {
+            let Some(added) = added_objects(&walk_repo, base.as_ref(), &head)? else {
+                // No root dir node for head means the commit's tree wasn't uploaded at all.
+                return Ok((vec![head.hash()?.to_string()], vec![]));
+            };
 
-    let store = repo.merkle_node_store();
-    let mut missing_nodes = Vec::new();
-    for hash in &added.nodes {
-        if !store.exists(hash)? {
-            missing_nodes.push(hash.to_string());
-        }
-    }
+            let store = walk_repo.merkle_node_store();
+            let mut missing_nodes = Vec::new();
+            for hash in &added.nodes {
+                if !store.exists(hash)? {
+                    missing_nodes.push(hash.to_string());
+                }
+            }
 
-    let added_versions: Vec<String> = added.versions.into_iter().collect();
+            Ok((missing_nodes, added.versions.into_iter().collect()))
+        })
+        .await??;
+
     let missing_versions = repo
         .version_store()
         .find_missing_versions(&added_versions)
