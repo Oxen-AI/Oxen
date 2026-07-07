@@ -28,34 +28,6 @@ reviews:
     - path: "**"
       instructions: |
         Do not comment about failing CI, it's already clear and visible.
-        Public repo: flag references to private Oxen repos or internal-only systems in user-facing text.
-    - path: "crates/liboxen/**"
-      instructions: |
-        Core library. New business logic belongs here before CLI/server wrappers.
-        Production code: no .unwrap()/.expect(); return OxenError. All disk writes via AtomicFile (util/fs.rs).
-        IO follows docs/async_policy.md: sync fs/DB inside spawn_blocking; no DB transactions across .await.
-        Symlinks: metadata.is_dir() not path.is_dir(); skip symlinks, never follow them.
-    - path: "crates/oxen-server/**"
-      instructions: |
-        Map inspectable OxenError variants to specific OxenHttpError; others to InternalServerError.
-        Server API operations must not touch a local checkout on disk.
-        New endpoints that supersede old ones: add alongside, register in docs/deprecations.md, remove later.
-    - path: "crates/oxen-cli/**"
-      instructions: |
-        Thin wrapper over liboxen. User-visible command/flag/output changes may need docs.oxen.ai updates (separate docs repo).
-    - path: "crates/oxen-py/**"
-      instructions: |
-        PyO3 bindings. Public API changes likely need matching oxen-python/ updates and bin/test-rust -p.
-    - path: "oxen-python/**"
-      instructions: |
-        Python package and pytest suite. Cross-check Rust binding changes in crates/oxen-py/.
-        Run bin/test-rust -p, not raw pytest without the script's server/build setup.
-    - path: "docs/**"
-      instructions: |
-        Policy docs (async_policy.md, deprecations.md, github_actions_pinning.md) are authoritative.
-    - path: ".github/workflows/**"
-      instructions: |
-        Actions are pinned by trust tier per docs/github_actions_pinning.md: version tags for first-party/high-trust orgs, full commit SHA with `# vX.Y.Z` comment for third-party.
 
   # auto review new commits
   # auto review draft PRs
