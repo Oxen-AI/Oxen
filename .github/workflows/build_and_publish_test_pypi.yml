@@ -110,8 +110,6 @@ jobs:
     needs: [set_env, compute_version]
     uses: ./.github/workflows/build_wheels_macos.yml
     with:
-      AWS_ROLE: ${{ needs.set_env.outputs.aws_role }}
-      AWS_REGION: ${{ needs.set_env.outputs.aws_region }}
       PYTHON_VERSIONS: ${{ needs.set_env.outputs.python_versions }}
       CHECKOUT_REF: ${{ inputs.commit }}
       VERSION_OVERRIDE: ${{ needs.compute_version.outputs.version }}
