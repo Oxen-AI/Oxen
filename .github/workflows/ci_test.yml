@@ -106,8 +106,8 @@ jobs:
         if: matrix.platform == 'windows'
         run: |
           choco install imdisk -y
-          # 24 GB (of the 32 GB runner), leaving 8 GB for Windows + the test process.
-          imdisk -a -s 24G -m R: -p "/fs:ntfs /q /y"
+          # 28 GB (of the 32 GB runner), leaving 4 GB for Windows + the test process.
+          imdisk -a -s 28G -m R: -p "/fs:ntfs /q /y"
           echo "OXEN_TEST_RUN_DIR=R:\test" >> $env:GITHUB_ENV
           echo "SYNC_DIR=R:\sync" >> $env:GITHUB_ENV
           mkdir R:\test
