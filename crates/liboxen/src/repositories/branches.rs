@@ -124,8 +124,9 @@ pub fn update(
 /// blob it adds relative to `base` is present (else `ReachableObjectsMissing`), and its
 /// directory-hash index — needed to resolve the tree by path — exists (else `DirHashIndexMissing`).
 ///
-/// Server ref-advance paths call this before moving a ref, so it can never point at a commit the
-/// server can't serve. Local/CLI branch ops skip it — a local clone is the source of truth.
+/// Server ref-advance paths that move onto a client-supplied commit call this first, so a ref can
+/// never point at a commit the server can't serve. Local/CLI branch ops skip it — a local clone is
+/// the source of truth.
 pub async fn verify_reachable_objects(
     repo: &LocalRepository,
     base: Option<&Commit>,
@@ -730,6 +731,72 @@ mod tests {
             assert_eq!(
                 head.commit_id, commit1.id,
                 "a rejected advance must not move main"
+            );
+
+            crate::api::client::repositories::delete(&remote_repo).await?;
+            Ok(())
+        })
+        .await
+    }
+
+    // Creating a branch *from another branch* is a ref advance too: it must refuse when the source
+    // branch's head commit is missing an added blob, just like commit-based creation.
+    #[tokio::test]
+    async fn test_ref_advance_gate_rejects_create_from_incomplete_branch() -> Result<(), OxenError>
+    {
+        test::run_empty_local_repo_test_async(|repo| async {
+            let mut repo = repo;
+
+            let a_path = repo.path.join("a.txt");
+            test::write_txt_file_to_path(&a_path, "alpha")?;
+            repositories::add(&repo, &a_path).await?;
+            let commit1 = repositories::commit(&repo, "add a.txt")?;
+
+            let remote = test::repo_remote_url_from(&repo.dirname());
+            crate::command::config::set_remote(
+                &mut repo,
+                crate::constants::DEFAULT_REMOTE_NAME,
+                &remote,
+            )?;
+            let remote_repo = test::create_remote_repo(&repo).await?;
+            repositories::push(&repo).await?;
+
+            let b_path = repo.path.join("b.txt");
+            test::write_txt_file_to_path(&b_path, "beta")?;
+            repositories::add(&repo, &b_path).await?;
+            let commit2 = repositories::commit(&repo, "add b.txt")?;
+            repositories::push(&repo).await?;
+
+            // "src" points at the complete commit2; then main resets to commit1 so the gate below
+            // diffs commit2 against commit1 and actually inspects b.txt.
+            crate::api::client::branches::create_from_branch(&remote_repo, "src", DEFAULT_BRANCH_NAME)
+                .await?;
+            crate::api::client::branches::update(&remote_repo, DEFAULT_BRANCH_NAME, &commit1)
+                .await?;
+
+            // The server loses b.txt's blob — referenced only by commit2 (src's head).
+            let b_hash = repositories::tree::get_node_by_path(&repo, &commit2, "b.txt")?
+                .expect("b.txt in commit2")
+                .file()?
+                .hash()
+                .to_string();
+            let server = server_repo(&repo.dirname())?;
+            server.version_store().delete_version(&b_hash).await?;
+
+            // Creating a branch from "src" (head = the now-incomplete commit2) must be rejected, and
+            // the new branch must not be created.
+            let result =
+                crate::api::client::branches::create_from_branch(&remote_repo, "derived", "src")
+                    .await;
+            assert!(
+                result.is_err(),
+                "create-from-branch off a source whose head is missing an added blob must be rejected"
+            );
+            assert!(
+                crate::api::client::branches::get_by_name(&remote_repo, "derived")
+                    .await?
+                    .is_none(),
+                "a rejected create-from-branch must not leave the branch behind"
             );
 
             crate::api::client::repositories::delete(&remote_repo).await?;

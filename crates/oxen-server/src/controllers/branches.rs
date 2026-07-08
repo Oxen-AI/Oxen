@@ -154,7 +154,7 @@ pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let data: Result<BranchNewFromBranchName, serde_json::Error> = serde_json::from_str(&body);
     if let Ok(data) = data {
         log::debug!("Create from branch!");
-        return create_from_branch(&repo, &data);
+        return create_from_branch(&repo, &data).await;
     }
 
     // Try to deserialize the body into a BranchNewFromCommitId
@@ -167,7 +167,7 @@ pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     Ok(HttpResponse::BadRequest().json(StatusMessage::error("Invalid request body")))
 }
 
-fn create_from_branch(
+async fn create_from_branch(
     repo: &LocalRepository,
     data: &BranchNewFromBranchName,
 ) -> Result<HttpResponse, OxenHttpError> {
@@ -185,6 +185,15 @@ fn create_from_branch(
 
     let from_branch = repositories::branches::get_by_name(repo, &data.from_name)
         .map_err(|_| OxenHttpError::NotFound)?;
+
+    // Verify the source branch's head before pointing a new ref at it, scoping the check to what it
+    // adds over the default branch.
+    repositories::branches::verify_advance_to(
+        repo,
+        &from_branch.commit_id,
+        constants::DEFAULT_BRANCH_NAME,
+    )
+    .await?;
 
     let new_branch = repositories::branches::create(repo, &data.new_name, from_branch.commit_id)?;
 
