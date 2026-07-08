@@ -150,7 +150,7 @@ jobs:
         if: matrix.platform == 'windows'
         run: |
           Start-Process ".\target\debug\oxen-server.exe" -ArgumentList "start","--test"
-          cargo test --workspace --no-fail-fast -- --test-threads=56
+          cargo test --workspace --no-fail-fast -- --test-threads=64
 
   python-test:
     name: Python Tests
