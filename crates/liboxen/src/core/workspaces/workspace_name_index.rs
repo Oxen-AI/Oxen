@@ -20,7 +20,7 @@ const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 // `get_index` calls in a concurrency test, handing out a fresh `Arc<RwLock<DB>>`
 // that breaks `put_if_absent`'s shared-writer atomicity.
 #[cfg(any(test, feature = "test-utils"))]
-const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(300).unwrap();
+const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(500).unwrap();
 
 // Static cache of DB instances with LRU eviction. The inner `RwLock<DB>` lets
 // compound read-modify-write sequences (e.g. `put_if_absent`) run under exclusive

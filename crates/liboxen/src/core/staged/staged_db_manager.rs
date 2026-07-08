@@ -30,7 +30,7 @@ const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 // `changes_db`; same eviction-then-`DB::open`-collides-on-LOCK failure class if a
 // still-in-use staged-DB entry gets evicted under sibling-test pressure.
 #[cfg(any(test, feature = "test-utils"))]
-const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(300).unwrap();
+const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(500).unwrap();
 
 // Static cache of DB instances with LRU eviction
 static DB_INSTANCES: LazyLock<RwLock<LruCache<PathBuf, Arc<RwLock<DB>>>>> =
