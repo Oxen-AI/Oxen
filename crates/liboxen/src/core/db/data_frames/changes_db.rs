@@ -42,7 +42,7 @@ const CHANGES_DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 // same path collide on RocksDB's `LOCK`, breaking bootstrap-plus-workers concurrency tests
 // under cross-test cache pressure.
 #[cfg(any(test, feature = "test-utils"))]
-const CHANGES_DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(500).unwrap();
+const CHANGES_DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(300).unwrap();
 
 /// Global LRU cache of open change-tracking RocksDB handles, keyed by db path.
 /// `Mutex` rather than `RwLock` because `LruCache::get` requires `&mut self` to
