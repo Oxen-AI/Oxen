@@ -161,11 +161,12 @@ pub async fn verify_advance_to(
     let Some(head_commit) = repositories::commits::get_by_id(repo, commit_id)? else {
         return Ok(());
     };
-    let base_commit = get_by_name(repo, base_branch).ok().and_then(|branch| {
-        repositories::commits::get_by_id(repo, &branch.commit_id)
-            .ok()
-            .flatten()
-    });
+    // Only an absent base branch falls back to a whole-tree check; real lookup errors surface.
+    let base_commit = match get_by_name(repo, base_branch) {
+        Ok(branch) => repositories::commits::get_by_id(repo, &branch.commit_id)?,
+        Err(OxenError::BranchNotFound(_)) => None,
+        Err(e) => return Err(e),
+    };
     verify_reachable_objects(repo, base_commit.as_ref(), &head_commit).await
 }
 
