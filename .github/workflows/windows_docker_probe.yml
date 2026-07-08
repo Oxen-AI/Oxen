@@ -1,0 +1,41 @@
+name: 🪟🐳 Windows Docker probe (throwaway)
+
+# Throwaway diagnostic: does the Windows CI runner expose a Linux Docker engine?
+# If it does, we can run the supported Linux oxen-server image as a test fixture
+# and keep the client push/pull suite on Windows against a supported server.
+# Delete this workflow (and its branch/PR) once the answer is recorded.
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-docker-probe:
+    name: Probe Linux-container support on the Windows runner
+    runs-on: windows-x64-8cpu-32ram-300ssd
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - name: Probe Docker / Linux-container support
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Continue'
+          if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+            Write-Host "RESULT: docker CLI not installed on this runner"
+            exit 0
+          }
+          Write-Host "=== docker version ==="
+          docker version
+          Write-Host "=== docker info (OSType) ==="
+          $osType = (docker info --format '{{.OSType}}' 2>&1)
+          Write-Host "OSType = $osType"
+          Write-Host "=== attempt: run a linux/amd64 image (hello-world) ==="
+          docker run --rm hello-world
+          Write-Host "=== wsl status (a Linux engine usually rides on WSL2) ==="
+          wsl --status
+          Write-Host "RESULT: probe finished; read OSType and the hello-world result above"
+          exit 0
