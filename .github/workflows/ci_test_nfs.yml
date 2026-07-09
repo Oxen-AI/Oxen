@@ -56,11 +56,14 @@ jobs:
           # no_root_squash + matching ownership so the non-root runner user can
           # read/write through the mount; export to loopback only.
           echo "/srv/oxen-nfs 127.0.0.1(rw,sync,no_subtree_check,no_root_squash,insecure)" | sudo tee /etc/exports
-          sudo systemctl start rpcbind || true # socket-activated on some images
+          sudo systemctl start rpcbind || true # NFSv3 needs the portmapper; tolerate already-active
           sudo systemctl restart nfs-kernel-server
           sudo exportfs -ra
           sudo mkdir -p /mnt/oxen-nfs
-          sudo mount -t nfs -o vers=4 127.0.0.1:/srv/oxen-nfs /mnt/oxen-nfs
+          # NFSv3 with production-representative mount options (GCP Filestore BASIC_SSD tier).
+          sudo mount -t nfs \
+            -o vers=3,hard,tcp,rsize=1048576,wsize=1048576,actimeo=120,noatime,nodiratime \
+            127.0.0.1:/srv/oxen-nfs /mnt/oxen-nfs
           sudo chown "$(id -u):$(id -g)" /mnt/oxen-nfs
           # Fail loudly if the mount didn't actually land on NFS, so a silent
           # fallback to local disk can't turn this lane into a false green.
