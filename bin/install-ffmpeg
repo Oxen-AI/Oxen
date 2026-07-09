@@ -39,7 +39,7 @@ if [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$want" ]; then
     exit 0
 fi
 
-tarball="ffmpeg-n${FFMPEG_VERSION}-${ff_arch}-lgpl-shared-${FFMPEG_BRANCH}.tar.xz"
+tarball="ffmpeg-n${FFMPEG_VERSION}${FFMPEG_BUILD_SUFFIX:-}-${ff_arch}-lgpl-shared-${FFMPEG_BRANCH}.tar.xz"
 url="https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_BTBN_TAG}/${tarball}"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
