@@ -549,7 +549,7 @@ pub async fn save_multiparts(
     let version_store = repo.version_store();
     let gzip_mime: mime::Mime = "application/gzip".parse().unwrap();
 
-    let max_in_flight = util::concurrency::default_num_threads();
+    let max_in_flight = util::concurrency::default_num_threads() * 4; // 32 (or less on small boxes)
     let mut in_flight: JoinSet<Option<ErrorFileInfo>> = JoinSet::new();
     let mut err_files: Vec<ErrorFileInfo> = vec![];
 
