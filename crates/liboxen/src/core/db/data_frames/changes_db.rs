@@ -15,68 +15,106 @@
 //! used to `DB::open` the change-tracking database fresh, and the second open
 //! collided with the lock the first still held.
 //!
-//! This module keeps one shared handle per path in a global LRU cache, mirroring
-//! [`crate::core::staged::staged_db_manager`]. Every caller that touches the
-//! same change-tracking database in this process shares that one handle, so they
-//! never race on the file lock.
+//! This module keeps one shared handle per path in a process-wide weak-ref registry.
+//! Every caller for the same path receives the same `Arc<RwLock<DB>>` for as long
+//! as at least one caller holds it; the DB closes when the last `Arc` drops, and
+//! the map entry becomes a tombstone that the next insert prunes. There is no
+//! capacity cap, so an in-use entry can never be evicted. A brief LOCK collision
+//! is still possible when an open races the tail of a concurrent close (RocksDB
+//! releases the OS lock in its `Drop`, after `strong_count` already hit zero); see
+//! [`get_changes_db`] for the bounded-retry that waits it out.
 //!
-//! Handles are `Arc<RwLock<DB>>`: compound writes take `.write()` across the full read-modify-write,
-//! readers take `.read()`. **Never hold a guard across `.await`** — the `Arc` may cross awaits,
-//! the guard must not. Eviction skips entries still held elsewhere; when every entry is pinned, new
-//! handles open uncached.
+//! Handles are `Arc<RwLock<DB>>`: compound writes take `.write()` across the full
+//! read-modify-write, readers take `.read()`. **Never hold a guard across `.await`**
+//! — the `Arc` may cross awaits, the guard must not.
 
-use lru::LruCache;
 use parking_lot::{Mutex, RwLock};
 use rocksdb::DB;
-use std::num::NonZeroUsize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, Weak};
+use std::thread::sleep;
+use std::time::Duration;
 
 use crate::core::db;
 use crate::core::db::data_frames::DataFrameError;
 use crate::error::OxenError;
 
-const CHANGES_DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
+/// Weak-ref registry of open change-tracking DB handles, keyed by db path.
+static CHANGES_DB_INSTANCES: LazyLock<Mutex<HashMap<PathBuf, Weak<RwLock<DB>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Global LRU cache of open change-tracking RocksDB handles, keyed by db path.
-/// `Mutex` rather than `RwLock` because `LruCache::get` requires `&mut self` to
-/// bump recency, so every access is exclusive anyway.
-static CHANGES_DB_INSTANCES: LazyLock<Mutex<LruCache<PathBuf, Arc<RwLock<DB>>>>> =
-    LazyLock::new(|| Mutex::new(LruCache::new(CHANGES_DB_CACHE_SIZE)));
+/// How long `get_changes_db` waits out a concurrent close before surfacing a LOCK error.
+/// See the retry loop in [`get_changes_db`] for the race this covers.
+const OPEN_RETRIES: u32 = 100;
+const OPEN_RETRY_INTERVAL: Duration = Duration::from_millis(2);
 
-/// Remove a single change-tracking db from the cache. The underlying handle is
-/// closed once the last outstanding `Arc` is dropped.
+/// Remove this path's tombstone entry from the registry. Live entries (someone still
+/// holds the `Arc`) are unaffected; the DB closes when the last strong reference drops.
 pub fn remove_from_cache(db_path: impl AsRef<Path>) -> Result<(), OxenError> {
     let mut instances = CHANGES_DB_INSTANCES.lock();
-    let _ = instances.pop(&db_path.as_ref().to_path_buf());
+    instances.remove(db_path.as_ref());
     Ok(())
 }
 
-/// Remove every cached change-tracking db whose path lives under `prefix`. Mainly used for test
-/// cleanup so handles are released before the temp directory is deleted.
+/// Remove tombstone entries under `prefix` from the registry. Live entries are unaffected;
+/// the DB closes when the last strong reference drops.
 pub fn remove_from_cache_with_children(prefix: impl AsRef<Path>) -> Result<(), OxenError> {
     let prefix = prefix.as_ref();
     let mut instances = CHANGES_DB_INSTANCES.lock();
-    let to_remove: Vec<PathBuf> = instances
-        .iter()
-        .map(|(key, _)| key.clone())
-        .filter(|key| key.starts_with(prefix))
-        .collect();
-    for key in to_remove {
-        let _ = instances.pop(&key);
-    }
+    instances.retain(|key, _| !key.starts_with(prefix));
     Ok(())
 }
 
-/// Return the shared handle for an existing change-tracking db, opening and
-/// caching it on first use. The db directory is created if it does not exist,
-/// so this is the right entry point for write paths (recording row/column
-/// changes) that always need a db to write into.
+/// Return the shared handle for a change-tracking db, opening it on first use.
+/// The db directory is created if it does not exist, so this is the right entry
+/// point for write paths (recording row/column changes) that always need a db to
+/// write into.
+///
+/// Waits out a concurrent close: when another thread drops the last strong `Arc`, its
+/// `strong_count` hits zero *before* RocksDB's `Drop` releases the OS `LOCK` file, so
+/// a follow-up open here can briefly race the tail of that close. If `DB::open` fails
+/// with a LOCK-collision error we retry a bounded number of times, re-checking the
+/// registry each round in case another opener won the race.
 pub fn get_changes_db(db_path: &Path) -> Result<Arc<RwLock<DB>>, DataFrameError> {
-    if let Some(db) = lookup_cached(db_path) {
-        return Ok(db);
+    let mut attempts = 0;
+    loop {
+        let mut instances = CHANGES_DB_INSTANCES.lock();
+        if let Some(weak) = instances.get(db_path)
+            && let Some(strong) = weak.upgrade()
+        {
+            return Ok(strong);
+        }
+        std::fs::create_dir_all(db_path).map_err(DataFrameError::FailCreateDfDbDir)?;
+        let opts = db::key_val::opts::default();
+        match DB::open(&opts, dunce::simplified(db_path)) {
+            Ok(db) => {
+                let handle = Arc::new(RwLock::new(db));
+                instances.insert(db_path.to_path_buf(), Arc::downgrade(&handle));
+                instances.retain(|_, weak| weak.strong_count() > 0);
+                return Ok(handle);
+            }
+            Err(err) if is_lock_collision(&err) => {
+                drop(instances);
+                attempts += 1;
+                if attempts >= OPEN_RETRIES {
+                    return Err(err.into());
+                }
+                sleep(OPEN_RETRY_INTERVAL);
+            }
+            Err(err) => return Err(err.into()),
+        }
     }
-    open_and_cache(db_path)
+}
+
+/// True if `err` is a RocksDB LOCK-file collision — i.e. another opener still holds the
+/// per-directory LOCK. The check is by error-message match rather than a distinct
+/// `ErrorKind` because RocksDB surfaces this as a plain `IOError` across platforms
+/// (Unix "While lock file: …/LOCK: Resource temporarily unavailable",
+/// Windows "Failed to create lock file: …\\LOCK: The process cannot access the file…").
+fn is_lock_collision(err: &rocksdb::Error) -> bool {
+    let msg = err.to_string();
+    msg.contains("LOCK") || msg.contains("lock file")
 }
 
 /// Like [`get_changes_db`], but returns `None` when the db does not yet exist
@@ -84,71 +122,20 @@ pub fn get_changes_db(db_path: &Path) -> Result<Arc<RwLock<DB>>, DataFrameError>
 /// so that merely reading a data frame never materializes an empty
 /// change-tracking db on disk.
 pub fn try_get_changes_db(db_path: &Path) -> Result<Option<Arc<RwLock<DB>>>, DataFrameError> {
-    if let Some(db) = lookup_cached(db_path) {
-        return Ok(Some(db));
+    // Scoped so the guard drops before the `get_changes_db` re-lock on the miss path.
+    {
+        let instances = CHANGES_DB_INSTANCES.lock();
+        if let Some(weak) = instances.get(db_path)
+            && let Some(strong) = weak.upgrade()
+        {
+            return Ok(Some(strong));
+        }
     }
     // `CURRENT` exists once RocksDB has initialized the db
     if !db_path.join("CURRENT").exists() {
         return Ok(None);
     }
-    open_and_cache(db_path).map(Some)
-}
-
-/// Look up a cached handle, bumping its LRU recency on a hit.
-fn lookup_cached(db_path: &Path) -> Option<Arc<RwLock<DB>>> {
-    let mut cache = CHANGES_DB_INSTANCES.lock();
-    cache.get(&db_path.to_path_buf()).cloned()
-}
-
-/// Slow path: open the db under the cache lock, evict an unreferenced LRU entry to make room, and
-/// cache the new handle. Returns the new handle uncached (with a warning) if every cached entry
-/// is still in use.
-fn open_and_cache(db_path: &Path) -> Result<Arc<RwLock<DB>>, DataFrameError> {
-    let key = db_path.to_path_buf();
-
-    let mut cache = CHANGES_DB_INSTANCES.lock();
-    if let Some(db) = cache.get(&key) {
-        return Ok(db.clone());
-    }
-
-    if !db_path.exists() {
-        std::fs::create_dir_all(db_path).map_err(DataFrameError::FailCreateDfDbDir)?;
-    }
-
-    let can_cache = make_room_for_new_entry(&mut cache);
-
-    let opts = db::key_val::opts::default();
-    let handle = Arc::new(RwLock::new(DB::open(&opts, dunce::simplified(db_path))?));
-    if can_cache {
-        cache.put(key, handle.clone());
-    }
-    Ok(handle)
-}
-
-/// Returns `true` if a new entry can be cached: either the cache had room, or an unreferenced
-/// LRU entry was evicted. Returns `false` when every cached entry is still held.
-fn make_room_for_new_entry(cache: &mut LruCache<PathBuf, Arc<RwLock<DB>>>) -> bool {
-    if cache.len() < cache.cap().get() {
-        return true;
-    }
-    let victim = cache
-        .iter()
-        .rev()
-        .find_map(|(k, v)| (Arc::strong_count(v) == 1).then(|| k.clone()));
-    match victim {
-        Some(key) => {
-            cache.pop(&key);
-            true
-        }
-        None => {
-            log::warn!(
-                "changes_db cache is at capacity ({}) with every entry still in use; \
-                 opening a new handle uncached",
-                cache.cap().get()
-            );
-            false
-        }
-    }
+    get_changes_db(db_path).map(Some)
 }
 
 #[cfg(test)]
@@ -182,11 +169,7 @@ mod tests {
         // available": before caching, the second concurrent `DB::open` on the
         // same path failed. Now every thread shares the cached handle and can
         // read/write without colliding on the file lock.
-        //
-        // Spawn more threads than the cache can hold open at once
-        // (`CHANGES_DB_CACHE_SIZE`) so the contention comfortably exceeds the
-        // pool of concurrent handles the cache is sized for.
-        const NUM_THREADS: usize = CHANGES_DB_CACHE_SIZE.get() + 8;
+        const NUM_THREADS: usize = 16;
 
         test::run_empty_dir_test(|data_dir| {
             let db_path = data_dir.join("row_changes");
@@ -257,52 +240,18 @@ mod tests {
         })
     }
 
-    /// When every cached entry is still in use, an additional open returns a working handle
-    /// without installing it in the cache.
+    /// Every concurrent opener for the same path returns the same shared `Arc`, so a
+    /// distinct set of unrelated opens between two calls cannot break identity.
     #[test]
-    fn test_open_uncached_when_cache_is_fully_pinned() -> Result<(), OxenError> {
-        test::run_empty_dir_test(|data_dir| {
-            // Pin every cache slot by holding `CHANGES_DB_CACHE_SIZE` Arcs.
-            let mut pinned = Vec::with_capacity(CHANGES_DB_CACHE_SIZE.get());
-            for i in 0..CHANGES_DB_CACHE_SIZE.get() {
-                pinned.push(get_changes_db(&data_dir.join(format!("pinned-{i}")))?);
-            }
-
-            // One more open finds no evictable slot and returns uncached.
-            let extra_path = data_dir.join("extra");
-            let extra = get_changes_db(&extra_path)?;
-            extra.write().put("k", "v")?;
-
-            // The uncached handle reads back through itself.
-            assert_eq!(extra.read().get("k")?.as_deref(), Some(b"v".as_ref()));
-
-            // The next opener for `extra_path` does not find it in the cache: it opens a
-            // *different* Arc (which only succeeds because the current `extra` Arc still holds
-            // the RocksDB lock — so we drop it first to make room).
-            drop(extra);
-            let reopened = get_changes_db(&extra_path)?;
-            // The data persisted to disk and the new handle sees it.
-            assert_eq!(reopened.read().get("k")?.as_deref(), Some(b"v".as_ref()));
-
-            drop(reopened);
-            drop(pinned);
-            remove_from_cache_with_children(data_dir)?;
-            Ok(())
-        })
-    }
-
-    /// Reopening a path whose handle is still held returns the same cached `Arc`, even after enough
-    /// distinct opens to fill the cache twice over.
-    #[test]
-    fn test_eviction_skips_still_held_entries() -> Result<(), OxenError> {
+    fn test_repeated_opens_return_same_arc_under_pressure() -> Result<(), OxenError> {
         test::run_empty_dir_test(|data_dir| {
             let held_path = data_dir.join("held");
             let held = get_changes_db(&held_path)?;
             held.write().put("k", "v")?;
 
-            // Fill the cache twice over with immediately-dropped handles to pressure eviction.
-            let pressure = CHANGES_DB_CACHE_SIZE.get() * 2;
-            for i in 0..pressure {
+            // Open (and drop) many unrelated handles between the two `get_changes_db` calls
+            // on `held_path`.
+            for i in 0..256 {
                 let other = get_changes_db(&data_dir.join(format!("other-{i}")))?;
                 drop(other);
             }
@@ -310,7 +259,7 @@ mod tests {
             let reopened = get_changes_db(&held_path)?;
             assert!(
                 Arc::ptr_eq(&held, &reopened),
-                "the held handle must survive eviction pressure",
+                "the held handle must survive registry pressure",
             );
             assert_eq!(reopened.read().get("k")?.as_deref(), Some(b"v".as_ref()));
 
