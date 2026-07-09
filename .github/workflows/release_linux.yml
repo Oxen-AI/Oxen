@@ -75,6 +75,7 @@ jobs:
           ec2-instance-type: ${{ env.EC2_INSTANCE_TYPE }}
           subnet-id: subnet-0e28805edbdad482f
           security-group-id: sg-09c8aa5830122d671
+          iam-role-name: github-runner-instance-profile
           aws-resource-tags: >
             [
               {"Key": "Name", "Value": "ec2-github-runner"}
@@ -85,9 +86,19 @@ jobs:
     needs: start-self-hosted-runner
     runs-on: ${{ needs.start-self-hosted-runner.outputs.label }}
 
+    env:
+      RUSTC_WRAPPER: sccache
+      CMAKE_C_COMPILER_LAUNCHER: sccache
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
+      SCCACHE_BUCKET: oxen-release-build-cache
+      SCCACHE_REGION: us-west-1
+      CARGO_INCREMENTAL: "0"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Create release directory
         run: mkdir ${{ github.workspace }}/release
@@ -110,6 +121,9 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
 
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+
       - name: Build oxen binaries
         run: |
           cargo build --workspace --exclude oxen-py --release
@@ -123,6 +137,10 @@ jobs:
           for version in ${{ inputs.PYTHON_VERSIONS }}; do
             uvx --from 'maturin[patchelf]' maturin build --release --interpreter /root/.local/bin/python${version}
           done
+
+      - name: sccache stats
+        if: always()
+        run: sccache --show-stats
 
       - name: Create tarballs with oxen binaries
         run: |

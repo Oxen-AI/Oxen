@@ -368,6 +368,10 @@ impl VersionStore for LocalVersionStore {
                 .with_hash(expected_hash)
                 .stream(&mut combined)?;
 
+            // Close the chunk file handles before removing their directory. On NFS, unlinking a
+            // still-open file leaves a hidden .nfsXXXX entry that fails the rmdir with ENOTEMPTY.
+            drop(combined);
+
             if chunks_dir.exists() {
                 std::fs::remove_dir_all(&chunks_dir)?;
             }
@@ -793,6 +797,37 @@ mod tests {
         // Get and verify the data
         let retrieved = store.get_version_chunk(&hash, offset, size).await.unwrap();
         assert_eq!(retrieved, data);
+    }
+
+    #[tokio::test]
+    async fn test_combine_version_chunks_reassembles_and_removes_chunks_dir() {
+        let (_temp_dir, store) = setup().await;
+        let data = b"chunk-zero-byteschunk-one-bytes";
+        let hash = hasher::hash_buffer(data);
+
+        // Split into two chunks stored at their byte offsets.
+        let split = 16;
+        store
+            .store_version_chunk(&hash, 0, Bytes::copy_from_slice(&data[..split]))
+            .await
+            .unwrap();
+        store
+            .store_version_chunk(&hash, split as u64, Bytes::copy_from_slice(&data[split..]))
+            .await
+            .unwrap();
+
+        let chunks_dir = store.version_chunks_dir(&hash);
+        assert!(chunks_dir.exists());
+
+        store.combine_version_chunks(&hash).await.unwrap();
+
+        // The reassembled version file matches the original bytes...
+        let version_path = store.version_path(&hash);
+        assert!(version_path.exists());
+        assert_eq!(store.get_version(&hash).await.unwrap(), data);
+
+        // ...and the chunks directory is removed.
+        assert!(!chunks_dir.exists());
     }
 
     #[tokio::test]
