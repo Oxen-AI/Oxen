@@ -1,6 +1,7 @@
 //! Various utility functions
 //!
 
+pub mod compression;
 pub mod concurrency;
 pub mod fs;
 pub mod glob;
