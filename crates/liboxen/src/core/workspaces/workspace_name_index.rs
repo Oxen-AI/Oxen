@@ -112,10 +112,7 @@ pub fn get_index(repo: &LocalRepository) -> Result<WorkspaceNameIndex, WsError> 
             return Ok(WorkspaceNameIndex { db: strong });
         }
 
-        if !dir.exists() {
-            util::fs::create_dir_all(&dir).map_err(|e| WsError::CreateDirErr(Box::new(e)))?;
-        }
-
+        util::fs::create_dir_all(&dir).map_err(|e| WsError::CreateDirErr(Box::new(e)))?;
         let opts = db::key_val::opts::default();
         match DB::open(&opts, dunce::simplified(&dir)) {
             Ok(db) => {
