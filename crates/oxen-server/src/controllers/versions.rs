@@ -543,9 +543,9 @@ pub async fn save_multiparts(
     mut payload: Multipart,
     repo: &LocalRepository,
 ) -> Result<Vec<ErrorFileInfo>, Error> {
-    // Receive a multipart request and save the files to the version store.
-    // Store files concurrently, capped at `default_num_threads()` in flight so buffered field
-    // bytes stay bounded. Reading the multipart stream itself stays serial (fields arrive in order).
+    // Receive a multipart request and save the files to the version store. Store files
+    // concurrently, capped in flight so buffered field bytes stay bounded. Reading the multipart
+    // stream itself stays serial (fields arrive in order).
     let version_store = repo.version_store();
     let gzip_mime: mime::Mime = "application/gzip".parse().unwrap();
 
