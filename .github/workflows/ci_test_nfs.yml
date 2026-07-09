@@ -90,6 +90,17 @@ jobs:
       # --no-tests=fail turns a filter that matches nothing into a failure rather than a silent pass
       - name: Run NFS-sensitive rust tests
         run: |
-          ./target/debug/oxen-server start --test &
+          RUST_LOG=warn,liboxen=debug \
+            ./target/debug/oxen-server start --test > oxen-server.log 2>&1 &
           cargo nextest run --workspace --profile ci --no-tests=fail \
             -E 'test(/clone|pull|push|fetch|download|checkout|chunk|combine/)'
+
+      # Publish the server log so NFS failures on the server side (its SYNC_DIR is on the
+      # NFS mount) can be inspected after the fact.
+      - name: Upload oxen-server log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: oxen-server-log
+          path: oxen-server.log
+          if-no-files-found: ignore
