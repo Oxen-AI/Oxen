@@ -1,9 +1,8 @@
-use std::num::NonZeroUsize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::{self, Utf8Error};
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, Weak};
 
-use lru::LruCache;
 use parking_lot::{Mutex, RwLock};
 use rocksdb::{DB, IteratorMode};
 
@@ -14,13 +13,15 @@ use crate::model::LocalRepository;
 use crate::model::workspace::WorkspaceConfig;
 use crate::util;
 
-const DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
-
-// Static cache of DB instances with LRU eviction. The inner `RwLock<DB>` lets
-// compound read-modify-write sequences (e.g. `put_if_absent`) run under exclusive
-// access. Never hold the guard across `.await`.
-static DB_INSTANCES: LazyLock<Mutex<LruCache<PathBuf, Arc<RwLock<DB>>>>> =
-    LazyLock::new(|| Mutex::new(LruCache::new(DB_CACHE_SIZE)));
+// Weak-ref registry of open DB handles, keyed by index dir. The strong `Arc<RwLock<DB>>`
+// lives only as long as some caller (a `WorkspaceNameIndex`) holds it; when the last caller
+// drops, RocksDB closes and the entry becomes a tombstone that the next `get_index`/insert
+// prunes. There is no capacity cap, so an entry can never be evicted while it is still in
+// use — the shared-Arc invariant `put_if_absent` relies on for atomicity holds unconditionally.
+// The inner `RwLock<DB>` still serializes compound read-modify-write sequences; never hold
+// its guard across `.await`.
+static DB_INSTANCES: LazyLock<Mutex<HashMap<PathBuf, Weak<RwLock<DB>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug, thiserror::Error)]
 pub enum WsError {
@@ -61,30 +62,19 @@ pub fn index_exists(repo: &LocalRepository) -> bool {
     index_dir(repo).exists()
 }
 
-/// Removes this repository's workspace name index DB from the cache.
+/// Removes this repository's tombstone entry from the registry. Live entries (someone still
+/// holds the `Arc`) are unaffected; the DB closes when the last strong reference drops.
 pub fn remove_from_cache(repo: &LocalRepository) {
     let dir = index_dir(repo);
     let mut instances = DB_INSTANCES.lock();
-    let _ = instances.pop(&dir); // drop immediately
+    instances.remove(&dir);
 }
 
-/// Removes from cache including children paths (useful for test cleanup).
+/// Removes tombstone entries under `repository_path` from the registry. Live entries are
+/// unaffected; the DB closes when the last strong reference drops.
 pub fn remove_from_cache_with_children(repository_path: &Path) {
     let mut instances = DB_INSTANCES.lock();
-
-    let dbs_to_remove = instances
-        .iter()
-        .filter_map(|(key, _)| {
-            if key.starts_with(repository_path) {
-                Some(key.clone())
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-    for db_path in dbs_to_remove {
-        let _ = instances.pop(&db_path); // drop immediately
-    }
+    instances.retain(|key, _| !key.starts_with(repository_path));
 }
 
 pub struct WorkspaceNameIndex {
@@ -93,14 +83,17 @@ pub struct WorkspaceNameIndex {
 
 /// Returns a [`WorkspaceNameIndex`] handle for the given repository.
 ///
-/// The handle holds a reference-counted DB instance cached in a global LRU cache.
-/// Drop it when you're done to avoid holding the DB open longer than necessary.
+/// Every concurrent caller for the same repo path receives the same `Arc<RwLock<DB>>` for
+/// as long as at least one handle stays alive. Drop the returned handle when done so the
+/// underlying RocksDB can close.
 pub fn get_index(repo: &LocalRepository) -> Result<WorkspaceNameIndex, WsError> {
     let dir = index_dir(repo);
 
     let mut instances = DB_INSTANCES.lock();
-    if let Some(db) = instances.get(&dir) {
-        return Ok(WorkspaceNameIndex { db: db.clone() });
+    if let Some(weak) = instances.get(&dir)
+        && let Some(strong) = weak.upgrade()
+    {
+        return Ok(WorkspaceNameIndex { db: strong });
     }
 
     if !dir.exists() {
@@ -110,7 +103,9 @@ pub fn get_index(repo: &LocalRepository) -> Result<WorkspaceNameIndex, WsError> 
     let opts = db::key_val::opts::default();
     let db = DB::open(&opts, dunce::simplified(&dir)).map_err(WsError::OpenError)?;
     let arc_db = Arc::new(RwLock::new(db));
-    instances.put(dir, arc_db.clone());
+    instances.insert(dir, Arc::downgrade(&arc_db));
+    // Opportunistic tombstone sweep — bounds map growth without a periodic reaper.
+    instances.retain(|_, weak| weak.strong_count() > 0);
     Ok(WorkspaceNameIndex { db: arc_db })
 }
 
