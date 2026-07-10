@@ -64,31 +64,29 @@ pub struct RefManager {
 
 /// Runs `operation` against a [`RefManager`] for `repository`.
 ///
-/// Every concurrent caller for the same repo receives the same `Arc<RwLock<DB>>` on the
-/// refs DB for as long as at least one `with_ref_manager` scope stays alive. Waits out a
-/// concurrent close: when another thread drops the last strong `Arc`, its `strong_count`
-/// hits zero *before* RocksDB's `Drop` releases the OS `LOCK` file, so a follow-up open
-/// here can briefly race the tail of that close. If `DB::open` fails with a LOCK-collision
-/// error we retry a bounded number of times, re-checking the registry each round in case
-/// another opener won the race.
+/// Every concurrent caller for the same repo receives the same shared `Arc<RwLock<DB>>`
+/// for as long as at least one `with_ref_manager` scope stays alive. May briefly block on
+/// a concurrent close — see the module doc and [`open_refs_db`] for the retry that covers it.
 pub fn with_ref_manager<F, T>(repository: &LocalRepository, operation: F) -> Result<T, OxenError>
 where
     F: FnOnce(&RefManager) -> Result<T, OxenError>,
 {
-    let refs_dir = util::fs::oxen_hidden_dir(&repository.path).join(REFS_DIR);
+    let hidden = util::fs::oxen_hidden_dir(&repository.path);
+    let refs_dir = hidden.join(REFS_DIR);
+    util::fs::create_dir_all(&refs_dir)?;
     let refs_db = open_refs_db(&refs_dir)?;
     let manager = RefManager {
         refs_db,
-        head_file: util::fs::oxen_hidden_dir(&repository.path).join(HEAD_FILE),
+        head_file: hidden.join(HEAD_FILE),
         repository: repository.clone(),
     };
     operation(&manager)
 }
 
-/// Return the shared refs-DB handle for `refs_dir`, upgrading an existing weak entry on
-/// a hit or opening + registering a new one on a miss. Handles the LOCK-collision race
-/// described on [`with_ref_manager`] via a bounded retry.
+/// Return the shared refs-DB handle for `refs_dir`, retrying briefly on a LOCK-collision
+/// race with a concurrent close (see module doc).
 fn open_refs_db(refs_dir: &Path) -> Result<Arc<RwLock<DB>>, OxenError> {
+    let opts = db::key_val::opts::default();
     let mut attempts = 0;
     loop {
         let mut instances = DB_INSTANCES.lock();
@@ -97,8 +95,6 @@ fn open_refs_db(refs_dir: &Path) -> Result<Arc<RwLock<DB>>, OxenError> {
         {
             return Ok(strong);
         }
-        util::fs::create_dir_all(refs_dir)?;
-        let opts = db::key_val::opts::default();
         match DB::open(&opts, dunce::simplified(refs_dir)) {
             Ok(db) => {
                 let arc_db = Arc::new(RwLock::new(db));
