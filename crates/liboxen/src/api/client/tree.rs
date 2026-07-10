@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time;
 use tokio_util::io::{ReaderStream, StreamReader, SyncIoBridge};
 
 use crate::api;
@@ -116,9 +115,7 @@ pub async fn create_nodes(
 
     let uri = "/tree/nodes".to_string();
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    let client = client::builder_for_url(&url)?
-        .timeout(time::Duration::from_secs(120))
-        .build()?;
+    let client = client::builder_for_url(&url)?.build()?;
     log::debug!("uploading {n} nodes to {url}");
 
     let res = client
@@ -375,9 +372,7 @@ async fn node_download_request(
 ) -> Result<(), OxenError> {
     let url = url.as_ref();
 
-    let client = client::builder_for_url(url)?
-        .timeout(time::Duration::from_secs(12000))
-        .build()?;
+    let client = client::builder_for_url(url)?.build()?;
     log::debug!("node_download_request sending request {url}");
     let res = client.get(url).send().await?;
     let res = client::handle_non_json_response(url, res).await?;

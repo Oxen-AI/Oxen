@@ -4,7 +4,6 @@
 use crate::config::AuthConfig;
 use crate::config::RuntimeConfig;
 use crate::config::runtime_config::runtime::Runtime;
-use crate::constants;
 use crate::error::OxenError;
 use crate::model::RemoteRepository;
 use crate::view::OxenResponse;
@@ -14,7 +13,6 @@ use reqwest::retry;
 use reqwest::{Client, ClientBuilder, header};
 use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
-use std::time;
 
 pub mod branches;
 pub mod commits;
@@ -90,9 +88,7 @@ fn new_for_host(host: String, should_add_user_agent: bool) -> Result<Client, Oxe
 
     // Slow path: build outside the write lock so concurrent first-time callers
     // for *different* hosts don't serialize on one mutex.
-    let client = builder_for_host(host, should_add_user_agent)?
-        .timeout(time::Duration::from_secs(constants::timeout()))
-        .build()?;
+    let client = builder_for_host(host, should_add_user_agent)?.build()?;
 
     // Double-check under the write lock; another thread may have inserted while we built.
     let mut cache = CLIENT_CACHE

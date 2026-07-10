@@ -6,12 +6,12 @@ use crate::params::{app_data, parse_resource, path_param};
 
 use actix_multipart::Multipart;
 use actix_web::{Error, HttpRequest, HttpResponse, web};
-use async_compression::tokio::bufread::GzipDecoder;
 use async_compression::tokio::write::GzipEncoder;
 use async_zip::Compression;
 use async_zip::base::write::ZipFileWriter;
 use flate2::read::GzDecoder;
 use futures_util::{StreamExt, TryStreamExt as _};
+use liboxen::constants::stream_segment_size;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::model::metadata::metadata_image::ImgResize;
@@ -21,10 +21,9 @@ use liboxen::view::versions::{CleanCorruptedVersionsResponse, VersionFile, Versi
 use liboxen::view::{ErrorFileInfo, ErrorFilesResponse, FileWithHash, StatusMessage};
 use mime;
 use std::io::Read as StdRead;
-use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::io::BufReader;
-use tokio::io::{AsyncRead, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
+use tokio::task::{JoinError, JoinSet, spawn_blocking};
 use tokio_tar::Builder;
 use tokio_util::compat::FuturesAsyncWriteCompatExt;
 use tokio_util::compat::TokioAsyncWriteCompatExt;
@@ -544,10 +543,14 @@ pub async fn save_multiparts(
     mut payload: Multipart,
     repo: &LocalRepository,
 ) -> Result<Vec<ErrorFileInfo>, Error> {
-    // Receive a multipart request and save the files to the version store
+    // Receive a multipart request and save the files to the version store. Store files
+    // concurrently, capped in flight so buffered field bytes stay bounded. Reading the multipart
+    // stream itself stays serial (fields arrive in order).
     let version_store = repo.version_store();
     let gzip_mime: mime::Mime = "application/gzip".parse().unwrap();
 
+    let max_in_flight = util::concurrency::default_num_threads() * 4; // 32 (or less on small boxes)
+    let mut in_flight: JoinSet<Option<ErrorFileInfo>> = JoinSet::new();
     let mut err_files: Vec<ErrorFileInfo> = vec![];
 
     while let Some(mut field) = payload.try_next().await? {
@@ -555,81 +558,111 @@ pub async fn save_multiparts(
             continue;
         };
 
-        if let Some(name) = content_disposition.get_name()
-            && (name == "file[]" || name == "file")
-        {
-            // The file hash is passed in as the filename. In version store, the file hash is the identifier.
-            let upload_filehash = content_disposition.get_filename().map_or_else(
-                || {
-                    Err(actix_web::error::ErrorBadRequest(
-                        "Missing hash in multipart request",
-                    ))
-                },
-                |fhash_os_str| Ok(fhash_os_str.to_string()),
-            )?;
-            log::debug!("upload file_hash: {upload_filehash:?}");
+        if !matches!(content_disposition.get_name(), Some("file[]" | "file")) {
+            continue;
+        }
 
-            let is_gzipped = field
-                .content_type()
-                .map(|mime| {
-                    mime.type_() == gzip_mime.type_() && mime.subtype() == gzip_mime.subtype()
-                })
-                .unwrap_or(false);
+        // The file hash is passed in as the filename. In version store, the file hash is the identifier.
+        let upload_filehash = content_disposition.get_filename().map_or_else(
+            || {
+                Err(actix_web::error::ErrorBadRequest(
+                    "Missing hash in multipart request",
+                ))
+            },
+            |fhash_os_str| Ok(fhash_os_str.to_string()),
+        )?;
+        log::debug!("upload file_hash: {upload_filehash:?}");
 
-            // Read the bytes from the stream
-            let mut field_bytes = Vec::new();
-            while let Some(chunk) = field.try_next().await? {
-                field_bytes.extend_from_slice(&chunk);
+        let is_gzipped = field
+            .content_type()
+            .map(|mime| mime.type_() == gzip_mime.type_() && mime.subtype() == gzip_mime.subtype())
+            .unwrap_or(false);
+
+        // Read the bytes from the stream
+        let mut field_bytes = Vec::new();
+        while let Some(chunk) = field.try_next().await? {
+            field_bytes.extend_from_slice(&chunk);
+        }
+
+        // Bound the in-flight stores (and thus buffered bytes) before dispatching the next one.
+        while in_flight.len() >= max_in_flight {
+            if let Some(result) = in_flight.join_next().await
+                && let Some(err_file) = store_task_result(result)?
+            {
+                err_files.push(err_file);
             }
+        }
 
-            let field_size = field_bytes.len() as u64;
-            let reader: Box<dyn AsyncRead + Send + Unpin> = if is_gzipped {
-                // async decompression
-                let cursor = std::io::Cursor::new(field_bytes);
-                let buf_reader = BufReader::new(cursor);
-                Box::new(GzipDecoder::new(buf_reader))
+        let version_store = Arc::clone(&version_store);
+        in_flight.spawn(async move {
+            // gzip inflate is CPU-bound; run it off the async runtime.
+            let data = if is_gzipped {
+                let max_decompressed_size = stream_segment_size();
+                let inflated = spawn_blocking(move || {
+                    util::compression::decompress_gzip_capped(&field_bytes, max_decompressed_size)
+                })
+                .await
+                .map_err(|e| OxenError::internal_error(format!("decompression task failed: {e}")))
+                .and_then(|r| r);
+                match inflated {
+                    Ok(decompressed) => decompressed,
+                    Err(e) => {
+                        log::error!("Failed to decompress version for hash {upload_filehash}: {e}");
+                        return Some(ErrorFileInfo {
+                            hash: upload_filehash,
+                            path: None,
+                            error: format!("Failed to decompress version: {e}"),
+                        });
+                    }
+                }
             } else {
-                let cursor = std::io::Cursor::new(field_bytes);
-                Box::new(cursor)
+                field_bytes
             };
 
             match version_store
-                .store_version_from_reader(&upload_filehash, reader, field_size)
+                .store_version(&upload_filehash, data.into())
                 .await
             {
                 Ok(_) => {
                     log::info!("Successfully stored version for hash: {upload_filehash}");
+                    None
                 }
                 Err(e) => {
                     log::error!("Failed to store version for hash {upload_filehash}: {e}");
-                    record_error_file(
-                        &mut err_files,
-                        upload_filehash.clone(),
-                        None,
-                        format!("Failed to store version: {e}"),
-                    );
-                    continue;
+                    Some(ErrorFileInfo {
+                        hash: upload_filehash,
+                        path: None,
+                        error: format!("Failed to store version: {e}"),
+                    })
                 }
             }
+        });
+    }
+
+    while let Some(result) = in_flight.join_next().await {
+        if let Some(err_file) = store_task_result(result)? {
+            err_files.push(err_file);
         }
     }
 
     Ok(err_files)
 }
 
-// Record the error file info for retry
-fn record_error_file(
-    err_files: &mut Vec<ErrorFileInfo>,
-    filehash: String,
-    filepath: Option<PathBuf>,
-    error: String,
-) {
-    let info = ErrorFileInfo {
-        hash: filehash,
-        path: filepath,
-        error,
-    };
-    err_files.push(info);
+// A finished store task's per-file error, if any: `Ok(Some)` is a retryable per-file store
+// failure; a `JoinError` (the store task panicked) surfaces as `Err` so the batch fails with a
+// 500 rather than reporting a hashless, un-retryable entry.
+fn store_task_result(
+    result: Result<Option<ErrorFileInfo>, JoinError>,
+) -> Result<Option<ErrorFileInfo>, Error> {
+    match result {
+        Ok(maybe_error) => Ok(maybe_error),
+        Err(join_err) => {
+            log::error!("version store task panicked: {join_err}");
+            Err(actix_web::error::ErrorInternalServerError(format!(
+                "version store task panicked: {join_err}"
+            )))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -871,6 +904,81 @@ mod tests {
 
         // cleanup
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_controllers_versions_batch_upload_multiple_files() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Name-Multi";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let path = liboxen::test::add_txt_file_to_dir(&repo.path, "hello")?;
+        repositories::add(&repo, path).await?;
+        repositories::commit(&repo, "first commit")?;
+
+        // Build one multipart body with several gzipped `file[]` parts sharing a boundary.
+        let contents = ["one", "two", "three", "four", "five"];
+        let hashes: Vec<String> = contents
+            .iter()
+            .map(|&c| util::hasher::hash_str(c))
+            .collect();
+        let boundary = "test-batch-boundary";
+        let mut body: Vec<u8> = Vec::new();
+        for (content, hash) in contents.iter().zip(&hashes) {
+            let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+            encoder.write_all(content.as_bytes())?;
+            let compressed = encoder.finish()?;
+
+            body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+            body.extend_from_slice(
+                format!("Content-Disposition: form-data; name=\"file[]\"; filename=\"{hash}\"\r\n")
+                    .as_bytes(),
+            );
+            body.extend_from_slice(b"Content-Type: application/gzip\r\n\r\n");
+            body.extend_from_slice(&compressed);
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+
+        let uri = format!("/oxen/{namespace}/{repo_name}/versions");
+        let req = actix_web::test::TestRequest::post()
+            .uri(&uri)
+            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+            .insert_header((
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            ))
+            .set_payload(body)
+            .to_request();
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/versions",
+                    web::post().to(controllers::versions::batch_upload),
+                ),
+        )
+        .await;
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let response: ErrorFilesResponse = serde_json::from_slice(&bytes)?;
+        assert_eq!(response.status.status, "success");
+        assert!(response.err_files.is_empty());
+
+        // Every file in the batch is stored, independent of store order/concurrency.
+        let version_store = repo.version_store();
+        for (content, hash) in contents.iter().zip(&hashes) {
+            let stored = version_store.get_version(hash).await?;
+            assert_eq!(stored, content.as_bytes());
+        }
+
+        test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
     }
 }

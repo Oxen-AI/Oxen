@@ -154,20 +154,20 @@ pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let data: Result<BranchNewFromBranchName, serde_json::Error> = serde_json::from_str(&body);
     if let Ok(data) = data {
         log::debug!("Create from branch!");
-        return create_from_branch(&repo, &data);
+        return create_from_branch(&repo, &data).await;
     }
 
     // Try to deserialize the body into a BranchNewFromCommitId
     let data: Result<BranchNewFromCommitId, serde_json::Error> = serde_json::from_str(&body);
     if let Ok(data) = data {
         log::debug!("Create from commit!");
-        return create_from_commit(&repo, &data);
+        return create_from_commit(&repo, &data).await;
     }
 
     Ok(HttpResponse::BadRequest().json(StatusMessage::error("Invalid request body")))
 }
 
-fn create_from_branch(
+async fn create_from_branch(
     repo: &LocalRepository,
     data: &BranchNewFromBranchName,
 ) -> Result<HttpResponse, OxenHttpError> {
@@ -186,6 +186,15 @@ fn create_from_branch(
     let from_branch = repositories::branches::get_by_name(repo, &data.from_name)
         .map_err(|_| OxenHttpError::NotFound)?;
 
+    // Verify the source branch's head before pointing a new ref at it, scoping the check to what it
+    // adds over the default branch.
+    repositories::branches::verify_advance_to(
+        repo,
+        &from_branch.commit_id,
+        constants::DEFAULT_BRANCH_NAME,
+    )
+    .await?;
+
     let new_branch = repositories::branches::create(repo, &data.new_name, from_branch.commit_id)?;
 
     Ok(HttpResponse::Ok().json(BranchResponse {
@@ -194,10 +203,19 @@ fn create_from_branch(
     }))
 }
 
-fn create_from_commit(
+async fn create_from_commit(
     repo: &LocalRepository,
     data: &BranchNewFromCommitId,
 ) -> Result<HttpResponse, OxenHttpError> {
+    // Verify the new branch's commit before pointing a ref at it, scoping the check to what it
+    // adds over the default branch.
+    repositories::branches::verify_advance_to(
+        repo,
+        &data.commit_id,
+        constants::DEFAULT_BRANCH_NAME,
+    )
+    .await?;
+
     let new_branch = repositories::branches::create(repo, &data.new_name, &data.commit_id)?;
 
     Ok(HttpResponse::Ok().json(BranchResponse {
@@ -275,7 +293,11 @@ pub async fn update(
     let data: Result<BranchUpdate, serde_json::Error> = serde_json::from_str(&body);
     let data = data.map_err(|err| OxenHttpError::BadRequest(format!("{err:?}").into()))?;
 
-    let branch = repositories::branches::update(&repository, branch_name, data.commit_id)?;
+    // Don't advance the ref onto a commit whose newly-added objects aren't all present. Scope the
+    // check to what changed since the branch's current head.
+    repositories::branches::verify_advance_to(&repository, &data.commit_id, &branch_name).await?;
+
+    let branch = repositories::branches::update(&repository, &branch_name, data.commit_id)?;
 
     Ok(HttpResponse::Ok().json(BranchResponse {
         status: StatusMessage::resource_updated(),
@@ -330,6 +352,16 @@ pub async fn maybe_create_merge(
         .ok_or_else(|| OxenError::resource_not_found(&current_commit_id))?;
 
     log::debug!("maybe_create_merge got client head commit {incoming_commit_id:?}");
+
+    // Validate the incoming commit's added objects before merging it in, so the merge can't build
+    // a head missing reachable objects. Scope the check to what the client added over the
+    // current server head.
+    repositories::branches::verify_reachable_objects(
+        &repository,
+        Some(&current_commit),
+        &incoming_commit,
+    )
+    .await?;
 
     let merge_commit = match repositories::merge::merge_commit_into_base_on_branch(
         &repository,

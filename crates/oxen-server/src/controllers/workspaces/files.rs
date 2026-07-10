@@ -22,10 +22,8 @@ use liboxen::view::{
 use actix_multipart::Multipart;
 use actix_web::Error;
 use actix_web::{HttpRequest, HttpResponse, web};
-use flate2::read::GzDecoder;
 use futures_util::TryStreamExt as _;
 use serde::Deserialize;
-use std::io::Read as StdRead;
 use std::path::PathBuf;
 use std::sync::Arc;
 use utoipa;
@@ -526,47 +524,20 @@ pub async fn save_parts(
 
             let (upload_filehash, data_to_store) =
                 match actix_web::web::block(move || -> Result<(String, Vec<u8>), OxenError> {
-                    if is_gzipped {
+                    let data = if is_gzipped {
                         log::debug!(
                             "Decompressing gzipped data for file: {upload_filename_copy:?}"
                         );
-
-                        // Cap gzip decompression against decompression bombs. Gzipped parts come
-                        // from the client's small-file staging path, which sends nothing larger
-                        // than one stream segment (bigger files go to the chunked upload), so a
-                        // decompressed part is capped at that threshold.
-                        let max_decompressed_size = stream_segment_size();
-
-                        // Cap decompression so a gzip bomb can't exhaust memory: read at most one
-                        // byte past the limit, then reject if the cap was hit.
-                        let mut decoder =
-                            GzDecoder::new(&field_bytes[..]).take(max_decompressed_size + 1);
-                        let mut decompressed_bytes: Vec<u8> = Vec::new();
-                        decoder.read_to_end(&mut decompressed_bytes).map_err(|e| {
-                            OxenError::internal_error(format!(
-                                "Failed to decompress gzipped data: {e}"
-                            ))
-                        })?;
-
-                        let decompressed_size = decompressed_bytes.len() as u64;
-                        if decompressed_size > max_decompressed_size {
-                            return Err(OxenError::internal_error(format!(
-                                "Decompressed size {decompressed_size} exceeds the \
-                                 {max_decompressed_size} byte limit"
-                            )));
-                        }
-
-                        // Hash file contents
-                        let hash = hasher::hash_buffer(&decompressed_bytes);
-
-                        Ok((hash, decompressed_bytes))
+                        util::compression::decompress_gzip_capped(
+                            &field_bytes,
+                            stream_segment_size(),
+                        )?
                     } else {
                         log::debug!("Data for file {upload_filename_copy:?} is not gzipped.");
-
-                        // Only hash file contents
-                        let hash = hasher::hash_buffer(&field_bytes);
-                        Ok((hash, field_bytes))
-                    }
+                        field_bytes
+                    };
+                    let hash = hasher::hash_buffer(&data);
+                    Ok((hash, data))
                 })
                 .await
                 {
