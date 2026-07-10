@@ -109,15 +109,17 @@ jobs:
           echo "SYNC_DIR=/Volumes/OxenTest/sync" >> "$GITHUB_ENV"
           mkdir -p /Volumes/OxenTest/test /Volumes/OxenTest/sync
 
-      - name: Setup ramdisk (Windows)
+      # No ramdisk on Windows: ImDisk RAM disks don't support the memory-mapped
+      # file operations LMDB requires, so opening an LMDB env on the ramdisk
+      # fails with "Incorrect function" (ERROR_INVALID_FUNCTION / os error 1).
+      # Run on the runner's real SSD (NTFS), which supports mmap + sparse files.
+      - name: Setup test data dir (Windows)
         if: matrix.platform == 'windows'
         run: |
-          choco install imdisk -y
-          imdisk -a -s 16G -m R: -p "/fs:ntfs /q /y"
-          echo "OXEN_TEST_RUN_DIR=R:\test" >> $env:GITHUB_ENV
-          echo "SYNC_DIR=R:\sync" >> $env:GITHUB_ENV
-          mkdir R:\test
-          mkdir R:\sync
+          echo "OXEN_TEST_RUN_DIR=$env:RUNNER_TEMP\oxen_test\test" >> $env:GITHUB_ENV
+          echo "SYNC_DIR=$env:RUNNER_TEMP\oxen_test\sync" >> $env:GITHUB_ENV
+          mkdir $env:RUNNER_TEMP\oxen_test\test
+          mkdir $env:RUNNER_TEMP\oxen_test\sync
 
       # Oxen Rust Tests
       - name: Setup test directories (Linux/macOS)

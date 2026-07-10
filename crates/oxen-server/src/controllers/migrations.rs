@@ -138,7 +138,7 @@ mod tests {
         // Index should exist after migration.
         assert!(workspace_name_index::index_exists(&repo));
 
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 
@@ -167,7 +167,7 @@ mod tests {
             other => panic!("expected BadRequest, got {other:?}"),
         }
 
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(_repo, &sync_dir)?;
         Ok(())
     }
 
@@ -201,7 +201,7 @@ mod tests {
         let resp = actix_web::test::call_service(&app, req).await;
         assert_eq!(resp.status(), http::StatusCode::BAD_REQUEST);
 
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(_repo, &sync_dir)?;
         Ok(())
     }
 
@@ -236,7 +236,7 @@ mod tests {
             other => panic!("expected BadRequest for unknown field, got {other:?}"),
         }
 
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(_repo, &sync_dir)?;
         Ok(())
     }
 
@@ -269,7 +269,7 @@ mod tests {
             other => panic!("expected BadRequest for wrong type, got {other:?}"),
         }
 
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(_repo, &sync_dir)?;
         Ok(())
     }
 
@@ -303,7 +303,7 @@ mod tests {
             other => panic!("expected BadRequest for malformed JSON, got {other:?}"),
         }
 
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(_repo, &sync_dir)?;
         Ok(())
     }
 }
