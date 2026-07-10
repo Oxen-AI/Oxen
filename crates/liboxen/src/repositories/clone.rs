@@ -161,10 +161,15 @@ mod tests {
                 repositories::status(&local_repo).await?;
 
                 let new_path = dir.join("new_path");
+                let old_path = local_repo.path.clone();
 
-                core::staged::remove_from_cache_with_children(&local_repo.path)?;
-                core::refs::remove_from_cache(&local_repo.path)?;
-                util::fs::rename(&local_repo.path, &new_path)?;
+                core::staged::remove_from_cache_with_children(&old_path)?;
+                core::refs::remove_from_cache(&old_path)?;
+                // Drop the repo to release its LMDB env before the rename: on Windows
+                // `util::fs::rename` copies then removes the source, and a mapped env file can't be
+                // removed while the repo holds it open.
+                drop(local_repo);
+                util::fs::rename(&old_path, &new_path)?;
 
                 let new_repo = LocalRepository::from_dir(&new_path)?;
                 repositories::status(&new_repo).await?;

@@ -861,7 +861,7 @@ mod tests {
         );
 
         // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
 
         Ok(())
     }
@@ -910,7 +910,7 @@ mod tests {
             header::CONTENT_LENGTH.as_str()
         );
 
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 
@@ -986,7 +986,7 @@ mod tests {
             .unwrap();
         assert_eq!(std::str::from_utf8(&body).unwrap(), "# Hero Content");
 
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 
@@ -1040,7 +1040,7 @@ mod tests {
         let put_resp = actix_web::test::call_service(&app, put_req).await;
         assert_eq!(put_resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
 
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 
@@ -1092,7 +1092,7 @@ mod tests {
 
         assert_eq!(put_resp.commit.message, "first upload message");
 
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 
@@ -1163,7 +1163,7 @@ mod tests {
             .unwrap();
         assert_eq!(std::str::from_utf8(&body).unwrap(), "# Hero Content");
 
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 
@@ -1239,7 +1239,7 @@ mod tests {
             .unwrap();
         assert_eq!(std::str::from_utf8(&body).unwrap(), "Hello from file field");
 
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 
@@ -1297,7 +1297,7 @@ mod tests {
         let put_resp = actix_web::test::call_service(&app, put_req).await;
         assert_eq!(put_resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
 
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 
@@ -1353,7 +1353,7 @@ mod tests {
 
         assert!(matches!(err, OxenHttpError::BadRequest(_)));
 
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 }
