@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use crate::constants::{DEFAULT_VNODE_SIZE, MIN_OXEN_VERSION};
+use crate::core::db::merkle_node::MerkleNodeBackend;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, Remote};
 use crate::storage::StorageConfig;
@@ -48,6 +49,10 @@ pub struct RepositoryConfig {
     /// Currently used only for remote mode
     pub workspace_name: Option<String>,
     pub workspaces: Option<Vec<String>>,
+    /// Which engine backs this repo's Merkle node store. The authoritative record of the repo's
+    /// backend: written at `init` and updated by the file ↔ LMDB migration. `None` for repos whose
+    /// config predates the field, which fall back to on-disk evidence (see `create_merkle_node_store`).
+    pub merkle_node_backend: Option<MerkleNodeBackend>,
 }
 
 impl Default for RepositoryConfig {
@@ -66,6 +71,7 @@ impl Default for RepositoryConfig {
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
+            merkle_node_backend: None,
         }
     }
 }

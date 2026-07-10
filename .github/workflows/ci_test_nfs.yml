@@ -1,0 +1,113 @@
+name: 🐂 NFS Test Suite
+
+# Runs the transfer- and storage-heavy Rust tests against an NFS-mounted test tree.
+# NFS has semantics no local filesystem reproduces. Most importantly silly-rename: unlinking a file
+# a process still holds open leaves a hidden .nfsXXXX entry behind, so a follow-up rmdir fails with
+# ENOTEMPTY. That class of bug is invisible to normal CI.
+
+on:
+  schedule:
+    - cron: "0 7 * * *" # 07:00 UTC daily
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust-test-nfs:
+    name: Rust Tests (NFS)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Free up disk space
+        uses: ./.github/actions/free-disk-space
+
+      - name: Setup Rust Toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          rustflags: "-D warnings"
+          cache: false # We use Swatinem/rust-cache directly below for save-if control.
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          prefix-key: rust-test # Restore the cache the PR test job saves on main.
+          cache-all-crates: true
+          cache-on-failure: false
+          cache-bin: false
+
+      - name: Install nextest runner
+        uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
+        with:
+          tool: nextest@0.9.114
+
+      # Loopback NFS export, mounted back to this same runner.
+      - name: Setup loopback NFS mount
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nfs-kernel-server nfs-common
+          sudo mkdir -p /srv/oxen-nfs
+          sudo chown "$(id -u):$(id -g)" /srv/oxen-nfs
+          # no_root_squash + matching ownership so the non-root runner user can
+          # read/write through the mount; export to loopback only.
+          echo "/srv/oxen-nfs 127.0.0.1(rw,sync,no_subtree_check,no_root_squash,insecure)" | sudo tee /etc/exports
+          sudo systemctl start rpcbind || true # NFSv3 needs the portmapper; tolerate already-active
+          sudo systemctl restart nfs-kernel-server
+          sudo exportfs -ra
+          sudo mkdir -p /mnt/oxen-nfs
+          # NFSv3 with production-representative mount options (GCP Filestore BASIC_SSD tier).
+          sudo mount -t nfs \
+            -o vers=3,hard,tcp,rsize=1048576,wsize=1048576,actimeo=120,noatime,nodiratime \
+            127.0.0.1:/srv/oxen-nfs /mnt/oxen-nfs
+          sudo chown "$(id -u):$(id -g)" /mnt/oxen-nfs
+          # Fail loudly if the mount didn't actually land on NFS, so a silent
+          # fallback to local disk can't turn this lane into a false green.
+          fstype="$(stat -f -c %T /mnt/oxen-nfs)"
+          [[ "$fstype" == nfs* ]] || { echo "Expected NFS mount, got: $fstype"; exit 1; }
+          mkdir -p /mnt/oxen-nfs/test /mnt/oxen-nfs/sync
+          echo "OXEN_TEST_RUN_DIR=/mnt/oxen-nfs/test" >> "$GITHUB_ENV"
+          echo "SYNC_DIR=/mnt/oxen-nfs/sync" >> "$GITHUB_ENV"
+
+      - name: Setup test directories
+        run: |
+          mkdir -p data/test/runs
+          mkdir -p /tmp/oxen_sync/
+
+      - name: Build oxen rust project
+        run: cargo build --workspace
+
+      - name: Setup oxen-server user
+        run: |
+          ./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
+          cp user_config.toml data/test/config/user_config.toml
+
+      # Targeted subset: the transfer and storage paths where NFS-only failures live.
+      # --no-tests=fail turns a filter that matches nothing into a failure rather than a silent pass
+      - name: Run NFS-sensitive rust tests
+        run: |
+          RUST_LOG=warn,liboxen=debug \
+            ./target/debug/oxen-server start --test > oxen-server.log 2>&1 &
+          # Wait for the server (its SYNC_DIR is on NFS, so startup can lag) before tests.
+          # Bounded so a server that never comes up fails fast instead of hanging the job.
+          for i in $(seq 1 100); do
+            if curl -sf http://localhost:3000/api/health >/dev/null 2>&1; then break; fi
+            if [ "$i" -eq 100 ]; then echo "oxen-server did not become healthy"; exit 1; fi
+            sleep 0.1
+          done
+          cargo nextest run --workspace --profile ci --no-tests=fail \
+            -E 'test(/clone|pull|push|fetch|download|checkout|chunk|combine/)'
+
+      # Publish the server log so NFS failures on the server side (its SYNC_DIR is on the
+      # NFS mount) can be inspected after the fact.
+      - name: Upload oxen-server log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: oxen-server-log
+          path: oxen-server.log
+          if-no-files-found: ignore

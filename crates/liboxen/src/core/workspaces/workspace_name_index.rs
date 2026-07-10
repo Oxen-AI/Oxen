@@ -103,6 +103,14 @@ pub struct WorkspaceNameIndex {
 /// registry each round in case another opener won the race.
 pub fn get_index(repo: &LocalRepository) -> Result<WorkspaceNameIndex, WsError> {
     let dir = index_dir(repo);
+    // Fast path: cache hit does no filesystem work.
+    if let Some(strong) = lookup_live(&dir) {
+        return Ok(WorkspaceNameIndex { db: strong });
+    }
+    // Miss path: ensure the dir exists once (idempotent, but no reason to repeat under retry),
+    // then open with bounded LOCK-collision retry.
+    util::fs::create_dir_all(&dir).map_err(|e| WsError::CreateDirErr(Box::new(e)))?;
+    let opts = db::key_val::opts::default();
     let mut attempts = 0;
     loop {
         let mut instances = DB_INSTANCES.lock();
@@ -111,9 +119,6 @@ pub fn get_index(repo: &LocalRepository) -> Result<WorkspaceNameIndex, WsError> 
         {
             return Ok(WorkspaceNameIndex { db: strong });
         }
-
-        util::fs::create_dir_all(&dir).map_err(|e| WsError::CreateDirErr(Box::new(e)))?;
-        let opts = db::key_val::opts::default();
         match DB::open(&opts, dunce::simplified(&dir)) {
             Ok(db) => {
                 let arc_db = Arc::new(RwLock::new(db));
@@ -132,6 +137,11 @@ pub fn get_index(repo: &LocalRepository) -> Result<WorkspaceNameIndex, WsError> 
             Err(err) => return Err(WsError::OpenError(err)),
         }
     }
+}
+
+fn lookup_live(dir: &Path) -> Option<Arc<RwLock<DB>>> {
+    let instances = DB_INSTANCES.lock();
+    instances.get(dir)?.upgrade()
 }
 
 /// True if `err` is a RocksDB LOCK-file collision — i.e. another opener still holds the

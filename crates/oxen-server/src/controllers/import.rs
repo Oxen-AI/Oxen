@@ -556,7 +556,7 @@ mod tests {
         );
 
         // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
 
         Ok(())
     }
@@ -642,7 +642,7 @@ mod tests {
         );
 
         // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
 
         Ok(())
     }
