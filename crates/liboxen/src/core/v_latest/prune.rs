@@ -4,10 +4,8 @@
 //! referenced by any commit in the repository history.
 
 use std::collections::HashSet;
-use std::str::FromStr;
 
 use crate::api;
-use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
 use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
@@ -212,58 +210,23 @@ fn prune_nodes(
     stats: &mut PruneStats,
     dry_run: bool,
 ) -> Result<(), OxenError> {
-    let nodes_dir = repo
-        .path
-        .join(OXEN_HIDDEN_DIR)
-        .join(TREE_DIR)
-        .join(NODES_DIR);
+    // Enumerate and delete through the store so pruning is backend-agnostic, mirroring how
+    // `prune_versions` drives the version store below.
+    let store = repo.merkle_node_store();
+    let all_nodes = store.list_hashes()?;
+    stats.nodes_scanned += all_nodes.len();
 
-    if !nodes_dir.exists() {
-        log::debug!("Nodes directory does not exist: {nodes_dir:?}");
-        return Ok(());
-    }
-
-    // Walk through the nodes directory structure
-    // Nodes are stored in a two-level directory structure: prefix/suffix
-    for top_entry in std::fs::read_dir(&nodes_dir)? {
-        let top_entry = top_entry?;
-        if !top_entry.file_type()?.is_dir() {
-            continue;
-        }
-
-        for sub_entry in std::fs::read_dir(top_entry.path())? {
-            let sub_entry = sub_entry?;
-            if !sub_entry.file_type()?.is_dir() {
-                continue;
-            }
-
-            stats.nodes_scanned += 1;
-
-            // Reconstruct the hash from the directory structure
-            let top_name = top_entry.file_name();
-            let sub_name = sub_entry.file_name();
-            let hash_str = format!(
-                "{}{}",
-                top_name.to_string_lossy(),
-                sub_name.to_string_lossy()
-            );
-
-            // Try to parse the hash
-            if let Ok(hash) = MerkleHash::from_str(&hash_str) {
-                if referenced_nodes.contains(&hash) {
-                    stats.nodes_kept += 1;
-                } else {
-                    // This node is orphaned
-                    stats.nodes_removed += 1;
-                    let node_path = sub_entry.path();
-
-                    if dry_run {
-                        log::debug!("Would remove orphaned node: {node_path:?}");
-                    } else {
-                        log::debug!("Removing orphaned node: {node_path:?}");
-                        std::fs::remove_dir_all(&node_path)?;
-                    }
-                }
+    for hash in all_nodes {
+        if referenced_nodes.contains(&hash) {
+            stats.nodes_kept += 1;
+        } else {
+            // This node is orphaned
+            stats.nodes_removed += 1;
+            if dry_run {
+                log::debug!("Would remove orphaned node: {hash}");
+            } else {
+                log::debug!("Removing orphaned node: {hash}");
+                store.delete(&hash)?;
             }
         }
     }
