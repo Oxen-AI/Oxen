@@ -3,12 +3,7 @@ name: 🐂📝 Continuous integration - Test Suite
 on:
   workflow_call:
 
-env:
-  AWS_REGION: us-west-1
-  AWS_ROLE: arn:aws:iam::213020545630:role/ci-test-integration-role
-
 permissions:
-  id-token: write
   contents: read
 
 jobs:
@@ -46,27 +41,22 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Free up disk space
         if: matrix.platform == 'linux'
         uses: ./.github/actions/free-disk-space
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ env.AWS_ROLE }}
-          role-duration-seconds: 3600
-          aws-region: ${{ env.AWS_REGION }}
-
       - name: Setup Rust Toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           rustflags: ${{ matrix.platform == 'windows' && '-D warnings -C link-arg=/DEBUG:NONE' || '-D warnings' }}
           cache: false # We use Swatinem/rust-cache directly below for save-if control.
 
       - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           prefix-key: rust-test
           save-if: ${{ github.ref == 'refs/heads/main' }} # Only save cache on main; always restore.
@@ -97,7 +87,7 @@ jobs:
           brew services start redis
 
       - name: Install nextest runner
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
         with:
           tool: nextest@0.9.114
 
@@ -195,27 +185,22 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Free up disk space
         if: matrix.platform == 'linux'
         uses: ./.github/actions/free-disk-space
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ env.AWS_ROLE }}
-          role-duration-seconds: 3600
-          aws-region: ${{ env.AWS_REGION }}
-
       - name: Setup Rust Toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           rustflags: ${{ matrix.platform == 'windows' && '-D warnings -C link-arg=/DEBUG:NONE' || '-D warnings' }}
           cache: false # We use Swatinem/rust-cache directly below for save-if control.
 
       - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           prefix-key: python-test
           save-if: ${{ github.ref == 'refs/heads/main' }} # Only save cache on main; always restore.
@@ -224,7 +209,7 @@ jobs:
           cache-bin: false # See rust-test job for rationale.
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.1.0
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           python-version: "3.11" # Test against the earliest supported Python version
 

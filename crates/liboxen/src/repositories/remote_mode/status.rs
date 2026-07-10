@@ -311,7 +311,7 @@ mod tests {
     #[tokio::test]
     async fn test_remote_mode_status_unsynced_when_modified_stage_missing_on_disk()
     -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -328,7 +328,7 @@ mod tests {
                 // Restore a single file from HEAD so it lives on disk and in the tree.
                 let target_path = PathBuf::from("annotations")
                     .join("train")
-                    .join("two_shot.csv");
+                    .join("bounding_box.csv");
                 let head_commit = repositories::commits::head_commit(&cloned_repo)?;
                 repositories::remote_mode::restore(
                     &cloned_repo,

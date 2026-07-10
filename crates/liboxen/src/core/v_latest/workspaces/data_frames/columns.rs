@@ -173,7 +173,8 @@ pub async fn restore(
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
 
-    let db = changes_db::get_changes_db(&column_changes_path)?;
+    // Arc may cross `.await`; the guards taken below must not.
+    let handle = changes_db::get_changes_db(&column_changes_path)?;
 
     log::debug!("restore_column() got db_path: {db_path:?}");
 
@@ -183,9 +184,16 @@ pub async fn restore(
         file_path,
     )?;
 
-    if let Some(change) =
-        column_changes_db::get_data_frame_column_change(&db, &column_to_restore.name)?
-    {
+    // Hold one write guard from the change lookup through the DuckDB mutation and revert, so a
+    // concurrent `record_column_change` can't replace the entry between read and revert. Drop the
+    // guard before any `.await`.
+    let result = {
+        let db = handle.write();
+        let change = column_changes_db::get_data_frame_column_change(&db, &column_to_restore.name)?
+            .ok_or_else(|| {
+                DataFrameError::ColumnNameNotFound(column_to_restore.name.to_string())
+            })?;
+
         match change.operation.as_str() {
             "added" => {
                 log::debug!("restore_column() column is added, deleting");
@@ -217,8 +225,7 @@ pub async fn restore(
                         })?
                         .column_name,
                 )?;
-                repositories::workspaces::files::add(workspace, file_path).await?;
-                Ok(result)
+                result
             }
             "deleted" => {
                 log::debug!("restore_column() column was removed, adding it back");
@@ -262,8 +269,7 @@ pub async fn restore(
                         })?
                         .column_name,
                 )?;
-                repositories::workspaces::files::add(workspace, file_path).await?;
-                Ok(result)
+                result
             }
             "modified" => {
                 log::debug!("restore_column() column was modified, reverting changes");
@@ -351,18 +357,18 @@ pub async fn restore(
                         })?
                         .column_name,
                 )?;
-                repositories::workspaces::files::add(workspace, file_path).await?;
-                Ok(result)
+                result
             }
-            _ => Err(OxenError::UnsupportedOperation(
-                change.operation.clone().into(),
-            )),
+            _ => {
+                return Err(OxenError::UnsupportedOperation(
+                    change.operation.clone().into(),
+                ));
+            }
         }
-    } else {
-        Err(DataFrameError::ColumnNameNotFound(
-            column_to_restore.name.to_string(),
-        ))?
-    }
+    };
+
+    repositories::workspaces::files::add(workspace, file_path).await?;
+    Ok(result)
 }
 
 pub fn add_column_metadata(

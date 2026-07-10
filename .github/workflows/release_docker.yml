@@ -75,7 +75,7 @@ jobs:
 
       - name: Start EC2 runner
         id: start-ec2-runner
-        uses: machulav/ec2-github-runner@v2
+        uses: machulav/ec2-github-runner@343a1b2ae682e681c3cec9a235d882da17ff04ef # v2.6.1
         with:
           mode: start
           github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
@@ -95,7 +95,9 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Get build metadata
         id: metadata
@@ -122,7 +124,7 @@ jobs:
         run: docker save oxen/oxen-server -o oxen-server-docker-${{ inputs.ARCHITECTURE }}.tar
 
       - name: Upload Docker Image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: oxen-server-docker-${{ inputs.ARCHITECTURE }}.tar
           path: ${{ github.workspace }}/oxen-server-docker-${{ inputs.ARCHITECTURE }}.tar
@@ -144,7 +146,7 @@ jobs:
           aws-region: ${{ inputs.AWS_REGION }}
 
       - name: Stop EC2 runner
-        uses: machulav/ec2-github-runner@v2
+        uses: machulav/ec2-github-runner@343a1b2ae682e681c3cec9a235d882da17ff04ef # v2.6.1
         with:
           mode: stop
           github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
