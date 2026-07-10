@@ -186,6 +186,12 @@ impl MerkleNodeStore for FsMerkleNodeStore {
         let _ = std::fs::remove_dir(&dir);
         Ok(())
     }
+
+    fn snapshot_for_archive(&self, _dst_dir: &Path) -> Result<Option<PathBuf>, MerkleDbError> {
+        // The filesystem backend stores nodes as plain files under `.oxen/tree/nodes`, which the
+        // archiver walks and copies directly. There is nothing to snapshot separately.
+        Ok(None)
+    }
 }
 
 #[cfg(test)]

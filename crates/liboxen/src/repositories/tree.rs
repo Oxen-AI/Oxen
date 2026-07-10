@@ -2583,7 +2583,9 @@ mod tests {
     /// payload must be identical.
     #[tokio::test]
     async fn test_compress_nodes_wire_format_unchanged() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(|repo| {
+        // FS-pinned: the `compress_nodes` oracle walks the on-disk `tree/nodes` layout, which only
+        // the filesystem backend produces.
+        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
             let head = repositories::commits::head_commit(&repo)?;
             let hashes = HashSet::from_iter([head.hash().expect("no commit for head")]);
 
@@ -2611,7 +2613,9 @@ mod tests {
     /// Same byte-compat check for the whole-tree path.
     #[tokio::test]
     async fn test_compress_tree_wire_format_unchanged() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(|repo| {
+        // FS-pinned: the `compress_tree` oracle walks the on-disk `tree/nodes` layout, which only
+        // the filesystem backend produces.
+        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
             // prior code for packing an entire Merkle tree into a .tar.gz
             let old_pack_method = compress_tree(&repo)?;
 
@@ -2635,7 +2639,9 @@ mod tests {
     /// `pack_nodes(&{hash})`).
     #[tokio::test]
     async fn test_compress_node_wire_format_unchanged() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(|repo| {
+        // FS-pinned: the `compress_node` oracle walks the on-disk `tree/nodes` layout, which only
+        // the filesystem backend produces.
+        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
             let head = repositories::commits::head_commit(&repo)?;
             let hash = head.hash().expect("no commit for head");
 
@@ -2665,7 +2671,9 @@ mod tests {
     /// `pack_nodes(&{commit hashes})`).
     #[tokio::test]
     async fn test_compress_commits_wire_format_unchanged() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(|repo| {
+        // FS-pinned: the `compress_commits` oracle walks the on-disk `tree/nodes` layout, which only
+        // the filesystem backend produces.
+        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
             let head = repositories::commits::head_commit(&repo)?;
             let commits: Vec<Commit> = vec![head];
 
@@ -2725,7 +2733,9 @@ mod tests {
     /// store in both target repos.
     #[tokio::test]
     async fn test_unpack_nodes_unchanged() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(|repo| {
+        // FS-pinned: the `unpack_nodes` oracle writes/reads the on-disk `tree/nodes` layout, which
+        // only the filesystem backend produces.
+        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
             let head = repositories::commits::head_commit(&repo)?;
             let hashes = HashSet::from_iter([head.hash().expect("no commit for head")]);
 
@@ -2734,13 +2744,15 @@ mod tests {
             let bytes = compress_nodes_client_push_format(&repo, &hashes)
                 .expect("client-push-format pack failed");
 
-            // Unpack into two fresh repos: one via `unpack_nodes`, one via `unpack`.
+            // Unpack into two fresh repos: one via `unpack_nodes`, one via `unpack`. Both are
+            // FS-pinned: the legacy `unpack_nodes` writes the on-disk layout directly, so its store
+            // must read from disk to see the result.
             let tmp_old = tempfile::TempDir::new()?;
-            let repo_old = repositories::init(tmp_old.path())?;
+            let repo_old = test::init_fs_merkle_backend(tmp_old.path())?;
             let old_hashes = unpack_nodes(&repo_old, &bytes).expect("old unpack_nodes failed");
 
             let tmp_new = tempfile::TempDir::new()?;
-            let repo_new = repositories::init(tmp_new.path())?;
+            let repo_new = test::init_fs_merkle_backend(tmp_new.path())?;
             // Old `unpack_nodes` skipped existing files; mirror that with
             // `UnpackOptions::SkipExisting` so the parity check is semantically faithful.
             let new_hashes = unpack(&repo_new, &mut &bytes[..], UnpackOptions::SkipExisting)
@@ -2806,21 +2818,25 @@ mod tests {
     /// cover every installed hash directory.
     #[tokio::test]
     async fn test_node_download_request_unpack_unchanged() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
+        // FS-pinned: this compares on-disk merkle node trees between the old unpack and the new one,
+        // a layout only the filesystem backend produces.
+        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
             let mut packed = Vec::new();
             pack_tree(&repo, &mut packed).expect("pack_tree failed");
             assert!(!packed.is_empty(), "pack_tree produced empty buffer");
 
-            // Old client install path (mirror of node_download_request on main).
+            // Old client install path (mirror of node_download_request on main). Both targets are
+            // FS-pinned: the comparison reads the on-disk `tree/nodes` tree, which only the
+            // filesystem backend produces.
             let tmp_old = tempfile::TempDir::new()?;
-            let repo_old = repositories::init(tmp_old.path())?;
+            let repo_old = test::init_fs_merkle_backend(tmp_old.path())?;
             node_download_request_unpack_old(&repo_old, &packed)
                 .await
                 .expect("old unpack failed");
 
             // New client install path: `unpack`, with download-path overwrite semantics.
             let tmp_new = tempfile::TempDir::new()?;
-            let repo_new = repositories::init(tmp_new.path())?;
+            let repo_new = test::init_fs_merkle_backend(tmp_new.path())?;
             let installed = unpack(&repo_new, &mut &packed[..], UnpackOptions::Overwrite)
                 .expect("new unpack failed");
 
@@ -2946,7 +2962,13 @@ mod tests {
     /// silent `id.len() == 32` gate that dropped these entries.
     #[tokio::test]
     async fn test_unpack_recovers_hash_with_leading_zero_nibbles() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|repo| {
+        // FS-pinned: this asserts on the short-hex hash recovered from the on-disk `tree/nodes`
+        // path layout, which only the filesystem backend produces.
+        if test::skip_fs_pinned_under_lmdb() {
+            return Ok(());
+        }
+        test::run_empty_dir_test_async(|dir| async move {
+            let repo = test::init_fs_merkle_backend(&dir)?;
             // Pick a small `u128` whose hex form is much shorter than 32 chars.
             // `MerkleHash`'s `Display` is `{:x}` (no zero padding) so this is
             // exactly the shape that triggered the bug.
@@ -2988,6 +3010,7 @@ mod tests {
             );
             Ok(())
         })
+        .await
     }
 
     /// A `{prefix}/{suffix}` dir entry whose name isn't valid hex must produce
@@ -3218,7 +3241,9 @@ mod tests {
     /// upload wire format.
     #[tokio::test]
     async fn test_create_nodes_wire_format_unchanged() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test(|repo| {
+        // FS-pinned: the `create_nodes_pack_old` oracle walks the on-disk `tree/nodes` layout, which
+        // only the filesystem backend produces.
+        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
             let head = repositories::commits::head_commit(&repo)?;
             let hashes = HashSet::from_iter([head.hash().expect("no commit for head")]);
 
