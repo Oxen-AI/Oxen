@@ -47,6 +47,9 @@ impl RunCmd for PushCmd {
                     .num_args(0..=1)
                     .value_name("COMMIT_ID")
                     .default_missing_value("true")
+                    // Whole-store clean + a commit-scoped re-push would delete corrupt files
+                    // everywhere but only re-push one commit's — leaving others missing.
+                    .conflicts_with("revalidate")
             )
             .arg(
                 Arg::new("revalidate")
