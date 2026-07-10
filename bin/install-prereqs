@@ -202,7 +202,7 @@ install_cargo_tool() {
     fi
 }
 
-install_cargo_tool bacon          bacon          "$BACON_VERSION"
+install_cargo_tool bacon          bacon          "$BACON_VERSION"        "--locked"
 install_cargo_tool cargo-machete  cargo-machete  "$CARGO_MACHETE_VERSION"
 install_cargo_tool cargo-llvm-cov cargo-llvm-cov "$CARGO_LLVM_COV_VERSION"
 install_cargo_tool cargo-sort     cargo-sort     "$CARGO_SORT_VERSION"
