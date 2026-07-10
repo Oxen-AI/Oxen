@@ -1,6 +1,6 @@
 use actix_web::{HttpRequest, HttpResponse, web};
 use bytesize::ByteSize;
-use futures_util::stream::StreamExt as _;
+use futures_util::stream::{self, StreamExt as _};
 use liboxen::core::node_sync_status;
 use liboxen::error::OxenError;
 use liboxen::model::Commit;
@@ -9,7 +9,9 @@ use liboxen::view::MerkleHashesResponse;
 use liboxen::view::StatusMessage;
 use liboxen::view::tree::MerkleHashResponse;
 use liboxen::view::tree::merkle_hashes::MerkleHashes;
+use tokio_util::io::{ReaderStream, SyncIoBridge};
 
+use std::io::Write;
 use std::path::PathBuf;
 
 use liboxen::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
@@ -23,6 +25,11 @@ use crate::helpers::get_repo;
 use crate::params::TreeDepthQuery;
 use crate::params::parse_resource;
 use crate::params::{app_data, path_param};
+
+/// Duplex buffer between the blocking packer and the response body for the full-tree download.
+const TREE_DOWNLOAD_BUFFER_SIZE: usize = 2 * 1024 * 1024;
+/// Buffer that batches the sync packer's writes before they cross into the duplex.
+const TREE_PACK_WRITE_BUFFER_SIZE: usize = 10 * 1024 * 1024;
 
 #[tracing::instrument(skip_all)]
 pub async fn get_node_by_id(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
@@ -193,10 +200,63 @@ pub async fn download_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, 
     let name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(app_data, namespace, name)?;
 
-    // Download the entire tree
-    let buffer = repositories::tree::compress_tree(&repository)?;
+    // Stream the entire tree tarball straight into the response body so the server never
+    // buffers the whole (potentially huge) tree in memory.
+    Ok(stream_tarball(move |out| {
+        repositories::tree::pack_tree(&repository, out)
+    }))
+}
 
-    Ok(HttpResponse::Ok().body(buffer))
+/// Stream a tar-gz produced by `pack` straight into the HTTP response body.
+///
+/// The packer is sync + blocking (`tar` + `flate2`), so it runs on a `spawn_blocking` worker
+/// that writes into one end of a `tokio::io::duplex`; the response body reads the other end,
+/// so packing and sending progress together with back-pressure and the whole tarball never
+/// lives in memory at once. A large `BufWriter` batches the packer's writes across the
+/// blocking boundary.
+///
+/// A pack failure — error or panic — becomes the stream's terminal item rather than being lost:
+/// the HTTP 200 is already sent, so it truncates the body instead of changing the status, and the
+/// cause is always logged.
+fn stream_tarball<F>(pack: F) -> HttpResponse
+where
+    F: FnOnce(&mut dyn Write) -> Result<(), OxenError> + Send + 'static,
+{
+    let (writer, reader) = tokio::io::duplex(TREE_DOWNLOAD_BUFFER_SIZE);
+
+    let pack_handle = tokio::task::spawn_blocking(move || {
+        let mut buf_writer = std::io::BufWriter::with_capacity(
+            TREE_PACK_WRITE_BUFFER_SIZE,
+            SyncIoBridge::new(writer),
+        );
+        let result =
+            pack(&mut buf_writer).and_then(|()| buf_writer.flush().map_err(OxenError::from));
+        // Dropping `buf_writer` drops the bridged duplex writer, signalling EOF to the reader.
+        drop(buf_writer);
+        result
+    });
+
+    // After the body bytes drain (reader EOF), await the worker and surface its error — or a
+    // panic — as the stream's final item. The worker has finished by then, so the await is ready.
+    let body = ReaderStream::new(reader)
+        .map(|chunk| chunk.map_err(OxenHttpError::from))
+        .chain(stream::once(async move {
+            match pack_handle.await {
+                Ok(Ok(())) => Ok(web::Bytes::new()),
+                Ok(Err(e)) => {
+                    log::error!("stream_tarball pack failed: {e}");
+                    Err(OxenHttpError::from(e))
+                }
+                Err(join_err) => {
+                    log::error!("stream_tarball pack task panicked: {join_err}");
+                    Err(OxenHttpError::InternalServerError)
+                }
+            }
+        }));
+
+    HttpResponse::Ok()
+        .content_type("application/gzip")
+        .streaming(body)
 }
 
 #[tracing::instrument(skip_all)]

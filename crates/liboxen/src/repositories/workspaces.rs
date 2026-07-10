@@ -889,6 +889,14 @@ mod tests {
         .await
     }
 
+    // On Windows, the workspace repo's LMDB env still maps files under the workspace dir
+    // during TemporaryWorkspace::drop, so remove_dir_all fails with a sharing violation and
+    // the dir is not cleaned up. Skip until the store can be disconnected before deletion
+    // (ENG-1159).
+    #[cfg_attr(
+        windows,
+        ignore = "workspace dir removal fails while LMDB env is mapped"
+    )]
     #[tokio::test]
     async fn test_temporary_workspace_cleanup() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {

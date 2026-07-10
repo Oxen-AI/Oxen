@@ -145,7 +145,7 @@ mod tests {
         assert_eq!(entries_resp.total_entries, num_entries);
 
         // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
 
         Ok(())
     }
@@ -230,7 +230,7 @@ mod tests {
         assert_eq!(filenames, vec!["b_file.txt", "a_file.txt"]);
 
         // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
 
         Ok(())
     }
