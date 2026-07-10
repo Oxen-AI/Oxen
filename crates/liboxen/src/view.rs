@@ -10,7 +10,6 @@ pub mod diff;
 pub mod entries;
 pub mod entry_metadata;
 pub mod file_metadata;
-pub mod fork;
 pub mod health;
 pub mod http;
 pub mod json_data_frame;

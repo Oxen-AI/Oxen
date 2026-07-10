@@ -38,8 +38,9 @@ pub fn get_row_diff(
 ) -> Result<Vec<DataFrameRowChange>, DataFrameError> {
     let row_changes_path =
         repositories::workspaces::data_frames::row_changes_path(workspace, file_path);
+    // No change-tracking db on disk means no edits are staged: empty diff.
     match changes_db::try_get_changes_db(&row_changes_path)? {
-        Some(db) => get_all_data_frame_row_changes(&db),
+        Some(handle) => get_all_data_frame_row_changes(&handle.read()),
         None => Ok(Vec::new()),
     }
 }

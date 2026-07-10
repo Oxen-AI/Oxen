@@ -5,7 +5,6 @@
 
 use crate::api::requests::RepoNew;
 use crate::constants;
-use crate::constants::OXEN_HIDDEN_DIR;
 use crate::core;
 use crate::core::refs::with_ref_manager;
 use crate::error::OxenError;
@@ -16,7 +15,6 @@ use crate::model::file::FileContents;
 use crate::model::merkle_tree;
 use crate::model::repository::local_repository::LocalRepositoryWithEntries;
 use crate::repositories;
-use crate::repositories::fork::FORK_STATUS_FILENAME;
 use crate::storage::S3Opts;
 use crate::util;
 use jwalk::WalkDir;
@@ -35,7 +33,6 @@ pub mod diffs;
 pub mod download;
 pub mod entries;
 pub mod fetch;
-pub mod fork;
 pub mod fsck;
 pub mod init;
 pub mod load;
@@ -86,31 +83,9 @@ pub fn get_by_namespace_and_name(
         return Ok(None);
     }
 
-    let repo = LocalRepository::from_dir_with_server_opts(&repo_dir, server_s3_opts);
-    match repo {
-        Ok(repo) => Ok(Some(repo)),
-        Err(OxenError::LocalRepoNotFound(_)) => is_repo_forked(&repo_dir, server_s3_opts),
-        Err(err) => {
-            log::error!("Error getting repo from dir: {err:?}");
-            Err(err)
-        }
-    }
-}
-
-fn is_repo_forked(
-    repo_dir: &Path,
-    server_s3_opts: Option<&S3Opts>,
-) -> Result<Option<LocalRepository>, OxenError> {
-    let status_path = repo_dir.join(OXEN_HIDDEN_DIR).join(FORK_STATUS_FILENAME);
-
-    if status_path.exists() {
-        Ok(Some(LocalRepository::from_dir_with_server_opts(
-            repo_dir,
-            server_s3_opts,
-        )?))
-    } else {
-        Err(OxenError::local_repo_not_found(repo_dir))
-    }
+    LocalRepository::from_dir_with_server_opts(&repo_dir, server_s3_opts)
+        .inspect_err(|err| log::error!("Error getting repo from dir: {err:?}"))
+        .map(Some)
 }
 
 pub fn is_empty(repo: &LocalRepository) -> Result<bool, OxenError> {
