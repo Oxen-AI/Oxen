@@ -73,7 +73,6 @@ where
 {
     let hidden = util::fs::oxen_hidden_dir(&repository.path);
     let refs_dir = hidden.join(REFS_DIR);
-    util::fs::create_dir_all(&refs_dir)?;
     let refs_db = open_refs_db(&refs_dir)?;
     let manager = RefManager {
         refs_db,
@@ -86,6 +85,13 @@ where
 /// Return the shared refs-DB handle for `refs_dir`, retrying briefly on a LOCK-collision
 /// race with a concurrent close (see module doc).
 fn open_refs_db(refs_dir: &Path) -> Result<Arc<RwLock<DB>>, OxenError> {
+    // Fast path: cache hit does no filesystem work.
+    if let Some(strong) = lookup_live(refs_dir) {
+        return Ok(strong);
+    }
+    // Miss path: ensure the dir exists once (idempotent, but no reason to repeat under retry),
+    // then open with bounded LOCK-collision retry.
+    util::fs::create_dir_all(refs_dir)?;
     let opts = db::key_val::opts::default();
     let mut attempts = 0;
     loop {
@@ -113,6 +119,11 @@ fn open_refs_db(refs_dir: &Path) -> Result<Arc<RwLock<DB>>, OxenError> {
             Err(err) => return Err(refs_db_open_failed(refs_dir, err)),
         }
     }
+}
+
+fn lookup_live(refs_dir: &Path) -> Option<Arc<RwLock<DB>>> {
+    let instances = DB_INSTANCES.lock();
+    instances.get(refs_dir)?.upgrade()
 }
 
 /// True if `err` is a RocksDB LOCK-file collision — i.e. another opener still holds the
