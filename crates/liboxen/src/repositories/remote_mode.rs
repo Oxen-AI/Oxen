@@ -166,7 +166,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_merkle_two_files_same_hash() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
+        test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {

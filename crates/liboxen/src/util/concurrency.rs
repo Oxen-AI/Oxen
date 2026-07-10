@@ -6,12 +6,10 @@ use crate::constants;
 pub fn num_threads_for_items(num_items: usize) -> usize {
     let num_workers = parse_num_threads_env();
 
-    // Finally look at how many items we have, and if we have less items than workers, use that instead
-    if num_workers > num_items {
-        num_items
-    } else {
-        num_workers
-    }
+    // Cap the worker count at the item count, but never return 0: callers feed this straight into
+    // `buffer_unordered` / `for_each_concurrent`, where a concurrency limit of 0 stalls the stream
+    // forever instead of completing on an empty input.
+    num_workers.min(num_items).max(1)
 }
 
 /// Returns the default number of threads to use
@@ -42,5 +40,17 @@ fn get_default_num_workers() -> usize {
         num_cpus
     } else {
         constants::DEFAULT_NUM_WORKERS
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::num_threads_for_items;
+
+    #[test]
+    fn test_num_threads_for_items_never_zero() {
+        // A worker count of 0 fed into `buffer_unordered` / `for_each_concurrent` stalls the
+        // stream forever, so an empty work set must still yield at least one worker.
+        assert_eq!(num_threads_for_items(0), 1);
     }
 }

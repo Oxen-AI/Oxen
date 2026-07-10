@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use crate::constants::{VERSION_CHUNK_FILE_NAME, VERSION_CHUNKS_DIR, VERSION_FILE_NAME};
 use crate::error::OxenError;
 use crate::model::MerkleHash;
-use crate::storage::version_store::{VersionLocation, VersionStore};
+use crate::storage::version_store::{BoxedByteStream, VersionLocation, VersionStore};
 use crate::util::fs::AtomicFile;
 use crate::util::{concurrency, hasher};
 use crate::view::versions::CleanCorruptedVersionsResult;
@@ -22,7 +22,6 @@ use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 use tokio::sync::Semaphore;
 use tokio::task::spawn_blocking;
-use tokio_stream::Stream;
 use tokio_util::io::ReaderStream;
 
 /// Local filesystem implementation of version storage
@@ -154,11 +153,7 @@ impl VersionStore for LocalVersionStore {
         Ok(metadata.len())
     }
 
-    async fn get_version_stream(
-        &self,
-        hash: &str,
-    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
-    {
+    async fn get_version_stream(&self, hash: &str) -> Result<BoxedByteStream, OxenError> {
         let path = self.version_path(hash);
         let file = File::open(&path).await?;
         let reader = BufReader::new(file);
@@ -171,8 +166,7 @@ impl VersionStore for LocalVersionStore {
         &self,
         orig_hash: &str,
         derived_filename: &str,
-    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
-    {
+    ) -> Result<BoxedByteStream, OxenError> {
         let path = self.version_dir(orig_hash).join(derived_filename);
         let file = File::open(&path).await?;
         let reader = BufReader::new(file);
@@ -373,6 +367,10 @@ impl VersionStore for LocalVersionStore {
             AtomicFile::new(&version_path)
                 .with_hash(expected_hash)
                 .stream(&mut combined)?;
+
+            // Close the chunk file handles before removing their directory. On NFS, unlinking a
+            // still-open file leaves a hidden .nfsXXXX entry that fails the rmdir with ENOTEMPTY.
+            drop(combined);
 
             if chunks_dir.exists() {
                 std::fs::remove_dir_all(&chunks_dir)?;
@@ -799,6 +797,37 @@ mod tests {
         // Get and verify the data
         let retrieved = store.get_version_chunk(&hash, offset, size).await.unwrap();
         assert_eq!(retrieved, data);
+    }
+
+    #[tokio::test]
+    async fn test_combine_version_chunks_reassembles_and_removes_chunks_dir() {
+        let (_temp_dir, store) = setup().await;
+        let data = b"chunk-zero-byteschunk-one-bytes";
+        let hash = hasher::hash_buffer(data);
+
+        // Split into two chunks stored at their byte offsets.
+        let split = 16;
+        store
+            .store_version_chunk(&hash, 0, Bytes::copy_from_slice(&data[..split]))
+            .await
+            .unwrap();
+        store
+            .store_version_chunk(&hash, split as u64, Bytes::copy_from_slice(&data[split..]))
+            .await
+            .unwrap();
+
+        let chunks_dir = store.version_chunks_dir(&hash);
+        assert!(chunks_dir.exists());
+
+        store.combine_version_chunks(&hash).await.unwrap();
+
+        // The reassembled version file matches the original bytes...
+        let version_path = store.version_path(&hash);
+        assert!(version_path.exists());
+        assert_eq!(store.get_version(&hash).await.unwrap(), data);
+
+        // ...and the chunks directory is removed.
+        assert!(!chunks_dir.exists());
     }
 
     #[tokio::test]

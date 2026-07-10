@@ -45,9 +45,11 @@ pub fn is_indexed(workspace: &Workspace, path: &Path) -> Result<bool, DataFrameE
 
     with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
-            let table_exists = df_db::table_exists(conn, TABLE_NAME)?;
-            log::debug!("dataset_is_indexed() got table_exists: {table_exists:?}");
-            Ok(table_exists)
+            // A partially-indexed table (missing some OXEN_COLS) can't be queried,
+            // so report it as not indexed and let callers rebuild it.
+            let fully_indexed = df_db::table_is_fully_indexed(conn, TABLE_NAME)?;
+            log::debug!("dataset_is_indexed() got fully_indexed: {fully_indexed:?}");
+            Ok(fully_indexed)
         })
     })
 }
@@ -581,6 +583,57 @@ mod tests {
                 }
                 _ => panic!("Expected tabular diff result"),
             }
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_partial_index_reads_as_not_indexed_and_reindex_repairs() -> Result<(), OxenError>
+    {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-partial-index")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+
+            // A normal index produces a fully-indexed, queryable table.
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+            assert!(workspaces::data_frames::is_indexed(&workspace, &file_path)?);
+
+            // Simulate the partial-index corruption an interrupted index leaves
+            // behind: a table that is missing one of the tracking columns.
+            let db_path = workspaces::data_frames::duckdb_path(&workspace, &file_path);
+            super::with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| {
+                    conn.execute(
+                        &format!(
+                            "ALTER TABLE \"{}\" DROP COLUMN \"{}\"",
+                            crate::constants::TABLE_NAME,
+                            crate::constants::DIFF_STATUS_COL
+                        ),
+                        [],
+                    )?;
+                    Ok(())
+                })
+            })?;
+
+            // A partial table must read as NOT indexed so callers rebuild it
+            // instead of serving a table the read path cannot bind.
+            assert!(!workspaces::data_frames::is_indexed(
+                &workspace, &file_path
+            )?);
+
+            // Re-indexing repairs the table back to fully indexed.
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+            assert!(workspaces::data_frames::is_indexed(&workspace, &file_path)?);
 
             Ok(())
         })

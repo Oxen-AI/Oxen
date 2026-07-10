@@ -1224,7 +1224,7 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|empty_dir| async move {
