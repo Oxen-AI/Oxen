@@ -19,7 +19,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_add_file_with_full_path() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -83,7 +83,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_add_file_with_relative_path() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -138,7 +138,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_add_file_with_canon_path() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -192,7 +192,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_add_and_modify_file_in_new_subdir() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -342,7 +342,7 @@ mod tests {
     // This means we're looking for untracked dirs, as opposed to files, in the test below
     #[tokio::test]
     async fn test_remote_mode_add_multiple_files_in_sub_dir() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -413,7 +413,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_add_files_with_glob_path() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -534,7 +534,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_add_dir_recursive() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -597,7 +597,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_cannot_add_if_not_modified() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {

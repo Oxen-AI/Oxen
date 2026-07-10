@@ -388,10 +388,11 @@ pub fn record_row_change(
         new_value,
     };
 
-    let db = changes_db::get_changes_db(row_changes_path)?;
+    let handle = changes_db::get_changes_db(row_changes_path)?;
 
+    // One write guard across the revert-then-put compound. Must not cross `.await`.
+    let db = handle.write();
     maybe_revert_row_changes(&db, row_id.to_owned())?;
-
     row_changes_db::write_data_frame_row_change(&change, &db)
 }
 
@@ -439,4 +440,65 @@ fn needs_explicit_cast(sql_type: &str) -> bool {
     // List columns end with `[]` (e.g. INTEGER[], VARCHAR[]); fixed-size arrays / embeddings end with `[N]`.
     // Structs are stored as JSON (which already accepts string binds), but cast for symmetry / clarity.
     sql_type.ends_with(']') || sql_type == "JSON"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::OxenError;
+    use crate::test;
+
+    /// Concurrent `record_row_change` calls for the same `row_id` serialize: the final stored value
+    /// matches exactly one writer, with no torn state.
+    #[test]
+    fn test_concurrent_record_row_change_same_row_id_serializes() -> Result<(), OxenError> {
+        const NUM_THREADS: usize = 16;
+
+        test::run_empty_dir_test(|data_dir| {
+            let row_changes_path = data_dir.join("row_changes");
+            // Pre-open so all worker threads share the same cached handle.
+            let _bootstrap = changes_db::get_changes_db(&row_changes_path)?;
+
+            std::thread::scope(|scope| {
+                let workers: Vec<_> = (0..NUM_THREADS)
+                    .map(|i| {
+                        let row_changes_path = row_changes_path.clone();
+                        scope.spawn(move || -> Result<(), OxenError> {
+                            record_row_change(
+                                &row_changes_path,
+                                "shared-row".to_string(),
+                                "modified".to_string(),
+                                Value::String(format!("value-{i}")),
+                                None,
+                            )?;
+                            Ok(())
+                        })
+                    })
+                    .collect();
+                for w in workers {
+                    w.join()
+                        .expect("worker panicked")
+                        .expect("record_row_change must not race itself");
+                }
+            });
+
+            // Exactly one writer's change is stored (last-writer-wins on the
+            // atomic compound); no torn intermediate is visible.
+            let handle = changes_db::get_changes_db(&row_changes_path)?;
+            let stored = row_changes_db::get_data_frame_row_change(&handle.read(), "shared-row")?
+                .expect("a writer's change is present");
+            let value = match stored.value {
+                Value::String(s) => s,
+                other => panic!("unexpected stored value: {other:?}"),
+            };
+            assert!(
+                (0..NUM_THREADS).any(|i| value == format!("value-{i}")),
+                "stored value should match one of the writers, got {value:?}",
+            );
+            drop(handle);
+
+            changes_db::remove_from_cache(&row_changes_path)?;
+            Ok(())
+        })
+    }
 }

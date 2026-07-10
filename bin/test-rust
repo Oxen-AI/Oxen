@@ -39,6 +39,19 @@ done
 
 set -euo pipefail
 
+# On Linux the `ffmpeg` feature links FFmpeg 8 from /opt/ffmpeg (installed by bin/install-prereqs);
+# point pkg-config at it. macOS gets FFmpeg 8 from Homebrew, already on the default pkg-config path.
+if [ -n "$FEATURE_ARGS" ] && [ "$(uname)" = "Linux" ]; then
+    if [ -d /opt/ffmpeg/lib/pkgconfig ]; then
+        export PKG_CONFIG_PATH="/opt/ffmpeg/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+    elif ! pkg-config --atleast-version=60 libavutil 2>/dev/null; then
+        echo "ERROR: --ffmpeg needs FFmpeg 8 dev libraries (libavutil >= 60), not found."
+        echo "       Run bin/install-prereqs to install them under /opt/ffmpeg"
+        echo "       (apt's FFmpeg is too old for ffmpeg-sys-next 8)."
+        exit 1
+    fi
+fi
+
 # we don't need oxen-server collecting metrics during tests
 export OXEN_METRICS_PORT='off'
 

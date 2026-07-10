@@ -8,6 +8,9 @@ pub use add::AddCmd;
 pub mod branch;
 pub use branch::BranchCmd;
 
+pub mod cat;
+pub use cat::CatCmd;
+
 pub mod checkout;
 pub use checkout::CheckoutCmd;
 

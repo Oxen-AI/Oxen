@@ -155,6 +155,9 @@ pub fn list_from_with_depth(
 /// List the history between two commits
 pub use crate::core::v_latest::commits::list_between;
 
+/// List commits reachable from head but not base (git `base..head`)
+pub use crate::core::v_latest::commits::list_between_exclusive;
+
 /// Get a list of commits by the commit message
 pub fn get_by_message(
     repo: &LocalRepository,
@@ -726,6 +729,229 @@ mod tests {
             assert_eq!(history.first().unwrap().message, head_commit.message);
             assert_eq!(history.last().unwrap().message, base_commit.message);
 
+            Ok(())
+        })
+        .await
+    }
+
+    // ----- list_between_exclusive: helpers -----
+    //
+    // Octopus merges (>2 parents) aren't exercised because Oxen never produces them:
+    // `merge` is pairwise, so commits have at most two parents. Disjoint histories can
+    // occur (`pull` merges unrelated histories) but are awkward to build with the test
+    // helpers; the algorithm handles them structurally, as a pure set difference
+    // between the two tips' reachable sets.
+
+    async fn add_commit(repo: &LocalRepository, name: &str) -> Result<Commit, OxenError> {
+        let path = repo.path.join(format!("{name}.txt"));
+        util::fs::write_to_path(&path, name)?;
+        repositories::add(repo, &path).await?;
+        repositories::commit(repo, name)
+    }
+
+    // Brute-force reference: every commit reachable from `id`, via the plain walk.
+    fn reachable_ids(repo: &LocalRepository, id: &str) -> HashSet<String> {
+        repositories::commits::list_from(repo, id)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.id)
+            .collect()
+    }
+
+    // The defining property of base..head: reachable(head) minus reachable(base).
+    fn reference_range_ids(
+        repo: &LocalRepository,
+        base: &Commit,
+        head: &Commit,
+    ) -> HashSet<String> {
+        let base_set = reachable_ids(repo, &base.id);
+        reachable_ids(repo, &head.id)
+            .into_iter()
+            .filter(|id| !base_set.contains(id))
+            .collect()
+    }
+
+    // Differential check: list_between_exclusive must equal the reference set, list
+    // no commit twice, and never place a commit before one of its children.
+    fn assert_range_matches_reference(repo: &LocalRepository, base: &Commit, head: &Commit) {
+        let got = repositories::commits::list_between_exclusive(repo, base, head).unwrap();
+        let order: HashMap<String, usize> = got
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.id.clone(), i))
+            .collect();
+
+        assert_eq!(
+            order.len(),
+            got.len(),
+            "duplicate commits in {}..{}",
+            base.id,
+            head.id
+        );
+        let got_set: HashSet<String> = order.keys().cloned().collect();
+        assert_eq!(
+            got_set,
+            reference_range_ids(repo, base, head),
+            "wrong set for {}..{}",
+            base.id,
+            head.id
+        );
+        for commit in &got {
+            for parent_id in &commit.parent_ids {
+                if let Some(&parent_pos) = order.get(parent_id) {
+                    assert!(
+                        order[&commit.id] < parent_pos,
+                        "{} listed before its child in {}..{}",
+                        parent_id,
+                        base.id,
+                        head.id
+                    );
+                }
+            }
+        }
+    }
+
+    // Every ordered pair drawn from `commits` must satisfy the reference, including
+    // self-pairs (empty) and reversed pairs (head behind base).
+    fn assert_all_pairs(repo: &LocalRepository, commits: &[&Commit]) {
+        for base in commits {
+            for head in commits {
+                assert_range_matches_reference(repo, base, head);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_list_between_exclusive_linear() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let root = repositories::commits::head_commit(&repo)?;
+            let a = add_commit(&repo, "a").await?;
+            let b = add_commit(&repo, "b").await?;
+            let c = add_commit(&repo, "c").await?;
+
+            let range = repositories::commits::list_between_exclusive(&repo, &a, &c)?;
+            let ids: HashSet<String> = range.iter().map(|x| x.id.clone()).collect();
+            assert_eq!(ids, HashSet::from([b.id.clone(), c.id.clone()]));
+
+            // Empty when head == base, and when head is behind base.
+            assert!(repositories::commits::list_between_exclusive(&repo, &c, &c)?.is_empty());
+            assert!(repositories::commits::list_between_exclusive(&repo, &c, &a)?.is_empty());
+
+            assert_all_pairs(&repo, &[&root, &a, &b, &c]);
+            Ok(())
+        })
+        .await
+    }
+
+    // Diamond: head is a merge of two branches that both fork from the base.
+    #[tokio::test]
+    async fn test_list_between_exclusive_diamond() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+            let a = add_commit(&repo, "a").await?;
+
+            let feature = repositories::branches::create_checkout(&repo, "feature")?;
+            let f1 = add_commit(&repo, "f1").await?;
+
+            repositories::checkout(&repo, &main_branch.name).await?;
+            let b = add_commit(&repo, "b").await?;
+            let m = repositories::merge::merge(&repo, &feature.name)
+                .await?
+                .unwrap();
+
+            let ids: HashSet<String> =
+                repositories::commits::list_between_exclusive(&repo, &a, &m)?
+                    .into_iter()
+                    .map(|x| x.id)
+                    .collect();
+            assert_eq!(
+                ids,
+                HashSet::from([b.id.clone(), f1.id.clone(), m.id.clone()])
+            );
+
+            assert_all_pairs(&repo, &[&a, &b, &f1, &m]);
+            Ok(())
+        })
+        .await
+    }
+
+    // Reproduces the merge-request bug: head merges the base branch back into
+    // itself, so head reaches base commits along the merge's second parent.
+    #[tokio::test]
+    async fn test_list_between_exclusive_skips_merged_base_history() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+            let c1 = add_commit(&repo, "c1").await?;
+
+            let feature = repositories::branches::create_checkout(&repo, "feature")?;
+            let f1 = add_commit(&repo, "f1").await?;
+
+            repositories::checkout(&repo, &main_branch.name).await?;
+            let c2 = add_commit(&repo, "c2").await?;
+            let c3 = add_commit(&repo, "c3").await?;
+
+            repositories::checkout(&repo, &feature.name).await?;
+            let merge = repositories::merge::merge(&repo, &main_branch.name)
+                .await?
+                .unwrap();
+            let f2 = add_commit(&repo, "f2").await?;
+
+            // base = main tip (c3), head = feature tip (f2): only feature's own work.
+            let ids: HashSet<String> =
+                repositories::commits::list_between_exclusive(&repo, &c3, &f2)?
+                    .into_iter()
+                    .map(|x| x.id)
+                    .collect();
+            assert_eq!(
+                ids,
+                HashSet::from([f1.id.clone(), merge.id.clone(), f2.id.clone()])
+            );
+
+            // The old walk over-includes base history reached past the merge commit.
+            let buggy = repositories::commits::list_between(&repo, &c3, &f2)?;
+            assert!(
+                buggy.iter().any(|c| c.id == c1.id),
+                "list_between is expected to over-include base history here"
+            );
+
+            assert_all_pairs(&repo, &[&c1, &c2, &c3, &f1, &merge, &f2]);
+            Ok(())
+        })
+        .await
+    }
+
+    // Criss-cross: two merge commits that each have the same pair of parents, so
+    // there are two merge bases and no single lowest common ancestor. The set
+    // difference is still exact where any single-LCA shortcut would not be.
+    #[tokio::test]
+    async fn test_list_between_exclusive_criss_cross() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            let branch_a = repositories::branches::create_checkout(&repo, "branch-a")?;
+            let a1 = add_commit(&repo, "a1").await?;
+            // Snapshot a1 so its pre-merge tip stays mergeable by name later.
+            repositories::branches::create_checkout(&repo, "a-snap")?;
+
+            repositories::checkout(&repo, &main_branch.name).await?;
+            let branch_b = repositories::branches::create_checkout(&repo, "branch-b")?;
+            let b1 = add_commit(&repo, "b1").await?;
+            repositories::branches::create_checkout(&repo, "b-snap")?;
+
+            // branch-a (at a1) merges b1; branch-b (at b1) merges a1.
+            repositories::checkout(&repo, &branch_a.name).await?;
+            let ma = repositories::merge::merge(&repo, "b-snap").await?.unwrap();
+            repositories::checkout(&repo, &branch_b.name).await?;
+            let mb = repositories::merge::merge(&repo, "a-snap").await?.unwrap();
+
+            // reachable(ma) and reachable(mb) share {a1, b1, root}; each range is
+            // exactly the other merge node.
+            let ma_to_mb: Vec<Commit> =
+                repositories::commits::list_between_exclusive(&repo, &ma, &mb)?;
+            assert_eq!(ma_to_mb.len(), 1);
+            assert_eq!(ma_to_mb[0].id, mb.id);
+
+            assert_all_pairs(&repo, &[&a1, &b1, &ma, &mb]);
             Ok(())
         })
         .await
