@@ -166,6 +166,32 @@ impl MerkleNodeStore for FsMerkleNodeStore {
             .map_err(MerkleDbError::fs_transport)?;
         Ok(())
     }
+
+    fn delete(&self, hash: &MerkleHash) -> Result<(), MerkleDbError> {
+        // Remove only this node's two files. A short hash whose suffix is empty stores its
+        // files directly in the `{prefix}` shard alongside sibling suffix subdirs, so removing
+        // the whole dir would wipe those unrelated nodes — delete the files individually instead.
+        // Deleting an absent node is idempotent.
+        let dir = node_db_path(&self.repo_path, hash);
+        for file in [NODE_FILE, CHILDREN_FILE] {
+            match std::fs::remove_file(dir.join(file)) {
+                Ok(()) => {}
+                Err(e) if e.kind() == ErrorKind::NotFound => {}
+                Err(e) => return Err(MerkleDbError::Io(e)),
+            }
+        }
+        // Best-effort cleanup: prune the node dir only if it is now empty. `remove_dir` fails
+        // (and is ignored) when the dir still holds sibling suffix subdirs. An empty `{prefix}`
+        // shard dir may be left behind; `list_hashes` ignores it, matching the prior behavior.
+        let _ = std::fs::remove_dir(&dir);
+        Ok(())
+    }
+
+    fn snapshot_for_archive(&self, _dst_dir: &Path) -> Result<Option<PathBuf>, MerkleDbError> {
+        // The filesystem backend stores nodes as plain files under `.oxen/tree/nodes`, which the
+        // archiver walks and copies directly. There is nothing to snapshot separately.
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
@@ -228,6 +254,42 @@ mod tests {
             store.node_byte_sizes(&missing),
             Err(MerkleDbError::MissingNodeDir(_))
         ));
+
+        // Delete removes a node; deleting an absent node is idempotent.
+        store.delete(&hash)?;
+        assert!(!store.exists(&hash)?, "node should be gone after delete");
+        store.delete(&missing)?;
+        assert_eq!(
+            store.list_hashes()?,
+            vec![leaf],
+            "only the surviving node remains after delete"
+        );
+        Ok(())
+    }
+
+    /// Deleting a short-hash node (whose files share the `{prefix}` shard with longer-hash
+    /// siblings) must remove only that node, leaving the siblings intact.
+    #[test]
+    fn fs_store_delete_preserves_prefix_shard_siblings() -> Result<(), OxenError> {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let store = FsMerkleNodeStore::new(dir.path());
+
+        // `short` hashes to "abc" (3 hex chars), so its files live directly in the shard dir.
+        // `sibling` shares that "abc" prefix but has a non-empty suffix subdir under it.
+        let short = MerkleHash::new(0xabc);
+        let sibling = MerkleHash::new(0xabc_def);
+        let body = Bytes::from_static(b"blob");
+        store.write_node(&short, body.clone(), Bytes::new())?;
+        store.write_node(&sibling, body.clone(), Bytes::new())?;
+
+        store.delete(&short)?;
+
+        assert!(!store.exists(&short)?, "short-hash node should be deleted");
+        assert!(
+            store.exists(&sibling)?,
+            "sibling sharing the prefix shard must survive"
+        );
+        assert_eq!(store.list_hashes()?, vec![sibling]);
         Ok(())
     }
 
