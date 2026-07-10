@@ -191,7 +191,7 @@ async fn revalidate_and_push_missing_files(
         clean_result.cleaned,
         humantime::format_duration(clean_result.elapsed)
     );
-    if clean_result.corrupted > clean_result.cleaned || clean_result.errors > clean_result.cleaned {
+    if clean_result.corrupted > clean_result.cleaned || clean_result.errors > 0 {
         println!(
             "🚧 This fix is not complete. Some files may still be corrupted. Please try running this command again."
         );
