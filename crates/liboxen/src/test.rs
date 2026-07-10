@@ -433,12 +433,12 @@ where
 /// [`run_one_commit_local_repo_test_async_fs_backend`] when one committed file is needed.
 pub fn init_fs_merkle_backend(path: &Path) -> Result<LocalRepository, OxenError> {
     let hidden_dir = util::fs::oxen_hidden_dir(path);
-    util::fs::create_dir_all(&hidden_dir)?;
-    if util::fs::config_filepath(path).try_exists()? {
+    if hidden_dir.try_exists()? {
         return Err(OxenError::basic_str(format!(
             "Oxen repository already exists: {path:?}"
         )));
     }
+    util::fs::create_dir_all(&hidden_dir)?;
     let config = RepositoryConfig {
         min_version: Some(constants::MIN_OXEN_VERSION.to_string()),
         merkle_node_backend: Some(MerkleNodeBackend::Filesystem),
