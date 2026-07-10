@@ -3,7 +3,8 @@
 //! This is an opt-in, reversible migration (run with `--run-optional`):
 //!   - **up** copies an FS-backed repo's nodes into an LMDB env and publishes it, *keeping* the
 //!     filesystem node tree as a backup.
-//!   - **down** copies an LMDB-backed repo's nodes back into the FS node tree, then removes the env.
+//!   - **down** clears the FS node tree (the backup kept by `up`, which may have gone stale), copies
+//!     an LMDB-backed repo's nodes back into it, then removes the env.
 //!
 //! After `up`, `create_merkle_node_store` resolves the repo to the LMDB backend (it prefers an
 //! existing LMDB env over the FS tree), so the repo runs on LMDB from then on while the source
@@ -158,8 +159,15 @@ fn migrate_fs_to_lmdb(repo: &LocalRepository) -> Result<(), OxenError> {
     Ok(())
 }
 
-/// LMDB → FS. Copy every node into the FS backend, verify, record Filesystem as the backend in
-/// `config.toml`, then remove the LMDB env.
+/// LMDB → FS. Clear the existing FS node tree, copy every node into the FS backend, verify, record
+/// Filesystem as the backend in `config.toml`, then remove the LMDB env.
+///
+/// The FS tree kept by `up` is only a backup and may have drifted from LMDB since the switch (nodes
+/// deleted from LMDB would survive in it), so it is cleared up front rather than merged into —
+/// otherwise stale nodes would outlive the migration and fail the strict set-equality verification.
+/// Clearing before the copy is safe: config still resolves the repo to LMDB until the config write
+/// below, so a crash anywhere in the rebuild leaves the env authoritative and re-running completes
+/// the move.
 ///
 /// The config write happens *before* removing the env, and that ordering is load-bearing: config is
 /// authoritative, so writing Filesystem first means a crash after it leaves config=Filesystem with
@@ -176,6 +184,13 @@ fn migrate_lmdb_to_fs(repo: LocalRepository) -> Result<(), OxenError> {
 
     let lmdb_dir = LmdbMerkleNodeStore::env_dir(&repo_path);
     let fs = FsMerkleNodeStore::new(&repo_path);
+
+    // Clear the stale FS backup so the rebuilt tree holds exactly the current LMDB node set (see
+    // the ordering note in the doc comment above for why this is crash-safe).
+    let nodes_dir = fs_nodes_dir(&repo_path);
+    if nodes_dir.exists() {
+        util::fs::remove_dir_all(&nodes_dir)?;
+    }
 
     let expected: HashSet<MerkleHash> = {
         let lmdb = LmdbMerkleNodeStore::new(&repo_path)?;
@@ -236,6 +251,8 @@ fn verify_migrated(
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+
+    use bytes::Bytes;
 
     use super::*;
     use crate::model::MerkleHash;
@@ -298,6 +315,16 @@ mod tests {
                 assert!(!root.children.is_empty());
             }
 
+            // Simulate the kept FS backup drifting from LMDB: a node that exists only in the FS
+            // tree. `down` must clear the backup rather than merge into it, so this node must not
+            // survive the migration (nor fail its set-equality verification).
+            let stale = MerkleHash::new(0xdead_beef);
+            FsMerkleNodeStore::new(&repo.path).write_node(
+                &stale,
+                Bytes::from_static(b"stale node"),
+                Bytes::new(),
+            )?;
+
             // --- down: LMDB → FS ---
             let to_down = LocalRepository::from_dir(&repo.path)?;
             assert!(migration.is_applicable(Direction::Down, &to_down)?);
@@ -320,7 +347,7 @@ mod tests {
                 .collect();
             assert_eq!(
                 restored, fs_hashes,
-                "FS backend should be restored after down"
+                "FS backend should hold exactly the LMDB node set after down (stale backup nodes cleared)"
             );
 
             Ok(())
