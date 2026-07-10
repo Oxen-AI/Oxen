@@ -3,9 +3,9 @@ use crate::api::client;
 use crate::error::OxenError;
 use crate::model::RemoteRepository;
 use crate::model::commit::NewCommitBody;
+use crate::storage::BoxedByteStream;
 use crate::view::CommitResponse;
 
-use bytes::{Bytes, BytesMut};
 use futures_util::StreamExt;
 use reqwest::multipart::{Form, Part};
 use std::path::Path;
@@ -92,84 +92,58 @@ fn apply_commit_body(mut form: Form, commit_body: Option<NewCommitBody>) -> Form
     form
 }
 
+/// Optional query parameters for [`get_file`]: thumbnail generation and image resizing.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GetFileOpts {
+    pub thumbnail: bool,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub timestamp: Option<f64>,
+}
+
+/// Streams a file's raw bytes from the remote at `revision`, without buffering the whole file in
+/// memory. `revision` may be a branch name or a commit id. `opts` carry optional thumbnail/resize
+/// query parameters. Callers that need the whole file in memory must drain the stream into a
+/// buffer at the call site.
 pub async fn get_file(
     remote_repo: &RemoteRepository,
-    branch: impl AsRef<str>,
-    file_path: impl AsRef<Path>,
-) -> Result<Bytes, OxenError> {
-    get_file_with_params(remote_repo, branch, file_path, None, None, None, None).await
-}
-
-/// Get a file with optional query parameters (for thumbnails, image resizing, etc.)
-pub async fn get_file_with_params(
-    remote_repo: &RemoteRepository,
-    branch: impl AsRef<str>,
-    file_path: impl AsRef<Path>,
-    thumbnail: Option<bool>,
-    width: Option<u32>,
-    height: Option<u32>,
-    timestamp: Option<f64>,
-) -> Result<Bytes, OxenError> {
-    let branch = branch.as_ref();
-    let path_ref = file_path.as_ref();
-    let file_path = path_ref
-        .to_str()
-        .ok_or_else(|| OxenError::basic_str(format!("Invalid UTF-8 in file path: {path_ref:?}")))?;
-    let uri = format!("/file/{branch}/{file_path}");
+    revision: &str,
+    file_path: &Path,
+    opts: GetFileOpts,
+) -> Result<BoxedByteStream, OxenError> {
+    let file_path = file_path.to_str().ok_or_else(|| {
+        OxenError::basic_str(format!("Invalid UTF-8 in file path: {file_path:?}"))
+    })?;
+    let uri = format!("/file/{revision}/{file_path}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
     let client = client::new_for_url(&url)?;
 
-    // Build query parameters only for Some(...) values
     let mut query_params: Vec<(&str, String)> = Vec::new();
-    if let Some(thumb) = thumbnail {
-        query_params.push(("thumbnail", thumb.to_string()));
+    if opts.thumbnail {
+        query_params.push(("thumbnail", "true".to_string()));
     }
-    if let Some(w) = width {
-        query_params.push(("width", w.to_string()));
+    if let Some(width) = opts.width {
+        query_params.push(("width", width.to_string()));
     }
-    if let Some(h) = height {
-        query_params.push(("height", h.to_string()));
+    if let Some(height) = opts.height {
+        query_params.push(("height", height.to_string()));
     }
-    if let Some(ts) = timestamp {
-        query_params.push(("timestamp", ts.to_string()));
-    }
-
-    let req = client.get(&url).query(&query_params);
-
-    let res = req.send().await?;
-
-    let res = res.error_for_status()?;
-    let mut stream = res.bytes_stream();
-    let mut buffer = BytesMut::new();
-    while let Some(chunk_result) = stream.next().await {
-        let chunk =
-            chunk_result.map_err(|e| OxenError::basic_str(format!("Failed to read chunk: {e}")))?;
-        buffer.extend_from_slice(&chunk);
+    if let Some(timestamp) = opts.timestamp {
+        query_params.push(("timestamp", timestamp.to_string()));
     }
 
-    Ok(buffer.freeze())
-}
+    let res = client
+        .get(&url)
+        .query(&query_params)
+        .send()
+        .await?
+        .error_for_status()?;
 
-/// Get a video thumbnail
-pub async fn get_file_thumbnail(
-    remote_repo: &RemoteRepository,
-    branch: impl AsRef<str>,
-    file_path: impl AsRef<Path>,
-    width: Option<u32>,
-    height: Option<u32>,
-    timestamp: Option<f64>,
-) -> Result<Bytes, OxenError> {
-    get_file_with_params(
-        remote_repo,
-        branch,
-        file_path,
-        Some(true),
-        width,
-        height,
-        timestamp,
-    )
-    .await
+    let stream = res
+        .bytes_stream()
+        .map(|chunk| chunk.map_err(std::io::Error::other));
+    // Pin on the heap so the boxed reqwest stream satisfies the `Unpin` bound.
+    Ok(Box::new(Box::pin(stream)))
 }
 
 /// Move/rename a file in place (mv in a temp workspace and commit)
@@ -252,6 +226,7 @@ pub async fn delete_file(
 mod tests {
 
     use bytes::Bytes;
+    use tokio_stream::StreamExt;
 
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
@@ -402,10 +377,19 @@ mod tests {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let branch_name = "main";
             let file_path = test::test_bounding_box_csv();
-            let bytes = api::client::file::get_file(&remote_repo, branch_name, file_path).await;
+            let mut stream = api::client::file::get_file(
+                &remote_repo,
+                branch_name,
+                &file_path,
+                api::client::file::GetFileOpts::default(),
+            )
+            .await?;
+            let mut bytes = Vec::new();
+            while let Some(chunk) = stream.next().await {
+                bytes.extend_from_slice(&chunk?);
+            }
 
-            assert!(bytes.is_ok());
-            assert!(!bytes.unwrap().is_empty());
+            assert!(!bytes.is_empty());
 
             Ok(remote_repo)
         })
@@ -597,11 +581,20 @@ mod tests {
             )
             .await;
 
-            let bytes = api::client::file::get_file(&remote_repo, workspace_id, file_path).await;
+            let mut stream = api::client::file::get_file(
+                &remote_repo,
+                workspace_id,
+                Path::new(&file_path),
+                api::client::file::GetFileOpts::default(),
+            )
+            .await?;
+            let mut bytes = Vec::new();
+            while let Some(chunk) = stream.next().await {
+                bytes.extend_from_slice(&chunk?);
+            }
 
-            assert!(bytes.is_ok());
-            assert!(!bytes.as_ref().unwrap().is_empty());
-            assert_eq!(bytes.unwrap(), Bytes::from_static(b"test content"));
+            assert!(!bytes.is_empty());
+            assert_eq!(bytes, Bytes::from_static(b"test content"));
 
             Ok(remote_repo)
         })
@@ -643,15 +636,20 @@ mod tests {
 
             // Download the thumbnail with default settings
             let thumbnail_path = format!("{directory_name}/basketball.mp4");
-            let thumbnail_bytes = api::client::file::get_file_thumbnail(
+            let mut thumbnail_stream = api::client::file::get_file(
                 &remote_repo,
                 branch_name,
-                thumbnail_path.as_str(),
-                None,
-                None,
-                None,
+                Path::new(&thumbnail_path),
+                api::client::file::GetFileOpts {
+                    thumbnail: true,
+                    ..Default::default()
+                },
             )
             .await?;
+            let mut thumbnail_bytes = Vec::new();
+            while let Some(chunk) = thumbnail_stream.next().await {
+                thumbnail_bytes.extend_from_slice(&chunk?);
+            }
 
             // Verify thumbnail is not empty
             assert!(!thumbnail_bytes.is_empty(), "Thumbnail should not be empty");
@@ -675,15 +673,22 @@ mod tests {
             );
 
             // Test with custom dimensions
-            let thumbnail_bytes_custom = api::client::file::get_file_thumbnail(
+            let mut custom_stream = api::client::file::get_file(
                 &remote_repo,
                 branch_name,
-                thumbnail_path.as_str(),
-                Some(640),
-                Some(480),
-                Some(0.5),
+                Path::new(&thumbnail_path),
+                api::client::file::GetFileOpts {
+                    thumbnail: true,
+                    width: Some(640),
+                    height: Some(480),
+                    timestamp: Some(0.5),
+                },
             )
             .await?;
+            let mut thumbnail_bytes_custom = Vec::new();
+            while let Some(chunk) = custom_stream.next().await {
+                thumbnail_bytes_custom.extend_from_slice(&chunk?);
+            }
 
             assert!(
                 !thumbnail_bytes_custom.is_empty(),
@@ -726,13 +731,14 @@ mod tests {
 
             println!("deleted {} as commit {}", train_d.display(), c.commit.id);
 
-            let contents =
-                api::client::file::get_file(&remote_repo, DEFAULT_BRANCH_NAME, &file).await;
-            assert!(
-                contents.is_err(),
-                "Fetching deleted file should be an error, but got: {:?}",
-                contents
-            );
+            let result = api::client::file::get_file(
+                &remote_repo,
+                DEFAULT_BRANCH_NAME,
+                &file,
+                api::client::file::GetFileOpts::default(),
+            )
+            .await;
+            assert!(result.is_err(), "Fetching deleted file should be an error");
 
             Ok(remote_repo)
         })

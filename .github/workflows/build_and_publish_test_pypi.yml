@@ -53,8 +53,9 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
+          persist-credentials: false
           ref: ${{ inputs.commit }}
           sparse-checkout: oxen-python/pyproject.toml
           sparse-checkout-cone-mode: false
@@ -109,6 +110,8 @@ jobs:
     needs: [set_env, compute_version]
     uses: ./.github/workflows/build_wheels_macos.yml
     with:
+      AWS_ROLE: ${{ needs.set_env.outputs.aws_role }}
+      AWS_REGION: ${{ needs.set_env.outputs.aws_region }}
       PYTHON_VERSIONS: ${{ needs.set_env.outputs.python_versions }}
       CHECKOUT_REF: ${{ inputs.commit }}
       VERSION_OVERRIDE: ${{ needs.compute_version.outputs.version }}
@@ -145,7 +148,7 @@ jobs:
 
     steps:
       - name: Download all wheel artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: wheels-*
           merge-multiple: true
@@ -155,7 +158,7 @@ jobs:
         run: ls -la wheels/
 
       - name: Publish to Test PyPI
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         env:
           MATURIN_PYPI_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}
         with:

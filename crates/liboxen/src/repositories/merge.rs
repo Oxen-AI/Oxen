@@ -95,11 +95,20 @@ mod tests {
 
     use crate::core::v_latest::merge_marker;
     use crate::error::OxenError;
-    use crate::model::{Commit, LocalRepository};
+    use crate::model::{Commit, LocalRepository, User};
     use crate::opts::DFOpts;
     use crate::repositories;
+    use crate::repositories::merge::merge_into_base;
     use crate::test;
     use crate::util;
+
+    /// Author for the server-side merge tests, which require a merge initiator.
+    fn test_author() -> User {
+        User {
+            name: "Test Merger".to_string(),
+            email: "merger@oxen.ai".to_string(),
+        }
+    }
 
     async fn populate_threeway_merge_repo(
         repo: &LocalRepository,
@@ -429,7 +438,7 @@ mod tests {
                 .expect("feature branch should resolve");
 
             let merge_commit =
-                repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
+                merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
 
             assert_empty_merge_commit(&repo, &merge_commit, &main_head_before_merge, &feature_tip)?;
             // Server-side: base branch ref is advanced to the new merge commit.
@@ -937,7 +946,7 @@ mod tests {
             let og_branch = repositories::branches::get_by_name(&repo, &og_branch.name)?;
             let new_branch = repositories::branches::get_by_name(&repo, new_branch_name)?;
             let merge_commit =
-                repositories::merge::merge_into_base(&repo, &og_branch, &new_branch).await?;
+                merge_into_base(&repo, &og_branch, &new_branch, &test_author()).await?;
 
             // 5. Already up to date: merge_into_base returns base unchanged, no new commit.
             assert_eq!(merge_commit.id, new_branch.commit_id);
@@ -1131,7 +1140,7 @@ mod tests {
 
             // Server-side merge: should succeed and update the branch ref
             let merge_commit =
-                repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
+                merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
 
             assert_eq!(merge_commit.id, merge_branch.commit_id);
 
@@ -1155,7 +1164,7 @@ mod tests {
             let merge_branch = repositories::branches::get_by_name(&repo, "twin")?;
 
             let merge_commit =
-                repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
+                merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
             assert_eq!(merge_commit.id, base_branch.commit_id);
 
             // The base branch ref must still point at the same commit.
@@ -1198,12 +1207,16 @@ mod tests {
 
             // Server-side three-way merge should succeed
             let merge_commit =
-                repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
+                merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
 
             // Merge commit should have two parents
             assert_eq!(merge_commit.parent_ids.len(), 2);
             assert!(merge_commit.parent_ids.contains(&base_branch.commit_id));
             assert!(merge_commit.parent_ids.contains(&merge_branch.commit_id));
+
+            // Merge commit is attributed to the provided author.
+            assert_eq!(merge_commit.author, test_author().name);
+            assert_eq!(merge_commit.email, test_author().email);
 
             Ok(())
         })
@@ -1238,8 +1251,7 @@ mod tests {
             let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
 
             // Server-side merge should return UpstreamMergeConflict error
-            let result =
-                repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await;
+            let result = merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await;
             assert!(result.is_err());
             let err = result.unwrap_err();
             assert!(
@@ -1279,7 +1291,7 @@ mod tests {
             let base_branch = repositories::branches::get_by_name(&repo, &base_branch.name)?;
 
             // Server-side merge
-            repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
+            merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
 
             // world.txt should STILL not exist — server merge doesn't touch working dir
             assert!(
@@ -1316,7 +1328,7 @@ mod tests {
             let base_branch = repositories::branches::get_by_name(&repo, &base_branch.name)?;
 
             let merge_commit =
-                repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
+                merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
 
             assert_eq!(merge_commit.id, merge_branch.commit_id);
 
@@ -1361,7 +1373,7 @@ mod tests {
             let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
 
             let merge_commit =
-                repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
+                merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
 
             assert_eq!(merge_commit.parent_ids.len(), 2);
 
@@ -1403,8 +1415,7 @@ mod tests {
             let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
             let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
 
-            let result =
-                repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await;
+            let result = merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await;
             assert!(matches!(
                 result.unwrap_err(),
                 OxenError::UpstreamMergeConflict(_)
@@ -1442,8 +1453,7 @@ mod tests {
             let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
             let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
 
-            let result =
-                repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await;
+            let result = merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await;
             assert!(matches!(
                 result.unwrap_err(),
                 OxenError::UpstreamMergeConflict(_)
@@ -1480,8 +1490,7 @@ mod tests {
             let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
             let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
 
-            let result =
-                repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await;
+            let result = merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await;
             assert!(
                 matches!(result.unwrap_err(), OxenError::UpstreamMergeConflict(_)),
                 "Modify on base + delete on merge should be a conflict"
@@ -1524,7 +1533,7 @@ mod tests {
 
             // Base's deletion should win since merge didn't change the file
             let merge_commit =
-                repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
+                merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
 
             assert_eq!(merge_commit.parent_ids.len(), 2);
 
@@ -1559,8 +1568,7 @@ mod tests {
             let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
             let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
 
-            let result =
-                repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await;
+            let result = merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await;
             assert!(
                 matches!(result.unwrap_err(), OxenError::UpstreamMergeConflict(_)),
                 "Delete on base + modify on merge should be a conflict"
@@ -1621,7 +1629,7 @@ mod tests {
 
             // Server-side three-way merge
             let merge_commit =
-                repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
+                merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
             assert_eq!(merge_commit.parent_ids.len(), 2);
 
             // Read the root DirNode from the merge commit
@@ -1710,7 +1718,7 @@ mod tests {
             let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
 
             let merge_commit =
-                repositories::merge::merge_into_base(&repo, &merge_branch, &base_branch).await?;
+                merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
             assert_eq!(merge_commit.parent_ids.len(), 2);
 
             // data/a.txt should still exist, data/b.txt should be deleted

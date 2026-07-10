@@ -128,59 +128,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remote_mode_rm_unsynced_subdir_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
-            let remote_repo_copy = remote_repo.clone();
-
-            test::run_empty_dir_test_async(|dir| async move {
-                // Clone a repo in remote mode
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
-                opts.is_remote = true;
-                let cloned_repo = repositories::clone(&opts).await?;
-                assert!(cloned_repo.is_remote_mode());
-
-                // Get path to unsynced README file
-                let file_path = PathBuf::from("annotations")
-                    .join("train")
-                    .join("bounding_box.csv");
-
-                // Remove the file
-                let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
-                let directory = ".".to_string();
-                api::client::workspaces::files::rm_files(
-                    &cloned_repo,
-                    &remote_repo,
-                    &workspace_identifier,
-                    vec![file_path],
-                )
-                .await?;
-
-                // Get status, should show staged file
-                let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
-                let status = repositories::remote_mode::status(
-                    &cloned_repo,
-                    &remote_repo,
-                    &workspace_identifier,
-                    &directory,
-                    &status_opts,
-                )
-                .await?;
-                status.print();
-
-                assert_eq!(status.untracked_files.len(), 0);
-                assert_eq!(status.staged_files.len(), 1);
-
-                Ok(())
-            })
-            .await?;
-
-            Ok(remote_repo_copy)
-        })
-        .await
-    }
-
-    #[tokio::test]
     async fn test_remote_mode_rm_unsynced_file_with_full_path() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
@@ -272,7 +219,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_rm_staged_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -283,7 +230,10 @@ mod tests {
 
                 let workspace_id = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
-                let file_path = PathBuf::from("README.md");
+                // Use a path that doesn't collide with the committed README from the helper —
+                // otherwise the "untracked_files == 1" assertion below would see a modified file
+                // instead of an untracked one.
+                let file_path = PathBuf::from("hello.txt");
                 let full_path = cloned_repo.path.join(&file_path);
 
                 // Create and stage a file

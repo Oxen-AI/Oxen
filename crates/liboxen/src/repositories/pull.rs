@@ -1995,6 +1995,19 @@ mod tests {
                 assert!(repo.path.join("train").exists());
                 assert!(repo.path.join("dir1").join("newfile.txt").exists());
 
+                // The new file lives outside the cloned subtree; confirm the push actually
+                // uploaded it by fetching it back from the server (not just trusting the local
+                // copy), so a regression that drops out-of-subtree files would fail here.
+                let downloaded = repo.path.join("downloaded_newfile.txt");
+                api::client::entries::download_entry(
+                    &remote_repo,
+                    "dir1/newfile.txt",
+                    &downloaded,
+                    branch_name,
+                )
+                .await?;
+                assert_eq!(util::fs::read_from_path(&downloaded)?, "This is a new file");
+
                 Ok(())
             })
             .await?;

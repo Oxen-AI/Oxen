@@ -830,6 +830,71 @@ pub fn list_between(
     Ok(results)
 }
 
+/// List commits reachable from `head` but not from `base` (equivalent to git's
+/// `base..head`), ordered newest-first by commit timestamp.
+///
+/// [`list_between`] stops only when it reaches the single `base` commit, so a
+/// merge commit in `head`'s history drags in every ancestor along its other
+/// parent, including commits that already live on `base`. This computes the exact
+/// set `reachable(head) \ reachable(base)` in two graph passes, so membership
+/// depends only on reachability, never on commit timestamps (which can be skewed
+/// or tied across machines):
+///
+///   1. Walk all of `reachable(base)` into `on_base`.
+///   2. Walk `head`'s ancestry, emitting every commit not in `on_base` and
+///      pruning at the first `on_base` commit reached, since all of its ancestors
+///      are on base too.
+///
+/// The second walk pops by timestamp only to order the output newest first; a
+/// commit still always precedes its parents because a parent is pushed to the
+/// heap only after its child has been popped.
+pub fn list_between_exclusive(
+    repo: &LocalRepository,
+    base: &Commit,
+    head: &Commit,
+) -> Result<Vec<Commit>, OxenError> {
+    // Pass 1: mark everything reachable from base. Purely graph-based, so the
+    // outcome can't hinge on the order commits happen to sort in.
+    let mut on_base: HashSet<String> = HashSet::new();
+    let mut stack = vec![base.clone()];
+    on_base.insert(base.id.clone());
+    while let Some(commit) = stack.pop() {
+        for parent_id in &commit.parent_ids {
+            let Some(parent) = get_by_hash(repo, &parent_id.parse()?)? else {
+                continue;
+            };
+            if on_base.insert(parent.id.clone()) {
+                stack.push(parent);
+            }
+        }
+    }
+
+    // Pass 2: emit head's ancestry that isn't on base, newest first.
+    let mut heap: BinaryHeap<TimestampedCommit> = BinaryHeap::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut results = vec![];
+
+    if !on_base.contains(&head.id) {
+        seen.insert(head.id.clone());
+        heap.push(TimestampedCommit(head.clone()));
+    }
+
+    while let Some(TimestampedCommit(commit)) = heap.pop() {
+        for parent_id in &commit.parent_ids {
+            let Some(parent) = get_by_hash(repo, &parent_id.parse()?)? else {
+                continue;
+            };
+            // An on_base parent (and everything above it) already lives on base.
+            if !on_base.contains(&parent.id) && seen.insert(parent.id.clone()) {
+                heap.push(TimestampedCommit(parent));
+            }
+        }
+        results.push(commit);
+    }
+
+    Ok(results)
+}
+
 /// Retrieve entries with filepaths matching a provided glob pattern
 pub fn search_entries(
     repo: &LocalRepository,
@@ -990,6 +1055,82 @@ mod tests {
     use super::*;
     use crate::repositories;
     use crate::test;
+
+    // Writes a commit with an explicit parent and timestamp. The normal commit
+    // path stamps `now()`, so this is the only way to reproduce cross-machine
+    // clock skew: a parent whose timestamp is newer than its own child's.
+    fn commit_at(
+        repo: &LocalRepository,
+        parent: &Commit,
+        message: &str,
+        timestamp: OffsetDateTime,
+    ) -> Result<Commit, OxenError> {
+        let new_commit = crate::model::NewCommit {
+            parent_ids: vec![parent.id.clone()],
+            message: message.to_string(),
+            author: "Ox".to_string(),
+            email: "ox@oxen.ai".to_string(),
+            timestamp,
+        };
+        let hash = commit_writer::compute_commit_id(&new_commit)?;
+        let parent_hash: MerkleHash = parent.id.parse()?;
+        let parent_node = repositories::tree::get_node_by_id_with_children(repo, &parent_hash)?
+            .ok_or_else(|| OxenError::basic_str("parent node not found"))?;
+        let commit_node = CommitNode::new(
+            repo,
+            CommitNodeOpts {
+                hash,
+                parent_ids: vec![parent_hash],
+                email: new_commit.email.clone(),
+                author: new_commit.author.clone(),
+                message: new_commit.message.clone(),
+                timestamp,
+            },
+        )?;
+        let mut commit_db = MerkleNodeDB::open_read_write(
+            repo.merkle_node_store(),
+            &commit_node,
+            Some(parent_node.hash),
+        )?;
+        let dir_node = parent_node.children.first().unwrap().dir()?;
+        commit_db.add_child(&dir_node)?;
+        commit_db.close()?;
+        repositories::tree::cp_dir_hashes_to(repo, &parent_hash, commit_node.hash())?;
+        Ok(commit_node.to_commit())
+    }
+
+    // Regression for the base..head skew bug: a shared ancestor must be excluded
+    // even when it sorts ahead of the base tip by timestamp. `base` here is older
+    // than its own parent `shared`, which only happens with clock skew across
+    // machines, exactly the case an order-dependent walk gets wrong.
+    #[tokio::test]
+    async fn test_list_between_exclusive_skewed_timestamps() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let shared = head_commit(&repo)?;
+            let head = commit_at(
+                &repo,
+                &shared,
+                "head",
+                shared.timestamp + time::Duration::seconds(100),
+            )?;
+            let base = commit_at(
+                &repo,
+                &shared,
+                "base",
+                shared.timestamp - time::Duration::seconds(100),
+            )?;
+
+            let range = list_between_exclusive(&repo, &base, &head)?;
+            let ids: HashSet<String> = range.iter().map(|c| c.id.clone()).collect();
+            assert_eq!(ids, HashSet::from([head.id.clone()]), "got {range:?}");
+            assert!(
+                !ids.contains(&shared.id),
+                "shared ancestor must be excluded"
+            );
+            Ok(())
+        })
+        .await
+    }
 
     #[tokio::test]
     async fn test_pagination_order_with_more_than_10_commits() -> Result<(), OxenError> {

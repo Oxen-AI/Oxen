@@ -256,6 +256,10 @@ async fn list_and_push_missing_files(
     let missing_files =
         api::client::commits::list_missing_files(remote_repo, base_commit, &head_commit.id).await?;
 
+    if missing_files.is_empty() {
+        return Ok(());
+    }
+
     if let Some(commit_entry) = missing_files.first() {
         let version_store = repo.version_store();
         if !version_store.version_exists(&commit_entry.hash).await? {
@@ -284,7 +288,14 @@ async fn get_commit_missing_hashes(
     commits: &[Commit],
 ) -> Result<HashMap<MerkleHash, PushCommitInfo>, OxenError> {
     let mut base_hashes = HashSet::new();
-    let paths = &repo.subtree_paths().unwrap_or(vec![PathBuf::new()]);
+    // Walk the full local tree (root, unlimited depth) so the upload set covers every new object
+    // the commit references, including files committed outside a fetch-time subtree filter or
+    // below its depth. Subtrees that aren't present locally load empty and are skipped; objects
+    // already on the remote are pruned by `base_hashes`. Scoping the upload to `subtree_paths` /
+    // `depth` would silently drop those files and leave the advanced ref pointing at content the
+    // remote lacks.
+    let paths = &vec![PathBuf::new()];
+    let upload_walk_depth = -1;
 
     if let Some(ref commit) = latest_remote_commit {
         for path in paths {
@@ -296,7 +307,7 @@ async fn get_commit_missing_hashes(
                 None,
                 Some(&mut starting_node_hashes),
                 None,
-                repo.depth().unwrap_or(-1),
+                upload_walk_depth,
             )?
             else {
                 log::warn!("Could not get remote tree for path {path:?}");
@@ -336,7 +347,7 @@ async fn get_commit_missing_hashes(
                 Some(&base_hashes),
                 Some(&mut unique_hashes),
                 None,
-                repo.depth().unwrap_or(-1),
+                upload_walk_depth,
             )?
             else {
                 log::error!("push_commits commit node not found for commit: {commit}");
