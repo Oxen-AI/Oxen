@@ -27,26 +27,34 @@
         oxenBuildInputs = with pkgs;
           [
             pkg-config
+            cmake
             mold
             clang
             llvmPackages.libclang.lib
+            cacert
             openssl
           ]
           ++ lib.optionals (pkgs.stdenv.isDarwin) [
             darwin.IOKit
             darwin.apple_sdk.frameworks.SystemConfiguration
           ];
+        commonEnv = {
+          CC = pkgs.lib.getExe pkgs.clang;
+          CXX = pkgs.lib.getExe' pkgs.clang "clang++";
+          CXXFLAGS = "-include cstdint";
+          LIBCLANG_PATH = pkgs.lib.makeLibraryPath [pkgs.llvmPackages.libclang.lib];
+          NIX_SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+          RUST_BACKTRACE = "1";
+          RUST_LOG = "info";
+          RUSTFLAGS = "-C target-cpu=native";
+          SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+        };
         commonDrvConfig = {
           deps.stdenv = pkgs.clangStdenv;
           mkDerivation = {
             buildInputs = oxenBuildInputs;
           };
-          env = {
-            LIBCLANG_PATH = pkgs.lib.makeLibraryPath [pkgs.llvmPackages.libclang.lib];
-            RUST_BACKTRACE = 1;
-            RUST_LOG = "info";
-            RUSTFLAGS = "-C target-cpu=native";
-          };
+          env = commonEnv;
         };
       in {
         nci.projects."Oxen" = {
@@ -57,6 +65,10 @@
           "oxen-cli" = {
             depsDrvConfig = commonDrvConfig;
             drvConfig = commonDrvConfig;
+            profiles = {
+              dev.runTests = false;
+              release.runTests = false;
+            };
           };
           "oxen-server" = {
             depsDrvConfig = commonDrvConfig;
@@ -82,18 +94,22 @@
         # export the project devshell as the default devshell
         devShells = {
           # nix develop -c $SHELL
-          default = outputs."Oxen".devShell.overrideAttrs (old: {
-            buildInputs = old.buildInputs ++ oxenBuildInputs;
+          default = outputs."Oxen".devShell.overrideAttrs (old:
+            {
+              buildInputs = old.buildInputs ++ oxenBuildInputs;
 
-            packages = [
-              pkgs.rust-analyzer
-            ];
+              packages = [
+                pkgs.rust-analyzer
+              ];
 
-            LIBCLANG_PATH = pkgs.lib.makeLibraryPath [pkgs.llvmPackages.libclang.lib];
-            RUST_BACKTRACE = 1;
-            RUST_LOG = "info";
-            RUSTFLAGS = "-C target-cpu=native";
-          });
+              shellHook =
+                (old.shellHook or "")
+                + ''
+                  export CC=${commonEnv.CC}
+                  export CXX=${commonEnv.CXX}
+                '';
+            }
+            // commonEnv);
         };
 
         # export the release package of the crate as default package
