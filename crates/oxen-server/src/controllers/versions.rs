@@ -699,7 +699,7 @@ mod tests {
         assert_eq!(bytes, "Hello");
 
         // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 
@@ -762,7 +762,7 @@ mod tests {
         let bytes = body::to_bytes(resp.into_body()).await.unwrap();
         assert_eq!(content_length, bytes.len());
 
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 
@@ -804,7 +804,7 @@ mod tests {
         assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
 
         // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 
@@ -870,7 +870,7 @@ mod tests {
         assert_eq!(stored_data, file_content.as_bytes());
 
         // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 }

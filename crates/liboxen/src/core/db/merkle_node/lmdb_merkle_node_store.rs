@@ -183,6 +183,13 @@ impl MerkleNodeStore for LmdbMerkleNodeStore {
             Ok(())
         })
     }
+
+    fn snapshot_for_archive(&self, dst_dir: &Path) -> Result<Option<PathBuf>, MerkleDbError> {
+        // `mdb_env_copy` writes a single, point-in-time-consistent `data.mdb` and no `lock.mdb`,
+        // so the archive captures durable state without the live env's runtime lock file.
+        let data_file = self.snapshot_to(dst_dir)?;
+        Ok(Some(data_file))
+    }
 }
 
 #[cfg(test)]
