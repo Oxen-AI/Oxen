@@ -15,6 +15,14 @@ on:
         description: "Version string to set in pyproject.toml (e.g. 0.44.1.dev0)"
         required: true
         type: string
+      AWS_ROLE:
+        description: "AWS role to assume"
+        required: true
+        type: string
+      AWS_REGION:
+        description: "AWS region"
+        required: true
+        type: string
 
 env:
   MACOSX_DEPLOYMENT_TARGET: 10.13
@@ -27,11 +35,26 @@ jobs:
   build_wheels:
     name: Build Python wheels
     runs-on: macos-15-xlarge
+    env:
+      RUSTC_WRAPPER: sccache
+      CMAKE_C_COMPILER_LAUNCHER: sccache
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
+      SCCACHE_BUCKET: oxen-release-build-cache
+      SCCACHE_REGION: us-west-1
+      CARGO_INCREMENTAL: "0"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
+          persist-credentials: false
           ref: ${{ inputs.CHECKOUT_REF }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ inputs.AWS_ROLE }}
+          role-duration-seconds: 3600
+          aws-region: ${{ inputs.AWS_REGION }}
 
       - name: Patch version in pyproject.toml and Cargo.toml
         run: |
@@ -42,13 +65,16 @@ jobs:
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           shared-key: "release-python"
           workspaces: "."
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.1.0
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Build Python wheels
         run: |
@@ -65,7 +91,7 @@ jobs:
           done
 
       - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-macos
           path: ${{ github.workspace }}/target/wheels/*.whl

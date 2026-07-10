@@ -57,6 +57,7 @@ jobs:
           startup-timeout-minutes: 10
           subnet-id: subnet-0e28805edbdad482f
           security-group-id: sg-09c8aa5830122d671
+          iam-role-name: github-runner-instance-profile
           aws-resource-tags: >
             [
               {"Key": "Name", "Value": "ec2-github-runner"}
@@ -70,16 +71,69 @@ jobs:
       run:
         shell: powershell
 
+    env:
+      RUSTC_WRAPPER: sccache
+      # cc-rs (duckdb/rocksdb/zstd bundled builds) intercepts via CC/CXX;
+      # cmake-driven builds (aws-lc) need the launcher vars plus a generator
+      # that honors them (Visual Studio generators ignore launchers).
+      CC: sccache cl
+      CXX: sccache cl
+      CMAKE_C_COMPILER_LAUNCHER: sccache
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
+      CMAKE_GENERATOR: Ninja
+      # aws-lc-sys's cc builder misdetects the compiler family behind the
+      # sccache wrapper and emits GCC-builtin calls that MSVC can't link;
+      # its cmake path probes the toolchain correctly (and NASM is installed)
+      AWS_LC_SYS_CMAKE_BUILDER: "1"
+      SCCACHE_BUCKET: oxen-release-build-cache
+      SCCACHE_REGION: us-west-1
+      # vcpkg rebuilds FFmpeg from source on every ephemeral runner without this
+      VCPKG_BINARY_SOURCES: clear;x-aws,s3://oxen-release-build-cache/vcpkg/,readwrite
+      # MSVC stamps wall-clock timestamps into linked PE files and .obj COFF
+      # headers; sccache hashes proc-macro dlls (--extern) and staticlib members
+      # into downstream Rust keys, so unstamped output churns those keys every
+      # run. /Brepro zeroes the timestamps.
+      RUSTFLAGS: -Clink-arg=/Brepro
+      CFLAGS: /Brepro
+      CXXFLAGS: /Brepro
+      CARGO_INCREMENTAL: "0"
+      SCCACHE_IDLE_TIMEOUT: "0"
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Create release directory
         run: mkdir ${{ github.workspace }}\release
 
+      - name: Disable Windows Defender for build (ephemeral runner)
+        run: |
+          try {
+            # Same configuration GitHub applies to its hosted runner images
+            Set-MpPreference -DisableRealtimeMonitoring $true -DisableArchiveScanning $true -DisableBehaviorMonitoring $true -DisableIOAVProtection $true -DisableScriptScanning $true -MAPSReporting 0 -PUAProtection 0 -ScanAvgCPULoadFactor 5
+            Set-MpPreference -ExclusionPath @("C:\Windows\System32\actions-runner", "C:\Users\Administrator\.cargo", "C:\Users\Administrator\.rustup", "C:\vcpkg", "C:\ProgramData\chocolatey", "$env:TEMP")
+            Set-MpPreference -ExclusionProcess @("rustc.exe", "cargo.exe", "sccache.exe", "cl.exe", "link.exe", "cmake.exe", "ninja.exe", "python.exe", "git.exe")
+            $s = Get-MpComputerStatus
+            Write-Host "Defender: RealTimeProtection=$($s.RealTimeProtectionEnabled) TamperProtected=$($s.IsTamperProtected)"
+          } catch {
+            Write-Host "Defender configuration unavailable: $_"
+          }
+
       - name: Install dependencies
         run: |
-          choco install -y cmake llvm uv rustup.install
+          choco install -y cmake llvm uv rustup.install ninja nasm
+          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
+            choco install -y awscli
+            # choco appends to the machine PATH; this process needs it now for vcpkg's x-aws
+            $env:Path = "C:\Program Files\Amazon\AWSCLIV2;$env:Path"
+          }
+          aws --version
+          # Install sccache 0.16 to a machine-PATH dir so it survives refreshenv
+          Invoke-WebRequest -Uri "https://github.com/mozilla/sccache/releases/download/v0.16.0/sccache-v0.16.0-x86_64-pc-windows-msvc.zip" -OutFile C:\sccache.zip
+          Expand-Archive -Path C:\sccache.zip -DestinationPath C:\sccache-dl -Force
+          Copy-Item C:\sccache-dl\sccache-v0.16.0-x86_64-pc-windows-msvc\sccache.exe C:\ProgramData\chocolatey\bin\sccache.exe -Force
           # Install vcpkg for FFmpeg development libraries
           git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
           cd C:\vcpkg
@@ -88,14 +142,81 @@ jobs:
           # Set VCPKG_ROOT for cargo to find FFmpeg libraries
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
+      - name: Restore dependency build tree
+        run: |
+          refreshenv
+          # Proc-macro dlls never link byte-identically across runs (PE content
+          # varies even with /Brepro), and sccache hashes them into every direct
+          # consumer's key, so those consumers and everything above them miss
+          # every run. Restoring the dependency slice of target\release plus the
+          # registry trees (mtimes preserved, so cargo's staleness math holds)
+          # makes cargo reuse the previous run's dlls verbatim; workspace crates
+          # stay dirty via fresh checkout mtimes and rebuild as usual.
+          $lock = (Get-FileHash Cargo.lock -Algorithm SHA256).Hash
+          $rv = (cmd /c "rustc -V 2>nul") -join ''
+          $keySrc = "$rv|$lock|-Clink-arg=/Brepro|v2"
+          $sha = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes($keySrc))).Replace("-","").Substring(0,32)
+          echo "DEPTREE_KEY=$sha" >> $env:GITHUB_ENV
+          cmd /c "aws s3 cp s3://oxen-release-build-cache/deptree/$sha.tar C:\deptree.tar 2>nul"
+          if (Test-Path C:\deptree.tar) {
+            tar -xf C:\deptree.tar -C C:\
+            Write-Host "DEPTREE restore hit ($sha)"
+          } else {
+            Write-Host "DEPTREE restore miss ($sha)"
+          }
+          exit 0
+
       - name: Build oxen binaries
         run: |
           refreshenv
+          # cc-rs only self-locates MSVC when CC is unset; with CC="sccache cl"
+          # the dev shell must put cl.exe (+ INCLUDE/LIB) in the environment
+          $vsPath = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          Import-Module (Join-Path $vsPath "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
+          Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments '-arch=x64'
+          $env:RUSTC_WRAPPER = "sccache"
+          $env:RUSTFLAGS = "-Clink-arg=/Brepro"
+          $env:CC = "sccache cl"
+          $env:CXX = "sccache cl"
+          $env:CFLAGS = "/Brepro"
+          $env:CXXFLAGS = "/Brepro"
+          $env:CMAKE_C_COMPILER_LAUNCHER = "sccache"
+          $env:CMAKE_CXX_COMPILER_LAUNCHER = "sccache"
+          $env:CMAKE_GENERATOR = "Ninja"
+          $env:AWS_LC_SYS_CMAKE_BUILDER = "1"
+          cmd /c "sccache --start-server"
           cargo build --workspace --exclude oxen-py --release
+          $cargoExit = $LASTEXITCODE
+          sccache --show-stats
+          exit $cargoExit
+
+      - name: Save dependency build tree
+        run: |
+          if (Test-Path C:\deptree.tar) { Write-Host "DEPTREE cache already present"; exit 0 }
+          refreshenv
+          $rel = "${{ github.workspace }}\target\release".Substring(3) -replace '\\','/'
+          $list = @("$rel/.fingerprint", "$rel/deps", "$rel/build", "Users/Administrator/.cargo/registry/src", "Users/Administrator/.cargo/registry/cache")
+          $list | Set-Content C:\deptree-list.txt
+          tar -cf C:\deptree-out.tar -C C:\ -T C:\deptree-list.txt
+          aws s3 cp C:\deptree-out.tar s3://oxen-release-build-cache/deptree/$env:DEPTREE_KEY.tar
+          Write-Host "DEPTREE saved ($env:DEPTREE_KEY)"
 
       - name: Build Python wheels
         run: |
           refreshenv
+          $vsPath = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          Import-Module (Join-Path $vsPath "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
+          Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments '-arch=x64'
+          $env:RUSTC_WRAPPER = "sccache"
+          $env:RUSTFLAGS = "-Clink-arg=/Brepro"
+          $env:CC = "sccache cl"
+          $env:CXX = "sccache cl"
+          $env:CFLAGS = "/Brepro"
+          $env:CXXFLAGS = "/Brepro"
+          $env:CMAKE_C_COMPILER_LAUNCHER = "sccache"
+          $env:CMAKE_CXX_COMPILER_LAUNCHER = "sccache"
+          $env:CMAKE_GENERATOR = "Ninja"
+          $env:AWS_LC_SYS_CMAKE_BUILDER = "1"
           uv python install ${{ inputs.PYTHON_VERSIONS }}
 
           cd ${{ github.workspace }}\oxen-python
@@ -103,7 +224,14 @@ jobs:
           $versions = "${{ inputs.PYTHON_VERSIONS }}" -split ' '
           foreach ($version in $versions) {
               uvx maturin build --release --interpreter "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-$version.*\python.exe"
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+
+      - name: sccache stats
+        if: always()
+        run: |
+          refreshenv
+          sccache --show-stats
 
       - name: Create zip with oxen binaries
         run: |
@@ -119,7 +247,7 @@ jobs:
           Compress-Archive -Path "${{ github.workspace }}\release\*" -DestinationPath "${{ github.workspace }}\release\oxen-windows-${{ inputs.ARCHITECTURE }}-release.zip"
 
       - name: Upload all artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: oxen-windows-release-${{ inputs.ARCHITECTURE }}.zip
           path: ${{ github.workspace }}\release\oxen-windows-${{ inputs.ARCHITECTURE }}-release.zip

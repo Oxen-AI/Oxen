@@ -90,8 +90,9 @@ pub fn get_column_diff(
 ) -> Result<Vec<DataFrameColumnChange>, DataFrameError> {
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
+    // No change-tracking db on disk means no edits are staged: empty diff.
     match changes_db::try_get_changes_db(&column_changes_path)? {
-        Some(db) => get_all_data_frame_column_changes(&db),
+        Some(handle) => get_all_data_frame_column_changes(&handle.read()),
         None => Ok(Vec::new()),
     }
 }
@@ -103,9 +104,11 @@ pub fn decorate_fields_with_column_diffs(
 ) -> Result<(), OxenError> {
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, file_path.as_ref());
-    let Some(db) = changes_db::try_get_changes_db(&column_changes_path)? else {
+    let Some(handle) = changes_db::try_get_changes_db(&column_changes_path)? else {
         return Ok(());
     };
+    // The function is sync — hold one read guard across both iterations.
+    let db = handle.read();
 
     df_views
         .source

@@ -669,6 +669,11 @@ pub async fn download_large_entry(
         AtomicFile::new(&local_path_for_blocking)
             .with_hash(expected_hash)
             .stream(&mut combined)?;
+
+        // Close the chunk file handles before removing their directory. On NFS, unlinking a
+        // still-open file leaves a hidden .nfsXXXX entry that fails the rmdir with ENOTEMPTY.
+        drop(combined);
+
         if tmp_dir_for_cleanup.exists() {
             std::fs::remove_dir_all(&tmp_dir_for_cleanup)?;
         }

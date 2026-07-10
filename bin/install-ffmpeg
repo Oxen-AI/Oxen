@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+#
+# install-ffmpeg
+#
+# Install a pinned FFmpeg 8 (LGPL shared build from BtbN/FFmpeg-Builds) under a prefix and register
+# its libraries with ldconfig. Shared by bin/install-prereqs, the production-build CI workflow, and
+# the Dockerfiles, which all provision FFmpeg from this one place. Pins live in tool-versions.env.
+#
+# BtbN prunes old autobuild releases over time; refresh the pin in tool-versions.env periodically,
+# or mirror the asset to storage we control.
+#
+# Usage: install-ffmpeg [PREFIX]            (PREFIX defaults to /opt/ffmpeg)
+#   TOOL_VERSIONS_FILE   path to tool-versions.env (default: alongside this script's repo root)
+#   FFMPEG_ARCH          target arch override: amd64|arm64|x86_64|aarch64 (default: uname -m)
+# Privileged steps run with sudo when not already root.
+set -euo pipefail
+
+PREFIX="${1:-/opt/ffmpeg}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TOOL_VERSIONS_FILE="${TOOL_VERSIONS_FILE:-$SCRIPT_DIR/../tool-versions.env}"
+
+# shellcheck disable=SC1090,SC1091
+. "$TOOL_VERSIONS_FILE"
+
+case "${FFMPEG_ARCH:-$(uname -m)}" in
+    amd64 | x86_64)  ff_arch="linux64";    ff_sha="$FFMPEG_SHA256_LINUX_X86_64" ;;
+    arm64 | aarch64) ff_arch="linuxarm64"; ff_sha="$FFMPEG_SHA256_LINUX_AARCH64" ;;
+    *) echo "Unsupported architecture for FFmpeg install: ${FFMPEG_ARCH:-$(uname -m)}" >&2; exit 1 ;;
+esac
+
+as_root() {
+    if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi
+}
+
+stamp="$PREFIX/.oxen-ffmpeg-version"
+want="${FFMPEG_VERSION}+${FFMPEG_BTBN_TAG}"
+if [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$want" ]; then
+    echo "FFmpeg ${FFMPEG_VERSION} already installed at $PREFIX"
+    exit 0
+fi
+
+tarball="ffmpeg-n${FFMPEG_VERSION}${FFMPEG_BUILD_SUFFIX:-}-${ff_arch}-lgpl-shared-${FFMPEG_BRANCH}.tar.xz"
+url="https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_BTBN_TAG}/${tarball}"
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+echo "Downloading FFmpeg ${FFMPEG_VERSION} (${ff_arch}) from ${url}..."
+curl -fsSL "$url" -o "$tmp_dir/ffmpeg.tar.xz"
+echo "${ff_sha}  $tmp_dir/ffmpeg.tar.xz" | sha256sum -c -
+
+# Replace any prior install before extracting; no library from an older pin is left behind.
+as_root rm -rf "$PREFIX"
+as_root mkdir -p "$PREFIX"
+as_root tar -xJf "$tmp_dir/ffmpeg.tar.xz" -C "$PREFIX" --strip-components=1
+
+echo "$PREFIX/lib" | as_root tee /etc/ld.so.conf.d/oxen-ffmpeg.conf >/dev/null
+as_root ldconfig
+echo "$want" | as_root tee "$stamp" >/dev/null
+echo "FFmpeg ${FFMPEG_VERSION} installed at $PREFIX"
