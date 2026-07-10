@@ -8,11 +8,6 @@
 //! `write_node` puts both under one write transaction, so a node is never observable with only one
 //! blob (the same atomicity the FS backend gets from writing both files before anything reads).
 
-// The store is not yet wired into repo construction (that lands in the follow-up backend-selection
-// change), so outside of its own unit tests nothing constructs or queries it yet. Remove this once
-// `create_merkle_node_store` can return this backend.
-#![allow(dead_code)]
-
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -64,9 +59,14 @@ impl std::fmt::Debug for LmdbMerkleNodeStore {
 impl LmdbMerkleNodeStore {
     /// Open (creating if absent) the LMDB merkle node env for the repo rooted at `repo_path`.
     pub(crate) fn new(repo_path: &Path) -> Result<Self, OxenError> {
-        let dir = Self::env_dir(repo_path);
+        Self::new_at(&Self::env_dir(repo_path))
+    }
+
+    /// Open (creating if absent) an LMDB merkle node env at an explicit directory. Used by the
+    /// FS→LMDB migration to build the env in a temp dir before atomically publishing it.
+    pub(crate) fn new_at(env_dir: &Path) -> Result<Self, OxenError> {
         let config = LmdbEnvConfig::new(MAX_DBS, MERKLE_NODE_MAP_SIZE);
-        let env = open_shared_env(&dir, &config)?;
+        let env = open_shared_env(env_dir, &config)?;
         let db = open_db(&env, NODES_DB_NAME)?;
         Ok(Self { env, db })
     }
@@ -77,7 +77,8 @@ impl LmdbMerkleNodeStore {
         Self::env_dir(repo_path).join(LMDB_DATA_FILE).exists()
     }
 
-    fn env_dir(repo_path: &Path) -> PathBuf {
+    /// The env directory for the repo rooted at `repo_path` (`.oxen/tree/nodes_lmdb`).
+    pub(crate) fn env_dir(repo_path: &Path) -> PathBuf {
         repo_path
             .join(constants::OXEN_HIDDEN_DIR)
             .join(constants::TREE_DIR)
@@ -182,6 +183,13 @@ impl MerkleNodeStore for LmdbMerkleNodeStore {
             Ok(())
         })
     }
+
+    fn snapshot_for_archive(&self, dst_dir: &Path) -> Result<Option<PathBuf>, MerkleDbError> {
+        // `mdb_env_copy` writes a single, point-in-time-consistent `data.mdb` and no `lock.mdb`,
+        // so the archive captures durable state without the live env's runtime lock file.
+        let data_file = self.snapshot_to(dst_dir)?;
+        Ok(Some(data_file))
+    }
 }
 
 #[cfg(test)]
@@ -252,16 +260,6 @@ mod tests {
         store.delete(&missing)?;
         assert_eq!(store.list_hashes()?, vec![leaf]);
 
-        Ok(())
-    }
-
-    /// `exists_on_disk` is false until an env has been created, then true.
-    #[test]
-    fn lmdb_store_exists_on_disk_reflects_creation() -> Result<(), OxenError> {
-        let dir = tempfile::tempdir().expect("create temp dir");
-        assert!(!LmdbMerkleNodeStore::exists_on_disk(dir.path()));
-        let _store = LmdbMerkleNodeStore::new(dir.path())?;
-        assert!(LmdbMerkleNodeStore::exists_on_disk(dir.path()));
         Ok(())
     }
 

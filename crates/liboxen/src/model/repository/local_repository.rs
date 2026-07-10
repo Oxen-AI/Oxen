@@ -1,7 +1,7 @@
 use crate::config::RepositoryConfig;
 use crate::constants::SHALLOW_FLAG;
 use crate::constants::{self, DEFAULT_VNODE_SIZE};
-use crate::core::db::merkle_node::{MerkleNodeStore, create_merkle_node_store};
+use crate::core::db::merkle_node::{MerkleNodeBackend, MerkleNodeStore, create_merkle_node_store};
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
@@ -53,6 +53,9 @@ pub struct LocalRepository {
     /// construction and never replaced, mirroring `version_store`. The backend (file vs. another
     /// engine) is a property of the repo chosen once in `create_merkle_node_store`.
     merkle_node_store: Arc<dyn MerkleNodeStore>,
+    /// The backend `merkle_node_store` resolved to. Persisted as `merkle_node_backend` in
+    /// `config.toml` by [`save`](Self::save) so the choice is the authoritative record on the next load.
+    merkle_node_backend: MerkleNodeBackend,
 }
 
 #[derive(Debug, Clone)]
@@ -105,6 +108,11 @@ impl LocalRepository {
         Arc::clone(&self.merkle_node_store)
     }
 
+    /// The backend this repo's Merkle node store resolved to (see `create_merkle_node_store`).
+    pub(crate) fn merkle_node_backend(&self) -> MerkleNodeBackend {
+        self.merkle_node_backend
+    }
+
     /// Load a repository from the current directory
     /// this traverses up the directory tree until it finds a .oxen/ directory
     pub fn from_current_dir() -> Result<LocalRepository, OxenError> {
@@ -138,7 +146,8 @@ impl LocalRepository {
         let path = path.as_ref().to_path_buf();
         let storage_config = config.storage.unwrap_or_default();
         let version_store = create_version_store(&path, &storage_config, server_s3_opts)?;
-        let merkle_node_store = create_merkle_node_store(&path)?;
+        let (merkle_node_store, merkle_node_backend) =
+            create_merkle_node_store(&path, config.merkle_node_backend)?;
         Ok(LocalRepository {
             path,
             remote_name: config.remote_name,
@@ -155,6 +164,7 @@ impl LocalRepository {
             server_s3_opts: server_s3_opts.cloned(),
             version_store,
             merkle_node_store,
+            merkle_node_backend,
         })
     }
 
@@ -174,11 +184,25 @@ impl LocalRepository {
         }
     }
 
+    /// Test-only constructor: clone an existing repo but back it with a caller-supplied Merkle node
+    /// store. Lets a test point a repo at a specific backend (e.g. an LMDB store on the repo's own
+    /// path) and exercise real commits/reads through it.
+    #[cfg(test)]
+    pub(crate) fn new_with_merkle_node_store_for_testing(
+        base: &LocalRepository,
+        merkle_node_store: Arc<dyn MerkleNodeStore>,
+    ) -> Self {
+        LocalRepository {
+            merkle_node_store,
+            ..base.clone()
+        }
+    }
+
     pub fn from_view(view: RepositoryView) -> Result<LocalRepository, OxenError> {
         let path = std::env::current_dir()?.join(view.name);
         let storage_config = StorageConfig::default();
         let version_store = create_version_store(&path, &storage_config, None)?;
-        let merkle_node_store = create_merkle_node_store(&path)?;
+        let (merkle_node_store, merkle_node_backend) = create_merkle_node_store(&path, None)?;
         Ok(LocalRepository {
             path,
             remotes: vec![],
@@ -195,6 +219,7 @@ impl LocalRepository {
             server_s3_opts: None,
             version_store,
             merkle_node_store,
+            merkle_node_backend,
         })
     }
 
@@ -202,7 +227,7 @@ impl LocalRepository {
         let path = path.to_owned();
         let storage_config = StorageConfig::default();
         let version_store = create_version_store(&path, &storage_config, None)?;
-        let merkle_node_store = create_merkle_node_store(&path)?;
+        let (merkle_node_store, merkle_node_backend) = create_merkle_node_store(&path, None)?;
         Ok(LocalRepository {
             path,
             remotes: vec![repo.remote],
@@ -219,6 +244,7 @@ impl LocalRepository {
             server_s3_opts: None,
             version_store,
             merkle_node_store,
+            merkle_node_backend,
         })
     }
 
@@ -314,6 +340,7 @@ impl LocalRepository {
             remote_mode: self.remote_mode,
             workspace_name: self.workspace_name.clone(),
             workspaces: self.workspaces.clone(),
+            merkle_node_backend: Some(self.merkle_node_backend),
         };
 
         config.save(&config_path)?;
@@ -798,6 +825,39 @@ mod tests {
             reloaded.storage_config().versions_path,
             custom.versions_path
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_merkle_node_backend_persists_to_config() -> Result<(), OxenError> {
+        use crate::core::db::merkle_node::MerkleNodeBackend;
+
+        // A repo with no explicit backend still records the resolved one in config.toml on save,
+        // so the choice is the authoritative record on the next load.
+        let temp_dir = TempDir::new()?;
+        let repo_path = temp_dir.path().to_path_buf();
+        let repo = LocalRepository::new(&repo_path, RepositoryConfig::default())?;
+        repo.save()?;
+        let on_disk = RepositoryConfig::from_file(crate::util::fs::config_filepath(&repo_path))?;
+        assert!(
+            on_disk.merkle_node_backend.is_some(),
+            "save must persist the resolved backend to config.toml"
+        );
+
+        // An explicit backend round-trips verbatim through save → config.toml.
+        let temp_dir = TempDir::new()?;
+        let repo_path = temp_dir.path().to_path_buf();
+        let repo = LocalRepository::new(
+            &repo_path,
+            RepositoryConfig {
+                merkle_node_backend: Some(MerkleNodeBackend::Lmdb),
+                ..Default::default()
+            },
+        )?;
+        repo.save()?;
+        let on_disk = RepositoryConfig::from_file(crate::util::fs::config_filepath(&repo_path))?;
+        assert_eq!(on_disk.merkle_node_backend, Some(MerkleNodeBackend::Lmdb));
 
         Ok(())
     }
