@@ -13,7 +13,8 @@
 //! bridge trivial.
 //!
 //! [`MerkleNodeDB`](super::merkle_node_db) reads and writes through a `MerkleNodeStore`;
-//! [`FsMerkleNodeStore`](super::fs_merkle_node_store) is the only implementation today.
+//! [`FsMerkleNodeStore`](super::fs_merkle_node_store) is the filesystem implementation of `MerkleNodeStore`
+//! [`LmdbMerkleNodeStore`](super::lmdb_merkle_node_store) is the LMDB implementation of `MerkleNodeStore`
 
 use std::fmt::Debug;
 use std::path::Path;
