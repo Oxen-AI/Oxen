@@ -95,7 +95,7 @@ mod tests {
         assert_eq!(path, "to/resource");
 
         // cleanup
-        test::cleanup_sync_dir(&sync_dir)?;
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
 
         Ok(())
     }

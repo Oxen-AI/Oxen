@@ -19,6 +19,9 @@ pub use m20250111083535_add_child_counts_to_nodes::AddChildCountsToNodesMigratio
 
 pub mod m20260408_add_workspace_name_index;
 pub use m20260408_add_workspace_name_index::AddWorkspaceNameIndexMigration;
+
+pub mod m20260626_migrate_merkle_nodes_to_lmdb;
+pub use m20260626_migrate_merkle_nodes_to_lmdb::MerkleNodesToLmdbMigration;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString, IntoStaticStr, VariantNames};
 
@@ -97,9 +100,10 @@ pub trait Migrate {
 /// (`POST /api/repos/:ns/:name/migrations/:migration_name`) to look up a
 /// migration by name at runtime. New migrations **MUST** be listed here
 /// for the [`all_migrations`] function to work properly.
-pub const ALL_MIGRATIONS: [&dyn Migrate; 2] = [
+pub const ALL_MIGRATIONS: [&dyn Migrate; 3] = [
     &AddChildCountsToNodesMigration,
     &AddWorkspaceNameIndexMigration,
+    &MerkleNodesToLmdbMigration,
 ];
 
 /// Maps a registered migration's name to its implementation.

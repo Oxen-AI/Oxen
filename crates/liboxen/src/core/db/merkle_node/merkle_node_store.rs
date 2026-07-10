@@ -17,7 +17,7 @@
 //! [`LmdbMerkleNodeStore`](super::lmdb_merkle_node_store) is the LMDB implementation of `MerkleNodeStore`
 
 use std::fmt::Debug;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -58,7 +58,7 @@ const MERKLE_NODE_BACKEND_ENV: &str = "OXEN_MERKLE_NODE_BACKEND";
 impl MerkleNodeBackend {
     /// The backend named by the environment, or `None` when the variable is unset or empty.
     /// `"lmdb"` selects LMDB; any other non-empty value selects the filesystem backend.
-    fn from_env() -> Option<Self> {
+    pub(crate) fn from_env() -> Option<Self> {
         match std::env::var(MERKLE_NODE_BACKEND_ENV) {
             Ok(value) if value.trim().is_empty() => None,
             Ok(value) if value.trim().eq_ignore_ascii_case("lmdb") => Some(MerkleNodeBackend::Lmdb),
@@ -109,6 +109,14 @@ pub(crate) trait MerkleNodeStore: Debug + Send + Sync {
 
     /// Remove the node for `hash` (both blobs). Idempotent: deleting an absent node is `Ok`.
     fn delete(&self, hash: &MerkleHash) -> Result<(), MerkleDbError>;
+
+    /// Copy the store's durable state into `dst_dir` for archiving, returning the file written.
+    ///
+    /// The copy is point-in-time consistent even while the store is in use and omits any
+    /// runtime-only files (e.g. an LMDB lock file). Backends whose on-disk representation is a tree
+    /// of plain files (the filesystem backend) return `None` — those files are archived directly
+    /// from their location and need no separate snapshot.
+    fn snapshot_for_archive(&self, dst_dir: &Path) -> Result<Option<PathBuf>, MerkleDbError>;
 }
 
 /// Build the node store for the repo rooted at `repo_path`, choosing the backend once at repo

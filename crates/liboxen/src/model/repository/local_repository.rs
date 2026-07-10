@@ -108,6 +108,11 @@ impl LocalRepository {
         Arc::clone(&self.merkle_node_store)
     }
 
+    /// The backend this repo's Merkle node store resolved to (see `create_merkle_node_store`).
+    pub(crate) fn merkle_node_backend(&self) -> MerkleNodeBackend {
+        self.merkle_node_backend
+    }
+
     /// Load a repository from the current directory
     /// this traverses up the directory tree until it finds a .oxen/ directory
     pub fn from_current_dir() -> Result<LocalRepository, OxenError> {
@@ -175,6 +180,20 @@ impl LocalRepository {
     pub fn new_for_testing(base: &LocalRepository, version_store: Arc<dyn VersionStore>) -> Self {
         LocalRepository {
             version_store,
+            ..base.clone()
+        }
+    }
+
+    /// Test-only constructor: clone an existing repo but back it with a caller-supplied Merkle node
+    /// store. Lets a test point a repo at a specific backend (e.g. an LMDB store on the repo's own
+    /// path) and exercise real commits/reads through it.
+    #[cfg(test)]
+    pub(crate) fn new_with_merkle_node_store_for_testing(
+        base: &LocalRepository,
+        merkle_node_store: Arc<dyn MerkleNodeStore>,
+    ) -> Self {
+        LocalRepository {
+            merkle_node_store,
             ..base.clone()
         }
     }
