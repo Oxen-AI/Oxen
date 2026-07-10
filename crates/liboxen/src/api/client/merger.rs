@@ -4,7 +4,7 @@
 use crate::api;
 use crate::api::client;
 use crate::error::OxenError;
-use crate::model::RemoteRepository;
+use crate::model::{RemoteRepository, User};
 use crate::view::merge::{MergeResult, MergeSuccessResponse, Mergeable, MergeableResponse};
 
 /// Can check the mergeability of head into base
@@ -25,18 +25,19 @@ pub async fn mergeable(
     Ok(response.mergeable)
 }
 
-/// Merge the head branch into the base branch
+/// Merge the head branch into the base branch. `author` attributes the merge commit.
 pub async fn merge(
     remote_repo: &RemoteRepository,
     base: &str,
     head: &str,
+    author: &User,
 ) -> Result<MergeResult, OxenError> {
     let uri = format!("/merge/{base}..{head}");
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     log::debug!("api::client::merger::merge url: {url}");
 
     let client = client::new_for_url(&url)?;
-    let res = client.post(&url).send().await?;
+    let res = client.post(&url).json(author).send().await?;
     let body = client::parse_json_body(&url, res).await?;
     let response: MergeSuccessResponse = serde_json::from_str(&body)?;
     Ok(response.commits)
@@ -46,6 +47,7 @@ pub async fn merge(
 mod tests {
 
     use crate::api;
+    use crate::config::UserConfig;
     use crate::constants::DEFAULT_REMOTE_NAME;
     use crate::error::OxenError;
     use crate::opts::FetchOpts;
@@ -262,7 +264,9 @@ mod tests {
             repositories::push::push_remote_branch(&local_repo, &opts).await?;
 
             // Merge the head branch into base
-            let merge_result = api::client::merger::merge(&remote_repo, base, head).await?;
+            let author = UserConfig::get()?.to_user();
+            let merge_result =
+                api::client::merger::merge(&remote_repo, base, head, &author).await?;
 
             repositories::checkout::checkout(&local_repo, base).await?;
             let commits_before = repositories::commits::list(&local_repo)?;

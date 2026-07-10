@@ -33,12 +33,14 @@ mod tests {
             [storage]
             backends = ["local", "s3"]
             s3_bucket = "my-bucket"
+            s3_region = "us-west-1"
         "#;
         let f: Config = toml::from_str(toml_str).unwrap();
         let expected: StoragePolicy = toml::from_str(
             r#"
             backends = ["local", "s3"]
             s3_bucket = "my-bucket"
+            s3_region = "us-west-1"
         "#,
         )
         .unwrap();
