@@ -60,7 +60,7 @@ impl MerkleNodeBackend {
     fn from_env() -> Option<Self> {
         match std::env::var(MERKLE_NODE_BACKEND_ENV) {
             Ok(value) if value.trim().is_empty() => None,
-            Ok(value) if value.eq_ignore_ascii_case("lmdb") => Some(MerkleNodeBackend::Lmdb),
+            Ok(value) if value.trim().eq_ignore_ascii_case("lmdb") => Some(MerkleNodeBackend::Lmdb),
             Ok(_) => Some(MerkleNodeBackend::Filesystem),
             Err(_) => None,
         }
