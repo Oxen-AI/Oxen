@@ -1,6 +1,5 @@
 use crate::error::OxenError;
 use async_trait::async_trait;
-use aws_config::meta::region::RegionProviderChain;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::operation::head_object::HeadObjectError;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier};
@@ -16,7 +15,7 @@ use tokio::sync::OnceCell;
 use tokio_stream::Stream;
 use tokio_util::io::StreamReader;
 
-use super::version_store::{VersionLocation, VersionStore};
+use super::version_store::{BoxedByteStream, VersionLocation, VersionStore};
 use crate::constants::VERSION_FILE_NAME;
 use crate::util::fs::AtomicFile;
 use crate::util::hasher;
@@ -26,13 +25,15 @@ use xxhash_rust::xxh3::Xxh3;
 /// AWS recommends uploading to S3 in a single PUT if filesize is <= 100 MB.
 const DEFAULT_ONESHOT_SIZE: u64 = 100 * 1024 * 1024;
 
-/// Server-supplied S3 configuration carried separately from per-repo `StorageConfig`. The bucket is
-/// a server-wide setting (the server can rotate it without rewriting every repo's config), so it
-/// never appears in `.oxen/config.toml` — only in the server's TOML, then threaded through repo
-/// construction. Clients of liboxen pass `None` for this when no S3 backend is server-enabled.
+/// Server-supplied S3 configuration carried separately from per-repo `StorageConfig`. The bucket
+/// and region are server-wide settings (the server can rotate them without rewriting every repo's
+/// config), so they never appear in `.oxen/config.toml` — only in the server's TOML, then threaded
+/// through repo construction. Clients of liboxen pass `None` for this when no S3 backend is
+/// server-enabled.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct S3Opts {
     pub bucket: String,
+    pub region: String,
 }
 
 /// S3 implementation of version storage
@@ -40,6 +41,9 @@ pub struct S3Opts {
 pub struct S3VersionStore {
     client: OnceCell<Result<Arc<Client>, OxenError>>,
     bucket: String,
+    /// AWS region the bucket lives in (from the server's S3 config). Used to build the client
+    /// directly, avoiding a `GetBucketLocation` round-trip per store.
+    region: String,
     prefix: String,
     /// Threshold (bytes) below which we upload with a single PUT rather than a multipart upload.
     oneshot_size: u64,
@@ -55,12 +59,14 @@ impl S3VersionStore {
     ///
     /// # Arguments
     /// * `bucket` - S3 bucket name
+    /// * `region` - AWS region the bucket lives in
     /// * `prefix` - Prefix for all objects in the bucket
-    pub fn new(bucket: impl Into<String>, prefix: impl Into<String>) -> Self {
+    pub fn new(bucket: String, region: String, prefix: String) -> Self {
         Self {
             client: OnceCell::new(),
-            bucket: bucket.into(),
-            prefix: prefix.into(),
+            bucket,
+            region,
+            prefix,
             oneshot_size: DEFAULT_ONESHOT_SIZE,
             endpoint_url: None,
         }
@@ -70,34 +76,11 @@ impl S3VersionStore {
         let result_ref = self
             .client
             .get_or_init(|| async {
-                // Create a temp client to get the bucket region
-                let region_provider = RegionProviderChain::default_provider().or_else("us-west-1");
-
-                let base_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-                    .region(region_provider)
+                let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+                    .region(Region::new(self.region.clone()))
                     .load()
                     .await;
-                let tmp_client = Client::new(&base_config);
-
-                let detected_region = tmp_client
-                    .get_bucket_location()
-                    .bucket(&self.bucket)
-                    .send()
-                    .await
-                    .map_err(|err| {
-                        OxenError::basic_str(format!("Failed to get bucket location: {err:?}"))
-                    })?
-                    .location_constraint()
-                    .map(|loc| loc.as_str().to_string())
-                    .unwrap_or("us-east-1".to_string());
-
-                // Construct the client with the detected bucket region
-                let real_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-                    .region(Region::new(detected_region))
-                    .load()
-                    .await;
-
-                Ok::<Arc<Client>, OxenError>(Arc::new(Client::new(&real_config)))
+                Ok::<Arc<Client>, OxenError>(Arc::new(Client::new(&config)))
             })
             .await;
 
@@ -107,10 +90,29 @@ impl S3VersionStore {
         }
     }
 
+    /// Verify the configured bucket exists and is reachable with the current credentials and
+    /// region (HeadBucket). Object read/write permission is not probed.
+    async fn check_bucket_accessible(&self) -> Result<(), OxenError> {
+        let client = self.client().await?;
+        client
+            .head_bucket()
+            .bucket(&self.bucket)
+            .send()
+            .await
+            .map_err(|err| {
+                OxenError::internal_error(format!(
+                    "Cannot access S3 bucket '{}': {err}",
+                    self.bucket
+                ))
+            })?;
+        Ok(())
+    }
+
     #[cfg(test)]
     pub fn new_with_client(
         client: Arc<Client>,
         bucket: String,
+        region: String,
         prefix: String,
         endpoint_url: Option<String>,
     ) -> Self {
@@ -119,6 +121,7 @@ impl S3VersionStore {
         Self {
             client: cell,
             bucket,
+            region,
             prefix,
             oneshot_size: DEFAULT_ONESHOT_SIZE,
             endpoint_url,
@@ -216,51 +219,49 @@ impl S3VersionStore {
     }
 }
 
+/// Verify the S3 bucket named in `opts` exists and is reachable with the server's configured
+/// credentials and region. Called at server startup so a misconfigured bucket fails the boot
+/// loudly instead of surfacing as a 500 on the first request.
+///
+/// Reachability only: per-repo object write access is validated when each repo's store is
+/// initialized (see [`VersionStore::init`]).
+pub async fn verify_s3_bucket_reachable(opts: &S3Opts) -> Result<(), OxenError> {
+    // The bucket-level HeadBucket probe ignores the object-key prefix.
+    S3VersionStore::new(opts.bucket.clone(), opts.region.clone(), String::new())
+        .check_bucket_accessible()
+        .await
+}
+
 #[async_trait]
 impl VersionStore for S3VersionStore {
     async fn init(&self) -> Result<(), OxenError> {
+        // Reachability + read access.
+        self.check_bucket_accessible().await?;
+
+        // Write access: round-trip a small sentinel object under this store's prefix.
         let client = self.client().await?;
-
-        // Check permission to write to S3
-        match client.head_bucket().bucket(&self.bucket).send().await {
-            Ok(result) => {
-                log::debug!("Successfully got S3 bucket {result:?}");
-                let test_key = format!("{}/_permission_check", self.prefix);
-                let body = ByteStream::from("permission-check".as_bytes().to_vec());
-
-                match client
-                    .put_object()
-                    .bucket(&self.bucket)
-                    .key(&test_key)
-                    .body(body)
-                    .send()
-                    .await
-                {
-                    Ok(_) => {
-                        client
-                            .delete_object()
-                            .bucket(&self.bucket)
-                            .key(&test_key)
-                            .send()
-                            .await
-                            .map_err(|err| {
-                                OxenError::basic_str(format!(
-                                    "Failed to delete _permission_check: {err}"
-                                ))
-                            })?;
-                        Ok(())
-                    }
-                    // Surface the error from S3
-                    Err(err) => Err(OxenError::basic_str(format!(
-                        "S3 write permission check failed: {err}",
-                    ))),
-                }
-            }
-            Err(err) => Err(OxenError::basic_str(format!(
-                "Cannot access S3 bucket '{}': {err}",
-                self.bucket
-            ))),
-        }
+        let test_key = format!("{}/_permission_check", self.prefix);
+        let body = ByteStream::from("permission-check".as_bytes().to_vec());
+        client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(&test_key)
+            .body(body)
+            .send()
+            .await
+            .map_err(|err| {
+                OxenError::basic_str(format!("S3 write permission check failed: {err}"))
+            })?;
+        client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(&test_key)
+            .send()
+            .await
+            .map_err(|err| {
+                OxenError::basic_str(format!("Failed to delete _permission_check: {err}"))
+            })?;
+        Ok(())
     }
 
     /// Streams file content to S3 without writing to disk.
@@ -539,11 +540,7 @@ impl VersionStore for S3VersionStore {
         Ok(size)
     }
 
-    async fn get_version_stream(
-        &self,
-        hash: &str,
-    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
-    {
+    async fn get_version_stream(&self, hash: &str) -> Result<BoxedByteStream, OxenError> {
         let client = self.client().await?;
         let key = self.generate_key(hash);
 
@@ -564,8 +561,7 @@ impl VersionStore for S3VersionStore {
         &self,
         orig_hash: &str,
         derived_filename: &str,
-    ) -> Result<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>, OxenError>
-    {
+    ) -> Result<BoxedByteStream, OxenError> {
         let client = self.client().await?;
         let key = format!("{}/{}", self.version_dir(orig_hash), derived_filename);
 
@@ -612,15 +608,9 @@ impl VersionStore for S3VersionStore {
     }
 
     async fn version_location(&self, hash: &str) -> Result<VersionLocation, OxenError> {
-        let client = self.client().await?;
-        let region = client
-            .config()
-            .region()
-            .map(|r| r.to_string())
-            .unwrap_or_else(|| "us-east-1".to_string());
         Ok(VersionLocation::S3 {
             url: format!("s3://{}/{}", self.bucket, self.generate_key(hash)),
-            region,
+            region: self.region.clone(),
             endpoint_url: self.endpoint_url.clone(),
         })
     }
@@ -1021,8 +1011,10 @@ mod tests {
     use std::net::SocketAddr;
     use tokio::net::TcpListener;
 
-    async fn setup() -> (
-        S3VersionStore,
+    /// Spin up an in-process s3s server on a loopback port. The returned temp dir and join handle
+    /// must be kept alive for the server's lifetime.
+    async fn spawn_s3s() -> (
+        SocketAddr,
         async_tempfile::TempDir,
         tokio::task::JoinHandle<()>,
     ) {
@@ -1052,6 +1044,16 @@ mod tests {
             }
         });
 
+        (addr, tmp, server_handle)
+    }
+
+    async fn setup() -> (
+        S3VersionStore,
+        async_tempfile::TempDir,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let (addr, tmp, server_handle) = spawn_s3s().await;
+
         let client = build_test_client(addr);
         client
             .create_bucket()
@@ -1063,6 +1065,7 @@ mod tests {
         let store = S3VersionStore::new_with_client(
             Arc::new(client),
             "test-bucket".to_string(),
+            "us-west-1".to_string(),
             "test-namespace/test-repo".to_string(),
             Some(format!("http://{addr}")),
         );
@@ -1073,7 +1076,7 @@ mod tests {
     fn build_test_client(addr: SocketAddr) -> Client {
         let config = aws_sdk_s3::Config::builder()
             .behavior_version_latest()
-            .region(aws_sdk_s3::config::Region::new("us-east-1"))
+            .region(aws_sdk_s3::config::Region::new("us-west-1"))
             .endpoint_url(format!("http://{addr}"))
             .credentials_provider(aws_sdk_s3::config::Credentials::new(
                 "test", "test", None, None, "test",
@@ -1081,6 +1084,33 @@ mod tests {
             .force_path_style(true)
             .build();
         Client::from_conf(config)
+    }
+
+    #[tokio::test]
+    async fn test_check_bucket_accessible_succeeds() {
+        let (store, _tmp, _server) = setup().await;
+        store.check_bucket_accessible().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_check_bucket_accessible_fails_for_missing_bucket() {
+        // Server is up but this bucket was never created -- the probe must error so the boot
+        // hard-fails rather than letting a misconfigured bucket through.
+        let (addr, _tmp, _server) = spawn_s3s().await;
+        let store = S3VersionStore::new_with_client(
+            Arc::new(build_test_client(addr)),
+            "missing-bucket".to_string(),
+            "us-west-1".to_string(),
+            "test-namespace/test-repo".to_string(),
+            Some(format!("http://{addr}")),
+        );
+        assert!(store.check_bucket_accessible().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_init_round_trips_permission_check() {
+        let (store, _tmp, _server) = setup().await;
+        store.init().await.unwrap();
     }
 
     #[tokio::test]
@@ -1099,7 +1129,7 @@ mod tests {
                     url,
                     format!("s3://test-bucket/test-namespace/test-repo/{hash}/data")
                 );
-                assert_eq!(region, "us-east-1");
+                assert_eq!(region, "us-west-1");
                 let endpoint = endpoint_url.expect("test setup configures a loopback endpoint");
                 assert!(
                     endpoint.starts_with("http://127.0.0.1:"),
@@ -1644,7 +1674,7 @@ mod tests {
                 unsafe {
                     std::env::set_var("AWS_ACCESS_KEY_ID", "test");
                     std::env::set_var("AWS_SECRET_ACCESS_KEY", "test");
-                    std::env::set_var("AWS_REGION", "us-east-1");
+                    std::env::set_var("AWS_REGION", "us-west-1");
                 }
             });
         }

@@ -44,3 +44,9 @@ impl From<User> for PyUser {
         PyUser { _user: user }
     }
 }
+
+impl From<PyUser> for User {
+    fn from(user: PyUser) -> User {
+        user._user
+    }
+}

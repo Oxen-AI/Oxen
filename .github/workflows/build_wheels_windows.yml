@@ -79,8 +79,9 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
+          persist-credentials: false
           ref: ${{ inputs.CHECKOUT_REF }}
 
       - name: Patch version in pyproject.toml and Cargo.toml
@@ -117,7 +118,7 @@ jobs:
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           shared-key: "release-python"
           workspaces: "."
@@ -135,7 +136,7 @@ jobs:
           }
 
       - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-windows-${{ inputs.ARCHITECTURE }}
           path: ${{ github.workspace }}\target\wheels\*.whl

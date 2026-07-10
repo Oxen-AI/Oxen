@@ -96,6 +96,8 @@ jobs:
     uses: ./.github/workflows/release_macos.yml
     with:
       PYTHON_VERSIONS: ${{ needs.set_env.outputs.python_versions }}
+      AWS_ROLE: ${{ needs.set_env.outputs.aws_role }}
+      AWS_REGION: ${{ needs.set_env.outputs.aws_region }}
 
   release_windows_x86_64:
     name: Windows x86_64
@@ -124,7 +126,7 @@ jobs:
 
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         id: download-artifacts
         with:
           merge-multiple: true
@@ -141,7 +143,7 @@ jobs:
           ls -la ${{ steps.download-artifacts.outputs.download-path }}/release
 
       - name: Create release draft
-        uses: ncipollo/release-action@v1.18.0
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
         with:
           allowUpdates: true
           artifacts: ${{ steps.download-artifacts.outputs.download-path }}/release/*

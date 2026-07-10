@@ -18,7 +18,7 @@ jobs:
     name: 🐍 Publish wheels to PyPI
     runs-on: ubuntu-latest
     steps:
-      - uses: robinraju/release-downloader@v1.12
+      - uses: robinraju/release-downloader@28fc21f50d76778e7023361aa1f863e717d3d56f # v1.13
         id: download-release
         with:
           tag: ${{ github.ref_name }}
@@ -33,7 +33,7 @@ jobs:
           for file in ${{ github.workspace }}/oxen-wheels/*.zip; do unzip "$file" -d ${{ github.workspace }}/oxen-wheels; done
 
       - name: Publish wheels to PyPI
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         env:
           MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
         with:
@@ -56,7 +56,9 @@ jobs:
       id-token: write # Required for OIDC token exchange
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Free up disk space
         uses: ./.github/actions/free-disk-space
       - name: Package and verify crates
@@ -88,7 +90,7 @@ jobs:
           # ************************************************************************************************
           cargo package --workspace --exclude oxen-py
 
-      - uses: rust-lang/crates-io-auth-action@v1
+      - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
         id: auth
       - name: Upload to crates.io
         env:
@@ -110,7 +112,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Update oxen formula on homebrew-core
-        uses: dawidd6/action-homebrew-bump-formula@v7
+        uses: dawidd6/action-homebrew-bump-formula@1446dca236b0440c6f02723a3f14f13be2c04ab0 # v7
         with:
           # Personal access token with fork + PR scopes; the action forks
           # homebrew-core, runs `brew bump-formula-pr`, and opens the PR.
@@ -123,7 +125,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: Oxen-AI/homebrew-oxen-server
           path: homebrew-oxen-server

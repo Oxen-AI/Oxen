@@ -654,9 +654,18 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::NotFound().json(error_json)
                     }
                     err => {
+                        // Surface the error's message so unmapped variants return a real reason
+                        // instead of a bare "internal_server_error" that lives only in the logs.
                         log::error!("Internal server error: {err:?}");
-                        HttpResponse::InternalServerError()
-                            .json(StatusMessage::internal_server_error())
+                        let error_json = json!({
+                            "error": {
+                                "type": MSG_INTERNAL_SERVER_ERROR,
+                                "title": format!("{err}"),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_INTERNAL_SERVER_ERROR,
+                        });
+                        HttpResponse::InternalServerError().json(error_json)
                     }
                 }
             }

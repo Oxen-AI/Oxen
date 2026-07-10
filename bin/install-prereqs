@@ -77,7 +77,7 @@ if [ "$PLATFORM" = "macos" ]; then
         ok "Homebrew already installed"
     fi
 
-    brew install cmake pkg-config ffmpeg@7 imagemagick
+    brew install cmake pkg-config ffmpeg imagemagick
 
 elif [ "$PLATFORM" = "linux" ]; then
     if ! command_exists apt-get || ! command_exists dpkg; then
@@ -95,11 +95,7 @@ elif [ "$PLATFORM" = "linux" ]; then
     dpkg -s clang               &>/dev/null || NEEDED_PKGS+=(clang)
     dpkg -s libclang-dev        &>/dev/null || NEEDED_PKGS+=(libclang-dev)
     dpkg -s curl                &>/dev/null || NEEDED_PKGS+=(curl)
-    dpkg -s libavcodec-dev      &>/dev/null || NEEDED_PKGS+=(libavcodec-dev)
-    dpkg -s libavformat-dev     &>/dev/null || NEEDED_PKGS+=(libavformat-dev)
-    dpkg -s libavutil-dev       &>/dev/null || NEEDED_PKGS+=(libavutil-dev)
-    dpkg -s libavfilter-dev     &>/dev/null || NEEDED_PKGS+=(libavfilter-dev)
-    dpkg -s libavdevice-dev     &>/dev/null || NEEDED_PKGS+=(libavdevice-dev)
+    dpkg -s xz-utils            &>/dev/null || NEEDED_PKGS+=(xz-utils)
     dpkg -s libjpeg-turbo-progs &>/dev/null || NEEDED_PKGS+=(libjpeg-turbo-progs)
 
     if [ ${#NEEDED_PKGS[@]} -gt 0 ]; then
@@ -109,6 +105,10 @@ elif [ "$PLATFORM" = "linux" ]; then
     else
         ok "All system packages already installed"
     fi
+
+    # Install FFmpeg 8 for the `ffmpeg` feature via the shared helper; bin/test-rust points
+    # pkg-config at this prefix.
+    "$SCRIPT_DIR/install-ffmpeg"
 fi
 
 ###############################################################################
@@ -317,6 +317,13 @@ info "All prerequisites installed successfully!"
 info "You can now build the project:"
 info "  cargo build --workspace"
 info "  cd oxen-python && uv sync --verbose"
+
+# bin/test-rust --ffmpeg wires up PKG_CONFIG_PATH itself; a bare ffmpeg-feature build needs it set.
+if [ "$PLATFORM" = "linux" ]; then
+    echo ""
+    info "To build the 'ffmpeg' feature outside bin/test-rust, point pkg-config at /opt/ffmpeg:"
+    info "  export PKG_CONFIG_PATH=/opt/ffmpeg/lib/pkgconfig:\$PKG_CONFIG_PATH"
+fi
 
 # Print shell configuration hints for any tools we freshly installed.
 if $INSTALLED_CARGO || $INSTALLED_BREW || $INSTALLED_UV; then
