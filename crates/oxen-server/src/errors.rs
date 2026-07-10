@@ -653,6 +653,46 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::NotFound().json(error_json)
                     }
+                    OxenError::ReachableObjectsMissing {
+                        missing_nodes,
+                        missing_versions,
+                    } => {
+                        log::warn!(
+                            "Refusing branch advance: commit references missing reachable objects ({missing_nodes} node(s), {missing_versions} blob(s))"
+                        );
+                        let error_json = json!({
+                            "error": {
+                                "type": "reachable_objects_missing",
+                                "title": "Commit references objects missing on server",
+                                "detail": format!(
+                                    "Refusing to advance the branch: the commit references {missing_nodes} merkle node(s) and {missing_versions} version blob(s) the server is missing. Re-push the missing objects with `oxen push --missing-files`."
+                                ),
+                                "missing_node_count": missing_nodes,
+                                "missing_version_count": missing_versions,
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
+                    OxenError::DirHashIndexMissing { commit } => {
+                        log::warn!(
+                            "Refusing branch advance: commit {commit} is missing its directory index"
+                        );
+                        let error_json = json!({
+                            "error": {
+                                "type": "dir_hash_index_missing",
+                                "title": "Commit directory index missing on server",
+                                "detail": format!(
+                                    "Refusing to advance the branch: commit {commit} is missing its directory index on the server, so its tree can't be served by path. Re-push the commit to repopulate it."
+                                ),
+                                "commit": commit,
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
                     err => {
                         // Surface the error's message so unmapped variants return a real reason
                         // instead of a bare "internal_server_error" that lives only in the logs.
