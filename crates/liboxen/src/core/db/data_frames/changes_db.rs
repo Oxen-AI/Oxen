@@ -77,6 +77,14 @@ pub fn remove_from_cache_with_children(prefix: impl AsRef<Path>) -> Result<(), O
 /// with a LOCK-collision error we retry a bounded number of times, re-checking the
 /// registry each round in case another opener won the race.
 pub fn get_changes_db(db_path: &Path) -> Result<Arc<RwLock<DB>>, DataFrameError> {
+    // Fast path: cache hit does no filesystem work.
+    if let Some(strong) = lookup_live(db_path) {
+        return Ok(strong);
+    }
+    // Miss path: ensure the dir exists once (idempotent, but no reason to repeat under retry),
+    // then open with bounded LOCK-collision retry.
+    std::fs::create_dir_all(db_path).map_err(DataFrameError::FailCreateDfDbDir)?;
+    let opts = db::key_val::opts::default();
     let mut attempts = 0;
     loop {
         let mut instances = CHANGES_DB_INSTANCES.lock();
@@ -85,8 +93,6 @@ pub fn get_changes_db(db_path: &Path) -> Result<Arc<RwLock<DB>>, DataFrameError>
         {
             return Ok(strong);
         }
-        std::fs::create_dir_all(db_path).map_err(DataFrameError::FailCreateDfDbDir)?;
-        let opts = db::key_val::opts::default();
         match DB::open(&opts, dunce::simplified(db_path)) {
             Ok(db) => {
                 let handle = Arc::new(RwLock::new(db));
@@ -107,6 +113,11 @@ pub fn get_changes_db(db_path: &Path) -> Result<Arc<RwLock<DB>>, DataFrameError>
     }
 }
 
+fn lookup_live(db_path: &Path) -> Option<Arc<RwLock<DB>>> {
+    let instances = CHANGES_DB_INSTANCES.lock();
+    instances.get(db_path)?.upgrade()
+}
+
 /// True if `err` is a RocksDB LOCK-file collision — i.e. another opener still holds the
 /// per-directory LOCK. The check is by error-message match rather than a distinct
 /// `ErrorKind` because RocksDB surfaces this as a plain `IOError` across platforms
@@ -122,14 +133,8 @@ fn is_lock_collision(err: &rocksdb::Error) -> bool {
 /// so that merely reading a data frame never materializes an empty
 /// change-tracking db on disk.
 pub fn try_get_changes_db(db_path: &Path) -> Result<Option<Arc<RwLock<DB>>>, DataFrameError> {
-    // Scoped so the guard drops before the `get_changes_db` re-lock on the miss path.
-    {
-        let instances = CHANGES_DB_INSTANCES.lock();
-        if let Some(weak) = instances.get(db_path)
-            && let Some(strong) = weak.upgrade()
-        {
-            return Ok(Some(strong));
-        }
+    if let Some(strong) = lookup_live(db_path) {
+        return Ok(Some(strong));
     }
     // `CURRENT` exists once RocksDB has initialized the db
     if !db_path.join("CURRENT").exists() {
