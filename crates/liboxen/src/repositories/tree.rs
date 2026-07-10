@@ -1653,6 +1653,234 @@ pub fn print_tree_depth(
     Ok(())
 }
 
+/// The merkle node hashes and version-blob hashes a commit's tree introduces relative to a base.
+#[derive(Debug, Default)]
+pub struct AddedObjects {
+    /// Merkle tree node hashes (dirs and vnodes) reachable from the added subtrees.
+    pub nodes: HashSet<MerkleHash>,
+    /// Content hashes of the version blobs the added files reference.
+    pub versions: HashSet<String>,
+}
+
+/// The merkle nodes and version blobs that `head`'s tree introduces relative to `base`. Returns
+/// `None` when `head`'s tree root isn't present at all.
+///
+/// The walk descends only into subtrees whose hashes differ between `base` and `head`
+/// (content-addressed nodes with equal hashes are identical and skipped), so cost scales with the
+/// changed set rather than the whole tree. `base = None` treats every object in `head` as added.
+pub fn added_objects(
+    repo: &LocalRepository,
+    base: Option<&Commit>,
+    head: &Commit,
+) -> Result<Option<AddedObjects>, OxenError> {
+    let Some(head_root) = root_dir_hash(repo, head)? else {
+        return Ok(None);
+    };
+    let base_root = match base {
+        Some(base) => root_dir_hash(repo, base)?,
+        None => None,
+    };
+
+    // Equal content-addressed roots mean identical trees, so head adds nothing.
+    if base_root == Some(head_root) {
+        return Ok(Some(AddedObjects::default()));
+    }
+
+    let mut added = AddedObjects::default();
+    collect_added_from_dir(
+        repo,
+        base_root,
+        head_root,
+        &mut added.nodes,
+        &mut added.versions,
+    )?;
+    Ok(Some(added))
+}
+
+/// The merkle nodes and version blobs that a commit references but the repository is missing,
+/// scoped to the objects the commit *adds* relative to a base commit.
+#[derive(Debug, Default, Clone)]
+pub struct MissingReachableObjects {
+    /// Hex hashes of merkle tree nodes referenced by the added subtrees but absent on disk.
+    pub nodes: Vec<String>,
+    /// Content hashes of version blobs referenced by added files but absent from the store.
+    pub versions: Vec<String>,
+}
+
+impl MissingReachableObjects {
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty() && self.versions.is_empty()
+    }
+}
+
+/// Find the merkle nodes and version blobs that `head`'s tree references but the repository is
+/// missing, limited to the objects `head` introduces relative to `base`.
+///
+/// Used to gate a branch-ref advance: a non-empty result means the ref would point at a commit
+/// whose newly-added objects aren't all present. `base = None` checks `head`'s entire tree.
+pub async fn find_missing_added_objects(
+    repo: &LocalRepository,
+    base: Option<&Commit>,
+    head: &Commit,
+) -> Result<MissingReachableObjects, OxenError> {
+    // Sync core: the merkle walk and node-existence probes are sync FS/DB IO — one blocking unit.
+    let walk_repo = repo.clone();
+    let base = base.cloned();
+    let head = head.clone();
+    let (missing_nodes, added_versions) =
+        tokio::task::spawn_blocking(move || -> Result<(Vec<String>, Vec<String>), OxenError> {
+            let Some(added) = added_objects(&walk_repo, base.as_ref(), &head)? else {
+                // No root dir node for head means the commit's tree wasn't uploaded at all.
+                return Ok((vec![head.hash()?.to_string()], vec![]));
+            };
+
+            let store = walk_repo.merkle_node_store();
+            let mut missing_nodes = Vec::new();
+            for hash in &added.nodes {
+                if !store.exists(hash)? {
+                    missing_nodes.push(hash.to_string());
+                }
+            }
+
+            Ok((missing_nodes, added.versions.into_iter().collect()))
+        })
+        .await??;
+
+    let missing_versions = repo
+        .version_store()
+        .find_missing_versions(&added_versions)
+        .await?;
+
+    Ok(MissingReachableObjects {
+        nodes: missing_nodes,
+        versions: missing_versions,
+    })
+}
+
+/// The hash of a commit's root directory node, or `None` if the commit node isn't present.
+fn root_dir_hash(repo: &LocalRepository, commit: &Commit) -> Result<Option<MerkleHash>, OxenError> {
+    let commit_hash = commit.hash()?;
+    let children = MerkleTreeNode::read_children_from_hash(repo, &commit_hash)?;
+    Ok(children
+        .into_iter()
+        .find(|(_, node)| matches!(node.node, EMerkleTreeNode::Directory(_)))
+        .map(|(hash, _)| hash))
+}
+
+/// Recursively collect the node hashes and version hashes that `head_dir` adds relative to
+/// `base_dir`. Identical subtrees (equal node hash) are pruned, so only changed directories are
+/// flattened and compared.
+fn collect_added_from_dir(
+    repo: &LocalRepository,
+    base_dir: Option<MerkleHash>,
+    head_dir: MerkleHash,
+    added_nodes: &mut HashSet<MerkleHash>,
+    added_versions: &mut HashSet<String>,
+) -> Result<(), OxenError> {
+    added_nodes.insert(head_dir);
+
+    let (head_entries, head_vnodes) = dir_entries(repo, &head_dir)?;
+    added_nodes.extend(head_vnodes);
+
+    let base_entries = match base_dir {
+        Some(base_dir) => dir_entries(repo, &base_dir)?.0,
+        None => HashMap::new(),
+    };
+
+    for (name, entry) in head_entries {
+        if base_entries
+            .get(&name)
+            .is_some_and(|base_entry| base_entry.hash == entry.hash)
+        {
+            // Identical entry (same content-addressed hash) — already present from the base.
+            continue;
+        }
+
+        match entry.kind {
+            EntryKind::File { version } => {
+                // A file node lives inline in its parent vnode's DB (which we just read), not as a
+                // standalone node, so its presence is already covered. Verify its content blob.
+                added_versions.insert(version);
+            }
+            EntryKind::Dir => {
+                let base_sub = base_entries
+                    .get(&name)
+                    .filter(|base_entry| matches!(base_entry.kind, EntryKind::Dir))
+                    .map(|base_entry| base_entry.hash);
+                collect_added_from_dir(repo, base_sub, entry.hash, added_nodes, added_versions)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+enum EntryKind {
+    /// A file entry, carrying its content (version-store) hash.
+    File {
+        version: String,
+    },
+    Dir,
+}
+
+struct DirEntry {
+    hash: MerkleHash,
+    kind: EntryKind,
+}
+
+/// The immediate file/dir entries of a directory node (flattening its vnode layer), keyed by name,
+/// plus the hashes of the vnodes traversed. Returns empty when the directory node is absent.
+fn dir_entries(
+    repo: &LocalRepository,
+    dir_hash: &MerkleHash,
+) -> Result<(HashMap<String, DirEntry>, Vec<MerkleHash>), OxenError> {
+    let mut entries = HashMap::new();
+    let mut vnode_hashes = Vec::new();
+
+    for (child_hash, child) in MerkleTreeNode::read_children_from_hash(repo, dir_hash)? {
+        match &child.node {
+            EMerkleTreeNode::VNode(_) => {
+                vnode_hashes.push(child_hash);
+                for (entry_hash, entry) in
+                    MerkleTreeNode::read_children_from_hash(repo, &child_hash)?
+                {
+                    insert_entry(&mut entries, entry_hash, &entry);
+                }
+            }
+            // Some trees may attach files/dirs directly under a directory node.
+            _ => insert_entry(&mut entries, child_hash, &child),
+        }
+    }
+
+    Ok((entries, vnode_hashes))
+}
+
+fn insert_entry(entries: &mut HashMap<String, DirEntry>, hash: MerkleHash, node: &MerkleTreeNode) {
+    match &node.node {
+        EMerkleTreeNode::File(file_node) => {
+            entries.insert(
+                file_node.name().to_string(),
+                DirEntry {
+                    hash,
+                    kind: EntryKind::File {
+                        version: file_node.hash().to_string(),
+                    },
+                },
+            );
+        }
+        EMerkleTreeNode::Directory(dir_node) => {
+            entries.insert(
+                dir_node.name().to_string(),
+                DirEntry {
+                    hash,
+                    kind: EntryKind::Dir,
+                },
+            );
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1667,6 +1895,87 @@ mod tests {
     use bytesize::ByteSize;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    // The incremental check must flag a blob the head commit *adds* when it's missing,
+    // and must NOT re-check blobs inherited unchanged from the base (that's the whole point of
+    // scoping to the changed set rather than walking the full tree).
+    #[tokio::test]
+    async fn test_find_missing_added_objects_scopes_to_the_added_set() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Base commit references a.txt; head adds b.txt and leaves a.txt unchanged.
+            let a_path = repo.path.join("a.txt");
+            test::write_txt_file_to_path(&a_path, "alpha")?;
+            repositories::add(&repo, &a_path).await?;
+            let base = repositories::commit(&repo, "add a.txt")?;
+
+            let b_path = repo.path.join("b.txt");
+            test::write_txt_file_to_path(&b_path, "beta")?;
+            repositories::add(&repo, &b_path).await?;
+            let head = repositories::commit(&repo, "add b.txt")?;
+
+            // Read the version-store keys the way the check collects them (the file node hash).
+            let a_hash = get_node_by_path(&repo, &head, "a.txt")?
+                .expect("a.txt in head")
+                .file()?
+                .hash()
+                .to_string();
+            let b_hash = get_node_by_path(&repo, &head, "b.txt")?
+                .expect("b.txt in head")
+                .file()?
+                .hash()
+                .to_string();
+
+            // Intact repo: nothing missing.
+            let missing = find_missing_added_objects(&repo, Some(&base), &head).await?;
+            assert!(
+                missing.is_empty(),
+                "intact repo reported missing: {missing:?}"
+            );
+
+            let version_store = repo.version_store();
+
+            // Drop the inherited blob (a.txt is unchanged from base). The check is scoped to the
+            // added set, so it must not flag it.
+            version_store.delete_version(&a_hash).await?;
+            let missing = find_missing_added_objects(&repo, Some(&base), &head).await?;
+            assert!(
+                !missing.versions.contains(&a_hash),
+                "inherited blob must not be flagged by the incremental check: {missing:?}"
+            );
+
+            // Drop the added blob (b.txt is new in head). This is in the changed set, so it must
+            // be flagged.
+            version_store.delete_version(&b_hash).await?;
+            let missing = find_missing_added_objects(&repo, Some(&base), &head).await?;
+            assert!(
+                missing.versions.contains(&b_hash),
+                "added-but-missing blob must be flagged: {missing:?}"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    // Identical base and head add nothing: the walk must return empty, not the shared root + vnodes.
+    #[tokio::test]
+    async fn test_added_objects_is_empty_when_base_equals_head() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let a_path = repo.path.join("a.txt");
+            test::write_txt_file_to_path(&a_path, "alpha")?;
+            repositories::add(&repo, &a_path).await?;
+            let commit = repositories::commit(&repo, "add a.txt")?;
+
+            let added = added_objects(&repo, Some(&commit), &commit)?.expect("head tree present");
+            assert!(
+                added.nodes.is_empty() && added.versions.is_empty(),
+                "identical base/head must add nothing, got: {added:?}"
+            );
+
+            Ok(())
+        })
+        .await
+    }
 
     #[tokio::test]
     async fn test_list_tabular_files_in_repo() -> Result<(), OxenError> {

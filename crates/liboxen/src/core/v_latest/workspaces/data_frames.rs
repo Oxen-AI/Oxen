@@ -1,6 +1,7 @@
 use duckdb::Connection;
 
 use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL, EXCLUDE_OXEN_COLS, TABLE_NAME};
+use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::df_db;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::staged::get_staged_db_manager;
@@ -72,10 +73,25 @@ pub fn get_queryable_data_frame_workspace_from_file_node(
             let workspace_file_db_path =
                 repositories::workspaces::data_frames::duckdb_path(&workspace, path);
 
-            // Check if the DuckDB file exists in the workspace's directory
+            // Only treat this as the queryable workspace if its DuckDB table is
+            // fully indexed (all OXEN_COLS present). A missing file, or a partial
+            // table left by an interrupted index, is treated as not indexed so the
+            // caller rebuilds rather than serving a table the read path can't bind.
             if workspace_file_db_path.exists() {
-                // The file exists in this non-editable workspace, and the commit IDs match
-                return Ok(workspace);
+                let fully_indexed = match with_df_db_manager(&workspace_file_db_path, |manager| {
+                    manager.with_conn(|conn| Ok(df_db::table_is_fully_indexed(conn, TABLE_NAME)?))
+                }) {
+                    Ok(fully_indexed) => fully_indexed,
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to check index completeness for {workspace_file_db_path:?}: {e}"
+                        );
+                        false
+                    }
+                };
+                if fully_indexed {
+                    return Ok(workspace);
+                }
             }
         }
     }
@@ -168,13 +184,35 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     tokio::task::spawn_blocking(move || {
         with_df_db_manager(&db_path, |manager| {
             manager.with_conn(|conn| {
+                // Drop any prior table (possibly partial or stale) and commit that
+                // drop before the rebuild, so a failed rebuild leaves no table at
+                // all rather than rolling back to a partial one.
                 if df_db::table_exists(conn, TABLE_NAME)? {
                     df_db::drop_table(conn, TABLE_NAME)?;
                 }
 
-                df_db::index_file_with_id(&version_path, conn, &extension)?;
-                add_row_status_cols(conn)?;
-                Ok(())
+                // A workspace data frame is only queryable once every OXEN_COLS
+                // tracking column is present, so build the table inside a
+                // transaction and publish it only on success. On any failure, roll
+                // back (and drop defensively) so the read path never sees a table
+                // that is missing tracking columns.
+                conn.execute_batch("BEGIN TRANSACTION")?;
+                let build = (|| -> Result<(), DataFrameError> {
+                    df_db::index_file_with_id(&version_path, conn, &extension)?;
+                    add_row_status_cols(conn)?;
+                    Ok(())
+                })();
+                match build {
+                    Ok(()) => {
+                        conn.execute_batch("COMMIT")?;
+                        Ok(())
+                    }
+                    Err(e) => {
+                        let _ = conn.execute_batch("ROLLBACK");
+                        let _ = df_db::drop_table(conn, TABLE_NAME);
+                        Err(e)
+                    }
+                }
             })
         })
     })

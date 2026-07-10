@@ -3,11 +3,13 @@
 
 use crate::error::OxenError;
 use crate::model::entry::entry_data_type::EntryDataType;
+use crate::model::entry::metadata_entry::CLIMetadataEntry;
 use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::model::metadata::MetadataDir;
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::parsed_resource::ParsedResourceView;
 use crate::model::{Commit, LocalRepository, MetadataEntry};
+use crate::repositories;
 use crate::util;
 
 use std::path::{Path, PathBuf};
@@ -98,6 +100,32 @@ pub fn from_dir_node(
 /// Returns metadata with latest commit information. Less efficient than get().
 pub use crate::core::v_latest::metadata::get_cli;
 
+/// Returns CLI metadata for `path` as it existed at `revision`, sourced from the merkle tree
+/// rather than the working-tree file. `revision` may be a branch name, a commit id, or `HEAD`.
+/// Errors if `revision` does not resolve to a commit, or if `path` is not a file in that commit.
+pub fn get_cli_at_revision(
+    repo: &LocalRepository,
+    path: impl AsRef<Path>,
+    revision: &str,
+) -> Result<CLIMetadataEntry, OxenError> {
+    let path = path.as_ref();
+    let commit = repositories::revisions::get(repo, revision)?
+        .ok_or_else(|| OxenError::RevisionNotFound(revision.into()))?;
+    let file_node = repositories::tree::get_file_by_path(repo, &commit, path)?
+        .ok_or_else(|| OxenError::entry_does_not_exist_in_commit(path, &commit.id))?;
+    let last_commit_id = file_node.last_commit_id().to_string();
+    let last_updated = repositories::commits::get_by_id(repo, &last_commit_id)?;
+    Ok(CLIMetadataEntry {
+        filename: file_node.name().to_string(),
+        last_updated,
+        hash: file_node.hash().to_string(),
+        size: file_node.num_bytes(),
+        data_type: file_node.data_type().clone(),
+        mime_type: file_node.mime_type().to_string(),
+        extension: file_node.extension().to_string(),
+    })
+}
+
 /// Returns the file size in bytes.
 pub fn get_file_size(path: impl AsRef<Path>) -> Result<u64, OxenError> {
     let metadata = util::fs::metadata(path.as_ref())?;
@@ -162,9 +190,12 @@ pub fn get_file_metadata(
 
 #[cfg(test)]
 mod tests {
+    use crate::error::OxenError;
     use crate::model::EntryDataType;
     use crate::repositories;
     use crate::test;
+    use crate::util;
+    use std::path::Path;
 
     #[tokio::test]
     async fn test_get_metadata_audio_flac() {
@@ -176,5 +207,32 @@ mod tests {
         assert_eq!(metadata.size, 37096);
         assert_eq!(metadata.data_type, EntryDataType::Audio);
         assert_eq!(metadata.mime_type, "audio/x-flac");
+    }
+
+    #[tokio::test]
+    async fn test_get_cli_at_revision_reads_committed_metadata_not_worktree()
+    -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let relative_path = Path::new("hello.txt");
+            let full_path = repo.path.join(relative_path);
+
+            util::fs::write_to_path(&full_path, "head version")?;
+            repositories::add(&repo, &full_path).await?;
+            repositories::commit(&repo, "add hello")?;
+
+            let committed =
+                repositories::metadata::get_cli_at_revision(&repo, relative_path, "HEAD")?;
+
+            // Change the working tree to prove the metadata comes from the commit, not disk.
+            util::fs::write_to_path(&full_path, "a longer working-tree version with new bytes")?;
+
+            let at_head =
+                repositories::metadata::get_cli_at_revision(&repo, relative_path, "HEAD")?;
+            assert_eq!(at_head.hash, committed.hash);
+            assert_eq!(at_head.size, "head version".len() as u64);
+
+            Ok(())
+        })
+        .await
     }
 }

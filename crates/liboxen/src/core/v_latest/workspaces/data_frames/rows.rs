@@ -289,7 +289,8 @@ pub async fn restore_row_in_db(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path.as_ref());
     let column_changes_path =
         repositories::workspaces::data_frames::column_changes_path(workspace, path.as_ref());
-    let db = changes_db::get_changes_db(&column_changes_path)?;
+    // Arc may cross `.await`; the guards taken below must not.
+    let handle = changes_db::get_changes_db(&column_changes_path)?;
 
     // Get the row by id
     let row =
@@ -305,7 +306,7 @@ pub async fn restore_row_in_db(
         StagedRowStatus::Added => {
             // Row is added, just delete it
             log::debug!("restore_row() row is added, deleting");
-            rows::revert_row_changes(&db, row_id.to_owned())?;
+            rows::revert_row_changes(&handle.write(), row_id.to_owned())?;
             with_df_db_manager(&db_path, |manager| {
                 manager.with_conn(|conn| rows::delete_row(conn, row_id))
             })?
@@ -321,7 +322,7 @@ pub async fn restore_row_in_db(
             )
             .await?;
             log::debug!("restore_row() insert_row: {insert_row:?}");
-            rows::revert_row_changes(&db, row_id.to_owned())?;
+            rows::revert_row_changes(&handle.write(), row_id.to_owned())?;
             log::debug!("restore_row() after revert");
             with_df_db_manager(&db_path, |manager| {
                 manager.with_conn(|conn| rows::modify_row(conn, &mut insert_row, row_id))

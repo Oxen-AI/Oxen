@@ -165,39 +165,36 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_checkout_current_branch_name_does_nothing() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(
-            |mut _local_repo, remote_repo| async move {
-                let remote_repo_copy = remote_repo.clone();
+        test::run_readme_remote_repo_test(|mut _local_repo, remote_repo| async move {
+            let remote_repo_copy = remote_repo.clone();
 
-                test::run_empty_dir_test_async(|dir| async move {
-                    let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
-                    opts.is_remote = true;
-                    let mut cloned_repo = repositories::clone(&opts).await?;
-                    assert!(cloned_repo.is_remote_mode());
+            test::run_empty_dir_test_async(|dir| async move {
+                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                opts.is_remote = true;
+                let mut cloned_repo = repositories::clone(&opts).await?;
+                assert!(cloned_repo.is_remote_mode());
 
-                    let branch_name = "feature".to_string();
-                    repositories::remote_mode::create_checkout(&mut cloned_repo, &branch_name)
-                        .await?;
+                let branch_name = "feature".to_string();
+                repositories::remote_mode::create_checkout(&mut cloned_repo, &branch_name).await?;
 
-                    // Call repositories::checkout to get the outputted branch name
-                    let checkout_branch = repositories::checkout(&cloned_repo, &branch_name)
-                        .await?
-                        .unwrap();
-                    assert_eq!(checkout_branch.name, branch_name);
+                // Call repositories::checkout to get the outputted branch name
+                let checkout_branch = repositories::checkout(&cloned_repo, &branch_name)
+                    .await?
+                    .unwrap();
+                assert_eq!(checkout_branch.name, branch_name);
 
-                    Ok(())
-                })
-                .await?;
+                Ok(())
+            })
+            .await?;
 
-                Ok(remote_repo_copy)
-            },
-        )
+            Ok(remote_repo_copy)
+        })
         .await
     }
 
     #[tokio::test]
     async fn test_remote_mode_checkout_changes_workspace() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -244,7 +241,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_checkout_updates_branch() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -285,7 +282,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_checkout_added_file_and_workspace() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -367,7 +364,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_checkout_added_file_keep_untracked() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -454,7 +451,7 @@ mod tests {
     // into files_to_store, causing store_version_from_reader to fail with NotFound.
     #[tokio::test]
     async fn test_remote_mode_checkout_file_in_tree_but_not_on_disk() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
@@ -527,7 +524,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remote_mode_checkout_modified_file() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {

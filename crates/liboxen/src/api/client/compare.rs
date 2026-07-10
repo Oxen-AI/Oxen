@@ -243,12 +243,17 @@ mod tests {
             // Push the commits to the remote
             repositories::push(&local_repo).await?;
 
-            let base_commit_id = commit_ids[3].parse()?;
-            let head_commit_id = commit_ids[1].parse()?;
+            // base..head is the commits on head that aren't already on base.
+            let base_commit_id = commit_ids[1].parse()?;
+            let head_commit_id = commit_ids[3].parse()?;
             let commits =
                 api::client::compare::commits(&remote_repo, &base_commit_id, &head_commit_id)
                     .await?;
-            assert_eq!(commits.len(), 2);
+            let ids: Vec<String> = commits.iter().map(|c| c.id.clone()).collect();
+            assert_eq!(ids.len(), 2);
+            assert!(ids.contains(&commit_ids[2]));
+            assert!(ids.contains(&commit_ids[3]));
+            assert!(!ids.contains(&commit_ids[1])); // base itself is excluded
             Ok(remote_repo)
         })
         .await
