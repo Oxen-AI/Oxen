@@ -86,7 +86,7 @@ async fn commit_inner(
         }
         Err(e) => return Err(e),
     };
-    log::debug!("commit looking up branch: {:#?}", &branch);
+    log::debug!("commit looking up branch: {:#?}", branch);
 
     let staged_db_path = util::fs::oxen_hidden_dir(&workspace.workspace_repo.path).join(STAGED_DIR);
 

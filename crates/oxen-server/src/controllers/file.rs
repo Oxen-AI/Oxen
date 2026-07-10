@@ -333,9 +333,8 @@ pub async fn put(
     let commit_body = NewCommitBody {
         author: name.unwrap_or_default(),
         email: email.unwrap_or_default(),
-        message: message.unwrap_or_else(|| {
-            format!("Auto-commit files to {}", &resource.path.to_string_lossy())
-        }),
+        message: message
+            .unwrap_or_else(|| format!("Auto-commit files to {}", resource.path.to_string_lossy())),
     };
 
     let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;
@@ -407,7 +406,7 @@ pub async fn delete(
         email: email.clone().unwrap_or("".to_string()),
         message: message
             .clone()
-            .unwrap_or(format!("Remove {}", &path.to_string_lossy())),
+            .unwrap_or(format!("Remove {}", path.to_string_lossy())),
     };
 
     let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;

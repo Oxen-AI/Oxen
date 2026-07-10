@@ -148,7 +148,7 @@ async fn push_to_existing_branch(
                 // Force push: push the full history and update the branch pointer
                 log::info!(
                     "Force pushing branch '{}' to {}",
-                    &remote_branch.name,
+                    remote_branch.name,
                     commit.id
                 );
                 let latest_remote_commit = find_latest_remote_commit(repo, remote_repo).await?;

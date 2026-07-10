@@ -371,7 +371,7 @@ pub fn nearest_neighbors(
             let sql = format!("{base_sql} LIMIT {limit} OFFSET {offset}");
 
             // Print just the first 50 characters of the query
-            log::debug!("Executing similarity query: {}", &sql);
+            log::debug!("Executing similarity query: {}", sql);
 
             let result_set: Vec<RecordBatch> = conn.prepare(&sql)?.query_arrow([])?.collect();
             Ok((result_set, schema))

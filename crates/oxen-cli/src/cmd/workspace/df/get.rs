@@ -126,7 +126,7 @@ impl RunCmd for WorkspaceDFGetCmd {
                 }
             }
             Err(e) => {
-                return Err(e)?;
+                Err(e)?;
             }
         }
 

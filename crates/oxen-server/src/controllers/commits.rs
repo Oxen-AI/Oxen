@@ -376,7 +376,7 @@ pub async fn mark_commits_as_synced(
     // until we delete this endpoint entirely in the near future as part of ENG-994
     log::debug!(
         "mark_commits_as_synced received {} commit hashes (no-op)",
-        &hashes.len()
+        hashes.len()
     );
     Ok(HttpResponse::Ok().json(MerkleHashesResponse {
         status: StatusMessage::resource_found(),

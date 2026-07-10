@@ -161,7 +161,7 @@ impl PyRemoteRepo {
                 let user = config.to_user();
                 let files: Vec<FileNew> = vec![FileNew {
                     path: PathBuf::from("README.md"),
-                    contents: FileContents::Text(format!("# {}\n", &self.repo.name)),
+                    contents: FileContents::Text(format!("# {}\n", self.repo.name)),
                     user: user.clone(),
                 }];
                 let mut repo =

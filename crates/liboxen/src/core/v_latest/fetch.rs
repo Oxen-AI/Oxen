@@ -915,7 +915,7 @@ async fn download_large_entries(
     );
     let mut handles = vec![];
     let tmp_dir = util::fs::oxen_hidden_dir(dst).join("tmp").join("pulled");
-    log::debug!("Backing up pulls to tmp dir: {:?}", &tmp_dir);
+    log::debug!("Backing up pulls to tmp dir: {:?}", tmp_dir);
     for worker in 0..worker_count {
         let queue = queue.clone();
         let progress_bar = Arc::clone(progress_bar);

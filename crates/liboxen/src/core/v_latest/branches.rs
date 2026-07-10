@@ -274,7 +274,7 @@ pub async fn checkout_subtrees(
             for file_to_restore in results.files_to_restore {
                 log::debug!("file_to_restore: {:?}", file_to_restore.file_node);
                 // In remote-mode repos, only restore files that are present in version store
-                let file_hash = format!("{}", &file_to_restore.file_node.hash());
+                let file_hash = format!("{}", file_to_restore.file_node.hash());
                 if version_store.version_exists(&file_hash).await? {
                     restore::restore_file(
                         repo,

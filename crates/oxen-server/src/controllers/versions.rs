@@ -296,7 +296,7 @@ pub async fn stream_versions_tar_gz(
                     }
                     log::info!(
                         "Successfully appended data to tarball for hash: {}",
-                        &file_hash
+                        file_hash
                     );
                 }
                 Err(e) => {
@@ -445,7 +445,7 @@ pub async fn stream_versions_zip(
                         break;
                     }
 
-                    log::info!("Successfully appended data to zip for hash: {}", &hash);
+                    log::info!("Successfully appended data to zip for hash: {}", hash);
                 }
                 Err(e) => {
                     log::error!("Failed to get version {hash}: {e}");

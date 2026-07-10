@@ -744,7 +744,7 @@ async fn fetch_file(
             log::debug!("file::import add file ✅ success! staged file {path:?}");
         }
     } else {
-        log::debug!("file::import add file {:?}", &filepath);
+        log::debug!("file::import add file {:?}", filepath);
         let path = repositories::workspaces::files::add(workspace, &save_path).await?;
         log::debug!("file::import add file ✅ success! staged file {path:?}");
     }

@@ -176,7 +176,7 @@ mod tests {
                     .await?;
                     status.print();
 
-                    let commit_message = format!("Adding {}", &filename);
+                    let commit_message = format!("Adding {}", filename);
                     let commit_body =
                         NewCommitBody::from_config(&UserConfig::get()?, &commit_message);
 

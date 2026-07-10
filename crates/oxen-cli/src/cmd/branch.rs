@@ -92,7 +92,7 @@ impl RunCmd for BranchCmd {
 
         // Parse Args
         if let Some((cmd, _)) = args.subcommand() {
-            return Err(UnknownSubcommand {
+            Err(UnknownSubcommand {
                 parent: "branch",
                 name: cmd.to_string(),
             })?;
@@ -237,7 +237,7 @@ impl BranchCmd {
 
         let branches = api::client::branches::list(&remote_repo).await?;
         for branch in branches.iter() {
-            println!("{}\t{}", &remote.name, branch.name);
+            println!("{}\t{}", remote.name, branch.name);
         }
         Ok(())
     }
