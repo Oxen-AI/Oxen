@@ -600,6 +600,16 @@ async fn start(
         );
     }
 
+    // Install DuckDB extensions before actix hands out any request threads. oxen-server
+    // is a single-instance deploy, so every restart drains pent-up client retries into a
+    // burst of concurrent first-use requests; two of them triggering autoload at once
+    // race on the extension file's temp→final rename (`Could not move file: Access is
+    // denied` on Windows, similar timing hazards elsewhere).
+    match liboxen::core::df::duckdb_setup::preload_extensions() {
+        Ok(()) => log::info!("DuckDB extensions preloaded"),
+        Err(e) => log::error!("Failed to preload DuckDB extensions: {e}"),
+    }
+
     let data = app_data::OxenAppData {
         path: PathBuf::from(sync_dir),
         config,
