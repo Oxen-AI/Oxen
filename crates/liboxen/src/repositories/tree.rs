@@ -1046,6 +1046,14 @@ fn extract_tar_under<R: Read>(
     // and exhaust memory before the post-loop completeness check runs.
     let mut pending: Option<(MerkleHash, Option<Bytes>, Option<Bytes>)> = None;
 
+    // Completed nodes collect here and flush to the store in batches. Batching lets each backend
+    // write a whole group at once. The filesystem writes the files across threads, and LMDB commits
+    // them in one transaction. Capping each batch by total bytes keeps peak memory flat, so even a
+    // node with a large `children` blob flushes promptly.
+    const FLUSH_THRESHOLD_BYTES: usize = 64 * 1024 * 1024;
+    let mut batch: Vec<(MerkleHash, Bytes, Bytes)> = Vec::new();
+    let mut batch_bytes: usize = 0;
+
     let decoder = GzDecoder::new(reader);
     let mut archive = Archive::new(decoder);
     let entries = archive.entries().map_err(MerkleDbError::CannotReadMerkle)?;
@@ -1154,12 +1162,21 @@ fn extract_tar_under<R: Read>(
         };
         pending = None;
 
-        // Persist the node as a unit through the store.
-        if overwrite_existing || !store.exists(&hash)? {
-            store.write_node(&hash, node, children)?;
-            installed.insert(hash);
+        // Buffer the completed node and flush once the batch grows past the threshold. The store
+        // decides what was newly installed (skipping nodes already present unless overwriting), so
+        // only its returned hashes join `installed`.
+        batch_bytes += node.len() + children.len();
+        batch.push((hash, node, children));
+        if batch_bytes >= FLUSH_THRESHOLD_BYTES {
+            installed.extend(store.write_nodes(std::mem::take(&mut batch), overwrite_existing)?);
+            batch_bytes = 0;
         }
     }
+
+    // Flush whatever is left in the final batch. A truncated archive still keeps every complete
+    // node it contained, so a later retry starts from there, and the partial node at the very end
+    // is rejected below.
+    installed.extend(store.write_nodes(batch, overwrite_existing)?);
 
     // EOF validation: a well-formed archive pairs every `node` blob with its `children` blob and
     // clears `pending` as each pair completes. A leftover entry means the archive was truncated

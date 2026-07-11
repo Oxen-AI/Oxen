@@ -167,6 +167,30 @@ impl MerkleNodeStore for FsMerkleNodeStore {
         Ok(())
     }
 
+    fn write_nodes(
+        &self,
+        nodes: Vec<(MerkleHash, Bytes, Bytes)>,
+        overwrite_existing: bool,
+    ) -> Result<Vec<MerkleHash>, MerkleDbError> {
+        // Each node's two files sit under a path unique to its hash, so writes to different nodes
+        // never touch the same files. Each write pays filesystem latency (create, write, fsync,
+        // rename, done twice), which is time spent waiting on the disk. Running the batch across a
+        // rayon pool lets those waits overlap, so even a large unpack finishes in seconds.
+        // `write_node` is atomic on its own, so the only thing to coordinate is the first error.
+        use rayon::prelude::*;
+        let written = nodes
+            .into_par_iter()
+            .map(|(hash, node, children)| {
+                if !overwrite_existing && self.exists(&hash)? {
+                    return Ok(None);
+                }
+                self.write_node(&hash, node, children)?;
+                Ok(Some(hash))
+            })
+            .collect::<Result<Vec<_>, MerkleDbError>>()?;
+        Ok(written.into_iter().flatten().collect())
+    }
+
     fn delete(&self, hash: &MerkleHash) -> Result<(), MerkleDbError> {
         // Remove only this node's two files. A short hash whose suffix is empty stores its
         // files directly in the `{prefix}` shard alongside sibling suffix subdirs, so removing
@@ -299,6 +323,61 @@ mod tests {
         let dir = tempfile::tempdir().expect("create temp dir");
         let store = FsMerkleNodeStore::new(dir.path());
         assert!(store.list_hashes()?.is_empty());
+        Ok(())
+    }
+
+    /// `write_nodes` persists a whole batch, returns exactly the hashes it newly wrote, and skips
+    /// nodes already present unless overwriting. This is the batch contract `extract_tar_under`
+    /// relies on, checked here over the filesystem backend's parallel write path.
+    #[test]
+    fn fs_write_nodes_batches_and_respects_existing() -> Result<(), OxenError> {
+        use std::collections::HashSet;
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let store = FsMerkleNodeStore::new(dir.path());
+
+        let a = MerkleHash::new(0xa);
+        let b = MerkleHash::new(0xb);
+        let batch = vec![
+            (
+                a,
+                Bytes::from_static(b"node-a"),
+                Bytes::from_static(b"kids-a"),
+            ),
+            (b, Bytes::from_static(b"node-b"), Bytes::new()),
+        ];
+
+        // A fresh batch writes every node and reports both hashes.
+        let written: HashSet<_> = store
+            .write_nodes(batch.clone(), false)?
+            .into_iter()
+            .collect();
+        assert_eq!(written, HashSet::from([a, b]));
+        assert_eq!(store.read_node(&a)?, Bytes::from_static(b"node-a"));
+        assert!(store.read_children(&b)?.is_empty());
+
+        // Re-running without overwrite writes nothing.
+        assert!(store.write_nodes(batch.clone(), false)?.is_empty());
+
+        // Overwriting must change the stored blobs, so read all four back and confirm the new
+        // bytes. b's children started empty.
+        let replacement = vec![
+            (
+                a,
+                Bytes::from_static(b"node-a2"),
+                Bytes::from_static(b"kids-a2"),
+            ),
+            (
+                b,
+                Bytes::from_static(b"node-b2"),
+                Bytes::from_static(b"kids-b2"),
+            ),
+        ];
+        let rewritten: HashSet<_> = store.write_nodes(replacement, true)?.into_iter().collect();
+        assert_eq!(rewritten, HashSet::from([a, b]));
+        assert_eq!(store.read_node(&a)?, Bytes::from_static(b"node-a2"));
+        assert_eq!(store.read_children(&a)?, Bytes::from_static(b"kids-a2"));
+        assert_eq!(store.read_node(&b)?, Bytes::from_static(b"node-b2"));
+        assert_eq!(store.read_children(&b)?, Bytes::from_static(b"kids-b2"));
         Ok(())
     }
 }
