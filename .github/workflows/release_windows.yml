@@ -73,9 +73,9 @@ jobs:
 
     env:
       CARGO_INCREMENTAL: "0"
-      # FFmpeg builds from source (~10 min) on a bare runner; the binary cache
-      # restores it in seconds. The vcpkg checkout is pinned below so its ABI
-      # hash stays stable and the cache actually hits across releases.
+      # FFmpeg is slow to build from source on a bare runner, so the binary
+      # cache restores it in seconds. The vcpkg checkout is pinned below so its
+      # ABI hash stays stable and the cache hits across releases.
       VCPKG_BINARY_SOURCES: clear;x-aws,s3://oxen-release-build-cache/vcpkg/,readwrite
 
     steps:
@@ -108,13 +108,13 @@ jobs:
           if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
             choco install -y awscli
             if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) { exit $LASTEXITCODE }
-            # choco appends to the machine PATH; this process needs it now for the s3 caches
+            # choco appends to the machine PATH, so this process needs it added now for the s3 caches
             $env:Path = "C:\Program Files\Amazon\AWSCLIV2;$env:Path"
           }
           aws --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          # Pin vcpkg so the FFmpeg binary-cache ABI hash is stable across runs;
-          # an unpinned HEAD rotates the key and the cache never hits.
+          # Pin vcpkg so the FFmpeg binary-cache ABI hash stays stable across
+          # runs. An unpinned HEAD rotates the key and the cache never hits.
           git clone --depth 1 --branch 2026.06.24 https://github.com/microsoft/vcpkg.git C:\vcpkg
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cd C:\vcpkg
@@ -145,8 +145,8 @@ jobs:
             Write-Host "DEPTREE restore hit ($sha)"
           } else {
             # A third-party dependency changed, so the exact key is gone. Restore
-            # the most recent tree anyway; cargo rebuilds only what the bump
-            # touched rather than the whole graph, and the save step writes a
+            # the most recent tree anyway, so cargo reuses the unchanged deps and
+            # rebuilds only what the bump touched. The save step then writes a
             # fresh tree under the new key so the next release hits exactly.
             $latest = (aws s3 ls "s3://oxen-release-build-cache/deptree/" | Where-Object { $_ -match '\.tar$' } | Sort-Object | Select-Object -Last 1) -replace '.*\s',''
             if ($latest) { cmd /c "aws s3 cp s3://oxen-release-build-cache/deptree/$latest C:\deptree.tar 2>nul" }
