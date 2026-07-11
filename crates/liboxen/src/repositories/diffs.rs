@@ -1505,6 +1505,78 @@ mod tests {
         .await
     }
 
+    // Diffing from the merge base (git three-dot base...head) excludes changes
+    // that landed on the base branch after the fork. Diffing from the base tip
+    // (two-dot) instead reports them as removals.
+    #[tokio::test]
+    async fn test_diff_entries_three_dot_excludes_base_changes() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let shared = repo.path.join("shared.txt");
+            test::write_txt_file_to_path(&shared, "shared")?;
+            repositories::add(&repo, &shared).await?;
+            let fork = repositories::commit(&repo, "shared")?;
+
+            let main_branch = repositories::branches::current_branch(&repo)?
+                .expect("default branch exists after first commit");
+
+            // Feature branch adds its own file.
+            repositories::branches::create_checkout(&repo, "feature")?;
+            let feature_file = repo.path.join("feature.txt");
+            test::write_txt_file_to_path(&feature_file, "feature")?;
+            repositories::add(&repo, &feature_file).await?;
+            let head = repositories::commit(&repo, "feature")?;
+
+            // Base branch advances past the fork with an unrelated file.
+            repositories::checkout(&repo, &main_branch.name).await?;
+            let main_side = repo.path.join("main_side.txt");
+            test::write_txt_file_to_path(&main_side, "main side")?;
+            repositories::add(&repo, &main_side).await?;
+            let base = repositories::commit(&repo, "main side")?;
+
+            let merge_base =
+                repositories::merge::lowest_common_ancestor_from_commits(&repo, &base, &head)?
+                    .expect("base and head share a merge base");
+            assert_eq!(merge_base.id, fork.id);
+
+            let two_dot = repositories::diffs::list_diff_entries(
+                &repo,
+                &base,
+                &head,
+                PathBuf::from(""),
+                PathBuf::from(""),
+                0,
+                100,
+            )
+            .await?;
+            let three_dot = repositories::diffs::list_diff_entries(
+                &repo,
+                &merge_base,
+                &head,
+                PathBuf::from(""),
+                PathBuf::from(""),
+                0,
+                100,
+            )
+            .await?;
+
+            assert!(
+                two_dot.counts.removed >= 1,
+                "two-dot keeps the base-side file"
+            );
+            assert_eq!(
+                three_dot.counts.removed, 0,
+                "three-dot drops the base-side file"
+            );
+            assert!(
+                three_dot.counts.added >= 1,
+                "three-dot still shows head's file"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_diff_entries_modify_one_tabular() -> Result<(), OxenError> {
         test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
