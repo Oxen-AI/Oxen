@@ -122,8 +122,8 @@ jobs:
           # from-scratch build recompiles the whole graph every release. Restore
           # the previous run's compiled dependencies (and the registry, mtimes
           # intact) so cargo marks them Fresh and only workspace crates rebuild.
-          # Keyed on the third-party lockfile entries plus toolchain, so a
-          # workspace version bump alone does not rotate the key.
+          # The key hashes the third-party lockfile entries plus toolchain, so a
+          # workspace version bump alone keeps the same key.
           $depText = ((Get-Content Cargo.lock -Raw) -split '\[\[package\]\]' | Where-Object { $_ -match 'source = ' }) -join ''
           $rv = (cmd /c "rustc -V 2>nul") -join ''
           $sha = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes("$rv|$depText|v4"))).Replace("-","").Substring(0,32)
@@ -131,9 +131,21 @@ jobs:
           cmd /c "aws s3 cp s3://oxen-release-build-cache/deptree/$sha.tar C:\deptree.tar 2>nul"
           if (Test-Path C:\deptree.tar) {
             tar -xf C:\deptree.tar -C C:\
+            echo "DEPTREE_EXACT_HIT=1" >> $env:GITHUB_ENV
             Write-Host "DEPTREE restore hit ($sha)"
           } else {
-            Write-Host "DEPTREE restore miss ($sha)"
+            # A third-party dependency changed, so the exact key is gone. Restore
+            # the most recent tree anyway; cargo rebuilds only what the bump
+            # touched rather than the whole graph, and the save step writes a
+            # fresh tree under the new key so the next release hits exactly.
+            $latest = (aws s3 ls "s3://oxen-release-build-cache/deptree/" | Where-Object { $_ -match '\.tar$' } | Sort-Object | Select-Object -Last 1) -replace '.*\s',''
+            if ($latest) { cmd /c "aws s3 cp s3://oxen-release-build-cache/deptree/$latest C:\deptree.tar 2>nul" }
+            if (Test-Path C:\deptree.tar) {
+              tar -xf C:\deptree.tar -C C:\
+              Write-Host "DEPTREE restore miss ($sha), fell back to $latest"
+            } else {
+              Write-Host "DEPTREE restore miss ($sha), no tree to fall back to"
+            }
           }
           exit 0
 
@@ -157,10 +169,11 @@ jobs:
 
       - name: Save dependency build tree
         run: |
+          # Skip only on an exact-key hit. A fallback restore still has to write
+          # the tree under the current key so the next release hits exactly.
           # Saved after both builds so the tree covers the binaries' deps and the
-          # pyo3/maturin deps that only the wheel build pulls in; otherwise the
-          # wheel-only deps rebuild from scratch on every run.
-          if (Test-Path C:\deptree.tar) { Write-Host "DEPTREE cache already present"; exit 0 }
+          # pyo3/maturin deps that only the wheel build pulls in.
+          if ($env:DEPTREE_EXACT_HIT -eq "1") { Write-Host "DEPTREE exact hit, cache is current"; exit 0 }
           refreshenv
           $rel = "${{ github.workspace }}\target\release".Substring(3) -replace '\\','/'
           $list = @("$rel/.fingerprint", "$rel/deps", "$rel/build", "Users/Administrator/.cargo/registry/src", "Users/Administrator/.cargo/registry/cache")
