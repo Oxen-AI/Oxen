@@ -1048,9 +1048,12 @@ fn extract_tar_under<R: Read>(
 
     // Completed nodes collect here and flush to the store in batches. Batching lets each backend
     // write a whole group at once. The filesystem writes the files across threads, and LMDB commits
-    // them in one transaction. Capping each batch by total bytes keeps peak memory flat, so even a
-    // node with a large `children` blob flushes promptly.
+    // them in one transaction. Each batch is capped by total bytes and by node count, so peak memory
+    // stays flat whether a batch holds a few large nodes or many tiny ones. The count cap matters
+    // because empty blobs add nothing to the byte total, so a hostile archive of empty nodes would
+    // otherwise grow the batch without bound.
     const FLUSH_THRESHOLD_BYTES: usize = 64 * 1024 * 1024;
+    const FLUSH_THRESHOLD_NODES: usize = 100_000;
     let mut batch: Vec<(MerkleHash, Bytes, Bytes)> = Vec::new();
     let mut batch_bytes: usize = 0;
 
@@ -1167,7 +1170,7 @@ fn extract_tar_under<R: Read>(
         // only its returned hashes join `installed`.
         batch_bytes += node.len() + children.len();
         batch.push((hash, node, children));
-        if batch_bytes >= FLUSH_THRESHOLD_BYTES {
+        if batch_bytes >= FLUSH_THRESHOLD_BYTES || batch.len() >= FLUSH_THRESHOLD_NODES {
             installed.extend(store.write_nodes(std::mem::take(&mut batch), overwrite_existing)?);
             batch_bytes = 0;
         }
