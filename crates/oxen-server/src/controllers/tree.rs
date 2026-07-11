@@ -182,13 +182,16 @@ pub async fn create_nodes(
     while let Some(item) = body.next().await {
         bytes.extend_from_slice(&item.map_err(|_| OxenHttpError::FailedToReadRequestPayload)?);
     }
+    let bytes = bytes.freeze();
 
-    log::debug!(
-        "create_node decompressing {} bytes",
-        ByteSize::b(bytes.len() as u64)
-    );
+    log::debug!("create_nodes unpacking {}", ByteSize::b(bytes.len() as u64));
 
-    let _hashes = repositories::tree::unpack_nodes(&repository, &bytes[..])?;
+    // Unpacking decompresses the archive and writes every node to the store. That is blocking CPU
+    // and disk work, and it takes longer the bigger the tree is. Run it on the blocking pool so a
+    // large tree never stalls the async workers that serve every other request this server handles.
+    tokio::task::spawn_blocking(move || repositories::tree::unpack_nodes(&repository, &bytes[..]))
+        .await
+        .map_err(|e| OxenError::basic_str(format!("create_nodes unpack task panicked: {e}")))??;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_found()))
 }
