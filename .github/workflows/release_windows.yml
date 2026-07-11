@@ -99,19 +99,29 @@ jobs:
 
       - name: Install dependencies
         run: |
+          # PowerShell doesn't stop on a failed native command, so a failed
+          # install would be masked by the next command and only surface later
+          # as a confusing build error. Check each critical command. choco
+          # returns 3010 to mean "installed, reboot pending", which is success.
           choco install -y cmake llvm uv rustup.install nasm
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) { exit $LASTEXITCODE }
           if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
             choco install -y awscli
+            if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) { exit $LASTEXITCODE }
             # choco appends to the machine PATH; this process needs it now for the s3 caches
             $env:Path = "C:\Program Files\Amazon\AWSCLIV2;$env:Path"
           }
           aws --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # Pin vcpkg so the FFmpeg binary-cache ABI hash is stable across runs;
           # an unpinned HEAD rotates the key and the cache never hits.
           git clone --depth 1 --branch 2026.06.24 https://github.com/microsoft/vcpkg.git C:\vcpkg
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cd C:\vcpkg
           .\bootstrap-vcpkg.bat
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           .\vcpkg.exe install ffmpeg:x64-windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
       - name: Restore dependency build tree
