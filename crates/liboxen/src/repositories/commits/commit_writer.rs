@@ -42,13 +42,22 @@ use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::merkle_tree::node::{CommitNode, DirNode};
 
 /// Persist path→hash entries into a commit's dir_hash_db.
+///
+/// Repo paths are logical and always slash-separated, so keys are written with forward
+/// slashes regardless of the host OS. A Windows client renders `PathBuf` with backslashes,
+/// and a backslash-keyed nested directory never matches the slash-based path the server
+/// looks it up by, so its folder listing returns "Resource not found".
 fn put_dir_hashes(
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
 ) -> Result<(), OxenError> {
     for (path, hash) in dir_hashes {
         match path.to_str() {
-            Some(path_str) => str_val_db::put(dir_hash_db, path_str, &hash.to_string())?,
+            Some(path_str) => str_val_db::put(
+                dir_hash_db,
+                util::fs::to_unix_str(path_str),
+                &hash.to_string(),
+            )?,
             None => log::error!("Failed to convert path to string: {path:?}"),
         }
     }
@@ -815,9 +824,9 @@ fn cache_invalidate_dir_hash_db<'a>(
                 let child_path = PathBuf::from(dir_node.name());
                 // `child_path` already contains the full relative path
                 // (e.g., "annotations/train"), so use it directly as the key
-                let path_str = child_path.to_string_lossy();
+                let path_str = util::fs::to_unix_str(&child_path);
                 log::debug!("deleting removed dir hash: {path_str}");
-                str_val_db::delete(dir_hash_db, path_str)?;
+                str_val_db::delete(dir_hash_db, &path_str)?;
             }
         }
     }

@@ -256,7 +256,9 @@ impl CommitMerkleTree {
                     let key = str::from_utf8(&key)?;
                     let value = str::from_utf8(&value)?;
                     let hash = value.parse()?;
-                    dir_hashes.insert(PathBuf::from(key), hash);
+                    // Heal legacy backslash keys from Windows clients: repo paths are
+                    // slash-separated, so a backslash key never matches a lookup.
+                    dir_hashes.insert(PathBuf::from(crate::util::fs::linux_path_str(key)), hash);
                 }
                 _ => {
                     return Err(OxenError::basic_str(

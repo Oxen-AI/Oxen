@@ -36,7 +36,11 @@ impl CommitMerkleTree {
                         let key = str::from_utf8(&key)?;
                         let value = str::from_utf8(&value)?;
                         let hash = value.parse()?;
-                        dir_hashes.insert(PathBuf::from(key), hash);
+                        // Heal legacy keys written with backslashes by a Windows client: repo
+                        // paths are slash-separated, and a backslash key never matches the
+                        // slash-based path a lookup asks for.
+                        dir_hashes
+                            .insert(PathBuf::from(crate::util::fs::linux_path_str(key)), hash);
                     }
                     _ => {
                         return Err(OxenError::basic_str(
@@ -1211,6 +1215,69 @@ mod tests {
     use crate::repositories;
 
     use test::add_n_files_m_dirs;
+
+    /// A Windows client writes `dir_hashes` keys with backslash separators. The Linux server
+    /// then can't match a nested directory's slash-based lookup path, so its folder listing
+    /// returns "Resource not found". The loader must normalize backslash keys back to slashes.
+    /// `test_load_dir_nodes` can't catch this: on Windows both separators collapse in `PathBuf`,
+    /// so the assertion passes there too. The break only shows up cross-platform, which is what
+    /// this test forces by injecting a backslash key and reading it on the host running the test.
+    #[tokio::test]
+    async fn test_dir_hashes_heal_windows_backslash_keys() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|dir| async move {
+            let repo = repositories::init::init_with_version(dir, MinOxenVersion::LATEST)?;
+
+            let child_dir = repo.path.join("assets").join("characters");
+            crate::util::fs::create_dir_all(&child_dir)?;
+            test::write_txt_file_to_path(child_dir.join("a.txt"), "hi")?;
+            repositories::add(&repo, &repo.path).await?;
+            let commit = repositories::commits::commit(&repo, "seed nested dir")?;
+
+            let nested = PathBuf::from("assets/characters");
+            let healthy = CommitMerkleTree::dir_hashes(&repo, &commit)?;
+            let hash = *healthy
+                .get(&nested)
+                .expect("nested dir should be in a healthy dir_hashes");
+
+            // Rewrite the slash key as a backslash key, mimicking a Windows-authored index.
+            let db_path =
+                crate::core::db::dir_hashes::dir_hashes_db::dir_hash_db_path_from_commit_id(
+                    &repo, &commit.id,
+                );
+            crate::core::db::dir_hashes::dir_hashes_db::remove_from_cache_with_children(&db_path)?;
+            {
+                let opts = crate::core::db::key_val::opts::default();
+                let db: rocksdb::DBWithThreadMode<rocksdb::SingleThreaded> =
+                    rocksdb::DBWithThreadMode::open(&opts, &db_path)?;
+                crate::core::db::key_val::str_val_db::delete(&db, "assets/characters")?;
+                crate::core::db::key_val::str_val_db::put(
+                    &db,
+                    "assets\\characters",
+                    &hash.to_string(),
+                )?;
+            }
+            crate::core::db::dir_hashes::dir_hashes_db::remove_from_cache_with_children(&db_path)?;
+
+            let healed = CommitMerkleTree::dir_hashes(&repo, &commit)?;
+            assert!(
+                healed.contains_key(&nested),
+                "backslash key should load as the slash path {nested:?}"
+            );
+            assert!(
+                !healed.keys().any(|k| k.to_string_lossy().contains('\\')),
+                "no backslash keys should survive the load"
+            );
+
+            // The browsing endpoint resolves the nested dir again.
+            assert!(
+                repositories::tree::get_dir_with_children(&repo, &commit, &nested, None)?.is_some(),
+                "get_dir_with_children should resolve {nested:?} after the heal"
+            );
+
+            Ok(())
+        })
+        .await
+    }
 
     #[tokio::test]
     async fn test_load_dir_nodes() -> Result<(), OxenError> {
