@@ -41,6 +41,20 @@ use crate::{repositories, util};
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::merkle_tree::node::{CommitNode, DirNode};
 
+/// Persist path→hash entries into a commit's dir_hash_db.
+fn put_dir_hashes(
+    dir_hash_db: &DBWithThreadMode<SingleThreaded>,
+    dir_hashes: &HashMap<PathBuf, MerkleHash>,
+) -> Result<(), OxenError> {
+    for (path, hash) in dir_hashes {
+        match path.to_str() {
+            Some(path_str) => str_val_db::put(dir_hash_db, path_str, &hash.to_string())?,
+            None => log::error!("Failed to convert path to string: {path:?}"),
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct EntryVNode {
     pub id: MerkleHash,
@@ -261,13 +275,7 @@ pub(crate) fn commit_dir_entries_with_parents(
         None => (HashMap::new(), None),
     };
 
-    for (path, hash) in &dir_hashes {
-        if let Some(path_str) = path.to_str() {
-            str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
-        } else {
-            log::error!("Failed to convert path to string: {path:?}");
-        }
-    }
+    put_dir_hashes(&dir_hash_db, &dir_hashes)?;
 
     let mut commit_db = MerkleNodeDB::open_read_write(repo.merkle_node_store(), &node, parent_id)?;
     write_commit_entries(
@@ -355,13 +363,7 @@ pub fn commit_dir_entries_new(
         None => (HashMap::new(), None),
     };
 
-    for (path, hash) in &dir_hashes {
-        if let Some(path_str) = path.to_str() {
-            str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
-        } else {
-            log::error!("Failed to convert path to string: {path:?}");
-        }
-    }
+    put_dir_hashes(&dir_hash_db, &dir_hashes)?;
 
     let mut commit_db = MerkleNodeDB::open_read_write(repo.merkle_node_store(), &node, parent_id)?;
 
@@ -467,13 +469,7 @@ pub fn commit_dir_entries(
         None => HashMap::new(),
     };
 
-    for (path, hash) in &dir_hashes {
-        if let Some(path_str) = path.to_str() {
-            str_val_db::put(&dir_hash_db, path_str, &hash.to_owned().to_string())?;
-        } else {
-            log::error!("Failed to convert path to string: {path:?}");
-        }
-    }
+    put_dir_hashes(&dir_hash_db, &dir_hashes)?;
 
     let mut commit_db = MerkleNodeDB::open_read_write(repo.merkle_node_store(), &node, None)?;
     write_commit_entries(
