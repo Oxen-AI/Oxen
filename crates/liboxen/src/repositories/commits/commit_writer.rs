@@ -43,10 +43,9 @@ use crate::model::merkle_tree::node::{CommitNode, DirNode};
 
 /// Persist path→hash entries into a commit's dir_hash_db.
 ///
-/// Repo paths are logical and always slash-separated, so keys are written with forward
-/// slashes regardless of the host OS. A Windows client renders `PathBuf` with backslashes,
-/// and a backslash-keyed nested directory never matches the slash-based path the server
-/// looks it up by, so its folder listing returns "Resource not found".
+/// Keys are canonicalized to forward slashes so a directory is looked up by the same path on
+/// every platform, keeping a Windows client (which writes `\` separators into `PathBuf`) and
+/// a Linux server agreeing on directory keys.
 fn put_dir_hashes(
     dir_hash_db: &DBWithThreadMode<SingleThreaded>,
     dir_hashes: &HashMap<PathBuf, MerkleHash>,
