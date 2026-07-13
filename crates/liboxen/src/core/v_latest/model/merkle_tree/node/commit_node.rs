@@ -1,10 +1,7 @@
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
-use crate::{
-    core::versions::MinOxenVersion,
-    model::{MerkleHash, MerkleTreeNodeType, merkle_tree::node::commit_node::TCommitNode},
-};
+use crate::model::{MerkleHash, MerkleTreeNodeType, merkle_tree::node::commit_node::TCommitNode};
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct CommitNodeData {
@@ -18,10 +15,6 @@ pub struct CommitNodeData {
 }
 
 impl TCommitNode for CommitNodeData {
-    fn version(&self) -> MinOxenVersion {
-        MinOxenVersion::LATEST
-    }
-
     fn node_type(&self) -> &MerkleTreeNodeType {
         &self.node_type
     }

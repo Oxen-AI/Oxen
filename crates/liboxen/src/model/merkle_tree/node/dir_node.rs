@@ -5,15 +5,11 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::core::v_latest::model::merkle_tree::node::dir_node::DirNodeData as DirNodeDataV0_25_0;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::{
-    LocalRepository, MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType, TMerkleTreeNode,
-};
+use crate::model::{MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType, TMerkleTreeNode};
 use crate::view::DataTypeCount;
 
 pub trait TDirNode {
-    fn version(&self) -> MinOxenVersion;
     fn node_type(&self) -> &MerkleTreeNodeType;
     fn hash(&self) -> &MerkleHash;
     fn name(&self) -> &str;
@@ -55,23 +51,21 @@ pub struct DirNode {
 }
 
 impl DirNode {
-    pub fn new(repo: &LocalRepository, opts: DirNodeOpts) -> Result<Self, OxenError> {
-        match repo.min_version() {
-            MinOxenVersion::LATEST => Ok(Self {
-                node: EDirNode::V0_25_0(DirNodeDataV0_25_0 {
-                    node_type: MerkleTreeNodeType::Dir,
-                    name: opts.name,
-                    hash: opts.hash,
-                    num_entries: opts.num_entries,
-                    num_bytes: opts.num_bytes,
-                    last_commit_id: opts.last_commit_id,
-                    last_modified_seconds: opts.last_modified_seconds,
-                    last_modified_nanoseconds: opts.last_modified_nanoseconds,
-                    data_type_counts: opts.data_type_counts,
-                    data_type_sizes: opts.data_type_sizes,
-                }),
+    pub fn new(opts: DirNodeOpts) -> Result<Self, OxenError> {
+        Ok(Self {
+            node: EDirNode::V0_25_0(DirNodeDataV0_25_0 {
+                node_type: MerkleTreeNodeType::Dir,
+                name: opts.name,
+                hash: opts.hash,
+                num_entries: opts.num_entries,
+                num_bytes: opts.num_bytes,
+                last_commit_id: opts.last_commit_id,
+                last_modified_seconds: opts.last_modified_seconds,
+                last_modified_nanoseconds: opts.last_modified_nanoseconds,
+                data_type_counts: opts.data_type_counts,
+                data_type_sizes: opts.data_type_sizes,
             }),
-        }
+        })
     }
 
     pub fn get_opts(&self) -> DirNodeOpts {
@@ -109,10 +103,6 @@ impl DirNode {
 
     pub fn hash(&self) -> &MerkleHash {
         self.node().hash()
-    }
-
-    pub fn version(&self) -> MinOxenVersion {
-        self.node().version()
     }
 
     pub fn node_type(&self) -> &MerkleTreeNodeType {
@@ -224,7 +214,7 @@ impl TMerkleTreeNode for DirNode {}
 /// Debug is used for verbose multi-line output with println!("{:?}", node)
 impl fmt::Debug for DirNode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "DirNode({})", self.version())?;
+        writeln!(f, "DirNode")?;
         writeln!(f, "\thash: {}", self.hash())?;
         writeln!(f, "\tname: {}", self.name())?;
         writeln!(

@@ -1,13 +1,11 @@
 //! Wrapper around the FileNodeData struct to support old versions of the file node
 
 use crate::core::v_latest::model::merkle_tree::node::file_node::FileNodeData as FileNodeDataV0_25_0;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::file_node_types::{FileChunkType, FileStorageType};
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{
-    EntryDataType, LocalRepository, MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType,
-    TMerkleTreeNode,
+    EntryDataType, MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType, TMerkleTreeNode,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -28,7 +26,6 @@ pub struct FileNodeOpts {
 }
 
 pub trait TFileNode {
-    fn version(&self) -> MinOxenVersion;
     fn node_type(&self) -> &MerkleTreeNodeType;
     fn hash(&self) -> &MerkleHash;
     fn name(&self) -> &str;
@@ -65,29 +62,27 @@ pub struct FileNode {
 }
 
 impl FileNode {
-    pub fn new(repo: &LocalRepository, opts: FileNodeOpts) -> Result<Self, OxenError> {
-        match repo.min_version() {
-            MinOxenVersion::LATEST => Ok(Self {
-                node: EFileNode::V0_25_0(FileNodeDataV0_25_0 {
-                    node_type: MerkleTreeNodeType::File,
-                    name: opts.name,
-                    hash: opts.hash,
-                    combined_hash: opts.combined_hash,
-                    metadata_hash: opts.metadata_hash,
-                    num_bytes: opts.num_bytes,
-                    last_commit_id: MerkleHash::new(0),
-                    last_modified_seconds: opts.last_modified_seconds,
-                    last_modified_nanoseconds: opts.last_modified_nanoseconds,
-                    data_type: opts.data_type,
-                    metadata: opts.metadata,
-                    mime_type: opts.mime_type,
-                    extension: opts.extension,
-                    chunk_hashes: vec![],
-                    chunk_type: FileChunkType::SingleFile,
-                    storage_backend: FileStorageType::Disk,
-                }),
+    pub fn new(opts: FileNodeOpts) -> Result<Self, OxenError> {
+        Ok(Self {
+            node: EFileNode::V0_25_0(FileNodeDataV0_25_0 {
+                node_type: MerkleTreeNodeType::File,
+                name: opts.name,
+                hash: opts.hash,
+                combined_hash: opts.combined_hash,
+                metadata_hash: opts.metadata_hash,
+                num_bytes: opts.num_bytes,
+                last_commit_id: MerkleHash::new(0),
+                last_modified_seconds: opts.last_modified_seconds,
+                last_modified_nanoseconds: opts.last_modified_nanoseconds,
+                data_type: opts.data_type,
+                metadata: opts.metadata,
+                mime_type: opts.mime_type,
+                extension: opts.extension,
+                chunk_hashes: vec![],
+                chunk_type: FileChunkType::SingleFile,
+                storage_backend: FileStorageType::Disk,
             }),
-        }
+        })
     }
 
     #[inline(always)]
@@ -119,10 +114,6 @@ impl FileNode {
 
     pub fn node_type(&self) -> &MerkleTreeNodeType {
         self.node().node_type()
-    }
-
-    pub fn version(&self) -> MinOxenVersion {
-        self.node().version()
     }
 
     pub fn hash(&self) -> &MerkleHash {
@@ -266,7 +257,7 @@ impl TMerkleTreeNode for FileNode {}
 /// Debug is used for verbose multi-line output with println!("{:?}", node)
 impl fmt::Debug for FileNode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "FileNode({})", self.version())?;
+        writeln!(f, "FileNode")?;
         writeln!(f, "\thash: {}", self.hash())?;
         writeln!(f, "\tname: {}", self.name())?;
         writeln!(

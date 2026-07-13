@@ -5,14 +5,12 @@ use std::fmt;
 use time::OffsetDateTime;
 
 use crate::core::v_latest::model::merkle_tree::node::commit_node::CommitNodeData as CommitNodeDataV0_25_0;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::{Commit, LocalRepository};
+use crate::model::Commit;
 use crate::model::{MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType, TMerkleTreeNode};
 
 pub trait TCommitNode {
     fn node_type(&self) -> &MerkleTreeNodeType;
-    fn version(&self) -> MinOxenVersion;
     fn hash(&self) -> &MerkleHash;
     fn parent_ids(&self) -> &Vec<MerkleHash>;
     fn message(&self) -> &str;
@@ -32,7 +30,6 @@ pub struct CommitNodeOpts {
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub enum ECommitNode {
-    // This is for backwards compatibility to load older versions from disk
     V0_25_0(CommitNodeDataV0_25_0),
 }
 
@@ -42,20 +39,18 @@ pub struct CommitNode {
 }
 
 impl CommitNode {
-    pub fn new(repo: &LocalRepository, opts: CommitNodeOpts) -> Result<CommitNode, OxenError> {
-        match repo.min_version() {
-            MinOxenVersion::LATEST => Ok(CommitNode {
-                node: ECommitNode::V0_25_0(CommitNodeDataV0_25_0 {
-                    hash: opts.hash,
-                    parent_ids: opts.parent_ids,
-                    email: opts.email,
-                    author: opts.author,
-                    message: opts.message,
-                    timestamp: opts.timestamp,
-                    node_type: MerkleTreeNodeType::Commit,
-                }),
+    pub fn new(opts: CommitNodeOpts) -> Result<CommitNode, OxenError> {
+        Ok(CommitNode {
+            node: ECommitNode::V0_25_0(CommitNodeDataV0_25_0 {
+                hash: opts.hash,
+                parent_ids: opts.parent_ids,
+                email: opts.email,
+                author: opts.author,
+                message: opts.message,
+                timestamp: opts.timestamp,
+                node_type: MerkleTreeNodeType::Commit,
             }),
-        }
+        })
     }
 
     pub fn from_commit(commit: Commit) -> CommitNode {
@@ -109,10 +104,6 @@ impl CommitNode {
         match self.node {
             ECommitNode::V0_25_0(ref commit) => commit,
         }
-    }
-
-    pub fn version(&self) -> MinOxenVersion {
-        self.node().version()
     }
 
     pub fn hash(&self) -> &MerkleHash {
@@ -192,8 +183,7 @@ impl fmt::Display for CommitNode {
             .join(",");
         write!(
             f,
-            "({}) \"{}\" -> {} {} parent_ids {:?}",
-            self.version(),
+            "\"{}\" -> {} {} parent_ids {:?}",
             self.message(),
             self.author(),
             self.email(),

@@ -2,7 +2,6 @@
 //! that is stored in on disk
 //!
 
-use crate::core::versions::MinOxenVersion;
 use crate::model::merkle_tree::node::file_node::TFileNode;
 use crate::model::merkle_tree::node::file_node_types::{FileChunkType, FileStorageType};
 use crate::model::metadata::generic_metadata::GenericMetadata;
@@ -47,10 +46,6 @@ pub struct FileNodeData {
 }
 
 impl TFileNode for FileNodeData {
-    fn version(&self) -> MinOxenVersion {
-        MinOxenVersion::LATEST
-    }
-
     fn node_type(&self) -> &MerkleTreeNodeType {
         &self.node_type
     }

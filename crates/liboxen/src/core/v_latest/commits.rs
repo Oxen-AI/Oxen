@@ -277,17 +277,14 @@ pub fn create_empty_commit(
             },
         )?;
     let timestamp = OffsetDateTime::now_utc();
-    let commit_node = CommitNode::new(
-        repo,
-        CommitNodeOpts {
-            hash: new_commit.id.parse()?,
-            parent_ids: vec![existing_commit_id],
-            email: new_commit.email.clone(),
-            author: new_commit.author.clone(),
-            message: new_commit.message.clone(),
-            timestamp,
-        },
-    )?;
+    let commit_node = CommitNode::new(CommitNodeOpts {
+        hash: new_commit.id.parse()?,
+        parent_ids: vec![existing_commit_id],
+        email: new_commit.email.clone(),
+        author: new_commit.author.clone(),
+        message: new_commit.message.clone(),
+        timestamp,
+    })?;
 
     let parent_id = Some(existing_node.hash);
     let mut commit_db =
@@ -342,34 +339,28 @@ pub fn create_initial_commit(
     let commit_id = commit_writer::compute_commit_id(&new_commit)?;
 
     // Create the commit node
-    let commit_node = CommitNode::new(
-        repo,
-        CommitNodeOpts {
-            hash: commit_id,
-            parent_ids: vec![],
-            email: user.email.clone(),
-            author: user.name.clone(),
-            message: message.to_string(),
-            timestamp,
-        },
-    )?;
+    let commit_node = CommitNode::new(CommitNodeOpts {
+        hash: commit_id,
+        parent_ids: vec![],
+        email: user.email.clone(),
+        author: user.name.clone(),
+        message: message.to_string(),
+        timestamp,
+    })?;
 
     // Create an empty root directory node
     let empty_dir_hash = MerkleHash::new(0); // Empty hash for empty directory
-    let dir_node = DirNode::new(
-        repo,
-        DirNodeOpts {
-            name: String::new(), // Root directory has empty name
-            hash: empty_dir_hash,
-            num_entries: 0,
-            num_bytes: 0,
-            last_commit_id: commit_id,
-            last_modified_seconds: timestamp.unix_timestamp(),
-            last_modified_nanoseconds: timestamp.nanosecond(),
-            data_type_counts: HashMap::new(),
-            data_type_sizes: HashMap::new(),
-        },
-    )?;
+    let dir_node = DirNode::new(DirNodeOpts {
+        name: String::new(), // Root directory has empty name
+        hash: empty_dir_hash,
+        num_entries: 0,
+        num_bytes: 0,
+        last_commit_id: commit_id,
+        last_modified_seconds: timestamp.unix_timestamp(),
+        last_modified_nanoseconds: timestamp.nanosecond(),
+        data_type_counts: HashMap::new(),
+        data_type_sizes: HashMap::new(),
+    })?;
 
     // Open the commit database and add the root directory
     let mut commit_db =
@@ -1076,17 +1067,14 @@ mod tests {
         let parent_hash: MerkleHash = parent.id.parse()?;
         let parent_node = repositories::tree::get_node_by_id_with_children(repo, &parent_hash)?
             .ok_or_else(|| OxenError::basic_str("parent node not found"))?;
-        let commit_node = CommitNode::new(
-            repo,
-            CommitNodeOpts {
-                hash,
-                parent_ids: vec![parent_hash],
-                email: new_commit.email.clone(),
-                author: new_commit.author.clone(),
-                message: new_commit.message.clone(),
-                timestamp,
-            },
-        )?;
+        let commit_node = CommitNode::new(CommitNodeOpts {
+            hash,
+            parent_ids: vec![parent_hash],
+            email: new_commit.email.clone(),
+            author: new_commit.author.clone(),
+            message: new_commit.message.clone(),
+            timestamp,
+        })?;
         let mut commit_db = MerkleNodeDB::open_read_write(
             repo.merkle_node_store(),
             &commit_node,
