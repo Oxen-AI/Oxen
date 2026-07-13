@@ -43,15 +43,18 @@ impl RunCmd for PushCmd {
             .arg(
                 Arg::new("missing-files")
                     .long("missing-files")
-                    .help("Push files missing from server (useful in case of a failed push). Optionally specify a commit id to push files from.")
+                    .help("Re-upload files the remote is missing — a fast repair after a failed push. Detects absence only, not corrupt-but-present files (use --revalidate for that). Optionally give a commit id to scope which files are pushed.")
                     .num_args(0..=1)
                     .value_name("COMMIT_ID")
                     .default_missing_value("true")
+                    // Whole-store clean + a commit-scoped re-push would delete corrupt files
+                    // everywhere but only re-push one commit's — leaving others missing.
+                    .conflicts_with("revalidate")
             )
             .arg(
                 Arg::new("revalidate")
                     .long("revalidate")
-                    .help("Revalidate file hashes on remote and push any missing files.")
+                    .help("Full integrity repair: re-hash every file on the remote, delete any that are corrupt, then re-upload all missing files. Slower than --missing-files but also fixes corruption, not just absence.")
                     .action(clap::ArgAction::SetTrue)
             )
             .arg(

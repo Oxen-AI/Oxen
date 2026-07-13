@@ -1680,4 +1680,63 @@ A: Checkout Oxen.ai
         })
         .await
     }
+
+    // `oxen push --revalidate` must re-push a blob the remote is simply MISSING, not only one that
+    // is corrupt-but-present. `versions::clean` reports zero corrupted for an absent blob, so the
+    // repair used to no-op on the common case.
+    #[tokio::test]
+    async fn test_revalidate_repushes_a_missing_blob() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async {
+            let mut repo = repo;
+
+            let path = repo.path.join("a.txt");
+            test::write_txt_file_to_path(&path, "alpha")?;
+            repositories::add(&repo, &path).await?;
+            let commit = repositories::commit(&repo, "add a.txt")?;
+
+            let remote = test::repo_remote_url_from(&repo.dirname());
+            command::config::set_remote(&mut repo, DEFAULT_REMOTE_NAME, &remote)?;
+            let remote_repo = test::create_remote_repo(&repo).await?;
+            repositories::push(&repo).await?;
+
+            // The server loses a.txt's blob — absent, not corrupt.
+            let hash = repositories::tree::get_node_by_path(&repo, &commit, "a.txt")?
+                .expect("a.txt in commit")
+                .file()?
+                .hash()
+                .to_string();
+            let sync_dir =
+                PathBuf::from(std::env::var("SYNC_DIR").expect("SYNC_DIR set by bin/test-rust"));
+            let server = repositories::get_by_namespace_and_name(
+                &sync_dir,
+                constants::DEFAULT_NAMESPACE,
+                repo.dirname(),
+                None,
+            )?
+            .expect("server repo exists");
+            server.version_store().delete_version(&hash).await?;
+            assert!(
+                !server.version_store().version_exists(&hash).await?,
+                "precondition: the blob should be gone from the server"
+            );
+
+            // clean finds nothing corrupt (the blob is absent), but revalidate must still re-push it.
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: DEFAULT_BRANCH_NAME.to_string(),
+                revalidate: true,
+                ..Default::default()
+            };
+            repositories::push::push_remote_branch(&repo, &opts).await?;
+
+            assert!(
+                server.version_store().version_exists(&hash).await?,
+                "revalidate must re-push the missing blob"
+            );
+
+            api::client::repositories::delete(&remote_repo).await?;
+            Ok(())
+        })
+        .await
+    }
 }

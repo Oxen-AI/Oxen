@@ -173,7 +173,7 @@ async fn push_to_existing_branch(
     Ok(())
 }
 
-// delete corrupted version files and push again
+// Clean up any corrupted version files on the remote, then re-push whatever it's still missing.
 async fn revalidate_and_push_missing_files(
     repo: &LocalRepository,
     opts: &PushOpts,
@@ -184,31 +184,23 @@ async fn revalidate_and_push_missing_files(
     println!("🐂 revalidating the remote repo...");
     let response = api::client::versions::clean(remote_repo).await?;
     let clean_result = response.result;
-    if clean_result.corrupted > 0 {
+    println!(
+        "🔍 scanned {} files, found {} corrupted files, cleaned {} of them. Scanning took {}",
+        clean_result.scanned,
+        clean_result.corrupted,
+        clean_result.cleaned,
+        humantime::format_duration(clean_result.elapsed)
+    );
+    if clean_result.corrupted > clean_result.cleaned || clean_result.errors > 0 {
         println!(
-            "🔍 scanned {} files, found {} corrupted files, cleaned {} of them. Scanning took {}",
-            clean_result.scanned,
-            clean_result.corrupted,
-            clean_result.cleaned,
-            humantime::format_duration(clean_result.elapsed)
+            "🚧 This fix is not complete. Some files may still be corrupted. Please try running this command again."
         );
-        println!("🐂 pushing missing files...");
-        if clean_result.corrupted > clean_result.cleaned
-            || clean_result.errors > clean_result.cleaned
-        {
-            println!(
-                "🚧 This fix is not complete. Some files may still be corrupted. Please try running this command again."
-            );
-        }
-        return push_missing_files(repo, opts, remote_repo, latest_remote_commit, commits).await;
-    } else {
-        println!(
-            "🔍 scanned {} files, no corrupted files found. Scanning took {}",
-            clean_result.scanned,
-            humantime::format_duration(clean_result.elapsed)
-        );
-        Ok(())
     }
+
+    // Re-push regardless of the corrupted count: `clean` only turns corrupt-but-present blobs into
+    // absent ones, and a blob that was absent to begin with needs the same re-push.
+    println!("🐂 checking for missing files...");
+    push_missing_files(repo, opts, remote_repo, latest_remote_commit, commits).await
 }
 
 async fn push_missing_files(
