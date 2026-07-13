@@ -26,7 +26,9 @@ pub use diff::diff;
 pub use upload::upload;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex as StdMutex, PoisonError};
+use tokio::sync::Mutex as TokioMutex;
 use uuid::Uuid;
 
 /// Loads a workspace from the filesystem. Must call create() first to create the workspace.
@@ -293,10 +295,31 @@ fn validate_create_constraints(
     Ok(())
 }
 
+// Serializes the one-time name-index build per repo. Without it, concurrent
+// first callers each run `rebuild_from_disk`, which clears the index and
+// rescans disk. One of those rebuilds can land between another caller's config
+// write and its `put_if_absent`, pre-claiming that caller's name from disk so
+// it collides with itself and rolls back. Keyed by repo path, in-process.
+static NAME_INDEX_LOCKS: LazyLock<StdMutex<HashMap<PathBuf, Arc<TokioMutex<()>>>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+fn name_index_lock_for(key: &Path) -> Arc<TokioMutex<()>> {
+    // Poisoning only means a holder panicked; the map of Arc handles is still
+    // sound, so recover the guard.
+    let mut locks = NAME_INDEX_LOCKS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    locks.entry(key.to_path_buf()).or_default().clone()
+}
+
 /// Ensures the workspace name index exists, lazily creating it if needed.
 /// On first call for a repo, rebuilds the index from disk (one-time O(n))
 /// on a blocking thread to avoid stalling the async runtime.
 async fn ensure_name_index(repo: &LocalRepository) -> Result<(), OxenError> {
+    let lock = name_index_lock_for(&repo.path);
+    let _guard = lock.lock().await;
+    // Re-check under the lock: the first caller builds the index (creating the
+    // dir), so everyone waiting behind it sees the dir and skips the rebuild.
     if !workspace_name_index::index_exists(repo) {
         let repo = repo.clone();
         tokio::task::spawn_blocking(move || {
