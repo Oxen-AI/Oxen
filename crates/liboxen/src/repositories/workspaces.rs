@@ -313,24 +313,49 @@ fn name_index_lock_for(key: &Path) -> Arc<TokioMutex<()>> {
     locks.entry(key.to_path_buf()).or_default().clone()
 }
 
+fn cleanup_name_index_lock(key: &Path) {
+    let mut locks = NAME_INDEX_LOCKS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if let Some(lock) = locks.get(key) {
+        // The registry's handle is the only one left — no holder, no waiter — so
+        // the entry can be dropped. A late caller simply gets a fresh mutex, which
+        // is equivalent since nobody holds this one.
+        if Arc::strong_count(lock) == 1 {
+            locks.remove(key);
+        }
+    }
+}
+
 /// Ensures the workspace name index exists, lazily creating it if needed.
 /// On first call for a repo, rebuilds the index from disk (one-time O(n))
 /// on a blocking thread to avoid stalling the async runtime.
 async fn ensure_name_index(repo: &LocalRepository) -> Result<(), OxenError> {
     let lock = name_index_lock_for(&repo.path);
-    let _guard = lock.lock().await;
-    // Re-check under the lock: the first caller builds the index (creating the
-    // dir), so everyone waiting behind it sees the dir and skips the rebuild.
-    if !workspace_name_index::index_exists(repo) {
-        let repo = repo.clone();
-        tokio::task::spawn_blocking(move || {
-            let idx = workspace_name_index::get_index(&repo)?;
-            idx.rebuild_from_disk(&repo)
-        })
-        .await
-        .map_err(|e| OxenError::basic_str(format!("spawn_blocking join error: {e}")))??;
-    }
-    Ok(())
+    let result = {
+        let _guard = lock.lock().await;
+        // Re-check under the lock: the first caller builds the index (creating the
+        // dir), so everyone waiting behind it sees the dir and skips the rebuild.
+        if workspace_name_index::index_exists(repo) {
+            Ok(())
+        } else {
+            let repo = repo.clone();
+            match tokio::task::spawn_blocking(move || {
+                let idx = workspace_name_index::get_index(&repo)?;
+                idx.rebuild_from_disk(&repo)
+            })
+            .await
+            {
+                Ok(rebuild_result) => rebuild_result.map_err(OxenError::from),
+                Err(join_err) => Err(OxenError::basic_str(format!(
+                    "spawn_blocking join error: {join_err}"
+                ))),
+            }
+        }
+    };
+    drop(lock);
+    cleanup_name_index_lock(&repo.path);
+    result
 }
 
 /// A wrapper around Workspace that automatically deletes the workspace when dropped
@@ -1136,6 +1161,37 @@ mod tests {
             Ok(remote_repo)
         })
         .await
+    }
+
+    #[tokio::test]
+    async fn test_name_index_lock_registry_shares_and_cleans_up() -> Result<(), OxenError> {
+        let key = PathBuf::from("test-name-index-lock-registry");
+
+        // Two lookups for the same key must return the same underlying mutex.
+        let lock_a = name_index_lock_for(&key);
+        let lock_b = name_index_lock_for(&key);
+        let guard = lock_a.lock().await;
+        assert!(
+            lock_b.try_lock().is_err(),
+            "second handle should contend on the same mutex"
+        );
+        drop(guard);
+        assert!(lock_b.try_lock().is_ok());
+
+        // A different key gets an independent mutex.
+        let other = name_index_lock_for(Path::new("test-name-index-lock-registry-other"));
+        let _guard = lock_a.lock().await;
+        assert!(other.try_lock().is_ok());
+
+        // Once all handles are dropped, cleanup removes the entry.
+        drop(_guard);
+        drop(lock_a);
+        drop(lock_b);
+        cleanup_name_index_lock(&key);
+        let registry = NAME_INDEX_LOCKS.lock().unwrap();
+        assert!(!registry.contains_key(&key));
+
+        Ok(())
     }
 
     #[tokio::test]
