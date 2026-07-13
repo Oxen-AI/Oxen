@@ -249,6 +249,8 @@ impl MerkleTreeNodeIdType for FileNode {
     }
 }
 
+/// `Hash` and `PartialEq` MUST use the same fields (`std::hash::Hash`'s
+/// `k1 == k2 -> hash(k1) == hash(k2)` contract).
 impl Hash for FileNode {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.name().hash(state);
@@ -316,7 +318,11 @@ impl fmt::Display for FileNode {
 
 impl PartialEq for FileNode {
     fn eq(&self, other: &Self) -> bool {
-        self.hash() == other.hash()
+        self.name() == other.name()
+            && self.num_bytes() == other.num_bytes()
+            && self.last_modified_seconds() == other.last_modified_seconds()
+            && self.last_modified_nanoseconds() == other.last_modified_nanoseconds()
+            && self.hash() == other.hash()
     }
 }
 

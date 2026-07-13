@@ -24,7 +24,7 @@ use std::path::PathBuf;
 
 use crate::core::db;
 use crate::core::db::dir_hashes::dir_hashes_db::{
-    dir_hash_db_path_from_commit_id, with_entry_evicted,
+    dir_hash_db_path_from_commit_id, with_exclusive_access,
 };
 use crate::core::db::key_val::str_val_db;
 use crate::error::OxenError;
@@ -50,10 +50,10 @@ pub struct RebuildDirHashesStats {
 /// writer.
 ///
 /// Strategy: build the new database in a sibling temp directory, then hand off to
-/// [`with_entry_evicted`] for the swap. That helper takes the per-path cache slot
-/// for writing (waiting for in-flight readers to drop their guards), drops the cached RocksDB
-/// handle — which on Windows is required before the directory can be renamed — runs our
-/// rename dance, and releases the lock.
+/// [`with_exclusive_access`] for the swap. That helper takes the per-repo write barrier —
+/// waiting for in-flight readers to drop their `Arc<DB>`, which is what actually closes the
+/// RocksDB and releases the OS file handles Windows needs before rename — runs our rename
+/// dance, and releases the barrier.
 pub fn rebuild_dir_hash_db(
     repo: &LocalRepository,
     commit: &Commit,
@@ -102,10 +102,11 @@ pub fn rebuild_dir_hash_db(
         // Drop the handle before renaming so RocksDB releases file locks.
     }
 
-    // 2. Swap under the slot's write lock. The cached RocksDB handle is closed inside this
-    //    helper so Windows will permit the renames; the helper also reopens afterwards.
+    // 2. Swap under the per-repo write barrier. In-flight readers finish and drop their
+    //    `Arc<DB>` before we enter the closure, so the RocksDB handle is already closed and
+    //    Windows will permit the renames; the next reader after the closure exits reopens.
     let swap_db_path = db_path.clone();
-    with_entry_evicted(repo, &commit.id, move || {
+    with_exclusive_access(repo, move || {
         let had_existing = swap_db_path.exists();
         if had_existing {
             util::fs::rename(&swap_db_path, &old_path)?;
