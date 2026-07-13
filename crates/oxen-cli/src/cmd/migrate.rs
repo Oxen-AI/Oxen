@@ -109,7 +109,7 @@ impl RunCmd for MigrateCmd {
                     for (repo_path, error) in errored {
                         println!("\t[FAIL] \"{}\" due to: {error}", repo_path.display());
                     }
-                    return Err(OxenError::MigrationFailed)?;
+                    Err(OxenError::MigrationFailed)?;
                 }
             } else {
                 let mr = try_apply_migration(

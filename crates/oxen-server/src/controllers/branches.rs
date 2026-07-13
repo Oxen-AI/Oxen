@@ -444,7 +444,7 @@ pub async fn list_entry_versions(
             match maybe_schema {
                 Some(schema) => Some(schema.hash),
                 None => {
-                    log::error!("Could not get schema for tabular file {:?}", &path);
+                    log::error!("Could not get schema for tabular file {:?}", path);
                     None
                 }
             }

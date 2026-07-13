@@ -1008,7 +1008,7 @@ mod tests {
             status.print();
 
             assert_eq!(status.staged_files.len(), og_num_files);
-            for (_, staged_entry) in status.staged_files.iter() {
+            for staged_entry in status.staged_files.values() {
                 assert_eq!(staged_entry.status, StagedEntryStatus::Removed);
             }
 
@@ -1043,7 +1043,7 @@ mod tests {
             status.print();
 
             assert_eq!(status.staged_files.len(), og_num_files);
-            for (_, staged_entry) in status.staged_files.iter() {
+            for staged_entry in status.staged_files.values() {
                 assert_eq!(staged_entry.status, StagedEntryStatus::Removed);
             }
 
@@ -1070,7 +1070,7 @@ mod tests {
             status.print();
 
             assert_eq!(status.staged_files.len(), og_num_files);
-            for (_, staged_entry) in status.staged_files.iter() {
+            for staged_entry in status.staged_files.values() {
                 assert_eq!(staged_entry.status, StagedEntryStatus::Removed);
             }
 

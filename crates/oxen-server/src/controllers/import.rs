@@ -196,7 +196,7 @@ pub async fn import(
         author: user.name,
         email: user.email,
         message: message
-            .unwrap_or_else(|| format!("Import files to {}", &resource.path.to_string_lossy())),
+            .unwrap_or_else(|| format!("Import files to {}", resource.path.to_string_lossy())),
     };
 
     let commit = repositories::workspaces::commit(&workspace, &commit_body, branch.name).await?;

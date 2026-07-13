@@ -1141,7 +1141,7 @@ pub fn lowest_common_ancestor_from_commits(
     let mut has_common_ancestor = false;
     let mut min_depth = usize::MAX;
     let mut lca: Commit = commit_depths_from_head.keys().next().unwrap().clone();
-    for (commit, _) in commit_depths_from_merge.iter() {
+    for commit in commit_depths_from_merge.keys() {
         if let Some(depth) = commit_depths_from_head.get(commit) {
             has_common_ancestor = true;
 

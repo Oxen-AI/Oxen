@@ -1101,7 +1101,7 @@ async fn _read_lazy_df_with_extension(
             return Err(OxenError::entry_does_not_exist(&path));
         }
 
-        log::debug!("Reading df with extension {:?} {:?}", &extension, &path);
+        log::debug!("Reading df with extension {:?} {:?}", extension, path);
 
         match extension.as_str() {
             "ndjson" | "jsonl" => read_df_jsonl(&path),

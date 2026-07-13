@@ -87,7 +87,7 @@ pub async fn get(
     };
 
     let path = path_param(&req, "path")?.to_string();
-    log::debug!("got workspace file path {:?}", &path);
+    log::debug!("got workspace file path {:?}", path);
 
     // First, look for the file in the workspace staged_db
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
@@ -545,7 +545,7 @@ pub async fn save_parts(
                     Ok(Err(e)) => {
                         log::error!(
                             "Failed to decompress data for file {}: {:?}",
-                            &upload_filename,
+                            upload_filename,
                             e
                         );
                         record_error_file(
@@ -559,7 +559,7 @@ pub async fn save_parts(
                     Err(e) => {
                         log::error!(
                             "Failed to execute blocking decompression task for file {}: {}",
-                            &upload_filename,
+                            upload_filename,
                             e
                         );
                         record_error_file(
@@ -581,12 +581,12 @@ pub async fn save_parts(
                         hash: upload_filehash.to_string(),
                         path: upload_filename.into(),
                     });
-                    log::info!("Successfully stored version for hash: {}", &upload_filehash);
+                    log::info!("Successfully stored version for hash: {}", upload_filehash);
                 }
                 Err(e) => {
                     log::error!(
                         "Failed to store version for hash {}: {}",
-                        &upload_filehash,
+                        upload_filehash,
                         e
                     );
                     record_error_file(

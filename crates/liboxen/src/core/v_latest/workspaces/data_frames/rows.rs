@@ -251,7 +251,7 @@ pub async fn prepare_modified_or_removed_row(
 
     log::debug!(
         "prepare_modified_or_removed_row() commit_merkle_tree: {:?}",
-        &commit_merkle_tree.hash.to_string()
+        commit_merkle_tree.hash.to_string()
     );
 
     // let scan_rows = 10000 as usize;

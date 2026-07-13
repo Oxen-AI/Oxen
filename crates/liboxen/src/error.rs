@@ -755,10 +755,9 @@ impl OxenError {
                 if req_err.is_connect() || req_err.is_timeout() {
                     "Check your internet connection and that the remote host is reachable."
                 } else if req_err.is_status() {
-                    if let Some(status) = req_err.status() {
+                    {
+                        let status = req_err.status()?;
                         return Some(format!("Server returned HTTP {status}."));
-                    } else {
-                        return None;
                     }
                 } else {
                     "Check your internet connection and remote configuration with `oxen remote -v`."

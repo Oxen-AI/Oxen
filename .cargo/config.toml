@@ -1,2 +1,6 @@
 [target.x86_64-pc-windows-msvc]
 linker = "rust-lld.exe"
+
+[target.aarch64-apple-darwin]
+# Suppress compact unwind linker warnings on macOS for aarch64 -- they're harmless
+rustflags = ["-C", "link-args=-Wl,-no_compact_unwind"]

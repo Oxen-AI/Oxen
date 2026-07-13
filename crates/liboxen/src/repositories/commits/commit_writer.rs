@@ -992,7 +992,7 @@ fn get_children(
     let dir_path = dir_path.as_ref().to_path_buf();
     let mut children = vec![];
 
-    for (path, _) in entries.iter() {
+    for path in entries.keys() {
         if path.starts_with(&dir_path) {
             children.push(path.clone());
         }
