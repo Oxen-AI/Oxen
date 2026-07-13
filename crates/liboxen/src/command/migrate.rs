@@ -13,9 +13,7 @@ use crate::{
     },
 };
 
-pub mod m20250111083535_add_child_counts_to_nodes;
 use colored::Colorize;
-pub use m20250111083535_add_child_counts_to_nodes::AddChildCountsToNodesMigration;
 
 pub mod m20260408_add_workspace_name_index;
 pub use m20260408_add_workspace_name_index::AddWorkspaceNameIndexMigration;
@@ -100,11 +98,8 @@ pub trait Migrate {
 /// (`POST /api/repos/:ns/:name/migrations/:migration_name`) to look up a
 /// migration by name at runtime. New migrations **MUST** be listed here
 /// for the [`all_migrations`] function to work properly.
-pub const ALL_MIGRATIONS: [&dyn Migrate; 3] = [
-    &AddChildCountsToNodesMigration,
-    &AddWorkspaceNameIndexMigration,
-    &MerkleNodesToLmdbMigration,
-];
+pub const ALL_MIGRATIONS: [&dyn Migrate; 2] =
+    [&AddWorkspaceNameIndexMigration, &MerkleNodesToLmdbMigration];
 
 /// Maps a registered migration's name to its implementation.
 /// The name is exactly the same value returned by `<dyn Migrate>::name()`.

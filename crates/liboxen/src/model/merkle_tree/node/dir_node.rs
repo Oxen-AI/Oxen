@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::core::v_latest::model::merkle_tree::node::dir_node::DirNodeData as DirNodeDataV0_25_0;
-use crate::core::v_old::v0_19_0::model::merkle_tree::node::dir_node::DirNodeData as DirNodeDataV0_19_0;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::{
@@ -36,7 +35,6 @@ pub trait TDirNode {
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub enum EDirNode {
     V0_25_0(DirNodeDataV0_25_0),
-    V0_19_0(DirNodeDataV0_19_0),
 }
 
 pub struct DirNodeOpts {
@@ -73,19 +71,6 @@ impl DirNode {
                     data_type_sizes: opts.data_type_sizes,
                 }),
             }),
-            MinOxenVersion::V0_19_0 => Ok(Self {
-                node: EDirNode::V0_19_0(DirNodeDataV0_19_0 {
-                    node_type: MerkleTreeNodeType::Dir,
-                    name: opts.name,
-                    hash: opts.hash,
-                    num_bytes: opts.num_bytes,
-                    last_commit_id: opts.last_commit_id,
-                    last_modified_seconds: opts.last_modified_seconds,
-                    last_modified_nanoseconds: opts.last_modified_nanoseconds,
-                    data_type_counts: opts.data_type_counts,
-                    data_type_sizes: opts.data_type_sizes,
-                }),
-            }),
         }
     }
 
@@ -102,48 +87,23 @@ impl DirNode {
                 data_type_counts: data.data_type_counts.clone(),
                 data_type_sizes: data.data_type_sizes.clone(),
             },
-            EDirNode::V0_19_0(data) => DirNodeOpts {
-                name: data.name.clone(),
-                hash: data.hash,
-                num_entries: 0, // not supported in v0.19.0
-                num_bytes: data.num_bytes,
-                last_commit_id: data.last_commit_id,
-                last_modified_seconds: data.last_modified_seconds,
-                last_modified_nanoseconds: data.last_modified_nanoseconds,
-                data_type_counts: data.data_type_counts.clone(),
-                data_type_sizes: data.data_type_sizes.clone(),
-            },
         }
     }
 
     #[inline(always)]
     pub fn deserialize(data: &[u8]) -> Result<DirNode, rmp_serde::decode::Error> {
-        // In order to support versions that didn't have the enum,
-        // if it fails we will fall back to the old struct, then populate the enum
-        let dir_node: DirNode = match rmp_serde::from_slice(data) {
-            Ok(dir_node) => dir_node,
-            Err(_) => {
-                // This is a fallback for old versions of the dir node
-                let dir_node: DirNodeDataV0_19_0 = rmp_serde::from_slice(data)?;
-                Self {
-                    node: EDirNode::V0_19_0(dir_node),
-                }
-            }
-        };
-        Ok(dir_node)
+        rmp_serde::from_slice(data)
     }
 
     fn node(&self) -> &dyn TDirNode {
         match &self.node {
             EDirNode::V0_25_0(data) => data,
-            EDirNode::V0_19_0(data) => data,
         }
     }
 
     fn mut_node(&mut self) -> &mut dyn TDirNode {
         match &mut self.node {
             EDirNode::V0_25_0(data) => data,
-            EDirNode::V0_19_0(data) => data,
         }
     }
 

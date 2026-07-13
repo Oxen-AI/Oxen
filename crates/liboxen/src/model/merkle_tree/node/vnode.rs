@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use crate::core::v_latest::model::merkle_tree::node::vnode::VNodeData as VNodeImplV0_25_0;
-use crate::core::v_old::v0_19_0::model::merkle_tree::node::vnode::VNodeData as VNodeImplV0_19_0;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::{
@@ -23,7 +22,6 @@ pub trait TVNode {
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub enum EVNode {
-    V0_19_0(VNodeImplV0_19_0),
     V0_25_0(VNodeImplV0_25_0),
 }
 
@@ -40,12 +38,6 @@ pub struct VNode {
 impl VNode {
     pub fn new(repo: &LocalRepository, vnode_opts: VNodeOpts) -> Result<VNode, OxenError> {
         match repo.min_version() {
-            MinOxenVersion::V0_19_0 => Ok(Self {
-                node: EVNode::V0_19_0(VNodeImplV0_19_0 {
-                    hash: vnode_opts.hash,
-                    node_type: MerkleTreeNodeType::VNode,
-                }),
-            }),
             MinOxenVersion::LATEST => Ok(Self {
                 node: EVNode::V0_25_0(VNodeImplV0_25_0 {
                     hash: vnode_opts.hash,
@@ -58,19 +50,7 @@ impl VNode {
 
     #[inline(always)]
     pub fn deserialize(data: &[u8]) -> Result<VNode, rmp_serde::decode::Error> {
-        // In order to support versions that didn't have the enum,
-        // if it fails we will fall back to the old struct, then populate the enum
-        let vnode: VNode = match rmp_serde::from_slice(data) {
-            Ok(vnode) => vnode,
-            Err(_) => {
-                // This is a fallback for old versions of the vnode
-                let vnode: VNodeImplV0_19_0 = rmp_serde::from_slice(data)?;
-                Self {
-                    node: EVNode::V0_19_0(vnode),
-                }
-            }
-        };
-        Ok(vnode)
+        rmp_serde::from_slice(data)
     }
 
     pub fn get_opts(&self) -> VNodeOpts {
@@ -79,24 +59,18 @@ impl VNode {
                 hash: vnode.hash,
                 num_entries: vnode.num_entries,
             },
-            EVNode::V0_19_0(vnode) => VNodeOpts {
-                hash: vnode.hash,
-                num_entries: 0,
-            },
         }
     }
 
     fn node(&self) -> &dyn TVNode {
         match self.node {
             EVNode::V0_25_0(ref vnode) => vnode,
-            EVNode::V0_19_0(ref vnode) => vnode,
         }
     }
 
     fn mut_node(&mut self) -> &mut dyn TVNode {
         match self.node {
             EVNode::V0_25_0(ref mut vnode) => vnode,
-            EVNode::V0_19_0(ref mut vnode) => vnode,
         }
     }
 
@@ -155,3 +129,37 @@ impl fmt::Display for VNode {
 }
 
 impl TMerkleTreeNode for VNode {}
+
+#[cfg(test)]
+mod on_disk_format {
+    use super::*;
+    use crate::model::merkle_tree::node::dir_node::{DirNode, EDirNode};
+
+    // Merkle nodes are serialized with `rmp_serde::to_vec`, which tags enum variants by
+    // *name* (`{"V0_25_0": ...}`), not by ordinal position. That name tag is what lets us drop
+    // the earlier `V0_19_0` variant without rewriting existing repos: a LATEST node keeps the
+    // exact same on-disk bytes even though `V0_25_0` is the second variant of `EVNode` but the
+    // first of `EDirNode`. If this regressed to ordinal tagging, the name would vanish from the
+    // bytes and nodes written by older Oxen versions would stop decoding.
+    #[test]
+    fn latest_nodes_are_name_tagged_and_round_trip() {
+        let vnode_bytes = rmp_serde::to_vec(&VNode::default()).unwrap();
+        let dir_bytes = rmp_serde::to_vec(&DirNode::default()).unwrap();
+
+        for bytes in [&vnode_bytes, &dir_bytes] {
+            assert!(
+                bytes.windows(7).any(|w| w == b"V0_25_0"),
+                "node must be tagged by variant name, not ordinal: {bytes:02x?}"
+            );
+        }
+
+        assert!(matches!(
+            VNode::deserialize(&vnode_bytes).unwrap().node,
+            EVNode::V0_25_0(_)
+        ));
+        assert!(matches!(
+            DirNode::deserialize(&dir_bytes).unwrap().node,
+            EDirNode::V0_25_0(_)
+        ));
+    }
+}
