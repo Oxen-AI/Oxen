@@ -38,7 +38,7 @@ pub enum ECommitNode {
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct CommitNode {
-    node: ECommitNode,
+    pub node: ECommitNode,
 }
 
 impl CommitNode {

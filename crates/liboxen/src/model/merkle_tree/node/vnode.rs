@@ -133,6 +133,7 @@ impl TMerkleTreeNode for VNode {}
 #[cfg(test)]
 mod on_disk_format {
     use super::*;
+    use crate::model::merkle_tree::node::commit_node::{CommitNode, ECommitNode};
     use crate::model::merkle_tree::node::dir_node::{DirNode, EDirNode};
 
     // Merkle nodes are serialized with `rmp_serde::to_vec`, which tags enum variants by
@@ -145,8 +146,9 @@ mod on_disk_format {
     fn latest_nodes_are_name_tagged_and_round_trip() {
         let vnode_bytes = rmp_serde::to_vec(&VNode::default()).unwrap();
         let dir_bytes = rmp_serde::to_vec(&DirNode::default()).unwrap();
+        let commit_bytes = rmp_serde::to_vec(&CommitNode::default()).unwrap();
 
-        for bytes in [&vnode_bytes, &dir_bytes] {
+        for bytes in [&vnode_bytes, &dir_bytes, &commit_bytes] {
             assert!(
                 bytes.windows(7).any(|w| w == b"V0_25_0"),
                 "node must be tagged by variant name, not ordinal: {bytes:02x?}"
@@ -160,6 +162,10 @@ mod on_disk_format {
         assert!(matches!(
             DirNode::deserialize(&dir_bytes).unwrap().node,
             EDirNode::V0_25_0(_)
+        ));
+        assert!(matches!(
+            CommitNode::deserialize(&commit_bytes).unwrap().node,
+            ECommitNode::V0_25_0(_)
         ));
     }
 }
