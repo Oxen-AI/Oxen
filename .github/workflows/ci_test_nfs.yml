@@ -86,9 +86,9 @@ jobs:
           ./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
           cp user_config.toml data/test/config/user_config.toml
 
-      # Targeted subset: the transfer and storage paths where NFS-only failures live.
-      # --no-tests=fail turns a filter that matches nothing into a failure rather than a silent pass
-      - name: Run NFS-sensitive rust tests
+      # Nightly and non-blocking, so run the whole suite on NFS rather than a guessed subset —
+      # NFS-only failures can surface anywhere, not just in the transfer/storage paths.
+      - name: Run oxen rust tests
         run: |
           RUST_LOG=warn,liboxen=debug \
             ./target/debug/oxen-server start --test > oxen-server.log 2>&1 &
@@ -99,8 +99,7 @@ jobs:
             if [ "$i" -eq 100 ]; then echo "oxen-server did not become healthy"; exit 1; fi
             sleep 0.1
           done
-          cargo nextest run --workspace --profile ci --no-tests=fail \
-            -E 'test(/clone|pull|push|fetch|download|checkout|chunk|combine/)'
+          cargo nextest run --workspace --profile ci
 
       # Publish the server log so NFS failures on the server side (its SYNC_DIR is on the
       # NFS mount) can be inspected after the fact.
