@@ -41,6 +41,37 @@ use crate::{repositories, util};
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::merkle_tree::node::{CommitNode, DirNode};
 
+/// Persist one path→hash entry into a commit's dir_hash_db.
+///
+/// Keys are canonicalized to forward slashes so a directory is looked up by the same path on
+/// every platform, keeping a Windows client (which writes `\` separators into `PathBuf`) and
+/// a Linux server agreeing on directory keys.
+fn put_dir_hash(
+    dir_hash_db: &DBWithThreadMode<SingleThreaded>,
+    path: &Path,
+    hash: &MerkleHash,
+) -> Result<(), OxenError> {
+    match path.to_str() {
+        Some(path_str) => str_val_db::put(
+            dir_hash_db,
+            util::fs::to_unix_str(path_str),
+            &hash.to_string(),
+        )?,
+        None => log::error!("Failed to convert path to string: {path:?}"),
+    }
+    Ok(())
+}
+
+fn put_dir_hashes(
+    dir_hash_db: &DBWithThreadMode<SingleThreaded>,
+    dir_hashes: &HashMap<PathBuf, MerkleHash>,
+) -> Result<(), OxenError> {
+    for (path, hash) in dir_hashes {
+        put_dir_hash(dir_hash_db, path, hash)?;
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct EntryVNode {
     pub id: MerkleHash,
@@ -261,13 +292,7 @@ pub(crate) fn commit_dir_entries_with_parents(
         None => (HashMap::new(), None),
     };
 
-    for (path, hash) in &dir_hashes {
-        if let Some(path_str) = path.to_str() {
-            str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
-        } else {
-            log::error!("Failed to convert path to string: {path:?}");
-        }
-    }
+    put_dir_hashes(&dir_hash_db, &dir_hashes)?;
 
     let mut commit_db = MerkleNodeDB::open_read_write(repo.merkle_node_store(), &node, parent_id)?;
     write_commit_entries(
@@ -355,13 +380,7 @@ pub fn commit_dir_entries_new(
         None => (HashMap::new(), None),
     };
 
-    for (path, hash) in &dir_hashes {
-        if let Some(path_str) = path.to_str() {
-            str_val_db::put(&dir_hash_db, path_str, &hash.to_string())?;
-        } else {
-            log::error!("Failed to convert path to string: {path:?}");
-        }
-    }
+    put_dir_hashes(&dir_hash_db, &dir_hashes)?;
 
     let mut commit_db = MerkleNodeDB::open_read_write(repo.merkle_node_store(), &node, parent_id)?;
 
@@ -467,13 +486,7 @@ pub fn commit_dir_entries(
         None => HashMap::new(),
     };
 
-    for (path, hash) in &dir_hashes {
-        if let Some(path_str) = path.to_str() {
-            str_val_db::put(&dir_hash_db, path_str, &hash.to_owned().to_string())?;
-        } else {
-            log::error!("Failed to convert path to string: {path:?}");
-        }
-    }
+    put_dir_hashes(&dir_hash_db, &dir_hashes)?;
 
     let mut commit_db = MerkleNodeDB::open_read_write(repo.merkle_node_store(), &node, None)?;
     write_commit_entries(
@@ -776,11 +789,7 @@ fn write_commit_entries(
     commit_db.add_child(&dir_node)?;
     total_written += 1;
 
-    str_val_db::put(
-        dir_hash_db,
-        root_path.to_str().unwrap(),
-        &dir_node.hash().to_string(),
-    )?;
+    put_dir_hash(dir_hash_db, &root_path, dir_node.hash())?;
     let dir_db =
         MerkleNodeDB::open_read_write(repo.merkle_node_store(), &dir_node, Some(commit_id))?;
     let mut maybe_dir_db = Some(dir_db);
@@ -819,9 +828,9 @@ fn cache_invalidate_dir_hash_db<'a>(
                 let child_path = PathBuf::from(dir_node.name());
                 // `child_path` already contains the full relative path
                 // (e.g., "annotations/train"), so use it directly as the key
-                let path_str = child_path.to_string_lossy();
+                let path_str = util::fs::to_unix_str(&child_path);
                 log::debug!("deleting removed dir hash: {path_str}");
-                str_val_db::delete(dir_hash_db, path_str)?;
+                str_val_db::delete(dir_hash_db, &path_str)?;
             }
         }
     }
@@ -931,11 +940,7 @@ fn r_create_dir_node(
                         dir_node
                     };
 
-                    str_val_db::put(
-                        dir_hash_db,
-                        dir_path.to_str().unwrap(),
-                        &dir_node.hash().to_string(),
-                    )?;
+                    put_dir_hash(dir_hash_db, &dir_path, dir_node.hash())?;
                 }
                 EMerkleTreeNode::File(file_node) => {
                     let mut file_node = file_node.clone();

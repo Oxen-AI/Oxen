@@ -256,7 +256,9 @@ impl CommitMerkleTree {
                     let key = str::from_utf8(&key)?;
                     let value = str::from_utf8(&value)?;
                     let hash = value.parse()?;
-                    dir_hashes.insert(PathBuf::from(key), hash);
+                    // Heal legacy backslash keys from Windows clients: repo paths are
+                    // slash-separated, so a backslash key never matches a lookup.
+                    dir_hashes.insert(PathBuf::from(crate::util::fs::linux_path_str(key)), hash);
                 }
                 _ => {
                     return Err(OxenError::basic_str(
@@ -614,6 +616,64 @@ mod tests {
     use crate::repositories;
 
     use test::add_n_files_m_dirs;
+
+    /// The v0.19.0 reader must heal legacy backslash keys the same way `v_latest` does; these
+    /// older repos are the ones most likely to carry keys written by a pre-fix Windows client.
+    /// See the matching `v_latest` test for why this can only be reproduced by injecting a
+    /// backslash key and reading it back on a slash-separated host.
+    #[tokio::test]
+    async fn test_dir_hashes_heal_windows_backslash_keys_v0_19_0() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|dir| async move {
+            let repo = repositories::init::init_with_version(dir, MinOxenVersion::V0_19_0)?;
+
+            let child_dir = repo.path.join("assets").join("characters");
+            crate::util::fs::create_dir_all(&child_dir)?;
+            test::write_txt_file_to_path(child_dir.join("a.txt"), "hi")?;
+            repositories::add(&repo, &repo.path).await?;
+            let commit = repositories::commits::commit(&repo, "seed nested dir")?;
+
+            let nested = PathBuf::from("assets/characters");
+            let healthy = CommitMerkleTree::dir_hashes(&repo, &commit)?;
+            let hash = *healthy
+                .get(&nested)
+                .expect("nested dir should be in a healthy dir_hashes");
+
+            let db_path =
+                crate::core::db::dir_hashes::dir_hashes_db::dir_hash_db_path_from_commit_id(
+                    &repo, &commit.id,
+                );
+            crate::core::db::dir_hashes::dir_hashes_db::remove_from_cache_with_children(&db_path)?;
+            {
+                let opts = crate::core::db::key_val::opts::default();
+                let db: rocksdb::DBWithThreadMode<rocksdb::SingleThreaded> =
+                    rocksdb::DBWithThreadMode::open(&opts, &db_path)?;
+                crate::core::db::key_val::str_val_db::delete(&db, "assets/characters")?;
+                crate::core::db::key_val::str_val_db::put(
+                    &db,
+                    "assets\\characters",
+                    &hash.to_string(),
+                )?;
+            }
+            crate::core::db::dir_hashes::dir_hashes_db::remove_from_cache_with_children(&db_path)?;
+
+            let healed = CommitMerkleTree::dir_hashes(&repo, &commit)?;
+            assert!(
+                healed.contains_key(&nested),
+                "backslash key should load as the slash path {nested:?}"
+            );
+            assert!(
+                !healed.keys().any(|k| k.to_string_lossy().contains('\\')),
+                "no backslash keys should survive the load"
+            );
+            assert!(
+                repositories::tree::get_dir_with_children(&repo, &commit, &nested, None)?.is_some(),
+                "get_dir_with_children should resolve {nested:?} after the heal"
+            );
+
+            Ok(())
+        })
+        .await
+    }
 
     #[tokio::test]
     async fn test_load_dir_nodes_v0_19_0() -> Result<(), OxenError> {
