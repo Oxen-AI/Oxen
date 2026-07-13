@@ -143,6 +143,11 @@ impl LocalRepository {
         config: RepositoryConfig,
         server_s3_opts: Option<&S3Opts>,
     ) -> Result<LocalRepository, OxenError> {
+        // Reject a repo whose on-disk format predates what this build supports (e.g. a config
+        // still pinned to 0.19.0) with a clear error, rather than letting the unsupported version
+        // surface as a panic when it is later read.
+        MinOxenVersion::or_earliest(config.min_version.clone())?;
+
         let path = path.as_ref().to_path_buf();
         let storage_config = config.storage.unwrap_or_default();
         let version_store = create_version_store(&path, &storage_config, server_s3_opts)?;
@@ -249,12 +254,9 @@ impl LocalRepository {
     }
 
     pub fn min_version(&self) -> MinOxenVersion {
-        match MinOxenVersion::or_earliest(self.min_version.clone()) {
-            Ok(version) => version,
-            Err(err) => {
-                panic!("Invalid repo version\n{err}")
-            }
-        }
+        // The stored version is validated at construction (`new_with_server_opts`), so this
+        // always parses; fall back to LATEST rather than panic.
+        MinOxenVersion::or_earliest(self.min_version.clone()).unwrap_or(MinOxenVersion::LATEST)
     }
 
     pub fn set_remote_name(&mut self, name: impl AsRef<str>) {
@@ -654,6 +656,18 @@ mod tests {
     use crate::model::LocalRepository;
     use crate::test;
     use tempfile::TempDir;
+
+    #[test]
+    fn test_new_rejects_unsupported_repo_version() {
+        // A repo whose config is still pinned to a dropped format (e.g. 0.19.0) must surface a
+        // clean UnsupportedRepoVersion error at load, not panic when the version is later read.
+        let config = RepositoryConfig {
+            min_version: Some("0.19.0".to_string()),
+            ..Default::default()
+        };
+        let result = LocalRepository::new("unused/path", config);
+        assert!(matches!(result, Err(OxenError::UnsupportedRepoVersion(_))));
+    }
 
     #[tokio::test]
     async fn test_mtime_matches_honors_tolerance() -> Result<(), OxenError> {

@@ -67,7 +67,7 @@ pub struct FileNode {
 impl FileNode {
     pub fn new(repo: &LocalRepository, opts: FileNodeOpts) -> Result<Self, OxenError> {
         match repo.min_version() {
-            MinOxenVersion::LATEST | MinOxenVersion::V0_19_0 => Ok(Self {
+            MinOxenVersion::LATEST => Ok(Self {
                 node: EFileNode::V0_25_0(FileNodeDataV0_25_0 {
                     node_type: MerkleTreeNodeType::File,
                     name: opts.name,

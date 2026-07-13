@@ -28,8 +28,7 @@ pub fn get_file(
     path: impl AsRef<Path>,
 ) -> Result<Option<FileNode>, OxenError> {
     match repo.min_version() {
-        MinOxenVersion::V0_19_0 => core::v_old::v0_19_0::entries::get_file(repo, commit, path),
-        _ => core::v_latest::entries::get_file(repo, commit, path),
+        MinOxenVersion::LATEST => core::v_latest::entries::get_file(repo, commit, path),
     }
 }
 
@@ -117,8 +116,7 @@ pub fn list_directory_w_workspace_depth(
 
 pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<(), OxenError> {
     match repo.min_version() {
-        MinOxenVersion::V0_19_0 => panic!("update_metadata not implemented for oxen v0.19.0"),
-        _ => core::v_latest::entries::update_metadata(repo, revision),
+        MinOxenVersion::LATEST => core::v_latest::entries::update_metadata(repo, revision),
     }
 }
 
@@ -139,10 +137,9 @@ pub fn get_meta_entry(
         resource: PathBuf::from(&commit.id).join(path),
     };
     match repo.min_version() {
-        MinOxenVersion::V0_19_0 => {
-            core::v_old::v0_19_0::entries::get_meta_entry(repo, &parsed_resource, path)
+        MinOxenVersion::LATEST => {
+            core::v_latest::entries::get_meta_entry(repo, &parsed_resource, path)
         }
-        _ => core::v_latest::entries::get_meta_entry(repo, &parsed_resource, path),
     }
 }
 

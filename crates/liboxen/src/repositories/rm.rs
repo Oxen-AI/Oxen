@@ -37,7 +37,6 @@ async fn p_rm(
     repo: &LocalRepository,
     opts: &RmOpts,
 ) -> Result<(), OxenError> {
-    log::debug!("Version found: V0_19_0");
     core::v_latest::rm::rm(paths, repo, opts).await?;
     Ok(())
 }

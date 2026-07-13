@@ -5,7 +5,6 @@ use std::fmt;
 use time::OffsetDateTime;
 
 use crate::core::v_latest::model::merkle_tree::node::commit_node::CommitNodeData as CommitNodeDataV0_25_0;
-use crate::core::v_old::v0_19_0::model::merkle_tree::node::commit_node::CommitNodeData as CommitNodeDataV0_19_0;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository};
@@ -35,28 +34,16 @@ pub struct CommitNodeOpts {
 pub enum ECommitNode {
     // This is for backwards compatibility to load older versions from disk
     V0_25_0(CommitNodeDataV0_25_0),
-    V0_19_0(CommitNodeDataV0_19_0),
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct CommitNode {
-    node: ECommitNode,
+    pub node: ECommitNode,
 }
 
 impl CommitNode {
     pub fn new(repo: &LocalRepository, opts: CommitNodeOpts) -> Result<CommitNode, OxenError> {
         match repo.min_version() {
-            MinOxenVersion::V0_19_0 => Ok(CommitNode {
-                node: ECommitNode::V0_19_0(CommitNodeDataV0_19_0 {
-                    hash: opts.hash,
-                    parent_ids: opts.parent_ids,
-                    email: opts.email,
-                    author: opts.author,
-                    message: opts.message,
-                    timestamp: opts.timestamp,
-                    node_type: MerkleTreeNodeType::Commit,
-                }),
-            }),
             MinOxenVersion::LATEST => Ok(CommitNode {
                 node: ECommitNode::V0_25_0(CommitNodeDataV0_25_0 {
                     hash: opts.hash,
@@ -110,40 +97,17 @@ impl CommitNode {
                 message: commit.message.clone(),
                 timestamp: commit.timestamp,
             },
-            ECommitNode::V0_19_0(ref commit) => CommitNodeOpts {
-                hash: commit.hash,
-                parent_ids: commit.parent_ids.clone(),
-                email: commit.email.clone(),
-                author: commit.author.clone(),
-                message: commit.message.clone(),
-                timestamp: commit.timestamp,
-            },
         }
     }
 
     #[inline(always)]
     pub fn deserialize(data: &[u8]) -> Result<CommitNode, rmp_serde::decode::Error> {
-        // In order to support versions that didn't have the enum,
-        // if it fails we will fall back to the old struct, then populate the enum
-        let commit: CommitNode = match rmp_serde::from_slice(data) {
-            Ok(node) => node,
-            Err(_) => {
-                // This is a fallback for old versions of the commit node
-                log::debug!("Deserializing old commit node version");
-                let commit: CommitNodeDataV0_19_0 = rmp_serde::from_slice(data)?;
-                log::debug!("Deserialized old commit node version: {commit:?}");
-                Self {
-                    node: ECommitNode::V0_19_0(commit),
-                }
-            }
-        };
-        Ok(commit)
+        rmp_serde::from_slice(data)
     }
 
     fn node(&self) -> &dyn TCommitNode {
         match self.node {
             ECommitNode::V0_25_0(ref commit) => commit,
-            ECommitNode::V0_19_0(ref commit) => commit,
         }
     }
 
