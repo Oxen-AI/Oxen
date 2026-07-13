@@ -39,10 +39,10 @@ impl RemoteRepository {
         }
     }
 
-    pub fn min_version(&self) -> MinOxenVersion {
-        // A reachable remote reports a version this build supports; anything else falls back to
-        // LATEST rather than panicking here.
-        MinOxenVersion::or_earliest(self.min_version.clone()).unwrap_or(MinOxenVersion::LATEST)
+    /// The repo-format version the remote reports. Errors with `UnsupportedRepoVersion` when the
+    /// remote's version predates what this build can read.
+    pub fn min_version(&self) -> Result<MinOxenVersion, OxenError> {
+        MinOxenVersion::or_earliest(self.min_version.clone())
     }
 
     /// User friendly url for the remote repository

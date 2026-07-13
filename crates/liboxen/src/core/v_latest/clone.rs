@@ -33,7 +33,7 @@ pub async fn clone_repo(
     local_repo.version_store().init().await?;
     repo_path.clone_into(&mut local_repo.path);
     local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
-    local_repo.set_min_version(remote_repo.min_version());
+    local_repo.set_min_version(remote_repo.min_version()?);
     local_repo.set_subtree_paths(opts.fetch_opts.subtree_paths.clone());
     local_repo.set_depth(opts.fetch_opts.depth);
 
@@ -96,7 +96,7 @@ pub async fn clone_repo_remote_mode(
     local_repo.version_store().init().await?;
     repo_path.clone_into(&mut local_repo.path);
     local_repo.set_remote(DEFAULT_REMOTE_NAME, &remote_repo.remote.url);
-    local_repo.set_min_version(remote_repo.min_version());
+    local_repo.set_min_version(remote_repo.min_version()?);
     local_repo.set_remote_mode(Some(true));
 
     if opts.is_vfs {
