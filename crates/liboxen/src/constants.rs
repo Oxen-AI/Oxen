@@ -215,6 +215,10 @@ pub const DEFAULT_PAGE_NUM: usize = 1;
 /// Minimum allowable oxen version to push or pull data
 pub const MIN_OXEN_VERSION: MinOxenVersion = MinOxenVersion::LATEST;
 
+/// Minimum client (CLI) version the server accepts on the wire. A standalone client-protocol
+/// floor, independent of any repo/node format version.
+pub const MIN_OXEN_CLIENT_VERSION: &str = "0.36.0";
+
 /// Filepath used to track repo and server-level migration status
 pub const LAST_MIGRATION_FILE: &str = "last_migration.txt";
 
