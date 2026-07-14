@@ -180,9 +180,10 @@ jobs:
           }
 
       - name: Save dependency build tree
-        # Persist even when a build step failed, so a workspace bug doesn't throw
-        # away the dependency compiles this cache exists to reuse.
-        if: ${{ !cancelled() }}
+        # Only cache a tree from a fully successful build. A failed build can
+        # leave the tree incomplete, and saving it under the exact key would make
+        # later runs restore that partial tree and rebuild every time.
+        if: success()
         run: |
           # Skip only on an exact-key hit. A fallback restore still has to write
           # the tree under the current key so the next release hits exactly.
