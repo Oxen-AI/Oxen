@@ -359,8 +359,13 @@ async fn ensure_name_index(repo: &LocalRepository) -> Result<(), OxenError> {
                 Err(join_err) => {
                     // The blocking task panicked after `get_index` may have created
                     // the dir; invalidate so a retry rebuilds rather than trusting a
-                    // never-populated index.
-                    invalidate_name_index(repo);
+                    // never-populated index. The cleanup does filesystem IO, so it
+                    // runs on a blocking thread rather than the async worker.
+                    let repo_for_cleanup = repo.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        invalidate_name_index(&repo_for_cleanup);
+                    })
+                    .await;
                     Err(OxenError::basic_str(format!(
                         "spawn_blocking join error: {join_err}"
                     )))
