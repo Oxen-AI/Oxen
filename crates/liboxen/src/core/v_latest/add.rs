@@ -25,7 +25,8 @@ use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::workspace::Workspace;
 use crate::model::{Commit, EntryDataType, MerkleHash, StagedEntryStatus};
 use crate::opts::{GlobOpts, RmOpts};
-use crate::storage::version_store::VersionStore;
+use crate::storage::chunked::should_chunk;
+use crate::storage::version_store::{ContentFormat, VersionStore};
 use crate::{error::OxenError, model::LocalRepository};
 use crate::{repositories, util};
 use derive_more::FromStr;
@@ -504,20 +505,17 @@ pub async fn process_add_dir(
                                             &conflicts,
                                         ) {
                                             Ok(Some(node)) => {
-                                                let file = tokio::fs::File::open(&path).await?;
-                                                let size = file.metadata().await?.len();
-                                                let reader = tokio::io::BufReader::new(file);
-                                                version_store
-                                                    .store_version_from_reader(
-                                                        &file_status.hash.to_string(),
-                                                        Box::new(reader),
-                                                        size,
-                                                    )
-                                                    .await?;
-
                                                 if let EMerkleTreeNode::File(file_node) =
                                                     &node.node.node
                                                 {
+                                                    store_file_version(
+                                                        &repo,
+                                                        &version_store,
+                                                        file_node,
+                                                        &file_status.hash,
+                                                        &path,
+                                                    )
+                                                    .await?;
                                                     byte_counter_clone.fetch_add(
                                                         file_node.num_bytes(),
                                                         Ordering::Relaxed,
@@ -653,6 +651,42 @@ pub fn get_file_node(
     Ok(Some(file_node.clone()))
 }
 
+/// Copy a file's bytes into the version store: as a chunked version (manifest +
+/// blocks) when the repository's content format is block-v1 and the chunking policy
+/// selects the file, as a whole-file blob otherwise. Either way the stored version
+/// is verified against `hash` before publication.
+async fn store_file_version(
+    repo: &LocalRepository,
+    version_store: &Arc<dyn VersionStore>,
+    file_node: &FileNode,
+    hash: &MerkleHash,
+    path: &Path,
+) -> Result<(), OxenError> {
+    let file = tokio::fs::File::open(path).await?;
+    let size = file.metadata().await?.len();
+    let reader = tokio::io::BufReader::new(file);
+    let use_blocks = repo.storage_config().content_format == ContentFormat::BlockV1
+        && should_chunk(file_node.data_type(), size);
+    match version_store.chunked() {
+        Some(chunked) if use_blocks => {
+            chunked
+                .store_version_chunked(
+                    &hash.to_string(),
+                    file_node.data_type(),
+                    file_node.extension(),
+                    Box::new(reader),
+                )
+                .await?;
+        }
+        _ => {
+            version_store
+                .store_version_from_reader(&hash.to_string(), Box::new(reader), size)
+                .await?;
+        }
+    }
+    Ok(())
+}
+
 async fn add_file_inner(
     repo: &LocalRepository,
     repo_path: &PathBuf,
@@ -671,12 +705,6 @@ async fn add_file_inner(
 
     let file_name = path.file_name().unwrap_or_default().to_string_lossy();
     let file_status = determine_file_status(repo, &maybe_dir_node, &file_name, path).await?;
-    let file = tokio::fs::File::open(path).await?;
-    let size = file.metadata().await?.len();
-    let reader = tokio::io::BufReader::new(file);
-    version_store
-        .store_version_from_reader(&file_status.hash.to_string(), Box::new(reader), size)
-        .await?;
 
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
     let conflicts: HashSet<PathBuf> = repositories::merge::list_conflicts(repo)?
@@ -684,7 +712,10 @@ async fn add_file_inner(
         .map(|conflict| conflict.merge_entry.path)
         .collect();
 
-    process_add_file(
+    // Stage first, then store the bytes — the same order as the bulk add path —
+    // so the staged FileNode's data type and extension can drive the chunking
+    // policy inside `store_file_version`.
+    let staged_node = process_add_file(
         repo,
         repo_path,
         &file_status,
@@ -692,7 +723,13 @@ async fn add_file_inner(
         path,
         &seen_dirs,
         &conflicts,
-    )
+    )?;
+    if let Some(staged) = &staged_node
+        && let EMerkleTreeNode::File(file_node) = &staged.node.node
+    {
+        store_file_version(repo, version_store, file_node, &file_status.hash, path).await?;
+    }
+    Ok(staged_node)
 }
 
 pub async fn determine_file_status(

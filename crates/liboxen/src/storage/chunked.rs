@@ -20,9 +20,10 @@ pub mod error;
 pub mod manifest;
 pub mod policy;
 pub mod registry;
+pub mod store;
 
 pub use block::{BlockChunk, BlockWriter, SealedBlock, parse_block_footer, verify_block};
-pub use block_engine::BlockEngine;
+pub use block_engine::{BlockEngine, ReconstructReader};
 pub use chunk_index::{ChunkIndex, ChunkLocation};
 pub use chunker::{Chunker, RawChunk};
 pub use compressor::{Compressor, EncodedChunk, decode_chunk, encode_chunk};
@@ -30,6 +31,7 @@ pub use error::ChunkedError;
 pub use manifest::{ChunkEntry, ChunkManifest};
 pub use policy::{EncodePolicy, dedup_min_file_size, encode_policy, should_chunk};
 pub use registry::{ChunkerId, CodecId, TransformId, chunker, codec};
+pub use store::ChunkedVersionStore;
 
 /// Minimum content-defined chunk size (FastCDC `min_size`).
 pub const MIN_CHUNK_SIZE: u32 = 8 * 1024;

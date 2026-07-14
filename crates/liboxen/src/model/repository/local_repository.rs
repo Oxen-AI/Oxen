@@ -90,6 +90,13 @@ impl LocalRepository {
         &self.storage_config
     }
 
+    /// Set the repository's content storage format (persisted on the next `save`).
+    /// Activating `ContentFormat::BlockV1` makes eligible new writes store chunked;
+    /// existing versions keep their current representation until migrated.
+    pub fn set_content_format(&mut self, format: crate::storage::version_store::ContentFormat) {
+        self.storage_config.content_format = format;
+    }
+
     /// Server-wide S3 opts the repo was constructed with (always `None` on CLI builds).
     /// Operations that derive a new `LocalRepository` from this one — workspace creation, for
     /// example — should pass this back into the constructor so the derived repo's S3 version
@@ -823,6 +830,7 @@ mod tests {
         let custom = StorageConfig {
             kind: StorageKind::Local,
             versions_path: Some(PathBuf::from("/mnt/nfs/customer/.oxen/versions/files")),
+            content_format: Default::default(),
         };
         let repo = LocalRepository::new(
             &repo_path,

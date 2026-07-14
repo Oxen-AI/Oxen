@@ -53,6 +53,24 @@ mod tests {
     use futures::future;
     use std::collections::HashSet;
     use std::path::PathBuf;
+
+    /// Pushing a block-v1 repository fails early with a structured error — the
+    /// block wire protocol doesn't exist yet, and a confusing mid-transfer failure
+    /// (or a silent whole-file fallback) is never acceptable.
+    #[tokio::test]
+    async fn test_push_block_v1_repo_is_rejected() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|mut repo| async move {
+            repo.set_content_format(crate::storage::ContentFormat::BlockV1);
+            repo.save()?;
+            let result = repositories::push(&repo).await;
+            assert!(
+                matches!(result, Err(OxenError::BlockFormatPushNotSupported)),
+                "expected BlockFormatPushNotSupported, got {result:?}"
+            );
+            Ok(())
+        })
+        .await
+    }
     use std::sync::Arc;
 
     #[tokio::test]

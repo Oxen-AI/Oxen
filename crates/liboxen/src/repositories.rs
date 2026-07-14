@@ -228,6 +228,7 @@ pub async fn create(
             .map(|kind| crate::storage::StorageConfig {
                 kind,
                 versions_path: None,
+                content_format: Default::default(),
             }),
         ..Default::default()
     };

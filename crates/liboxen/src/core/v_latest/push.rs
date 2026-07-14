@@ -16,7 +16,7 @@ use crate::model::{
 };
 
 use crate::opts::PushOpts;
-use crate::storage::VersionLocation;
+use crate::storage::{ContentFormat, VersionLocation};
 use crate::util::concurrency;
 use crate::{api, repositories};
 
@@ -37,6 +37,14 @@ pub async fn push_remote_branch(
     repo: &LocalRepository,
     opts: &PushOpts,
 ) -> Result<Branch, OxenError> {
+    // Hard gate, before any mutation: pushing chunked (block-v1) versions needs the
+    // block wire protocol, which is not implemented yet. Fail early and actionably
+    // rather than confusingly partway through the transfer — never a silent
+    // whole-file fallback (see docs/block_level_dedup_plan.md §8).
+    if repo.storage_config().content_format == ContentFormat::BlockV1 {
+        return Err(OxenError::BlockFormatPushNotSupported);
+    }
+
     // start a timer
     let start = std::time::Instant::now();
 

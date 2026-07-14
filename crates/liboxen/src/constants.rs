@@ -110,6 +110,15 @@ pub const VERSION_FILE_NAME: &str = "data";
 pub const VERSION_CHUNK_FILE_NAME: &str = "chunk";
 /// Chunks directory for version files
 pub const VERSION_CHUNKS_DIR: &str = "chunks";
+/// File name of a chunked version's manifest, a sibling of where its whole-file
+/// blob (`data`) would live. A chunked version has a manifest instead of `data`.
+pub const VERSION_MANIFEST_FILE_NAME: &str = "manifest";
+/// Directory of content-addressed blocks holding chunked versions' payloads
+/// (sibling of the versions files dir, e.g. `.oxen/versions/blocks`)
+pub const BLOCKS_DIR: &str = "blocks";
+/// Directory of the store-local LMDB chunk index (sibling of the versions files
+/// dir, e.g. `.oxen/versions/chunk_index`)
+pub const CHUNK_INDEX_DIR: &str = "chunk_index";
 /// merge/ is where any merge conflicts are stored so that we can get rid of them
 pub const MERGE_DIR: &str = "merge";
 /// mods/ is where we can stage appends, modifications, deletions to files to be merged later

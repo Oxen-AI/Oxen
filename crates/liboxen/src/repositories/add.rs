@@ -135,6 +135,138 @@ A: Oxen.ai
         .await
     }
 
+    /// On a block-v1 repository, `oxen add` stores eligible files chunked (a
+    /// manifest plus blocks, no whole-file blob) while small files keep the
+    /// whole-file path, and commit/restore round-trips the exact bytes through the
+    /// transparent read path.
+    #[tokio::test]
+    async fn test_add_commit_restore_block_v1_repo() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|mut repo| async move {
+            use crate::constants::{FILES_DIR, VERSIONS_DIR};
+            use crate::opts::RestoreOpts;
+            use crate::storage::ContentFormat;
+            use crate::storage::chunked::dedup_min_file_size;
+
+            repo.set_content_format(ContentFormat::BlockV1);
+            repo.save()?;
+
+            // A compressible CSV over the chunking floor, and a file under it.
+            let floor = dedup_min_file_size() as usize;
+            let mut big_csv = String::from("file,label\n");
+            let mut row = 0u64;
+            while big_csv.len() < floor + floor / 4 {
+                big_csv.push_str(&format!("images/img_{row}.jpg,label_{}\n", row % 7));
+                row += 1;
+            }
+            let big_path = repo.path.join("train.csv");
+            util::fs::write_to_path(&big_path, &big_csv)?;
+            let small_path = repo.path.join("README.md");
+            util::fs::write_to_path(&small_path, "# small file")?;
+
+            repositories::add(&repo, &repo.path).await?;
+            let commit = repositories::commit(&repo, "adding train.csv")?;
+
+            // The big file landed as manifest + blocks; the small one as a blob.
+            let versions_dir = util::fs::oxen_hidden_dir(&repo.path)
+                .join(VERSIONS_DIR)
+                .join(FILES_DIR);
+            let version_dir = |hash: &str| versions_dir.join(&hash[..2]).join(&hash[2..]);
+            let big_hash = util::hasher::hash_file_contents(&big_path)?;
+            assert!(version_dir(&big_hash).join("manifest").exists());
+            assert!(!version_dir(&big_hash).join("data").exists());
+            let small_hash = util::hasher::hash_file_contents(&small_path)?;
+            assert!(!version_dir(&small_hash).join("manifest").exists());
+            assert!(version_dir(&small_hash).join("data").exists());
+            let blocks_dir = util::fs::oxen_hidden_dir(&repo.path)
+                .join(VERSIONS_DIR)
+                .join(crate::constants::BLOCKS_DIR);
+            assert!(blocks_dir.exists(), "chunked add must produce blocks");
+
+            // Transparent reads serve the chunked version's exact bytes.
+            let stored = repo.version_store().get_version(&big_hash).await?;
+            assert_eq!(stored, big_csv.as_bytes());
+
+            // Restore both files from the commit and verify the working bytes.
+            util::fs::remove_file(&big_path)?;
+            util::fs::remove_file(&small_path)?;
+            repositories::restore::restore(
+                &repo,
+                RestoreOpts::from_path_ref("train.csv", commit.id.clone()),
+            )
+            .await?;
+            repositories::restore::restore(
+                &repo,
+                RestoreOpts::from_path_ref("README.md", commit.id.clone()),
+            )
+            .await?;
+            assert_eq!(util::fs::read_from_path(&big_path)?, big_csv);
+            assert_eq!(util::fs::read_from_path(&small_path)?, "# small file");
+
+            // And the working tree is clean against the commit.
+            let status = repositories::status(&repo).await?;
+            assert!(status.is_clean(), "expected clean status, got {status:?}");
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// The dedup this feature exists for, end to end: committing an appended
+    /// version of a large file reuses the unchanged chunks — the second commit
+    /// adds at most one small block for the new tail, not a second copy.
+    #[tokio::test]
+    async fn test_add_block_v1_dedups_edited_file() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|mut repo| async move {
+            use crate::constants::{BLOCKS_DIR, VERSIONS_DIR};
+            use crate::storage::ContentFormat;
+            use crate::storage::chunked::dedup_min_file_size;
+
+            repo.set_content_format(ContentFormat::BlockV1);
+            repo.save()?;
+
+            let floor = dedup_min_file_size() as usize;
+            let mut csv = String::from("file,label\n");
+            let mut row = 0u64;
+            while csv.len() < floor * 2 {
+                csv.push_str(&format!("images/img_{row}.jpg,label_{}\n", row % 7));
+                row += 1;
+            }
+            let path = repo.path.join("train.csv");
+            util::fs::write_to_path(&path, &csv)?;
+            repositories::add(&repo, &path).await?;
+            repositories::commit(&repo, "original")?;
+
+            let blocks_dir = util::fs::oxen_hidden_dir(&repo.path)
+                .join(VERSIONS_DIR)
+                .join(BLOCKS_DIR);
+            let count_blocks = |dir: &Path| -> Result<usize, OxenError> {
+                let mut count = 0;
+                for prefix in std::fs::read_dir(dir)? {
+                    count += std::fs::read_dir(prefix?.path())?.count();
+                }
+                Ok(count)
+            };
+            let blocks_before = count_blocks(&blocks_dir)?;
+            assert!(blocks_before > 0);
+
+            // Label one more row: the labeling workload. Only the perturbed tail
+            // chunks are new, so at most one small block gets written.
+            csv.push_str("images/img_new.jpg,label_3\n");
+            util::fs::write_to_path(&path, &csv)?;
+            repositories::add(&repo, &path).await?;
+            repositories::commit(&repo, "one more label")?;
+
+            let blocks_after = count_blocks(&blocks_dir)?;
+            assert!(
+                blocks_after <= blocks_before + 1,
+                "appending one row must not re-store the file: {blocks_before} -> {blocks_after} blocks"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_command_add_file() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {

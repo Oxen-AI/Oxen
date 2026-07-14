@@ -3,42 +3,59 @@ use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::constants::{VERSION_CHUNK_FILE_NAME, VERSION_CHUNKS_DIR, VERSION_FILE_NAME};
+use crate::constants::{
+    BLOCKS_DIR, CHUNK_INDEX_DIR, STREAMING_BUF_SIZE, VERSION_CHUNK_FILE_NAME, VERSION_CHUNKS_DIR,
+    VERSION_FILE_NAME, VERSION_MANIFEST_FILE_NAME,
+};
 use crate::error::OxenError;
-use crate::model::MerkleHash;
+use crate::model::{EntryDataType, MerkleHash};
+use crate::storage::chunked::manifest::ChunkManifest;
+use crate::storage::chunked::{BlockEngine, ChunkedVersionStore, ReconstructReader, encode_policy};
 use crate::storage::version_store::{BoxedByteStream, VersionLocation, VersionStore};
 use crate::util::fs::AtomicFile;
+use crate::util::hasher::HashingReader;
 use crate::util::{concurrency, hasher};
 use crate::view::versions::CleanCorruptedVersionsResult;
 
 use async_trait::async_trait;
 use bytes::Bytes;
 use log;
-use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, OnceLock};
 use tokio::fs::{self, File, metadata};
 use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 use tokio::sync::Semaphore;
 use tokio::task::spawn_blocking;
-use tokio_util::io::ReaderStream;
+use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::io::{ReaderStream, SyncIoBridge};
 
 /// Local filesystem implementation of version storage
 #[derive(Debug)]
 pub struct LocalVersionStore {
     /// Root path where versions are stored
     root_path: PathBuf,
+    /// Lazily-opened block engine (blocks dir + LMDB chunk index) for chunked
+    /// versions; repos that never touch a chunked version pay nothing.
+    block_engine: OnceLock<Arc<BlockEngine>>,
 }
 
 impl LocalVersionStore {
     /// Create a new LocalVersionStore
+    ///
+    /// Chunked-version storage (the blocks dir and the LMDB chunk index) lives in
+    /// sibling directories of `root_path` — e.g. for the default
+    /// `.oxen/versions/files`, blocks land in `.oxen/versions/blocks` and the index
+    /// in `.oxen/versions/chunk_index` — so give each store a dedicated parent
+    /// directory.
     ///
     /// # Arguments
     /// * `root_path` - Base directory for version storage
     pub fn new(root_path: impl AsRef<Path>) -> Self {
         Self {
             root_path: root_path.as_ref().to_path_buf(),
+            block_engine: OnceLock::new(),
         }
     }
 
@@ -52,6 +69,28 @@ impl LocalVersionStore {
     /// Get the full path for a version file
     fn version_path(&self, hash: &str) -> PathBuf {
         self.version_dir(hash).join(VERSION_FILE_NAME)
+    }
+
+    /// Get the full path for a chunked version's manifest
+    fn manifest_path(&self, hash: &str) -> PathBuf {
+        self.version_dir(hash).join(VERSION_MANIFEST_FILE_NAME)
+    }
+
+    /// The block engine for chunked versions, opened on first use. Blocks and the
+    /// chunk index live as siblings of the versions files dir (`root_path`), e.g.
+    /// `.oxen/versions/blocks` and `.oxen/versions/chunk_index`.
+    fn engine(&self) -> Result<Arc<BlockEngine>, OxenError> {
+        if let Some(engine) = self.block_engine.get() {
+            return Ok(Arc::clone(engine));
+        }
+        let base = self.root_path.parent().unwrap_or(&self.root_path);
+        let engine = Arc::new(BlockEngine::open(
+            &base.join(BLOCKS_DIR),
+            &base.join(CHUNK_INDEX_DIR),
+        )?);
+        // A concurrent first call may have won the race; either engine is fine —
+        // the LMDB env is shared per-path, so both wrap the same underlying store.
+        Ok(Arc::clone(self.block_engine.get_or_init(|| engine)))
     }
 
     /// Get the directory containing all the chunks for a version file
@@ -69,6 +108,16 @@ impl LocalVersionStore {
     fn version_chunk_file(&self, hash: &str, offset: u64) -> PathBuf {
         self.version_chunk_dir(hash, offset)
             .join(VERSION_CHUNK_FILE_NAME)
+    }
+}
+
+/// Load the published manifest at `path`, if present. Sync on purpose; async
+/// callers wrap it in `spawn_blocking` per `docs/async_policy.md`.
+fn read_manifest_at(path: &Path) -> Result<Option<ChunkManifest>, OxenError> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(ChunkManifest::from_bytes(&bytes)?)),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -133,14 +182,41 @@ impl VersionStore for LocalVersionStore {
 
     async fn get_version_size(&self, hash: &str) -> Result<u64, OxenError> {
         let path = self.version_path(hash);
-        let metadata = fs::metadata(&path).await?;
-        Ok(metadata.len())
+        match fs::metadata(&path).await {
+            Ok(metadata) => Ok(metadata.len()),
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                // Chunked versions have a manifest instead of a `data` blob; the
+                // logical size lives in the manifest.
+                let manifest_path = self.manifest_path(hash);
+                let manifest = spawn_blocking(move || read_manifest_at(&manifest_path)).await??;
+                match manifest {
+                    Some(manifest) => Ok(manifest.file_size),
+                    None => Err(err.into()),
+                }
+            }
+            Err(err) => Err(err.into()),
+        }
     }
 
     async fn get_version(&self, hash: &str) -> Result<Vec<u8>, OxenError> {
         let path = self.version_path(hash);
-        let data = fs::read(&path).await?;
-        Ok(data)
+        match fs::read(&path).await {
+            Ok(data) => Ok(data),
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                let manifest_path = self.manifest_path(hash);
+                let engine = self.engine()?;
+                spawn_blocking(move || {
+                    let Some(manifest) = read_manifest_at(&manifest_path)? else {
+                        return Err(err.into());
+                    };
+                    let mut data = Vec::with_capacity(manifest.file_size as usize);
+                    engine.reconstruct_to(&manifest, &mut data)?;
+                    Ok(data)
+                })
+                .await?
+            }
+            Err(err) => Err(err.into()),
+        }
     }
 
     async fn get_version_derived_size(
@@ -155,11 +231,46 @@ impl VersionStore for LocalVersionStore {
 
     async fn get_version_stream(&self, hash: &str) -> Result<BoxedByteStream, OxenError> {
         let path = self.version_path(hash);
-        let file = File::open(&path).await?;
-        let reader = BufReader::new(file);
-        let stream = ReaderStream::new(reader);
-
-        Ok(Box::new(stream))
+        match File::open(&path).await {
+            Ok(file) => {
+                let reader = BufReader::new(file);
+                let stream = ReaderStream::new(reader);
+                Ok(Box::new(stream))
+            }
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                let manifest_path = self.manifest_path(hash);
+                let engine = self.engine()?;
+                let manifest = spawn_blocking(move || read_manifest_at(&manifest_path))
+                    .await??
+                    .ok_or(err)?;
+                // Channel hand-off: the sync reconstruction runs on the blocking
+                // pool, feeding the async stream through a bounded channel.
+                let (tx, rx) = tokio::sync::mpsc::channel::<std::io::Result<Bytes>>(2);
+                spawn_blocking(move || {
+                    let mut reader = ReconstructReader::new(engine, manifest);
+                    let mut buf = vec![0u8; STREAMING_BUF_SIZE];
+                    loop {
+                        match std::io::Read::read(&mut reader, &mut buf) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                if tx
+                                    .blocking_send(Ok(Bytes::copy_from_slice(&buf[..n])))
+                                    .is_err()
+                                {
+                                    break; // consumer dropped the stream
+                                }
+                            }
+                            Err(err) => {
+                                let _ = tx.blocking_send(Err(err));
+                                break;
+                            }
+                        }
+                    }
+                });
+                Ok(Box::new(ReceiverStream::new(rx)))
+            }
+            Err(err) => Err(err.into()),
+        }
     }
 
     async fn get_version_derived_stream(
@@ -207,27 +318,46 @@ impl VersionStore for LocalVersionStore {
         // caller (oxen restore / merge / etc.) can surface a useful hint pointing the user
         // at `oxen fetch --missing-files`. Real IO errors from the existence check (e.g.
         // permission denied on `.oxen/versions/`) propagate as-is.
-        match fs::try_exists(&version_path).await? {
-            true => {}
-            false => {
-                return Err(OxenError::VersionStoreDataMissing {
-                    hash: hash.to_string(),
-                    target_path: dest_path.to_path_buf().into(),
-                });
-            }
+        if fs::try_exists(&version_path).await? {
+            let dest_path = dest_path.to_path_buf();
+            spawn_blocking(move || {
+                AtomicFile::new(&dest_path)
+                    .with_mtime(mtime)
+                    .copy_from(&version_path)
+            })
+            .await??;
+            return Ok(());
         }
-        let dest_path = dest_path.to_path_buf();
+
+        // Chunked representation: reconstruct through the block engine, verifying
+        // the whole-file hash as the bytes are published (invariant: a checkout
+        // never lands unverified reconstructed bytes in the working tree).
+        let manifest_path = self.manifest_path(hash);
+        let engine = self.engine()?;
+        let expected_hash: MerkleHash = hash.parse()?;
+        let dest_path_buf = dest_path.to_path_buf();
+        let manifest = spawn_blocking(move || read_manifest_at(&manifest_path)).await??;
+        let Some(manifest) = manifest else {
+            return Err(OxenError::VersionStoreDataMissing {
+                hash: hash.to_string(),
+                target_path: dest_path.to_path_buf().into(),
+            });
+        };
         spawn_blocking(move || {
-            AtomicFile::new(&dest_path)
+            let mut reader = ReconstructReader::new(engine, manifest);
+            AtomicFile::new(&dest_path_buf)
+                .with_hash(expected_hash)
                 .with_mtime(mtime)
-                .copy_from(&version_path)
+                .stream(&mut reader)
         })
         .await??;
         Ok(())
     }
 
     async fn version_exists(&self, hash: &str) -> Result<bool, OxenError> {
-        Ok(self.version_path(hash).exists())
+        // A version is present as either a whole-file blob or a published manifest
+        // (a chunked version has a manifest instead of `data`).
+        Ok(self.version_path(hash).exists() || self.manifest_path(hash).exists())
     }
 
     async fn delete_version(&self, hash: &str) -> Result<(), OxenError> {
@@ -298,7 +428,30 @@ impl VersionStore for LocalVersionStore {
     ) -> Result<Vec<u8>, OxenError> {
         let version_file_path = self.version_path(hash);
 
-        let mut file = File::open(&version_file_path).await?;
+        let mut file = match File::open(&version_file_path).await {
+            Ok(file) => file,
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                // Chunked representation: a range read is a manifest binary search
+                // plus partial chunk decodes, with the same EOF semantics as the
+                // whole-file path below.
+                let manifest_path = self.manifest_path(hash);
+                let engine = self.engine()?;
+                return spawn_blocking(move || {
+                    let Some(manifest) = read_manifest_at(&manifest_path)? else {
+                        return Err(err.into());
+                    };
+                    if offset >= manifest.file_size || offset + size > manifest.file_size {
+                        return Err(OxenError::IO(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "beyond end of file",
+                        )));
+                    }
+                    engine.read_range(&manifest, offset, size)
+                })
+                .await?;
+            }
+            Err(err) => return Err(err.into()),
+        };
         let metadata = file.metadata().await?;
         let file_len = metadata.len();
 
@@ -581,6 +734,102 @@ impl VersionStore for LocalVersionStore {
     fn storage_kind(&self) -> crate::storage::StorageKind {
         crate::storage::StorageKind::Local
     }
+
+    fn chunked(&self) -> Option<&dyn ChunkedVersionStore> {
+        Some(self)
+    }
+}
+
+#[async_trait]
+impl ChunkedVersionStore for LocalVersionStore {
+    async fn store_version_chunked(
+        &self,
+        hash: &str,
+        data_type: &EntryDataType,
+        extension: &str,
+        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+    ) -> Result<ChunkManifest, OxenError> {
+        let manifest_path = self.manifest_path(hash);
+        let engine = self.engine()?;
+        let expected_hash: MerkleHash = hash.parse()?;
+        let policy = encode_policy(data_type, extension);
+        // The bridge must be constructed on the async runtime; its reads then run
+        // on the blocking pool inside the spawn_blocking below.
+        let mut sync_reader = SyncIoBridge::new(reader);
+        spawn_blocking(move || {
+            // Idempotent: a published manifest is never overwritten.
+            if let Some(existing) = read_manifest_at(&manifest_path)? {
+                return Ok(existing);
+            }
+            let manifest = engine.ingest(&mut sync_reader, &policy)?;
+            if manifest.file_hash != expected_hash {
+                // Blocks already written are unreferenced orphans, reclaimable by
+                // GC; nothing is published under the claimed hash.
+                return Err(OxenError::HashMismatch {
+                    path: manifest_path,
+                    expected: expected_hash,
+                    actual: manifest.file_hash,
+                });
+            }
+            AtomicFile::new(&manifest_path).write(&manifest.to_bytes()?)?;
+            Ok(manifest)
+        })
+        .await?
+    }
+
+    async fn get_manifest(&self, hash: &str) -> Result<Option<ChunkManifest>, OxenError> {
+        let manifest_path = self.manifest_path(hash);
+        spawn_blocking(move || read_manifest_at(&manifest_path)).await?
+    }
+
+    async fn put_manifest(&self, manifest: &ChunkManifest) -> Result<(), OxenError> {
+        let manifest_path = self.manifest_path(&manifest.file_hash.to_string());
+        let engine = self.engine()?;
+        let manifest = manifest.clone();
+        spawn_blocking(move || {
+            manifest.validate()?;
+            // No-op success: the store already holds this version's bytes, and two
+            // valid recipes for the same bytes may legitimately differ across
+            // chunker policies. The published manifest stays canonical.
+            if manifest_path.exists() {
+                return Ok(());
+            }
+            // Full streamed reconstruction (decision 11): the chunk list must
+            // reproduce exactly `file_size` bytes hashing to the claimed file hash
+            // before the manifest is published. A missing chunk fails here too.
+            let mut reader = ReconstructReader::new(engine, manifest.clone());
+            let mut hashing = HashingReader::new(&mut reader);
+            let reconstructed_size = std::io::copy(&mut hashing, &mut std::io::sink())?;
+            let actual = MerkleHash::new(hashing.digest128());
+            if reconstructed_size != manifest.file_size || actual != manifest.file_hash {
+                return Err(OxenError::HashMismatch {
+                    path: manifest_path,
+                    expected: manifest.file_hash,
+                    actual,
+                });
+            }
+            AtomicFile::new(&manifest_path).write(&manifest.to_bytes()?)
+        })
+        .await?
+    }
+
+    async fn missing_chunks(&self, hashes: &[u128]) -> Result<Vec<u128>, OxenError> {
+        let engine = self.engine()?;
+        let hashes = hashes.to_vec();
+        spawn_blocking(move || engine.index().missing(&hashes)).await?
+    }
+
+    async fn store_block(&self, hash: &str, data: Bytes) -> Result<(), OxenError> {
+        let engine = self.engine()?;
+        let block_hash = u128::from_str_radix(hash, 16)
+            .map_err(|_| OxenError::basic_str(format!("invalid block hash: {hash}")))?;
+        spawn_blocking(move || engine.store_block(block_hash, &data)).await?
+    }
+
+    async fn rebuild_chunk_index(&self) -> Result<u64, OxenError> {
+        let engine = self.engine()?;
+        spawn_blocking(move || engine.rebuild_index()).await?
+    }
 }
 
 #[cfg(test)]
@@ -591,7 +840,9 @@ mod tests {
 
     async fn setup() -> (TempDir, LocalVersionStore) {
         let temp_dir = TempDir::new().unwrap();
-        let store = LocalVersionStore::new(temp_dir.path());
+        // Mirror the production layout (`.oxen/versions/files`): the store's
+        // chunked-version storage lands in siblings of this `files` dir.
+        let store = LocalVersionStore::new(temp_dir.path().join("files"));
         store.init().await.unwrap();
         (temp_dir, store)
     }
@@ -966,5 +1217,210 @@ mod tests {
             .filter_map(|e| e.ok().map(|e| e.file_name()))
             .collect();
         assert!(names.is_empty(), "leftover entries: {names:?}");
+    }
+
+    mod chunked {
+        use super::*;
+        use futures::StreamExt;
+
+        /// Deterministic compressible pseudo-CSV, seeded for reproducibility.
+        fn csv_bytes(seed: u64, len: usize) -> Vec<u8> {
+            let mut out = Vec::with_capacity(len + 64);
+            let mut state = seed;
+            let mut row = 0u64;
+            while out.len() < len {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                out.extend_from_slice(
+                    format!("{row},image_{state:x}.jpg,label_{}\n", state % 10).as_bytes(),
+                );
+                row += 1;
+            }
+            out.truncate(len);
+            out
+        }
+
+        async fn store_chunked(
+            store: &LocalVersionStore,
+            data: &[u8],
+        ) -> Result<(String, ChunkManifest), OxenError> {
+            let hash = hasher::hash_buffer(data);
+            let manifest = store
+                .chunked()
+                .expect("local store supports chunked versions")
+                .store_version_chunked(
+                    &hash,
+                    &EntryDataType::Tabular,
+                    "csv",
+                    Box::new(Cursor::new(data.to_vec())),
+                )
+                .await?;
+            Ok((hash, manifest))
+        }
+
+        /// A chunked version reads identically to a whole-file version through
+        /// every transparent read API — no caller can tell the representations
+        /// apart.
+        #[tokio::test]
+        async fn chunked_version_reads_are_transparent() -> Result<(), OxenError> {
+            let (_temp_dir, store) = setup().await;
+            let data = csv_bytes(3, 2 * 1024 * 1024);
+            let (hash, manifest) = store_chunked(&store, &data).await?;
+
+            // The version exists with a manifest instead of a data blob.
+            assert!(store.version_exists(&hash).await?);
+            assert!(!store.version_path(&hash).exists());
+            assert!(store.manifest_path(&hash).exists());
+            assert_eq!(manifest.file_size, data.len() as u64);
+
+            // Whole-file reads.
+            assert_eq!(store.get_version_size(&hash).await?, data.len() as u64);
+            assert_eq!(store.get_version(&hash).await?, data);
+
+            // Streamed read.
+            let mut stream = store.get_version_stream(&hash).await?;
+            let mut streamed = Vec::new();
+            while let Some(chunk) = stream.next().await {
+                streamed.extend_from_slice(&chunk?);
+            }
+            assert_eq!(streamed, data);
+
+            // Range reads, including the same beyond-EOF error the blob path gives.
+            let range = store.get_version_chunk(&hash, 1000, 4096).await?;
+            assert_eq!(range, &data[1000..5096]);
+            assert!(matches!(
+                store
+                    .get_version_chunk(&hash, data.len() as u64 - 1, 2)
+                    .await,
+                Err(OxenError::IO(e)) if e.kind() == io::ErrorKind::UnexpectedEof
+            ));
+
+            // Working-tree publish: verified against the whole-file hash, mtime
+            // stamped.
+            let dest_dir = TempDir::new().unwrap();
+            let dest_path = dest_dir.path().join("restored.csv");
+            let mtime = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+            store.copy_version_to_path(&hash, &dest_path, mtime).await?;
+            assert_eq!(std::fs::read(&dest_path).unwrap(), data);
+            assert_eq!(
+                std::fs::metadata(&dest_path).unwrap().modified().unwrap(),
+                mtime
+            );
+
+            // find_missing_versions sees chunked versions as present.
+            let missing = store
+                .find_missing_versions(&[hash.clone(), "0000000000000000".to_string()])
+                .await?;
+            assert_eq!(missing, vec!["0000000000000000".to_string()]);
+            Ok(())
+        }
+
+        /// Storing the same version chunked twice is idempotent, and a claimed
+        /// hash that doesn't match the bytes is rejected without publishing.
+        #[tokio::test]
+        async fn chunked_ingest_is_idempotent_and_verified() -> Result<(), OxenError> {
+            let (_temp_dir, store) = setup().await;
+            let data = csv_bytes(5, 1_500_000);
+            let (_hash, manifest) = store_chunked(&store, &data).await?;
+
+            let again = store_chunked(&store, &data).await?.1;
+            assert_eq!(again, manifest);
+
+            // A lying hash: ingest completes, verification refuses to publish.
+            let wrong_hash = hasher::hash_buffer(b"different bytes");
+            let result = store
+                .chunked()
+                .expect("local store supports chunked versions")
+                .store_version_chunked(
+                    &wrong_hash,
+                    &EntryDataType::Tabular,
+                    "csv",
+                    Box::new(Cursor::new(data.clone())),
+                )
+                .await;
+            assert!(matches!(result, Err(OxenError::HashMismatch { .. })));
+            assert!(!store.version_exists(&wrong_hash).await?);
+            Ok(())
+        }
+
+        /// `put_manifest` validates by full reconstruction: it publishes a good
+        /// manifest whose chunks are present, no-ops on a duplicate, and rejects a
+        /// manifest whose chunks are missing or whose hash lies.
+        #[tokio::test]
+        async fn put_manifest_validates_before_publish() -> Result<(), OxenError> {
+            let (_temp_dir, store) = setup().await;
+            let chunked_store = store.chunked().expect("chunked capability");
+            let data = csv_bytes(7, 1_200_000);
+            let (hash, manifest) = store_chunked(&store, &data).await?;
+
+            // Re-publishing the same manifest is a no-op success.
+            chunked_store.put_manifest(&manifest).await?;
+
+            // Delete the manifest, then re-publish from the still-present chunks:
+            // validation reconstructs and passes.
+            std::fs::remove_file(store.manifest_path(&hash)).unwrap();
+            assert!(!store.version_exists(&hash).await?);
+            chunked_store.put_manifest(&manifest).await?;
+            assert_eq!(store.get_version(&hash).await?, data);
+
+            // A manifest lying about its file hash is rejected.
+            std::fs::remove_file(store.manifest_path(&hash)).unwrap();
+            let mut lying = manifest.clone();
+            lying.file_hash = MerkleHash::new(lying.file_hash.to_u128() ^ 1);
+            assert!(matches!(
+                chunked_store.put_manifest(&lying).await,
+                Err(OxenError::HashMismatch { .. })
+            ));
+
+            // A manifest referencing chunks this store doesn't have is rejected.
+            let mut foreign = manifest.clone();
+            for chunk in &mut foreign.chunks {
+                chunk.hash ^= 0xF00D;
+            }
+            assert!(chunked_store.put_manifest(&foreign).await.is_err());
+            Ok(())
+        }
+
+        /// The negotiation and transfer surface: missing_chunks partitions
+        /// correctly and store_block installs verified blocks that make a
+        /// version reconstructable after a manifest arrives.
+        #[tokio::test]
+        async fn missing_chunks_and_store_block_round_trip() -> Result<(), OxenError> {
+            let (_src_dir, src) = setup().await;
+            let (_dst_dir, dst) = setup().await;
+            let src_chunked = src.chunked().expect("chunked capability");
+            let dst_chunked = dst.chunked().expect("chunked capability");
+
+            let data = csv_bytes(11, 1_200_000);
+            let (hash, manifest) = store_chunked(&src, &data).await?;
+
+            let all_hashes: Vec<u128> = manifest.chunks.iter().map(|c| c.hash).collect();
+            assert_eq!(
+                src_chunked.missing_chunks(&all_hashes).await?,
+                Vec::<u128>::new()
+            );
+            assert_eq!(dst_chunked.missing_chunks(&all_hashes).await?, all_hashes);
+
+            // "Transfer" every block from src to dst, then publish the manifest.
+            let src_engine = src.engine()?;
+            for (block_hash, path) in src_engine.list_blocks()? {
+                let bytes = std::fs::read(&path).unwrap();
+                dst_chunked
+                    .store_block(&format!("{block_hash:x}"), Bytes::from(bytes))
+                    .await?;
+            }
+            assert_eq!(
+                dst_chunked.missing_chunks(&all_hashes).await?,
+                Vec::<u128>::new()
+            );
+            dst_chunked.put_manifest(&manifest).await?;
+            assert_eq!(dst.get_version(&hash).await?, data);
+
+            // The chunk index is disposable on the receiving store too.
+            dst_chunked.rebuild_chunk_index().await?;
+            assert_eq!(dst.get_version(&hash).await?, data);
+            Ok(())
+        }
     }
 }

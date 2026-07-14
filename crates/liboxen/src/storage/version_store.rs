@@ -15,6 +15,7 @@ use utoipa::ToSchema;
 use crate::constants;
 use crate::constants::MAX_CONCURRENT_VERSION_PROBES;
 use crate::error::OxenError;
+use crate::storage::chunked::ChunkedVersionStore;
 use crate::storage::{LocalVersionStore, S3Opts, S3VersionStore};
 use crate::util;
 use crate::view::versions::CleanCorruptedVersionsResult;
@@ -138,6 +139,27 @@ impl std::str::FromStr for StorageKind {
     }
 }
 
+/// The repository's content storage format — a repository format feature, not a
+/// client preference. Serializes as `"legacy"` / `"block-v1"`.
+///
+/// `BlockV1` turns on block-level dedup (see `docs/block_level_dedup_plan.md`):
+/// eligible files (≥ the `should_chunk` floor) are stored as manifests + blocks
+/// instead of whole-file blobs. Reads are transparent either way. Merkle hashes
+/// and commit IDs are never affected by the format.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ContentFormat {
+    #[default]
+    Legacy,
+    BlockV1,
+}
+
+impl ContentFormat {
+    fn is_legacy(&self) -> bool {
+        *self == ContentFormat::Legacy
+    }
+}
+
 /// Configuration for version storage backend.
 ///
 /// Persisted in each repo's `config.toml` under `[storage]`. On-disk shape:
@@ -145,7 +167,8 @@ impl std::str::FromStr for StorageKind {
 /// ```toml
 /// [storage]
 /// kind = "local"
-/// versions_path = "/mnt/nfs/..."   # only when set
+/// versions_path = "/mnt/nfs/..."      # only when set
+/// content_format = "block-v1"         # only when set; "legacy" if absent
 /// ```
 ///
 /// A custom [`Deserialize`] impl also accepts the pre-rename layout
@@ -161,6 +184,10 @@ pub struct StorageConfig {
     /// joined with the repo directory at runtime, so repos stay portable if moved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub versions_path: Option<PathBuf>,
+    /// The content storage format. Omitted from the persisted config while legacy,
+    /// so pre-dedup configs and new configs stay byte-identical.
+    #[serde(skip_serializing_if = "ContentFormat::is_legacy")]
+    pub content_format: ContentFormat,
 }
 
 impl<'de> Deserialize<'de> for StorageConfig {
@@ -180,6 +207,8 @@ impl<'de> Deserialize<'de> for StorageConfig {
             kind: StorageKind,
             #[serde(default)]
             versions_path: Option<PathBuf>,
+            #[serde(default)]
+            content_format: ContentFormat,
             // Pre-rename location; consumed on load for backwards compatibility,
             // never re-emitted.
             #[serde(default)]
@@ -193,6 +222,7 @@ impl<'de> Deserialize<'de> for StorageConfig {
         Ok(StorageConfig {
             kind: raw.kind,
             versions_path,
+            content_format: raw.content_format,
         })
     }
 }
@@ -480,6 +510,13 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
 
     /// Which storage backend kind this is.
     fn storage_kind(&self) -> StorageKind;
+
+    /// The chunked-storage capability, if this store supports block-backed
+    /// versions. A store that returns `None` never stores chunked versions; reads
+    /// of chunked versions stay transparent through the methods above either way.
+    fn chunked(&self) -> Option<&dyn ChunkedVersionStore> {
+        None
+    }
 }
 
 /// Build a `VersionStore` for the given repo according to its persisted `StorageConfig`.
@@ -542,6 +579,7 @@ mod tests {
         StorageConfig {
             kind: StorageKind::S3,
             versions_path: None,
+            content_format: Default::default(),
         }
     }
 

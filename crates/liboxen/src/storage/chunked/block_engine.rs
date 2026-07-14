@@ -19,6 +19,7 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use xxhash_rust::xxh3::Xxh3;
 
@@ -171,9 +172,9 @@ impl BlockEngine {
         manifest: &ChunkManifest,
         writer: &mut dyn Write,
     ) -> Result<(), OxenError> {
-        let mut block_reader = BlockChunkReader::new(self);
+        let mut cursor = ChunkPayloadCursor::new();
         for entry in &manifest.chunks {
-            let raw = block_reader.read_chunk(entry)?;
+            let raw = cursor.read_chunk(self, entry)?;
             writer.write_all(&raw)?;
         }
         Ok(())
@@ -193,7 +194,7 @@ impl BlockEngine {
             return Ok(Vec::new());
         }
         let mut out = Vec::with_capacity((end - offset) as usize);
-        let mut block_reader = BlockChunkReader::new(self);
+        let mut cursor = ChunkPayloadCursor::new();
         let mut pos = offset;
         while pos < end {
             let entry = manifest.chunk_at(pos).ok_or_else(|| {
@@ -202,7 +203,7 @@ impl BlockEngine {
                     manifest.file_size
                 ))
             })?;
-            let raw = block_reader.read_chunk(entry)?;
+            let raw = cursor.read_chunk(self, entry)?;
             let start_in_chunk = (pos - entry.offset) as usize;
             let end_in_chunk = (end - entry.offset).min(entry.len as u64) as usize;
             out.extend_from_slice(&raw[start_in_chunk..end_in_chunk]);
@@ -286,23 +287,23 @@ impl BlockEngine {
 /// Reads raw chunk bytes through the index and block files, keeping the most
 /// recently used block file open — consecutive chunks of a file land consecutively
 /// in blocks, so this makes sequential reconstruction cheap without a handle cache.
-struct BlockChunkReader<'a> {
-    engine: &'a BlockEngine,
+#[derive(Default)]
+struct ChunkPayloadCursor {
     open_block: Option<(u128, File)>,
 }
 
-impl<'a> BlockChunkReader<'a> {
-    fn new(engine: &'a BlockEngine) -> Self {
-        Self {
-            engine,
-            open_block: None,
-        }
+impl ChunkPayloadCursor {
+    fn new() -> Self {
+        Self::default()
     }
 
     /// Read and decode the raw bytes of one manifest chunk.
-    fn read_chunk(&mut self, entry: &ChunkEntry) -> Result<Vec<u8>, OxenError> {
-        let location = self
-            .engine
+    fn read_chunk(
+        &mut self,
+        engine: &BlockEngine,
+        entry: &ChunkEntry,
+    ) -> Result<Vec<u8>, OxenError> {
+        let location = engine
             .index
             .get(entry.hash)?
             .ok_or(ChunkedError::MissingChunk {
@@ -315,7 +316,7 @@ impl<'a> BlockChunkReader<'a> {
             ))
             .into());
         }
-        let payload = self.read_payload(&location)?;
+        let payload = self.read_payload(engine, &location)?;
         Ok(decode_chunk(
             location.codec,
             &payload,
@@ -324,12 +325,16 @@ impl<'a> BlockChunkReader<'a> {
     }
 
     /// Read a chunk's stored payload from its block file.
-    fn read_payload(&mut self, location: &ChunkLocation) -> Result<Vec<u8>, OxenError> {
+    fn read_payload(
+        &mut self,
+        engine: &BlockEngine,
+        location: &ChunkLocation,
+    ) -> Result<Vec<u8>, OxenError> {
         let block_hash = location.block_hash;
         let io_err = |source| ChunkedError::BlockRead { block_hash, source };
 
         if self.open_block.as_ref().map(|(hash, _)| *hash) != Some(block_hash) {
-            let file = File::open(self.engine.block_path(block_hash)).map_err(io_err)?;
+            let file = File::open(engine.block_path(block_hash)).map_err(io_err)?;
             self.open_block = Some((block_hash, file));
         }
         // The `if` above guarantees an open block; re-match instead of unwrap.
@@ -344,6 +349,51 @@ impl<'a> BlockChunkReader<'a> {
             .map_err(io_err)?;
         file.read_exact(&mut payload).map_err(io_err)?;
         Ok(payload)
+    }
+}
+
+/// A sync [`Read`] over the reconstructed bytes of a chunked version, decoding one
+/// chunk at a time. Owns its engine handle, so it can move into a `spawn_blocking`
+/// or feed `AtomicFile::stream` from any thread.
+pub struct ReconstructReader {
+    engine: Arc<BlockEngine>,
+    manifest: ChunkManifest,
+    cursor: ChunkPayloadCursor,
+    next_chunk: usize,
+    buf: Vec<u8>,
+    buf_pos: usize,
+}
+
+impl ReconstructReader {
+    pub fn new(engine: Arc<BlockEngine>, manifest: ChunkManifest) -> Self {
+        Self {
+            engine,
+            manifest,
+            cursor: ChunkPayloadCursor::new(),
+            next_chunk: 0,
+            buf: Vec::new(),
+            buf_pos: 0,
+        }
+    }
+}
+
+impl Read for ReconstructReader {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        while self.buf_pos == self.buf.len() {
+            let Some(entry) = self.manifest.chunks.get(self.next_chunk) else {
+                return Ok(0); // clean EOF
+            };
+            self.buf = self
+                .cursor
+                .read_chunk(&self.engine, entry)
+                .map_err(std::io::Error::other)?;
+            self.buf_pos = 0;
+            self.next_chunk += 1;
+        }
+        let n = out.len().min(self.buf.len() - self.buf_pos);
+        out[..n].copy_from_slice(&self.buf[self.buf_pos..self.buf_pos + n]);
+        self.buf_pos += n;
+        Ok(n)
     }
 }
 
