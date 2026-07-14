@@ -20,6 +20,7 @@ mod helpers;
 // THE **ONLY** PUBLIC THING IN oxen-cli IS THE BINARY !!!
 
 const SHORT_ABOUT: &str = "🐂 is the AI and machine learning data management toolchain";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const LONG_ABOUT: &str = "
 🐂 is the AI and machine learning data management toolchain
@@ -137,7 +138,7 @@ async fn async_main() -> ExitCode {
 
 fn main_oxen_command() -> (Command, Runners) {
     let mut command = Command::new("oxen")
-        .version(liboxen::constants::OXEN_VERSION)
+        .version(VERSION)
         .about(SHORT_ABOUT)
         .long_about(LONG_ABOUT)
         .subcommand_required(true)
@@ -225,5 +226,24 @@ fn print_error(err: &anyhow::Error) {
         && let Some(hint) = oxen_error.hint()
     {
         eprintln!("  {} {}", "hint:".cyan().bold(), hint);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::error::ErrorKind;
+
+    use super::*;
+
+    #[test]
+    fn version_flag_prints_package_version_and_succeeds() {
+        let (command, _) = main_oxen_command();
+        let error = command
+            .try_get_matches_from(["oxen", "--version"])
+            .expect_err("--version should exit before command dispatch");
+
+        assert_eq!(error.kind(), ErrorKind::DisplayVersion);
+        assert_eq!(error.exit_code(), 0);
+        assert_eq!(error.to_string(), format!("oxen {VERSION}\n"));
     }
 }
