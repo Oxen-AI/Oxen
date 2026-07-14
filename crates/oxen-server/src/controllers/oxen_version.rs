@@ -1,6 +1,6 @@
 use crate::params::{app_data, path_param};
 use actix_web::{HttpRequest, HttpResponse};
-use liboxen::constants::MIN_OXEN_VERSION;
+use liboxen::constants::MIN_OXEN_CLIENT_VERSION;
 use liboxen::repositories;
 use liboxen::view::StatusMessage;
 use liboxen::view::oxen_version::OxenVersionResponse;
@@ -24,7 +24,7 @@ pub async fn index(_req: HttpRequest) -> HttpResponse {
 pub async fn min_version(_req: HttpRequest) -> HttpResponse {
     let response = OxenVersionResponse {
         status: StatusMessage::resource_found(),
-        version: MIN_OXEN_VERSION.to_string(),
+        version: MIN_OXEN_CLIENT_VERSION.to_string(),
     };
     HttpResponse::Ok().json(response)
 }
