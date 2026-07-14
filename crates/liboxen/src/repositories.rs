@@ -10,11 +10,9 @@ use crate::core::refs::with_ref_manager;
 use crate::error::OxenError;
 use crate::model::Commit;
 use crate::model::LocalRepository;
-use crate::model::MetadataEntry;
 use crate::model::file::FileContents;
 use crate::model::merkle_tree;
 use crate::model::repository::local_repository::LocalRepositoryWithEntries;
-use crate::repositories;
 use crate::storage::S3Opts;
 use crate::util;
 use jwalk::WalkDir;
@@ -249,7 +247,6 @@ pub async fn create(
     })?;
 
     // If the user supplied files, add and commit them
-    let mut commit: Option<Commit> = None;
     if let Some(files) = &new_repo.files {
         let user = &files[0].user;
         // Add the files
@@ -275,44 +272,12 @@ pub async fn create(
             add(&local_repo, &full_path).await?;
         }
 
-        commit = Some(core::v_latest::commits::commit_with_user(
-            &local_repo,
-            "Initial commit",
-            user,
-        )?);
-        branches::create(
-            &local_repo,
-            constants::DEFAULT_BRANCH_NAME,
-            &commit.as_ref().unwrap().id,
-        )?;
+        let commit =
+            core::v_latest::commits::commit_with_user(&local_repo, "Initial commit", user)?;
+        branches::create(&local_repo, constants::DEFAULT_BRANCH_NAME, &commit.id)?;
     }
 
-    let metadata_entries: Option<Vec<MetadataEntry>> = if let Some(files) = &new_repo.files {
-        let entries: Vec<MetadataEntry> = files
-            .iter()
-            .filter_map(|file| {
-                repositories::entries::get_meta_entry(
-                    &local_repo,
-                    commit.as_ref().unwrap(),
-                    &file.path,
-                )
-                .ok()
-            })
-            .collect();
-
-        if entries.is_empty() {
-            None
-        } else {
-            Some(entries)
-        }
-    } else {
-        None
-    };
-
-    Ok(LocalRepositoryWithEntries {
-        local_repo,
-        entries: metadata_entries,
-    })
+    Ok(LocalRepositoryWithEntries { local_repo })
 }
 
 pub fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenError> {

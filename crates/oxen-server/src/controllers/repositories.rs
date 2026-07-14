@@ -125,12 +125,15 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
         status: STATUS_SUCCESS.to_string(),
         status_message: MSG_RESOURCE_FOUND.to_string(),
         repository: RepositoryDataTypesView {
-            namespace,
-            name,
+            repository: RepositoryView {
+                namespace,
+                name,
+                min_version: Some(repository.min_version().to_string()),
+                is_empty: repositories::is_empty(&repository)?,
+                storage_kind: repository.storage_config().kind,
+            },
             size,
             data_types,
-            min_version: Some(repository.min_version().to_string()),
-            is_empty: repositories::is_empty(&repository)?,
             branch_count,
             default_resource,
         },
@@ -334,8 +337,8 @@ async fn handle_json_creation(
                     latest_commit: Some(latest_commit.clone()),
                     name: repo_new_clone.name.clone(),
                     min_version: Some(repo.local_repo.min_version().to_string()),
+                    storage_kind: repo.local_repo.storage_config().kind,
                 },
-                metadata_entries: None,
             })),
             Err(OxenError::NoCommitsFound) => {
                 Ok(HttpResponse::Ok().json(RepositoryCreationResponse {
@@ -346,8 +349,8 @@ async fn handle_json_creation(
                         latest_commit: None,
                         name: repo_new_clone.name.clone(),
                         min_version: Some(repo.local_repo.min_version().to_string()),
+                        storage_kind: repo.local_repo.storage_config().kind,
                     },
-                    metadata_entries: None,
                 }))
             }
             Err(err) => {
@@ -472,8 +475,8 @@ async fn handle_multipart_creation(
                     latest_commit: Some(latest_commit),
                     name: repo_data_clone.name,
                     min_version: Some(repo.local_repo.min_version().to_string()),
+                    storage_kind: repo.local_repo.storage_config().kind,
                 },
-                metadata_entries: repo.entries,
             })),
             Err(OxenError::NoCommitsFound) => {
                 Ok(HttpResponse::Ok().json(RepositoryCreationResponse {
@@ -484,8 +487,8 @@ async fn handle_multipart_creation(
                         latest_commit: None,
                         name: repo_data_clone.name,
                         min_version: Some(repo.local_repo.min_version().to_string()),
+                        storage_kind: repo.local_repo.storage_config().kind,
                     },
-                    metadata_entries: repo.entries,
                 }))
             }
             Err(err) => {
@@ -608,6 +611,7 @@ pub async fn transfer_namespace(
             name,
             min_version: Some(repo.min_version().to_string()),
             is_empty: repositories::is_empty(&repo)?,
+            storage_kind: repo.storage_config().kind,
         },
     }))
 }

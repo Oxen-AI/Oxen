@@ -60,7 +60,7 @@ impl PyWorkspace {
 
         // Get the workspace by name
         let workspace = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            api::client::workspaces::get(&repo.repo, &workspace_identifier).await
+            api::client::workspaces::get(repo.repo()?, &workspace_identifier).await
         })?;
 
         if let Some(workspace) = workspace {
@@ -75,7 +75,7 @@ impl PyWorkspace {
 
         let workspace = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::create_with_path(
-                &repo.repo,
+                repo.repo()?,
                 &branch_name,
                 &workspace_id,
                 Path::new(&path.unwrap_or("/".to_string())),
@@ -120,7 +120,7 @@ impl PyWorkspace {
     fn status(&self, path: PathBuf) -> Result<PyStagedData, PyOxenError> {
         let remote_status = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::changes::list(
-                &self.repo.repo,
+                self.repo.repo()?,
                 &self.get_identifier(),
                 &path,
                 liboxen::constants::DEFAULT_PAGE_NUM,
@@ -136,7 +136,7 @@ impl PyWorkspace {
     fn add(&self, src: Vec<PathBuf>, dst: String) -> Result<Vec<PyErrorFileInfo>, PyOxenError> {
         let errors = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::files::add(
-                &self.repo.repo,
+                self.repo.repo()?,
                 &self.get_identifier(),
                 &dst,
                 src,
@@ -154,7 +154,7 @@ impl PyWorkspace {
     ) -> Result<Vec<PyErrorFileInfo>, PyOxenError> {
         let errors = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::files::add_files(
-                &self.repo.repo,
+                self.repo.repo()?,
                 &self.get_identifier(),
                 base_dir,
                 src,
@@ -166,14 +166,15 @@ impl PyWorkspace {
 
     fn rm(&self, path: PathBuf) -> Result<(), PyOxenError> {
         pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            api::client::workspaces::files::rm(&self.repo.repo, &self.id, path).await
+            api::client::workspaces::files::rm(self.repo.repo()?, &self.id, path).await
         })?;
         Ok(())
     }
 
     fn delete(&self) -> Result<(), PyOxenError> {
-        pyo3_async_runtimes::tokio::get_runtime()
-            .block_on(async { api::client::workspaces::delete(&self.repo.repo, &self.id).await })?;
+        pyo3_async_runtimes::tokio::get_runtime().block_on(async {
+            api::client::workspaces::delete(self.repo.repo()?, &self.id).await
+        })?;
         Ok(())
     }
 
@@ -193,7 +194,7 @@ impl PyWorkspace {
         let workspace_id = self.get_identifier();
         pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             let commit = api::client::workspaces::commit(
-                &self.repo.repo,
+                self.repo.repo()?,
                 &branch_name,
                 &workspace_id,
                 &commit,

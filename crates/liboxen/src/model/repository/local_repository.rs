@@ -5,7 +5,7 @@ use crate::core::db::merkle_node::{MerkleNodeBackend, MerkleNodeStore, create_me
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
-use crate::model::{MetadataEntry, Remote, RemoteRepository};
+use crate::model::{Remote, RemoteRepository};
 use crate::storage::{S3Opts, StorageConfig, VersionStore, create_version_store};
 use crate::util;
 use crate::util::fs::AtomicFile;
@@ -61,7 +61,6 @@ pub struct LocalRepository {
 #[derive(Debug, Clone)]
 pub struct LocalRepositoryWithEntries {
     pub local_repo: LocalRepository,
-    pub entries: Option<Vec<MetadataEntry>>,
 }
 
 impl LocalRepository {
