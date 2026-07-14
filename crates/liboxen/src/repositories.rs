@@ -279,22 +279,32 @@ pub async fn create(
     Ok(local_repo)
 }
 
-pub fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenError> {
+pub async fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenError> {
     if !repo.path.exists() {
         let err = format!("Repository does not exist {:?}", repo.path);
         return Err(OxenError::basic_str(err));
     }
 
-    // Close DB instances before trying to delete the directory
-    merkle_tree::merkle_tree_node_cache::remove_from_cache(&repo.path)?;
-    core::staged::remove_from_cache_with_children(&repo.path)?;
-    core::refs::ref_manager::remove_from_cache(&repo.path)?;
-    // Drop cached DuckDB connections too. On NFS, unlinking a still-open file leaves a hidden
-    // .nfsXXXX entry that fails the rmdir with ENOTEMPTY.
-    core::db::data_frames::df_db::remove_df_db_from_cache_with_children(&repo.path)?;
+    // Remove the stored version files first: for non-local backends (and local stores with a
+    // custom versions_path) they live outside the repo directory.
+    repo.version_store().destroy().await?;
 
-    log::debug!("Deleting repo directory: {repo:?}");
-    util::fs::remove_dir_all(&repo.path)?;
+    let path = repo.path.clone();
+    tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
+        // Close DB instances before trying to delete the directory
+        merkle_tree::merkle_tree_node_cache::remove_from_cache(&path)?;
+        core::staged::remove_from_cache_with_children(&path)?;
+        core::refs::ref_manager::remove_from_cache(&path)?;
+
+        // Drop cached DuckDB connections too. On NFS, unlinking a still-open file leaves a hidden
+        // .nfsXXXX entry that fails the rmdir with ENOTEMPTY.
+        core::db::data_frames::df_db::remove_df_db_from_cache_with_children(&path)?;
+
+        log::debug!("Deleting repo directory: {path:?}");
+        util::fs::remove_dir_all(&path)?;
+        Ok(())
+    })
+    .await??;
     Ok(repo)
 }
 
@@ -311,6 +321,52 @@ mod tests {
     use crate::util;
     use std::path::{Path, PathBuf};
     use time::OffsetDateTime;
+
+    #[tokio::test]
+    async fn test_delete_removes_custom_versions_path_outside_repo() -> Result<(), OxenError> {
+        use crate::config::RepositoryConfig;
+        use crate::storage::{StorageConfig, StorageKind};
+        use bytes::Bytes;
+
+        test::run_empty_dir_test_async(|dir| async move {
+            // A local store whose versions root lives OUTSIDE the repo directory: deleting
+            // the repo directory alone would leak it.
+            let repo_path = dir.join("repo");
+            let custom_root = dir.join("custom-versions");
+            util::fs::create_dir_all(util::fs::oxen_hidden_dir(&repo_path))?;
+
+            let repo = LocalRepository::new(
+                &repo_path,
+                RepositoryConfig {
+                    storage: Some(StorageConfig {
+                        kind: StorageKind::Local,
+                        versions_path: Some(custom_root.clone()),
+                    }),
+                    ..Default::default()
+                },
+            )?;
+            repo.save()?;
+
+            let data = b"leak check";
+            let hash = util::hasher::hash_buffer(data);
+
+            let store = repo.version_store();
+            store.init().await?;
+            store.store_version(&hash, Bytes::from_static(data)).await?;
+            assert!(store.version_exists(&hash).await?);
+            assert!(custom_root.exists());
+
+            repositories::delete(&repo).await?;
+
+            assert!(
+                !custom_root.exists(),
+                "custom versions root must be removed"
+            );
+            assert!(!repo_path.exists(), "repo directory must be removed");
+            Ok(())
+        })
+        .await
+    }
 
     #[tokio::test]
     async fn test_local_repository_api_create_empty_with_commit() -> Result<(), OxenError> {

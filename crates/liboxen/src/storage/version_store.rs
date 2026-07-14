@@ -463,6 +463,10 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// * `hash` - The content hash of the version to delete
     async fn delete_version(&self, hash: &str) -> Result<(), OxenError>;
 
+    /// Delete every version file this store holds, including chunks and derived versions.
+    /// After this call the store is empty. Call when the repository itself is being deleted.
+    async fn destroy(&self) -> Result<(), OxenError>;
+
     /// List all versions.
     ///
     /// Results are returned as hash strings, sorted in UTF-8 byte order (equivalent to

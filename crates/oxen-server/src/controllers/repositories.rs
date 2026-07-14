@@ -504,10 +504,13 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
         return Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()));
     };
 
-    // Delete in a background thread because it could take awhile
-    std::thread::spawn(move || match repositories::delete(&repository) {
-        Ok(_) => log::info!("Deleted repo: {namespace}/{name}"),
-        Err(err) => log::error!("Err deleting repo: {err}"),
+    // Delete in a background task because it could take awhile; the blocking directory
+    // removal runs inside delete's own spawn_blocking.
+    tokio::spawn(async move {
+        match repositories::delete(&repository).await {
+            Ok(_) => log::info!("Deleted repo: {namespace}/{name}"),
+            Err(err) => log::error!("Err deleting repo: {err}"),
+        }
     });
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))

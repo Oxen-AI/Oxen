@@ -741,6 +741,22 @@ impl VersionStore for S3VersionStore {
         self.delete_objects(keys).await
     }
 
+    async fn destroy(&self) -> Result<(), OxenError> {
+        // A store's prefix scopes it to one repository; an empty prefix would make this
+        // delete every object in the bucket.
+        if self.prefix.is_empty() {
+            return Err(OxenError::internal_error(
+                "refusing to destroy an S3 version store with an empty prefix",
+            ));
+        }
+        // The trailing slash keeps the listing from matching sibling repos whose prefix
+        // starts with this one (e.g. `ns/repo` vs `ns/repo2`).
+        let keys = self
+            .list_objects_with_prefix(&format!("{}/", self.prefix))
+            .await?;
+        self.delete_objects(keys).await
+    }
+
     async fn list_versions(&self) -> Result<Vec<String>, OxenError> {
         // Each version is stored at `{self.prefix}/{hash}/...`. To enumerate the hashes
         // without reading every leaf object, ask S3 for the common prefixes under
@@ -1090,6 +1106,74 @@ mod tests {
     async fn test_check_bucket_accessible_succeeds() {
         let (store, _tmp, _server) = setup().await;
         store.check_bucket_accessible().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_destroy_removes_only_this_stores_objects() {
+        let (addr, _tmp, _server) = spawn_s3s().await;
+        let client = Arc::new(build_test_client(addr));
+        client
+            .create_bucket()
+            .bucket("test-bucket")
+            .send()
+            .await
+            .unwrap();
+
+        let store = S3VersionStore::new_with_client(
+            Arc::clone(&client),
+            "test-bucket".to_string(),
+            "us-west-1".to_string(),
+            "ns/repo".to_string(),
+            Some(format!("http://{addr}")),
+        );
+        // A sibling repo whose prefix extends this store's prefix must survive the destroy.
+        let sibling = S3VersionStore::new_with_client(
+            client,
+            "test-bucket".to_string(),
+            "us-west-1".to_string(),
+            "ns/repo2".to_string(),
+            Some(format!("http://{addr}")),
+        );
+
+        store
+            .store_version("aaaa1111", Bytes::from_static(b"one"))
+            .await
+            .unwrap();
+        store
+            .store_version_chunk("bbbb2222", 0, Bytes::from_static(b"chunk"))
+            .await
+            .unwrap();
+        sibling
+            .store_version("cccc3333", Bytes::from_static(b"sibling"))
+            .await
+            .unwrap();
+
+        store.destroy().await.unwrap();
+
+        assert!(store.list_versions().await.unwrap().is_empty());
+        assert!(!store.version_exists("aaaa1111").await.unwrap());
+        assert!(sibling.version_exists("cccc3333").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_destroy_refuses_empty_prefix() {
+        let (addr, _tmp, _server) = spawn_s3s().await;
+        let client = Arc::new(build_test_client(addr));
+        client
+            .create_bucket()
+            .bucket("test-bucket")
+            .send()
+            .await
+            .unwrap();
+
+        let store = S3VersionStore::new_with_client(
+            client,
+            "test-bucket".to_string(),
+            "us-west-1".to_string(),
+            String::new(),
+            Some(format!("http://{addr}")),
+        );
+        assert!(store.destroy().await.is_err());
     }
 
     #[tokio::test]
