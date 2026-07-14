@@ -338,23 +338,51 @@ async fn ensure_name_index(repo: &LocalRepository) -> Result<(), OxenError> {
         if workspace_name_index::index_exists(repo) {
             Ok(())
         } else {
-            let repo = repo.clone();
+            let repo_for_task = repo.clone();
             match tokio::task::spawn_blocking(move || {
-                let idx = workspace_name_index::get_index(&repo)?;
-                idx.rebuild_from_disk(&repo)
+                let result = (|| {
+                    let idx = workspace_name_index::get_index(&repo_for_task)?;
+                    idx.rebuild_from_disk(&repo_for_task)
+                })();
+                // `get_index` creates the index dir before the rebuild populates it,
+                // so a failed build would leave a dir that `index_exists` reports as
+                // ready. Remove it so the next call rebuilds instead of trusting an
+                // empty index.
+                if result.is_err() {
+                    invalidate_name_index(&repo_for_task);
+                }
+                result
             })
             .await
             {
                 Ok(rebuild_result) => rebuild_result.map_err(OxenError::from),
-                Err(join_err) => Err(OxenError::basic_str(format!(
-                    "spawn_blocking join error: {join_err}"
-                ))),
+                Err(join_err) => {
+                    // The blocking task panicked after `get_index` may have created
+                    // the dir; invalidate so a retry rebuilds rather than trusting a
+                    // never-populated index.
+                    invalidate_name_index(repo);
+                    Err(OxenError::basic_str(format!(
+                        "spawn_blocking join error: {join_err}"
+                    )))
+                }
             }
         }
     };
     drop(lock);
     cleanup_name_index_lock(&repo.path);
     result
+}
+
+/// Removes a partially-built workspace name index so the next `ensure_name_index`
+/// rebuilds it from disk. Evicts the cached DB handle, then removes the index dir.
+fn invalidate_name_index(repo: &LocalRepository) {
+    workspace_name_index::remove_from_cache(repo);
+    let dir = workspace_name_index::index_dir(repo);
+    if dir.exists()
+        && let Err(e) = util::fs::remove_dir_all(&dir)
+    {
+        log::error!("ensure_name_index: failed to remove partial index dir {dir:?}: {e}");
+    }
 }
 
 /// A wrapper around Workspace that automatically deletes the workspace when dropped
@@ -1248,6 +1276,42 @@ mod tests {
             // The index maps the name to the winner.
             let idx = workspace_name_index::get_index(&repo)?;
             assert_eq!(idx.get_id_by_name(SHARED_NAME)?, Some(winner.id.clone()));
+
+            Ok(())
+        })
+        .await
+    }
+
+    // A failed rebuild leaves an index dir that `index_exists` would otherwise
+    // report as ready, short-circuiting future `ensure_name_index` calls onto an
+    // empty index. Invalidation must remove that dir so the next call rebuilds.
+    #[tokio::test]
+    async fn test_ensure_name_index_rebuilds_after_invalidation() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+
+            // Create a named workspace so a correct rebuild has an entry to find.
+            create_with_name(
+                &repo,
+                &commit,
+                "ws-id-1",
+                Some("named-ws".to_string()),
+                true,
+            )
+            .await?;
+            assert!(workspace_name_index::index_exists(&repo));
+
+            // Invalidation stands in for the cleanup done on a failed build: the
+            // on-disk index dir is gone, so `index_exists` no longer short-circuits.
+            invalidate_name_index(&repo);
+            assert!(!workspace_name_index::index_exists(&repo));
+
+            // The next call rebuilds from disk rather than trusting a missing index.
+            ensure_name_index(&repo).await?;
+            assert!(workspace_name_index::index_exists(&repo));
+
+            let idx = workspace_name_index::get_index(&repo)?;
+            assert_eq!(idx.get_id_by_name("named-ws")?, Some("ws-id-1".to_string()));
 
             Ok(())
         })
