@@ -37,4 +37,34 @@ pub enum ChunkedError {
 
     #[error("decompressed chunk length {actual} does not match declared raw length {expected}")]
     DecodedLenMismatch { expected: usize, actual: usize },
+
+    #[error("failed to encode chunk manifest: {0}")]
+    ManifestEncode(#[from] rmp_serde::encode::Error),
+
+    #[error("failed to decode chunk manifest: {0}")]
+    ManifestDecode(#[from] rmp_serde::decode::Error),
+
+    #[error(
+        "unsupported chunk manifest version {0}: this repository was written by a newer version of oxen, please upgrade"
+    )]
+    UnsupportedManifestVersion(u8),
+
+    #[error("invalid chunk manifest: {0}")]
+    InvalidManifest(String),
+
+    #[error("not an oxen block: bad magic bytes")]
+    BadBlockMagic,
+
+    #[error(
+        "unsupported block format version {0}: this repository was written by a newer version of oxen, please upgrade"
+    )]
+    UnsupportedBlockVersion(u8),
+
+    #[error("corrupt block: {0}")]
+    CorruptBlock(String),
+
+    #[error(
+        "chunk hash mismatch: block footer claims {expected:x} but payload hashes to {actual:x}"
+    )]
+    ChunkHashMismatch { expected: u128, actual: u128 },
 }

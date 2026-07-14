@@ -11,15 +11,19 @@
 //! This module is the single place future chunkers, codecs, and transforms are added;
 //! see `registry` for the extension contract.
 
+pub mod block;
 pub mod chunker;
 pub mod compressor;
 pub mod error;
+pub mod manifest;
 pub mod policy;
 pub mod registry;
 
+pub use block::{BlockChunk, BlockWriter, SealedBlock, parse_block_footer, verify_block};
 pub use chunker::{Chunker, RawChunk};
 pub use compressor::{Compressor, EncodedChunk, decode_chunk, encode_chunk};
 pub use error::ChunkedError;
+pub use manifest::{ChunkEntry, ChunkManifest};
 pub use policy::{EncodePolicy, dedup_min_file_size, encode_policy, should_chunk};
 pub use registry::{ChunkerId, CodecId, TransformId, chunker, codec};
 
