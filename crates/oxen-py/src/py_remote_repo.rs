@@ -4,6 +4,7 @@ use pyo3::prelude::*;
 
 use liboxen::api::requests::RepoNew;
 use liboxen::config::UserConfig;
+use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::error::OxenError;
 use liboxen::model::commit::NewCommitBody;
 use liboxen::model::file::{FileContents, FileNew};
@@ -174,35 +175,51 @@ impl PyRemoteRepo {
         let storage_kind = storage_backend
             .map(|s| StorageKind::from_str(&s))
             .transpose()?;
-        let result = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            if empty {
-                let mut repo = RepoNew::from_namespace_name_host(
-                    self.namespace.clone(),
-                    self.name.clone(),
-                    self.host.clone(),
-                    storage_kind,
-                );
-                repo.is_public = Some(is_public);
-                repo.scheme = Some(self.scheme.clone());
-                api::client::repositories::create_empty(repo).await
-            } else {
-                let config = UserConfig::get()?;
-                let user = config.to_user();
-                let files: Vec<FileNew> = vec![FileNew {
-                    path: PathBuf::from("README.md"),
-                    contents: FileContents::Text(format!("# {}\n", self.name)),
-                    user: user.clone(),
-                }];
-                let mut repo =
-                    RepoNew::from_files(&self.namespace, &self.name, files, storage_kind);
-                repo.host = Some(self.host.clone());
-                repo.is_public = Some(is_public);
-                repo.scheme = Some(self.scheme.clone());
-                api::client::repositories::create(repo).await
-            }
-        })?;
+        let (result, default_branch) =
+            pyo3_async_runtimes::tokio::get_runtime().block_on(async {
+                if empty {
+                    let mut repo = RepoNew::from_namespace_name_host(
+                        self.namespace.clone(),
+                        self.name.clone(),
+                        self.host.clone(),
+                        storage_kind,
+                    );
+                    repo.is_public = Some(is_public);
+                    repo.scheme = Some(self.scheme.clone());
+                    let repo = api::client::repositories::create_empty(repo).await?;
+                    Ok::<_, OxenError>((repo, None))
+                } else {
+                    let config = UserConfig::get()?;
+                    let user = config.to_user();
+                    let files: Vec<FileNew> = vec![FileNew {
+                        path: PathBuf::from("README.md"),
+                        contents: FileContents::Text(format!("# {}\n", self.name)),
+                        user: user.clone(),
+                    }];
+                    let mut repo =
+                        RepoNew::from_files(&self.namespace, &self.name, files, storage_kind);
+                    repo.host = Some(self.host.clone());
+                    repo.is_public = Some(is_public);
+                    repo.scheme = Some(self.scheme.clone());
+                    let repo = api::client::repositories::create(repo).await?;
+                    // The non-empty create makes an initial commit; look up the default branch so
+                    // the handle reflects it.
+                    let branch =
+                        api::client::branches::get_by_name(&repo, DEFAULT_BRANCH_NAME).await?;
+                    let branch = branch.ok_or_else(|| {
+                        OxenError::internal_error(format!(
+                            "Branch {DEFAULT_BRANCH_NAME} not found after repository creation"
+                        ))
+                    })?;
+                    Ok((repo, Some(branch)))
+                }
+            })?;
 
         self.repo = Some(result);
+        if let Some(branch) = default_branch {
+            self.revision = Some(branch.name);
+            self.commit_id = Some(branch.commit_id);
+        }
 
         Ok(PyRemoteRepo {
             namespace: self.namespace.clone(),
