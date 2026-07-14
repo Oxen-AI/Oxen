@@ -67,4 +67,21 @@ pub enum ChunkedError {
         "chunk hash mismatch: block footer claims {expected:x} but payload hashes to {actual:x}"
     )]
     ChunkHashMismatch { expected: u128, actual: u128 },
+
+    #[error("block hash mismatch: expected {expected:x} but block bytes hash to {actual:x}")]
+    BlockHashMismatch { expected: u128, actual: u128 },
+
+    #[error("corrupt chunk index: {0}")]
+    CorruptChunkIndex(String),
+
+    #[error(
+        "chunk {chunk_hash:x} is not present in this store: the chunk index may need a rebuild, or the version's blocks were never fetched"
+    )]
+    MissingChunk { chunk_hash: u128 },
+
+    #[error("failed to read block {block_hash:x}: {source}")]
+    BlockRead {
+        block_hash: u128,
+        source: std::io::Error,
+    },
 }

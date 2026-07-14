@@ -12,6 +12,8 @@
 //! see `registry` for the extension contract.
 
 pub mod block;
+pub mod block_engine;
+pub mod chunk_index;
 pub mod chunker;
 pub mod compressor;
 pub mod error;
@@ -20,6 +22,8 @@ pub mod policy;
 pub mod registry;
 
 pub use block::{BlockChunk, BlockWriter, SealedBlock, parse_block_footer, verify_block};
+pub use block_engine::BlockEngine;
+pub use chunk_index::{ChunkIndex, ChunkLocation};
 pub use chunker::{Chunker, RawChunk};
 pub use compressor::{Compressor, EncodedChunk, decode_chunk, encode_chunk};
 pub use error::ChunkedError;
