@@ -265,17 +265,14 @@ pub(crate) fn commit_dir_entries_with_parents(
         }
     }
 
-    let node = CommitNode::new(
-        repo,
-        CommitNodeOpts {
-            hash: commit_id,
-            parent_ids: parent_hashes,
-            email: new_commit.email.clone(),
-            author: new_commit.author.clone(),
-            message: message.to_string(),
-            timestamp,
-        },
-    )?;
+    let node = CommitNode::new(CommitNodeOpts {
+        hash: commit_id,
+        parent_ids: parent_hashes,
+        email: new_commit.email.clone(),
+        author: new_commit.author.clone(),
+        message: message.to_string(),
+        timestamp,
+    })?;
 
     let opts = db::key_val::opts::default();
     let commit_id_string = format!("{commit_id}").to_string();
@@ -349,21 +346,18 @@ pub fn commit_dir_entries_new(
 
     let commit_id = compute_commit_id(&new_commit)?;
 
-    let node = CommitNode::new(
-        repo,
-        CommitNodeOpts {
-            hash: commit_id,
-            parent_ids: new_commit
-                .parent_ids
-                .iter()
-                .map(|id: &String| id.parse().unwrap())
-                .collect(),
-            email: new_commit.email.clone(),
-            author: new_commit.author.clone(),
-            message: message.to_string(),
-            timestamp,
-        },
-    )?;
+    let node = CommitNode::new(CommitNodeOpts {
+        hash: commit_id,
+        parent_ids: new_commit
+            .parent_ids
+            .iter()
+            .map(|id: &String| id.parse().unwrap())
+            .collect(),
+        email: new_commit.email.clone(),
+        author: new_commit.author.clone(),
+        message: message.to_string(),
+        timestamp,
+    })?;
 
     let opts = db::key_val::opts::default();
     let commit_id_string = format!("{commit_id}").to_string();
@@ -462,17 +456,14 @@ pub fn commit_dir_entries(
     };
     let commit_id = compute_commit_id(&new_commit)?;
 
-    let node = CommitNode::new(
-        repo,
-        CommitNodeOpts {
-            hash: commit_id,
-            parent_ids,
-            email: new_commit.email.clone(),
-            author: new_commit.author.clone(),
-            message: message.to_string(),
-            timestamp,
-        },
-    )?;
+    let node = CommitNode::new(CommitNodeOpts {
+        hash: commit_id,
+        parent_ids,
+        email: new_commit.email.clone(),
+        author: new_commit.author.clone(),
+        message: message.to_string(),
+        timestamp,
+    })?;
 
     let opts = db::key_val::opts::default();
     let commit_id_string = format!("{commit_id}").to_string();
@@ -864,7 +855,7 @@ fn r_create_dir_node(
             hash: vnode.id,
             num_entries: vnode.entries.len() as u64,
         };
-        let vnode_obj = VNode::new(repo, opts)?;
+        let vnode_obj = VNode::new(opts)?;
         if let Some(dir_db) = maybe_dir_db {
             dir_db.add_child(&vnode_obj)?;
             *total_written += 1;
@@ -1159,20 +1150,17 @@ fn compute_dir_node(
         "Aggregated dir {path:?} [{hash}] num_bytes {num_bytes:?} num_entries {num_entries:?} data_type_counts {data_type_counts:?}"
     );
 
-    let node = DirNode::new(
-        repo,
-        DirNodeOpts {
-            name: file_name.to_owned(),
-            hash,
-            num_bytes,
-            num_entries,
-            last_commit_id: commit_id,
-            last_modified_seconds: 0,
-            last_modified_nanoseconds: 0,
-            data_type_counts,
-            data_type_sizes,
-        },
-    )?;
+    let node = DirNode::new(DirNodeOpts {
+        name: file_name.to_owned(),
+        hash,
+        num_bytes,
+        num_entries,
+        last_commit_id: commit_id,
+        last_modified_seconds: 0,
+        last_modified_nanoseconds: 0,
+        data_type_counts,
+        data_type_sizes,
+    })?;
     Ok(node)
 }
 

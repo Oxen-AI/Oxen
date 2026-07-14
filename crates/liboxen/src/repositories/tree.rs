@@ -1330,7 +1330,7 @@ pub fn write_tree(repo: &LocalRepository, node: &MerkleTreeNode) -> Result<(), O
     let EMerkleTreeNode::Commit(commit_node) = &node.node else {
         return Err(OxenError::basic_str("Expected commit node"));
     };
-    let commit_node = CommitNode::new(repo, commit_node.get_opts())?;
+    let commit_node = CommitNode::new(commit_node.get_opts())?;
     p_write_tree(repo, node, &commit_node)?;
     Ok(())
 }

@@ -1074,19 +1074,16 @@ fn create_empty_merge_commit(
     let base_commit_hash: MerkleHash = merge_commits.base.id.parse()?;
     let merge_commit_hash: MerkleHash = merge_commits.merge.id.parse()?;
 
-    let commit_node = CommitNode::new(
-        repo,
-        CommitNodeOpts {
-            hash: commit_id,
-            // CommitNode.parent_ids holds parent commit hashes (matches `create_empty_commit`
-            // in core/v_latest/commits.rs).
-            parent_ids: vec![base_commit_hash, merge_commit_hash],
-            email: author_email,
-            author: author_name,
-            message: merge_commits.commit_message(),
-            timestamp,
-        },
-    )?;
+    let commit_node = CommitNode::new(CommitNodeOpts {
+        hash: commit_id,
+        // CommitNode.parent_ids holds parent commit hashes (matches `create_empty_commit`
+        // in core/v_latest/commits.rs).
+        parent_ids: vec![base_commit_hash, merge_commit_hash],
+        email: author_email,
+        author: author_name,
+        message: merge_commits.commit_message(),
+        timestamp,
+    })?;
 
     // Open the new commit's MerkleNodeDB and add base's existing root DirNode as the only child.
     // Tree is content-addressed, so the new commit's tree equals base's tree without any tree

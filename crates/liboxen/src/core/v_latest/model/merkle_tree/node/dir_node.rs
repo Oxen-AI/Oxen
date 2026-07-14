@@ -5,7 +5,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::core::versions::MinOxenVersion;
 use crate::model::merkle_tree::node::dir_node::TDirNode;
 use crate::model::{MerkleHash, MerkleTreeNodeType};
 
@@ -35,10 +34,6 @@ pub struct DirNodeData {
 }
 
 impl TDirNode for DirNodeData {
-    fn version(&self) -> MinOxenVersion {
-        MinOxenVersion::LATEST
-    }
-
     fn node_type(&self) -> &MerkleTreeNodeType {
         &self.node_type
     }

@@ -6,16 +6,12 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use crate::core::v_latest::model::merkle_tree::node::vnode::VNodeData as VNodeImplV0_25_0;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::{
-    LocalRepository, MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType, TMerkleTreeNode,
-};
+use crate::model::{MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType, TMerkleTreeNode};
 
 pub trait TVNode {
     fn node_type(&self) -> &MerkleTreeNodeType;
     fn hash(&self) -> &MerkleHash;
-    fn version(&self) -> MinOxenVersion;
     fn num_entries(&self) -> u64;
     fn set_num_entries(&mut self, _: u64);
 }
@@ -36,16 +32,14 @@ pub struct VNode {
 }
 
 impl VNode {
-    pub fn new(repo: &LocalRepository, vnode_opts: VNodeOpts) -> Result<VNode, OxenError> {
-        match repo.min_version() {
-            MinOxenVersion::LATEST => Ok(Self {
-                node: EVNode::V0_25_0(VNodeImplV0_25_0 {
-                    hash: vnode_opts.hash,
-                    node_type: MerkleTreeNodeType::VNode,
-                    num_entries: vnode_opts.num_entries,
-                }),
+    pub fn new(vnode_opts: VNodeOpts) -> Result<VNode, OxenError> {
+        Ok(Self {
+            node: EVNode::V0_25_0(VNodeImplV0_25_0 {
+                hash: vnode_opts.hash,
+                node_type: MerkleTreeNodeType::VNode,
+                num_entries: vnode_opts.num_entries,
             }),
-        }
+        })
     }
 
     #[inline(always)]
@@ -72,10 +66,6 @@ impl VNode {
         match self.node {
             EVNode::V0_25_0(ref mut vnode) => vnode,
         }
-    }
-
-    pub fn version(&self) -> MinOxenVersion {
-        self.node().version()
     }
 
     pub fn hash(&self) -> &MerkleHash {
