@@ -12,7 +12,6 @@ use crate::model::Commit;
 use crate::model::LocalRepository;
 use crate::model::file::FileContents;
 use crate::model::merkle_tree;
-use crate::model::repository::local_repository::LocalRepositoryWithEntries;
 use crate::storage::S3Opts;
 use crate::util;
 use jwalk::WalkDir;
@@ -191,7 +190,7 @@ pub async fn create(
     root_dir: &Path,
     new_repo: RepoNew,
     server_s3_opts: Option<&S3Opts>,
-) -> Result<LocalRepositoryWithEntries, OxenError> {
+) -> Result<LocalRepository, OxenError> {
     // Validate repo name
     if !is_valid_repo_name(&new_repo.name) {
         return Err(OxenError::InvalidRepoName(new_repo.name.into()));
@@ -277,7 +276,7 @@ pub async fn create(
         branches::create(&local_repo, constants::DEFAULT_BRANCH_NAME, &commit.id)?;
     }
 
-    Ok(LocalRepositoryWithEntries { local_repo })
+    Ok(local_repo)
 }
 
 pub fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenError> {

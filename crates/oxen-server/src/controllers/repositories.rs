@@ -430,7 +430,7 @@ async fn create_repo_response(
     let name = data.name.clone();
     match repositories::create(&app_data.path, data, app_data.config.storage.s3()).await {
         Ok(repo) => {
-            let latest_commit = match repositories::commits::latest_commit(&repo.local_repo) {
+            let latest_commit = match repositories::commits::latest_commit(&repo) {
                 Ok(commit) => Some(commit),
                 Err(OxenError::NoCommitsFound) => None,
                 Err(err) => {
@@ -446,8 +446,8 @@ async fn create_repo_response(
                     namespace,
                     name,
                     latest_commit,
-                    min_version: Some(repo.local_repo.min_version().to_string()),
-                    storage_kind: repo.local_repo.storage_config().kind,
+                    min_version: Some(repo.min_version().to_string()),
+                    storage_kind: repo.storage_config().kind,
                 },
             }))
         }
