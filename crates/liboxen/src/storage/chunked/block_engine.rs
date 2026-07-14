@@ -288,17 +288,17 @@ impl BlockEngine {
 /// recently used block file open — consecutive chunks of a file land consecutively
 /// in blocks, so this makes sequential reconstruction cheap without a handle cache.
 #[derive(Default)]
-struct ChunkPayloadCursor {
+pub(super) struct ChunkPayloadCursor {
     open_block: Option<(u128, File)>,
 }
 
 impl ChunkPayloadCursor {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self::default()
     }
 
     /// Read and decode the raw bytes of one manifest chunk.
-    fn read_chunk(
+    pub(super) fn read_chunk(
         &mut self,
         engine: &BlockEngine,
         entry: &ChunkEntry,

@@ -20,6 +20,7 @@ pub mod error;
 pub mod manifest;
 pub mod policy;
 pub mod registry;
+pub mod seekable;
 pub mod store;
 
 pub use block::{BlockChunk, BlockWriter, SealedBlock, parse_block_footer, verify_block};
@@ -31,6 +32,7 @@ pub use error::ChunkedError;
 pub use manifest::{ChunkEntry, ChunkManifest};
 pub use policy::{EncodePolicy, dedup_min_file_size, encode_policy, should_chunk};
 pub use registry::{ChunkerId, CodecId, TransformId, chunker, codec};
+pub use seekable::SeekableVersionReader;
 pub use store::ChunkedVersionStore;
 
 /// Minimum content-defined chunk size (FastCDC `min_size`).

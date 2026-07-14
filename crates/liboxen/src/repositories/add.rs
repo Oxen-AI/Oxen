@@ -206,6 +206,16 @@ A: Oxen.ai
             let status = repositories::status(&repo).await?;
             assert!(status.is_clean(), "expected clean status, got {status:?}");
 
+            // `oxen df --revision` reads the committed chunked version through the
+            // transparent tabular path.
+            crate::command::df::df_revision(
+                &repo,
+                "train.csv",
+                &commit.id,
+                crate::opts::DFOpts::empty(),
+            )
+            .await?;
+
             Ok(())
         })
         .await

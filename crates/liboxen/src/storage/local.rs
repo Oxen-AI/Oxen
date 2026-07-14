@@ -10,8 +10,12 @@ use crate::constants::{
 use crate::error::OxenError;
 use crate::model::{EntryDataType, MerkleHash};
 use crate::storage::chunked::manifest::ChunkManifest;
-use crate::storage::chunked::{BlockEngine, ChunkedVersionStore, ReconstructReader, encode_policy};
-use crate::storage::version_store::{BoxedByteStream, VersionLocation, VersionStore};
+use crate::storage::chunked::{
+    BlockEngine, ChunkedVersionStore, ReconstructReader, SeekableVersionReader, encode_policy,
+};
+use crate::storage::version_store::{
+    BoxedByteStream, LocalFilePath, VersionLocation, VersionStore,
+};
 use crate::util::fs::AtomicFile;
 use crate::util::hasher::HashingReader;
 use crate::util::{concurrency, hasher};
@@ -358,6 +362,24 @@ impl VersionStore for LocalVersionStore {
         // A version is present as either a whole-file blob or a published manifest
         // (a chunked version has a manifest instead of `data`).
         Ok(self.version_path(hash).exists() || self.manifest_path(hash).exists())
+    }
+
+    async fn materialize(&self, hash: &str, dir: &Path) -> Result<LocalFilePath, OxenError> {
+        let path = self.version_path(hash);
+        if path.exists() {
+            return Ok(LocalFilePath::Stable(path));
+        }
+        // Chunked version: no contiguous on-disk file exists, so materializing means
+        // reconstructing into a temp file — the explicit, declared fallback for
+        // path-only consumers. A missing version surfaces the usual
+        // VersionStoreDataMissing from the copy.
+        crate::util::fs::create_dir_all(dir)?;
+        let temp = async_tempfile::TempFile::new_in(dir)
+            .await
+            .map_err(|e| OxenError::basic_str(format!("Failed to create temp file: {e}")))?;
+        self.copy_version_to_path(hash, temp.file_path(), SystemTime::now())
+            .await?;
+        Ok(LocalFilePath::Temp(temp))
     }
 
     async fn delete_version(&self, hash: &str) -> Result<(), OxenError> {
@@ -824,6 +846,19 @@ impl ChunkedVersionStore for LocalVersionStore {
         let block_hash = u128::from_str_radix(hash, 16)
             .map_err(|_| OxenError::basic_str(format!("invalid block hash: {hash}")))?;
         spawn_blocking(move || engine.store_block(block_hash, &data)).await?
+    }
+
+    async fn open_seekable(&self, hash: &str) -> Result<SeekableVersionReader, OxenError> {
+        let manifest_path = self.manifest_path(hash);
+        let engine = self.engine()?;
+        let hash = hash.to_string();
+        spawn_blocking(move || {
+            let manifest = read_manifest_at(&manifest_path)?.ok_or_else(|| {
+                OxenError::basic_str(format!("no chunked version found for hash {hash}"))
+            })?;
+            Ok(SeekableVersionReader::new(engine, manifest))
+        })
+        .await?
     }
 
     async fn rebuild_chunk_index(&self) -> Result<u64, OxenError> {

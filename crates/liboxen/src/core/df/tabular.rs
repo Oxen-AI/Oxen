@@ -13,7 +13,6 @@ use crate::core::df::filter::DFLogicalOp;
 use crate::core::df::pretty_print;
 use crate::core::df::sql;
 use crate::error::OxenError;
-use crate::io::chunk_reader::ChunkReader;
 use crate::model::DataFrameSize;
 use crate::model::LocalRepository;
 use crate::model::data_frame::schema::DataType;
@@ -1189,6 +1188,14 @@ pub async fn read_version_df(
     let extension = extension.as_ref();
     match version_store.version_location(hash).await? {
         VersionLocation::Local(path) => {
+            if !path.exists()
+                && let Some(chunked) = version_store.chunked()
+                && chunked.get_manifest(hash).await?.is_some()
+            {
+                // Chunked version: no contiguous on-disk file exists, so read
+                // through the store's byte interfaces instead of a path scan.
+                return read_chunked_version_df(version_store, hash, extension, opts).await;
+            }
             p_read_df_with_extension(path, extension, opts.clone()).await
         }
         VersionLocation::S3 {
@@ -1249,7 +1256,7 @@ async fn read_s3_version_df(
         "csv" | "data" | "tsv" => {
             // `.tsv` pins the tab delimiter; only the quote character is sniffed.
             let force_delim = (extension == "tsv").then_some(b'\t');
-            let dialect = resolve_s3_csv_dialect(version_store, hash, opts, force_delim).await?;
+            let dialect = resolve_store_csv_dialect(version_store, hash, opts, force_delim).await?;
             task::spawn_blocking(move || {
                 read_s3_csv(&url, cloud_opts, dialect.delimiter, dialect.quote_char)
             })
@@ -1274,11 +1281,12 @@ async fn read_s3_version_df(
     collect_with_opts(df_lazy, opts.clone()).await
 }
 
-/// Resolve the CSV/TSV dialect for an S3 version file: honor explicit `DFOpts` overrides, otherwise
-/// sniff a head sample fetched through the store's `get_version_chunk` (full parity with the local
-/// path, which also samples only the head). `force_delim` pins the delimiter for `.tsv` while still
-/// sniffing the quote character.
-async fn resolve_s3_csv_dialect(
+/// Resolve the CSV/TSV dialect for a version file read through the store's byte interface (the
+/// S3 and chunked-local paths): honor explicit `DFOpts` overrides, otherwise sniff a head sample
+/// fetched through the store's `get_version_chunk` (full parity with the local path, which also
+/// samples only the head). `force_delim` pins the delimiter for `.tsv` while still sniffing the
+/// quote character.
+async fn resolve_store_csv_dialect(
     version_store: &Arc<dyn VersionStore>,
     hash: &str,
     opts: &DFOpts,
@@ -1292,18 +1300,88 @@ async fn resolve_s3_csv_dialect(
             quote_char: user_quote,
         });
     }
-    // Fixed-size head sample. `sniff_reader` needs Read+Seek and rewinds per pass, so it can't
+    // Fixed-size head sample, clamped to the file so short files don't trip the store's
+    // beyond-EOF range check. `sniff_reader` needs Read+Seek and rewinds per pass, so it can't
     // consume the forward-only `get_version_stream` directly; a buffer (hence a byte cap) is
     // required. If huge first lines sniff wrong, raise this cap. Streaming whole lines would match
     // local exactly but reintroduces local's unbounded single-line memory cost.
+    let sample_size = CSV_SNIFF_SAMPLE_BYTES.min(version_store.get_version_size(hash).await?);
     let sample = version_store
-        .get_version_chunk(hash, 0, CSV_SNIFF_SAMPLE_BYTES)
+        .get_version_chunk(hash, 0, sample_size)
         .await?;
     // Sniffing parses the sample (CPU-bound); keep it off the async runtime.
     let sniffed =
         task::spawn_blocking(move || qsv_sniffer::Sniffer::new().sniff_reader(Cursor::new(sample)))
             .await?;
     Ok(build_csv_dialect(sniffed, delimiter, user_quote))
+}
+
+/// Chunked-local branch of [`read_version_df`]: the version is stored as manifest + blocks, so
+/// there is no contiguous file to scan. Every format collects the logical bytes in memory via the
+/// transparent `get_version` and parses from that buffer — the polars eager readers materialize
+/// any non-file source internally anyway (parquet column chunks are sliced out of one contiguous
+/// buffer), so this is the same cost stated plainly and greppable for a future
+/// pushdown-capable scan source. Range consumers (HTTP `Range`, CSV sniffing) stay on
+/// `get_version_chunk` and never buffer the whole file.
+async fn read_chunked_version_df(
+    version_store: &Arc<dyn VersionStore>,
+    hash: &str,
+    extension: &str,
+    opts: &DFOpts,
+) -> Result<DataFrame, OxenError> {
+    log::debug!("Reading chunked version df {hash} with extension {extension}");
+    let df_lazy = match extension {
+        "parquet" => {
+            let bytes = version_store.get_version(hash).await?;
+            task::spawn_blocking(move || {
+                ParquetReader::new(Cursor::new(bytes))
+                    .finish()
+                    .map(|df| df.lazy())
+                    .map_err(OxenError::from)
+            })
+            .await??
+        }
+        "arrow" => {
+            if opts.sql.is_some() {
+                return Err(OxenError::internal_error(
+                    "SQL queries are not supported for .arrow files",
+                ));
+            }
+            let bytes = version_store.get_version(hash).await?;
+            task::spawn_blocking(move || {
+                IpcReader::new(Cursor::new(bytes))
+                    .finish()
+                    .map(|df| df.lazy())
+                    .map_err(OxenError::from)
+            })
+            .await??
+        }
+        "ndjson" | "jsonl" => {
+            let bytes = version_store.get_version(hash).await?;
+            task::spawn_blocking(move || read_jsonl_bytes(bytes)).await??
+        }
+        "json" => {
+            let bytes = version_store.get_version(hash).await?;
+            task::spawn_blocking(move || read_json_bytes(bytes)).await??
+        }
+        "csv" | "data" | "tsv" => {
+            // `.tsv` pins the tab delimiter; only the quote character is sniffed.
+            let force_delim = (extension == "tsv").then_some(b'\t');
+            let dialect = resolve_store_csv_dialect(version_store, hash, opts, force_delim).await?;
+            let bytes = version_store.get_version(hash).await?;
+            task::spawn_blocking(move || {
+                read_csv_bytes(bytes, dialect.delimiter, dialect.quote_char)
+            })
+            .await??
+        }
+        _ => {
+            return Err(OxenError::internal_error(format!(
+                "Could not load chunked data frame with unsupported extension: {extension}"
+            )));
+        }
+    };
+
+    collect_with_opts(df_lazy, opts.clone()).await
 }
 
 fn read_s3_parquet(url: &str, cloud_opts: CloudOptions) -> Result<LazyFrame, OxenError> {
@@ -1345,6 +1423,37 @@ fn read_s3_csv(
 fn read_json_bytes(bytes: Vec<u8>) -> Result<LazyFrame, OxenError> {
     let df = JsonReader::new(Cursor::new(bytes))
         .infer_schema_len(Some(NonZeroUsize::new(10000).unwrap()))
+        .finish()?;
+    Ok(df.lazy())
+}
+
+fn read_jsonl_bytes(bytes: Vec<u8>) -> Result<LazyFrame, OxenError> {
+    let df = JsonLineReader::new(Cursor::new(bytes))
+        .infer_schema_len(NonZeroUsize::new(10000))
+        .finish()?;
+    Ok(df.lazy())
+}
+
+/// In-memory CSV parse with the same reader settings as [`base_lazy_csv_reader`].
+fn read_csv_bytes(
+    bytes: Vec<u8>,
+    delimiter: u8,
+    quote_char: Option<u8>,
+) -> Result<LazyFrame, OxenError> {
+    let df = CsvReadOptions::default()
+        .with_infer_schema_length(Some(10000))
+        .with_ignore_errors(true)
+        .with_has_header(true)
+        .with_rechunk(true)
+        .with_parse_options(
+            CsvParseOptions::default()
+                .with_truncate_ragged_lines(true)
+                .with_separator(delimiter)
+                .with_eol_char(b'\n')
+                .with_quote_char(quote_char)
+                .with_encoding(CsvEncoding::LossyUtf8),
+        )
+        .into_reader_with_file_handle(Cursor::new(bytes))
         .finish()?;
     Ok(df.lazy())
 }
@@ -1706,69 +1815,27 @@ pub fn polars_schema_to_flat_str(schema: &Schema) -> String {
     result
 }
 
+/// Load a committed file node's data frame through the version store (whole-file
+/// or chunked, transparently) and pretty-print it — the `oxen df <path> --revision`
+/// read path.
 pub async fn show_node(
     repo: LocalRepository,
     node: &MerkleTreeNode,
     opts: DFOpts,
 ) -> Result<DataFrame, OxenError> {
     let file_node = node.file()?;
-    log::debug!("Opening chunked reader");
+    let version_store = repo.version_store();
+    let df = read_version_df(
+        &version_store,
+        &file_node.hash().to_string(),
+        file_node.extension(),
+        &opts,
+    )
+    .await?;
 
-    let df = if file_node.name().ends_with("parquet") {
-        let chunk_reader = ChunkReader::new(repo, file_node)?;
-        let parquet_reader = ParquetReader::new(chunk_reader);
-        log::debug!("Reading chunked parquet");
-
-        match parquet_reader.finish() {
-            Ok(df) => {
-                log::debug!("Finished reading chunked parquet");
-                Ok(df)
-            }
-            err => Err(OxenError::basic_str(format!(
-                "Could not read chunked parquet: {err:?}"
-            ))),
-        }?
-    } else if file_node.name().ends_with("arrow") {
-        let chunk_reader = ChunkReader::new(repo, file_node)?;
-        let parquet_reader = IpcReader::new(chunk_reader);
-        log::debug!("Reading chunked arrow");
-
-        match parquet_reader.finish() {
-            Ok(df) => {
-                log::debug!("Finished reading chunked arrow");
-                Ok(df)
-            }
-            err => Err(OxenError::basic_str(format!(
-                "Could not read chunked arrow: {err:?}"
-            ))),
-        }?
-    } else {
-        let chunk_reader = ChunkReader::new(repo, file_node)?;
-        let json_reader = JsonLineReader::new(chunk_reader);
-
-        match json_reader.finish() {
-            Ok(df) => {
-                log::debug!("Finished reading line delimited json");
-                Ok(df)
-            }
-            err => Err(OxenError::basic_str(format!(
-                "Could not read chunked json: {err:?}"
-            ))),
-        }?
-    };
-
-    let df: PolarsResult<DataFrame> = if opts.has_transform() {
-        let df = transform(df, opts).await?;
-        let pretty_df = pretty_print::df_to_str(&df);
-        println!("{pretty_df}");
-        Ok(df)
-    } else {
-        let pretty_df = pretty_print::df_to_str(&df);
-        println!("{pretty_df}");
-        Ok(df)
-    };
-
-    Ok(df?)
+    let pretty_df = pretty_print::df_to_str(&df);
+    println!("{pretty_df}");
+    Ok(df)
 }
 
 #[cfg(test)]
@@ -1780,6 +1847,70 @@ mod tests {
     use crate::{error::OxenError, opts::DFOpts};
     use itertools::Itertools;
     use tokio::task;
+
+    /// Chunked versions read through `read_version_df` identically to whole-file
+    /// versions: parquet via the seekable reader (no contiguous file exists), CSV
+    /// via the sniffed in-memory parse.
+    #[tokio::test]
+    async fn test_read_version_df_chunked_versions() -> Result<(), OxenError> {
+        use crate::model::EntryDataType;
+        use crate::storage::{LocalVersionStore, VersionStore};
+        use std::io::Cursor;
+        use std::sync::Arc;
+
+        let temp_dir = tempfile::tempdir()?;
+        let store = LocalVersionStore::new(temp_dir.path().join("files"));
+        store.init().await?;
+        let store: Arc<dyn VersionStore> = Arc::new(store);
+        let chunked = store.chunked().expect("local store supports chunked");
+
+        // Parquet: build a frame, serialize it, store the bytes chunked.
+        let mut df = df!(
+            "image" => (0..5000).map(|i| format!("img_{i}.jpg")).collect::<Vec<_>>(),
+            "label" => (0..5000i64).collect::<Vec<_>>(),
+        )
+        .expect("build test df");
+        let parquet_path = temp_dir.path().join("test.parquet");
+        tabular::write_df(&mut df, &parquet_path)?;
+        let parquet_bytes = std::fs::read(&parquet_path)?;
+        let parquet_hash = hasher::hash_buffer(&parquet_bytes);
+        chunked
+            .store_version_chunked(
+                &parquet_hash,
+                &EntryDataType::Tabular,
+                "parquet",
+                Box::new(Cursor::new(parquet_bytes)),
+            )
+            .await?;
+
+        let read = read_version_df(&store, &parquet_hash, "parquet", &DFOpts::empty()).await?;
+        assert_eq!(read, df);
+
+        // CSV: same content as text, exercising dialect sniffing over the
+        // transparent byte interface.
+        let mut csv = String::from("image,label\n");
+        for i in 0..5000 {
+            csv.push_str(&format!("img_{i}.jpg,{i}\n"));
+        }
+        let csv_hash = hasher::hash_buffer(csv.as_bytes());
+        chunked
+            .store_version_chunked(
+                &csv_hash,
+                &EntryDataType::Tabular,
+                "csv",
+                Box::new(Cursor::new(csv.into_bytes())),
+            )
+            .await?;
+
+        let read = read_version_df(&store, &csv_hash, "csv", &DFOpts::empty()).await?;
+        assert_eq!(read.height(), 5000);
+        assert_eq!(
+            read.get_column_names_str(),
+            vec!["image", "label"],
+            "sniffed CSV schema"
+        );
+        Ok(())
+    }
 
     #[test]
     fn test_filter_single_expr() -> Result<(), OxenError> {

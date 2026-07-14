@@ -20,6 +20,7 @@ use crate::error::OxenError;
 use crate::model::EntryDataType;
 
 use super::manifest::ChunkManifest;
+use super::seekable::SeekableVersionReader;
 
 /// Explicit chunked-version operations for stores that support block-backed storage.
 ///
@@ -70,6 +71,11 @@ pub trait ChunkedVersionStore: Send + Sync {
     /// Verify a complete transfer block against `hash` and its own footer claims
     /// (every chunk decoded and hash-checked), then store and index it. Idempotent.
     async fn store_block(&self, hash: &str, data: Bytes) -> Result<(), OxenError>;
+
+    /// Open a sync `Read + Seek` over the reconstructed bytes of a chunked version
+    /// — the random-access reader for consumers like eager Parquet/IPC readers.
+    /// The consumer should run inside one `spawn_blocking`.
+    async fn open_seekable(&self, hash: &str) -> Result<SeekableVersionReader, OxenError>;
 
     /// Rebuild the chunk index from block footers (the index is disposable derived
     /// state). Returns the number of blocks scanned.

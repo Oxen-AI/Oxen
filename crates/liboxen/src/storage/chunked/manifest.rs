@@ -118,13 +118,18 @@ impl ChunkManifest {
     /// The chunk covering file offset `pos`, found by binary search. `None` at or
     /// past EOF.
     pub fn chunk_at(&self, pos: u64) -> Option<&ChunkEntry> {
+        self.chunk_index_at(pos).map(|idx| &self.chunks[idx])
+    }
+
+    /// The index of the chunk covering file offset `pos`. `None` at or past EOF.
+    pub fn chunk_index_at(&self, pos: u64) -> Option<usize> {
         if pos >= self.file_size {
             return None;
         }
         let idx = self
             .chunks
             .partition_point(|chunk| chunk.offset + chunk.len as u64 <= pos);
-        self.chunks.get(idx)
+        (idx < self.chunks.len()).then_some(idx)
     }
 }
 
