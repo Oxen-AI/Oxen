@@ -430,13 +430,14 @@ async fn create_repo_response(
     let name = data.name.clone();
     match repositories::create(&app_data.path, data, app_data.config.storage.s3()).await {
         Ok(repo) => {
+            // The repository exists by this point, so a failed lookup only degrades the
+            // response's latest_commit to None rather than failing the creation.
             let latest_commit = match repositories::commits::latest_commit(&repo) {
                 Ok(commit) => Some(commit),
                 Err(OxenError::NoCommitsFound) => None,
                 Err(err) => {
                     log::error!("Err repositories::commits::latest_commit: {err:?}");
-                    return Ok(HttpResponse::InternalServerError()
-                        .json(StatusMessage::error("Failed to get latest commit.")));
+                    None
                 }
             };
             Ok(HttpResponse::Ok().json(RepositoryCreationResponse {
