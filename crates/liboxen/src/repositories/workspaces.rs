@@ -1,6 +1,7 @@
 use crate::config::RepositoryConfig;
 use crate::constants::{OXEN_HIDDEN_DIR, REPO_CONFIG_FILENAME};
 use crate::core;
+use crate::core::db::data_frames::df_db;
 use crate::core::staged::staged_db_manager::get_staged_db_manager;
 use crate::core::workspaces::workspace_name_index;
 use crate::error::OxenError;
@@ -448,6 +449,9 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
     // Clean up caches before deleting the workspace
     merkle_tree::merkle_tree_node_cache::remove_from_cache(&workspace.workspace_repo.path)?;
     core::staged::remove_from_cache(&workspace.workspace_repo.path)?;
+    // Drop cached DuckDB connections rooted in this workspace before removing the dir. On NFS,
+    // unlinking a still-open file leaves a hidden .nfsXXXX entry that fails the rmdir with ENOTEMPTY.
+    df_db::remove_df_db_from_cache_with_children(&workspace_dir)?;
     match util::fs::remove_dir_all(&workspace_dir) {
         Ok(_) => log::debug!("workspace::delete removed workspace dir: {workspace_dir:?}"),
         Err(e) => log::error!("workspace::delete error removing workspace dir: {e:?}"),
