@@ -67,6 +67,7 @@ difference = { workspace = true }
 dirs = { workspace = true }
 duckdb = { workspace = true, optional = true }
 dunce = { workspace = true }
+fastcdc = { workspace = true }
 filetime = { workspace = true }
 flate2 = { workspace = true }
 fs_extra = { workspace = true }
@@ -140,6 +141,7 @@ video-rs = { workspace = true, optional = true }
 walkdir = { workspace = true }
 xxhash-rust = { workspace = true }
 zip = { workspace = true }
+zstd = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

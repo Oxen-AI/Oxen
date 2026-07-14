@@ -26,6 +26,7 @@ use crate::model::Schema;
 use crate::model::Workspace;
 use crate::model::merkle_tree::merkle_hash::HexHash;
 use crate::model::merkle_tree::node_type::InvalidMerkleTreeNodeType;
+use crate::storage::chunked::ChunkedError;
 
 pub mod path_buf_error;
 pub mod string_error;
@@ -311,6 +312,10 @@ pub enum OxenError {
     /// An error from the on-disk Merkle node database.
     #[error("{0}")]
     MerkleDbError(#[from] MerkleDbError),
+
+    /// An error from the block-level dedup storage layer (`storage::chunked`).
+    #[error("{0}")]
+    ChunkedError(#[from] ChunkedError),
 
     // Attempting to make a commit with no changes from its parent is an error.
     #[error("No changes to commit")]
@@ -781,6 +786,11 @@ impl OxenError {
             DirHashIndexMissing { .. } => {
                 "Re-push the commit from a clone with the full local history to repopulate the server's directory index."
             }
+            ChunkedError(
+                crate::storage::chunked::ChunkedError::UnknownChunkerId(_)
+                | crate::storage::chunked::ChunkedError::UnknownCodecId(_)
+                | crate::storage::chunked::ChunkedError::UnknownTransformId(_),
+            ) => "Upgrade oxen to a version that supports this repository's storage format.",
             UnsupportedRepoVersion(_) => {
                 "Use an older Oxen release to migrate this repository up to the current format, then retry with this CLI."
             }
