@@ -216,6 +216,10 @@ impl PyRemoteRepo {
             })?;
 
         self.repo = Some(result);
+        // A non-empty create points the handle at the initial commit on the default branch. An
+        // empty create leaves the handle untouched: `revision` is the branch future operations
+        // target (the constructor defaults it to "main" before the branch exists), so clearing
+        // it would break follow-up calls like `log()` once the first commit lands.
         if let Some(branch) = default_branch {
             self.revision = Some(branch.name);
             self.commit_id = Some(branch.commit_id);
