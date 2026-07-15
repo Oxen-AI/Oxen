@@ -17,14 +17,13 @@ use std::sync::Arc;
 
 use crate::error::OxenError;
 
-use super::block_engine::{BlockEngine, ChunkPayloadCursor};
+use super::block_engine::BlockEngine;
 use super::manifest::ChunkManifest;
 
 /// Sync `Read + Seek` over a chunked version's logical bytes.
 pub struct SeekableVersionReader {
     engine: Arc<BlockEngine>,
     manifest: ChunkManifest,
-    cursor: ChunkPayloadCursor,
     /// Logical position in the reconstructed file. May sit past EOF (like `File`);
     /// reads there return 0.
     pos: u64,
@@ -37,7 +36,6 @@ impl SeekableVersionReader {
         Self {
             engine,
             manifest,
-            cursor: ChunkPayloadCursor::new(),
             pos: 0,
             cached_chunk: None,
         }
@@ -51,9 +49,7 @@ impl SeekableVersionReader {
     /// The decoded bytes of chunk `idx`, from cache or via one block range read.
     fn chunk_bytes(&mut self, idx: usize) -> Result<&[u8], OxenError> {
         if self.cached_chunk.as_ref().map(|(i, _)| *i) != Some(idx) {
-            let raw = self
-                .cursor
-                .read_chunk(&self.engine, &self.manifest.chunks[idx])?;
+            let raw = self.engine.read_chunk(&self.manifest.chunks[idx])?;
             self.cached_chunk = Some((idx, raw));
         }
         // The branch above guarantees the cache is filled; re-match instead of unwrap.

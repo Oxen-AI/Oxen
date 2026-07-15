@@ -1,76 +1,63 @@
-//! The local block engine: packs chunked file versions into blocks on disk, indexes
-//! them, and reconstructs file bytes from manifests.
+//! The block engine: packs chunked file versions into blocks, indexes them, and
+//! reconstructs file bytes from manifests.
 //!
-//! This is the shared core the version-store backends drive; it is sync on purpose
-//! (callers bridge with one `spawn_blocking` per operation, per
-//! `docs/async_policy.md`). Layout on disk:
+//! This is the shared core every version-store backend drives; backends differ
+//! only in the raw [`BlockByteIo`] the engine runs over (local file ranges, S3
+//! ranged GETs / PUTs). It is sync on purpose (callers bridge with one
+//! `spawn_blocking` per operation, per `docs/async_policy.md`); the chunk index is
+//! always local LMDB, even for remote block storage.
 //!
-//! ```text
-//! {blocks_dir}/{hash[..2]}/{hash[2..]}/data   # immutable sealed blocks
-//! {index_dir}/                                 # LMDB chunk index (derived state)
-//! ```
-//!
-//! Block hashes are rendered as fixed-width 32-digit hex, so the two-level fan-out
-//! is uniform. Durability ordering is publish-last everywhere: a block is written
-//! atomically (hash-verified) *before* its chunks are indexed, so a crash between
-//! the two leaves only a reclaimable orphan block that [`BlockEngine::rebuild_index`]
+//! Durability ordering is publish-last everywhere: a block is durably written
+//! (hash-verified) *before* its chunks are indexed, so a crash between the two
+//! leaves only a reclaimable orphan block that [`BlockEngine::rebuild_index`]
 //! discovers.
 
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::io::{Read, Write};
+use std::path::Path;
 use std::sync::Arc;
 
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::error::OxenError;
 use crate::model::MerkleHash;
-use crate::util;
-use crate::util::fs::AtomicFile;
 use crate::util::hasher::hash_buffer_128bit;
 
 use super::block::{BlockWriter, SealedBlock, parse_block_footer, verify_block};
-use super::chunk_index::{ChunkIndex, ChunkLocation};
+use super::block_io::{BlockByteIo, LocalBlockIo};
+use super::chunk_index::ChunkIndex;
 use super::compressor::{EncodedChunk, decode_chunk, encode_chunk};
 use super::error::ChunkedError;
 use super::manifest::{ChunkEntry, ChunkManifest, MANIFEST_VERSION};
 use super::policy::EncodePolicy;
 use super::registry::chunker;
 
-/// File name of the block payload within its hash directory (mirrors the version
-/// store's `data` convention).
-const BLOCK_DATA_FILE: &str = "data";
-
-/// Packs, indexes, and reconstructs chunked file versions against a local blocks
-/// directory and chunk index.
+/// Packs, indexes, and reconstructs chunked file versions over a block byte-IO
+/// backend and a local chunk index.
 #[derive(Debug)]
 pub struct BlockEngine {
-    blocks_dir: PathBuf,
+    io: Arc<dyn BlockByteIo>,
     index: ChunkIndex,
 }
 
 impl BlockEngine {
-    /// Open (creating if absent) the engine over `blocks_dir` and the chunk index
-    /// at `index_dir`.
-    pub fn open(blocks_dir: &Path, index_dir: &Path) -> Result<Self, OxenError> {
+    /// Build an engine over an explicit byte-IO backend and the chunk index at
+    /// `index_dir`.
+    pub fn new(io: Arc<dyn BlockByteIo>, index_dir: &Path) -> Result<Self, OxenError> {
         let index = ChunkIndex::open(index_dir)?;
-        Ok(Self {
-            blocks_dir: blocks_dir.to_path_buf(),
-            index,
-        })
+        Ok(Self { io, index })
+    }
+
+    /// Open (creating if absent) a local-filesystem engine over `blocks_dir` and
+    /// the chunk index at `index_dir`.
+    pub fn open(blocks_dir: &Path, index_dir: &Path) -> Result<Self, OxenError> {
+        Self::new(
+            Arc::new(LocalBlockIo::new(blocks_dir.to_path_buf())),
+            index_dir,
+        )
     }
 
     pub fn index(&self) -> &ChunkIndex {
         &self.index
-    }
-
-    /// The on-disk path of a block.
-    pub fn block_path(&self, block_hash: u128) -> PathBuf {
-        let hex = format!("{block_hash:032x}");
-        self.blocks_dir
-            .join(&hex[..2])
-            .join(&hex[2..])
-            .join(BLOCK_DATA_FILE)
     }
 
     /// Chunk `reader` in a single streaming pass — hashing the whole file while
@@ -134,12 +121,10 @@ impl BlockEngine {
         Ok(manifest)
     }
 
-    /// Atomically publish a sealed block, then index its chunks (publish-last: the
-    /// index is only ever behind the blocks on disk, never ahead).
+    /// Durably publish a sealed block, then index its chunks (publish-last: the
+    /// index is only ever behind the stored blocks, never ahead).
     fn publish_block(&self, block: SealedBlock) -> Result<(), OxenError> {
-        AtomicFile::new(self.block_path(block.hash))
-            .with_hash(MerkleHash::new(block.hash))
-            .write(&block.data)?;
+        self.io.put_block(block.hash, &block.data)?;
         self.index.insert_block(block.hash, &block.chunks)
     }
 
@@ -147,8 +132,8 @@ impl BlockEngine {
     /// peer, a repair source): check its content hash against `expected_hash`,
     /// verify every chunk against the footer's claims (design decision 16), then
     /// publish and index it. Idempotent.
-    pub fn store_block(&self, expected_hash: u128, data: &[u8]) -> Result<(), OxenError> {
-        let actual = hash_buffer_128bit(data);
+    pub fn store_block(&self, expected_hash: u128, data: bytes::Bytes) -> Result<(), OxenError> {
+        let actual = hash_buffer_128bit(&data);
         if actual != expected_hash {
             return Err(ChunkedError::BlockHashMismatch {
                 expected: expected_hash,
@@ -156,11 +141,42 @@ impl BlockEngine {
             }
             .into());
         }
-        let chunks = verify_block(data)?;
-        AtomicFile::new(self.block_path(expected_hash))
-            .with_hash(MerkleHash::new(expected_hash))
-            .write(data)?;
+        let chunks = verify_block(&data)?;
+        self.io.put_block(expected_hash, &data)?;
         self.index.insert_block(expected_hash, &chunks)
+    }
+
+    /// Read and decode the raw bytes of one manifest chunk through the index and
+    /// block byte IO.
+    pub(super) fn read_chunk(&self, entry: &ChunkEntry) -> Result<Vec<u8>, OxenError> {
+        let location = self
+            .index
+            .get(entry.hash)?
+            .ok_or(ChunkedError::MissingChunk {
+                chunk_hash: entry.hash,
+            })?;
+        if location.raw_len != entry.len {
+            return Err(ChunkedError::CorruptChunkIndex(format!(
+                "chunk {:x} indexed with raw length {} but manifest says {}",
+                entry.hash, location.raw_len, entry.len
+            ))
+            .into());
+        }
+        let payload = self.io.read_block_range(
+            location.block_hash,
+            location.offset as u64,
+            location.stored_len as u64,
+        )?;
+        Ok(decode_chunk(
+            location.codec,
+            &payload,
+            location.raw_len as usize,
+        )?)
+    }
+
+    /// Read a block's complete bytes (transfer packing, tests, fsck).
+    pub fn read_block_bytes(&self, block_hash: u128) -> Result<Vec<u8>, OxenError> {
+        self.io.read_block(block_hash)
     }
 
     /// Stream the file a manifest describes into `writer`, in order.
@@ -172,9 +188,8 @@ impl BlockEngine {
         manifest: &ChunkManifest,
         writer: &mut dyn Write,
     ) -> Result<(), OxenError> {
-        let mut cursor = ChunkPayloadCursor::new();
         for entry in &manifest.chunks {
-            let raw = cursor.read_chunk(self, entry)?;
+            let raw = self.read_chunk(entry)?;
             writer.write_all(&raw)?;
         }
         Ok(())
@@ -194,7 +209,6 @@ impl BlockEngine {
             return Ok(Vec::new());
         }
         let mut out = Vec::with_capacity((end - offset) as usize);
-        let mut cursor = ChunkPayloadCursor::new();
         let mut pos = offset;
         while pos < end {
             let entry = manifest.chunk_at(pos).ok_or_else(|| {
@@ -203,7 +217,7 @@ impl BlockEngine {
                     manifest.file_size
                 ))
             })?;
-            let raw = cursor.read_chunk(self, entry)?;
+            let raw = self.read_chunk(entry)?;
             let start_in_chunk = (pos - entry.offset) as usize;
             let end_in_chunk = (end - entry.offset).min(entry.len as u64) as usize;
             out.extend_from_slice(&raw[start_in_chunk..end_in_chunk]);
@@ -235,7 +249,6 @@ impl BlockEngine {
         let mut blocks = Vec::new();
         let mut writer = BlockWriter::new();
         let mut packed = std::collections::HashSet::new();
-        let mut cursor = ChunkPayloadCursor::new();
 
         for &chunk_hash in hashes {
             if !packed.insert(chunk_hash) {
@@ -245,7 +258,11 @@ impl BlockEngine {
                 .index
                 .get(chunk_hash)?
                 .ok_or(ChunkedError::MissingChunk { chunk_hash })?;
-            let payload = cursor.read_payload(self, &location)?;
+            let payload = self.io.read_block_range(
+                location.block_hash,
+                location.offset as u64,
+                location.stored_len as u64,
+            )?;
             let encoded = EncodedChunk {
                 codec: location.codec,
                 data: payload,
@@ -261,8 +278,8 @@ impl BlockEngine {
         Ok(blocks)
     }
 
-    /// Rebuild the chunk index from block footers: clear it, scan every block on
-    /// disk (verifying each block's content hash), and re-index every chunk.
+    /// Rebuild the chunk index from block footers: clear it, scan every stored
+    /// block (verifying each block's content hash), and re-index every chunk.
     ///
     /// Returns the number of blocks scanned. The index is derived state, so this is
     /// always safe; a block whose bytes no longer match its name is reported as
@@ -270,8 +287,8 @@ impl BlockEngine {
     pub fn rebuild_index(&self) -> Result<u64, OxenError> {
         self.index.clear()?;
         let mut num_blocks = 0u64;
-        for (block_hash, path) in self.list_blocks()? {
-            let data = util::fs::read_bytes_from_path(&path)?;
+        for block_hash in self.list_blocks()? {
+            let data = self.io.read_block(block_hash)?;
             let actual = hash_buffer_128bit(&data);
             if actual != block_hash {
                 return Err(ChunkedError::BlockHashMismatch {
@@ -287,106 +304,9 @@ impl BlockEngine {
         Ok(num_blocks)
     }
 
-    /// Every block on disk, as `(block_hash, path)` pairs.
-    pub fn list_blocks(&self) -> Result<Vec<(u128, PathBuf)>, OxenError> {
-        let mut blocks = Vec::new();
-        if !self.blocks_dir.exists() {
-            return Ok(blocks);
-        }
-        for prefix_entry in std::fs::read_dir(&self.blocks_dir)? {
-            let prefix_entry = prefix_entry?;
-            if !prefix_entry.metadata()?.is_dir() {
-                continue;
-            }
-            for block_entry in std::fs::read_dir(prefix_entry.path())? {
-                let block_entry = block_entry?;
-                if !block_entry.metadata()?.is_dir() {
-                    continue;
-                }
-                let hex = format!(
-                    "{}{}",
-                    prefix_entry.file_name().to_string_lossy(),
-                    block_entry.file_name().to_string_lossy()
-                );
-                let Ok(block_hash) = u128::from_str_radix(&hex, 16) else {
-                    log::warn!("skipping non-block directory in blocks dir: {hex}");
-                    continue;
-                };
-                let path = block_entry.path().join(BLOCK_DATA_FILE);
-                if path.exists() {
-                    blocks.push((block_hash, path));
-                }
-            }
-        }
-        Ok(blocks)
-    }
-}
-
-/// Reads raw chunk bytes through the index and block files, keeping the most
-/// recently used block file open — consecutive chunks of a file land consecutively
-/// in blocks, so this makes sequential reconstruction cheap without a handle cache.
-#[derive(Default)]
-pub(super) struct ChunkPayloadCursor {
-    open_block: Option<(u128, File)>,
-}
-
-impl ChunkPayloadCursor {
-    pub(super) fn new() -> Self {
-        Self::default()
-    }
-
-    /// Read and decode the raw bytes of one manifest chunk.
-    pub(super) fn read_chunk(
-        &mut self,
-        engine: &BlockEngine,
-        entry: &ChunkEntry,
-    ) -> Result<Vec<u8>, OxenError> {
-        let location = engine
-            .index
-            .get(entry.hash)?
-            .ok_or(ChunkedError::MissingChunk {
-                chunk_hash: entry.hash,
-            })?;
-        if location.raw_len != entry.len {
-            return Err(ChunkedError::CorruptChunkIndex(format!(
-                "chunk {:x} indexed with raw length {} but manifest says {}",
-                entry.hash, location.raw_len, entry.len
-            ))
-            .into());
-        }
-        let payload = self.read_payload(engine, &location)?;
-        Ok(decode_chunk(
-            location.codec,
-            &payload,
-            location.raw_len as usize,
-        )?)
-    }
-
-    /// Read a chunk's stored payload from its block file.
-    fn read_payload(
-        &mut self,
-        engine: &BlockEngine,
-        location: &ChunkLocation,
-    ) -> Result<Vec<u8>, OxenError> {
-        let block_hash = location.block_hash;
-        let io_err = |source| ChunkedError::BlockRead { block_hash, source };
-
-        if self.open_block.as_ref().map(|(hash, _)| *hash) != Some(block_hash) {
-            let file = File::open(engine.block_path(block_hash)).map_err(io_err)?;
-            self.open_block = Some((block_hash, file));
-        }
-        // The `if` above guarantees an open block; re-match instead of unwrap.
-        let Some((_, file)) = self.open_block.as_mut() else {
-            return Err(ChunkedError::CorruptChunkIndex(
-                "open block handle unexpectedly missing".to_string(),
-            )
-            .into());
-        };
-        let mut payload = vec![0u8; location.stored_len as usize];
-        file.seek(SeekFrom::Start(location.offset as u64))
-            .map_err(io_err)?;
-        file.read_exact(&mut payload).map_err(io_err)?;
-        Ok(payload)
+    /// Every stored block's hash.
+    pub fn list_blocks(&self) -> Result<Vec<u128>, OxenError> {
+        self.io.list_blocks()
     }
 }
 
@@ -396,7 +316,6 @@ impl ChunkPayloadCursor {
 pub struct ReconstructReader {
     engine: Arc<BlockEngine>,
     manifest: ChunkManifest,
-    cursor: ChunkPayloadCursor,
     next_chunk: usize,
     buf: Vec<u8>,
     buf_pos: usize,
@@ -407,7 +326,6 @@ impl ReconstructReader {
         Self {
             engine,
             manifest,
-            cursor: ChunkPayloadCursor::new(),
             next_chunk: 0,
             buf: Vec::new(),
             buf_pos: 0,
@@ -422,8 +340,8 @@ impl Read for ReconstructReader {
                 return Ok(0); // clean EOF
             };
             self.buf = self
-                .cursor
-                .read_chunk(&self.engine, entry)
+                .engine
+                .read_chunk(entry)
                 .map_err(std::io::Error::other)?;
             self.buf_pos = 0;
             self.next_chunk += 1;
@@ -610,8 +528,9 @@ mod tests {
         let manifest = ingest(&t.engine, &data);
         let blocks = t.engine.list_blocks()?;
         assert!(blocks.len() >= 2, "expected multiple blocks");
-        for (_, path) in &blocks {
-            assert!(util::fs::metadata(path)?.len() <= MAX_BLOCK_SIZE);
+        for block_hash in &blocks {
+            let len = t.engine.read_block_bytes(*block_hash)?.len() as u64;
+            assert!(len <= MAX_BLOCK_SIZE);
         }
         assert_eq!(reconstruct(&t.engine, &manifest), data);
         Ok(())
@@ -661,20 +580,20 @@ mod tests {
         let manifest = ingest(&source.engine, &data);
 
         let dest = test_engine();
-        for (block_hash, path) in source.engine.list_blocks()? {
-            let bytes = util::fs::read_bytes_from_path(&path)?;
+        for block_hash in source.engine.list_blocks()? {
+            let bytes = bytes::Bytes::from(source.engine.read_block_bytes(block_hash)?);
 
             // Wrong expected hash is rejected before anything is written.
             assert!(matches!(
-                dest.engine.store_block(block_hash ^ 1, &bytes),
+                dest.engine.store_block(block_hash ^ 1, bytes.clone()),
                 Err(OxenError::ChunkedError(
                     ChunkedError::BlockHashMismatch { .. }
                 ))
             ));
 
-            dest.engine.store_block(block_hash, &bytes)?;
+            dest.engine.store_block(block_hash, bytes.clone())?;
             // Idempotent: storing the same block again succeeds.
-            dest.engine.store_block(block_hash, &bytes)?;
+            dest.engine.store_block(block_hash, bytes)?;
         }
         assert_eq!(reconstruct(&dest.engine, &manifest), data);
         Ok(())

@@ -564,7 +564,13 @@ pub fn create_version_store(
                 .and_then(|s| s.to_str())
                 .ok_or_else(|| OxenError::S3PrefixUnresolvable(repo_dir.into()))?;
             let prefix = format!("{namespace}/{name}");
-            let store = S3VersionStore::new(opts.bucket.clone(), opts.region.clone(), prefix);
+            // Blocks and manifests live in S3; the chunk index is store-local
+            // derived state kept with the server's repository metadata.
+            let chunk_index_dir = util::fs::oxen_hidden_dir(repo_dir)
+                .join(constants::VERSIONS_DIR)
+                .join(constants::CHUNK_INDEX_DIR);
+            let store = S3VersionStore::new(opts.bucket.clone(), opts.region.clone(), prefix)
+                .with_chunk_index_dir(chunk_index_dir);
             Ok(Arc::new(store))
         }
     }

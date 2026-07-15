@@ -846,7 +846,7 @@ impl ChunkedVersionStore for LocalVersionStore {
         let engine = self.engine()?;
         let block_hash = u128::from_str_radix(hash, 16)
             .map_err(|_| OxenError::basic_str(format!("invalid block hash: {hash}")))?;
-        spawn_blocking(move || engine.store_block(block_hash, &data)).await?
+        spawn_blocking(move || engine.store_block(block_hash, data)).await?
     }
 
     async fn pack_chunks(&self, hashes: &[u128]) -> Result<Vec<SealedBlock>, OxenError> {
@@ -1482,8 +1482,8 @@ mod tests {
 
             // "Transfer" every block from src to dst, then publish the manifest.
             let src_engine = src.engine()?;
-            for (block_hash, path) in src_engine.list_blocks()? {
-                let bytes = std::fs::read(&path).unwrap();
+            for block_hash in src_engine.list_blocks()? {
+                let bytes = src_engine.read_block_bytes(block_hash)?;
                 dst_chunked
                     .store_block(&format!("{block_hash:x}"), Bytes::from(bytes))
                     .await?;

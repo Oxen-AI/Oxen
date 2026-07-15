@@ -1186,16 +1186,21 @@ pub async fn read_version_df(
     opts: &DFOpts,
 ) -> Result<DataFrame, OxenError> {
     let extension = extension.as_ref();
-    match version_store.version_location(hash).await? {
+    let location = version_store.version_location(hash).await?;
+
+    // Chunked versions have no contiguous file or S3 object to scan; read them
+    // through the store's byte interfaces instead. A local whole-file blob skips
+    // the manifest probe entirely (the common case stays zero-overhead).
+    let whole_file_local = matches!(&location, VersionLocation::Local(path) if path.exists());
+    if !whole_file_local
+        && let Some(chunked) = version_store.chunked()
+        && chunked.get_manifest(hash).await?.is_some()
+    {
+        return read_chunked_version_df(version_store, hash, extension, opts).await;
+    }
+
+    match location {
         VersionLocation::Local(path) => {
-            if !path.exists()
-                && let Some(chunked) = version_store.chunked()
-                && chunked.get_manifest(hash).await?.is_some()
-            {
-                // Chunked version: no contiguous on-disk file exists, so read
-                // through the store's byte interfaces instead of a path scan.
-                return read_chunked_version_df(version_store, hash, extension, opts).await;
-            }
             p_read_df_with_extension(path, extension, opts.clone()).await
         }
         VersionLocation::S3 {

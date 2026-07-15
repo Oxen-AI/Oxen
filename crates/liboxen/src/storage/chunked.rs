@@ -13,6 +13,7 @@
 
 pub mod block;
 pub mod block_engine;
+pub mod block_io;
 pub mod chunk_index;
 pub mod chunker;
 pub mod compressor;
@@ -25,6 +26,7 @@ pub mod store;
 
 pub use block::{BlockChunk, BlockWriter, SealedBlock, parse_block_footer, verify_block};
 pub use block_engine::{BlockEngine, ReconstructReader};
+pub use block_io::{BlockByteIo, LocalBlockIo};
 pub use chunk_index::{ChunkIndex, ChunkLocation};
 pub use chunker::{Chunker, RawChunk};
 pub use compressor::{Compressor, EncodedChunk, decode_chunk, encode_chunk};

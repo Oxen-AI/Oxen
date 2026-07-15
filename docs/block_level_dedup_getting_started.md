@@ -32,7 +32,7 @@ transparently.
 | `SeekableVersionReader`, chunked `read_version_df` / `oxen df --revision` (plan §6.9) | ✅ implemented |
 | Push wire protocol: chunk negotiation, block transfer, server-side manifest validation (plan §7) | ✅ implemented — a server without block support is rejected with a structured error |
 | Pull of chunked-on-server versions | ✅ correct via the server's transparent reads (whole-file on the wire); chunk-level pull dedup is planned |
-| S3 backend parity (plan Phase 4) | ⬜ not yet |
+| S3 backend parity (plan Phase 4) | ✅ implemented — blocks and manifests live in S3, the chunk index stays on the server's local disk; same transparent reads and wire endpoints as local |
 | `oxen storage status` / `oxen storage migrate --to block-v1\|legacy` | ✅ implemented (local, resumable; converts every stored version) |
 | Maintenance lease, reachable-set inventory, GC, fsck (plan §9–11) | ⬜ not yet — reverse migration leaves blocks on disk until GC ships |
 

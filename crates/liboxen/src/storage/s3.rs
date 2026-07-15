@@ -1,24 +1,34 @@
 use crate::error::OxenError;
 use async_trait::async_trait;
 use aws_sdk_s3::error::SdkError;
+use aws_sdk_s3::operation::get_object::GetObjectError;
 use aws_sdk_s3::operation::head_object::HeadObjectError;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier};
 use aws_sdk_s3::{Client, config::Region, primitives::ByteStream};
 use bytes::Bytes;
 use futures::StreamExt;
 use log;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::io::AsyncReadExt;
 use tokio::sync::OnceCell;
+use tokio::task::spawn_blocking;
 use tokio_stream::Stream;
-use tokio_util::io::StreamReader;
+use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::io::{StreamReader, SyncIoBridge};
 
 use super::version_store::{BoxedByteStream, VersionLocation, VersionStore};
-use crate::constants::VERSION_FILE_NAME;
+use crate::constants::{STREAMING_BUF_SIZE, VERSION_FILE_NAME, VERSION_MANIFEST_FILE_NAME};
+use crate::model::{EntryDataType, MerkleHash};
+use crate::storage::chunked::block_io::BlockByteIo;
+use crate::storage::chunked::{
+    BlockEngine, ChunkManifest, ChunkedVersionStore, ReconstructReader, SealedBlock,
+    SeekableVersionReader, encode_policy,
+};
 use crate::util::fs::AtomicFile;
 use crate::util::hasher;
+use crate::util::hasher::HashingReader;
 use crate::view::versions::CleanCorruptedVersionsResult;
 use xxhash_rust::xxh3::Xxh3;
 
@@ -52,6 +62,13 @@ pub struct S3VersionStore {
     /// cloud-aware readers (Polars `CloudOptions`, DuckDB `SET s3_endpoint=...`) hit the same
     /// host as the version store itself.
     endpoint_url: Option<String>,
+    /// Local directory for the LMDB chunk index (chunked-version support). Blocks and manifests
+    /// live in S3, but the index is store-local derived state and lives with the server's
+    /// repository metadata on local disk (single authoritative server per repository). `None`
+    /// means chunked storage is unavailable on this store.
+    chunk_index_dir: Option<PathBuf>,
+    /// Lazily-built block engine over S3 block IO + the local chunk index.
+    block_engine: OnceCell<Arc<BlockEngine>>,
 }
 
 impl S3VersionStore {
@@ -69,7 +86,17 @@ impl S3VersionStore {
             prefix,
             oneshot_size: DEFAULT_ONESHOT_SIZE,
             endpoint_url: None,
+            chunk_index_dir: None,
+            block_engine: OnceCell::new(),
         }
+    }
+
+    /// Enable chunked-version (block) storage by naming the local directory for
+    /// the LMDB chunk index. Blocks and manifests live in S3; the index is
+    /// store-local derived state (rebuildable from block footers).
+    pub fn with_chunk_index_dir(mut self, dir: PathBuf) -> Self {
+        self.chunk_index_dir = Some(dir);
+        self
     }
 
     pub async fn client(&self) -> Result<Arc<Client>, OxenError> {
@@ -125,6 +152,8 @@ impl S3VersionStore {
             prefix,
             oneshot_size: DEFAULT_ONESHOT_SIZE,
             endpoint_url,
+            chunk_index_dir: None,
+            block_engine: OnceCell::new(),
         }
     }
 
@@ -146,6 +175,104 @@ impl S3VersionStore {
     /// Get the S3 key prefix for all chunks of a version
     fn chunks_prefix(&self, hash: &str) -> String {
         format!("{}/chunks/", self.version_dir(hash))
+    }
+
+    /// Get the S3 key of a chunked version's manifest (a chunked version has a
+    /// manifest object instead of `data`, mirroring the local layout).
+    fn manifest_key(&self, hash: &str) -> String {
+        format!("{}/{}", self.version_dir(hash), VERSION_MANIFEST_FILE_NAME)
+    }
+
+    /// The S3 key prefix for content-addressed blocks.
+    fn blocks_prefix(&self) -> String {
+        format!("{}/blocks", self.prefix)
+    }
+
+    /// Whether an object exists at `key` (HeadObject; NotFound → false).
+    async fn head_exists(&self, key: &str) -> Result<bool, OxenError> {
+        let client = self.client().await?;
+        match client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(SdkError::ServiceError(err))
+                if matches!(err.err(), HeadObjectError::NotFound(_)) =>
+            {
+                Ok(false)
+            }
+            Err(err) => Err(OxenError::basic_str(format!(
+                "S3 head_object failed for {key}: {err:?}"
+            ))),
+        }
+    }
+
+    /// Read an object's complete bytes, mapping a missing key to `None`.
+    async fn get_object_bytes_opt(&self, key: &str) -> Result<Option<Vec<u8>>, OxenError> {
+        let client = self.client().await?;
+        let resp = match client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+        {
+            Ok(resp) => resp,
+            Err(SdkError::ServiceError(err))
+                if matches!(err.err(), GetObjectError::NoSuchKey(_)) =>
+            {
+                return Ok(None);
+            }
+            Err(err) => {
+                return Err(OxenError::basic_str(format!(
+                    "S3 get_object failed for {key}: {err:?}"
+                )));
+            }
+        };
+        let data = resp
+            .body
+            .collect()
+            .await
+            .map_err(|e| OxenError::basic_str(format!("S3 read body failed: {e}")))?
+            .into_bytes()
+            .to_vec();
+        Ok(Some(data))
+    }
+
+    /// Load the published manifest for `hash`, if this store holds that version chunked.
+    async fn read_manifest(&self, hash: &str) -> Result<Option<ChunkManifest>, OxenError> {
+        match self.get_object_bytes_opt(&self.manifest_key(hash)).await? {
+            Some(bytes) => Ok(Some(ChunkManifest::from_bytes(&bytes)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// The block engine for chunked versions (S3 block IO + local LMDB chunk
+    /// index), built on first use. Requires [`Self::with_chunk_index_dir`].
+    async fn engine(&self) -> Result<Arc<BlockEngine>, OxenError> {
+        let Some(index_dir) = self.chunk_index_dir.clone() else {
+            return Err(OxenError::basic_str(
+                "S3 chunked storage requires a local chunk index directory (server repos configure one at construction)",
+            ));
+        };
+        self.block_engine
+            .get_or_try_init(|| async {
+                let io = Arc::new(S3BlockIo {
+                    client: self.client().await?,
+                    bucket: self.bucket.clone(),
+                    prefix: self.blocks_prefix(),
+                    handle: tokio::runtime::Handle::current(),
+                });
+                // Opening the LMDB env touches the filesystem; keep it off the
+                // async runtime.
+                let engine = spawn_blocking(move || BlockEngine::new(io, &index_dir)).await??;
+                Ok(Arc::new(engine))
+            })
+            .await
+            .cloned()
     }
 
     /// List all S3 object keys under a given prefix, following continuation tokens.
@@ -216,6 +343,141 @@ impl S3VersionStore {
         }
 
         Ok(())
+    }
+}
+
+/// S3-backed [`BlockByteIo`]: blocks are single objects at
+/// `{prefix}/blocks/{hash:032x}` (≤ 64 MiB by format, so a single PUT/GET each).
+///
+/// The trait is sync and only ever called from blocking threads (the block
+/// engine's entry points are wrapped in `spawn_blocking`), so each method bridges
+/// to the async SDK with `Handle::block_on` — sound outside an async execution
+/// context, which a `spawn_blocking` thread is.
+#[derive(Debug)]
+struct S3BlockIo {
+    client: Arc<Client>,
+    bucket: String,
+    prefix: String,
+    handle: tokio::runtime::Handle,
+}
+
+impl S3BlockIo {
+    fn block_key(&self, block_hash: u128) -> String {
+        format!("{}/{block_hash:032x}", self.prefix)
+    }
+}
+
+impl BlockByteIo for S3BlockIo {
+    fn put_block(&self, block_hash: u128, data: &Bytes) -> Result<(), OxenError> {
+        let key = self.block_key(block_hash);
+        let body = ByteStream::from(data.clone());
+        self.handle.block_on(async {
+            self.client
+                .put_object()
+                .bucket(&self.bucket)
+                .key(&key)
+                .body(body)
+                .send()
+                .await
+                .map_err(|e| OxenError::basic_str(format!("S3 put block {key} failed: {e}")))?;
+            Ok(())
+        })
+    }
+
+    fn read_block_range(
+        &self,
+        block_hash: u128,
+        offset: u64,
+        len: u64,
+    ) -> Result<Vec<u8>, OxenError> {
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+        let key = self.block_key(block_hash);
+        // HTTP Range is inclusive on both ends.
+        let end = offset
+            .checked_add(len - 1)
+            .ok_or_else(|| OxenError::basic_str("block range overflows u64"))?;
+        let range = format!("bytes={offset}-{end}");
+        self.handle.block_on(async {
+            let resp = self
+                .client
+                .get_object()
+                .bucket(&self.bucket)
+                .key(&key)
+                .range(&range)
+                .send()
+                .await
+                .map_err(|e| {
+                    OxenError::basic_str(format!("S3 ranged get of block {key} failed: {e}"))
+                })?;
+            let bytes = resp
+                .body
+                .collect()
+                .await
+                .map_err(|e| OxenError::basic_str(format!("S3 read block body failed: {e}")))?
+                .into_bytes();
+            Ok(bytes.to_vec())
+        })
+    }
+
+    fn read_block(&self, block_hash: u128) -> Result<Vec<u8>, OxenError> {
+        let key = self.block_key(block_hash);
+        self.handle.block_on(async {
+            let resp = self
+                .client
+                .get_object()
+                .bucket(&self.bucket)
+                .key(&key)
+                .send()
+                .await
+                .map_err(|e| OxenError::basic_str(format!("S3 get block {key} failed: {e}")))?;
+            let bytes = resp
+                .body
+                .collect()
+                .await
+                .map_err(|e| OxenError::basic_str(format!("S3 read block body failed: {e}")))?
+                .into_bytes();
+            Ok(bytes.to_vec())
+        })
+    }
+
+    fn list_blocks(&self) -> Result<Vec<u128>, OxenError> {
+        let base = format!("{}/", self.prefix);
+        self.handle.block_on(async {
+            let mut blocks = Vec::new();
+            let mut continuation_token: Option<String> = None;
+            loop {
+                let mut req = self
+                    .client
+                    .list_objects_v2()
+                    .bucket(&self.bucket)
+                    .prefix(&base);
+                if let Some(token) = &continuation_token {
+                    req = req.continuation_token(token);
+                }
+                let resp = req
+                    .send()
+                    .await
+                    .map_err(|e| OxenError::basic_str(format!("S3 list blocks failed: {e}")))?;
+                for obj in resp.contents.unwrap_or_default() {
+                    let Some(key) = obj.key else { continue };
+                    let Some(hex) = key.strip_prefix(&base) else {
+                        continue;
+                    };
+                    match u128::from_str_radix(hex, 16) {
+                        Ok(block_hash) => blocks.push(block_hash),
+                        Err(_) => log::warn!("skipping non-block object in blocks prefix: {key}"),
+                    }
+                }
+                if resp.is_truncated.unwrap_or(false) {
+                    continuation_token = resp.next_continuation_token;
+                } else {
+                    break;
+                }
+            }
+            Ok(blocks)
+        })
     }
 }
 
@@ -479,42 +741,54 @@ impl VersionStore for S3VersionStore {
         let client = self.client().await?;
         let key = self.generate_key(hash);
 
-        let resp = client
+        match client
             .head_object()
             .bucket(&self.bucket)
             .key(&key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("S3 head_object failed: {e}")))?;
-
-        let size = resp
-            .content_length()
-            .ok_or_else(|| OxenError::basic_str("S3 object missing content_length"))?
-            as u64;
-        Ok(size)
+        {
+            Ok(resp) => Ok(resp
+                .content_length()
+                .ok_or_else(|| OxenError::basic_str("S3 object missing content_length"))?
+                as u64),
+            Err(SdkError::ServiceError(err))
+                if matches!(err.err(), HeadObjectError::NotFound(_)) =>
+            {
+                // Chunked versions have a manifest instead of a `data` object; the
+                // logical size lives in the manifest.
+                match self.read_manifest(hash).await? {
+                    Some(manifest) => Ok(manifest.file_size),
+                    None => Err(OxenError::basic_str(format!(
+                        "S3 version not found: {hash}"
+                    ))),
+                }
+            }
+            Err(err) => Err(OxenError::basic_str(format!(
+                "S3 head_object failed: {err}"
+            ))),
+        }
     }
 
     async fn get_version(&self, hash: &str) -> Result<Vec<u8>, OxenError> {
-        let client = self.client().await?;
-        let key = self.generate_key(hash);
-
-        let resp = client
-            .get_object()
-            .bucket(&self.bucket)
-            .key(&key)
-            .send()
-            .await
-            .map_err(|e| OxenError::basic_str(format!("S3 get_object failed: {e}")))?;
-
-        let data = resp
-            .body
-            .collect()
-            .await
-            .map_err(|e| OxenError::basic_str(format!("S3 read body failed: {e}")))?
-            .into_bytes()
-            .to_vec();
-
-        Ok(data)
+        match self.get_object_bytes_opt(&self.generate_key(hash)).await? {
+            Some(data) => Ok(data),
+            None => {
+                // Chunked representation: reconstruct through the block engine.
+                let Some(manifest) = self.read_manifest(hash).await? else {
+                    return Err(OxenError::basic_str(format!(
+                        "S3 version not found: {hash}"
+                    )));
+                };
+                let engine = self.engine().await?;
+                spawn_blocking(move || {
+                    let mut data = Vec::with_capacity(manifest.file_size as usize);
+                    engine.reconstruct_to(&manifest, &mut data)?;
+                    Ok(data)
+                })
+                .await?
+            }
+        }
     }
 
     async fn get_version_derived_size(
@@ -544,13 +818,53 @@ impl VersionStore for S3VersionStore {
         let client = self.client().await?;
         let key = self.generate_key(hash);
 
-        let resp = client
+        let resp = match client
             .get_object()
             .bucket(&self.bucket)
             .key(&key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("S3 get_object failed: {e}")))?;
+        {
+            Ok(resp) => resp,
+            Err(SdkError::ServiceError(err))
+                if matches!(err.err(), GetObjectError::NoSuchKey(_)) =>
+            {
+                // Chunked representation: reconstruct on the blocking pool,
+                // feeding the async stream through a bounded channel.
+                let Some(manifest) = self.read_manifest(hash).await? else {
+                    return Err(OxenError::basic_str(format!(
+                        "S3 version not found: {hash}"
+                    )));
+                };
+                let engine = self.engine().await?;
+                let (tx, rx) = tokio::sync::mpsc::channel::<std::io::Result<Bytes>>(2);
+                spawn_blocking(move || {
+                    let mut reader = ReconstructReader::new(engine, manifest);
+                    let mut buf = vec![0u8; STREAMING_BUF_SIZE];
+                    loop {
+                        match std::io::Read::read(&mut reader, &mut buf) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                if tx
+                                    .blocking_send(Ok(Bytes::copy_from_slice(&buf[..n])))
+                                    .is_err()
+                                {
+                                    break; // consumer dropped the stream
+                                }
+                            }
+                            Err(err) => {
+                                let _ = tx.blocking_send(Err(err));
+                                break;
+                            }
+                        }
+                    }
+                });
+                return Ok(Box::new(ReceiverStream::new(rx)));
+            }
+            Err(err) => {
+                return Err(OxenError::basic_str(format!("S3 get_object failed: {err}")));
+            }
+        };
 
         let adapter = ByteStreamAdapter { inner: resp.body };
 
@@ -672,13 +986,36 @@ impl VersionStore for S3VersionStore {
         })?;
         let range = format!("bytes={offset}-{end}");
 
-        let resp = client
+        let resp = match client
             .get_object()
             .bucket(&self.bucket)
             .key(&key)
             .range(&range)
             .send()
-            .await?;
+            .await
+        {
+            Ok(resp) => resp,
+            Err(SdkError::ServiceError(err))
+                if matches!(err.err(), GetObjectError::NoSuchKey(_)) =>
+            {
+                // Chunked representation: a range read is a manifest binary search
+                // plus partial chunk decodes.
+                let Some(manifest) = self.read_manifest(hash).await? else {
+                    return Err(OxenError::basic_str(format!(
+                        "S3 version not found: {hash}"
+                    )));
+                };
+                if offset >= manifest.file_size || offset + size > manifest.file_size {
+                    return Err(OxenError::IO(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "beyond end of file",
+                    )));
+                }
+                let engine = self.engine().await?;
+                return spawn_blocking(move || engine.read_range(&manifest, offset, size)).await?;
+            }
+            Err(err) => return Err(err.into()),
+        };
 
         let bytes = resp
             .body
@@ -710,29 +1047,12 @@ impl VersionStore for S3VersionStore {
     }
 
     async fn version_exists(&self, hash: &str) -> Result<bool, OxenError> {
-        let client = self.client().await?;
-        let key = self.generate_key(hash);
-
-        match client
-            .head_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .send()
-            .await
-        {
-            Ok(_) => Ok(true),
-
-            Err(SdkError::ServiceError(err)) => match err.err() {
-                HeadObjectError::NotFound(_) => Ok(false),
-                err => Err(OxenError::basic_str(format!(
-                    "version_exists failed with S3 head_object error: {err:?}"
-                ))),
-            },
-
-            Err(err) => Err(OxenError::basic_str(format!(
-                "version_exists failed with S3 head_object error: {err:?}"
-            ))),
+        // A version is present as either a whole-file object or a published
+        // manifest (a chunked version has a manifest instead of `data`).
+        if self.head_exists(&self.generate_key(hash)).await? {
+            return Ok(true);
         }
+        self.head_exists(&self.manifest_key(hash)).await
     }
 
     async fn delete_version(&self, hash: &str) -> Result<(), OxenError> {
@@ -925,6 +1245,173 @@ impl VersionStore for S3VersionStore {
 
     fn storage_kind(&self) -> crate::storage::StorageKind {
         crate::storage::StorageKind::S3
+    }
+
+    fn chunked(&self) -> Option<&dyn ChunkedVersionStore> {
+        // Chunked storage needs the local chunk index; without a configured
+        // directory the capability is absent rather than failing at first use.
+        self.chunk_index_dir.as_ref().map(|_| self as _)
+    }
+}
+
+#[async_trait]
+impl ChunkedVersionStore for S3VersionStore {
+    async fn store_version_chunked(
+        &self,
+        hash: &str,
+        data_type: &EntryDataType,
+        extension: &str,
+        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+    ) -> Result<ChunkManifest, OxenError> {
+        // Idempotent: a published manifest is never overwritten.
+        if let Some(existing) = self.read_manifest(hash).await? {
+            return Ok(existing);
+        }
+        let engine = self.engine().await?;
+        let expected_hash: MerkleHash = hash.parse()?;
+        let policy = encode_policy(data_type, extension);
+        // The bridge must be constructed on the async runtime; its reads then run
+        // on the blocking pool inside the spawn_blocking below.
+        let mut sync_reader = SyncIoBridge::new(reader);
+        let manifest = spawn_blocking(move || {
+            let manifest = engine.ingest(&mut sync_reader, &policy)?;
+            if manifest.file_hash != expected_hash {
+                // Blocks already written are unreferenced orphans, reclaimable by
+                // GC; nothing is published under the claimed hash.
+                return Err(OxenError::HashMismatch {
+                    path: PathBuf::from(expected_hash.to_string()),
+                    expected: expected_hash,
+                    actual: manifest.file_hash,
+                });
+            }
+            Ok(manifest)
+        })
+        .await??;
+
+        let client = self.client().await?;
+        client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(self.manifest_key(hash))
+            .body(ByteStream::from(manifest.to_bytes()?))
+            .send()
+            .await
+            .map_err(|e| OxenError::basic_str(format!("S3 put manifest failed: {e}")))?;
+        Ok(manifest)
+    }
+
+    async fn get_manifest(&self, hash: &str) -> Result<Option<ChunkManifest>, OxenError> {
+        self.read_manifest(hash).await
+    }
+
+    async fn put_manifest(&self, manifest: &ChunkManifest) -> Result<(), OxenError> {
+        manifest.validate()?;
+        let hash = manifest.file_hash.to_string();
+        // No-op success: the store already holds this version's bytes, and two
+        // valid recipes for the same bytes may legitimately differ across chunker
+        // policies. The published manifest stays canonical.
+        if self.head_exists(&self.manifest_key(&hash)).await? {
+            return Ok(());
+        }
+
+        // Full streamed reconstruction (decision 11): the chunk list must
+        // reproduce exactly `file_size` bytes hashing to the claimed file hash
+        // before the manifest is published. A missing chunk fails here too.
+        let engine = self.engine().await?;
+        let manifest_clone = manifest.clone();
+        spawn_blocking(move || {
+            let mut reader = ReconstructReader::new(engine, manifest_clone.clone());
+            let mut hashing = HashingReader::new(&mut reader);
+            let reconstructed_size = std::io::copy(&mut hashing, &mut std::io::sink())?;
+            let actual = MerkleHash::new(hashing.digest128());
+            if reconstructed_size != manifest_clone.file_size || actual != manifest_clone.file_hash
+            {
+                return Err(OxenError::HashMismatch {
+                    path: PathBuf::from(manifest_clone.file_hash.to_string()),
+                    expected: manifest_clone.file_hash,
+                    actual,
+                });
+            }
+            Ok(())
+        })
+        .await??;
+
+        let client = self.client().await?;
+        client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(self.manifest_key(&hash))
+            .body(ByteStream::from(manifest.to_bytes()?))
+            .send()
+            .await
+            .map_err(|e| OxenError::basic_str(format!("S3 put manifest failed: {e}")))?;
+        Ok(())
+    }
+
+    async fn missing_chunks(&self, hashes: &[u128]) -> Result<Vec<u128>, OxenError> {
+        let engine = self.engine().await?;
+        let hashes = hashes.to_vec();
+        spawn_blocking(move || engine.index().missing(&hashes)).await?
+    }
+
+    async fn store_block(&self, hash: &str, data: Bytes) -> Result<(), OxenError> {
+        let engine = self.engine().await?;
+        let block_hash = u128::from_str_radix(hash, 16)
+            .map_err(|_| OxenError::basic_str(format!("invalid block hash: {hash}")))?;
+        spawn_blocking(move || engine.store_block(block_hash, data)).await?
+    }
+
+    async fn pack_chunks(&self, hashes: &[u128]) -> Result<Vec<SealedBlock>, OxenError> {
+        let engine = self.engine().await?;
+        let hashes = hashes.to_vec();
+        spawn_blocking(move || engine.pack_chunks(&hashes)).await?
+    }
+
+    async fn open_seekable(&self, hash: &str) -> Result<SeekableVersionReader, OxenError> {
+        let manifest = self.read_manifest(hash).await?.ok_or_else(|| {
+            OxenError::basic_str(format!("no chunked version found for hash {hash}"))
+        })?;
+        let engine = self.engine().await?;
+        Ok(SeekableVersionReader::new(engine, manifest))
+    }
+
+    async fn rebuild_chunk_index(&self) -> Result<u64, OxenError> {
+        let engine = self.engine().await?;
+        spawn_blocking(move || engine.rebuild_index()).await?
+    }
+
+    async fn delete_whole_file_blob(&self, hash: &str) -> Result<(), OxenError> {
+        if !self.head_exists(&self.manifest_key(hash)).await? {
+            return Err(OxenError::basic_str(format!(
+                "refusing to delete the whole-file object for {hash}: no chunked representation exists"
+            )));
+        }
+        let client = self.client().await?;
+        client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(self.generate_key(hash))
+            .send()
+            .await
+            .map_err(|e| OxenError::basic_str(format!("S3 delete_object failed: {e}")))?;
+        Ok(())
+    }
+
+    async fn delete_manifest(&self, hash: &str) -> Result<(), OxenError> {
+        if !self.head_exists(&self.generate_key(hash)).await? {
+            return Err(OxenError::basic_str(format!(
+                "refusing to delete the manifest for {hash}: no whole-file object exists"
+            )));
+        }
+        let client = self.client().await?;
+        client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(self.manifest_key(hash))
+            .send()
+            .await
+            .map_err(|e| OxenError::basic_str(format!("S3 delete_object failed: {e}")))?;
+        Ok(())
     }
 }
 
@@ -1974,6 +2461,218 @@ mod tests {
                 Ok(())
             })
             .await
+        }
+    }
+
+    /// Conformance suite for chunked storage on the S3 backend, mirroring the
+    /// local store's chunked tests: blocks and manifests live in S3, the chunk
+    /// index on local disk. Multi-thread runtimes so `S3BlockIo`'s
+    /// `Handle::block_on` bridge always has a driver.
+    mod chunked {
+        use super::*;
+        use crate::model::EntryDataType;
+        use crate::storage::chunked::ChunkedVersionStore;
+        use std::io::Cursor;
+
+        struct ChunkedFixture {
+            store: S3VersionStore,
+            _s3_dir: async_tempfile::TempDir,
+            _index_dir: tempfile::TempDir,
+            _server: tokio::task::JoinHandle<()>,
+            addr: std::net::SocketAddr,
+        }
+
+        async fn setup_chunked(prefix: &str) -> ChunkedFixture {
+            let (addr, s3_dir, server) = spawn_s3s().await;
+            let client = build_test_client(addr);
+            // Bucket creation races are fine across fixtures; each test spins its
+            // own server, so create unconditionally.
+            client
+                .create_bucket()
+                .bucket("test-bucket")
+                .send()
+                .await
+                .unwrap();
+            let index_dir = tempfile::tempdir().unwrap();
+            let store = S3VersionStore::new_with_client(
+                Arc::new(client),
+                "test-bucket".to_string(),
+                "us-west-1".to_string(),
+                prefix.to_string(),
+                Some(format!("http://{addr}")),
+            )
+            .with_chunk_index_dir(index_dir.path().to_path_buf());
+            ChunkedFixture {
+                store,
+                _s3_dir: s3_dir,
+                _index_dir: index_dir,
+                _server: server,
+                addr,
+            }
+        }
+
+        /// Deterministic compressible pseudo-CSV, seeded for reproducibility.
+        fn csv_bytes(seed: u64, len: usize) -> Vec<u8> {
+            let mut out = Vec::with_capacity(len + 64);
+            let mut state = seed;
+            let mut row = 0u64;
+            while out.len() < len {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                out.extend_from_slice(
+                    format!("{row},image_{state:x}.jpg,label_{}\n", state % 10).as_bytes(),
+                );
+                row += 1;
+            }
+            out.truncate(len);
+            out
+        }
+
+        async fn store_chunked(
+            store: &S3VersionStore,
+            data: &[u8],
+        ) -> Result<(String, ChunkManifest), OxenError> {
+            let hash = hasher::hash_buffer(data);
+            let manifest = store
+                .store_version_chunked(
+                    &hash,
+                    &EntryDataType::Tabular,
+                    "csv",
+                    Box::new(Cursor::new(data.to_vec())),
+                )
+                .await?;
+            Ok((hash, manifest))
+        }
+
+        /// A chunked S3 version reads identically to a whole-file version through
+        /// every transparent read API, ingest is idempotent, and the tabular read
+        /// path serves it without a cloud scan.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn s3_chunked_reads_are_transparent() -> Result<(), OxenError> {
+            let f = setup_chunked("ns/chunked-reads").await;
+            let data = csv_bytes(3, 1_500_000);
+            let (hash, manifest) = store_chunked(&f.store, &data).await?;
+            assert_eq!(manifest.file_size, data.len() as u64);
+
+            // Idempotent re-ingest returns the same manifest.
+            assert_eq!(store_chunked(&f.store, &data).await?.1, manifest);
+
+            // The version exists with a manifest instead of a data object.
+            assert!(f.store.version_exists(&hash).await?);
+            assert!(!f.store.head_exists(&f.store.generate_key(&hash)).await?);
+
+            assert_eq!(f.store.get_version_size(&hash).await?, data.len() as u64);
+            assert_eq!(f.store.get_version(&hash).await?, data);
+
+            // Streamed read.
+            let mut stream = f.store.get_version_stream(&hash).await?;
+            let mut streamed = Vec::new();
+            while let Some(chunk) = stream.next().await {
+                streamed.extend_from_slice(&chunk?);
+            }
+            assert_eq!(streamed, data);
+
+            // Range reads with the same beyond-EOF semantics as the object path.
+            let range = f.store.get_version_chunk(&hash, 1000, 4096).await?;
+            assert_eq!(range, &data[1000..5096]);
+            assert!(matches!(
+                f.store
+                    .get_version_chunk(&hash, data.len() as u64 - 1, 2)
+                    .await,
+                Err(OxenError::IO(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof
+            ));
+
+            // Working-tree publish through the transparent stream.
+            let dest_dir = tempfile::tempdir().unwrap();
+            let dest_path = dest_dir.path().join("restored.csv");
+            let mtime = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+            f.store
+                .copy_version_to_path(&hash, &dest_path, mtime)
+                .await?;
+            assert_eq!(std::fs::read(&dest_path)?, data);
+
+            // The tabular path reads the chunked S3 version through the byte
+            // interfaces (no cloud scan of a nonexistent object).
+            let store: Arc<dyn VersionStore> = Arc::new(f.store);
+            let df = crate::core::df::tabular::read_version_df(
+                &store,
+                &hash,
+                "csv",
+                &crate::opts::DFOpts::empty(),
+            )
+            .await?;
+            assert!(df.height() > 0);
+            Ok(())
+        }
+
+        /// The transfer surface on S3: pack blocks from one store, install them in
+        /// another (verified), publish the manifest (validated by reconstruction),
+        /// and rebuild the disposable index.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn s3_block_transfer_and_index_rebuild() -> Result<(), OxenError> {
+            let src = setup_chunked("ns/transfer-src").await;
+            let data = csv_bytes(11, 1_200_000);
+            let (hash, manifest) = store_chunked(&src.store, &data).await?;
+            let all_hashes: Vec<u128> = manifest.chunks.iter().map(|c| c.hash).collect();
+            assert_eq!(
+                src.store.missing_chunks(&all_hashes).await?,
+                Vec::<u128>::new()
+            );
+
+            // A second, independent store on its own s3s server.
+            let dst = setup_chunked("ns/transfer-dst").await;
+            assert_ne!(src.addr, dst.addr);
+            assert_eq!(dst.store.missing_chunks(&all_hashes).await?, all_hashes);
+
+            for block in src.store.pack_chunks(&all_hashes).await? {
+                dst.store
+                    .store_block(&format!("{:x}", block.hash), block.data)
+                    .await?;
+            }
+            assert_eq!(
+                dst.store.missing_chunks(&all_hashes).await?,
+                Vec::<u128>::new()
+            );
+
+            // A manifest lying about its file hash is rejected by reconstruction.
+            let mut lying = manifest.clone();
+            lying.file_hash = MerkleHash::new(lying.file_hash.to_u128() ^ 1);
+            assert!(matches!(
+                dst.store.put_manifest(&lying).await,
+                Err(OxenError::HashMismatch { .. })
+            ));
+
+            dst.store.put_manifest(&manifest).await?;
+            assert_eq!(dst.store.get_version(&hash).await?, data);
+
+            // The chunk index is disposable on the receiving store too.
+            let num_blocks = dst.store.rebuild_chunk_index().await?;
+            assert!(num_blocks > 0);
+            assert_eq!(dst.store.get_version(&hash).await?, data);
+            Ok(())
+        }
+
+        /// The migration guards hold on S3: neither representation can be deleted
+        /// unless the other exists.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn s3_representation_delete_guards() -> Result<(), OxenError> {
+            let f = setup_chunked("ns/guards").await;
+
+            // A whole-file version with no manifest: blob deletion is refused.
+            let whole = b"just a small whole file".to_vec();
+            let whole_hash = hasher::hash_buffer(&whole);
+            f.store
+                .store_version(&whole_hash, Bytes::from(whole))
+                .await?;
+            assert!(f.store.delete_whole_file_blob(&whole_hash).await.is_err());
+
+            // A chunked-only version: manifest deletion is refused.
+            let data = csv_bytes(7, 1_100_000);
+            let (chunked_hash, _) = store_chunked(&f.store, &data).await?;
+            assert!(f.store.delete_manifest(&chunked_hash).await.is_err());
+            assert!(f.store.version_exists(&chunked_hash).await?);
+            Ok(())
         }
     }
 }
