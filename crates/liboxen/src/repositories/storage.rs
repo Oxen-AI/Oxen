@@ -17,15 +17,8 @@
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::{EntryDataType, LocalRepository};
-use crate::storage::ContentFormat;
 use crate::storage::chunked::dedup_min_file_size;
-
-/// The `min_version` marker stamped on repos holding block-v1 chunked versions.
-/// Binaries that predate chunked storage don't recognize it and refuse to open
-/// the repo with an upgrade hint — without the fence they would misread chunked
-/// versions as missing data, and their fsck would delete manifest-only version
-/// dirs as corruption.
-const BLOCK_V1_MIN_OXEN_VERSION: &str = "0.52.0";
+use crate::storage::{BLOCK_V1_MIN_OXEN_VERSION, ContentFormat};
 
 /// Counters reported by a migration run.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -186,8 +179,14 @@ pub async fn migrate_to_legacy(repo: &mut LocalRepository) -> Result<MigrationSt
         stats.bytes_migrated += size;
     }
 
-    // Every chunked version is whole-file again, so pre-block binaries can
-    // safely open the repo: lower the fence stamped by migrate_to_block_v1.
+    // Blocks deliberately remain for a later GC, but their derived locations
+    // must not survive the fence transition. A pre-block cleaner may remove the
+    // block tree; clearing first prevents a future forward migration from
+    // trusting stale locations and deleting the only whole-file blobs.
+    chunked.clear_chunk_index().await?;
+
+    // Every chunked version is whole-file again and no stale chunk locations
+    // remain, so pre-block binaries can safely open the repo.
     repo.set_min_version(MinOxenVersion::LATEST);
     repo.save()?;
     Ok(stats)
@@ -270,10 +269,23 @@ mod tests {
             assert_eq!(stats.skipped_small, 1);
 
             // Reverse migration restores the whole-file blob byte-exactly.
+            let chunk_hashes = chunked
+                .get_manifest(&big_hash)
+                .await?
+                .expect("chunked version before reverse migration")
+                .chunks
+                .into_iter()
+                .map(|chunk| chunk.hash)
+                .collect::<Vec<_>>();
             let stats = repositories::storage::migrate_to_legacy(&mut repo).await?;
             assert_eq!(stats.migrated, 1);
             assert!(chunked.get_manifest(&big_hash).await?.is_none());
             assert_eq!(store.get_version(&big_hash).await?, csv.as_bytes());
+            assert_eq!(
+                chunked.missing_chunks(&chunk_hashes).await?,
+                chunk_hashes,
+                "reverse migration must discard the derived chunk index before lowering the fence"
+            );
             let status = repositories::storage::status(&repo).await?;
             assert_eq!(status.content_format, crate::storage::ContentFormat::Legacy);
             assert_eq!(status.chunked_versions, 0);

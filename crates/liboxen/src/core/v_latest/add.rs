@@ -495,38 +495,40 @@ pub async fn process_add_dir(
                                             )
                                             .await?;
 
-                                        match process_add_file(
-                                            &repo,
+                                        match prepare_add_file(
                                             &repo_path,
                                             &file_status,
-                                            &staged_db,
                                             &path,
-                                            &seen_dirs_clone,
                                             &conflicts,
                                         ) {
-                                            Ok(Some(node)) => {
-                                                if let EMerkleTreeNode::File(file_node) =
-                                                    &node.node.node
-                                                {
-                                                    store_file_version(
-                                                        &repo,
-                                                        &version_store,
-                                                        file_node,
-                                                        &file_status.hash,
-                                                        &path,
-                                                    )
-                                                    .await?;
-                                                    byte_counter_clone.fetch_add(
-                                                        file_node.num_bytes(),
-                                                        Ordering::Relaxed,
-                                                    );
-                                                    added_file_counter_clone
-                                                        .fetch_add(1, Ordering::Relaxed);
-                                                }
+                                            Ok(Some(prepared)) => {
+                                                store_file_version(
+                                                    &repo,
+                                                    &version_store,
+                                                    &prepared.file_node,
+                                                    &file_status.hash,
+                                                    &path,
+                                                )
+                                                .await?;
+                                                let num_bytes = prepared.file_node.num_bytes();
+                                                stage_prepared_add_file(
+                                                    &repo,
+                                                    &staged_db,
+                                                    prepared,
+                                                    &seen_dirs_clone,
+                                                )?;
+                                                byte_counter_clone
+                                                    .fetch_add(num_bytes, Ordering::Relaxed);
+                                                added_file_counter_clone
+                                                    .fetch_add(1, Ordering::Relaxed);
                                             }
                                             Ok(None) => {
-                                                unchanged_file_counter_clone
-                                                    .fetch_add(1, Ordering::Relaxed);
+                                                if file_status.status
+                                                    == StagedEntryStatus::Unmodified
+                                                {
+                                                    unchanged_file_counter_clone
+                                                        .fetch_add(1, Ordering::Relaxed);
+                                                }
                                             }
                                             Err(e) => {
                                                 log::error!("Error adding file: {e:?}");
@@ -712,31 +714,20 @@ async fn add_file_inner(
         .map(|conflict| conflict.merge_entry.path)
         .collect();
 
-    // Stage first, then store the bytes — the same order as the bulk add path —
-    // so the staged FileNode's data type and extension can drive the chunking
-    // policy inside `store_file_version`.
-    let staged_node = process_add_file(
-        repo,
-        repo_path,
-        &file_status,
-        staged_db,
-        path,
-        &seen_dirs,
-        &conflicts,
-    )?;
-    if let Some(staged) = &staged_node
-        && let EMerkleTreeNode::File(file_node) = &staged.node.node
-    {
-        if let Err(err) =
-            store_file_version(repo, version_store, file_node, &file_status.hash, path).await
-        {
-            // Roll the file's staged entry back: a staged FileNode whose bytes
-            // never reached the version store would let a later commit
-            // reference a version nothing can restore.
-            let relative_path = util::fs::path_relative_to_dir(path, repo_path)?;
-            staged_db.delete(relative_path.to_str().unwrap_or_default())?;
-            return Err(err);
-        }
+    // Store the content-addressed bytes before publishing any staged metadata.
+    // An interruption between these steps leaves only reclaimable orphan bytes;
+    // the inverse order could leave a commit-visible FileNode with no bytes.
+    let prepared = prepare_add_file(repo_path, &file_status, path, &conflicts)?;
+    let staged_node = if let Some(prepared) = prepared {
+        store_file_version(
+            repo,
+            version_store,
+            &prepared.file_node,
+            &file_status.hash,
+            path,
+        )
+        .await?;
+        stage_prepared_add_file(repo, staged_db, prepared, &seen_dirs)?
     } else if file_status.status == StagedEntryStatus::Unmodified
         && let Some(file_node) = &file_status.previous_file_node
         && !version_store
@@ -747,7 +738,10 @@ async fn add_file_inner(
         // (e.g. a blob removed by a corruption clean) restores it to the store.
         log::warn!("version data missing for unchanged file {path:?} - restoring");
         store_file_version(repo, version_store, file_node, &file_status.hash, path).await?;
-    }
+        None
+    } else {
+        None
+    };
     Ok(staged_node)
 }
 
@@ -816,26 +810,28 @@ pub async fn determine_file_status(
     })
 }
 
-pub fn process_add_file(
-    repo: &LocalRepository,
+struct PreparedAddFile {
+    relative_path: PathBuf,
+    status: StagedEntryStatus,
+    file_node: FileNode,
+    resolves_conflict: bool,
+}
+
+/// Build all metadata for an add without mutating durable repository state.
+/// The caller can therefore publish the version bytes before staging this node.
+fn prepare_add_file(
     repo_path: &Path,         // Path to the repository
     file_status: &FileStatus, // All the metadata including if the file is added, modified, or deleted
-    staged_db: &DBWithThreadMode<MultiThreaded>,
-    path: &Path, // Path to the file in the repository, or path defined by the user
-    seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
+    path: &Path,              // Path to the file in the repository, or path defined by the user
     merge_conflicts: &HashSet<PathBuf>,
-) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
-    log::debug!("process_add_file {path:?}");
+) -> Result<Option<PreparedAddFile>, OxenError> {
+    log::debug!("prepare_add_file {path:?}");
     let relative_path = util::fs::path_relative_to_dir(path, repo_path)?;
     let full_path = repo_path.join(&relative_path);
 
     if !full_path.is_file() {
-        // If path is not canonical, we cannot recover the absolute repo path
         log::debug!("file is not a file - skipping add on {full_path:?}");
-        return Ok(Some(StagedMerkleTreeNode {
-            status: StagedEntryStatus::Added,
-            node: MerkleTreeNode::default_dir(),
-        }));
+        return Ok(None);
     }
 
     let mut status = file_status.status.clone();
@@ -849,10 +845,9 @@ pub fn process_add_file(
         "status {status:?} hash {hash:?} num_bytes {num_bytes:?} mtime {mtime:?} file_node {maybe_file_node:?}"
     );
 
-    if maybe_file_node.is_some() && merge_conflicts.contains(&relative_path) {
-        log::debug!("merge conflict resolved: {relative_path:?}");
+    let resolves_conflict = maybe_file_node.is_some() && merge_conflicts.contains(&relative_path);
+    if resolves_conflict {
         status = StagedEntryStatus::Modified; // Mark as modified if there's a conflict
-        repositories::merge::mark_conflict_as_resolved(repo, &relative_path)?;
     }
 
     // Don't have to add the file to the staged db if it hasn't changed
@@ -910,7 +905,48 @@ pub fn process_add_file(
         extension: file_extension.to_string(),
     })?;
 
-    p_add_file_node_to_staged_db(staged_db, relative_path_str, status, &file_node, seen_dirs)
+    Ok(Some(PreparedAddFile {
+        relative_path,
+        status,
+        file_node,
+        resolves_conflict,
+    }))
+}
+
+/// Publish a fully prepared add after its backing version bytes are durable.
+fn stage_prepared_add_file(
+    repo: &LocalRepository,
+    staged_db: &DBWithThreadMode<MultiThreaded>,
+    prepared: PreparedAddFile,
+    seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
+) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
+    let staged = p_add_file_node_to_staged_db(
+        staged_db,
+        &prepared.relative_path,
+        prepared.status,
+        &prepared.file_node,
+        seen_dirs,
+    )?;
+    if prepared.resolves_conflict {
+        log::debug!("merge conflict resolved: {:?}", prepared.relative_path);
+        repositories::merge::mark_conflict_as_resolved(repo, &prepared.relative_path)?;
+    }
+    Ok(staged)
+}
+
+pub fn process_add_file(
+    repo: &LocalRepository,
+    repo_path: &Path,
+    file_status: &FileStatus,
+    staged_db: &DBWithThreadMode<MultiThreaded>,
+    path: &Path,
+    seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
+    merge_conflicts: &HashSet<PathBuf>,
+) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
+    let Some(prepared) = prepare_add_file(repo_path, file_status, path, merge_conflicts)? else {
+        return Ok(None);
+    };
+    stage_prepared_add_file(repo, staged_db, prepared, seen_dirs)
 }
 
 /// Add this function in replace of process_add_file for workspaces staged db to handle concurrent add_file calls
@@ -1304,7 +1340,44 @@ pub fn has_different_modification_time(node: &FileNode, time: &FileTime) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::RepositoryConfig;
+    use crate::storage::{StorageConfig, StorageKind};
     use crate::test;
+
+    /// A failed version-store write must not publish any staged metadata. In
+    /// particular, parent directory entries must not survive after the file
+    /// itself fails to store, because a later commit could otherwise observe a
+    /// partial add transaction.
+    #[tokio::test]
+    async fn test_add_storage_failure_leaves_staging_untouched() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let blocker = repo.path.join("version-store-blocker");
+            test::write_txt_file_to_path(&blocker, "not a directory")?;
+
+            let mut config = RepositoryConfig::from_repo(&repo)?;
+            config.storage = Some(StorageConfig {
+                kind: StorageKind::Local,
+                versions_path: Some(blocker),
+                ..Default::default()
+            });
+            let failing_repo = LocalRepository::new(&repo.path, config)?;
+
+            let path = repo.path.join("nested/file.txt");
+            util::fs::create_dir_all(path.parent().expect("nested file has a parent"))?;
+            test::write_txt_file_to_path(&path, "bytes that cannot be stored")?;
+            assert!(add(&failing_repo, [&path]).await.is_err());
+
+            let status = repositories::status(&repo).await?;
+            assert!(status.staged_files.is_empty());
+            assert!(
+                status.staged_dirs.is_empty(),
+                "a failed add left staged directories behind: {:?}",
+                status.staged_dirs
+            );
+            Ok(())
+        })
+        .await
+    }
 
     #[tokio::test]
     async fn test_add_respects_oxenignore() -> Result<(), OxenError> {

@@ -103,4 +103,14 @@ pub trait ChunkedVersionStore: Send + Sync {
     /// Rebuild the chunk index from block footers (the index is disposable derived
     /// state). Returns the number of blocks scanned.
     async fn rebuild_chunk_index(&self) -> Result<u64, OxenError>;
+
+    /// Clear the disposable chunk index while leaving blocks and manifests
+    /// untouched. Reverse migration uses this before allowing pre-block binaries
+    /// to open the repository, so a later forward migration cannot trust stale
+    /// locations for blocks an older cleaner removed.
+    async fn clear_chunk_index(&self) -> Result<(), OxenError> {
+        Err(OxenError::basic_str(
+            "this chunked storage backend cannot clear its chunk index",
+        ))
+    }
 }

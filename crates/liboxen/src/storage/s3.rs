@@ -1442,6 +1442,11 @@ impl ChunkedVersionStore for S3VersionStore {
         spawn_blocking(move || engine.rebuild_index()).await?
     }
 
+    async fn clear_chunk_index(&self) -> Result<(), OxenError> {
+        let engine = self.engine().await?;
+        spawn_blocking(move || engine.index().clear()).await?
+    }
+
     async fn delete_whole_file_blob(&self, hash: &str) -> Result<(), OxenError> {
         if !self.head_exists(&self.manifest_key(hash)).await? {
             return Err(OxenError::basic_str(format!(

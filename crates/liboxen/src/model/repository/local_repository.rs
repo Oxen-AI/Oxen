@@ -6,7 +6,10 @@ use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::{MetadataEntry, Remote, RemoteRepository};
-use crate::storage::{S3Opts, StorageConfig, VersionStore, create_version_store};
+use crate::storage::{
+    BLOCK_V1_MIN_OXEN_VERSION, ContentFormat, S3Opts, StorageConfig, VersionStore,
+    create_version_store,
+};
 use crate::util;
 use crate::util::fs::AtomicFile;
 use crate::view::RepositoryView;
@@ -93,7 +96,10 @@ impl LocalRepository {
     /// Set the repository's content storage format (persisted on the next `save`).
     /// Activating `ContentFormat::BlockV1` makes eligible new writes store chunked;
     /// existing versions keep their current representation until migrated.
-    pub fn set_content_format(&mut self, format: crate::storage::version_store::ContentFormat) {
+    pub fn set_content_format(&mut self, format: ContentFormat) {
+        if format == ContentFormat::BlockV1 {
+            self.set_min_version_marker(BLOCK_V1_MIN_OXEN_VERSION);
+        }
         self.storage_config.content_format = format;
     }
 
@@ -154,6 +160,16 @@ impl LocalRepository {
         // still pinned to 0.19.0) with a clear error, rather than letting the unsupported version
         // surface as a panic when it is later read.
         MinOxenVersion::or_earliest(config.min_version.clone())?;
+        if config
+            .storage
+            .as_ref()
+            .is_some_and(|storage| storage.content_format == ContentFormat::BlockV1)
+            && config.min_version.as_deref() != Some(BLOCK_V1_MIN_OXEN_VERSION)
+        {
+            return Err(OxenError::basic_str(format!(
+                "block-v1 repositories require min_version = {BLOCK_V1_MIN_OXEN_VERSION}"
+            )));
+        }
 
         let path = path.as_ref().to_path_buf();
         let storage_config = config.storage.unwrap_or_default();
@@ -670,6 +686,7 @@ mod tests {
     use crate::config::RepositoryConfig;
     use crate::error::OxenError;
     use crate::model::LocalRepository;
+    use crate::storage::{ContentFormat, StorageConfig};
     use crate::test;
     use tempfile::TempDir;
 
@@ -683,6 +700,34 @@ mod tests {
         };
         let result = LocalRepository::new("unused/path", config);
         assert!(matches!(result, Err(OxenError::UnsupportedRepoVersion(_))));
+    }
+
+    #[test]
+    fn test_set_block_v1_content_format_raises_min_version_fence() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test(|mut repo| {
+            repo.set_content_format(ContentFormat::BlockV1);
+            assert_eq!(repo.min_version.as_deref(), Some("0.52.0"));
+            repo.save()?;
+
+            let config = RepositoryConfig::from_repo(&repo)?;
+            assert_eq!(config.min_version.as_deref(), Some("0.52.0"));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_new_rejects_unfenced_block_v1_config() {
+        let config = RepositoryConfig {
+            storage: Some(StorageConfig {
+                content_format: ContentFormat::BlockV1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let result = LocalRepository::new("unused/path", config);
+        let err = result.expect_err("unfenced block-v1 config was accepted");
+        assert!(err.to_string().contains("block-v1 repositories require"));
     }
 
     #[tokio::test]

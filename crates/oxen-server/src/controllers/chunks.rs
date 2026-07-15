@@ -7,8 +7,8 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use futures_util::stream::StreamExt as _;
 
 use liboxen::error::OxenError;
-use liboxen::storage::VersionStore;
 use liboxen::storage::chunked::{ChunkManifest, ChunkedVersionStore, MAX_BLOCK_SIZE};
+use liboxen::storage::{BLOCK_V1_MIN_OXEN_VERSION, VersionStore};
 use liboxen::view::StatusMessage;
 use liboxen::view::chunks::{
     ChunkHashesRequest, MissingChunksResponse, format_chunk_hash, parse_chunk_hash,
@@ -106,7 +106,7 @@ pub async fn upload_manifest(
     let namespace = path_param(&req, "namespace")?;
     let repo_name = path_param(&req, "repo_name")?;
     let file_hash = path_param(&req, "file_hash")?;
-    let repo = get_repo(app_data, namespace, repo_name)?;
+    let mut repo = get_repo(app_data, namespace, repo_name)?;
     let store = repo.version_store();
 
     // Drain the payload inline with a hard cap; the manifest parser enforces its
@@ -136,6 +136,11 @@ pub async fn upload_manifest(
         ));
     }
 
+    // Fence the repository durably before making a block-backed version
+    // visible. A pre-block server must refuse to open this repository even if
+    // the process is interrupted immediately after manifest publication.
+    repo.set_min_version_marker(BLOCK_V1_MIN_OXEN_VERSION);
+    repo.save()?;
     chunked(&*store)?.put_manifest(&manifest).await?;
     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
 }
@@ -148,7 +153,10 @@ mod tests {
 
     use actix_web::{App, web};
     use liboxen::error::OxenError;
+    use liboxen::model::EntryDataType;
     use liboxen::storage::chunked::MAX_BLOCK_SIZE;
+    use liboxen::util;
+    use std::io::Cursor;
 
     /// Oversized block bodies are rejected with 413 before they are fully
     /// buffered (raw payload streaming is not covered by actix's extractor
@@ -184,6 +192,77 @@ mod tests {
         );
 
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
+
+    /// Publishing the first server-side manifest raises the repository format
+    /// fence before the manifest becomes visible to older binaries.
+    #[actix_web::test]
+    async fn test_upload_manifest_persists_block_v1_fence() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Manifest-Fence";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let source = test::create_local_repo(&sync_dir, namespace, "Manifest-Source")?;
+
+        let data = b"manifest fence test bytes".to_vec();
+        let hash = util::hasher::hash_buffer(&data);
+        let source_store = source.version_store();
+        let source_chunked = source_store
+            .chunked()
+            .expect("source store supports chunks");
+        let manifest = source_chunked
+            .store_version_chunked(
+                &hash,
+                &EntryDataType::Text,
+                "txt",
+                Box::new(Cursor::new(data)),
+            )
+            .await?;
+        let chunk_hashes = manifest
+            .chunks
+            .iter()
+            .map(|chunk| chunk.hash)
+            .collect::<Vec<_>>();
+
+        let store = repo.version_store();
+        let destination_chunked = store.chunked().expect("destination store supports chunks");
+        for block in source_chunked.pack_chunks(&chunk_hashes).await? {
+            destination_chunked
+                .store_block(&format!("{:032x}", block.hash), block.data)
+                .await?;
+        }
+        assert!(destination_chunked.get_manifest(&hash).await?.is_none());
+
+        let uri = format!("/oxen/{namespace}/{repo_name}/manifests/{hash}");
+        let req = actix_web::test::TestRequest::put()
+            .uri(&uri)
+            .set_payload(manifest.to_bytes()?)
+            .to_request();
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/manifests/{file_hash}",
+                    web::put().to(controllers::chunks::upload_manifest),
+                ),
+        )
+        .await;
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        let config = std::fs::read_to_string(util::fs::config_filepath(&repo.path))?;
+        assert!(
+            config.contains("min_version = \"0.52.0\""),
+            "manifest was published without the block-v1 fence: {config}"
+        );
+
+        drop(source_store);
+        drop(store);
+        drop(source);
+        drop(repo);
+        test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
     }
 }

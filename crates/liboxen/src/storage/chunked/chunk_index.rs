@@ -157,12 +157,42 @@ impl ChunkIndex {
         })
     }
 
+    /// Atomically replace the complete index with locations parsed from a
+    /// validated block scan. If clearing or inserting any entry fails, LMDB
+    /// aborts the transaction and the previous live index remains intact.
+    pub fn replace_blocks(
+        &self,
+        blocks: impl IntoIterator<Item = Result<(u128, Vec<BlockChunk>), OxenError>>,
+    ) -> Result<(), OxenError> {
+        self.write(|db, txn| {
+            db.clear(txn)?;
+            for block in blocks {
+                let (block_hash, chunks) = block?;
+                for chunk in chunks {
+                    let key = chunk.chunk_hash.to_le_bytes();
+                    if db.contains(txn, &key)? {
+                        continue;
+                    }
+                    let location = ChunkLocation {
+                        block_hash,
+                        offset: chunk.offset,
+                        stored_len: chunk.stored_len,
+                        raw_len: chunk.raw_len,
+                        codec: chunk.codec,
+                    };
+                    db.put(txn, &key, &location.to_bytes())?;
+                }
+            }
+            Ok(())
+        })
+    }
+
     /// Number of indexed chunks.
     pub fn num_chunks(&self) -> Result<u64, OxenError> {
         self.read(|db, txn| Ok(db.len(txn)?))
     }
 
-    /// Drop every entry (one atomic commit). Used by index rebuild.
+    /// Drop every entry in one atomic commit.
     pub fn clear(&self) -> Result<(), OxenError> {
         self.write(|db, txn| Ok(db.clear(txn)?))
     }
@@ -244,6 +274,27 @@ mod tests {
         assert_eq!(location.block_hash, 0xAAAA);
         assert_eq!(location.offset, 0);
         assert_eq!(index.get(8)?.expect("chunk 8 indexed").block_hash, 0xBBBB);
+        Ok(())
+    }
+
+    /// Replacement is one LMDB transaction: an error after new entries have
+    /// been inserted aborts both the clear and the partial replacement.
+    #[test]
+    fn failed_replace_preserves_the_complete_live_index() -> Result<(), OxenError> {
+        let (_dir, index) = test_index();
+        index.insert_block(0xAAAA, &[block_chunk(1, 0)])?;
+
+        let replacements = vec![
+            Ok((0xBBBB, vec![block_chunk(2, 0)])),
+            Err(OxenError::basic_str("injected scan failure")),
+        ];
+        assert!(index.replace_blocks(replacements).is_err());
+
+        assert_eq!(
+            index.get(1)?.expect("old entry retained").block_hash,
+            0xAAAA
+        );
+        assert_eq!(index.get(2)?, None, "partial replacement was committed");
         Ok(())
     }
 }

@@ -20,6 +20,11 @@ use crate::storage::{LocalVersionStore, S3Opts, S3VersionStore};
 use crate::util;
 use crate::view::versions::CleanCorruptedVersionsResult;
 
+/// The minimum Oxen version for repositories that may contain block-v1
+/// manifests. Older binaries do not recognize the block tree and must refuse to
+/// open repositories carrying this marker.
+pub const BLOCK_V1_MIN_OXEN_VERSION: &str = "0.52.0";
+
 /// A boxed, `Send + Unpin` stream of byte chunks, each an `io::Result`.
 ///
 /// The shared return type of the version store's streaming reads and the

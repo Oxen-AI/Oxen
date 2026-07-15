@@ -278,16 +278,16 @@ impl BlockEngine {
         Ok(blocks)
     }
 
-    /// Rebuild the chunk index from block footers: clear it, scan every stored
-    /// block (verifying each block's content hash), and re-index every chunk.
+    /// Rebuild the chunk index from block footers: validate every stored block,
+    /// then atomically replace the live index with the complete scan result.
     ///
     /// Returns the number of blocks scanned. The index is derived state, so this is
     /// always safe; a block whose bytes no longer match its name is reported as
     /// corrupt rather than indexed.
     pub fn rebuild_index(&self) -> Result<u64, OxenError> {
-        self.index.clear()?;
-        let mut num_blocks = 0u64;
-        for block_hash in self.list_blocks()? {
+        let block_hashes = self.list_blocks()?;
+        let num_blocks = block_hashes.len() as u64;
+        let blocks = block_hashes.into_iter().map(|block_hash| {
             let data = self.io.read_block(block_hash)?;
             let actual = hash_buffer_128bit(&data);
             if actual != block_hash {
@@ -298,9 +298,12 @@ impl BlockEngine {
                 .into());
             }
             let chunks = parse_block_footer(&data)?;
-            self.index.insert_block(block_hash, &chunks)?;
-            num_blocks += 1;
-        }
+            Ok((block_hash, chunks))
+        });
+        // `replace_blocks` consumes the scan inside one LMDB write transaction.
+        // Its clear is invisible until commit, and any scan/index error aborts
+        // the transaction, leaving the prior live index intact.
+        self.index.replace_blocks(blocks)?;
         Ok(num_blocks)
     }
 
@@ -568,6 +571,33 @@ mod tests {
             .map(|c| t.engine.index().get(c.hash))
             .collect::<Result<_, _>>()?;
         assert_eq!(before, after, "rebuild must reproduce placements");
+        Ok(())
+    }
+
+    /// A rebuild validates all durable blocks before replacing the live index.
+    /// One corrupt block must not turn an otherwise usable index into an empty
+    /// or partially rebuilt one.
+    #[test]
+    fn failed_index_rebuild_preserves_live_index() -> Result<(), OxenError> {
+        let t = test_engine();
+        let data = csv_bytes(59, 2 * 1024 * 1024);
+        let manifest = ingest(&t.engine, &data);
+        let blocks = t.engine.list_blocks()?;
+        assert_eq!(blocks.len(), 1, "fixture should produce one block");
+
+        let chunk_hash = manifest.chunks[0].hash;
+        let before = t.engine.index().get(chunk_hash)?;
+        assert!(before.is_some());
+
+        let block_path = LocalBlockIo::new(t._dir.path().join("blocks")).block_path(blocks[0]);
+        std::fs::write(block_path, b"corrupt block")?;
+
+        assert!(t.engine.rebuild_index().is_err());
+        assert_eq!(
+            t.engine.index().get(chunk_hash)?,
+            before,
+            "failed rebuild replaced the live index"
+        );
         Ok(())
     }
 

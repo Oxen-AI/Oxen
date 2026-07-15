@@ -925,6 +925,11 @@ impl ChunkedVersionStore for LocalVersionStore {
         spawn_blocking(move || engine.rebuild_index()).await?
     }
 
+    async fn clear_chunk_index(&self) -> Result<(), OxenError> {
+        let engine = self.engine()?;
+        spawn_blocking(move || engine.index().clear()).await?
+    }
+
     async fn delete_whole_file_blob(&self, hash: &str) -> Result<(), OxenError> {
         let data_path = self.version_path(hash);
         let manifest_path = self.manifest_path(hash);
