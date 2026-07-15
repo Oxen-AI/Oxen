@@ -1056,7 +1056,13 @@ impl VersionStore for S3VersionStore {
                         "S3 version not found: {hash}"
                     )));
                 };
-                if offset >= manifest.file_size || offset + size > manifest.file_size {
+                // checked_add: offset and size are request-controlled, and a
+                // wrapping sum would slip past this guard.
+                if offset >= manifest.file_size
+                    || offset
+                        .checked_add(size)
+                        .is_none_or(|end| end > manifest.file_size)
+                {
                     return Err(OxenError::IO(std::io::Error::new(
                         std::io::ErrorKind::UnexpectedEof,
                         "beyond end of file",
@@ -2599,6 +2605,38 @@ mod tests {
                 )
                 .await?;
             Ok((hash, manifest))
+        }
+
+        /// Hostile range requests on a chunked version fail cleanly instead of
+        /// returning truncated data: an `offset + size` that overflows is an
+        /// error at every layer, and an in-range offset with an absurd size
+        /// gets the same beyond-EOF error the whole-file path gives.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn get_version_chunk_rejects_overflowing_ranges() -> Result<(), OxenError> {
+            let f = setup_chunked("ns/chunk-range-overflow").await;
+            let data = csv_bytes(23, 1_200_000);
+            let (hash, _manifest) = store_chunked(&f.store, &data).await?;
+
+            let result = f.store.get_version_chunk(&hash, 1, u64::MAX).await;
+            assert!(
+                result.is_err(),
+                "overflowing range must not return data, got {result:?}"
+            );
+
+            // A valid Range header that reaches the chunked fallback: the size
+            // pushes past EOF, and the guard must not wrap.
+            let result = f
+                .store
+                .get_version_chunk(&hash, 1000, 10 * 1024 * 1024 * 1024)
+                .await;
+            assert!(
+                matches!(
+                    &result,
+                    Err(OxenError::IO(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof
+                ),
+                "expected beyond-EOF error, got {result:?}"
+            );
+            Ok(())
         }
 
         /// Blocks are keyed under `{prefix}/blocks/`, inside the namespace that

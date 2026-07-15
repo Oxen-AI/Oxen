@@ -50,6 +50,7 @@ pub enum OxenHttpError {
     WorkspaceBehind(Box<WorkspaceBranch>),
     BasicError(StringError),
     FailedToReadRequestPayload,
+    PayloadTooLarge(StringError),
 
     // Translate OxenError to OxenHttpError
     InternalOxenError(OxenError),
@@ -117,6 +118,18 @@ impl error::ResponseError for OxenHttpError {
             OxenHttpError::FailedToReadRequestPayload => HttpResponse::BadRequest().json(
                 StatusMessageDescription::bad_request("Failed to read request payload"),
             ),
+            OxenHttpError::PayloadTooLarge(desc) => {
+                let error_json = json!({
+                    "error": {
+                        "type": "payload_too_large",
+                        "title": "Payload Too Large",
+                        "detail": desc.to_string()
+                    },
+                    "status": STATUS_ERROR,
+                    "status_message": MSG_BAD_REQUEST,
+                });
+                HttpResponse::PayloadTooLarge().json(error_json)
+            }
             OxenHttpError::BadRequest(desc) => {
                 let error_json = json!({
                     "error": {

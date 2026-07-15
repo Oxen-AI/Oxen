@@ -463,7 +463,13 @@ impl VersionStore for LocalVersionStore {
                     let Some(manifest) = read_manifest_at(&manifest_path)? else {
                         return Err(err.into());
                     };
-                    if offset >= manifest.file_size || offset + size > manifest.file_size {
+                    // checked_add: offset and size are request-controlled, and a
+                    // wrapping sum would slip past this guard.
+                    if offset >= manifest.file_size
+                        || offset
+                            .checked_add(size)
+                            .is_none_or(|end| end > manifest.file_size)
+                    {
                         return Err(OxenError::IO(io::Error::new(
                             io::ErrorKind::UnexpectedEof,
                             "beyond end of file",
@@ -478,7 +484,9 @@ impl VersionStore for LocalVersionStore {
         let metadata = file.metadata().await?;
         let file_len = metadata.len();
 
-        if offset >= file_len || offset + size > file_len {
+        // checked_add: offset and size are request-controlled, and a wrapping
+        // sum would slip past this guard.
+        if offset >= file_len || offset.checked_add(size).is_none_or(|end| end > file_len) {
             return Err(OxenError::IO(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "beyond end of file",
@@ -1489,6 +1497,34 @@ mod tests {
                 chunk.hash ^= 0xF00D;
             }
             assert!(chunked_store.put_manifest(&foreign).await.is_err());
+            Ok(())
+        }
+
+        /// Range requests whose `offset + size` overflows must fail with the
+        /// beyond-EOF error instead of wrapping past the bounds guard and
+        /// returning truncated data (offset and size arrive straight from
+        /// request query parameters).
+        #[tokio::test]
+        async fn get_version_chunk_rejects_overflowing_ranges() -> Result<(), OxenError> {
+            let (_temp_dir, store) = setup().await;
+            let data = csv_bytes(19, 1_200_000);
+            let (chunked_hash, _manifest) = store_chunked(&store, &data).await?;
+            let blob = b"0123456789";
+            let blob_hash = hasher::hash_buffer(blob);
+            store
+                .store_version(&blob_hash, Bytes::from_static(blob))
+                .await?;
+
+            for hash in [&chunked_hash, &blob_hash] {
+                let result = store.get_version_chunk(hash, 1, u64::MAX).await;
+                assert!(
+                    matches!(
+                        &result,
+                        Err(OxenError::IO(e)) if e.kind() == io::ErrorKind::UnexpectedEof
+                    ),
+                    "expected beyond-EOF error for {hash}, got {result:?}"
+                );
+            }
             Ok(())
         }
 
