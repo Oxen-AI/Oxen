@@ -1495,7 +1495,9 @@ mod tests {
                 [],
             )?;
             conn.execute(
-                &format!("ALTER TABLE {TABLE_NAME} ADD COLUMN {DIFF_HASH_COL} VARCHAR DEFAULT NULL"),
+                &format!(
+                    "ALTER TABLE {TABLE_NAME} ADD COLUMN {DIFF_HASH_COL} VARCHAR DEFAULT NULL"
+                ),
                 [],
             )?;
 
@@ -1514,10 +1516,7 @@ mod tests {
                     .trim_matches('\"')
                     .to_string();
                 let mut new_row = row.clone();
-                new_row.with_column(Series::new(
-                    "file".into(),
-                    vec![format!("{file}-updated")],
-                ))?;
+                new_row.with_column(Series::new("file".into(), vec![format!("{file}-updated")]))?;
                 row_map.insert(id, new_row);
             }
 

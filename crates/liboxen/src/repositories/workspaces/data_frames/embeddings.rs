@@ -633,9 +633,7 @@ mod tests {
     fn test_validate_embedding_query_accepts_known_columns() {
         let schema = schema_with(&["id", "embedding", "prompt"]);
         assert!(validate_embedding_query_columns(&schema, "embedding", "id = 1").is_ok());
-        assert!(
-            validate_embedding_query_columns(&schema, "embedding", "prompt = 'hello'").is_ok()
-        );
+        assert!(validate_embedding_query_columns(&schema, "embedding", "prompt = 'hello'").is_ok());
         // Column matching is case-insensitive, like DuckDB's binder.
         assert!(validate_embedding_query_columns(&schema, "EMBEDDING", "ID = 1").is_ok());
     }
