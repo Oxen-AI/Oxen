@@ -9,8 +9,6 @@ use std::io::Cursor;
 use utoipa::ToSchema;
 
 use super::StatusMessage;
-use super::data_frames::DataFrameColumnChange;
-use super::data_frames::DataFrameRowChange;
 use crate::constants;
 use crate::core::df::tabular;
 use crate::error::OxenError;
@@ -64,7 +62,6 @@ pub struct WorkspaceJsonDataFrameViewResponse {
 pub struct JsonDataFrameRowResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
-    pub diff: Option<Vec<DataFrameRowChange>>,
     pub data_frame: JsonDataFrameViews,
     pub commit: Option<Commit>,
     pub resource: Option<ResourceVersion>,
@@ -91,7 +88,6 @@ pub struct BatchUpdateResponse {
 pub struct JsonDataFrameColumnResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
-    pub diff: Option<Vec<DataFrameColumnChange>>,
     pub data_frame: JsonDataFrameViews,
     pub commit: Option<Commit>,
     pub resource: Option<ResourceVersion>,

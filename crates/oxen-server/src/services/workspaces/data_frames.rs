@@ -14,10 +14,6 @@ pub fn data_frames() -> Scope {
             web::get().to(controllers::workspaces::data_frames::get_by_branch),
         )
         .route(
-            "/diff/{path:.*}",
-            web::get().to(controllers::workspaces::data_frames::diff),
-        )
-        .route(
             "/download/{path:.*}",
             web::get().to(controllers::workspaces::data_frames::download),
         )

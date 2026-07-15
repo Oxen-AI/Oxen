@@ -10,18 +10,12 @@ use crate::constants::{OXEN_COLS, TABLE_NAME};
 use crate::core;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::db::data_frames::workspace_df_db::select_cols_from_schema;
-use crate::core::db::data_frames::{DataFrameError, df_db, workspace_df_db};
+use crate::core::db::data_frames::{DataFrameError, df_db};
 use crate::core::df::sql;
 use crate::error::OxenError;
 use crate::model::{Branch, Commit, EntryDataType, LocalRepository, NewCommitBody, Workspace};
 use crate::opts::DFOpts;
 use crate::{repositories, util};
-
-use crate::model::diff::tabular_diff::{
-    TabularDiffDupes, TabularDiffMods, TabularDiffParameters, TabularDiffSchemas,
-    TabularDiffSummary, TabularSchemaDiff,
-};
-use crate::model::diff::{AddRemoveModifyCounts, DiffResult, TabularDiff};
 
 use crate::core::db::data_frames::columns::polar_insert_column;
 use duckdb::arrow::array::RecordBatch;
@@ -180,69 +174,6 @@ pub fn export(
             sql::export_df(conn, sql, Some(opts), temp_file)?;
 
             Ok(())
-        })
-    })
-}
-
-pub fn diff(workspace: &Workspace, file_path: &Path) -> Result<DataFrame, DataFrameError> {
-    let staged_db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
-
-    with_df_db_manager(&staged_db_path, |manager| {
-        manager.with_conn(|conn| {
-            let diff_df = workspace_df_db::df_diff(conn)?;
-            Ok(diff_df)
-        })
-    })
-}
-
-pub fn full_diff(workspace: &Workspace, path: &Path) -> Result<DiffResult, DataFrameError> {
-    let repo = &workspace.base_repo;
-    // Get commit for the branch head
-    log::debug!("diff_workspace_df got repo at path {:?}", repo.path);
-
-    if !is_indexed(workspace, path)? {
-        return Err(DataFrameError::NotIndexed);
-    };
-
-    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-
-    with_df_db_manager(&db_path, |manager| {
-        manager.with_conn(|conn| {
-            let diff_df = workspace_df_db::df_diff(conn)?;
-            log::debug!("full_diff() diff_df: {diff_df:?}");
-
-            if diff_df.is_empty() {
-                return Ok(DiffResult::Tabular(TabularDiff::empty()));
-            }
-
-            let row_mods = AddRemoveModifyCounts::from_diff_df(&diff_df)?;
-
-            let schema = workspace_df_db::schema_without_oxen_cols(conn, TABLE_NAME)?;
-
-            let schemas = TabularDiffSchemas {
-                left: schema.clone(),
-                right: schema.clone(),
-                diff: schema.clone(),
-            };
-
-            let diff_summary = TabularDiffSummary {
-                modifications: TabularDiffMods {
-                    row_counts: row_mods,
-                    col_changes: TabularSchemaDiff::empty(),
-                },
-                schemas,
-                dupes: TabularDiffDupes::empty(),
-            };
-
-            let diff_result = TabularDiff {
-                contents: diff_df,
-                parameters: TabularDiffParameters::empty(),
-                summary: diff_summary,
-                filename1: None,
-                filename2: None,
-            };
-
-            Ok(DiffResult::Tabular(diff_result))
         })
     })
 }
@@ -455,28 +386,6 @@ pub fn previous_commit_ref_path(workspace: &Workspace, path: impl AsRef<Path>) -
         .join("COMMIT_ID")
 }
 
-pub fn column_changes_path(workspace: &Workspace, path: impl AsRef<Path>) -> PathBuf {
-    let path_hash = util::hasher::hash_str(path.as_ref().to_string_lossy());
-    workspace
-        .dir()
-        .join(OXEN_HIDDEN_DIR)
-        .join(MODS_DIR)
-        .join("duckdb")
-        .join(path_hash)
-        .join("column_changes")
-}
-
-pub fn row_changes_path(workspace: &Workspace, path: impl AsRef<Path>) -> PathBuf {
-    let path_hash = util::hasher::hash_str(path.as_ref().to_string_lossy());
-    workspace
-        .dir()
-        .join(OXEN_HIDDEN_DIR)
-        .join(MODS_DIR)
-        .join("duckdb")
-        .join(path_hash)
-        .join("row_changes")
-}
-
 // Add this function after the existing imports
 fn add_exclude_to_sql(sql: &str) -> Result<String, DataFrameError> {
     // Create the EXCLUDE clause
@@ -575,14 +484,9 @@ mod tests {
             let status = workspaces::status::status(&workspace)?;
             assert_eq!(status.staged_files.len(), 1);
 
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    assert_eq!(added_rows, 1);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
+            // The staged table has the original 6 rows plus the appended one
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 7);
 
             Ok(())
         })
@@ -689,36 +593,28 @@ mod tests {
             log::debug!("status is {status:?}");
             assert_eq!(status.staged_files.len(), 1);
 
-            // List the staged mods
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    assert_eq!(added_rows, 2);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
+            // Both appended rows are in the staged table
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 8);
 
             // Delete the first append
             workspaces::data_frames::rows::delete(&repo, &workspace, &file_path, &append_1_id)?;
 
-            // Should only be one mod now
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    assert_eq!(added_rows, 1);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
+            // Only the second appended row remains
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 7);
 
             Ok(())
         })
         .await
     }
 
+    /// Edits are not reversible: even when deletes bring the table back to its
+    /// original contents, the data frame stays staged as modified. Un-staging
+    /// is an explicit operation (`workspaces::data_frames::restore`), not an
+    /// automatic side effect of edits cancelling out.
     #[tokio::test]
-    async fn test_clear_changes() -> Result<(), OxenError> {
+    async fn test_delete_added_rows_keeps_data_frame_staged() -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
@@ -769,38 +665,24 @@ mod tests {
             let status = workspaces::status::status(&workspace)?;
             assert_eq!(status.staged_files.len(), 1);
 
-            // List the staged mods
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 8);
 
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    assert_eq!(added_rows, 2);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
             // Delete the first append
             workspaces::data_frames::rows::delete(&repo, &workspace, &file_path, append_1_id)?;
 
             // Delete the second append
             workspaces::data_frames::rows::delete(&repo, &workspace, &file_path, append_2_id)?;
 
-            // Should be zero staged files
+            // The table is back to its original contents...
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 6);
+
+            // ...but the data frame stays staged: edits are applied, not tracked,
+            // so nothing detects that they cancelled out.
             let status = workspaces::status::status(&workspace)?;
-            assert_eq!(status.staged_files.len(), 0);
+            assert_eq!(status.staged_files.len(), 1);
 
-            log::debug!("about to diff staged");
-            // Should be zero mods left
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            log::debug!("got diff staged");
-
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    assert_eq!(added_rows, 0);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
             Ok(())
         })
         .await
@@ -842,15 +724,6 @@ mod tests {
             // List the files that are changed
             let status = workspaces::status::status(&workspace)?;
             assert_eq!(status.staged_files.len(), 1);
-
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let removed_rows = tabular_diff.summary.modifications.row_counts.removed;
-                    assert_eq!(removed_rows, 1);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
 
             let status = repositories::status(&repo).await?;
             log::debug!("got this status {status:?}");
@@ -989,14 +862,8 @@ mod tests {
                 workspaces::data_frames::rows::add(&repo, &workspace, &file_path, &json_data)?;
 
             // 1 row added
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    assert_eq!(added_rows, 1);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 7);
 
             let id_to_modify = new_row.column(OXEN_ID_COL)?.get(0)?;
             let id_to_modify = id_to_modify.get_str().unwrap();
@@ -1012,21 +879,19 @@ mod tests {
                 id_to_modify,
                 &json_data,
             )?;
-            // List the files that are changed - this file should be back into unchanged state
+            // The data frame stays staged after the update
             let status = workspaces::status::status(&workspace)?;
             log::debug!("found mod entries: {status:?}");
             assert_eq!(status.staged_files.len(), 1);
 
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let modified_rows = tabular_diff.summary.modifications.row_counts.modified;
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    assert_eq!(modified_rows, 0);
-                    assert_eq!(added_rows, 1);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
+            // The update was applied in place to the same row
+            let row =
+                workspaces::data_frames::rows::get_by_id(&workspace, &file_path, id_to_modify)?;
+            assert_eq!(row.height(), 1);
+            let height = row.column("height")?.get(0)?;
+            assert_eq!(height.to_string(), "101");
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 7);
 
             Ok(())
         })
@@ -1065,34 +930,23 @@ mod tests {
                 workspaces::data_frames::rows::add(&repo, &workspace, &file_path, &json_data)?;
 
             // 1 row added
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    assert_eq!(added_rows, 1);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 7);
 
             let id_to_delete = new_row.column(OXEN_ID_COL)?.get(0)?.to_string();
             let id_to_delete = id_to_delete.replace('"', "");
 
-            // Stage a deletion
+            // Delete the added row again
             workspaces::data_frames::rows::delete(&repo, &workspace, &file_path, &id_to_delete)?;
             log::debug!("done deleting row");
-            // List the files that are changed - this file should be back into unchanged state
+
+            // The table is back to its original contents, but the data frame
+            // stays staged: edits are applied, not tracked.
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 6);
             let status = workspaces::status::status(&workspace)?;
             log::debug!("found mod entries: {status:?}");
-            assert_eq!(status.staged_files.len(), 0);
-
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let removed_rows = tabular_diff.summary.modifications.row_counts.removed;
-                    assert_eq!(removed_rows, 0);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
+            assert_eq!(status.staged_files.len(), 1);
 
             Ok(())
         })
@@ -1146,14 +1000,10 @@ mod tests {
             let status = workspaces::status::status(&workspace)?;
             assert_eq!(status.staged_files.len(), 1);
 
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let modified_rows = tabular_diff.summary.modifications.row_counts.modified;
-                    assert_eq!(modified_rows, 1);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
+            let row =
+                workspaces::data_frames::rows::get_by_id(&workspace, &file_path, &id_to_modify)?;
+            let label = row.column("label")?.get(0)?;
+            assert_eq!(label.get_str(), Some("doggo"));
 
             // Now modify the row back to its original state
             let json_data = json!({
@@ -1170,178 +1020,21 @@ mod tests {
 
             log::debug!("res is... {res:?}");
 
+            // The value is back to the original...
+            let row =
+                workspaces::data_frames::rows::get_by_id(&workspace, &file_path, &id_to_modify)?;
+            let label = row.column("label")?.get(0)?;
+            assert_eq!(label.get_str(), Some("dog"));
+
+            // ...but the data frame stays staged: edits are applied, not
+            // tracked, so nothing detects that they cancelled out.
             let status = workspaces::status::status(&workspace)?;
-            assert_eq!(status.staged_files.len(), 0);
-
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let modified_rows = tabular_diff.summary.modifications.row_counts.modified;
-                    assert_eq!(modified_rows, 0);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
-
-            Ok(())
-        })
-        .await
-    }
-    #[tokio::test]
-    async fn test_restore_row_after_modification() -> Result<(), OxenError> {
-        if std::env::consts::OS == "windows" {
-            return Ok(());
-        }
-        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
-            let branch_name = "test-append";
-            let branch = repositories::branches::create_checkout(&repo, branch_name)?;
-            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
-            let workspace_id = UserConfig::identifier()?;
-            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
-            let file_path = Path::new("annotations")
-                .join("train")
-                .join("bounding_box.csv");
-
-            // Index the dataset
-            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
-
-            // Preview the dataset to grab some ids
-            let mut page_opts = DFOpts::empty();
-            page_opts.page = Some(0);
-            page_opts.page_size = Some(10);
-
-            let staged_df = workspaces::data_frames::query(&workspace, &file_path, &page_opts)?;
-
-            let id_to_modify = staged_df.column(OXEN_ID_COL)?.get(0)?.to_string();
-            let id_to_modify = id_to_modify.replace('"', "");
-
-            let json_data = json!({
-                "label": "doggo"
-            });
-
-            // Stage a modification
-            workspaces::data_frames::rows::update(
-                &repo,
-                &workspace,
-                &file_path,
-                &id_to_modify,
-                &json_data,
-            )?;
-
-            // List the files that are changed
-            let status = workspaces::status::status(&workspace)?;
-            println!("status: {status:?}");
             assert_eq!(status.staged_files.len(), 1);
 
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let modified_rows = tabular_diff.summary.modifications.row_counts.modified;
-                    assert_eq!(modified_rows, 1);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
-
-            // Now restore the row
-            let res = workspaces::data_frames::rows::restore(
-                &repo,
-                &workspace,
-                &file_path,
-                &id_to_modify,
-            )
-            .await?;
-
-            log::debug!("res is... {res:?}");
-
-            let status = workspaces::status::status(&workspace)?;
-            assert_eq!(status.staged_files.len(), 0);
-
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let modified_rows = tabular_diff.summary.modifications.row_counts.modified;
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    let removed_rows = tabular_diff.summary.modifications.row_counts.removed;
-                    assert_eq!(modified_rows, 0);
-                    assert_eq!(added_rows, 0);
-                    assert_eq!(removed_rows, 0);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
-
             Ok(())
         })
         .await
     }
-
-    #[tokio::test]
-    async fn test_restore_row_delete() -> Result<(), OxenError> {
-        if std::env::consts::OS == "windows" {
-            return Ok(());
-        }
-        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
-            let branch_name = "test-append";
-            let branch = repositories::branches::create_checkout(&repo, branch_name)?;
-            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
-            let workspace_id = UserConfig::identifier()?;
-            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
-            let file_path = Path::new("annotations")
-                .join("train")
-                .join("bounding_box.csv");
-
-            // Index the dataset
-            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
-
-            // Preview the dataset to grab some ids
-            let mut page_opts = DFOpts::empty();
-            page_opts.page = Some(0);
-            page_opts.page_size = Some(10);
-
-            let staged_df = workspaces::data_frames::query(&workspace, &file_path, &page_opts)?;
-
-            let id_to_delete = staged_df.column(OXEN_ID_COL)?.get(0)?.to_string();
-            let id_to_delete = id_to_delete.replace('"', "");
-
-            // Stage a deletion
-            workspaces::data_frames::rows::delete(&repo, &workspace, &file_path, &id_to_delete)?;
-            let status = workspaces::status::status(&workspace)?;
-            println!("status: {status:?}");
-            assert_eq!(status.staged_files.len(), 1);
-
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let removed_rows = tabular_diff.summary.modifications.row_counts.removed;
-                    assert_eq!(removed_rows, 1);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
-
-            // Now restore the row
-            workspaces::data_frames::rows::restore(&repo, &workspace, &file_path, &id_to_delete)
-                .await?;
-
-            let status = workspaces::status::status(&workspace)?;
-            println!("status: {status:?}");
-            assert!(status.is_clean());
-
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let modified_rows = tabular_diff.summary.modifications.row_counts.modified;
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    let removed_rows = tabular_diff.summary.modifications.row_counts.removed;
-                    assert_eq!(modified_rows, 0);
-                    assert_eq!(added_rows, 0);
-                    assert_eq!(removed_rows, 0);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
-
-            Ok(())
-        })
-        .await
-    }
-
     #[tokio::test]
     async fn test_commit_tabular_append_invalid_column() -> Result<(), OxenError> {
         // Skip if on windows

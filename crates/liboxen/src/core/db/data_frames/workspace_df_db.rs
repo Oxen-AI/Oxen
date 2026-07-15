@@ -1,12 +1,7 @@
-use polars::frame::DataFrame;
-use sql_query_builder as sql;
+use crate::constants::OXEN_COLS;
 
-use crate::constants::{DIFF_STATUS_COL, OXEN_COLS};
-
-use crate::constants::TABLE_NAME;
 use crate::core::db::data_frames::DataFrameError;
 use crate::model::Schema;
-use crate::model::staged_row_status::StagedRowStatus;
 
 use super::df_db;
 
@@ -36,19 +31,4 @@ pub fn schema_without_oxen_cols(
 ) -> Result<Schema, DataFrameError> {
     let table_schema = df_db::get_schema_excluding_cols(conn, table_name, &OXEN_COLS)?;
     Ok(table_schema)
-}
-
-pub fn df_diff(conn: &duckdb::Connection) -> Result<DataFrame, DataFrameError> {
-    let select = sql::Select::new()
-        .select("*")
-        .from(TABLE_NAME)
-        .where_clause(&format!(
-            "\"{}\" != '{}'",
-            DIFF_STATUS_COL,
-            StagedRowStatus::Unchanged
-        ));
-
-    let res = df_db::select(conn, &select, None)?;
-
-    Ok(res)
 }
