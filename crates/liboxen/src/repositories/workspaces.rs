@@ -336,6 +336,7 @@ async fn ensure_name_index(repo: &LocalRepository) -> Result<(), OxenError> {
         && let Ok(guard) = lock.try_lock()
     {
         drop(guard);
+        drop(lock);
         cleanup_name_index_lock(&repo.path);
         return Ok(());
     }
