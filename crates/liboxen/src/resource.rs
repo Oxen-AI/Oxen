@@ -1,4 +1,6 @@
-pub use crate::core::v_latest::resource::parse_resource_from_path;
+pub use crate::core::v_latest::resource::{
+    parse_resource_from_path, parse_resource_from_path_async,
+};
 
 #[cfg(test)]
 mod tests {
@@ -312,6 +314,34 @@ mod tests {
             let path = Path::new("nonexistent-thing/file.txt");
             let result = resource::parse_resource_from_path(&repo, path)?;
             assert!(result.is_none(), "unknown identifier should return None");
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_parse_resource_from_path_async_matches_sync() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            let path_str = format!("{}/some/file.txt", commit.id);
+            let path = Path::new(&path_str);
+
+            let sync = resource::parse_resource_from_path(&repo, path)?;
+            let async_ = resource::parse_resource_from_path_async(&repo, path).await?;
+
+            let sync = sync.expect("should resolve");
+            let async_ = async_.expect("should resolve");
+            assert_eq!(async_.commit.unwrap().id, sync.commit.unwrap().id);
+            assert_eq!(async_.path, sync.path);
+
+            // Unknown identifiers resolve to None on the async path too.
+            let unknown = Path::new("nonexistent-thing/file.txt");
+            assert!(
+                resource::parse_resource_from_path_async(&repo, unknown)
+                    .await?
+                    .is_none()
+            );
 
             Ok(())
         })

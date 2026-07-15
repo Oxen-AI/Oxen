@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 
 use liboxen::error::OxenError;
 use liboxen::model::{Branch, Commit, LocalRepository, ParsedResource};
-use liboxen::resource::parse_resource_from_path;
+use liboxen::resource::{parse_resource_from_path, parse_resource_from_path_async};
 use liboxen::{constants, repositories};
 
 use actix_web::HttpRequest;
@@ -136,6 +136,26 @@ pub fn parse_resource(
         "parse_resource_from_path looking for resource: {resource:?} decoded_resource: {decoded_resource:?}"
     );
     parse_resource_from_path(repo, &decoded_resource)?
+        .ok_or_else(|| OxenError::path_does_not_exist(resource).into())
+}
+
+/// Resolve the `resource` query param against `repo`, off the async worker.
+pub async fn parse_resource_async(
+    req: &HttpRequest,
+    repo: &LocalRepository,
+) -> Result<ParsedResource, OxenHttpError> {
+    let resource: PathBuf = PathBuf::from(query_param(req, "resource"));
+    let resource_path_str = resource.to_string_lossy();
+
+    // Decode the URL, handling both %20 and + as spaces
+    let decoded_path = decode_resource_path(&resource_path_str);
+
+    let decoded_resource = PathBuf::from(decoded_path);
+    log::debug!(
+        "parse_resource_from_path looking for resource: {resource:?} decoded_resource: {decoded_resource:?}"
+    );
+    parse_resource_from_path_async(repo, &decoded_resource)
+        .await?
         .ok_or_else(|| OxenError::path_does_not_exist(resource).into())
 }
 
