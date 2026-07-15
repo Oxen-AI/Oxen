@@ -7,15 +7,13 @@ use sql::Select;
 // use sql::Select;
 use sql_query_builder as sql;
 
-use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL, OXEN_COLS, OXEN_ID_COL};
+use crate::constants::{OXEN_COLS, OXEN_ID_COL};
 
 use crate::constants::TABLE_NAME;
 use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
 use crate::core::df::tabular;
 use crate::model::data_frame::schema::DataType;
-use crate::model::staged_row_status::StagedRowStatus;
-use polars::prelude::*; // or use polars::lazy::*; if you're working in a lazy context
 
 use super::df_db;
 
@@ -31,34 +29,15 @@ pub fn append_row(conn: &duckdb::Connection, df: &DataFrame) -> Result<DataFrame
         });
     }
 
-    let added_column = Column::Series(
-        Series::new(
-            PlSmallStr::from_str(DIFF_STATUS_COL),
-            vec![StagedRowStatus::Added.to_string(); df.height()],
-        )
-        .into(),
-    );
-    let df = df.hstack(&[added_column])?;
+    // Handle completely null {} create objects coming over from the hub:
+    // insert a row of all defaults rather than building an empty INSERT.
+    if df.height() == 0 || df.width() == 0 {
+        let sql = format!("INSERT INTO {TABLE_NAME} DEFAULT VALUES RETURNING *");
+        let result_set: Vec<RecordBatch> = conn.prepare(&sql)?.query_arrow([])?.collect();
+        return df_db::record_batches_to_polars_df(result_set);
+    }
 
-    // Handle initialization for completely null {} create objects coming over from the hub
-    let df = if df.height() == 0 {
-        let added_column = Column::Series(
-            Series::new(
-                PlSmallStr::from_str(DIFF_STATUS_COL),
-                vec![StagedRowStatus::Added.to_string()],
-            )
-            .into(),
-        );
-        DataFrame::new(vec![added_column])?
-    } else {
-        df
-    };
-
-    let inserted_df = insert_polars_df(conn, TABLE_NAME, &df)?;
-
-    Ok(inserted_df)
-
-    // Proceed with appending `new_df` to the database
+    insert_polars_df(conn, TABLE_NAME, df)
 }
 
 pub fn modify_row(
@@ -89,41 +68,7 @@ pub fn modify_row(
         });
     }
 
-    // get existing hash and status from db
-    let select_hash = Select::new()
-        .select("*")
-        .from(TABLE_NAME)
-        .where_clause(&format!("\"{OXEN_ID_COL}\" = '{uuid}'"));
-    let maybe_db_data = df_db::select(conn, &select_hash, None)?;
-
-    let mut new_row = maybe_db_data.clone().to_owned();
-
-    for col in df.get_columns() {
-        // Replace that column - copy the entire Series to preserve complex types (lists, structs, etc.)
-        let col_name = col.name();
-        let col_series = df.column(col_name)?;
-        if let Some(col_idx) = new_row.get_column_index(col_name) {
-            new_row.replace_column(col_idx, col_series.clone())?;
-        } else {
-            new_row.with_column(col_series.clone())?;
-        }
-    }
-
-    // TODO could use a struct to return these more safely
-    let (insert_hash, updated_status) =
-        get_hash_and_status_for_modification(conn, &maybe_db_data, &new_row)?;
-
-    // Update with latest values pre insert
-    // TODO: Find a better way to do this than overwriting the entire column here.
-    new_row.with_column(Series::new(
-        PlSmallStr::from_str(DIFF_STATUS_COL),
-        vec![updated_status],
-    ))?;
-    new_row.with_column(Series::new(
-        PlSmallStr::from_str(DIFF_HASH_COL),
-        vec![insert_hash],
-    ))?;
-    let result = df_db::modify_row_with_polars_df(conn, TABLE_NAME, uuid, &new_row)?;
+    let result = df_db::modify_row_with_polars_df(conn, TABLE_NAME, uuid, &df)?;
     if result.height() == 0 {
         return Err(DataFrameError::MissingDataFrame(uuid.to_string()));
     }
@@ -138,7 +83,10 @@ pub fn modify_rows(
 
     let mut update_map: HashMap<String, DataFrame> = HashMap::new();
 
-    // Filter it down to exclude any of the OXEN_COLS, we don't want to modify these but hub sends them over
+    // Each entry may carry a different subset of columns, but the batch UPDATE
+    // below builds one CASE expression per column across all rows — so merge
+    // every change into its full current row first. Also excludes any of the
+    // OXEN_COLS the hub sends over, which must not be modified.
     for (row_id, df) in row_map.iter() {
         if df.height() != 1 {
             return Err(DataFrameError::ModifyOnly1Row);
@@ -159,14 +107,13 @@ pub fn modify_rows(
             });
         }
 
-        // get existing hash and status from db
-        let select_hash = Select::new()
+        let select_current = Select::new()
             .select("*")
             .from(TABLE_NAME)
             .where_clause(&format!("\"{OXEN_ID_COL}\" = '{row_id}'"));
-        let maybe_db_data = df_db::select(conn, &select_hash, None)?;
+        let current_row = df_db::select(conn, &select_current, None)?;
 
-        let mut new_row = maybe_db_data.clone().to_owned();
+        let mut new_row = current_row.clone();
         for col in df.get_columns() {
             // Replace that column - copy the entire Series to preserve complex types (lists, structs, etc.)
             let col_name = col.name();
@@ -178,19 +125,6 @@ pub fn modify_rows(
             }
         }
 
-        // TODO could use a struct to return these more safely
-        let (insert_hash, updated_status) =
-            get_hash_and_status_for_modification(conn, &maybe_db_data, &new_row)?;
-
-        // TODO: Find a better way to do this than overwriting the entire column here.
-        new_row.with_column(Series::new(
-            PlSmallStr::from_str(DIFF_STATUS_COL),
-            vec![updated_status],
-        ))?;
-        new_row.with_column(Series::new(
-            PlSmallStr::from_str(DIFF_HASH_COL),
-            vec![insert_hash],
-        ))?;
         update_map.insert(row_id.to_owned(), new_row);
     }
 
@@ -220,98 +154,13 @@ pub fn delete_row(conn: &duckdb::Connection, uuid: &str) -> Result<DataFrame, Da
         return Err(DataFrameError::MissingDataFrame(uuid.to_string()));
     }
 
-    // If it's newly added, delete it. Otherwise, set it to removed
-    let status = row_to_delete.column(DIFF_STATUS_COL)?.get(0)?;
-    let status_str = status.get_str();
-
-    let status = match status_str {
-        Some(status) => status,
-        None => return Err(DataFrameError::DiffStatusColNotStr),
-    };
-    log::debug!("status is: {status}");
-
-    // Rows that weren't in previous commits are just removed from the staging df, rows in previous commits are tombstoned as "Removed"
-    if status == StagedRowStatus::Added.to_string() {
-        log::debug!("staged_df_db::delete_row() deleting row");
-        let stmt = sql::Delete::new()
-            .delete_from(TABLE_NAME)
-            .where_clause(&format!("{OXEN_ID_COL} = '{uuid}'"));
-        log::debug!("staged_df_db::delete_row() sql: {stmt:?}");
-        conn.execute(&stmt.to_string(), [])?;
-    } else {
-        log::debug!("staged_df_db::delete_row() updating row to indicate deletion");
-        let stmt = sql::Update::new()
-            .update(TABLE_NAME)
-            .set(&format!(
-                "\"{}\" = '{}'",
-                DIFF_STATUS_COL,
-                StagedRowStatus::Removed
-            ))
-            .where_clause(&format!("{OXEN_ID_COL} = '{uuid}'"));
-        log::debug!("staged_df_db::delete_row() sql: {stmt:?}");
-        conn.execute(&stmt.to_string(), [])?;
-    };
+    let stmt = sql::Delete::new()
+        .delete_from(TABLE_NAME)
+        .where_clause(&format!("{OXEN_ID_COL} = '{uuid}'"));
+    log::debug!("delete_row() sql: {stmt:?}");
+    conn.execute(&stmt.to_string(), [])?;
 
     Ok(row_to_delete)
-}
-
-fn get_hash_and_status_for_modification(
-    conn: &duckdb::Connection,
-    old_row: &DataFrame,
-    new_row: &DataFrame,
-) -> Result<(String, String), DataFrameError> {
-    let schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
-    let col_names = schema.fields_names();
-    let old_status = old_row.column(DIFF_STATUS_COL)?.get(0)?;
-    let old_status = old_status
-        .get_str()
-        .ok_or_else(|| DataFrameError::DiffStatusColNotStr)?;
-
-    let old_hash = old_row.column(DIFF_HASH_COL)?.get(0)?;
-
-    let new_hash_df = tabular::df_hash_rows_on_cols(new_row.clone(), &col_names, "_temp_hash")?;
-    let new_hash = new_hash_df.column("_temp_hash")?.get(0)?;
-    let new_hash = new_hash
-        .get_str()
-        .ok_or_else(|| DataFrameError::DiffHashColNotStr)?;
-
-    // We need to calculate the original hash for the row
-    // Use a temp hash column to avoid collision with the column that's already there.
-    let insert_hash = if old_hash.is_null() {
-        let original_data_hash =
-            tabular::df_hash_rows_on_cols(old_row.clone(), &col_names, "_temp_hash")?;
-        let original_data_hash = original_data_hash.column("_temp_hash")?.get(0)?;
-        original_data_hash
-            .get_str()
-            .ok_or_else(|| DataFrameError::DiffHashColNotStr)?
-            .to_owned()
-    } else {
-        old_hash
-            .get_str()
-            .ok_or_else(|| DataFrameError::DiffHashColNotStr)?
-            .to_owned()
-    };
-
-    // Anything previously added must stay added regardless of any further modifications.
-    // Modifying back to original state changes it to unchanged
-    // If we have no prior hash info on the original hash state, it is now modified (this is the first modification)
-    let new_status = if old_status == StagedRowStatus::Added.to_string() {
-        StagedRowStatus::Added.to_string()
-    } else if old_status == StagedRowStatus::Removed.to_string() {
-        if insert_hash == new_hash {
-            StagedRowStatus::Unchanged.to_string()
-        } else {
-            StagedRowStatus::Modified.to_string()
-        }
-    } else if old_hash.is_null() {
-        StagedRowStatus::Modified.to_string()
-    } else if new_hash == insert_hash {
-        StagedRowStatus::Unchanged.to_string()
-    } else {
-        StagedRowStatus::Modified.to_string()
-    };
-
-    Ok((insert_hash.to_string(), new_status))
 }
 
 /// Insert a row from a polars dataframe into a duckdb table.

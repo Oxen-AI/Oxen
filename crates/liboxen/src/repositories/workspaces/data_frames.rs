@@ -493,9 +493,49 @@ mod tests {
         .await
     }
 
+    /// Indexing adds exactly one hidden column (`_oxen_id`) — the legacy
+    /// tracking columns (`_oxen_diff_status`, `_oxen_row_id`,
+    /// `_oxen_diff_hash`) are no longer created.
     #[tokio::test]
-    async fn test_partial_index_reads_as_not_indexed_and_reindex_repairs() -> Result<(), OxenError>
-    {
+    async fn test_index_adds_only_oxen_id_column() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-index-cols")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            let db_path = workspaces::data_frames::duckdb_path(&workspace, &file_path);
+            let columns: Vec<String> = super::with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| {
+                    let schema = df_db::get_schema(conn, crate::constants::TABLE_NAME)?;
+                    Ok(schema.fields.into_iter().map(|f| f.name).collect())
+                })
+            })?;
+
+            assert!(columns.contains(&OXEN_ID_COL.to_string()));
+            assert!(!columns.contains(&crate::constants::DIFF_STATUS_COL.to_string()));
+            assert!(!columns.iter().any(|c| c == "_oxen_row_id"));
+            assert!(!columns.iter().any(|c| c == "_oxen_diff_hash"));
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// A table left behind by an older version (with the legacy tracking
+    /// columns) or by an interrupted index (missing `_oxen_id`) must read as
+    /// NOT indexed so callers rebuild it, and re-indexing must repair it.
+    #[tokio::test]
+    async fn test_stale_or_partial_index_reads_as_not_indexed_and_reindex_repairs()
+    -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
@@ -512,14 +552,17 @@ mod tests {
             workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
             assert!(workspaces::data_frames::is_indexed(&workspace, &file_path)?);
 
-            // Simulate the partial-index corruption an interrupted index leaves
-            // behind: a table that is missing one of the tracking columns.
             let db_path = workspaces::data_frames::duckdb_path(&workspace, &file_path);
+
+            // Simulate a table written by an older version: the legacy
+            // tracking columns are still present. Such a table may hold rows
+            // tombstoned as 'removed' that the current code would wrongly
+            // export, so it must be rebuilt.
             super::with_df_db_manager(&db_path, |manager| {
                 manager.with_conn(|conn| {
                     conn.execute(
                         &format!(
-                            "ALTER TABLE \"{}\" DROP COLUMN \"{}\"",
+                            "ALTER TABLE \"{}\" ADD COLUMN \"{}\" VARCHAR DEFAULT 'unchanged'",
                             crate::constants::TABLE_NAME,
                             crate::constants::DIFF_STATUS_COL
                         ),
@@ -528,14 +571,33 @@ mod tests {
                     Ok(())
                 })
             })?;
-
-            // A partial table must read as NOT indexed so callers rebuild it
-            // instead of serving a table the read path cannot bind.
             assert!(!workspaces::data_frames::is_indexed(
                 &workspace, &file_path
             )?);
 
-            // Re-indexing repairs the table back to fully indexed.
+            // Re-indexing repairs the table.
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+            assert!(workspaces::data_frames::is_indexed(&workspace, &file_path)?);
+
+            // Simulate the partial-index corruption an interrupted index
+            // leaves behind: a table that is missing `_oxen_id`.
+            super::with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| {
+                    conn.execute(
+                        &format!(
+                            "ALTER TABLE \"{}\" DROP COLUMN \"{}\"",
+                            crate::constants::TABLE_NAME,
+                            OXEN_ID_COL
+                        ),
+                        [],
+                    )?;
+                    Ok(())
+                })
+            })?;
+            assert!(!workspaces::data_frames::is_indexed(
+                &workspace, &file_path
+            )?);
+
             workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
             assert!(workspaces::data_frames::is_indexed(&workspace, &file_path)?);
 
@@ -718,8 +780,11 @@ mod tests {
             let id_to_delete = staged_df.column(OXEN_ID_COL)?.get(0)?.to_string();
             let id_to_delete = id_to_delete.replace('"', "");
 
-            // Stage a deletion
+            // Stage a deletion — the row is deleted from the staged table
+            // immediately, not tombstoned.
             workspaces::data_frames::rows::delete(&repo, &workspace, &file_path, &id_to_delete)?;
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 5);
 
             // List the files that are changed
             let status = workspaces::status::status(&workspace)?;
@@ -1241,10 +1306,7 @@ mod tests {
     fn test_add_exclude_to_simple_select() -> Result<(), OxenError> {
         let sql = "SELECT * FROM table";
         let result = add_exclude_to_sql(sql)?;
-        assert_eq!(
-            result,
-            "SELECT * EXCLUDE (\"_oxen_id\", \"_oxen_diff_status\", \"_oxen_row_id\", \"_oxen_diff_hash\") FROM table"
-        );
+        assert_eq!(result, "SELECT * EXCLUDE (\"_oxen_id\") FROM table");
         Ok(())
     }
 
@@ -1254,7 +1316,7 @@ mod tests {
         let result = add_exclude_to_sql(sql)?;
         assert_eq!(
             result,
-            "SELECT col1, col2, col3 EXCLUDE (\"_oxen_id\", \"_oxen_diff_status\", \"_oxen_row_id\", \"_oxen_diff_hash\") FROM table WHERE col1 = 'value'"
+            "SELECT col1, col2, col3 EXCLUDE (\"_oxen_id\") FROM table WHERE col1 = 'value'"
         );
         Ok(())
     }
@@ -1263,10 +1325,7 @@ mod tests {
     fn test_add_exclude_case_insensitive() -> Result<(), OxenError> {
         let sql = "select * from table";
         let result = add_exclude_to_sql(sql)?;
-        assert_eq!(
-            result,
-            "SELECT * EXCLUDE (\"_oxen_id\", \"_oxen_diff_status\", \"_oxen_row_id\", \"_oxen_diff_hash\") from table"
-        );
+        assert_eq!(result, "SELECT * EXCLUDE (\"_oxen_id\") from table");
         Ok(())
     }
 

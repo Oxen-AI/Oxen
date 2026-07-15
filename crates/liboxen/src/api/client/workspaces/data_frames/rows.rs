@@ -388,9 +388,7 @@ mod tests {
             )
             .await?;
 
-            let data: Value = serde_json::from_value(row.data_frame.view.data[0].clone()).unwrap();
-
-            assert_eq!(data.get("_oxen_diff_status").unwrap(), "unchanged");
+            assert_eq!(row.data_frame.view.size.height, 1);
 
             api::client::workspaces::data_frames::rows::delete(
                 &remote_repo,
@@ -408,9 +406,9 @@ mod tests {
             )
             .await?;
 
-            let data: Value = serde_json::from_value(row.data_frame.view.data[0].clone()).unwrap();
-
-            assert_eq!(data.get("_oxen_diff_status").unwrap(), "removed");
+            // The row is deleted from the staged table immediately, not
+            // tombstoned: fetching it again returns an empty result.
+            assert_eq!(row.data_frame.view.size.height, 0);
             Ok(remote_repo)
         })
         .await
@@ -474,9 +472,7 @@ mod tests {
             )
             .await?;
 
-            let data: Value = serde_json::from_value(row.data_frame.view.data[0].clone()).unwrap();
-
-            assert_eq!(data.get("_oxen_diff_status").unwrap(), "unchanged");
+            assert_eq!(row.data_frame.view.size.height, 1);
 
             let data: &str = "{\"file\":\"lebron>jordan.jpg\", \"label\": \"dog\", \"min_x\":13, \"min_y\":14, \"width\": 100, \"height\": 100}";
 
@@ -498,9 +494,7 @@ mod tests {
             .await?;
 
             let data: Value = serde_json::from_value(row.data_frame.view.data[0].clone()).unwrap();
-            assert_eq!(data.get("file").unwrap() ,"lebron>jordan.jpg");
-
-            assert_eq!(data.get("_oxen_diff_status").unwrap(), "modified");
+            assert_eq!(data.get("file").unwrap(), "lebron>jordan.jpg");
             Ok(remote_repo)
         })
         .await

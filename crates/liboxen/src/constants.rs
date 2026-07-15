@@ -69,19 +69,18 @@ pub const STATS_DIR: &str = "stats";
 pub const STAGED_DIR: &str = "staged";
 /// Name of the table in the duckdb db used for remote staging
 pub const TABLE_NAME: &str = "df";
-/// Oxen's internal row id column in duckdb remote staging tables
-pub const OXEN_COLS: [&str; 4] = [OXEN_ID_COL, DIFF_STATUS_COL, OXEN_ROW_ID_COL, DIFF_HASH_COL];
-/// Oxen's internal row id column to exclude from dfs
-pub const EXCLUDE_OXEN_COLS: [&str; 7] = [
+/// Oxen's internal columns in duckdb remote staging tables
+pub const OXEN_COLS: [&str; 1] = [OXEN_ID_COL];
+/// Columns written by older versions' change tracking; their presence marks a
+/// staged table as stale so it gets re-indexed.
+pub const LEGACY_OXEN_COLS: [&str; 3] = [DIFF_STATUS_COL, "_oxen_row_id", "_oxen_diff_hash"];
+/// Oxen's internal columns to exclude from dfs
+pub const EXCLUDE_OXEN_COLS: [&str; 4] = [
     OXEN_ID_COL,
-    DIFF_STATUS_COL,
-    OXEN_ROW_ID_COL,
-    DIFF_HASH_COL,
     EVAL_STATUS_COL,
     EVAL_ERROR_COL,
     EVAL_DURATION_COL,
 ];
-pub const OXEN_ROW_ID_COL: &str = "_oxen_row_id";
 /// Oxen's internal id column in duckdb remote staging tables
 pub const OXEN_ID_COL: &str = "_oxen_id";
 /// Name of the folder of the cache dir in which dfs are indexed as duckdbs
@@ -160,8 +159,6 @@ pub const TARGETS_HASH_COL: &str = "_targets_hash";
 pub const KEYS_HASH_COL: &str = "_keys_hash";
 // Internal Name When Performing Computation
 pub const DIFF_STATUS_COL: &str = "_oxen_diff_status";
-// Internal Name When Performing Computation
-pub const DIFF_HASH_COL: &str = "_oxen_diff_hash";
 
 /// Internal Name For Evaluations Status
 pub const EVAL_STATUS_COL: &str = "_oxen_eval_status";

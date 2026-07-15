@@ -58,8 +58,6 @@ pub async fn create(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
     let row_df =
         repositories::workspaces::data_frames::rows::add(&repo, &workspace, &file_path, data)?;
     let row_id: Option<String> = repositories::workspaces::data_frames::rows::get_row_id(&row_df)?;
-    let row_index: Option<usize> =
-        repositories::workspaces::data_frames::rows::get_row_idx(&row_df)?;
 
     let opts = DFOpts::empty();
     let row_schema = Schema::from_polars(row_df.schema());
@@ -76,7 +74,7 @@ pub async fn create(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
         status: StatusMessage::resource_found(),
         resource: None,
         row_id,
-        row_index,
+        row_index: None,
     };
 
     Ok(HttpResponse::Ok().json(response))
@@ -101,7 +99,6 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
         repositories::workspaces::data_frames::rows::get_by_id(&workspace, file_path, row_id)?;
 
     let row_id = repositories::workspaces::data_frames::rows::get_row_id(&row_df)?;
-    let row_index = repositories::workspaces::data_frames::rows::get_row_idx(&row_df)?;
 
     let opts = DFOpts::empty();
     let row_schema = Schema::from_polars(row_df.schema());
@@ -118,7 +115,7 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
         status: StatusMessage::resource_found(),
         resource: None,
         row_id,
-        row_index,
+        row_index: None,
     };
 
     Ok(HttpResponse::Ok().json(response))
@@ -163,7 +160,6 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
         &repo, &workspace, &file_path, &row_id, data,
     )?;
 
-    let row_index = repositories::workspaces::data_frames::rows::get_row_idx(&modified_row)?;
     let row_id = repositories::workspaces::data_frames::rows::get_row_id(&modified_row)?;
 
     log::debug!("Modified row in controller is {modified_row:?}");
@@ -178,7 +174,7 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
         status: StatusMessage::resource_updated(),
         resource: None,
         row_id,
-        row_index,
+        row_index: None,
     }))
 }
 

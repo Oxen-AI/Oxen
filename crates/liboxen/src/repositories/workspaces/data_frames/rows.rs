@@ -2,15 +2,13 @@ use crate::error::OxenError;
 use crate::model::Workspace;
 use crate::model::data_frame::update_result::UpdateResult;
 
-use polars::datatypes::AnyValue;
-
 use polars::frame::DataFrame;
 use polars::prelude::PlSmallStr;
 
 use crate::{core, repositories};
 use sql_query_builder::Select;
 
-use crate::constants::{OXEN_ID_COL, OXEN_ROW_ID_COL, TABLE_NAME};
+use crate::constants::{OXEN_ID_COL, TABLE_NAME};
 
 use crate::core::db::data_frames::df_db::{self, with_df_db_manager};
 use crate::model::LocalRepository;
@@ -85,27 +83,6 @@ pub fn get_row_id(row_df: &DataFrame) -> Result<Option<String>, OxenError> {
             .get(0)
             .map(|val| val.to_string().trim_matches('"').to_string())
             .ok())
-    } else {
-        Ok(None)
-    }
-}
-
-pub fn get_row_idx(row_df: &DataFrame) -> Result<Option<usize>, OxenError> {
-    let oxen_row_id_col = PlSmallStr::from_str(OXEN_ROW_ID_COL);
-    if row_df.height() == 1 && row_df.get_column_names().contains(&&oxen_row_id_col) {
-        let row_df_anyval = row_df.column(OXEN_ROW_ID_COL).unwrap().get(0)?;
-        match row_df_anyval {
-            AnyValue::UInt16(val) => Ok(Some(val as usize)),
-            AnyValue::UInt32(val) => Ok(Some(val as usize)),
-            AnyValue::UInt64(val) => Ok(Some(val as usize)),
-            AnyValue::Int16(val) => Ok(Some(val as usize)),
-            AnyValue::Int32(val) => Ok(Some(val as usize)),
-            AnyValue::Int64(val) => Ok(Some(val as usize)),
-            val => {
-                log::debug!("unrecognized row index type {val:?}");
-                Ok(None)
-            }
-        }
     } else {
         Ok(None)
     }

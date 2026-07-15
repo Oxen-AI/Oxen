@@ -2,7 +2,7 @@
 //!
 
 use crate::constants::{
-    DEFAULT_PAGE_SIZE, DUCKDB_DF_TABLE_NAME, OXEN_COLS, OXEN_ID_COL, OXEN_ROW_ID_COL, TABLE_NAME,
+    DEFAULT_PAGE_SIZE, DUCKDB_DF_TABLE_NAME, LEGACY_OXEN_COLS, OXEN_COLS, OXEN_ID_COL, TABLE_NAME,
 };
 
 use crate::core::db::data_frames::{DataFrameError, rows};
@@ -333,9 +333,16 @@ pub fn table_is_fully_indexed(
         return Ok(false);
     }
     let schema = get_schema(conn, table_name)?;
-    Ok(OXEN_COLS
+    let has_oxen_cols = OXEN_COLS
         .iter()
-        .all(|col| schema.fields.iter().any(|field| field.name == *col)))
+        .all(|col| schema.fields.iter().any(|field| field.name == *col));
+    // A table with the legacy change-tracking columns was written by an older
+    // version and may hold rows tombstoned as 'removed'; report it as not
+    // indexed so callers rebuild it instead of serving stale contents.
+    let has_legacy_cols = LEGACY_OXEN_COLS
+        .iter()
+        .any(|col| schema.fields.iter().any(|field| field.name == *col));
+    Ok(has_oxen_cols && !has_legacy_cols)
 }
 
 /// Create a table from a set of oxen fields with data types.
@@ -806,13 +813,6 @@ pub fn index_file_with_id(
 ) -> Result<(), DataFrameError> {
     log::debug!("df_db:index_file() at path {path:?} into path {conn:?}");
     let path_str = path.to_string_lossy().to_string();
-    let counter = "counter";
-    // Drop sequence if exists
-    let drop_sequence_query = format!("DROP SEQUENCE IF EXISTS {counter}");
-    conn.execute(&drop_sequence_query, [])?;
-
-    let add_row_id_sequence_query = format!("CREATE SEQUENCE {counter} START 1");
-    conn.execute(&add_row_id_sequence_query, [])?;
 
     match extension {
         "csv" => {
@@ -903,11 +903,6 @@ pub fn index_file_with_id(
     );
 
     conn.execute(&add_default_query, [])?;
-
-    let add_row_id_query = format!(
-        "ALTER TABLE {DUCKDB_DF_TABLE_NAME} ADD COLUMN {OXEN_ROW_ID_COL} INTEGER DEFAULT nextval('{counter}');"
-    );
-    conn.execute(&add_row_id_query, [])?;
 
     Ok(())
 }
@@ -1004,7 +999,7 @@ mod tests {
                     "CREATE TABLE {TABLE_NAME} (
                         color VARCHAR,
                         {OXEN_ID_COL} VARCHAR DEFAULT (uuid()::VARCHAR),
-                        {OXEN_ROW_ID_COL} INTEGER
+                        num INTEGER
                     )"
                 ),
                 [],
@@ -1012,7 +1007,7 @@ mod tests {
 
             // Insert rows with duplicate 'color' values
             conn.execute(
-                &format!("INSERT INTO {TABLE_NAME} (color, {OXEN_ROW_ID_COL}) VALUES ('red', 1), ('red', 2), ('blue', 3)"),
+                &format!("INSERT INTO {TABLE_NAME} (color, num) VALUES ('red', 1), ('red', 2), ('blue', 3)"),
                 [],
             )?;
 
@@ -1336,9 +1331,7 @@ mod tests {
     /// VARCHAR[] at index time. This test goes through that path end-to-end.
     #[test]
     fn test_rows_modify_row_round_trip_preserves_json_array_strings() -> Result<(), OxenError> {
-        use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL};
         use crate::core::db::data_frames::rows;
-        use crate::model::staged_row_status::StagedRowStatus;
 
         test::run_empty_dir_test(|data_dir| {
             let jsonl_path = data_dir.join("data.jsonl");
@@ -1357,30 +1350,6 @@ mod tests {
             // what the workspace controller calls and is where the column
             // type gets locked in.
             index_file_with_id(&jsonl_path, &conn, "jsonl")?;
-
-            // `rows::modify_row` requires the diff-status bookkeeping columns
-            // and a non-null status value. The full server flow adds these via
-            // `add_row_status_cols` after indexing — replicate inline so this
-            // test stays scoped to the type-coercion bug.
-            conn.execute(
-                &format!(
-                    "ALTER TABLE {TABLE_NAME} ADD COLUMN {DIFF_STATUS_COL} VARCHAR DEFAULT '{}'",
-                    StagedRowStatus::Unchanged
-                ),
-                [],
-            )?;
-            conn.execute(
-                &format!("ALTER TABLE {TABLE_NAME} ADD COLUMN {DIFF_HASH_COL} VARCHAR DEFAULT '0'"),
-                [],
-            )?;
-            conn.execute(
-                &format!(
-                    "UPDATE {TABLE_NAME} \
-                       SET {DIFF_STATUS_COL} = '{}', {DIFF_HASH_COL} = '0'",
-                    StagedRowStatus::Unchanged
-                ),
-                [],
-            )?;
 
             // Grab the auto-assigned _oxen_id for row 'a'.
             let row_id: String = conn.query_row(
@@ -1468,8 +1437,7 @@ mod tests {
     /// exception and aborts the whole process instead of returning an error.
     #[test]
     fn test_modify_rows_with_list_column_binds_cleanly() -> Result<(), OxenError> {
-        use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL, OXEN_ID_COL};
-        use crate::model::staged_row_status::StagedRowStatus;
+        use crate::constants::OXEN_ID_COL;
         use polars::prelude::NamedFrom;
         use polars::series::Series;
         use std::collections::HashMap;
@@ -1487,19 +1455,6 @@ mod tests {
             let db_file = data_dir.join("data.db");
             let conn = get_connection(&db_file)?;
             index_file_with_id(&jsonl_path, &conn, "jsonl")?;
-            conn.execute(
-                &format!(
-                    "ALTER TABLE {TABLE_NAME} ADD COLUMN {DIFF_STATUS_COL} VARCHAR DEFAULT '{}'",
-                    StagedRowStatus::Unchanged
-                ),
-                [],
-            )?;
-            conn.execute(
-                &format!(
-                    "ALTER TABLE {TABLE_NAME} ADD COLUMN {DIFF_HASH_COL} VARCHAR DEFAULT NULL"
-                ),
-                [],
-            )?;
 
             // Build the row_map the way the batch-update flow does: the full
             // row selected from the table, with the changed column replaced.
