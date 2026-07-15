@@ -19,6 +19,7 @@ use tokio::io::AsyncRead;
 use crate::error::OxenError;
 use crate::model::EntryDataType;
 
+use super::block::SealedBlock;
 use super::manifest::ChunkManifest;
 use super::seekable::SeekableVersionReader;
 
@@ -71,6 +72,11 @@ pub trait ChunkedVersionStore: Send + Sync {
     /// Verify a complete transfer block against `hash` and its own footer claims
     /// (every chunk decoded and hash-checked), then store and index it. Idempotent.
     async fn store_block(&self, hash: &str, data: Bytes) -> Result<(), OxenError>;
+
+    /// Pack exactly the requested chunks into fresh transfer blocks (stored
+    /// payloads copied as-is — compressed chunks travel compressed). Callers bound
+    /// their batches (e.g. by summed raw length) to keep memory bounded.
+    async fn pack_chunks(&self, hashes: &[u128]) -> Result<Vec<SealedBlock>, OxenError>;
 
     /// Open a sync `Read + Seek` over the reconstructed bytes of a chunked version
     /// — the random-access reader for consumers like eager Parquet/IPC readers.

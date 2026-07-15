@@ -317,12 +317,12 @@ pub enum OxenError {
     #[error("{0}")]
     ChunkedError(#[from] ChunkedError),
 
-    /// Pushing a block-v1 repository requires the block wire protocol, which this
-    /// version of oxen does not implement yet.
+    /// The remote server has no block-dedup wire endpoints (it predates block-v1
+    /// support), so chunked versions cannot be pushed to it.
     #[error(
-        "this repository uses the block-v1 content format; this version of oxen cannot push block-v1 repositories"
+        "the remote server does not support block-v1 repositories; upgrade the server or convert this repository back to the legacy content format"
     )]
-    BlockFormatPushNotSupported,
+    ServerLacksBlockSupport,
 
     // Attempting to make a commit with no changes from its parent is an error.
     #[error("No changes to commit")]

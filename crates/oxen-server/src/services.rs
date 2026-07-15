@@ -1,4 +1,5 @@
 pub mod action;
+pub mod blocks;
 pub mod branches;
 pub mod chunk;
 pub mod commits;
@@ -25,6 +26,7 @@ pub mod versions;
 pub mod workspaces;
 
 pub use action::action;
+pub use blocks::{blocks, chunks, manifests};
 pub use branches::branches;
 pub use chunk::chunk;
 pub use commits::commits;

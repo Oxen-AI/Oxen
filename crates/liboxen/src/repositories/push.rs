@@ -54,20 +54,95 @@ mod tests {
     use std::collections::HashSet;
     use std::path::PathBuf;
 
-    /// Pushing a block-v1 repository fails early with a structured error — the
-    /// block wire protocol doesn't exist yet, and a confusing mid-transfer failure
-    /// (or a silent whole-file fallback) is never acceptable.
+    /// Pushing a block-v1 repository transfers chunked versions at block
+    /// granularity: after the push the server has every chunk, serves the exact
+    /// file bytes through its transparent read path, and an incremental push of an
+    /// appended version negotiates down to just the new tail chunks.
     #[tokio::test]
-    async fn test_push_block_v1_repo_is_rejected() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|mut repo| async move {
+    async fn test_push_block_v1_repo_chunked_round_trip() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async {
+            let mut repo = repo;
             repo.set_content_format(crate::storage::ContentFormat::BlockV1);
             repo.save()?;
-            let result = repositories::push(&repo).await;
+
+            // A compressible CSV over the chunking floor.
+            let floor = crate::storage::chunked::dedup_min_file_size() as usize;
+            let mut csv = String::from("file,label\n");
+            let mut row = 0u64;
+            while csv.len() < floor * 2 {
+                csv.push_str(&format!("images/img_{row}.jpg,label_{}\n", row % 7));
+                row += 1;
+            }
+            let csv_path = repo.path.join("train.csv");
+            util::fs::write_to_path(&csv_path, &csv)?;
+            repositories::add(&repo, &csv_path).await?;
+            repositories::commit(&repo, "adding train.csv")?;
+
+            let remote_repo = test::create_remote_repo(&repo).await?;
+            let remote = test::repo_remote_url_from(&repo.dirname());
+            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
+
+            repositories::push(&repo).await?;
+
+            // The version was stored chunked locally, so the push negotiated and
+            // transferred blocks: the server must now be missing none of them.
+            let version_store = repo.version_store();
+            let chunked = version_store.chunked().expect("local store is chunked");
+            let hash = util::hasher::hash_buffer(csv.as_bytes());
+            let manifest = chunked
+                .get_manifest(&hash)
+                .await?
+                .expect("local manifest exists");
+            let all_hashes: Vec<u128> = manifest.chunks.iter().map(|c| c.hash).collect();
+            let missing = api::client::chunks::missing_chunks(&remote_repo, &all_hashes).await?;
             assert!(
-                matches!(result, Err(OxenError::BlockFormatPushNotSupported)),
-                "expected BlockFormatPushNotSupported, got {result:?}"
+                missing.is_empty(),
+                "server still missing {} chunks after push",
+                missing.len()
             );
-            Ok(())
+
+            // The server serves the pushed chunked version's exact bytes.
+            let download_path = repo.path.join("train_download.csv");
+            api::client::entries::download_entry(&remote_repo, "train.csv", &download_path, "main")
+                .await?;
+            assert_eq!(util::fs::read_from_path(&download_path)?, csv);
+
+            // Label one more row and push again: negotiation finds only the
+            // perturbed tail chunks missing.
+            let mut appended = csv.clone();
+            appended.push_str("images/img_new.jpg,label_3\n");
+            util::fs::write_to_path(&csv_path, &appended)?;
+            repositories::add(&repo, &csv_path).await?;
+            repositories::commit(&repo, "one more label")?;
+
+            let appended_hash = util::hasher::hash_buffer(appended.as_bytes());
+            let appended_manifest = chunked
+                .get_manifest(&appended_hash)
+                .await?
+                .expect("appended manifest exists");
+            let appended_hashes: Vec<u128> =
+                appended_manifest.chunks.iter().map(|c| c.hash).collect();
+            let missing_before =
+                api::client::chunks::missing_chunks(&remote_repo, &appended_hashes).await?;
+            assert!(
+                missing_before.len() <= 2,
+                "appending one row should leave at most a couple of new chunks, server missing {}",
+                missing_before.len()
+            );
+
+            repositories::push(&repo).await?;
+            let missing_after =
+                api::client::chunks::missing_chunks(&remote_repo, &appended_hashes).await?;
+            assert!(missing_after.is_empty());
+
+            // And the appended version round-trips from the server too.
+            let download_path = repo.path.join("appended_download.csv");
+            api::client::entries::download_entry(&remote_repo, "train.csv", &download_path, "main")
+                .await?;
+            assert_eq!(util::fs::read_from_path(&download_path)?, appended);
+
+            api::client::repositories::delete(&remote_repo).await?;
+            future::ok::<(), OxenError>(()).await
         })
         .await
     }

@@ -24,8 +24,11 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         .service(
             web::scope("/{namespace}/{repo_name}")
                 .service(services::action())
+                .service(services::blocks())
                 .service(services::branches())
                 .service(services::chunk())
+                .service(services::chunks())
+                .service(services::manifests())
                 .service(services::commits())
                 .service(services::commits_db())
                 .service(services::compare())

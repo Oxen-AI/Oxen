@@ -29,14 +29,19 @@ transparently.
 | `VersionStore::chunked()` seam + transparent reads on `LocalVersionStore` | ✅ implemented |
 | `oxen add` routing on block-v1 repos (CLI add path) | ✅ implemented |
 | Other write paths (workspaces, server uploads, remote-mode checkout) | ⬜ still whole-file; planned (plan §6.8) |
-| Push/pull wire protocol for chunked versions (plan §7) | ⬜ not yet — push of a block-v1 repo fails early with a structured error |
-| S3 backend parity, `SeekableVersionReader`/`read_version_df` (plan §6.9, Phase 3–4) | ⬜ not yet |
+| `SeekableVersionReader`, chunked `read_version_df` / `oxen df --revision` (plan §6.9) | ✅ implemented |
+| Push wire protocol: chunk negotiation, block transfer, server-side manifest validation (plan §7) | ✅ implemented — a server without block support is rejected with a structured error |
+| Pull of chunked-on-server versions | ✅ correct via the server's transparent reads (whole-file on the wire); chunk-level pull dedup is planned |
+| S3 backend parity (plan Phase 4) | ⬜ not yet |
 | Migration command, GC, fsck (plan §9–11) | ⬜ not yet |
 
-**In short: block-v1 is currently a local, experimental format.** Everything you
-commit locally round-trips exactly (add → commit → checkout/restore), but you
-cannot push a block-v1 repository yet, and `oxen df` on a chunked version is
-not yet wired to the seekable reader.
+**In short: block-v1 is an experimental format with a working local + push
+path.** Everything you commit round-trips exactly (add → commit →
+checkout/restore), `oxen push` negotiates at chunk granularity and uploads
+only the blocks the server is missing, and the server validates every pushed
+manifest by full reconstruction before publishing it. Clones and pulls of
+chunked-on-server versions are served through the server's transparent read
+path (correct, not yet dedup-optimized on the wire).
 
 ## Try it on a new repository
 
@@ -114,9 +119,9 @@ takes effect **for new writes only**:
 
 There is **no tooling yet** to convert historical versions, so an old repo's
 existing 5 GB CSV history stays at its current size until the migration
-command ships. Also remember the current hard limitation: a block-v1
-repository cannot be pushed yet — the push command refuses up front. Don't
-enable it on a repository you need to sync today.
+command ships. Pushing works: chunked versions transfer at block granularity
+to a block-capable server (an older server is rejected up front with a
+structured upgrade error, never a silent whole-file fallback).
 
 ### The finished migration (plan §9, not yet implemented)
 

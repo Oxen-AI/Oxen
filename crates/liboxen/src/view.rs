@@ -2,6 +2,7 @@
 //!
 
 pub mod branch;
+pub mod chunks;
 pub mod commit;
 pub mod compare;
 pub mod data_frames;

@@ -11,7 +11,8 @@ use crate::error::OxenError;
 use crate::model::{EntryDataType, MerkleHash};
 use crate::storage::chunked::manifest::ChunkManifest;
 use crate::storage::chunked::{
-    BlockEngine, ChunkedVersionStore, ReconstructReader, SeekableVersionReader, encode_policy,
+    BlockEngine, ChunkedVersionStore, ReconstructReader, SealedBlock, SeekableVersionReader,
+    encode_policy,
 };
 use crate::storage::version_store::{
     BoxedByteStream, LocalFilePath, VersionLocation, VersionStore,
@@ -846,6 +847,12 @@ impl ChunkedVersionStore for LocalVersionStore {
         let block_hash = u128::from_str_radix(hash, 16)
             .map_err(|_| OxenError::basic_str(format!("invalid block hash: {hash}")))?;
         spawn_blocking(move || engine.store_block(block_hash, &data)).await?
+    }
+
+    async fn pack_chunks(&self, hashes: &[u128]) -> Result<Vec<SealedBlock>, OxenError> {
+        let engine = self.engine()?;
+        let hashes = hashes.to_vec();
+        spawn_blocking(move || engine.pack_chunks(&hashes)).await?
     }
 
     async fn open_seekable(&self, hash: &str) -> Result<SeekableVersionReader, OxenError> {

@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
 
 pub mod branches;
+pub mod chunks;
 pub mod commits;
 pub mod compare;
 pub mod data_frames;

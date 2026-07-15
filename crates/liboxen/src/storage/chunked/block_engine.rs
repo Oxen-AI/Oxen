@@ -31,7 +31,7 @@ use crate::util::hasher::hash_buffer_128bit;
 
 use super::block::{BlockWriter, SealedBlock, parse_block_footer, verify_block};
 use super::chunk_index::{ChunkIndex, ChunkLocation};
-use super::compressor::{decode_chunk, encode_chunk};
+use super::compressor::{EncodedChunk, decode_chunk, encode_chunk};
 use super::error::ChunkedError;
 use super::manifest::{ChunkEntry, ChunkManifest, MANIFEST_VERSION};
 use super::policy::EncodePolicy;
@@ -221,6 +221,44 @@ impl BlockEngine {
             }
         }
         Ok(true)
+    }
+
+    /// Pack exactly the requested chunks into fresh transfer blocks (the same
+    /// on-disk block format, formed per transfer).
+    ///
+    /// Stored payloads are copied as-is — compressed chunks travel compressed, no
+    /// decode/re-encode. Duplicate hashes pack once. A hash this store doesn't
+    /// have fails with [`ChunkedError::MissingChunk`]. Memory is bounded by the
+    /// requested chunks; callers bound their batches (e.g. by summed raw length)
+    /// to keep transfers incremental.
+    pub fn pack_chunks(&self, hashes: &[u128]) -> Result<Vec<SealedBlock>, OxenError> {
+        let mut blocks = Vec::new();
+        let mut writer = BlockWriter::new();
+        let mut packed = std::collections::HashSet::new();
+        let mut cursor = ChunkPayloadCursor::new();
+
+        for &chunk_hash in hashes {
+            if !packed.insert(chunk_hash) {
+                continue;
+            }
+            let location = self
+                .index
+                .get(chunk_hash)?
+                .ok_or(ChunkedError::MissingChunk { chunk_hash })?;
+            let payload = cursor.read_payload(self, &location)?;
+            let encoded = EncodedChunk {
+                codec: location.codec,
+                data: payload,
+            };
+            if writer.would_exceed_max_size(encoded.data.len()) {
+                blocks.push(std::mem::take(&mut writer).seal()?);
+            }
+            writer.append(chunk_hash, location.raw_len, &encoded)?;
+        }
+        if !writer.is_empty() {
+            blocks.push(writer.seal()?);
+        }
+        Ok(blocks)
     }
 
     /// Rebuild the chunk index from block footers: clear it, scan every block on

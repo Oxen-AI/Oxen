@@ -16,7 +16,8 @@ use crate::model::{
 };
 
 use crate::opts::PushOpts;
-use crate::storage::{ContentFormat, VersionLocation};
+use crate::storage::VersionLocation;
+use crate::storage::chunked::{ChunkManifest, ChunkedVersionStore};
 use crate::util::concurrency;
 use crate::{api, repositories};
 
@@ -37,14 +38,6 @@ pub async fn push_remote_branch(
     repo: &LocalRepository,
     opts: &PushOpts,
 ) -> Result<Branch, OxenError> {
-    // Hard gate, before any mutation: pushing chunked (block-v1) versions needs the
-    // block wire protocol, which is not implemented yet. Fail early and actionably
-    // rather than confusingly partway through the transfer — never a silent
-    // whole-file fallback (see docs/block_level_dedup_plan.md §8).
-    if repo.storage_config().content_format == ContentFormat::BlockV1 {
-        return Err(OxenError::BlockFormatPushNotSupported);
-    }
-
     // start a timer
     let start = std::time::Instant::now();
 
@@ -561,6 +554,26 @@ pub async fn push_entries(
         commit.message
     );
 
+    // Versions stored chunked locally (a published manifest exists) transfer at
+    // block granularity: negotiate chunk hashes, upload only the blocks the server
+    // is missing, then publish manifests. Everything else takes the legacy paths.
+    let mut chunked_entries: Vec<(CommitEntry, ChunkManifest)> = Vec::new();
+    let mut whole_file_entries: Vec<CommitEntry> = Vec::new();
+    let version_store = local_repo.version_store();
+    match version_store.chunked() {
+        Some(chunked_store) => {
+            for entry in entries {
+                match chunked_store.get_manifest(&entry.hash).await? {
+                    Some(manifest) => chunked_entries.push((entry.to_owned(), manifest)),
+                    None => whole_file_entries.push(entry.to_owned()),
+                }
+            }
+        }
+        None => whole_file_entries.extend(entries.iter().cloned()),
+    }
+
+    push_chunked_entries(local_repo, remote_repo, chunked_entries, progress).await?;
+
     // Some files may be much larger than others....so we can't just zip them up and send them
     // since bodies will be too big. Hence we chunk and send the big ones, and bundle and send the small ones
 
@@ -568,7 +581,7 @@ pub async fn push_entries(
 
     // For files at-or-below the streamed-transfer segment size, group them, zip them up, and
     // transfer them as one batch.
-    let smaller_entries: Vec<CommitEntry> = entries
+    let smaller_entries: Vec<CommitEntry> = whole_file_entries
         .iter()
         .filter(|e| e.num_bytes <= segment_size)
         .map(|e| e.to_owned())
@@ -576,7 +589,7 @@ pub async fn push_entries(
 
     // For files above the streamed-transfer segment size, split them into segments and send
     // them in parallel.
-    let larger_entries: Vec<CommitEntry> = entries
+    let larger_entries: Vec<CommitEntry> = whole_file_entries
         .iter()
         .filter(|e| e.num_bytes > segment_size)
         .map(|e| e.to_owned())
@@ -608,6 +621,114 @@ pub async fn push_entries(
         }
         _ => Err(OxenError::basic_str("Unknown error syncing entries")),
     }
+}
+
+/// Total raw chunk bytes per pack-and-upload batch. Bounds client memory to at
+/// most one batch of payloads (~one sealed block) regardless of push size.
+const PACK_BATCH_RAW_BYTES: u64 = 48 * 1024 * 1024;
+
+/// Push versions stored chunked locally: negotiate at chunk granularity, transfer
+/// exactly the missing chunks at block granularity, then publish manifests. The
+/// server validates every block at ingest and every manifest by full streamed
+/// reconstruction, so blocks always land before the manifests that reference them.
+async fn push_chunked_entries(
+    local_repo: &LocalRepository,
+    remote_repo: &RemoteRepository,
+    entries: Vec<(CommitEntry, ChunkManifest)>,
+    progress: &Arc<PushProgress>,
+) -> Result<(), OxenError> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let version_store = local_repo.version_store();
+    let Some(chunked_store) = version_store.chunked() else {
+        return Err(OxenError::basic_str(
+            "cannot push chunked versions: local store does not support block storage",
+        ));
+    };
+
+    // Unique chunk hashes in file order (keeps the transfer packer's locality),
+    // with each chunk's raw length for batching.
+    let mut seen = HashSet::new();
+    let mut all_hashes = Vec::new();
+    let mut raw_lens: HashMap<u128, u64> = HashMap::new();
+    for (_, manifest) in &entries {
+        for chunk in &manifest.chunks {
+            if seen.insert(chunk.hash) {
+                all_hashes.push(chunk.hash);
+                raw_lens.insert(chunk.hash, chunk.len as u64);
+            }
+        }
+    }
+
+    let missing = api::client::chunks::missing_chunks(remote_repo, &all_hashes).await?;
+    log::debug!(
+        "push_chunked_entries: server missing {} of {} chunks across {} files",
+        missing.len(),
+        all_hashes.len(),
+        entries.len()
+    );
+
+    // Pack and upload the missing chunks in bounded batches. Only hashes we asked
+    // about are honored — a server must never be able to make us pack arbitrary
+    // chunks.
+    let mut batch: Vec<u128> = Vec::new();
+    let mut batch_raw_bytes = 0u64;
+    for chunk_hash in missing {
+        let Some(raw_len) = raw_lens.get(&chunk_hash) else {
+            continue;
+        };
+        batch.push(chunk_hash);
+        batch_raw_bytes += raw_len;
+        if batch_raw_bytes >= PACK_BATCH_RAW_BYTES {
+            pack_and_upload_blocks(chunked_store, remote_repo, &batch, progress).await?;
+            batch.clear();
+            batch_raw_bytes = 0;
+        }
+    }
+    if !batch.is_empty() {
+        pack_and_upload_blocks(chunked_store, remote_repo, &batch, progress).await?;
+    }
+
+    // Every referenced chunk is durable on the server; publish the manifests.
+    futures::stream::iter(entries.iter().map(Ok::<_, OxenError>))
+        .try_for_each_concurrent(concurrency::num_threads_for_items(entries.len()), {
+            let progress = Arc::clone(progress);
+            move |(_, manifest)| {
+                let progress = Arc::clone(&progress);
+                async move {
+                    api::client::chunks::upload_manifest(remote_repo, manifest).await?;
+                    progress.add_files(1);
+                    Ok(())
+                }
+            }
+        })
+        .await
+}
+
+/// Pack one bounded batch of chunks into transfer blocks and upload them with
+/// bounded parallelism, counting encoded bytes into the progress bar.
+async fn pack_and_upload_blocks(
+    chunked_store: &dyn ChunkedVersionStore,
+    remote_repo: &RemoteRepository,
+    hashes: &[u128],
+    progress: &Arc<PushProgress>,
+) -> Result<(), OxenError> {
+    let blocks = chunked_store.pack_chunks(hashes).await?;
+    futures::stream::iter(blocks.into_iter().map(Ok::<_, OxenError>))
+        .try_for_each_concurrent(4, {
+            let progress = Arc::clone(progress);
+            move |block| {
+                let progress = Arc::clone(&progress);
+                async move {
+                    let encoded_len = block.data.len() as u64;
+                    api::client::chunks::upload_block(remote_repo, block.hash, block.data).await?;
+                    progress.add_bytes(encoded_len);
+                    Ok(())
+                }
+            }
+        })
+        .await
 }
 
 async fn chunk_and_send_large_entries(

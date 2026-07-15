@@ -1,5 +1,6 @@
 pub mod action;
 pub mod branches;
+pub mod chunks;
 pub mod commits;
 pub mod data_frames;
 pub mod diff;
