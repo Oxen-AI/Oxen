@@ -33,6 +33,10 @@ pub fn storage_args() -> Command {
                         .help("Target content format"),
                 ),
         )
+        .subcommand(Command::new("rebuild-index").about(
+            "Rebuild the local chunk index by scanning stored blocks \
+             (recovers a lost or corrupted index; blocks and manifests are untouched)",
+        ))
 }
 
 #[async_trait]
@@ -52,10 +56,18 @@ impl RunCmd for StorageCmd {
         match args.subcommand() {
             Some(("status", _)) => run_status(&repository).await?,
             Some(("migrate", sub_args)) => run_migrate(&mut repository, sub_args).await?,
+            Some(("rebuild-index", _)) => run_rebuild_index(&repository).await?,
             _ => unreachable!("clap enforces subcommand_required(true)"),
         }
         Ok(())
     }
+}
+
+async fn run_rebuild_index(repository: &LocalRepository) -> Result<(), OxenError> {
+    println!("Rebuilding the chunk index from stored blocks...");
+    let chunks = repositories::storage::rebuild_chunk_index(repository).await?;
+    println!("Rebuilt chunk index: {chunks} chunks indexed");
+    Ok(())
 }
 
 async fn run_status(repository: &LocalRepository) -> Result<(), OxenError> {

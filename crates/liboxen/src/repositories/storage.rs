@@ -193,6 +193,20 @@ pub async fn migrate_to_legacy(repo: &mut LocalRepository) -> Result<MigrationSt
     Ok(stats)
 }
 
+/// Rebuild the store-local chunk index (chunk hash → block location) by scanning
+/// every stored block. The index is derived state — blocks and manifests are the
+/// durable representation — so a lost or corrupted index is fully recoverable
+/// here. Returns the number of chunks indexed.
+pub async fn rebuild_chunk_index(repo: &LocalRepository) -> Result<u64, OxenError> {
+    let store = repo.version_store();
+    let Some(chunked) = store.chunked() else {
+        return Err(OxenError::basic_str(
+            "this repository's storage backend does not support block storage",
+        ));
+    };
+    chunked.rebuild_chunk_index().await
+}
+
 #[cfg(test)]
 mod tests {
     use crate::error::OxenError;
@@ -264,6 +278,67 @@ mod tests {
             assert_eq!(status.content_format, crate::storage::ContentFormat::Legacy);
             assert_eq!(status.chunked_versions, 0);
 
+            Ok(())
+        })
+        .await
+    }
+
+    /// The chunk index is derived state: after losing it entirely (host
+    /// redeploy, partial restore), `rebuild_chunk_index` recovers every chunked
+    /// version from block footers.
+    #[tokio::test]
+    async fn test_rebuild_chunk_index_recovers_reads() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|mut repo| async move {
+            let floor = dedup_min_file_size() as usize;
+            let mut csv = String::from("file,label\n");
+            let mut row = 0u64;
+            while csv.len() < floor + 1024 {
+                csv.push_str(&format!("images/img_{row}.jpg,label_{}\n", row % 7));
+                row += 1;
+            }
+            let csv_path = repo.path.join("train.csv");
+            util::fs::write_to_path(&csv_path, &csv)?;
+            repositories::add(&repo, &csv_path).await?;
+            repositories::commit(&repo, "one big file")?;
+            repositories::storage::migrate_to_block_v1(&mut repo).await?;
+            let big_hash = util::hasher::hash_buffer(csv.as_bytes());
+
+            // Restore the repo elsewhere without the derived index (a host
+            // redeploy or partial restore); blocks and manifests stay durable.
+            // A copy is needed because LMDB envs are cached per path in-process,
+            // so deleting the index dir under the original repo wouldn't affect
+            // its already-open env.
+            let restored_path = repo.path.parent().expect("repo has a parent").join(format!(
+                "{}_restored",
+                repo.path
+                    .file_name()
+                    .expect("repo dirname")
+                    .to_string_lossy()
+            ));
+            util::fs::copy_dir_all(&repo.path, &restored_path)?;
+            let index_dir = crate::util::fs::oxen_hidden_dir(&restored_path)
+                .join(crate::constants::VERSIONS_DIR)
+                .join(crate::constants::CHUNK_INDEX_DIR);
+            util::fs::remove_dir_all(&index_dir)?;
+
+            // The restored repo can't serve the chunked version...
+            let restored = crate::model::LocalRepository::from_dir(&restored_path)?;
+            assert!(
+                restored
+                    .version_store()
+                    .get_version(&big_hash)
+                    .await
+                    .is_err()
+            );
+
+            // ...until the index is rebuilt from block footers.
+            let chunks = repositories::storage::rebuild_chunk_index(&restored).await?;
+            assert!(chunks > 0, "rebuild must re-index the stored chunks");
+            assert_eq!(
+                restored.version_store().get_version(&big_hash).await?,
+                csv.as_bytes()
+            );
+            util::fs::remove_dir_all(&restored_path)?;
             Ok(())
         })
         .await
