@@ -727,6 +727,25 @@ async fn add_file_inner(
     if let Some(staged) = &staged_node
         && let EMerkleTreeNode::File(file_node) = &staged.node.node
     {
+        if let Err(err) =
+            store_file_version(repo, version_store, file_node, &file_status.hash, path).await
+        {
+            // Roll the file's staged entry back: a staged FileNode whose bytes
+            // never reached the version store would let a later commit
+            // reference a version nothing can restore.
+            let relative_path = util::fs::path_relative_to_dir(path, repo_path)?;
+            staged_db.delete(relative_path.to_str().unwrap_or_default())?;
+            return Err(err);
+        }
+    } else if file_status.status == StagedEntryStatus::Unmodified
+        && let Some(file_node) = &file_status.previous_file_node
+        && !version_store
+            .version_exists(&file_status.hash.to_string())
+            .await?
+    {
+        // Re-adding an unchanged file whose version data has gone missing
+        // (e.g. a blob removed by a corruption clean) restores it to the store.
+        log::warn!("version data missing for unchanged file {path:?} - restoring");
         store_file_version(repo, version_store, file_node, &file_status.hash, path).await?;
     }
     Ok(staged_node)

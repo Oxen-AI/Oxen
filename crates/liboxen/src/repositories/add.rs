@@ -277,6 +277,86 @@ A: Oxen.ai
         .await
     }
 
+    /// Re-adding an unchanged file whose version data went missing (e.g. a blob
+    /// removed by a corruption clean) restores the bytes to the version store
+    /// instead of silently no-oping.
+    #[tokio::test]
+    async fn test_add_unmodified_file_restores_missing_version_data() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            use crate::constants::{FILES_DIR, VERSIONS_DIR};
+
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello World")?;
+            repositories::add(&repo, &hello_file).await?;
+            repositories::commit(&repo, "add hello")?;
+
+            let hash = util::hasher::hash_file_contents(&hello_file)?;
+            let store = repo.version_store();
+            assert!(store.version_exists(&hash).await?);
+
+            // Simulate a lost blob.
+            let version_dir = util::fs::oxen_hidden_dir(&repo.path)
+                .join(VERSIONS_DIR)
+                .join(FILES_DIR)
+                .join(&hash[..2])
+                .join(&hash[2..]);
+            util::fs::remove_dir_all(&version_dir)?;
+            assert!(!store.version_exists(&hash).await?);
+
+            // Re-add of the unchanged file restores the version data...
+            repositories::add(&repo, &hello_file).await?;
+            assert!(store.version_exists(&hash).await?);
+            assert_eq!(store.get_version(&hash).await?, b"Hello World");
+
+            // ...without staging anything.
+            let status = repositories::status(&repo).await?;
+            assert_eq!(status.staged_files.len(), 0);
+            Ok(())
+        })
+        .await
+    }
+
+    /// A failed version-store write must not leave the file staged: a staged
+    /// FileNode with no stored bytes would let a later commit reference a
+    /// version nothing can restore.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_add_rolls_back_staged_entry_when_store_fails() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            use crate::constants::{FILES_DIR, VERSIONS_DIR};
+            use std::os::unix::fs::PermissionsExt;
+
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello World")?;
+
+            // Make the version store unwritable so the byte store fails after
+            // the file is staged.
+            let versions_dir = util::fs::oxen_hidden_dir(&repo.path)
+                .join(VERSIONS_DIR)
+                .join(FILES_DIR);
+            std::fs::set_permissions(&versions_dir, std::fs::Permissions::from_mode(0o555))
+                .map_err(OxenError::from)?;
+            let result = repositories::add(&repo, &hello_file).await;
+            std::fs::set_permissions(&versions_dir, std::fs::Permissions::from_mode(0o755))
+                .map_err(OxenError::from)?;
+            assert!(
+                result.is_err(),
+                "add must fail when the store is unwritable"
+            );
+
+            // Nothing staged: the entry was rolled back.
+            let status = repositories::status(&repo).await?;
+            assert_eq!(
+                status.staged_files.len(),
+                0,
+                "staged entry must be rolled back, got {:?}",
+                status.staged_files.keys()
+            );
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_command_add_file() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
