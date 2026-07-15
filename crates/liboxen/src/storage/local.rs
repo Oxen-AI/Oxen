@@ -670,15 +670,47 @@ impl VersionStore for LocalVersionStore {
 
                     {
                         // First read the data async
-                        let data_path = suffix_path.join("data");
+                        let data_path = suffix_path.join(VERSION_FILE_NAME);
                         let data = match fs::read(&data_path).await {
                             Ok(b) => b,
                             Err(_) => {
-                                // cannot read data - treat as corrupted
-                                stats_cl.incr_io_error();
-
-                                if !dry_run && fs::remove_dir_all(&suffix_path).await.is_ok() {
-                                    stats_cl.incr_deleted();
+                                // No whole-file blob. Chunked versions publish a
+                                // manifest instead of `data`, and the manifest is
+                                // their only representation — never delete a
+                                // version dir holding a valid one.
+                                let manifest_path = suffix_path.join(VERSION_MANIFEST_FILE_NAME);
+                                match fs::read(&manifest_path).await {
+                                    Ok(manifest_bytes) => {
+                                        stats_cl.incr_scanned();
+                                        let valid = ChunkManifest::from_bytes(&manifest_bytes)
+                                            .is_ok_and(|m| {
+                                                m.file_hash.to_string() == expected_hash
+                                            });
+                                        if !valid {
+                                            stats_cl.incr_corrupted();
+                                            if !dry_run
+                                                && fs::remove_dir_all(&suffix_path).await.is_ok()
+                                            {
+                                                stats_cl.incr_deleted();
+                                            }
+                                        }
+                                    }
+                                    Err(err) if err.kind() == ErrorKind::NotFound => {
+                                        // Neither blob nor manifest: nothing valid
+                                        // to preserve - treat as corrupted.
+                                        stats_cl.incr_io_error();
+                                        if !dry_run
+                                            && fs::remove_dir_all(&suffix_path).await.is_ok()
+                                        {
+                                            stats_cl.incr_deleted();
+                                        }
+                                    }
+                                    Err(_) => {
+                                        // Manifest present but unreadable: an IO
+                                        // fault, not proof of corruption - leave
+                                        // it in place.
+                                        stats_cl.incr_io_error();
+                                    }
                                 }
                                 drop(permit);
                                 continue;
@@ -1457,6 +1489,58 @@ mod tests {
                 chunk.hash ^= 0xF00D;
             }
             assert!(chunked_store.put_manifest(&foreign).await.is_err());
+            Ok(())
+        }
+
+        /// `clean_corrupted_versions` must never delete a chunked version: the
+        /// manifest (not a `data` blob) is its only representation. Corrupted
+        /// whole-file blobs and unparseable manifests are still cleaned.
+        #[tokio::test]
+        async fn clean_corrupted_versions_preserves_chunked_versions() -> Result<(), OxenError> {
+            let (_temp_dir, store) = setup().await;
+            let data = csv_bytes(13, 1_200_000);
+            let (chunked_hash, _manifest) = store_chunked(&store, &data).await?;
+
+            let good = b"healthy whole-file bytes";
+            let good_hash = hasher::hash_buffer(good);
+            store
+                .store_version(&good_hash, Bytes::from_static(good))
+                .await?;
+
+            // A whole-file blob planted under a hash its bytes don't match
+            // (store_version verifies, so write the fixture directly).
+            let bad_hash = "aaaa5555bbbb6666".to_string();
+            let bad_dir = store.version_dir(&bad_hash);
+            std::fs::create_dir_all(&bad_dir).unwrap();
+            std::fs::write(bad_dir.join(VERSION_FILE_NAME), b"corrupted bytes").unwrap();
+
+            // Dry run: counts but deletes nothing.
+            let result = store.clean_corrupted_versions(true).await?;
+            assert_eq!(result.scanned, 3);
+            assert_eq!(result.corrupted, 1);
+            assert_eq!(result.cleaned, 0);
+            assert!(store.version_exists(&chunked_hash).await?);
+            assert!(store.version_exists(&bad_hash).await?);
+
+            // Real run: the corrupted blob goes, the chunked version stays readable.
+            let result = store.clean_corrupted_versions(false).await?;
+            assert_eq!(result.corrupted, 1);
+            assert_eq!(result.cleaned, 1);
+            assert!(!store.version_exists(&bad_hash).await?);
+            assert!(store.version_exists(&good_hash).await?);
+            assert!(store.version_exists(&chunked_hash).await?);
+            assert_eq!(store.get_version(&chunked_hash).await?, data);
+
+            // An unparseable manifest is corruption and is cleaned.
+            let junk_hash = "1234abcd5678ef90";
+            let junk_dir = store.version_dir(junk_hash);
+            std::fs::create_dir_all(&junk_dir).unwrap();
+            std::fs::write(junk_dir.join(VERSION_MANIFEST_FILE_NAME), b"not a manifest").unwrap();
+            let result = store.clean_corrupted_versions(false).await?;
+            assert_eq!(result.corrupted, 1);
+            assert_eq!(result.cleaned, 1);
+            assert!(!store.version_exists(junk_hash).await?);
+            assert!(store.version_exists(&chunked_hash).await?);
             Ok(())
         }
 
