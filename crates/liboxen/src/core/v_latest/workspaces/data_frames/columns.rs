@@ -153,7 +153,7 @@ pub fn add_column_metadata(
         // Stage parent nodes
         staged_db_manager.upsert_staged_nodes(&staged_nodes)?;
 
-        sync_workspace_columns_into_metadata(workspace, &path, file_node.get_mut_metadata());
+        sync_workspace_columns_into_metadata(workspace, &path, file_node.get_mut_metadata())?;
 
         // Update the column metadata
         let mut results = HashMap::new();
@@ -213,23 +213,22 @@ fn sync_workspace_columns_into_metadata(
     workspace: &Workspace,
     path: &Path,
     file_node_metadata: &mut Option<GenericMetadata>,
-) {
+) -> Result<(), OxenError> {
     let Some(GenericMetadata::MetadataTabular(metadata_tabular)) = file_node_metadata else {
         log::warn!("Metadata is not of type MetadataTabular or is None");
-        return;
+        return Ok(());
     };
 
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     if !db_path.exists() {
-        return;
+        // Never indexed: nothing to sync.
+        return Ok(());
     }
+    // A db without the staged table yields an empty schema (harmless no-op
+    // below), so any error here is a genuine failure and must propagate.
     let table_schema = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| schema_without_oxen_cols(conn, TABLE_NAME))
-    });
-    let Ok(table_schema) = table_schema else {
-        // Not indexed (no staged table): nothing to sync.
-        return;
-    };
+    })?;
 
     for field in table_schema.fields {
         let exists = metadata_tabular
@@ -247,4 +246,5 @@ fn sync_workspace_columns_into_metadata(
             });
         }
     }
+    Ok(())
 }

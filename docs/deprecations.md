@@ -12,6 +12,15 @@ Central registry of deprecated behavior and the release each item should be **re
 | CLI `--workspace` flag (renamed to `--workspace-id`) | ≤ 0.50.4 (already shipped) | **TBD — assign a target** | `crates/cli/src/cmd/workspace/status.rs` | Existing "`--workspace` will be REMOVED in a future release" warning; pick a concrete release. |
 | `commits` no-op echo endpoint | ≤ 0.50.4 (already shipped) | **TBD — assign a target** | `crates/server/src/controllers/commits.rs` | Existing "will be removed in a future release" doc; pick a concrete release. |
 
+## Removed without a deprecation window
+
+Removals that intentionally skipped the additive-deprecation workflow (owner decision), recorded here so client breakage reports can be traced to a release.
+
+| Item | Removed in | Location (was) | Notes |
+| --- | --- | --- | --- |
+| Workspace data frame staged diff — `GET /repos/{ns}/{name}/workspaces/{id}/data_frames/diff/{path}` and the `oxen workspace diff` CLI command | 0.52.0 (workspace reversibility removal) | `crates/oxen-server/src/services/workspaces/data_frames.rs`; `crates/oxen-cli/src/cmd/workspace/diff.rs` | Older CLIs receive a 404. Removed with the change-tracking ("mods") layer; there is no replacement — edits apply directly. |
+| Workspace row/column restore — `POST .../data_frames/rows/{row_id}/restore/{path}` and `POST .../data_frames/columns/{column_name}/restore/{path}` | 0.52.0 (workspace reversibility removal) | `crates/oxen-server/src/controllers/workspaces/data_frames/rows.rs`, `.../columns.rs` | Older clients receive a 404. Whole-data-frame restore (`DELETE .../data_frames/resource/{path}`, re-index) remains. |
+
 ## Reminder
 
 There is no automated scheduler for this list (a Claude session cron expires after 7 days — too short for these multi-release horizons — and a persistent CI job wasn't wanted yet). Instead, the workspace `CLAUDE.md` ("Wrapping up work") tells the agent to **offer**, when work wraps up, a quick scan that cross-checks the **Remove in** targets above against the current/upcoming release and flags anything due for removal. Keep this list current so that scan stays useful.

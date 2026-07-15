@@ -507,8 +507,8 @@ pub fn prepare_sql(
     Ok(sql)
 }
 
-/// Use this for DuckDB
-const DIALECT: PostgreSqlDialect = PostgreSqlDialect {};
+/// Use this for DuckDB: the sqlparser dialect for all SQL destined for it.
+pub(crate) const DIALECT: PostgreSqlDialect = PostgreSqlDialect {};
 
 fn add_special_columns(conn: &duckdb::Connection, sql: &str) -> Result<String, DataFrameError> {
     let original_schema = get_schema(conn, TABLE_NAME)?;
