@@ -635,6 +635,15 @@ async fn start(
     // to the client as a dropped connection (502 Bad Gateway).
     const ACTIX_KEEP_ALIVE_SECS: u64 = 75;
 
+    // Oversubscribe HTTP workers far above the CPU count as a temporary fix. We've got lots of
+    // workers getting blocked by sync i/o or sync inefficient algorithms. We'll revert this once
+    // we've cleaned up a batch of the worst offenders.
+    const HTTP_WORKERS: usize = 256;
+
+    let workers_msg = format!("HTTP worker threads: {HTTP_WORKERS}");
+    eprintln!("{workers_msg}");
+    log::info!("{workers_msg}");
+
     let server_result = HttpServer::new(move || {
         App::new()
             .app_data(data.clone())
@@ -677,6 +686,7 @@ async fn start(
             .wrap(MetricsMiddleware)
             .wrap(TracingLogger::default())
     })
+    .workers(HTTP_WORKERS)
     .keep_alive(Duration::from_secs(ACTIX_KEEP_ALIVE_SECS))
     .bind((host.to_owned(), port))?
     .shutdown_timeout(ACTIX_SHUTDOWN_TIMEOUT_SECS)
