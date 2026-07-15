@@ -330,10 +330,14 @@ fn cleanup_name_index_lock(key: &Path) {
 /// On first call for a repo, rebuilds the index from disk (one-time O(n))
 /// on a blocking thread to avoid stalling the async runtime.
 async fn ensure_name_index(repo: &LocalRepository) -> Result<(), OxenError> {
-    if workspace_name_index::index_exists(repo) {
+    let lock = name_index_lock_for(&repo.path);
+    if workspace_name_index::index_exists(repo)
+        && let Ok(guard) = lock.try_lock()
+    {
+        drop(guard);
+        cleanup_name_index_lock(&repo.path);
         return Ok(());
     }
-    let lock = name_index_lock_for(&repo.path);
     let result = {
         let _guard = lock.lock().await;
         // Re-check under the lock: the first caller builds the index (creating the
