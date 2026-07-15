@@ -80,6 +80,13 @@ pub async fn list(repo: &LocalRepository) -> Result<Vec<Branch>, OxenError> {
 
 The inner sync functions (`with_ref_manager`, `RefManager::list_branches`) stay synchronous; only the public API grows the `async` / `spawn_blocking` edge. Callers ripple outward to `.await` it — a thin sync wrapper that only forwards (e.g. `repositories::is_empty`) becomes `async` in turn, and its own callers, already `async` handlers, add `.await`. The conversion stops at the first `async` boundary above each caller.
 
+The granularity is **one `spawn_blocking` per converted API, not per handler.** A handler or CLI command that needs several reads resolves the repo once (`get_repo`) and `.await`s each converted API in sequence; it does **not** wrap them in one bespoke closure. The per-request hop overhead is negligible — µs-scale hops against ms-to-second-scale reads — and keeping one offload per API is what lets leaf endpoints convert independently.
+
+Two granularity rules that `branches::list` doesn't exercise but the leaf conversions will:
+
+- **A read loop is one operation, not N.** When an API iterates — a value per key, a walk over merkle nodes — the *entire loop* stays inside its single `spawn_blocking` (or moves to a bulk API); never dispatch one hop per iteration, which pays the dispatch tax on every element. (`branches::list`'s inner `list_branches` iterates the whole refs DB inside its one closure.)
+- **Independent reads may overlap with `tokio::try_join!`** (optional perf). When a handler's reads don't depend on each other, joining their separate offloads runs them on separate blocking-pool threads in parallel, and the DB handle caches dedup temporally-overlapping opens of the same database. Join the separate `async fn`s — do **not** merge their bodies into one closure, which can neither overlap nor dedup.
+
 ### Bracket: async → sync → async
 
 The handler is async. It does any required network calls up front, then a single `spawn_blocking` for the sync core, then any network calls at the end.
