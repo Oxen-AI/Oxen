@@ -33,7 +33,8 @@ transparently.
 | Push wire protocol: chunk negotiation, block transfer, server-side manifest validation (plan §7) | ✅ implemented — a server without block support is rejected with a structured error |
 | Pull of chunked-on-server versions | ✅ correct via the server's transparent reads (whole-file on the wire); chunk-level pull dedup is planned |
 | S3 backend parity (plan Phase 4) | ⬜ not yet |
-| Migration command, GC, fsck (plan §9–11) | ⬜ not yet |
+| `oxen storage status` / `oxen storage migrate --to block-v1\|legacy` | ✅ implemented (local, resumable; converts every stored version) |
+| Maintenance lease, reachable-set inventory, GC, fsck (plan §9–11) | ⬜ not yet — reverse migration leaves blocks on disk until GC ships |
 
 **In short: block-v1 is an experimental format with a working local + push
 path.** Everything you commit round-trips exactly (add → commit →
@@ -104,29 +105,48 @@ followed by `repo.save()`; the ingest/read seam is `repo.version_store().chunked
 
 ## Migrating an existing repository
 
-### Today (interim state)
+### Today: `oxen storage migrate`
 
-Setting `content_format = "block-v1"` on an existing repository is safe and
-takes effect **for new writes only**:
+From inside any repository:
 
-- Every version committed *after* the switch that meets the 1 MiB floor is
-  stored chunked.
-- Every version committed *before* the switch keeps its whole-file blob and
-  keeps working — the two representations coexist indefinitely, and reads pick
-  whichever exists for each version.
-- Nothing in history is rewritten; flipping the config back to `"legacy"`
-  stops new chunked writes (already-chunked versions remain readable).
+```bash
+oxen storage status                    # format + how many versions are chunked
+oxen storage migrate --to block-v1     # convert history to chunked storage
+oxen storage migrate --to legacy       # convert back to whole-file blobs
+```
 
-There is **no tooling yet** to convert historical versions, so an old repo's
-existing 5 GB CSV history stays at its current size until the migration
-command ships. Pushing works: chunked versions transfer at block granularity
-to a block-capable server (an older server is rejected up front with a
-structured upgrade error, never a silent whole-file fallback).
+Forward migration walks every version in the store; each version at/above the
+1 MiB floor is chunked through the standard single-pass ingest (verified
+against the version's content hash), its manifest is published, and **only
+then** is its whole-file blob deleted — at every point each version has at
+least one complete representation, so interrupting and re-running is always
+safe (`already migrated` versions are skipped, and a version whose blob
+deletion was interrupted is finished). Small versions keep the whole-file path
+by policy. The `content_format` flips to `block-v1` only after everything is
+converted.
 
-### The finished migration (plan §9, not yet implemented)
+Reverse migration reconstructs every chunked version into its verified
+whole-file blob before removing the manifest. Blocks stay on disk until GC
+ships (other versions may share their chunks), so a reverse migration does not
+immediately reclaim space.
 
-The planned `oxen storage migrate --to block-v1 [--dry-run] [--resume]` is an
-explicit, resumable maintenance operation that converts all reachable history:
+Commits, merkle nodes, and hashes are never touched in either direction.
+
+Alternatively, setting `content_format = "block-v1"` in the config *without*
+migrating is also valid: it takes effect for new writes only, and the two
+representations coexist indefinitely.
+
+Current scope notes (vs the full plan §9): the command converts **every**
+stored version (no reachable-set inventory yet — unreachable versions' chunks
+are harmless and reclaimable by future GC), takes no maintenance lease (don't
+run it concurrently with writes), and stored versions don't carry their
+original data type, so migration uses the universal zstd-with-raw-fallback
+codec policy for all content.
+
+### The finished migration (plan §9)
+
+The full plan adds to this command an explicit, resumable maintenance
+operation over all reachable history:
 
 1. **Inventory** every reachable file version (all refs, retained commits,
    workspaces, staged content) while writes are blocked — reads stay allowed.

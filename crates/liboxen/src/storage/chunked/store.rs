@@ -83,6 +83,23 @@ pub trait ChunkedVersionStore: Send + Sync {
     /// The consumer should run inside one `spawn_blocking`.
     async fn open_seekable(&self, hash: &str) -> Result<SeekableVersionReader, OxenError>;
 
+    /// Delete a version's whole-file blob, leaving its chunked representation
+    /// (migration to block-v1, after the manifest is durably published).
+    ///
+    /// Refuses unless a published manifest exists for `hash` — a version's last
+    /// representation can never be deleted through this method. Idempotent once
+    /// the manifest exists.
+    async fn delete_whole_file_blob(&self, hash: &str) -> Result<(), OxenError>;
+
+    /// Delete a version's manifest, leaving its whole-file blob (migration back
+    /// to legacy, after the reconstructed blob is durably published). Blocks are
+    /// left in place for GC — other manifests may share their chunks.
+    ///
+    /// Refuses unless the whole-file blob exists for `hash` — a version's last
+    /// representation can never be deleted through this method. Idempotent once
+    /// the blob exists.
+    async fn delete_manifest(&self, hash: &str) -> Result<(), OxenError>;
+
     /// Rebuild the chunk index from block footers (the index is disposable derived
     /// state). Returns the number of blocks scanned.
     async fn rebuild_chunk_index(&self) -> Result<u64, OxenError>;

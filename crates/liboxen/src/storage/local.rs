@@ -872,6 +872,42 @@ impl ChunkedVersionStore for LocalVersionStore {
         let engine = self.engine()?;
         spawn_blocking(move || engine.rebuild_index()).await?
     }
+
+    async fn delete_whole_file_blob(&self, hash: &str) -> Result<(), OxenError> {
+        let data_path = self.version_path(hash);
+        let manifest_path = self.manifest_path(hash);
+        let hash = hash.to_string();
+        spawn_blocking(move || {
+            if !manifest_path.exists() {
+                return Err(OxenError::basic_str(format!(
+                    "refusing to delete the whole-file blob for {hash}: no chunked representation exists"
+                )));
+            }
+            if data_path.exists() {
+                crate::util::fs::remove_file(&data_path)?;
+            }
+            Ok(())
+        })
+        .await?
+    }
+
+    async fn delete_manifest(&self, hash: &str) -> Result<(), OxenError> {
+        let data_path = self.version_path(hash);
+        let manifest_path = self.manifest_path(hash);
+        let hash = hash.to_string();
+        spawn_blocking(move || {
+            if !data_path.exists() {
+                return Err(OxenError::basic_str(format!(
+                    "refusing to delete the manifest for {hash}: no whole-file blob exists"
+                )));
+            }
+            if manifest_path.exists() {
+                crate::util::fs::remove_file(&manifest_path)?;
+            }
+            Ok(())
+        })
+        .await?
+    }
 }
 
 #[cfg(test)]

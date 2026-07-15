@@ -164,7 +164,7 @@ fn main_oxen_command() -> (Command, Runners) {
 }
 
 /// Every command that is used by the `oxen` CLI **MUST** be listed here!
-fn all_commands() -> [Box<dyn cmd::RunCmd>; 38] {
+fn all_commands() -> [Box<dyn cmd::RunCmd>; 39] {
     [
         Box::new(cmd::AddCmd),
         Box::new(cmd::BranchCmd),
@@ -201,6 +201,7 @@ fn all_commands() -> [Box<dyn cmd::RunCmd>; 38] {
         Box::new(cmd::SaveCmd),
         Box::new(cmd::SchemasCmd),
         Box::new(cmd::StatusCmd),
+        Box::new(cmd::StorageCmd),
         Box::new(cmd::TreeCmd),
         Box::new(cmd::UploadCmd),
         Box::new(cmd::WorkspaceCmd),

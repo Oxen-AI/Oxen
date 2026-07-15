@@ -107,6 +107,9 @@ pub use tree::TreeCmd;
 pub mod status;
 pub use status::StatusCmd;
 
+pub mod storage;
+pub use storage::StorageCmd;
+
 pub mod upload;
 pub use upload::UploadCmd;
 
