@@ -49,11 +49,12 @@ pub struct LocalVersionStore {
 impl LocalVersionStore {
     /// Create a new LocalVersionStore
     ///
-    /// Chunked-version storage (the blocks dir and the LMDB chunk index) lives in
-    /// sibling directories of `root_path` — e.g. for the default
-    /// `.oxen/versions/files`, blocks land in `.oxen/versions/blocks` and the index
-    /// in `.oxen/versions/chunk_index` — so give each store a dedicated parent
-    /// directory.
+    /// The store owns everything under `root_path`: version dirs (two hex-named
+    /// levels per hash) plus the reserved chunked-storage dirs — e.g. for the
+    /// default `.oxen/versions/files`, blocks land in
+    /// `.oxen/versions/files/blocks` and the LMDB chunk index in
+    /// `.oxen/versions/files/chunk_index` — so stores with distinct roots (any
+    /// custom `versions_path`) never share state.
     ///
     /// # Arguments
     /// * `root_path` - Base directory for version storage
@@ -82,16 +83,16 @@ impl LocalVersionStore {
     }
 
     /// The block engine for chunked versions, opened on first use. Blocks and the
-    /// chunk index live as siblings of the versions files dir (`root_path`), e.g.
-    /// `.oxen/versions/blocks` and `.oxen/versions/chunk_index`.
+    /// chunk index live in reserved dirs inside `root_path` (skipped by the
+    /// version scanners), so every store's chunked state is isolated under its
+    /// own root — sibling stores under a shared parent never collide.
     fn engine(&self) -> Result<Arc<BlockEngine>, OxenError> {
         if let Some(engine) = self.block_engine.get() {
             return Ok(Arc::clone(engine));
         }
-        let base = self.root_path.parent().unwrap_or(&self.root_path);
         let engine = Arc::new(BlockEngine::open(
-            &base.join(BLOCKS_DIR),
-            &base.join(CHUNK_INDEX_DIR),
+            &self.root_path.join(BLOCKS_DIR),
+            &self.root_path.join(CHUNK_INDEX_DIR),
         )?);
         // A concurrent first call may have won the race; either engine is fine —
         // the LMDB env is shared per-path, so both wrap the same underlying store.
@@ -403,6 +404,11 @@ impl VersionStore for LocalVersionStore {
             }
 
             let top_name = top_entry.file_name();
+            // The reserved chunked-storage dirs share the root; they are not
+            // versions (two-hex-char prefix dirs can't collide with them).
+            if top_name == BLOCKS_DIR || top_name == CHUNK_INDEX_DIR {
+                continue;
+            }
             let mut sub_entries = fs::read_dir(top_entry.path()).await?;
             while let Some(sub_entry) = sub_entries.next_entry().await? {
                 let file_type = sub_entry.file_type().await?;
@@ -615,6 +621,12 @@ impl VersionStore for LocalVersionStore {
         let mut prefix_rd = fs::read_dir(&self.root_path).await?;
         let mut prefix_paths: Vec<PathBuf> = Vec::new();
         while let Some(entry) = prefix_rd.next_entry().await? {
+            // The reserved chunked-storage dirs share the root but hold no
+            // version dirs; scanning them would misread blocks as corruption.
+            let name = entry.file_name();
+            if name == BLOCKS_DIR || name == CHUNK_INDEX_DIR {
+                continue;
+            }
             match entry.file_type().await {
                 Ok(ft) if ft.is_dir() => {
                     prefix_paths.push(entry.path());
@@ -958,8 +970,8 @@ mod tests {
 
     async fn setup() -> (TempDir, LocalVersionStore) {
         let temp_dir = TempDir::new().unwrap();
-        // Mirror the production layout (`.oxen/versions/files`): the store's
-        // chunked-version storage lands in siblings of this `files` dir.
+        // Mirror the production layout (`.oxen/versions/files`): the store owns
+        // everything under this `files` dir, chunked storage included.
         let store = LocalVersionStore::new(temp_dir.path().join("files"));
         store.init().await.unwrap();
         (temp_dir, store)
@@ -1497,6 +1509,37 @@ mod tests {
                 chunk.hash ^= 0xF00D;
             }
             assert!(chunked_store.put_manifest(&foreign).await.is_err());
+            Ok(())
+        }
+
+        /// Chunked storage is fully contained in each store's root: sibling
+        /// stores under a shared parent (any custom `versions_path` layout)
+        /// never share blocks or a chunk index, nothing escapes to the parent,
+        /// and the reserved dirs never surface as versions.
+        #[tokio::test]
+        async fn chunked_storage_is_isolated_per_store_root() -> Result<(), OxenError> {
+            let shared = TempDir::new().unwrap();
+            let store_a = LocalVersionStore::new(shared.path().join("repo_a"));
+            store_a.init().await?;
+            let store_b = LocalVersionStore::new(shared.path().join("repo_b"));
+            store_b.init().await?;
+
+            let data = csv_bytes(29, 1_200_000);
+            let (hash, _manifest) = store_chunked(&store_a, &data).await?;
+
+            assert!(shared.path().join("repo_a").join(BLOCKS_DIR).exists());
+            assert!(!shared.path().join(BLOCKS_DIR).exists());
+            assert!(!shared.path().join("repo_b").join(BLOCKS_DIR).exists());
+            assert!(
+                store_b
+                    .chunked()
+                    .expect("local store supports chunked versions")
+                    .get_manifest(&hash)
+                    .await?
+                    .is_none()
+            );
+
+            assert_eq!(store_a.list_versions().await?, vec![hash]);
             Ok(())
         }
 

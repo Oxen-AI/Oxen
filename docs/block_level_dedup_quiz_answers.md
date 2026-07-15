@@ -179,8 +179,8 @@ vs whole-file through policy; only reads are transparent.
 Required: both live under `.oxen/versions/files/{hash[..2]}/{hash[2..]}/` —
 a whole-file version has a `data` file there; a chunked version has a
 `manifest` file **instead**. Chunk payloads live in
-`.oxen/versions/blocks/{block_hash[..2]}/{block_hash[2..]}/data`, and the
-LMDB index in `.oxen/versions/chunk_index/`.
+`.oxen/versions/files/blocks/{block_hash[..2]}/{block_hash[2..]}/data`, and the
+LMDB index in `.oxen/versions/files/chunk_index/`.
 Bonus: block hashes are fixed-width 32-hex in paths (uniform fan-out), unlike
 the legacy unpadded version hashes.
 

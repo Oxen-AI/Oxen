@@ -74,9 +74,9 @@ path (correct, not yet dedup-optimized on the wire).
 
    - `.oxen/versions/files/{hash[..2]}/{hash[2..]}/manifest` — the version's
      chunk recipe (a chunked version has a `manifest` instead of a `data` blob).
-   - `.oxen/versions/blocks/{hash[..2]}/{hash[2..]}/data` — immutable blocks
+   - `.oxen/versions/files/blocks/{hash[..2]}/{hash[2..]}/data` — immutable blocks
      holding the compressed chunk payloads.
-   - `.oxen/versions/chunk_index/` — the LMDB chunk index. Derived state: if it
+   - `.oxen/versions/files/chunk_index/` — the LMDB chunk index. Derived state: if it
      is ever lost or corrupted, it is rebuilt from block footers, never a source
      of data loss.
 

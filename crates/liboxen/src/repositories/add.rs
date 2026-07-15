@@ -179,6 +179,7 @@ A: Oxen.ai
             assert!(version_dir(&small_hash).join("data").exists());
             let blocks_dir = util::fs::oxen_hidden_dir(&repo.path)
                 .join(VERSIONS_DIR)
+                .join(FILES_DIR)
                 .join(crate::constants::BLOCKS_DIR);
             assert!(blocks_dir.exists(), "chunked add must produce blocks");
 
@@ -227,7 +228,7 @@ A: Oxen.ai
     #[tokio::test]
     async fn test_add_block_v1_dedups_edited_file() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut repo| async move {
-            use crate::constants::{BLOCKS_DIR, VERSIONS_DIR};
+            use crate::constants::{BLOCKS_DIR, FILES_DIR, VERSIONS_DIR};
             use crate::storage::ContentFormat;
             use crate::storage::chunked::dedup_min_file_size;
 
@@ -248,6 +249,7 @@ A: Oxen.ai
 
             let blocks_dir = util::fs::oxen_hidden_dir(&repo.path)
                 .join(VERSIONS_DIR)
+                .join(FILES_DIR)
                 .join(BLOCKS_DIR);
             let count_blocks = |dir: &Path| -> Result<usize, OxenError> {
                 let mut count = 0;

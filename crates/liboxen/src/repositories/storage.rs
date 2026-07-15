@@ -318,6 +318,7 @@ mod tests {
             util::fs::copy_dir_all(&repo.path, &restored_path)?;
             let index_dir = crate::util::fs::oxen_hidden_dir(&restored_path)
                 .join(crate::constants::VERSIONS_DIR)
+                .join(crate::constants::FILES_DIR)
                 .join(crate::constants::CHUNK_INDEX_DIR);
             util::fs::remove_dir_all(&index_dir)?;
 
