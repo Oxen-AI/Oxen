@@ -209,17 +209,26 @@ Bonus: this write-time check *is* the client's end-to-end pull validation —
 no separate reconstruction pass is needed on checkout.
 
 **A19.**
-Required: push fails immediately with the structured
-`OxenError::BlockFormatPushNotSupported`, enforced at the top of
-`push_remote_branch` before any remote mutation. (a) Letting it fail naturally
-would surface a baffling "file not found" mid-transfer — the large-file upload
-path resolves the on-disk `data` path, which doesn't exist for chunked
-versions. (b) Silent whole-file reconstruction is exactly the "silent
-fallback" the design's hard gate forbids: it would hide that the promised
-dedup isn't happening and set wrong expectations, and the plan requires
-block-enabled repos to fail early and actionably against non-block servers.
-Bonus: the real fix is the Phase 5 wire protocol (chunk negotiation + block
-transfer), after which this gate is replaced by capability negotiation.
+Required:
+- Entries with a local manifest split off from the legacy small/large paths in
+  `push_entries`.
+- **Negotiation is at chunk granularity**: the unique chunk hashes from all
+  manifests go to `POST /chunks/missing` (batched), and only the reported
+  missing chunks move.
+- **Transfer is at block granularity**: missing chunks are repacked into fresh
+  transfer blocks (stored payloads copied as-is, so compressed chunks travel
+  compressed) and uploaded via idempotent `PUT /blocks/{hash}`.
+- **Manifests upload last** (`PUT /manifests/{hash}`) because the server
+  validates each by full streamed reconstruction — every referenced chunk must
+  already be durable there, and a published manifest is what marks the version
+  as present; publishing earlier would let a resumed push/pull believe the
+  version exists before its bytes do.
+- An old server has none of these routes: the 404 maps to the structured
+  `OxenError::ServerLacksBlockSupport` — fail early and actionably, never a
+  silent whole-file fallback.
+Bonus: client memory stays bounded by packing in ~48 MiB raw batches, and
+progress counts encoded bytes actually uploaded (a 99%-deduped push would look
+stalled if it tracked logical bytes).
 
 **A20.**
 Required: (1) the repository's `content_format` is `block-v1`
@@ -249,3 +258,30 @@ LMDB overhead → 32 GiB is generous) rather than copying the merkle store's
 256 GiB reflexively, because fleet-wide address reservation is additive across
 stores × open repos. `MapFull` is not a runtime recovery path: the remedy is
 raising the compile-time constant and rebuilding.
+
+**A23.**
+Required: every server read API (`get_version_stream`, `get_version_chunk`,
+tarball packing, range serving) is transparent over chunked versions — the
+server reconstructs through its manifest + chunk index + blocks, so an
+unchanged client downloads correct whole-file bytes. The reserved optimization
+is chunk-level pull dedup (`QUERY /manifests` + `QUERY /chunks`): the client
+would fetch manifests, diff chunk hashes against its local index, download
+only missing chunks as blocks, and publish manifests last (publish-last
+applies on pull exactly as on push).
+Bonus: manifest presence equals version presence, which is why a pulled
+manifest must stay *staged* until all its chunks are durable — otherwise
+`version_exists` would lie to a resumed pull.
+
+**A24.**
+Required: **at every interruption point, every version has at least one
+complete representation** — the old representation is deleted only after the
+new one is durably published and verified. Enforced by
+`delete_whole_file_blob` (refuses unless a published manifest exists) and
+`delete_manifest` (refuses unless the whole-file blob exists), so not even a
+buggy migration loop can delete a version's last representation. Re-running
+skips converted versions and finishes any interrupted deletion.
+Bonus: forward flips `content_format` at the end so an interrupted run leaves
+a still-legacy repo in a valid mixed state; reverse flips it first so no new
+chunked writes land while the conversion is draining chunked versions away.
+(Reverse also leaves blocks on disk — other manifests may share their chunks;
+reclaiming them is GC's job.)

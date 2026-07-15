@@ -93,9 +93,10 @@ does the crash-safety story give?
 
 ## Gates and boundaries
 
-**Q19.** What happens today when you `oxen push` a block-v1 repository, where
-is that enforced, and why fail there instead of (a) letting the transfer
-error naturally or (b) silently reconstructing whole files for upload?
+**Q19.** Walk through what `oxen push` does with a version that is stored
+chunked locally: what is negotiated, at which granularity does data travel,
+and why must manifests upload strictly after blocks? What happens if the
+remote server predates block support?
 
 **Q20.** In `oxen add` on a block-v1 repo, which two conditions must both hold
 for a file to take the chunked path, and what happens to a 500 KB file?
@@ -109,3 +110,13 @@ duplicate chunk-in-two-blocks legitimate rather than a bug?
 **Q22.** The chunk-index LMDB map size is 32 GiB while the merkle node store
 reserves 256 GiB. Why is it sized from arithmetic instead of copied, and what
 is the remedy when an LMDB store hits `MapFull`?
+
+**Q23.** Why does *pull* of a chunked-on-server version require no client
+changes for correctness, and what optimization does the plan still reserve
+for the pull direction?
+
+**Q24.** `oxen storage migrate` is interruption-safe in both directions. Name
+the invariant that guarantees no data loss at any interruption point, and the
+two guarded storage-layer methods that enforce it. Bonus: why does forward
+migration flip `content_format` at the *end* while reverse migration flips it
+at the *start*?
