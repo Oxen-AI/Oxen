@@ -14,10 +14,18 @@
 //! every stored version migrates, reachable or not — extra chunks are safe and
 //! reclaimable by future GC).
 
+use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::{EntryDataType, LocalRepository};
 use crate::storage::ContentFormat;
 use crate::storage::chunked::dedup_min_file_size;
+
+/// The `min_version` marker stamped on repos holding block-v1 chunked versions.
+/// Binaries that predate chunked storage don't recognize it and refuse to open
+/// the repo with an upgrade hint — without the fence they would misread chunked
+/// versions as missing data, and their fsck would delete manifest-only version
+/// dirs as corruption.
+const BLOCK_V1_MIN_OXEN_VERSION: &str = "0.52.0";
 
 /// Counters reported by a migration run.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -28,6 +36,9 @@ pub struct MigrationStats {
     pub already_migrated: u64,
     /// Versions below the chunking floor, kept whole-file by policy.
     pub skipped_small: u64,
+    /// Dirs in the version store that hold no version (e.g. leftovers of an
+    /// interrupted legacy segment upload), stepped over by this run.
+    pub skipped_orphaned: u64,
     /// Logical bytes converted by this run.
     pub bytes_migrated: u64,
 }
@@ -67,7 +78,9 @@ pub async fn status(repo: &LocalRepository) -> Result<StorageStatus, OxenError> 
 ///
 /// The repository's `content_format` flips to `block-v1` (persisted) only after
 /// every eligible version is converted, so an interrupted run leaves a legacy
-/// repo with some versions already chunked — a valid mixed state.
+/// repo with some versions already chunked — a valid mixed state. The
+/// `min_version` fence is stamped before the first conversion, so binaries that
+/// predate chunked storage refuse to open the repo in any of these states.
 pub async fn migrate_to_block_v1(repo: &mut LocalRepository) -> Result<MigrationStats, OxenError> {
     let store = repo.version_store();
     let Some(chunked) = store.chunked() else {
@@ -76,6 +89,12 @@ pub async fn migrate_to_block_v1(repo: &mut LocalRepository) -> Result<Migration
         ));
     };
 
+    // Fence first: a pre-block binary opening a mid-migration repo would misread
+    // chunked versions as missing data (and its fsck deletes manifest-only
+    // version dirs), so refuse it the repo before the first version converts.
+    repo.set_min_version_marker(BLOCK_V1_MIN_OXEN_VERSION);
+    repo.save()?;
+
     let mut stats = MigrationStats::default();
     for hash in store.list_versions().await? {
         if chunked.get_manifest(&hash).await?.is_some() {
@@ -83,6 +102,14 @@ pub async fn migrate_to_block_v1(repo: &mut LocalRepository) -> Result<Migration
             // leftover blob (no-op when it's already gone).
             chunked.delete_whole_file_blob(&hash).await?;
             stats.already_migrated += 1;
+            continue;
+        }
+        if !store.version_exists(&hash).await? {
+            // Not a version: e.g. a dir left behind by an interrupted legacy
+            // segment upload (a chunks/ subdir with no blob and no manifest).
+            // Step over it rather than aborting a resumable migration.
+            log::warn!("storage migrate: skipping non-version dir for hash {hash}");
+            stats.skipped_orphaned += 1;
             continue;
         }
         let size = store.get_version_size(&hash).await?;
@@ -134,7 +161,14 @@ pub async fn migrate_to_legacy(repo: &mut LocalRepository) -> Result<MigrationSt
     let mut stats = MigrationStats::default();
     for hash in store.list_versions().await? {
         if chunked.get_manifest(&hash).await?.is_none() {
-            stats.already_migrated += 1;
+            if store.version_exists(&hash).await? {
+                stats.already_migrated += 1;
+            } else {
+                // See migrate_to_block_v1: leftovers of an interrupted legacy
+                // segment upload are not versions.
+                log::warn!("storage migrate: skipping non-version dir for hash {hash}");
+                stats.skipped_orphaned += 1;
+            }
             continue;
         }
         let size = store.get_version_size(&hash).await?;
@@ -151,12 +185,16 @@ pub async fn migrate_to_legacy(repo: &mut LocalRepository) -> Result<MigrationSt
         stats.migrated += 1;
         stats.bytes_migrated += size;
     }
+
+    // Every chunked version is whole-file again, so pre-block binaries can
+    // safely open the repo: lower the fence stamped by migrate_to_block_v1.
+    repo.set_min_version(MinOxenVersion::LATEST);
+    repo.save()?;
     Ok(stats)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::error::OxenError;
     use crate::opts::RestoreOpts;
     use crate::storage::chunked::dedup_min_file_size;
@@ -225,6 +263,71 @@ mod tests {
             let status = repositories::storage::status(&repo).await?;
             assert_eq!(status.content_format, crate::storage::ContentFormat::Legacy);
             assert_eq!(status.chunked_versions, 0);
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Migration steps over non-version dirs left by interrupted legacy segment
+    /// uploads instead of aborting, and stamps/lowers the `min_version` fence
+    /// that keeps pre-block binaries from opening a repo with chunked versions.
+    #[tokio::test]
+    async fn test_migrate_to_block_v1_skips_orphans_and_fences_min_version() -> Result<(), OxenError>
+    {
+        test::run_empty_local_repo_test_async(|mut repo| async move {
+            let floor = dedup_min_file_size() as usize;
+            let mut csv = String::from("file,label\n");
+            let mut row = 0u64;
+            while csv.len() < floor + 1024 {
+                csv.push_str(&format!("images/img_{row}.jpg,label_{}\n", row % 7));
+                row += 1;
+            }
+            let csv_path = repo.path.join("train.csv");
+            util::fs::write_to_path(&csv_path, &csv)?;
+            repositories::add(&repo, &csv_path).await?;
+            repositories::commit(&repo, "one big file")?;
+
+            // An interrupted legacy segment upload leaves a version dir holding
+            // only a chunks/ subdir — no blob, no manifest. Not a version.
+            let orphan_chunk_dir = repo
+                .path
+                .join(".oxen/versions/files/ab/cdef0123456789/chunks/0");
+            util::fs::create_dir_all(&orphan_chunk_dir)?;
+            util::fs::write_to_path(orphan_chunk_dir.join("chunk"), "partial upload")?;
+
+            let stats = repositories::storage::migrate_to_block_v1(&mut repo).await?;
+            assert_eq!(stats.migrated, 1);
+            assert_eq!(stats.skipped_orphaned, 1);
+            assert!(orphan_chunk_dir.join("chunk").exists());
+
+            // Re-running resumes cleanly past the orphan too.
+            let stats = repositories::storage::migrate_to_block_v1(&mut repo).await?;
+            assert_eq!(stats.already_migrated, 1);
+            assert_eq!(stats.skipped_orphaned, 1);
+
+            // The fence is stamped, and current binaries still open the repo.
+            let config = std::fs::read_to_string(util::fs::config_filepath(&repo.path))
+                .map_err(OxenError::from)?;
+            assert!(
+                config.contains("min_version = \"0.52.0\""),
+                "expected block-v1 fence in config: {config}"
+            );
+            let reopened = crate::model::LocalRepository::from_dir(&repo.path)?;
+            assert_eq!(
+                reopened.min_version(),
+                crate::core::versions::MinOxenVersion::LATEST
+            );
+
+            // Reverse migration lowers the fence once no chunked versions remain.
+            let stats = repositories::storage::migrate_to_legacy(&mut repo).await?;
+            assert_eq!(stats.migrated, 1);
+            let config = std::fs::read_to_string(util::fs::config_filepath(&repo.path))
+                .map_err(OxenError::from)?;
+            assert!(
+                config.contains("min_version = \"0.36.0\""),
+                "expected fence lowered in config: {config}"
+            );
 
             Ok(())
         })

@@ -274,6 +274,15 @@ impl LocalRepository {
         self.min_version = Some(version.to_string());
     }
 
+    /// Stamp the raw minimum-version marker persisted to `.oxen/config.toml` (on the
+    /// next `save`). Binaries that don't recognize the marker refuse to open the
+    /// repo with an upgrade hint, so raise it when enabling an on-disk feature
+    /// older binaries would misread (e.g. block-v1 chunked storage). The marker
+    /// must be a version `MinOxenVersion::from_string` accepts in current binaries.
+    pub fn set_min_version_marker(&mut self, version: &str) {
+        self.min_version = Some(version.to_string());
+    }
+
     pub fn remotes(&self) -> &Vec<Remote> {
         &self.remotes
     }

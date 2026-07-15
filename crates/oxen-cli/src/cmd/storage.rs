@@ -97,6 +97,9 @@ async fn run_migrate(repository: &mut LocalRepository, args: &ArgMatches) -> Res
     println!("  Migrated:         {}", stats.migrated);
     println!("  Already migrated: {}", stats.already_migrated);
     println!("  Kept whole-file:  {}", stats.skipped_small);
+    if stats.skipped_orphaned > 0 {
+        println!("  Skipped non-version dirs: {}", stats.skipped_orphaned);
+    }
     println!(
         "  Bytes migrated:   {}",
         bytesize::ByteSize(stats.bytes_migrated)

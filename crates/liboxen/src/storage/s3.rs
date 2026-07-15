@@ -19,7 +19,9 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::{StreamReader, SyncIoBridge};
 
 use super::version_store::{BoxedByteStream, VersionLocation, VersionStore};
-use crate::constants::{STREAMING_BUF_SIZE, VERSION_FILE_NAME, VERSION_MANIFEST_FILE_NAME};
+use crate::constants::{
+    BLOCKS_DIR, STREAMING_BUF_SIZE, VERSION_FILE_NAME, VERSION_MANIFEST_FILE_NAME,
+};
 use crate::model::{EntryDataType, MerkleHash};
 use crate::storage::chunked::block_io::BlockByteIo;
 use crate::storage::chunked::{
@@ -183,9 +185,10 @@ impl S3VersionStore {
         format!("{}/{}", self.version_dir(hash), VERSION_MANIFEST_FILE_NAME)
     }
 
-    /// The S3 key prefix for content-addressed blocks.
+    /// The S3 key prefix for content-addressed blocks. This shares the namespace
+    /// `list_versions` enumerates, which skips the reserved dir by name.
     fn blocks_prefix(&self) -> String {
-        format!("{}/blocks", self.prefix)
+        format!("{}/{}", self.prefix, BLOCKS_DIR)
     }
 
     /// Whether an object exists at `key` (HeadObject; NotFound → false).
@@ -1141,6 +1144,11 @@ impl VersionStore for S3VersionStore {
                         .and_then(|p| p.strip_prefix(&base))
                         .and_then(|s| s.strip_suffix('/'))
                     {
+                        // The reserved block-storage dir shares this namespace;
+                        // it is not a version (hex hashes can't collide with it).
+                        if hash == BLOCKS_DIR {
+                            continue;
+                        }
                         hashes.push(hash.to_string());
                     }
                 }
@@ -2591,6 +2599,18 @@ mod tests {
                 )
                 .await?;
             Ok((hash, manifest))
+        }
+
+        /// Blocks are keyed under `{prefix}/blocks/`, inside the namespace that
+        /// `list_versions` enumerates via common prefixes; the reserved dir must
+        /// never surface as a version hash (it would abort storage migration).
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn list_versions_excludes_block_storage() -> Result<(), OxenError> {
+            let f = setup_chunked("ns/list-excludes-blocks").await;
+            let data = csv_bytes(17, 1_200_000);
+            let (hash, _manifest) = store_chunked(&f.store, &data).await?;
+            assert_eq!(f.store.list_versions().await?, vec![hash]);
+            Ok(())
         }
 
         /// A chunked S3 version reads identically to a whole-file version through
