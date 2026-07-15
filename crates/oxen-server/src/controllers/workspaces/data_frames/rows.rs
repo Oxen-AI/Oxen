@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
@@ -95,6 +95,12 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
+    if !repositories::workspaces::data_frames::is_indexed(&workspace, Path::new(&file_path))? {
+        return Err(OxenHttpError::DatasetNotIndexed(
+            PathBuf::from(&file_path).into(),
+        ));
+    }
+
     let row_df =
         repositories::workspaces::data_frames::rows::get_by_id(&workspace, file_path, row_id)?;
 
@@ -156,6 +162,14 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
         "update row repo {namespace}/{repo_name} -> {workspace_id}/{file_path:?} with json data {data:?}"
     );
 
+    // Row operations run against the staged DuckDB table; a table that fails
+    // the indexed gate (never indexed, or written by an older version) must
+    // not be served or mutated — edits into a stale table would be silently
+    // discarded by the re-index that recovery requires.
+    if !repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)? {
+        return Err(OxenHttpError::DatasetNotIndexed(file_path.into()));
+    }
+
     let modified_row = repositories::workspaces::data_frames::rows::update(
         &repo, &workspace, &file_path, &row_id, data,
     )?;
@@ -193,6 +207,14 @@ pub async fn delete(req: HttpRequest, _bytes: Bytes) -> Result<HttpResponse, Oxe
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
+
+    // Row operations run against the staged DuckDB table; a table that fails
+    // the indexed gate (never indexed, or written by an older version) must
+    // not be served or mutated — edits into a stale table would be silently
+    // discarded by the re-index that recovery requires.
+    if !repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)? {
+        return Err(OxenHttpError::DatasetNotIndexed(file_path.into()));
+    }
 
     let df = repositories::workspaces::data_frames::rows::delete(
         &repo, &workspace, &file_path, &row_id,
@@ -240,6 +262,14 @@ pub async fn batch_update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
     log::debug!("update row repo {namespace}/{repo_name} -> {workspace_id}/{file_path:?}");
+
+    // Row operations run against the staged DuckDB table; a table that fails
+    // the indexed gate (never indexed, or written by an older version) must
+    // not be served or mutated — edits into a stale table would be silently
+    // discarded by the re-index that recovery requires.
+    if !repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)? {
+        return Err(OxenHttpError::DatasetNotIndexed(file_path.into()));
+    }
 
     let modified_rows = repositories::workspaces::data_frames::rows::batch_update(
         &repo, &workspace, &file_path, data,

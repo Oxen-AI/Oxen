@@ -2,7 +2,7 @@
 //!
 
 use crate::constants::{
-    DEFAULT_PAGE_SIZE, DUCKDB_DF_TABLE_NAME, LEGACY_OXEN_COLS, OXEN_COLS, OXEN_ID_COL, TABLE_NAME,
+    DEFAULT_PAGE_SIZE, DUCKDB_DF_TABLE_NAME, INDEX_META_TABLE, OXEN_COLS, OXEN_ID_COL, TABLE_NAME,
 };
 
 use crate::core::db::data_frames::{DataFrameError, rows};
@@ -332,17 +332,19 @@ pub fn table_is_fully_indexed(
     if !table_exists(conn, table_name)? {
         return Ok(false);
     }
+    // The marker table is written last by index_file_with_id, so its absence
+    // means the table was left by an older version (which may hold rows
+    // tombstoned as 'removed' by the old delete flow) or by an interrupted
+    // index. Report it as not indexed so callers rebuild it. Checking a
+    // separate table rather than column names means user data that happens to
+    // contain a column like _oxen_diff_status can never be misread as stale.
+    if !table_exists(conn, INDEX_META_TABLE)? {
+        return Ok(false);
+    }
     let schema = get_schema(conn, table_name)?;
-    let has_oxen_cols = OXEN_COLS
+    Ok(OXEN_COLS
         .iter()
-        .all(|col| schema.fields.iter().any(|field| field.name == *col));
-    // A table with the legacy change-tracking columns was written by an older
-    // version and may hold rows tombstoned as 'removed'; report it as not
-    // indexed so callers rebuild it instead of serving stale contents.
-    let has_legacy_cols = LEGACY_OXEN_COLS
-        .iter()
-        .any(|col| schema.fields.iter().any(|field| field.name == *col));
-    Ok(has_oxen_cols && !has_legacy_cols)
+        .all(|col| schema.fields.iter().any(|field| field.name == *col)))
 }
 
 /// Create a table from a set of oxen fields with data types.
@@ -903,6 +905,14 @@ pub fn index_file_with_id(
     );
 
     conn.execute(&add_default_query, [])?;
+
+    // Written last: its presence certifies the table above was fully built by
+    // the current indexer (see table_is_fully_indexed).
+    let meta_query = format!(
+        "CREATE OR REPLACE TABLE \"{INDEX_META_TABLE}\" (schema_version INTEGER); \
+         INSERT INTO \"{INDEX_META_TABLE}\" VALUES (1);"
+    );
+    conn.execute_batch(&meta_query)?;
 
     Ok(())
 }

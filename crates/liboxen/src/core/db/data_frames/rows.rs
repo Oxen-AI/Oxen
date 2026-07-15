@@ -7,7 +7,7 @@ use sql::Select;
 // use sql::Select;
 use sql_query_builder as sql;
 
-use crate::constants::{OXEN_COLS, OXEN_ID_COL};
+use crate::constants::{LEGACY_OXEN_COLS, OXEN_COLS, OXEN_ID_COL};
 
 use crate::constants::TABLE_NAME;
 use crate::core::db::data_frames::DataFrameError;
@@ -57,7 +57,9 @@ pub fn modify_row(
     let df_cols: Vec<String> = df_col_names
         .clone()
         .into_iter()
-        .filter(|col| !OXEN_COLS.contains(&col.as_str()))
+        .filter(|col| {
+            !OXEN_COLS.contains(&col.as_str()) && !LEGACY_OXEN_COLS.contains(&col.as_str())
+        })
         .collect();
     let df = df.select(&df_cols)?;
     if !table_schema.has_field_names(&df_cols) {
@@ -96,7 +98,9 @@ pub fn modify_rows(
         let df_cols: Vec<String> = df_col_names
             .clone()
             .into_iter()
-            .filter(|col| !OXEN_COLS.contains(&col.as_str()))
+            .filter(|col| {
+                !OXEN_COLS.contains(&col.as_str()) && !LEGACY_OXEN_COLS.contains(&col.as_str())
+            })
             .collect();
         let df = df.select(&df_cols)?;
         if !table_schema.has_field_names(&df_cols) {
@@ -112,6 +116,12 @@ pub fn modify_rows(
             .from(TABLE_NAME)
             .where_clause(&format!("\"{OXEN_ID_COL}\" = '{row_id}'"));
         let current_row = df_db::select(conn, &select_current, None)?;
+        // Fail before ANY row is written: proceeding with a missing id would
+        // let the batch UPDATE run for the other rows and then error on the
+        // count check afterward — a partial write reported as a failure.
+        if current_row.height() == 0 {
+            return Err(DataFrameError::MissingDataFrame(row_id.to_string()));
+        }
 
         let mut new_row = current_row.clone();
         for col in df.get_columns() {

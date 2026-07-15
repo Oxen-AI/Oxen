@@ -71,9 +71,16 @@ pub const STAGED_DIR: &str = "staged";
 pub const TABLE_NAME: &str = "df";
 /// Oxen's internal columns in duckdb remote staging tables
 pub const OXEN_COLS: [&str; 1] = [OXEN_ID_COL];
-/// Columns written by older versions' change tracking; their presence marks a
-/// staged table as stale so it gets re-indexed.
+/// Columns written by older versions' change tracking. Clients in the field
+/// still round-trip these keys in row-update payloads, so the edit paths
+/// strip them like they always did.
 pub const LEGACY_OXEN_COLS: [&str; 3] = [DIFF_STATUS_COL, "_oxen_row_id", "_oxen_diff_hash"];
+/// Marker table written by the indexer alongside [`TABLE_NAME`]. Its presence
+/// is the provenance signal that the staged table was produced by the current
+/// indexer — a db without it (written by an older version, which tracked
+/// changes in extra columns, or left by an interrupted index) must be
+/// rebuilt. A table, unlike a column, can never collide with user data.
+pub const INDEX_META_TABLE: &str = "_oxen_index_meta";
 /// Oxen's internal columns to exclude from dfs
 pub const EXCLUDE_OXEN_COLS: [&str; 4] = [
     OXEN_ID_COL,

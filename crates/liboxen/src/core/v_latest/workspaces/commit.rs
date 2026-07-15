@@ -325,10 +325,11 @@ async fn export_tabular_data_frames(
                         log::debug!("exported path: {exported_path:?}");
 
                         // Update the metadata in the new staged merkle tree node
+                        let entry_status = dir_entry.status.clone();
                         let new_staged_merkle_tree_node = compute_staged_merkle_tree_node(
                             workspace,
                             &exported_path,
-                            dir_entry.status,
+                            entry_status.clone(),
                             file_node.data_type().clone(),
                         )
                         .await?;
@@ -336,11 +337,46 @@ async fn export_tabular_data_frames(
                         log::debug!(
                             "export_tabular_data_frames new_staged_merkle_tree_node: {new_staged_merkle_tree_node:?}"
                         );
+
+                        // The re-export produced a file identical (content and
+                        // metadata) to the base commit's: the staged edits
+                        // cancelled out, so drop the entry instead of
+                        // committing a rewritten copy. When this was the only
+                        // staged entry the commit fails with "No changes to
+                        // commit", like an unedited workspace.
+                        if entry_status == StagedEntryStatus::Modified
+                            && new_staged_merkle_tree_node.node.file()?.combined_hash()
+                                == file_node.combined_hash()
+                        {
+                            log::debug!(
+                                "export_tabular_data_frames export identical to base, skipping: {node_path:?}"
+                            );
+                            continue;
+                        }
                         new_dir_entries
                             .entry(dir_path.to_path_buf())
                             .or_default()
                             .push(new_staged_merkle_tree_node);
                     } else {
+                        // A staged table that exists but fails the indexed
+                        // gate was written by an older version and may hold
+                        // edits this code cannot export. The staged entry is
+                        // the BASE file node, so committing it would silently
+                        // discard those edits — fail instead so the user can
+                        // re-index (dropping the stale edits explicitly) or
+                        // unstage.
+                        if *file_node.data_type() == EntryDataType::Tabular
+                            && repositories::workspaces::data_frames::has_staged_table(
+                                workspace, &node_path,
+                            )?
+                        {
+                            return Err(OxenError::basic_str(format!(
+                                "Cannot commit workspace: the staged data frame {node_path:?} \
+                                 was indexed by an older version of oxen. Re-index the data \
+                                 frame (discarding its staged edits) or unstage it, then \
+                                 commit again."
+                            )));
+                        }
                         new_dir_entries
                             .entry(dir_path.to_path_buf())
                             .or_default()
