@@ -331,10 +331,7 @@ fn cleanup_name_index_lock(key: &Path) {
 /// on a blocking thread to avoid stalling the async runtime.
 async fn ensure_name_index(repo: &LocalRepository) -> Result<(), OxenError> {
     let lock = name_index_lock_for(&repo.path);
-    if workspace_name_index::index_exists(repo)
-        && let Ok(guard) = lock.try_lock()
-    {
-        drop(guard);
+    if workspace_name_index::index_exists(repo) && lock.try_lock().is_ok() {
         drop(lock);
         cleanup_name_index_lock(&repo.path);
         return Ok(());
