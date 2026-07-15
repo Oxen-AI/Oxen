@@ -701,7 +701,15 @@ pub fn modify_rows_with_polars_df(
         let mut all_params: Vec<Box<dyn ToSql>> = Vec::new();
 
         for col_name in &column_names {
-            let placeholder = rows::placeholder_for_column(&column_sql_types, col_name);
+            // The CASE expression hides the target column's type from the
+            // binder, so every placeholder needs an explicit cast: a bare `?`
+            // inside `CASE WHEN .. THEN ? END` fails to resolve, and that bind
+            // failure aborts the process instead of surfacing as an error (see
+            // test_modify_rows_with_list_column_binds_cleanly).
+            let placeholder = match column_sql_types.get(col_name.as_str()) {
+                Some(sql_type) => format!("CAST(? AS {sql_type})"),
+                None => rows::placeholder_for_column(&column_sql_types, col_name),
+            };
             let mut case_clauses = Vec::new();
             for (id, df) in row_map.iter() {
                 let series = df.column(col_name)?;
@@ -1449,6 +1457,91 @@ mod tests {
             );
 
             remove_df_db_from_cache(&db_file)?;
+            Ok(())
+        })
+    }
+
+    /// Batch updates build one `UPDATE ... SET col = CASE WHEN "_oxen_id" = .. THEN ? END`
+    /// per column. The statement must bind cleanly on a table with a list
+    /// (embedding) column, including null list values: a bind failure on this
+    /// path (ParameterNotResolved) escapes DuckDB's C API as an uncaught C++
+    /// exception and aborts the whole process instead of returning an error.
+    #[test]
+    fn test_modify_rows_with_list_column_binds_cleanly() -> Result<(), OxenError> {
+        use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL, OXEN_ID_COL};
+        use crate::model::staged_row_status::StagedRowStatus;
+        use polars::prelude::NamedFrom;
+        use polars::series::Series;
+        use std::collections::HashMap;
+
+        test::run_empty_dir_test(|data_dir| {
+            let jsonl_path = data_dir.join("data.jsonl");
+            // One row with an embedding, one with a null embedding — mirrors a
+            // workspace data frame where only some rows have embeddings.
+            std::fs::write(
+                &jsonl_path,
+                "{\"file\":\"a\",\"embedding\":[0.1,0.2,0.3]}\n{\"file\":\"b\",\"embedding\":null}\n",
+            )
+            .map_err(|e| OxenError::basic_str(format!("write fixture: {e}")))?;
+
+            let db_file = data_dir.join("data.db");
+            let conn = get_connection(&db_file)?;
+            index_file_with_id(&jsonl_path, &conn, "jsonl")?;
+            conn.execute(
+                &format!(
+                    "ALTER TABLE {TABLE_NAME} ADD COLUMN {DIFF_STATUS_COL} VARCHAR DEFAULT '{}'",
+                    StagedRowStatus::Unchanged
+                ),
+                [],
+            )?;
+            conn.execute(
+                &format!("ALTER TABLE {TABLE_NAME} ADD COLUMN {DIFF_HASH_COL} VARCHAR DEFAULT NULL"),
+                [],
+            )?;
+
+            // Build the row_map the way the batch-update flow does: the full
+            // row selected from the table, with the changed column replaced.
+            let mut row_map: HashMap<String, DataFrame> = HashMap::new();
+            for file in ["a", "b"] {
+                let row = select_raw(
+                    &conn,
+                    &format!("SELECT * FROM {TABLE_NAME} WHERE file = '{file}'"),
+                )?;
+                let id = row
+                    .column(OXEN_ID_COL)?
+                    .get(0)?
+                    .to_string()
+                    .trim_matches('\"')
+                    .to_string();
+                let mut new_row = row.clone();
+                new_row.with_column(Series::new(
+                    "file".into(),
+                    vec![format!("{file}-updated")],
+                ))?;
+                row_map.insert(id, new_row);
+            }
+
+            // Must not abort the process, and must apply the updates.
+            let result = modify_rows_with_polars_df(&conn, TABLE_NAME, &row_map)?;
+            assert_eq!(result.height(), 2);
+
+            let updated = select_raw(
+                &conn,
+                &format!("SELECT file FROM {TABLE_NAME} ORDER BY file"),
+            )?;
+            let files: Vec<String> = (0..updated.height())
+                .map(|i| {
+                    updated
+                        .column("file")
+                        .expect("file column present")
+                        .get(i)
+                        .expect("row present")
+                        .to_string()
+                        .trim_matches('\"')
+                        .to_string()
+                })
+                .collect();
+            assert_eq!(files, vec!["a-updated", "b-updated"]);
             Ok(())
         })
     }

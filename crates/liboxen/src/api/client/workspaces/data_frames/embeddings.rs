@@ -508,6 +508,20 @@ mod tests {
             .await;
             assert!(result.is_err());
 
+            // The invalid query must be rejected as a clean error, not crash
+            // the server: a follow-up valid request still succeeds.
+            let result = api::client::workspaces::data_frames::get(
+                &remote_repo,
+                &workspace_id,
+                &path,
+                &DFOpts::empty(),
+            )
+            .await;
+            assert!(
+                result.is_ok(),
+                "server should survive an invalid embedding query, got {result:?}"
+            );
+
             Ok(remote_repo)
         })
         .await

@@ -507,7 +507,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remote_stage_delete_row_clears_remote_status() -> Result<(), OxenError> {
+    async fn test_remote_stage_delete_row_keeps_remote_status_modified() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         };
@@ -560,7 +560,9 @@ mod tests {
                 repositories::workspaces::df(&cloned_repo, workspace_id, &path, delete_opts)
                     .await?;
 
-                // Now status should be empty
+                // Edits are applied, not tracked: deleting the added row does
+                // not detect that the edits cancelled out, so the data frame
+                // stays listed as modified.
                 let status = api::client::workspaces::changes::list(
                     &remote_repo,
                     workspace_id,
@@ -569,7 +571,7 @@ mod tests {
                     constants::DEFAULT_PAGE_SIZE,
                 )
                 .await?;
-                assert_eq!(status.modified_files.entries.len(), 0);
+                assert_eq!(status.modified_files.entries.len(), 1);
 
                 Ok(())
             })
