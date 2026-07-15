@@ -50,6 +50,36 @@ Not all Oxen code should be async. All filesystem operations should be sync. Mos
 
 The patterns below cover the cases that come up in practice. Names are useful for code review shorthand.
 
+### Offload: converting a sync liboxen API to async
+
+The most common conversion here: a `liboxen` read or mutation API does purely synchronous sync-DB / filesystem work (no network) and is called from `async` HTTP handlers. Make the API an `async fn` and move its sync core into a single `spawn_blocking`. Three invariants make it correct:
+
+1. **One `spawn_blocking` at operation granularity** — wrap the whole operation in one closure, not one closure per DB call or syscall.
+2. **Return an owned result.** The closure's output is the API's result and must be `Send + 'static` — an owned `Vec<Branch>`, `String`, or domain struct. No borrow of the repo or of a DB guard may escape it.
+3. **Keep every `!Send` guard inside the closure.** RocksDB read guards, LMDB transactions, iterators/cursors, and `parking_lot` guards are created and dropped within the closure and never cross an `.await`.
+
+`repositories::branches::list` is the worked example. Before:
+
+```rust
+pub fn list(repo: &LocalRepository) -> Result<Vec<Branch>, OxenError> {
+    with_ref_manager(repo, |manager| manager.list_branches())
+}
+```
+
+After:
+
+```rust
+pub async fn list(repo: &LocalRepository) -> Result<Vec<Branch>, OxenError> {
+    let repo = repo.clone();
+    tokio::task::spawn_blocking(move || with_ref_manager(&repo, |manager| manager.list_branches()))
+        .await?
+}
+```
+
+`repo.clone()` gives the closure an owned `LocalRepository` to capture, since `spawn_blocking` requires `'static`. The RocksDB read guard that `RefManager::list_branches` acquires lives and dies inside the closure, so it never touches the `.await`, and the returned `Vec<Branch>` is fully owned — nothing `!Send` escapes. `.await?` unwraps twice: `From<JoinError> for OxenError` maps a panicked or cancelled blocking task to an `OxenError`, then the inner `Result` is returned as-is.
+
+The inner sync functions (`with_ref_manager`, `RefManager::list_branches`) stay synchronous; only the public API grows the `async` / `spawn_blocking` edge. Callers ripple outward to `.await` it — a thin sync wrapper that only forwards (e.g. `repositories::is_empty`) becomes `async` in turn, and its own callers, already `async` handlers, add `.await`. The conversion stops at the first `async` boundary above each caller.
+
 ### Bracket: async → sync → async
 
 The handler is async. It does any required network calls up front, then a single `spawn_blocking` for the sync core, then any network calls at the end.

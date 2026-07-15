@@ -412,7 +412,8 @@ mod tests {
             assert_eq!(current_branch.name, new_branch_name);
 
             // Check that old branch no longer exists
-            repositories::branches::list(&repo)?
+            repositories::branches::list(&repo)
+                .await?
                 .iter()
                 .for_each(|branch| {
                     assert_ne!(branch.name, og_branch_name);
@@ -561,7 +562,7 @@ mod tests {
             repositories::add(&repo, new_file).await?;
             repositories::commit(&repo, "Added a new file")?;
 
-            let og_branches = repositories::branches::list(&repo)?;
+            let og_branches = repositories::branches::list(&repo).await?;
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             let branch_name = "my-branch";
@@ -583,7 +584,7 @@ mod tests {
             }
 
             // Should be one less branch
-            let leftover_branches = repositories::branches::list(&repo)?;
+            let leftover_branches = repositories::branches::list(&repo).await?;
             assert_eq!(og_branches.len(), leftover_branches.len() - 1);
 
             Ok(())
@@ -600,7 +601,7 @@ mod tests {
             repositories::add(&repo, new_file).await?;
             repositories::commit(&repo, "Added a new file")?;
 
-            let og_branches = repositories::branches::list(&repo)?;
+            let og_branches = repositories::branches::list(&repo).await?;
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             let branch_name = "my-branch";
@@ -618,7 +619,7 @@ mod tests {
             repositories::branches::force_delete(&repo, branch_name)?;
 
             // Should be one less branch
-            let leftover_branches = repositories::branches::list(&repo)?;
+            let leftover_branches = repositories::branches::list(&repo).await?;
             assert_eq!(og_branches.len(), leftover_branches.len());
 
             Ok(())

@@ -152,6 +152,16 @@ impl RefManager {
         matches!(db.get(name.as_bytes()), Ok(Some(_)))
     }
 
+    /// Whether the repo has no branches, reading only the first ref.
+    pub fn is_empty(&self) -> Result<bool, OxenError> {
+        let db = self.refs_db.read();
+        Ok(db
+            .iterator(IteratorMode::Start)
+            .next()
+            .transpose()?
+            .is_none())
+    }
+
     pub fn get_current_branch(&self) -> Result<Option<Branch>, OxenError> {
         let ref_name = self.read_head_ref()?;
         if ref_name.is_none() {

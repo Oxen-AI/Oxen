@@ -127,7 +127,7 @@ impl RunCmd for BranchCmd {
             if repo.is_remote_mode() {
                 self.list_branches_with_commits(&repo)?;
             } else {
-                self.list_branches(&repo)?;
+                self.list_branches(&repo).await?;
             }
         }
         Ok(())
@@ -136,7 +136,7 @@ impl RunCmd for BranchCmd {
 
 impl BranchCmd {
     pub async fn list_all_branches(&self, repo: &LocalRepository) -> Result<(), OxenError> {
-        self.list_branches(repo)?;
+        self.list_branches(repo).await?;
 
         for remote in repo.remotes().iter() {
             self.list_remote_branches(repo, &remote.name).await?;
@@ -145,8 +145,8 @@ impl BranchCmd {
         Ok(())
     }
 
-    pub fn list_branches(&self, repo: &LocalRepository) -> Result<(), OxenError> {
-        let branches = repositories::branches::list(repo)?;
+    pub async fn list_branches(&self, repo: &LocalRepository) -> Result<(), OxenError> {
+        let branches = repositories::branches::list(repo).await?;
         let current_branch = repositories::branches::current_branch(repo)?;
 
         for branch in branches.iter() {
