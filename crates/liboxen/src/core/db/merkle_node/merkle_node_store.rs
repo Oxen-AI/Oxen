@@ -112,24 +112,13 @@ pub(crate) trait MerkleNodeStore: Debug + Send + Sync {
     ///
     /// Unpacking a commit's tree writes one node for every directory and vnode. A large repo has
     /// tens of thousands of them, and writing them one at a time means tens of thousands of
-    /// separate trips to the store. Each backend has a faster way to write a whole batch, so this
-    /// hands it the batch and lets it use that way. The filesystem backend writes the files at once
-    /// across threads. The LMDB backend commits the batch in a single transaction. The default is
-    /// the plain serial loop that any backend can fall back on.
+    /// separate trips to the store. Each backend implements batching: the filesystem backend writes
+    /// files in parallel across threads; the LMDB backend commits the batch in a single transaction.
     fn write_nodes(
         &self,
         nodes: Vec<(MerkleHash, Bytes, Bytes)>,
         overwrite_existing: bool,
-    ) -> Result<Vec<MerkleHash>, MerkleDbError> {
-        let mut written = Vec::with_capacity(nodes.len());
-        for (hash, node, children) in nodes {
-            if overwrite_existing || !self.exists(&hash)? {
-                self.write_node(&hash, node, children)?;
-                written.push(hash);
-            }
-        }
-        Ok(written)
-    }
+    ) -> Result<Vec<MerkleHash>, MerkleDbError>;
 
     /// Remove the node for `hash` (both blobs). Idempotent: deleting an absent node is `Ok`.
     fn delete(&self, hash: &MerkleHash) -> Result<(), MerkleDbError>;
