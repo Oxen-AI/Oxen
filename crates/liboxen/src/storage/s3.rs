@@ -265,6 +265,7 @@ impl S3VersionStore {
                     bucket: self.bucket.clone(),
                     prefix: self.blocks_prefix(),
                     handle: tokio::runtime::Handle::current(),
+                    read_cache: parking_lot::Mutex::new(None),
                 });
                 // Opening the LMDB env touches the filesystem; keep it off the
                 // async runtime.
@@ -359,7 +360,23 @@ struct S3BlockIo {
     bucket: String,
     prefix: String,
     handle: tokio::runtime::Handle,
+    /// Bounded range coalescing: the most recent over-fetched range. Consecutive
+    /// chunks of a file land consecutively in blocks, so sequential
+    /// reconstruction serves ~[`RANGE_READ_AHEAD`]-worth of chunk reads from one
+    /// ranged GET instead of one request per ~64 KiB chunk. One buffer, bounded.
+    read_cache: parking_lot::Mutex<Option<RangeCache>>,
 }
+
+/// One cached contiguous byte range of one block.
+#[derive(Debug)]
+struct RangeCache {
+    block_hash: u128,
+    offset: u64,
+    data: Vec<u8>,
+}
+
+/// How far past the requested range a block read over-fetches.
+const RANGE_READ_AHEAD: u64 = 4 * 1024 * 1024;
 
 impl S3BlockIo {
     fn block_key(&self, block_hash: u128) -> String {
@@ -393,13 +410,30 @@ impl BlockByteIo for S3BlockIo {
         if len == 0 {
             return Ok(Vec::new());
         }
+
+        // Serve from the coalesced range when it fully contains the request.
+        {
+            let cache = self.read_cache.lock();
+            if let Some(c) = cache.as_ref()
+                && c.block_hash == block_hash
+                && offset >= c.offset
+                && offset - c.offset + len <= c.data.len() as u64
+            {
+                let start = (offset - c.offset) as usize;
+                return Ok(c.data[start..start + len as usize].to_vec());
+            }
+        }
+
+        // Over-fetch with bounded read-ahead; S3 clamps ranges that run past the
+        // object end, so the response may be shorter than asked — but never
+        // shorter than the chunk the caller needs unless the index is corrupt.
         let key = self.block_key(block_hash);
         // HTTP Range is inclusive on both ends.
         let end = offset
-            .checked_add(len - 1)
+            .checked_add(len.max(RANGE_READ_AHEAD) - 1)
             .ok_or_else(|| OxenError::basic_str("block range overflows u64"))?;
         let range = format!("bytes={offset}-{end}");
-        self.handle.block_on(async {
+        let fetched = self.handle.block_on(async {
             let resp = self
                 .client
                 .get_object()
@@ -417,8 +451,22 @@ impl BlockByteIo for S3BlockIo {
                 .await
                 .map_err(|e| OxenError::basic_str(format!("S3 read block body failed: {e}")))?
                 .into_bytes();
-            Ok(bytes.to_vec())
-        })
+            Ok::<Vec<u8>, OxenError>(bytes.to_vec())
+        })?;
+        if (fetched.len() as u64) < len {
+            return Err(OxenError::basic_str(format!(
+                "S3 block {key} returned {} bytes for a {len}-byte range at {offset}",
+                fetched.len()
+            )));
+        }
+
+        let out = fetched[..len as usize].to_vec();
+        *self.read_cache.lock() = Some(RangeCache {
+            block_hash,
+            offset,
+            data: fetched,
+        });
+        Ok(out)
     }
 
     fn read_block(&self, block_hash: u128) -> Result<Vec<u8>, OxenError> {
