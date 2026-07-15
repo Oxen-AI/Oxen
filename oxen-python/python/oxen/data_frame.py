@@ -42,10 +42,6 @@ class DataFrame:
     # Delete a row
     data_frame.delete_row(row_id)
 
-    # Get the current changes to the data frame
-    status = data_frame.diff()
-    print(status.added_files())
-
     # Commit the changes
     data_frame.commit("Updating data.csv")
     ```
@@ -104,7 +100,6 @@ class DataFrame:
         except Exception as e:
             print(e)
             self.data_frame = None
-        self.filter_keys = ["_oxen_diff_hash", "_oxen_diff_status", "_oxen_row_id"]
 
     def __repr__(self):
         name = f"{self._workspace._repo.namespace}/{self._workspace._repo.name}"
@@ -155,7 +150,6 @@ class DataFrame:
         # convert string to dict
         # this is not the most efficient but gets it working
         data = json.loads(results)
-        data = self._filter_keys_arr(data)
         return data
 
     def insert_row(self, data: dict, workspace: Optional[Workspace] = None):
@@ -203,7 +197,6 @@ class DataFrame:
             )
             results = self.data_frame.list(1)
             results = json.loads(results)
-            print(results)
             return results[0]["_oxen_id"]
         else:
             # convert dict to json string
@@ -215,11 +208,7 @@ class DataFrame:
         """
         Get the columns of the data frame.
         """
-        # filter out the columns that are in the filter_keys list
-        columns = [
-            c for c in self.data_frame.get_columns() if c.name not in self.filter_keys
-        ]
-        return columns
+        return self.data_frame.get_columns()
 
     def add_column(self, name: str, data_type: str):
         """
@@ -389,8 +378,6 @@ class DataFrame:
         # convert string to dict
         # this is not the most efficient but gets it working
         data = json.loads(data)
-        # filter out .oxen.diff.hash and .oxen.diff.status and _oxen_row_id
-        data = self._filter_keys_arr(data)
 
         if len(data) == 0:
             return None
@@ -415,7 +402,6 @@ class DataFrame:
         data = json.dumps(data)
         result = self.data_frame.update_row(id, data)
         result = json.loads(result)
-        result = self._filter_keys_arr(result)
         return result
 
     def delete_row(self, id: str):
@@ -430,7 +416,8 @@ class DataFrame:
 
     def restore(self):
         """
-        Unstage any changes to the schema or contents of a data frame
+        Discard all staged edits to the data frame by re-indexing it from
+        the committed version
         """
         self.data_frame.restore()
 
@@ -446,17 +433,3 @@ class DataFrame:
         """
         self._workspace.commit(message, branch)
 
-    def _filter_keys(self, data: dict):
-        """
-        Filter out the keys that are not needed in the dataset.
-        """
-        # TODO: why do we use periods vs underscores...?
-        # filter out .oxen.diff.hash and .oxen.diff.status and _oxen_row_id
-        # from each element in the list of dicts
-        return {k: v for k, v in data.items() if k not in self.filter_keys}
-
-    def _filter_keys_arr(self, data: List[dict]):
-        """
-        Filter out the keys that are not needed in the dataset.
-        """
-        return [self._filter_keys(d) for d in data]
