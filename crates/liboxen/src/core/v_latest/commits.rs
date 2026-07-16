@@ -839,51 +839,58 @@ pub fn list_between(
 /// The second walk pops by timestamp only to order the output newest first; a
 /// commit still always precedes its parents because a parent is pushed to the
 /// heap only after its child has been popped.
-pub fn list_between_exclusive(
+pub async fn list_between_exclusive(
     repo: &LocalRepository,
     base: &Commit,
     head: &Commit,
 ) -> Result<Vec<Commit>, OxenError> {
-    // Pass 1: mark everything reachable from base. Purely graph-based, so the
-    // outcome can't hinge on the order commits happen to sort in.
-    let mut on_base: HashSet<String> = HashSet::new();
-    let mut stack = vec![base.clone()];
-    on_base.insert(base.id.clone());
-    while let Some(commit) = stack.pop() {
-        for parent_id in &commit.parent_ids {
-            let Some(parent) = get_by_hash(repo, &parent_id.parse()?)? else {
-                continue;
-            };
-            if on_base.insert(parent.id.clone()) {
-                stack.push(parent);
+    // Sync core: both passes are sync RocksDB reads over the commit graph — one blocking unit.
+    let repo = repo.clone();
+    let base = base.clone();
+    let head = head.clone();
+    tokio::task::spawn_blocking(move || -> Result<Vec<Commit>, OxenError> {
+        // Pass 1: mark everything reachable from base. Purely graph-based, so the
+        // outcome can't hinge on the order commits happen to sort in.
+        let mut on_base: HashSet<String> = HashSet::new();
+        let mut stack = vec![base.clone()];
+        on_base.insert(base.id.clone());
+        while let Some(commit) = stack.pop() {
+            for parent_id in &commit.parent_ids {
+                let Some(parent) = get_by_hash(&repo, &parent_id.parse()?)? else {
+                    continue;
+                };
+                if on_base.insert(parent.id.clone()) {
+                    stack.push(parent);
+                }
             }
         }
-    }
 
-    // Pass 2: emit head's ancestry that isn't on base, newest first.
-    let mut heap: BinaryHeap<TimestampedCommit> = BinaryHeap::new();
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut results = vec![];
+        // Pass 2: emit head's ancestry that isn't on base, newest first.
+        let mut heap: BinaryHeap<TimestampedCommit> = BinaryHeap::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut results = vec![];
 
-    if !on_base.contains(&head.id) {
-        seen.insert(head.id.clone());
-        heap.push(TimestampedCommit(head.clone()));
-    }
-
-    while let Some(TimestampedCommit(commit)) = heap.pop() {
-        for parent_id in &commit.parent_ids {
-            let Some(parent) = get_by_hash(repo, &parent_id.parse()?)? else {
-                continue;
-            };
-            // An on_base parent (and everything above it) already lives on base.
-            if !on_base.contains(&parent.id) && seen.insert(parent.id.clone()) {
-                heap.push(TimestampedCommit(parent));
-            }
+        if !on_base.contains(&head.id) {
+            seen.insert(head.id.clone());
+            heap.push(TimestampedCommit(head.clone()));
         }
-        results.push(commit);
-    }
 
-    Ok(results)
+        while let Some(TimestampedCommit(commit)) = heap.pop() {
+            for parent_id in &commit.parent_ids {
+                let Some(parent) = get_by_hash(&repo, &parent_id.parse()?)? else {
+                    continue;
+                };
+                // An on_base parent (and everything above it) already lives on base.
+                if !on_base.contains(&parent.id) && seen.insert(parent.id.clone()) {
+                    heap.push(TimestampedCommit(parent));
+                }
+            }
+            results.push(commit);
+        }
+
+        Ok(results)
+    })
+    .await?
 }
 
 /// Retrieve entries with filepaths matching a provided glob pattern
@@ -1108,7 +1115,7 @@ mod tests {
                 shared.timestamp - time::Duration::seconds(100),
             )?;
 
-            let range = list_between_exclusive(&repo, &base, &head)?;
+            let range = list_between_exclusive(&repo, &base, &head).await?;
             let ids: HashSet<String> = range.iter().map(|c| c.id.clone()).collect();
             assert_eq!(ids, HashSet::from([head.id.clone()]), "got {range:?}");
             assert!(

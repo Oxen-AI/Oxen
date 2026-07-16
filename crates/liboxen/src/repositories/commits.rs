@@ -784,8 +784,10 @@ mod tests {
 
     // Differential check: list_between_exclusive must equal the reference set, list
     // no commit twice, and never place a commit before one of its children.
-    fn assert_range_matches_reference(repo: &LocalRepository, base: &Commit, head: &Commit) {
-        let got = repositories::commits::list_between_exclusive(repo, base, head).unwrap();
+    async fn assert_range_matches_reference(repo: &LocalRepository, base: &Commit, head: &Commit) {
+        let got = repositories::commits::list_between_exclusive(repo, base, head)
+            .await
+            .unwrap();
         let order: HashMap<String, usize> = got
             .iter()
             .enumerate()
@@ -824,10 +826,10 @@ mod tests {
 
     // Every ordered pair drawn from `commits` must satisfy the reference, including
     // self-pairs (empty) and reversed pairs (head behind base).
-    fn assert_all_pairs(repo: &LocalRepository, commits: &[&Commit]) {
+    async fn assert_all_pairs(repo: &LocalRepository, commits: &[&Commit]) {
         for base in commits {
             for head in commits {
-                assert_range_matches_reference(repo, base, head);
+                assert_range_matches_reference(repo, base, head).await;
             }
         }
     }
@@ -840,15 +842,23 @@ mod tests {
             let b = add_commit(&repo, "b").await?;
             let c = add_commit(&repo, "c").await?;
 
-            let range = repositories::commits::list_between_exclusive(&repo, &a, &c)?;
+            let range = repositories::commits::list_between_exclusive(&repo, &a, &c).await?;
             let ids: HashSet<String> = range.iter().map(|x| x.id.clone()).collect();
             assert_eq!(ids, HashSet::from([b.id.clone(), c.id.clone()]));
 
             // Empty when head == base, and when head is behind base.
-            assert!(repositories::commits::list_between_exclusive(&repo, &c, &c)?.is_empty());
-            assert!(repositories::commits::list_between_exclusive(&repo, &c, &a)?.is_empty());
+            assert!(
+                repositories::commits::list_between_exclusive(&repo, &c, &c)
+                    .await?
+                    .is_empty()
+            );
+            assert!(
+                repositories::commits::list_between_exclusive(&repo, &c, &a)
+                    .await?
+                    .is_empty()
+            );
 
-            assert_all_pairs(&repo, &[&root, &a, &b, &c]);
+            assert_all_pairs(&repo, &[&root, &a, &b, &c]).await;
             Ok(())
         })
         .await
@@ -870,17 +880,17 @@ mod tests {
                 .await?
                 .unwrap();
 
-            let ids: HashSet<String> =
-                repositories::commits::list_between_exclusive(&repo, &a, &m)?
-                    .into_iter()
-                    .map(|x| x.id)
-                    .collect();
+            let ids: HashSet<String> = repositories::commits::list_between_exclusive(&repo, &a, &m)
+                .await?
+                .into_iter()
+                .map(|x| x.id)
+                .collect();
             assert_eq!(
                 ids,
                 HashSet::from([b.id.clone(), f1.id.clone(), m.id.clone()])
             );
 
-            assert_all_pairs(&repo, &[&a, &b, &f1, &m]);
+            assert_all_pairs(&repo, &[&a, &b, &f1, &m]).await;
             Ok(())
         })
         .await
@@ -909,7 +919,8 @@ mod tests {
 
             // base = main tip (c3), head = feature tip (f2): only feature's own work.
             let ids: HashSet<String> =
-                repositories::commits::list_between_exclusive(&repo, &c3, &f2)?
+                repositories::commits::list_between_exclusive(&repo, &c3, &f2)
+                    .await?
                     .into_iter()
                     .map(|x| x.id)
                     .collect();
@@ -925,7 +936,7 @@ mod tests {
                 "list_between is expected to over-include base history here"
             );
 
-            assert_all_pairs(&repo, &[&c1, &c2, &c3, &f1, &merge, &f2]);
+            assert_all_pairs(&repo, &[&c1, &c2, &c3, &f1, &merge, &f2]).await;
             Ok(())
         })
         .await
@@ -958,11 +969,11 @@ mod tests {
             // reachable(ma) and reachable(mb) share {a1, b1, root}; each range is
             // exactly the other merge node.
             let ma_to_mb: Vec<Commit> =
-                repositories::commits::list_between_exclusive(&repo, &ma, &mb)?;
+                repositories::commits::list_between_exclusive(&repo, &ma, &mb).await?;
             assert_eq!(ma_to_mb.len(), 1);
             assert_eq!(ma_to_mb[0].id, mb.id);
 
-            assert_all_pairs(&repo, &[&a1, &b1, &ma, &mb]);
+            assert_all_pairs(&repo, &[&a1, &b1, &ma, &mb]).await;
             Ok(())
         })
         .await
