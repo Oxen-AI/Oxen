@@ -234,7 +234,7 @@ impl RunCmd for DFCmd {
         .arg(
             Arg::new("delete-row")
                 .long("delete-row")
-                .help("Delete a row from a data frame. Currently only works with remote data frames with the value from _id column.")
+                .help("Delete a row from a data frame. Currently only works with remote data frames, using the row id from the _oxen_id column.")
                 .action(clap::ArgAction::Set),
         )
         .arg(

@@ -9,8 +9,6 @@ use std::io::Cursor;
 use utoipa::ToSchema;
 
 use super::StatusMessage;
-use super::data_frames::DataFrameColumnChange;
-use super::data_frames::DataFrameRowChange;
 use crate::constants;
 use crate::core::df::tabular;
 use crate::error::OxenError;
@@ -64,13 +62,11 @@ pub struct WorkspaceJsonDataFrameViewResponse {
 pub struct JsonDataFrameRowResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
-    pub diff: Option<Vec<DataFrameRowChange>>,
     pub data_frame: JsonDataFrameViews,
     pub commit: Option<Commit>,
     pub resource: Option<ResourceVersion>,
     pub derived_resource: Option<DerivedDFResource>,
     pub row_id: Option<String>,
-    pub row_index: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -91,7 +87,6 @@ pub struct BatchUpdateResponse {
 pub struct JsonDataFrameColumnResponse {
     #[serde(flatten)]
     pub status: StatusMessage,
-    pub diff: Option<Vec<DataFrameColumnChange>>,
     pub data_frame: JsonDataFrameViews,
     pub commit: Option<Commit>,
     pub resource: Option<ResourceVersion>,
@@ -193,8 +188,15 @@ impl JsonDataFrameView {
         let mut opts = opts.clone();
         opts.slice = None;
 
+        // Keep the requested sort visible in the response metadata, but do not
+        // re-apply it here: sorting was already applied upstream (DuckDB's
+        // ORDER BY for indexed workspace frames, the read-time transform
+        // otherwise) and may name SQL-only pseudo-columns like `rowid` that
+        // don't exist in the materialized frame — re-sorting would panic.
         let opts_view = DFOptsView::from_df_opts(&opts);
-        let mut sliced_df = tabular::transform(df, opts.clone()).await.unwrap();
+        let mut transform_opts = opts.clone();
+        transform_opts.sort_by = None;
+        let mut sliced_df = tabular::transform(df, transform_opts).await.unwrap();
 
         // Merge the metadata from the original schema
         let mut slice_schema = Schema::from_polars(sliced_df.schema());

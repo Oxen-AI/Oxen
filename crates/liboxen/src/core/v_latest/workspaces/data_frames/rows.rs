@@ -1,30 +1,17 @@
 use polars::frame::DataFrame;
 
-use polars::prelude::NamedFrom;
-use polars::prelude::PlSmallStr;
-use polars::series::Series;
 use serde_json::Value;
 
-use crate::constants::DIFF_STATUS_COL;
-use crate::model::merkle_tree::node::EMerkleTreeNode;
-use crate::opts::DFOpts;
-
-use crate::core::db::data_frames::changes_db;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::db::data_frames::rows;
 use crate::core::df::tabular;
-use crate::core::staged::staged_db_manager::get_staged_db_manager;
 use crate::core::v_latest::workspaces;
 use crate::error::OxenError;
+use crate::model::Workspace;
 use crate::model::data_frame::update_result::UpdateResult;
-use crate::model::diff::DiffResult;
-use crate::model::staged_row_status::StagedRowStatus;
-use crate::model::{Commit, LocalRepository, Workspace};
 use crate::repositories;
-use crate::view::JsonDataFrameView;
 
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::path::Path;
 
 pub fn add(
@@ -34,54 +21,17 @@ pub fn add(
 ) -> Result<DataFrame, OxenError> {
     let path = path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
     let df = tabular::parse_json_to_df(data)?;
     log::debug!("add() df: {df:?}");
 
-    let mut result = with_df_db_manager(&db_path, |manager| {
+    let result = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| rows::append_row(conn, &df))
     })?;
-    let oxen_id_col = result
-        .column("_oxen_id")
-        .expect("Column _oxen_id not found");
-
-    let last_idx = oxen_id_col.len() - 1;
-    let last_value = oxen_id_col.get(last_idx)?;
-
-    let row_id = last_value.to_string().trim_matches('"').to_string();
-
-    let row = JsonDataFrameView::json_from_df(&mut result);
-
-    rows::record_row_change(&row_changes_path, row_id, "added".to_owned(), row, None)?;
 
     workspaces::files::track_modified_data_frame(workspace, path)?;
 
     Ok(result)
-}
-
-pub async fn restore(
-    workspace: &Workspace,
-    path: impl AsRef<Path>,
-    row_id: impl AsRef<str>,
-) -> Result<DataFrame, OxenError> {
-    let row_id = row_id.as_ref();
-    let restored_row = restore_row_in_db(workspace, path.as_ref(), row_id).await?;
-    let diff = repositories::workspaces::data_frames::full_diff(workspace, path.as_ref())?;
-    if let DiffResult::Tabular(diff) = diff
-        && !diff.has_changes()
-    {
-        log::debug!("no changes, deleting file from staged db");
-        // Restored to original state == delete file from staged db
-        // TODO: Implement this
-        let manager = get_staged_db_manager(&workspace.workspace_repo)?;
-        manager.remove_staged_recursively(
-            &workspace.workspace_repo,
-            &HashSet::from([path.as_ref().to_path_buf()]),
-        )?;
-    }
-
-    Ok(restored_row)
 }
 
 pub fn delete(
@@ -92,43 +42,14 @@ pub fn delete(
     log::debug!("delete() row_id: {row_id} from path: {:?}", path.as_ref());
     let path = path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
-    let mut deleted_row = with_df_db_manager(&db_path, |manager| {
+    let deleted_row = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| rows::delete_row(conn, row_id))
     })?;
     log::debug!("delete() deleted_row: {deleted_row:?}");
 
-    let row = JsonDataFrameView::json_from_df(&mut deleted_row);
+    workspaces::files::track_modified_data_frame(workspace, path)?;
 
-    rows::record_row_change(
-        &row_changes_path,
-        row_id.to_owned(),
-        "deleted".to_owned(),
-        row,
-        None,
-    )?;
-
-    // TODO: Better way of tracking when a file is restored to its original state without diffing
-    //       this could be really slow
-    let diff = repositories::workspaces::data_frames::full_diff(workspace, path)?;
-
-    if let DiffResult::Tabular(diff) = diff {
-        if !diff.has_changes() {
-            log::debug!("no changes, deleting file from staged db {path:?}");
-            // Restored to original state == delete file from staged db
-            get_staged_db_manager(&workspace.workspace_repo)?.remove_staged_recursively(
-                &workspace.workspace_repo,
-                &HashSet::from([path.to_path_buf()]),
-            )?;
-        } else {
-            log::debug!("there are still changes, not deleting file from staged db");
-            log::debug!("diff: {diff:?}");
-            // We track that the file has been modified
-            log::debug!("rows::delete() tracking file to staged db: {path:?}");
-            workspaces::files::track_modified_data_frame(workspace, path)?;
-        }
-    }
     Ok(deleted_row)
 }
 
@@ -140,42 +61,18 @@ pub fn update(
 ) -> Result<DataFrame, OxenError> {
     let path = path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    let row_changes_path = repositories::workspaces::data_frames::row_changes_path(workspace, path);
 
     let mut df = tabular::parse_json_to_df(data)?;
-    let mut row = repositories::workspaces::data_frames::rows::get_by_id(workspace, path, row_id)?;
+    let row = repositories::workspaces::data_frames::rows::get_by_id(workspace, path, row_id)?;
     if row.height() == 0 {
         return Err(OxenError::resource_not_found("row not found"));
     }
 
-    let mut result = with_df_db_manager(&db_path, |manager| {
+    let result = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| rows::modify_row(conn, &mut df, row_id))
     })?;
 
-    let row_before = JsonDataFrameView::json_from_df(&mut row);
-
-    let row_after = JsonDataFrameView::json_from_df(&mut result);
-
-    rows::record_row_change(
-        &row_changes_path,
-        row_id.to_owned(),
-        "updated".to_owned(),
-        row_before,
-        Some(row_after),
-    )?;
-
-    let diff = repositories::workspaces::data_frames::full_diff(workspace, path)?;
-    log::debug!("update() diff: {diff:?}");
-    if let DiffResult::Tabular(diff) = diff {
-        if !diff.has_changes() {
-            get_staged_db_manager(&workspace.workspace_repo)?.remove_staged_recursively(
-                &workspace.workspace_repo,
-                &HashSet::from([path.to_path_buf()]),
-            )?;
-        } else {
-            workspaces::files::track_modified_data_frame(workspace, path)?;
-        }
-    }
+    workspaces::files::track_modified_data_frame(workspace, path)?;
 
     Ok(result)
 }
@@ -218,123 +115,12 @@ pub fn batch_update(
         manager.with_conn(|conn| rows::modify_rows(conn, row_map))
     })?;
 
+    workspaces::files::track_modified_data_frame(workspace, path)?;
+
     let results: Vec<UpdateResult> = keys
         .iter()
-        .map(|key| UpdateResult::Success(key.to_owned(), None))
+        .map(|key| UpdateResult(key.to_owned()))
         .collect();
 
     Ok(results)
-}
-
-pub async fn prepare_modified_or_removed_row(
-    repo: &LocalRepository,
-    commit: &Commit,
-    path: impl AsRef<Path>,
-    row_df: &DataFrame,
-) -> Result<DataFrame, OxenError> {
-    let row_idx = repositories::workspaces::data_frames::rows::get_row_idx(row_df)?
-        .ok_or_else(|| OxenError::basic_str("Row index not found"))?;
-    let row_idx_og = (row_idx - 1) as i64;
-
-    let Some(commit_merkle_tree) =
-        repositories::tree::get_node_by_path_with_children(repo, commit, &path)?
-    else {
-        return Err(OxenError::basic_str(format!(
-            "Merkle tree for commit {commit:?} not found"
-        )));
-    };
-
-    let file_node = match commit_merkle_tree.node {
-        EMerkleTreeNode::File(file_node) => file_node,
-        _ => return Err(OxenError::basic_str("File node not found")),
-    };
-
-    log::debug!(
-        "prepare_modified_or_removed_row() commit_merkle_tree: {:?}",
-        commit_merkle_tree.hash.to_string()
-    );
-
-    // let scan_rows = 10000 as usize;
-    let version_store = repo.version_store();
-
-    // TODONOW should not be using all rows - just need to parse delim
-    let lazy_df = tabular::read_version_df(
-        &version_store,
-        &commit_merkle_tree.hash.to_string(),
-        file_node.extension(),
-        &DFOpts::empty(),
-    )
-    .await?;
-
-    // Get the row by index
-    let mut row = lazy_df.slice(row_idx_og, 1_usize);
-
-    // Added rows will error here on out of index, but we caught them earlier..
-    // let mut row = row.collect()?;
-
-    row.with_column(Series::new(
-        PlSmallStr::from_str(DIFF_STATUS_COL),
-        vec![StagedRowStatus::Unchanged.to_string()],
-    ))?;
-
-    Ok(row)
-}
-
-pub async fn restore_row_in_db(
-    workspace: &Workspace,
-    path: impl AsRef<Path>,
-    row_id: impl AsRef<str>,
-) -> Result<DataFrame, OxenError> {
-    let row_id = row_id.as_ref();
-    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path.as_ref());
-    let column_changes_path =
-        repositories::workspaces::data_frames::column_changes_path(workspace, path.as_ref());
-    // Arc may cross `.await`; the guards taken below must not.
-    let handle = changes_db::get_changes_db(&column_changes_path)?;
-
-    // Get the row by id
-    let row =
-        repositories::workspaces::data_frames::rows::get_by_id(workspace, path.as_ref(), row_id)?;
-
-    if row.height() == 0 {
-        return Err(OxenError::resource_not_found(row_id));
-    };
-
-    let row_status = repositories::workspaces::data_frames::rows::get_row_status(&row)?
-        .ok_or_else(|| OxenError::basic_str("Row status not found"))?;
-    let result_row = match row_status {
-        StagedRowStatus::Added => {
-            // Row is added, just delete it
-            log::debug!("restore_row() row is added, deleting");
-            rows::revert_row_changes(&handle.write(), row_id.to_owned())?;
-            with_df_db_manager(&db_path, |manager| {
-                manager.with_conn(|conn| rows::delete_row(conn, row_id))
-            })?
-        }
-        StagedRowStatus::Modified | StagedRowStatus::Removed => {
-            // Row is modified, just delete it
-            log::debug!("restore_row() row is modified, deleting");
-            let mut insert_row = prepare_modified_or_removed_row(
-                &workspace.base_repo,
-                &workspace.commit,
-                path.as_ref(),
-                &row,
-            )
-            .await?;
-            log::debug!("restore_row() insert_row: {insert_row:?}");
-            rows::revert_row_changes(&handle.write(), row_id.to_owned())?;
-            log::debug!("restore_row() after revert");
-            with_df_db_manager(&db_path, |manager| {
-                manager.with_conn(|conn| rows::modify_row(conn, &mut insert_row, row_id))
-            })?
-        }
-        StagedRowStatus::Unchanged => {
-            // Row is unchanged, just return it
-            row
-        }
-    };
-
-    log::debug!("we're returning this row: {result_row:?}");
-
-    Ok(result_row)
 }

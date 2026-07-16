@@ -106,7 +106,7 @@ mod tests {
 
     use crate::config::UserConfig;
     use crate::config::embedding_config::EmbeddingStatus;
-    use crate::constants::{DEFAULT_BRANCH_NAME, OXEN_ROW_ID_COL};
+    use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::core::df::tabular;
     use crate::error::OxenError;
     use crate::opts::{DFOpts, PaginateOpts};
@@ -260,7 +260,9 @@ mod tests {
 
             // Query the embeddings by id
             let opts = DFOpts {
-                find_embedding_where: Some(format!("{OXEN_ROW_ID_COL} = 1")),
+                find_embedding_where: Some(
+                    "prompt = 'What is great way to version 0 images?'".to_string(),
+                ),
                 sort_by_similarity_to: Some(column.to_string()),
                 page_size: Some(23),
                 ..DFOpts::empty()
@@ -413,7 +415,9 @@ mod tests {
 
                 // Download the data frame sorted by embeddings
                 let opts = DFOpts {
-                    find_embedding_where: Some(format!("{OXEN_ROW_ID_COL} = 1")),
+                    find_embedding_where: Some(
+                        "prompt = 'What is great way to version 0 images?'".to_string(),
+                    ),
                     sort_by_similarity_to: Some(column.to_string()),
                     output: Some(output_path.clone()),
                     ..DFOpts::empty()
@@ -507,6 +511,20 @@ mod tests {
             )
             .await;
             assert!(result.is_err());
+
+            // The invalid query must be rejected as a clean error, not crash
+            // the server: a follow-up valid request still succeeds.
+            let result = api::client::workspaces::data_frames::get(
+                &remote_repo,
+                &workspace_id,
+                &path,
+                &DFOpts::empty(),
+            )
+            .await;
+            assert!(
+                result.is_ok(),
+                "server should survive an invalid embedding query, got {result:?}"
+            );
 
             Ok(remote_repo)
         })

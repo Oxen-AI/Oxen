@@ -14,6 +14,10 @@ use crate::model::{Schema, Workspace};
 use crate::opts::{EmbeddingQueryOpts, PaginateOpts};
 use crate::{repositories, util};
 
+use sqlparser::ast::{Expr, visit_expressions};
+use sqlparser::parser::Parser;
+use std::ops::ControlFlow;
+
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -164,8 +168,13 @@ fn get_embedding_length(
     log::debug!("Embedding index DB Path: {db_path:?}");
     let result_set = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
-            // Make sure the existing column is a float vector
-            let sql = format!("SELECT {column} FROM df LIMIT 1;");
+            // Make sure the existing column is a float vector. The column name
+            // is user input: validate it against the schema before it is
+            // embedded in SQL, so an unknown column errors instead of hitting
+            // a bind failure that can abort the process.
+            let schema = df_db::get_schema(conn, TABLE_NAME)?;
+            let column = canonical_column(&schema, column)?;
+            let sql = format!("SELECT \"{column}\" FROM {TABLE_NAME} LIMIT 1");
             let result_set: Vec<RecordBatch> = conn.prepare(&sql)?.query_arrow([])?.collect();
             Ok(result_set)
         })
@@ -220,6 +229,71 @@ fn get_embedding_length(
     Ok(vector_length)
 }
 
+/// Reject an embedding lookup whose embedding column does not exist in the
+/// staged table (matched case-insensitively, like DuckDB's binder).
+/// Return the schema's canonical spelling of `column` (matched
+/// case-insensitively, like DuckDB's binder), or an error if it has no such
+/// column. Callers must use the returned name for SQL and config lookups so a
+/// caller-supplied casing (`EMBEDDING`) can't miss a case-sensitive lookup.
+fn canonical_column(schema: &Schema, column: &str) -> Result<String, DataFrameError> {
+    schema
+        .fields
+        .iter()
+        .find(|f| f.name.eq_ignore_ascii_case(column))
+        .map(|f| f.name.clone())
+        .ok_or_else(|| DataFrameError::ColumnNameNotFound(column.to_string()))
+}
+
+/// Reject a user-supplied embedding WHERE clause that references a column the
+/// staged table does not have.
+///
+/// The referenced columns must be validated *before* the SQL reaches DuckDB: a
+/// semantically-invalid query (unknown column) passes parsing and fails at
+/// bind time, and a bind failure can escape DuckDB's C API as an uncaught C++
+/// exception that aborts the whole server process instead of surfacing as a
+/// `duckdb::Error`. No DuckDB-side probe is safe for this (EXPLAIN aborts the
+/// same way), so the check has to run on the parsed AST.
+fn validate_where_clause_columns(schema: &Schema, query: &str) -> Result<(), DataFrameError> {
+    let sql = format!("SELECT * FROM {TABLE_NAME} WHERE {query}");
+    let statements = Parser::parse_sql(&crate::core::db::data_frames::df_db::DIALECT, &sql)?;
+
+    // A bare unquoted word on either side of a comparison parses as a column
+    // identifier, so this also rejects unquoted string values — DuckDB would
+    // reject them at bind time for the same reason. Table-qualified names
+    // ("df".prompt) validate their column segment; the clause we embed has no
+    // aliases, so any other qualifier is itself an unknown name.
+    let unknown = visit_expressions(&statements, |expr| {
+        let name = match expr {
+            Expr::Identifier(ident) => &ident.value,
+            Expr::CompoundIdentifier(parts) => match parts.as_slice() {
+                // Only `df.<column>` is a valid qualified reference here (the
+                // clause we embed has no other tables or aliases). Reject every
+                // other compound identifier outright — a real column name in the
+                // first segment must not mask a bad qualifier, e.g. `id.nope`.
+                [table, column] if table.value.eq_ignore_ascii_case(TABLE_NAME) => &column.value,
+                _ => {
+                    let joined = parts
+                        .iter()
+                        .map(|p| p.value.as_str())
+                        .collect::<Vec<_>>()
+                        .join(".");
+                    return ControlFlow::Break(joined);
+                }
+            },
+            _ => return ControlFlow::Continue(()),
+        };
+        if !schema.has_column(name) {
+            return ControlFlow::Break(name.clone());
+        }
+        ControlFlow::Continue(())
+    });
+
+    match unknown {
+        ControlFlow::Break(name) => Err(DataFrameError::ColumnNameNotFound(name)),
+        ControlFlow::Continue(()) => Ok(()),
+    }
+}
+
 pub fn embedding_from_query(
     conn: &duckdb::Connection,
     workspace: &Workspace,
@@ -228,7 +302,12 @@ pub fn embedding_from_query(
 ) -> Result<(Vec<f32>, usize), DataFrameError> {
     let column = query.column.clone();
     let query = query.query.clone();
-    let sql = format!("SELECT {column} FROM df WHERE {query};");
+
+    let schema = df_db::get_schema(conn, TABLE_NAME)?;
+    let column = canonical_column(&schema, &column)?;
+    validate_where_clause_columns(&schema, &query)?;
+
+    let sql = format!("SELECT \"{column}\" FROM {TABLE_NAME} WHERE {query}");
     log::debug!("Executing: {sql}");
     let result_set: Vec<RecordBatch> = conn.prepare(&sql)?.query_arrow([])?.collect();
     // log::debug!("Result set: {:?}", result_set);
@@ -266,16 +345,15 @@ fn build_similarity_query_sql(
             .join(",")
     );
 
-    let columns = schema
+    let columns_str = schema
         .fields
         .iter()
-        .map(|f| f.name.as_str())
-        .filter(|c| !(EXCLUDE_OXEN_COLS.contains(c) && exclude_cols))
-        .collect::<Vec<&str>>();
-
-    let columns_str = columns.join(", ");
+        .filter(|f| !(EXCLUDE_OXEN_COLS.contains(&f.name.as_str()) && exclude_cols))
+        .map(|f| format!("\"{}\"", f.name))
+        .collect::<Vec<String>>()
+        .join(", ");
     format!(
-        "SELECT {columns_str}, array_cosine_similarity({column}, {embedding_str}::FLOAT[{vector_length}]) as {similarity_column} FROM df ORDER BY {similarity_column} DESC"
+        "SELECT {columns_str}, array_cosine_similarity(\"{column}\", {embedding_str}::FLOAT[{vector_length}]) as \"{similarity_column}\" FROM {TABLE_NAME} ORDER BY \"{similarity_column}\" DESC"
     )
 }
 
@@ -349,6 +427,11 @@ pub fn nearest_neighbors(
     let (result_set, mut schema) = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             let schema = df_db::get_schema(conn, TABLE_NAME)?;
+            // `column` is user input embedded in the SQL below: validate it
+            // before it can produce a bind failure, which can abort the
+            // process instead of surfacing as an error.
+            let column = canonical_column(&schema, column)?;
+            let column = column.as_str();
 
             // Build base SQL using helper function
             let base_sql = build_similarity_query_sql(
@@ -555,4 +638,75 @@ fn get_avg_embedding(result_set: Vec<RecordBatch>) -> Result<Vec<f32>, DataFrame
     }
 
     Ok(avg_embedding)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::data_frame::schema::Field;
+
+    fn schema_with(names: &[&str]) -> Schema {
+        Schema::new(
+            names
+                .iter()
+                .map(|name| Field::new(name, "str"))
+                .collect::<Vec<Field>>(),
+        )
+    }
+
+    #[test]
+    fn test_canonical_column() {
+        let schema = schema_with(&["id", "Embedding", "prompt"]);
+        // Returns the schema's spelling regardless of the caller's casing.
+        assert_eq!(canonical_column(&schema, "embedding").unwrap(), "Embedding");
+        assert_eq!(canonical_column(&schema, "EMBEDDING").unwrap(), "Embedding");
+        assert_eq!(canonical_column(&schema, "id").unwrap(), "id");
+        let result = canonical_column(&schema, "nope");
+        assert!(matches!(result, Err(DataFrameError::ColumnNameNotFound(name)) if name == "nope"));
+    }
+
+    #[test]
+    fn test_validate_where_clause_accepts_known_and_qualified_columns() {
+        let schema = schema_with(&["id", "embedding", "prompt"]);
+        assert!(validate_where_clause_columns(&schema, "id = 1").is_ok());
+        assert!(validate_where_clause_columns(&schema, "prompt = 'hello'").is_ok());
+        // Case-insensitive, like DuckDB's binder.
+        assert!(validate_where_clause_columns(&schema, "ID = 1").is_ok());
+        // Table-qualified references are valid DuckDB and must pass.
+        assert!(validate_where_clause_columns(&schema, "df.prompt = 'hello'").is_ok());
+        assert!(validate_where_clause_columns(&schema, "DF.id = 1").is_ok());
+    }
+
+    #[test]
+    fn test_validate_where_clause_rejects_unknown_columns() {
+        let schema = schema_with(&["id", "embedding"]);
+
+        let result = validate_where_clause_columns(&schema, "nope = 1");
+        assert!(matches!(result, Err(DataFrameError::ColumnNameNotFound(name)) if name == "nope"));
+
+        // An unquoted value parses as an identifier and is rejected, matching
+        // what DuckDB's binder would do.
+        let result = validate_where_clause_columns(&schema, "id = test");
+        assert!(matches!(result, Err(DataFrameError::ColumnNameNotFound(name)) if name == "test"));
+
+        // A qualifier other than the staged table name is rejected as a whole,
+        // even when its first segment is a real column (must not mask a bad
+        // qualifier).
+        let result = validate_where_clause_columns(&schema, "other.id = 1");
+        assert!(
+            matches!(result, Err(DataFrameError::ColumnNameNotFound(name)) if name == "other.id")
+        );
+        let result = validate_where_clause_columns(&schema, "id.nope = 1");
+        assert!(
+            matches!(result, Err(DataFrameError::ColumnNameNotFound(name)) if name == "id.nope")
+        );
+
+        // Qualified reference to a column the table does not have.
+        let result = validate_where_clause_columns(&schema, "df.nope = 1");
+        assert!(matches!(result, Err(DataFrameError::ColumnNameNotFound(name)) if name == "nope"));
+
+        // Unparseable input errors at the parse step.
+        let result = validate_where_clause_columns(&schema, "id = = 1");
+        assert!(matches!(result, Err(DataFrameError::SqlParse(_))));
+    }
 }

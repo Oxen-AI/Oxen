@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
@@ -58,28 +58,22 @@ pub async fn create(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
     let row_df =
         repositories::workspaces::data_frames::rows::add(&repo, &workspace, &file_path, data)?;
     let row_id: Option<String> = repositories::workspaces::data_frames::rows::get_row_id(&row_df)?;
-    let row_index: Option<usize> =
-        repositories::workspaces::data_frames::rows::get_row_idx(&row_df)?;
 
     let opts = DFOpts::empty();
     let row_schema = Schema::from_polars(row_df.schema());
     let row_df_source = DataFrameSchemaSize::from_df(&row_df, &row_schema);
     let row_df_view = JsonDataFrameView::from_df_opts(row_df, row_schema, &opts).await;
 
-    let diff = repositories::workspaces::data_frames::rows::get_row_diff(&workspace, &file_path)?;
-
     let response = JsonDataFrameRowResponse {
         data_frame: JsonDataFrameViews {
             source: row_df_source,
             view: row_df_view,
         },
-        diff: Some(diff),
         commit: None,
         derived_resource: None,
         status: StatusMessage::resource_found(),
         resource: None,
         row_id,
-        row_index,
     };
 
     Ok(HttpResponse::Ok().json(response))
@@ -100,11 +94,16 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
+    if !repositories::workspaces::data_frames::is_indexed(&workspace, Path::new(&file_path))? {
+        return Err(OxenHttpError::DatasetNotIndexed(
+            PathBuf::from(&file_path).into(),
+        ));
+    }
+
     let row_df =
         repositories::workspaces::data_frames::rows::get_by_id(&workspace, file_path, row_id)?;
 
     let row_id = repositories::workspaces::data_frames::rows::get_row_id(&row_df)?;
-    let row_index = repositories::workspaces::data_frames::rows::get_row_idx(&row_df)?;
 
     let opts = DFOpts::empty();
     let row_schema = Schema::from_polars(row_df.schema());
@@ -116,13 +115,11 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
             source: row_df_source,
             view: row_df_view,
         },
-        diff: None,
         commit: None,
         derived_resource: None,
         status: StatusMessage::resource_found(),
         resource: None,
         row_id,
-        row_index,
     };
 
     Ok(HttpResponse::Ok().json(response))
@@ -163,14 +160,19 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
         "update row repo {namespace}/{repo_name} -> {workspace_id}/{file_path:?} with json data {data:?}"
     );
 
+    // Row operations run against the staged DuckDB table; a table that fails
+    // the indexed gate (never indexed, or written by an older version) must
+    // not be served or mutated — edits into a stale table would be silently
+    // discarded by the re-index that recovery requires.
+    if !repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)? {
+        return Err(OxenHttpError::DatasetNotIndexed(file_path.into()));
+    }
+
     let modified_row = repositories::workspaces::data_frames::rows::update(
         &repo, &workspace, &file_path, &row_id, data,
     )?;
 
-    let row_index = repositories::workspaces::data_frames::rows::get_row_idx(&modified_row)?;
     let row_id = repositories::workspaces::data_frames::rows::get_row_id(&modified_row)?;
-
-    let diff = repositories::workspaces::data_frames::rows::get_row_diff(&workspace, &file_path)?;
 
     log::debug!("Modified row in controller is {modified_row:?}");
     let schema = Schema::from_polars(modified_row.schema());
@@ -179,13 +181,11 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
             source: DataFrameSchemaSize::from_df(&modified_row, &schema),
             view: JsonDataFrameView::from_df_opts(modified_row, schema, &DFOpts::empty()).await,
         },
-        diff: Some(diff),
         commit: None,
         derived_resource: None,
         status: StatusMessage::resource_updated(),
         resource: None,
         row_id,
-        row_index,
     }))
 }
 
@@ -205,67 +205,28 @@ pub async fn delete(req: HttpRequest, _bytes: Bytes) -> Result<HttpResponse, Oxe
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
+    // Row operations run against the staged DuckDB table; a table that fails
+    // the indexed gate (never indexed, or written by an older version) must
+    // not be served or mutated — edits into a stale table would be silently
+    // discarded by the re-index that recovery requires.
+    if !repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)? {
+        return Err(OxenHttpError::DatasetNotIndexed(file_path.into()));
+    }
+
     let df = repositories::workspaces::data_frames::rows::delete(
         &repo, &workspace, &file_path, &row_id,
     )?;
-    let diff = repositories::workspaces::data_frames::rows::get_row_diff(&workspace, &file_path)?;
-
     let schema = Schema::from_polars(df.schema());
     Ok(HttpResponse::Ok().json(JsonDataFrameRowResponse {
         data_frame: JsonDataFrameViews {
             source: DataFrameSchemaSize::from_df(&df, &schema),
             view: JsonDataFrameView::from_df_opts(df, schema, &DFOpts::empty()).await,
         },
-        diff: Some(diff),
         commit: None,
         derived_resource: None,
         status: StatusMessage::resource_deleted(),
         resource: None,
         row_id: None,
-        row_index: None,
-    }))
-}
-
-pub async fn restore(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let repo_name = path_param(&req, "repo_name")?.to_string();
-    let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let row_id = path_param(&req, "row_id")?.to_string();
-
-    let repo = get_repo(app_data, namespace, repo_name)?;
-
-    let file_path = PathBuf::from(path_param(&req, "path")?);
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
-        return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
-    };
-
-    let restored_row = repositories::workspaces::data_frames::rows::restore(
-        &repo, &workspace, &file_path, &row_id,
-    )
-    .await?;
-
-    let row_index = repositories::workspaces::data_frames::rows::get_row_idx(&restored_row)?;
-    let row_id = repositories::workspaces::data_frames::rows::get_row_id(&restored_row)?;
-
-    let diff = repositories::workspaces::data_frames::rows::get_row_diff(&workspace, &file_path)?;
-
-    log::debug!("Restored row in controller is {restored_row:?}");
-    let schema = Schema::from_polars(restored_row.schema());
-    Ok(HttpResponse::Ok().json(JsonDataFrameRowResponse {
-        data_frame: JsonDataFrameViews {
-            source: DataFrameSchemaSize::from_df(&restored_row, &schema),
-            view: JsonDataFrameView::from_df_opts(restored_row, schema, &DFOpts::empty()).await,
-        },
-        diff: Some(diff),
-        commit: None,
-        derived_resource: None,
-        status: StatusMessage::resource_updated(),
-        resource: None,
-        row_id,
-        row_index,
     }))
 }
 
@@ -298,26 +259,26 @@ pub async fn batch_update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse
     };
     log::debug!("update row repo {namespace}/{repo_name} -> {workspace_id}/{file_path:?}");
 
+    // Row operations run against the staged DuckDB table; a table that fails
+    // the indexed gate (never indexed, or written by an older version) must
+    // not be served or mutated — edits into a stale table would be silently
+    // discarded by the re-index that recovery requires.
+    if !repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)? {
+        return Err(OxenHttpError::DatasetNotIndexed(file_path.into()));
+    }
+
     let modified_rows = repositories::workspaces::data_frames::rows::batch_update(
         &repo, &workspace, &file_path, data,
     )?;
 
     let mut responses = Vec::new();
 
-    for modified_row in modified_rows {
-        let response = match modified_row {
-            UpdateResult::Success(row_id, _data_frame) => BatchUpdateResponse {
-                row_id,
-                code: 200,
-                error: None,
-            },
-            UpdateResult::Error(row_id, error) => BatchUpdateResponse {
-                row_id,
-                code: 500,
-                error: Some(error.to_string()),
-            },
-        };
-        responses.push(response);
+    for UpdateResult(row_id) in modified_rows {
+        responses.push(BatchUpdateResponse {
+            row_id,
+            code: 200,
+            error: None,
+        });
     }
 
     Ok(HttpResponse::Ok().json(VecBatchUpdateResponse {

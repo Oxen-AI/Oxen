@@ -17,13 +17,11 @@ use crate::view::entries::EMetadataEntry;
 
 pub mod data_frames;
 pub mod df;
-pub mod diff;
 pub mod files;
 pub mod status;
 pub mod upload;
 
 pub use df::df;
-pub use diff::diff;
 pub use upload::upload;
 
 use std::collections::HashMap;

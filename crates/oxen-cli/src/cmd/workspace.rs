@@ -10,9 +10,6 @@ pub use create::WorkspaceCreateCmd;
 pub mod commit;
 pub use commit::WorkspaceCommitCmd;
 
-pub mod diff;
-pub use diff::WorkspaceDiffCmd;
-
 pub mod df;
 pub use df::WorkspaceDfCmd;
 
@@ -89,13 +86,12 @@ impl RunCmd for WorkspaceCmd {
 
 impl WorkspaceCmd {
     fn get_subcommands() -> Runners {
-        let commands: [Box<dyn RunCmd>; 12] = [
+        let commands: [Box<dyn RunCmd>; 11] = [
             Box::new(WorkspaceAddCmd),
             Box::new(WorkspaceClearCmd),
             Box::new(WorkspaceCommitCmd),
             Box::new(WorkspaceCreateCmd),
             Box::new(WorkspaceDfCmd),
-            Box::new(WorkspaceDiffCmd),
             Box::new(WorkspaceDeleteCmd),
             Box::new(WorkspaceListCmd),
             Box::new(WorkspaceRmCmd),

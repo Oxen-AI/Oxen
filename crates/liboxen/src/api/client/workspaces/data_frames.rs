@@ -10,7 +10,7 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::model::RemoteRepository;
-use crate::view::{JsonDataFrameViewResponse, JsonDataFrameViews, StatusMessage};
+use crate::view::StatusMessage;
 
 pub mod columns;
 pub mod embeddings;
@@ -202,58 +202,6 @@ pub async fn restore(
     Ok(())
 }
 
-pub async fn restore_files(
-    remote_repo: &RemoteRepository,
-    workspace_id: &str,
-    path: impl AsRef<Path>,
-) -> Result<(), OxenError> {
-    let file_name = path.as_ref().to_string_lossy();
-    let uri = format!("/workspaces/{workspace_id}/data_frames/resource/{file_name}");
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    log::debug!("workspaces::data_frames::restore {url}");
-    let client = client::new_for_url(&url)?;
-    let res = client.delete(&url).send().await?;
-    let body = client::parse_json_body(&url, res).await?;
-    log::debug!("workspaces::data_frames::restore got body: {body}");
-    Ok(())
-}
-
-pub async fn diff(
-    remote_repo: &RemoteRepository,
-    workspace_id: &str,
-    path: &Path,
-    page_num: usize,
-    page_size: usize,
-) -> Result<JsonDataFrameViews, OxenError> {
-    let file_path_str = path.to_str().unwrap();
-
-    let uri = format!(
-        "/workspaces/{workspace_id}/data_frames/diff/{file_path_str}?page={page_num}&page_size={page_size}"
-    );
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
-    let client = client::new_for_url(&url)?;
-    match client.get(&url).send().await {
-        Ok(res) => {
-            let body = client::parse_json_body(&url, res).await?;
-            log::debug!("diff got body: {body}");
-            let response: Result<JsonDataFrameViewResponse, serde_json::Error> =
-                serde_json::from_str(&body);
-            match response {
-                Ok(data) => Ok(data.data_frame),
-
-                Err(err) => Err(OxenError::basic_str(format!(
-                    "api::staging::diff error parsing response from {url}\n\nErr {err:?} \n\n{body}"
-                ))),
-            }
-        }
-        Err(err) => {
-            let err = format!("api::staging::diff Request failed: {url}\nErr {err:?}");
-            Err(OxenError::basic_str(err))
-        }
-    }
-}
-
 pub async fn rename_data_frame(
     remote_repo: &RemoteRepository,
     workspace_id: impl AsRef<str>,
@@ -290,9 +238,7 @@ mod tests {
     use std::path::Path;
 
     use crate::config::UserConfig;
-    use crate::constants::{
-        DEFAULT_BRANCH_NAME, DEFAULT_PAGE_NUM, DEFAULT_PAGE_SIZE, DEFAULT_REMOTE_NAME,
-    };
+    use crate::constants::{DEFAULT_BRANCH_NAME, DEFAULT_REMOTE_NAME};
     use crate::core::df::tabular;
     use crate::error::OxenError;
     use crate::model::NewCommitBody;
@@ -968,43 +914,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_data_frame_diff() -> Result<(), OxenError> {
-        // Skip duckdb if on windows
-        if std::env::consts::OS == "windows" {
-            return Ok(());
-        }
-
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
-            let workspace_id = "some_workspace";
-            let path = Path::new("annotations/train/bounding_box.csv");
-
-            let res =
-                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, workspace_id)
-                    .await;
-            assert!(res.is_ok());
-
-            let res = api::client::workspaces::data_frames::index(&remote_repo, workspace_id, path)
-                .await?;
-
-            assert_eq!(res.status, "success");
-
-            let res = api::client::workspaces::data_frames::diff(
-                &remote_repo,
-                workspace_id,
-                path,
-                1,
-                100,
-            )
-            .await;
-
-            assert!(res.is_ok());
-
-            Ok(remote_repo)
-        })
-        .await
-    }
-
-    #[tokio::test]
     async fn test_restore_modified_dataframe() -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
@@ -1046,35 +955,33 @@ mod tests {
             assert!(result_2.is_ok());
 
 
-            // Make sure both got staged
-            let diff = api::client::workspaces::data_frames::diff(
+            // Make sure both got staged: the table has the original 6 rows plus 2 added
+            let res = api::client::workspaces::data_frames::get(
                 &remote_repo,
                 &workspace_id,
                 &path,
-                DEFAULT_PAGE_NUM,
-                DEFAULT_PAGE_SIZE
+                &DFOpts::empty(),
             ).await?;
+            let df = res.data_frame.expect("data frame should be present");
+            assert_eq!(df.source.size.height, 8);
 
-            log::debug!("Got this diff {diff:?}");
-            assert_eq!(diff.view.size.height, 2);
-
-            // Delete result_2
-            let result_delete = api::client::workspaces::data_frames::restore(
+            // Restore the data frame: discards all staged edits by re-indexing
+            let result_restore = api::client::workspaces::data_frames::restore(
                 &remote_repo,
                 &workspace_id,
                 &path,
             ).await;
-            assert!(result_delete.is_ok());
+            assert!(result_restore.is_ok());
 
-            // Should be cleared
-            let diff = api::client::workspaces::data_frames::diff(
+            // Back to the committed contents
+            let res = api::client::workspaces::data_frames::get(
                 &remote_repo,
                 &workspace_id,
                 &path,
-                DEFAULT_PAGE_NUM,
-                DEFAULT_PAGE_SIZE
+                &DFOpts::empty(),
             ).await?;
-            assert_eq!(diff.view.size.height, 0);
+            let df = res.data_frame.expect("data frame should be present");
+            assert_eq!(df.source.size.height, 6);
 
             Ok(remote_repo)
         })
@@ -1082,7 +989,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_diff_modified_dataframe() -> Result<(), OxenError> {
+    async fn test_get_modified_dataframe_row_count() -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
@@ -1116,15 +1023,15 @@ mod tests {
                 data.to_string()
             ).await?;
 
-            let diff = api::client::workspaces::data_frames::diff(
+            // The added row is applied to the staged table (6 committed + 1)
+            let res = api::client::workspaces::data_frames::get(
                 &remote_repo,
                 &workspace_id,
                 &path,
-                DEFAULT_PAGE_NUM,
-                DEFAULT_PAGE_SIZE
+                &DFOpts::empty(),
             ).await?;
-
-            assert_eq!(diff.view.size.height, 1);
+            let df = res.data_frame.expect("data frame should be present");
+            assert_eq!(df.source.size.height, 7);
 
             Ok(remote_repo)
         })
@@ -1132,7 +1039,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_diff_delete_row_from_modified_dataframe() -> Result<(), OxenError> {
+    async fn test_delete_row_from_modified_dataframe() -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
@@ -1170,16 +1077,15 @@ mod tests {
                     data.to_string(),
                 ).await?;
 
-            // Make sure both got staged
-            let diff = api::client::workspaces::data_frames::diff(
+            // Make sure both got staged (6 committed + 2 added)
+            let res = api::client::workspaces::data_frames::get(
                 &remote_repo,
                 &workspace_id,
                 &path,
-                DEFAULT_PAGE_NUM,
-                DEFAULT_PAGE_SIZE
+                &DFOpts::empty(),
             ).await?;
-
-            assert_eq!(diff.view.size.height, 2);
+            let df = res.data_frame.expect("data frame should be present");
+            assert_eq!(df.source.size.height, 8);
 
             let uuid_2 = row_id_2.unwrap();
             // Delete result_2
@@ -1191,15 +1097,15 @@ mod tests {
             ).await;
             assert!(result_delete.is_ok());
 
-            // Make there is only one left
-            let diff = api::client::workspaces::data_frames::diff(
+            // The deleted row is gone from the staged table
+            let res = api::client::workspaces::data_frames::get(
                 &remote_repo,
                 &workspace_id,
                 &path,
-                DEFAULT_PAGE_NUM,
-                DEFAULT_PAGE_SIZE
+                &DFOpts::empty(),
             ).await?;
-            assert_eq!(diff.view.size.height, 1);
+            let df = res.data_frame.expect("data frame should be present");
+            assert_eq!(df.source.size.height, 7);
 
             Ok(remote_repo)
         })
