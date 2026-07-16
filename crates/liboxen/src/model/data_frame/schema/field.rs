@@ -10,6 +10,7 @@ pub struct Field {
     pub name: String,
     pub dtype: String,
     pub metadata: Option<Value>,
+    #[serde(default)]
     pub changes: Option<Changes>,
 }
 
