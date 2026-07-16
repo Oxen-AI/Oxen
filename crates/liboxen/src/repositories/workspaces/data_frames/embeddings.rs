@@ -173,8 +173,8 @@ fn get_embedding_length(
             // embedded in SQL, so an unknown column errors instead of hitting
             // a bind failure that can abort the process.
             let schema = df_db::get_schema(conn, TABLE_NAME)?;
-            ensure_column_exists(&schema, column)?;
-            let sql = format!("SELECT {column} FROM {TABLE_NAME} LIMIT 1");
+            let column = canonical_column(&schema, column)?;
+            let sql = format!("SELECT \"{column}\" FROM {TABLE_NAME} LIMIT 1");
             let result_set: Vec<RecordBatch> = conn.prepare(&sql)?.query_arrow([])?.collect();
             Ok(result_set)
         })
@@ -231,12 +231,17 @@ fn get_embedding_length(
 
 /// Reject an embedding lookup whose embedding column does not exist in the
 /// staged table (matched case-insensitively, like DuckDB's binder).
-fn ensure_column_exists(schema: &Schema, column: &str) -> Result<(), DataFrameError> {
-    if schema.has_column(column) {
-        Ok(())
-    } else {
-        Err(DataFrameError::ColumnNameNotFound(column.to_string()))
-    }
+/// Return the schema's canonical spelling of `column` (matched
+/// case-insensitively, like DuckDB's binder), or an error if it has no such
+/// column. Callers must use the returned name for SQL and config lookups so a
+/// caller-supplied casing (`EMBEDDING`) can't miss a case-sensitive lookup.
+fn canonical_column(schema: &Schema, column: &str) -> Result<String, DataFrameError> {
+    schema
+        .fields
+        .iter()
+        .find(|f| f.name.eq_ignore_ascii_case(column))
+        .map(|f| f.name.clone())
+        .ok_or_else(|| DataFrameError::ColumnNameNotFound(column.to_string()))
 }
 
 /// Reject a user-supplied embedding WHERE clause that references a column the
@@ -292,10 +297,10 @@ pub fn embedding_from_query(
     let query = query.query.clone();
 
     let schema = df_db::get_schema(conn, TABLE_NAME)?;
-    ensure_column_exists(&schema, &column)?;
+    let column = canonical_column(&schema, &column)?;
     validate_where_clause_columns(&schema, &query)?;
 
-    let sql = format!("SELECT {column} FROM {TABLE_NAME} WHERE {query}");
+    let sql = format!("SELECT \"{column}\" FROM {TABLE_NAME} WHERE {query}");
     log::debug!("Executing: {sql}");
     let result_set: Vec<RecordBatch> = conn.prepare(&sql)?.query_arrow([])?.collect();
     // log::debug!("Result set: {:?}", result_set);
@@ -333,16 +338,15 @@ fn build_similarity_query_sql(
             .join(",")
     );
 
-    let columns = schema
+    let columns_str = schema
         .fields
         .iter()
-        .map(|f| f.name.as_str())
-        .filter(|c| !(EXCLUDE_OXEN_COLS.contains(c) && exclude_cols))
-        .collect::<Vec<&str>>();
-
-    let columns_str = columns.join(", ");
+        .filter(|f| !(EXCLUDE_OXEN_COLS.contains(&f.name.as_str()) && exclude_cols))
+        .map(|f| format!("\"{}\"", f.name))
+        .collect::<Vec<String>>()
+        .join(", ");
     format!(
-        "SELECT {columns_str}, array_cosine_similarity({column}, {embedding_str}::FLOAT[{vector_length}]) as {similarity_column} FROM df ORDER BY {similarity_column} DESC"
+        "SELECT {columns_str}, array_cosine_similarity(\"{column}\", {embedding_str}::FLOAT[{vector_length}]) as \"{similarity_column}\" FROM {TABLE_NAME} ORDER BY \"{similarity_column}\" DESC"
     )
 }
 
@@ -419,7 +423,8 @@ pub fn nearest_neighbors(
             // `column` is user input embedded in the SQL below: validate it
             // before it can produce a bind failure, which can abort the
             // process instead of surfacing as an error.
-            ensure_column_exists(&schema, column)?;
+            let column = canonical_column(&schema, column)?;
+            let column = column.as_str();
 
             // Build base SQL using helper function
             let base_sql = build_similarity_query_sql(
@@ -643,12 +648,13 @@ mod tests {
     }
 
     #[test]
-    fn test_ensure_column_exists() {
-        let schema = schema_with(&["id", "embedding", "prompt"]);
-        assert!(ensure_column_exists(&schema, "embedding").is_ok());
-        // Column matching is case-insensitive, like DuckDB's binder.
-        assert!(ensure_column_exists(&schema, "EMBEDDING").is_ok());
-        let result = ensure_column_exists(&schema, "nope");
+    fn test_canonical_column() {
+        let schema = schema_with(&["id", "Embedding", "prompt"]);
+        // Returns the schema's spelling regardless of the caller's casing.
+        assert_eq!(canonical_column(&schema, "embedding").unwrap(), "Embedding");
+        assert_eq!(canonical_column(&schema, "EMBEDDING").unwrap(), "Embedding");
+        assert_eq!(canonical_column(&schema, "id").unwrap(), "id");
+        let result = canonical_column(&schema, "nope");
         assert!(matches!(result, Err(DataFrameError::ColumnNameNotFound(name)) if name == "nope"));
     }
 

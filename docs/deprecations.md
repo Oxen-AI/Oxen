@@ -18,8 +18,8 @@ Removals that intentionally skipped the additive-deprecation workflow (owner dec
 
 | Item | Removed in | Location (was) | Notes |
 | --- | --- | --- | --- |
-| Workspace data frame staged diff — `GET /repos/{ns}/{name}/workspaces/{id}/data_frames/diff/{path}` and the `oxen workspace diff` CLI command | 0.52.0 (workspace reversibility removal) | `crates/oxen-server/src/services/workspaces/data_frames.rs`; `crates/oxen-cli/src/cmd/workspace/diff.rs` | Older CLIs receive a 404. Removed with the change-tracking ("mods") layer; there is no replacement — edits apply directly. |
-| Workspace row/column restore — `POST .../data_frames/rows/{row_id}/restore/{path}` and `POST .../data_frames/columns/{column_name}/restore/{path}` | 0.52.0 (workspace reversibility removal) | `crates/oxen-server/src/controllers/workspaces/data_frames/rows.rs`, `.../columns.rs` | Older clients receive a 404. Whole-data-frame restore (`DELETE .../data_frames/resource/{path}`, re-index) remains. |
+| Workspace data frame staged diff — `GET /repos/{namespace}/{name}/workspaces/{workspace_id}/data_frames/diff/{path}` and the `oxen workspace diff` CLI command | 0.52.0 (workspace reversibility removal) | `crates/oxen-server/src/services/workspaces/data_frames.rs`; `crates/oxen-cli/src/cmd/workspace/diff.rs` | Older CLIs receive a 404. Removed with the change-tracking ("mods") layer; there is no replacement — edits apply directly. |
+| Workspace row/column restore — `POST /repos/{namespace}/{name}/workspaces/{workspace_id}/data_frames/rows/{row_id}/restore/{path}` and `POST /repos/{namespace}/{name}/workspaces/{workspace_id}/data_frames/columns/{column_name}/restore/{path}` | 0.52.0 (workspace reversibility removal) | `crates/oxen-server/src/controllers/workspaces/data_frames/rows.rs`, `.../columns.rs` | Older clients receive a 404. Whole-data-frame restore (`DELETE .../data_frames/resource/{path}`, re-index) remains. |
 
 ## Reminder
 

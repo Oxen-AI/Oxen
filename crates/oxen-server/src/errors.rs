@@ -482,6 +482,19 @@ impl error::ResponseError for OxenHttpError {
                             });
                             HttpResponse::BadRequest().json(error_json)
                         }
+                        DataFrameError::SqlParse(e) => {
+                            log::error!("SQL parse error: {e}");
+                            let error_json = json!({
+                                "error": {
+                                    "type": "sql_parse_error",
+                                    "title": "Invalid SQL",
+                                    "detail": format!("{e}"),
+                                },
+                                "status": STATUS_ERROR,
+                                "status_message": MSG_BAD_REQUEST,
+                            });
+                            HttpResponse::BadRequest().json(error_json)
+                        }
                         DataFrameError::ColumnNameNotFound(column_name) => {
                             log::error!("Column Name Not Found: {column_name}");
                             let error_json = json!({
