@@ -176,7 +176,6 @@ fn build_compare_schema_diff(
                 name: col.clone(),
                 dtype: dtype.dtype().to_string(),
                 metadata: None,
-                changes: None,
             })
         })
         .collect::<Result<Vec<Field>, OxenError>>()?;
@@ -190,7 +189,6 @@ fn build_compare_schema_diff(
                 name: col.clone(),
                 dtype: dtype.dtype().to_string(),
                 metadata: None,
-                changes: None,
             })
         })
         .collect::<Result<Vec<Field>, OxenError>>()?;

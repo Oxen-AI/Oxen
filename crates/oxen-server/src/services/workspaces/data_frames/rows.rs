@@ -6,10 +6,6 @@ use crate::controllers;
 pub fn rows() -> Scope {
     web::scope("/rows")
         .route(
-            "/{row_id}/restore/{path:.*}",
-            web::post().to(controllers::workspaces::data_frames::rows::restore),
-        )
-        .route(
             "/resource/{path:.*}",
             web::post().to(controllers::workspaces::data_frames::rows::create),
         )

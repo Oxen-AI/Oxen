@@ -156,50 +156,6 @@ pub async fn add(
     }
 }
 
-pub async fn restore_row(
-    remote_repo: &RemoteRepository,
-    workspace_id: &str,
-    path: &Path,
-    row_id: &str,
-) -> Result<JsonDataFrameRowResponse, OxenError> {
-    let Some(file_path_str) = path.to_str() else {
-        return Err(OxenError::basic_str(format!(
-            "Path must be a string: {path:?}"
-        )));
-    };
-
-    let uri =
-        format!("/workspaces/{workspace_id}/data_frames/rows/{row_id}/restore/{file_path_str}");
-    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-
-    let client = client::new_for_url(&url)?;
-    match client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .send()
-        .await
-    {
-        Ok(res) => {
-            let body = client::parse_json_body(&url, res).await?;
-            let response: Result<JsonDataFrameRowResponse, serde_json::Error> =
-                serde_json::from_str(&body);
-            match response {
-                Ok(val) => Ok(val),
-                Err(err) => {
-                    let err = format!(
-                        "api::staging::update_row error parsing response from {url}\n\nErr {err:?} \n\n{body}"
-                    );
-                    Err(OxenError::basic_str(err))
-                }
-            }
-        }
-        Err(err) => {
-            let err = format!("api::staging::update_row Request failed: {url}\n\nErr {err:?}");
-            Err(OxenError::basic_str(err))
-        }
-    }
-}
-
 pub async fn batch_update(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
@@ -257,7 +213,6 @@ mod tests {
     use crate::opts::DFOpts;
     use crate::repositories;
     use crate::test;
-    use crate::view::json_data_frame_view::JsonDataFrameRowResponse;
     use polars::prelude::AnyValue;
 
     use std::path::Path;
@@ -380,61 +335,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_restore_row() -> Result<(), OxenError> {
-        // Skip duckdb if on windows
-        if std::env::consts::OS == "windows" {
-            return Ok(());
-        }
-
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
-            let branch_name = "add-images";
-            let branch = api::client::branches::create_from_branch(&remote_repo, branch_name, DEFAULT_BRANCH_NAME).await?;
-            assert_eq!(branch.name, branch_name);
-
-            let workspace_id = UserConfig::identifier()?;
-            let workspace = api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
-            assert_eq!(workspace.id, workspace_id);
-
-            // Path to the CSV file
-            let path = Path::new("annotations").join("train").join("bounding_box.csv");
-            let data = "{\"file\":\"image1.jpg\", \"label\": \"dog\", \"min_x\":13, \"min_y\":14, \"width\": 100, \"height\": 100}";
-
-            api::client::workspaces::data_frames::index(&remote_repo, &workspace_id, &path).await?;
-
-            // Create a new row
-            let result = api::client::workspaces::data_frames::rows::add(
-                &remote_repo,
-                &workspace_id,
-                &path,
-                data.to_string()
-            ).await;
-
-            assert!(result.is_ok());
-
-            let row_id: &String = result.as_ref().unwrap().1.as_ref().unwrap();
-
-            // Get the newly created row
-            let row = api::client::workspaces::data_frames::rows::get(&remote_repo, &workspace_id, &path, row_id).await?;
-
-            // Check the "_oxen_diff_status" field
-            let data: Value = serde_json::from_value(row.data_frame.view.data[0].clone()).unwrap();
-            assert_eq!(data.get("_oxen_diff_status").unwrap(), "added");
-
-            // Restore the row
-            let _restore_resp = api::client::workspaces::data_frames::rows::restore_row(&remote_repo, &workspace_id, &path, row_id).await?;
-
-            // Get the restored row
-            let restored_row: JsonDataFrameRowResponse = api::client::workspaces::data_frames::rows::get(&remote_repo, &workspace_id, &path, row_id).await?;
-
-            // Check that the restored data is null
-            let restore_data: Value = serde_json::from_value(restored_row.data_frame.view.data[0].clone()).unwrap();
-            assert!(restore_data.is_null(), "Restored data is not null");
-
-            Ok(remote_repo)
-        }).await
-    }
-
-    #[tokio::test]
     async fn test_delete_row() -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
@@ -488,9 +388,7 @@ mod tests {
             )
             .await?;
 
-            let data: Value = serde_json::from_value(row.data_frame.view.data[0].clone()).unwrap();
-
-            assert_eq!(data.get("_oxen_diff_status").unwrap(), "unchanged");
+            assert_eq!(row.data_frame.view.size.height, 1);
 
             api::client::workspaces::data_frames::rows::delete(
                 &remote_repo,
@@ -508,9 +406,9 @@ mod tests {
             )
             .await?;
 
-            let data: Value = serde_json::from_value(row.data_frame.view.data[0].clone()).unwrap();
-
-            assert_eq!(data.get("_oxen_diff_status").unwrap(), "removed");
+            // The row is deleted from the staged table immediately, not
+            // tombstoned: fetching it again returns an empty result.
+            assert_eq!(row.data_frame.view.size.height, 0);
             Ok(remote_repo)
         })
         .await
@@ -574,9 +472,7 @@ mod tests {
             )
             .await?;
 
-            let data: Value = serde_json::from_value(row.data_frame.view.data[0].clone()).unwrap();
-
-            assert_eq!(data.get("_oxen_diff_status").unwrap(), "unchanged");
+            assert_eq!(row.data_frame.view.size.height, 1);
 
             let data: &str = "{\"file\":\"lebron>jordan.jpg\", \"label\": \"dog\", \"min_x\":13, \"min_y\":14, \"width\": 100, \"height\": 100}";
 
@@ -598,16 +494,14 @@ mod tests {
             .await?;
 
             let data: Value = serde_json::from_value(row.data_frame.view.data[0].clone()).unwrap();
-            assert_eq!(data.get("file").unwrap() ,"lebron>jordan.jpg");
-
-            assert_eq!(data.get("_oxen_diff_status").unwrap(), "modified");
+            assert_eq!(data.get("file").unwrap(), "lebron>jordan.jpg");
             Ok(remote_repo)
         })
         .await
     }
 
     #[tokio::test]
-    async fn test_remote_stage_delete_row_clears_remote_status() -> Result<(), OxenError> {
+    async fn test_remote_stage_delete_row_keeps_remote_status_modified() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         };
@@ -660,7 +554,9 @@ mod tests {
                 repositories::workspaces::df(&cloned_repo, workspace_id, &path, delete_opts)
                     .await?;
 
-                // Now status should be empty
+                // Edits are applied, not tracked: deleting the added row does
+                // not detect that the edits cancelled out, so the data frame
+                // stays listed as modified.
                 let status = api::client::workspaces::changes::list(
                     &remote_repo,
                     workspace_id,
@@ -669,7 +565,7 @@ mod tests {
                     constants::DEFAULT_PAGE_SIZE,
                 )
                 .await?;
-                assert_eq!(status.modified_files.entries.len(), 0);
+                assert_eq!(status.modified_files.entries.len(), 1);
 
                 Ok(())
             })

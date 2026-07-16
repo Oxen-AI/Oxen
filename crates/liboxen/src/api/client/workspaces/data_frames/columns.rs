@@ -193,7 +193,6 @@ mod tests {
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
     use crate::model::NewCommitBody;
-    use crate::model::data_frame::schema::field::Changes;
     use crate::opts::DFOpts;
     use crate::test;
 
@@ -317,19 +316,16 @@ mod tests {
             )
             .await?;
 
-            if let Some((_index, field)) = df
+            // Deletes remove the column outright now (no tombstone), so it
+            // must be absent from the returned schema.
+            if df
                 .data_frame
                 .unwrap()
                 .view
                 .schema
                 .fields
                 .iter()
-                .enumerate()
-                .find(|(_index, field)| field.name == column.name)
-                && <std::option::Option<Changes> as Clone>::clone(&field.changes)
-                    .unwrap()
-                    .status
-                    != "deleted"
+                .any(|field| field.name == column.name)
             {
                 panic!("Column {} still exists in the data frame", column.name);
             }

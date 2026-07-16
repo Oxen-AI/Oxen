@@ -1,8 +1,4 @@
-use crate::error::OxenError;
-use polars::frame::DataFrame;
-
+/// The row id of a successfully applied batch-update entry. Batch update is
+/// all-or-nothing (a single DuckDB UPDATE), so there is no per-row error case.
 #[derive(Debug)]
-pub enum UpdateResult {
-    Success(String, Option<DataFrame>),
-    Error(String, OxenError),
-}
+pub struct UpdateResult(pub String);

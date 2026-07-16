@@ -10,9 +10,7 @@ use liboxen::model::Schema;
 use liboxen::model::data_frame::DataFrameSchemaSize;
 use liboxen::opts::DFOpts;
 use liboxen::repositories;
-use liboxen::view::data_frames::columns::{
-    ColumnToDelete, ColumnToRestore, ColumnToUpdate, NewColumn,
-};
+use liboxen::view::data_frames::columns::{ColumnToDelete, ColumnToUpdate, NewColumn};
 use liboxen::view::json_data_frame_view::JsonDataFrameColumnResponse;
 use liboxen::view::{
     JsonDataFrameView, JsonDataFrameViews, StatusMessage, StatusMessageDescription,
@@ -74,23 +72,13 @@ pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let column_schema = Schema::from_polars(column_df.schema());
     let column_df_source = DataFrameSchemaSize::from_df(&column_df, &column_schema);
     let column_df_view = JsonDataFrameView::from_df_opts(column_df, column_schema, &opts).await;
-    let diff =
-        repositories::workspaces::data_frames::columns::get_column_diff(&workspace, &file_path)?;
-
-    let mut df_views = JsonDataFrameViews {
+    let df_views = JsonDataFrameViews {
         source: column_df_source,
         view: column_df_view,
     };
 
-    repositories::workspaces::data_frames::columns::decorate_fields_with_column_diffs(
-        &workspace,
-        &file_path,
-        &mut df_views,
-    )?;
-
     let response = JsonDataFrameColumnResponse {
         data_frame: df_views,
-        diff: Some(diff),
         commit: None,
         derived_resource: None,
         status: StatusMessage::resource_found(),
@@ -151,23 +139,13 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let column_df_source = DataFrameSchemaSize::from_df(&column_df, &column_schema);
     let column_df_view = JsonDataFrameView::from_df_opts(column_df, column_schema, &opts).await;
 
-    let mut df_views = JsonDataFrameViews {
+    let df_views = JsonDataFrameViews {
         source: column_df_source,
         view: column_df_view,
     };
 
-    let diff =
-        repositories::workspaces::data_frames::columns::get_column_diff(&workspace, &file_path)?;
-
-    repositories::workspaces::data_frames::columns::decorate_fields_with_column_diffs(
-        &workspace,
-        &file_path,
-        &mut df_views,
-    )?;
-
     let response = JsonDataFrameColumnResponse {
         data_frame: df_views,
-        diff: Some(diff),
         commit: None,
         derived_resource: None,
         status: StatusMessage::resource_found(),
@@ -265,12 +243,6 @@ pub async fn update(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
         view: column_df_view,
     };
 
-    repositories::workspaces::data_frames::columns::decorate_fields_with_column_diffs(
-        &workspace,
-        &file_path,
-        &mut df_views,
-    )?;
-
     let new_schema = repositories::data_frames::schemas::get_staged_schema_with_staged_db_manager(
         &workspace.workspace_repo,
         &file_path,
@@ -280,12 +252,8 @@ pub async fn update(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
         &mut df_views,
     )?;
 
-    let diff =
-        repositories::workspaces::data_frames::columns::get_column_diff(&workspace, &file_path)?;
-
     let response = JsonDataFrameColumnResponse {
         data_frame: df_views,
-        diff: Some(diff),
         commit: None,
         derived_resource: None,
         status: StatusMessage::resource_found(),
@@ -329,74 +297,4 @@ pub async fn add_column_metadata(
     )?;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
-}
-
-pub async fn restore(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let repo_name = path_param(&req, "repo_name")?.to_string();
-    let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let file_path: PathBuf = PathBuf::from(path_param(&req, "path")?);
-
-    let column_name = path_param(&req, "column_name")
-        .map_err(|_| OxenHttpError::BadRequest("Column name missing in path parameters".into()))?;
-
-    let column_to_restore = ColumnToRestore {
-        name: column_name.to_string(),
-    };
-
-    let repo = get_repo(app_data, namespace, repo_name)?;
-
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
-        return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
-    };
-
-    let is_editable = repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)?;
-
-    if !is_editable {
-        return Err(OxenHttpError::DatasetNotIndexed(file_path.into()));
-    }
-
-    let restored_column = match repositories::workspaces::data_frames::columns::restore(
-        &repo,
-        &workspace,
-        &file_path,
-        &column_to_restore,
-    )
-    .await
-    {
-        Ok(df) => df,
-        Err(e) => {
-            log::error!("Error restoring column: {e:?}");
-            return Err(OxenHttpError::BasicError(StringError::from(e.to_string())));
-        }
-    };
-
-    let diff =
-        repositories::workspaces::data_frames::columns::get_column_diff(&workspace, &file_path)?;
-
-    let schema = Schema::from_polars(restored_column.schema());
-    log::debug!("Restored column in controller is {restored_column:?}");
-
-    let mut df_views = JsonDataFrameViews {
-        source: DataFrameSchemaSize::from_df(&restored_column, &schema),
-        view: JsonDataFrameView::from_df_opts(restored_column, schema, &DFOpts::empty()).await,
-    };
-
-    repositories::workspaces::data_frames::columns::decorate_fields_with_column_diffs(
-        &workspace,
-        &file_path,
-        &mut df_views,
-    )?;
-
-    Ok(HttpResponse::Ok().json(JsonDataFrameColumnResponse {
-        data_frame: df_views,
-        diff: Some(diff),
-        commit: None,
-        derived_resource: None,
-        status: StatusMessage::resource_updated(),
-        resource: None,
-    }))
 }

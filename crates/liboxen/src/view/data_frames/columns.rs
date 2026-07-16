@@ -13,11 +13,6 @@ pub struct ColumnToDelete {
 }
 
 #[derive(Deserialize, Serialize, Debug)]
-pub struct ColumnToRestore {
-    pub name: String,
-}
-
-#[derive(Deserialize, Serialize, Debug)]
 pub struct ColumnToUpdate {
     pub name: String,
     pub new_name: Option<String>,

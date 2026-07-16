@@ -19,9 +19,7 @@ use liboxen::view::entries::ResourceVersion;
 use liboxen::view::entries::{PaginatedMetadataEntries, PaginatedMetadataEntriesResponse};
 use liboxen::view::json_data_frame_view::WorkspaceJsonDataFrameViewResponse;
 use liboxen::view::workspaces::RenameRequest;
-use liboxen::view::{
-    JsonDataFrameViewResponse, JsonDataFrameViews, StatusMessage, StatusMessageDescription,
-};
+use liboxen::view::{JsonDataFrameViews, StatusMessage, StatusMessageDescription};
 
 use actix_web::web::Bytes;
 use futures_util::stream::Stream;
@@ -212,12 +210,6 @@ pub async fn get(
 
     let mut df_views =
         JsonDataFrameViews::from_df_and_opts_unpaginated(df, df_schema, count, &opts).await;
-
-    repositories::workspaces::data_frames::columns::decorate_fields_with_column_diffs(
-        &workspace,
-        &file_path,
-        &mut df_views,
-    )?;
 
     let new_schema = repositories::data_frames::schemas::get_staged_schema_with_staged_db_manager(
         &workspace.workspace_repo,
@@ -539,71 +531,6 @@ pub async fn get_by_branch(
             pagination,
         },
     }))
-}
-
-pub async fn diff(
-    req: HttpRequest,
-    query: web::Query<DFOptsQuery>,
-) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(app_data, namespace, repo_name)?;
-    let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let file_path = PathBuf::from(path_param(&req, "path")?);
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
-        return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
-    };
-
-    let mut opts = DFOpts::empty();
-    opts = df_opts_query::parse_opts(&query, &mut opts);
-
-    opts.page = Some(query.page.unwrap_or(constants::DEFAULT_PAGE_NUM));
-    opts.page_size = Some(query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE));
-
-    let df = repositories::workspaces::data_frames::query(&workspace, &file_path, &opts)?;
-    let diff_df = repositories::workspaces::data_frames::diff(&workspace, &file_path)?;
-    let mut df_schema =
-        repositories::workspaces::data_frames::schemas::get_by_path(&workspace, &file_path)?;
-
-    let resource = ResourceVersion {
-        path: file_path.to_string_lossy().to_string(),
-        version: workspace.commit.id.to_string(),
-    };
-
-    let og_schema = if let Some(schema) =
-        repositories::data_frames::schemas::get_by_path(&repo, &workspace.commit, resource.path)?
-    {
-        schema
-    } else {
-        Schema::from_polars(df.schema())
-    };
-
-    df_schema.update_metadata_from_schema(&og_schema);
-
-    let mut df_views = JsonDataFrameViews::from_df_and_opts(diff_df, df_schema, &opts).await;
-
-    repositories::workspaces::data_frames::columns::decorate_fields_with_column_diffs(
-        &workspace,
-        &file_path,
-        &mut df_views,
-    )?;
-
-    let resource = ResourceVersion {
-        path: file_path.to_string_lossy().to_string(),
-        version: workspace.commit.id.to_string(),
-    };
-
-    let resource = JsonDataFrameViewResponse {
-        data_frame: df_views,
-        status: StatusMessage::resource_found(),
-        resource: Some(resource),
-        commit: None,
-        derived_resource: None,
-    };
-
-    Ok(HttpResponse::Ok().json(resource))
 }
 
 /// Index a data frame into DuckDB for querying

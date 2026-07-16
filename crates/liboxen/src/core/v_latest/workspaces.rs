@@ -7,7 +7,6 @@ use std::path::Path;
 
 pub mod commit;
 pub mod data_frames;
-pub mod diff;
 pub mod files;
 pub mod status;
 
