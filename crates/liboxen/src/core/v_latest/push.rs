@@ -252,15 +252,30 @@ async fn list_and_push_missing_files(
         return Ok(());
     }
 
-    if let Some(commit_entry) = missing_files.first() {
-        let version_store = repo.version_store();
-        if !version_store.version_exists(&commit_entry.hash).await? {
-            return Err(OxenError::CannotPushShallowClone {
-                commit_id: head_commit.id.clone(),
-                commit_message: head_commit.message.clone(),
-                help: "To repair the remote, re-run this command from a clone that has the full history.".to_string(),
-            });
-        }
+    // Fail fast if any file the push will upload is absent from this clone — before uploading any.
+    let hashes: Vec<String> = missing_files.iter().map(|e| e.hash.clone()).collect();
+    let locally_absent = repo.version_store().find_missing_versions(&hashes).await?;
+    if !locally_absent.is_empty() {
+        let listed = locally_absent
+            .iter()
+            .take(10)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let extra = locally_absent.len().saturating_sub(10);
+        let listed = if extra > 0 {
+            format!("{listed}, and {extra} more")
+        } else {
+            listed
+        };
+        return Err(OxenError::CannotPushShallowClone {
+            commit_id: head_commit.id.clone(),
+            commit_message: head_commit.message.clone(),
+            help: format!(
+                "{} of the files to upload are absent from this clone ({listed}). Re-run this command from a clone that has the full history.",
+                locally_absent.len()
+            ),
+        });
     }
 
     let total_bytes = missing_files.iter().map(|e| e.num_bytes).sum();
