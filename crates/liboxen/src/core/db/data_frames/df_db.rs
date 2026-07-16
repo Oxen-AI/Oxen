@@ -629,9 +629,20 @@ pub fn select_str(
 }
 
 pub fn select_raw(conn: &duckdb::Connection, stmt: &str) -> Result<DataFrame, DataFrameError> {
+    select_raw_with_params(conn, stmt, [])
+}
+
+/// Like [`select_raw`] but binds `params` into the prepared statement. Use this
+/// (rather than interpolating) whenever a value in the predicate comes from a
+/// request, so a value containing a quote can't alter the query.
+pub fn select_raw_with_params<P: duckdb::Params>(
+    conn: &duckdb::Connection,
+    stmt: &str,
+    params: P,
+) -> Result<DataFrame, DataFrameError> {
     let records: Vec<RecordBatch> = {
         let mut stmt = conn.prepare(stmt)?;
-        stmt.query_arrow([])?.collect()
+        stmt.query_arrow(params)?.collect()
     };
 
     if records.is_empty() {
@@ -666,16 +677,18 @@ pub fn modify_row_with_polars_df(
         .collect::<Vec<String>>()
         .join(", ");
 
-    let where_clause = format!("\"{OXEN_ID_COL}\" = '{id}'");
-
-    let sql = format!("UPDATE {table_name} SET {set_clauses} WHERE {where_clause} RETURNING *");
+    // The id is bound, not interpolated: a request-supplied id containing a
+    // quote must not be able to alter the predicate.
+    let sql =
+        format!("UPDATE {table_name} SET {set_clauses} WHERE \"{OXEN_ID_COL}\" = ? RETURNING *");
 
     let values = df.get(0).unwrap(); // Checked above
 
-    let boxed_values: Vec<Box<dyn ToSql>> = values
+    let mut boxed_values: Vec<Box<dyn ToSql>> = values
         .iter()
         .map(|v| tabular::value_to_tosql(v.to_owned()))
         .collect();
+    boxed_values.push(Box::new(id.to_string()));
 
     let params: Vec<&dyn ToSql> = boxed_values
         .iter()
@@ -724,13 +737,13 @@ pub fn modify_rows_with_polars_df(
                 let series = df.column(col_name)?;
                 let value = series.get(0)?;
 
-                let boxed_value: Box<dyn ToSql> = Box::new(tabular::value_to_tosql(value));
-
-                case_clauses.push(format!(
-                    "WHEN \"{OXEN_ID_COL}\" = '{id}' THEN {placeholder}"
-                ));
-
-                all_params.push(boxed_value);
+                // Bind the id as well as the value: an id from a request must
+                // not be interpolated into the predicate. row_map.iter() yields
+                // a stable order across columns (the map is not mutated), so the
+                // (id, value) params line up with the placeholders positionally.
+                case_clauses.push(format!("WHEN \"{OXEN_ID_COL}\" = ? THEN {placeholder}"));
+                all_params.push(Box::new(id.clone()));
+                all_params.push(Box::new(tabular::value_to_tosql(value)));
             }
             set_clauses.push(format!(
                 "\"{}\" = CASE {} END",

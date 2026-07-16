@@ -3,11 +3,10 @@ use std::collections::HashMap;
 use duckdb::ToSql;
 use duckdb::arrow::array::RecordBatch;
 use polars::frame::DataFrame;
-use sql::Select;
-// use sql::Select;
-use sql_query_builder as sql;
+// use sql_query_builder as sql;
 
 use crate::constants::{LEGACY_OXEN_COLS, OXEN_COLS, OXEN_ID_COL};
+use crate::model::data_frame::schema::Schema;
 
 use crate::constants::TABLE_NAME;
 use crate::core::db::data_frames::DataFrameError;
@@ -40,6 +39,16 @@ pub fn append_row(conn: &duckdb::Connection, df: &DataFrame) -> Result<DataFrame
     insert_polars_df(conn, TABLE_NAME, df)
 }
 
+/// Whether a column in an update payload should be dropped rather than applied.
+/// The hub sends the oxen-internal columns (and, from older clients, the legacy
+/// tracking columns) in row payloads; those must not be written — UNLESS the
+/// data frame genuinely has a column of that name, in which case it is user
+/// data and the update applies.
+fn drop_from_update_payload(table_schema: &Schema, col: &str) -> bool {
+    let is_reserved = OXEN_COLS.contains(&col) || LEGACY_OXEN_COLS.contains(&col);
+    is_reserved && !table_schema.has_column(col)
+}
+
 pub fn modify_row(
     conn: &duckdb::Connection,
     df: &mut DataFrame,
@@ -51,15 +60,17 @@ pub fn modify_row(
 
     let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
 
-    // Filter it down to exclude any of the OXEN_COLS, we don't want to modify these but hub sends them over
+    // Exclude the OXEN_COLS the hub sends over (never modifiable), and any
+    // legacy tracking columns the hub still round-trips — but only when they
+    // aren't real columns in this table. A user data frame can legitimately
+    // have a column named e.g. `_oxen_diff_status`, and updates to it must
+    // apply, so a legacy name present in the schema is treated as user data.
     let schema = df.schema();
     let df_col_names: Vec<String> = schema.iter_names().map(|s| s.to_string()).collect();
     let df_cols: Vec<String> = df_col_names
         .clone()
         .into_iter()
-        .filter(|col| {
-            !OXEN_COLS.contains(&col.as_str()) && !LEGACY_OXEN_COLS.contains(&col.as_str())
-        })
+        .filter(|col| !drop_from_update_payload(&table_schema, col))
         .collect();
     let df = df.select(&df_cols)?;
     if !table_schema.has_field_names(&df_cols) {
@@ -98,9 +109,7 @@ pub fn modify_rows(
         let df_cols: Vec<String> = df_col_names
             .clone()
             .into_iter()
-            .filter(|col| {
-                !OXEN_COLS.contains(&col.as_str()) && !LEGACY_OXEN_COLS.contains(&col.as_str())
-            })
+            .filter(|col| !drop_from_update_payload(&table_schema, col))
             .collect();
         let df = df.select(&df_cols)?;
         if !table_schema.has_field_names(&df_cols) {
@@ -111,11 +120,11 @@ pub fn modify_rows(
             });
         }
 
-        let select_current = Select::new()
-            .select("*")
-            .from(TABLE_NAME)
-            .where_clause(&format!("\"{OXEN_ID_COL}\" = '{row_id}'"));
-        let current_row = df_db::select(conn, &select_current, None)?;
+        let current_row = df_db::select_raw_with_params(
+            conn,
+            &format!("SELECT * FROM {TABLE_NAME} WHERE \"{OXEN_ID_COL}\" = ?"),
+            [row_id.as_str()],
+        )?;
         // Fail before ANY row is written: proceeding with a missing id would
         // let the batch UPDATE run for the other rows and then error on the
         // count check afterward — a partial write reported as a failure.
@@ -154,21 +163,21 @@ pub fn modify_rows(
 }
 
 pub fn delete_row(conn: &duckdb::Connection, uuid: &str) -> Result<DataFrame, DataFrameError> {
-    let select_stmt = sql::Select::new()
-        .select("*")
-        .from(TABLE_NAME)
-        .where_clause(&format!("{OXEN_ID_COL} = '{uuid}'"));
-
-    let row_to_delete = df_db::select(conn, &select_stmt, None)?;
+    // The id is bound, not interpolated, so a request-supplied id can't alter
+    // the predicate and delete unrelated rows.
+    let row_to_delete = df_db::select_raw_with_params(
+        conn,
+        &format!("SELECT * FROM {TABLE_NAME} WHERE \"{OXEN_ID_COL}\" = ?"),
+        [uuid],
+    )?;
     if row_to_delete.height() == 0 {
         return Err(DataFrameError::MissingDataFrame(uuid.to_string()));
     }
 
-    let stmt = sql::Delete::new()
-        .delete_from(TABLE_NAME)
-        .where_clause(&format!("{OXEN_ID_COL} = '{uuid}'"));
-    log::debug!("delete_row() sql: {stmt:?}");
-    conn.execute(&stmt.to_string(), [])?;
+    conn.execute(
+        &format!("DELETE FROM {TABLE_NAME} WHERE \"{OXEN_ID_COL}\" = ?"),
+        [uuid],
+    )?;
 
     Ok(row_to_delete)
 }

@@ -1187,6 +1187,51 @@ mod tests {
         .await
     }
 
+    /// A user data frame with a column named like a legacy tracking column
+    /// (`_oxen_diff_status`) is editable: updates to that column apply rather
+    /// than being silently stripped as a reserved key.
+    #[tokio::test]
+    async fn test_update_user_owned_legacy_named_column_applies() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let file_path = Path::new("diff_output.csv");
+            let full_path = repo.path.join(file_path);
+            util::fs::write_to_path(
+                &full_path,
+                "file,_oxen_diff_status\na.jpg,added\nb.jpg,removed\n",
+            )?;
+            repositories::add(&repo, &full_path).await?;
+            let commit = repositories::commit(&repo, "add diff export")?;
+
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            workspaces::data_frames::index(&repo, &workspace, file_path).await?;
+
+            let mut page_opts = DFOpts::empty();
+            page_opts.page = Some(0);
+            page_opts.page_size = Some(10);
+            let staged = workspaces::data_frames::query(&workspace, file_path, &page_opts)?;
+            let id = staged
+                .column(OXEN_ID_COL)?
+                .get(0)?
+                .to_string()
+                .replace('"', "");
+
+            // Update the user's own _oxen_diff_status column.
+            let json_data = json!({ "_oxen_diff_status": "changed" });
+            workspaces::data_frames::rows::update(&repo, &workspace, file_path, &id, &json_data)?;
+
+            let row = workspaces::data_frames::rows::get_by_id(&workspace, file_path, &id)?;
+            let val = row.column("_oxen_diff_status")?.get(0)?;
+            assert_eq!(val.get_str(), Some("changed"));
+
+            Ok(())
+        })
+        .await
+    }
+
     /// Row-update payloads that still carry the legacy tracking keys
     /// (_oxen_diff_status etc.) — as older clients send — are accepted, with
     /// the legacy keys stripped like they always were.

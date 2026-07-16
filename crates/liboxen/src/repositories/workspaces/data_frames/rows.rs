@@ -6,7 +6,6 @@ use polars::frame::DataFrame;
 use polars::prelude::PlSmallStr;
 
 use crate::{core, repositories};
-use sql_query_builder::Select;
 
 use crate::constants::{OXEN_ID_COL, TABLE_NAME};
 
@@ -63,11 +62,12 @@ pub fn get_by_id(
     log::debug!("get_row_by_id() got db_path: {db_path:?}");
     let data = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
-            let query = Select::new()
-                .select("*")
-                .from(TABLE_NAME)
-                .where_clause(&format!("{OXEN_ID_COL} = '{row_id}'"));
-            df_db::select(conn, &query, None)
+            // Bind the id rather than interpolate it into the predicate.
+            df_db::select_raw_with_params(
+                conn,
+                &format!("SELECT * FROM {TABLE_NAME} WHERE \"{OXEN_ID_COL}\" = ?"),
+                [row_id],
+            )
         })
     })?;
     log::debug!("get_row_by_id() got data: {data:?}");
