@@ -109,11 +109,42 @@ mod tests {
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::core::df::tabular;
     use crate::error::OxenError;
+    use crate::model::RemoteRepository;
     use crate::opts::{DFOpts, PaginateOpts};
     use crate::test;
+    use crate::view::data_frames::embeddings::EmbeddingColumnsResponse;
     use crate::{api, repositories};
 
     use std::path::Path;
+
+    /// Polls the embedding index for `path` until its first column reports
+    /// [`EmbeddingStatus::Complete`], then returns that response with `columns`
+    /// guaranteed non-empty. A transient per-request failure (e.g. the server
+    /// briefly busy under load) is retried rather than failing the test; only a
+    /// genuine failure to complete within the ~10s budget returns an error.
+    async fn wait_for_embedding_index(
+        remote_repo: &RemoteRepository,
+        workspace_id: &str,
+        path: &Path,
+    ) -> Result<EmbeddingColumnsResponse, OxenError> {
+        // Indexing is normally sub-second; the ~10s budget (1000 × 10ms) absorbs load spikes.
+        for _ in 0..1000 {
+            if let Ok(response) = api::client::workspaces::data_frames::embeddings::get(
+                remote_repo,
+                workspace_id,
+                path,
+            )
+            .await
+                && response.columns.first().map(|c| &c.status) == Some(&EmbeddingStatus::Complete)
+            {
+                return Ok(response);
+            }
+            sleep(std::time::Duration::from_millis(10)).await;
+        }
+        Err(OxenError::basic_str(
+            "embedding index did not reach Complete within the ~10s budget",
+        ))
+    }
 
     #[tokio::test]
     async fn test_no_embeddings_in_dataframe() -> Result<(), OxenError> {
@@ -186,31 +217,10 @@ mod tests {
             )
             .await?;
 
-            let mut indexing_status = EmbeddingStatus::NotIndexed;
-            let mut max_retries = 1000; // 10ms * 1000 = 10s total budget
-            while indexing_status != EmbeddingStatus::Complete && max_retries > 0 {
-                let result = api::client::workspaces::data_frames::embeddings::get(
-                    &remote_repo,
-                    &workspace_id,
-                    &path,
-                )
-                .await;
-
-                assert!(result.is_ok());
-                let response = result.unwrap();
-                assert_eq!(response.columns.len(), 1);
-                assert_eq!(response.columns[0].name, column);
-                assert_eq!(response.columns[0].vector_length, 3);
-                indexing_status = response.columns[0].status.clone();
-
-                // Poll interval — indexing is sub-second; the 10ms × 1000 schedule caps the
-                // total wait at ~10s while reacting to completion within a frame.
-                sleep(std::time::Duration::from_millis(10)).await;
-
-                max_retries -= 1;
-            }
-
-            assert_eq!(indexing_status, EmbeddingStatus::Complete);
+            let response = wait_for_embedding_index(&remote_repo, &workspace_id, &path).await?;
+            assert_eq!(response.columns.len(), 1);
+            assert_eq!(response.columns[0].name, column);
+            assert_eq!(response.columns[0].vector_length, 3);
 
             Ok(remote_repo)
         })
@@ -389,26 +399,7 @@ mod tests {
             )
             .await?;
 
-            let mut indexing_status = EmbeddingStatus::NotIndexed;
-            let mut max_retries = 1000; // 10ms * 1000 = 10s total budget
-            while indexing_status != EmbeddingStatus::Complete && max_retries > 0 {
-                let result = api::client::workspaces::data_frames::embeddings::get(
-                    &remote_repo,
-                    &workspace_id,
-                    &path,
-                )
-                .await;
-                assert!(result.is_ok());
-                let response = result.unwrap();
-                indexing_status = response.columns[0].status.clone();
-
-                // Poll interval — indexing is sub-second; the 10ms × 1000 schedule caps the
-                // total wait at ~10s while reacting to completion within a frame.
-                sleep(std::time::Duration::from_millis(10)).await;
-
-                max_retries -= 1;
-            }
-            assert_eq!(indexing_status, EmbeddingStatus::Complete);
+            wait_for_embedding_index(&remote_repo, &workspace_id, &path).await?;
 
             test::run_empty_dir_test_async(|sync_dir| async move {
                 let output_path = sync_dir.join("test_download.parquet");
@@ -475,27 +466,7 @@ mod tests {
             )
             .await?;
 
-            let mut indexing_status = EmbeddingStatus::NotIndexed;
-            let mut max_retries = 1000; // 10ms * 1000 = 10s total budget
-            while indexing_status != EmbeddingStatus::Complete && max_retries > 0 {
-                let result = api::client::workspaces::data_frames::embeddings::get(
-                    &remote_repo,
-                    &workspace_id,
-                    &path,
-                )
-                .await;
-
-                assert!(result.is_ok());
-                let response = result.unwrap();
-                indexing_status = response.columns[0].status.clone();
-
-                // Poll interval — indexing is sub-second; the 10ms × 1000 schedule caps the
-                // total wait at ~10s while reacting to completion within a frame.
-                sleep(std::time::Duration::from_millis(10)).await;
-
-                max_retries -= 1;
-            }
-            assert_eq!(indexing_status, EmbeddingStatus::Complete);
+            wait_for_embedding_index(&remote_repo, &workspace_id, &path).await?;
 
             // Query the embeddings by id
             let opts = DFOpts {
