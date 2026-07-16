@@ -432,4 +432,3 @@ class DataFrame:
                 The branch to commit the changes to. Defaults to the current branch.
         """
         self._workspace.commit(message, branch)
-
