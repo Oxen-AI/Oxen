@@ -4,12 +4,16 @@
 use std::backtrace::Backtrace;
 use std::io::{self, Write};
 use std::panic;
+
+#[cfg(unix)]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(unix)]
 use std::thread;
 
 #[cfg(unix)]
 use signal_hook::consts::signal::{SIGABRT, SIGBUS};
 
+#[cfg(unix)]
 static FATAL_SIGNAL_LOGGED: AtomicBool = AtomicBool::new(false);
 
 fn log_backtrace(label: &str) {
