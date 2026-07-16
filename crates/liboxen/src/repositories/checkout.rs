@@ -407,7 +407,7 @@ mod tests {
             let commits = repositories::commits::list(&repo)?;
             assert_eq!(commits.len(), 2);
 
-            let branches = repositories::branches::list(&repo)?;
+            let branches = repositories::branches::list(&repo).await?;
             assert_eq!(branches.len(), 2);
 
             // Make sure we have both files on disk in our repo dir
