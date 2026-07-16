@@ -1,6 +1,6 @@
 use crate::app_data::OxenAppData;
 use crate::errors::OxenHttpError;
-use crate::helpers::get_repo;
+use crate::helpers::{get_repo, get_repo_async};
 use crate::params::{app_data, path_param};
 
 use futures_util::TryStreamExt;
@@ -9,9 +9,9 @@ use liboxen::api::requests::RepoNew;
 // Import StreamExt for the next() method
 use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::error::OxenError;
-use liboxen::model::ParsedResource;
 use liboxen::model::file::{FileContents, FileNew};
 use liboxen::model::parsed_resource::ParsedResourceView;
+use liboxen::model::{Branch, ParsedResource};
 use liboxen::repositories;
 use liboxen::view::http::{MSG_RESOURCE_FOUND, MSG_RESOURCE_UPDATED, STATUS_SUCCESS};
 use liboxen::view::repository::{
@@ -86,15 +86,18 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     let name = path_param(&req, "repo_name")?.to_string();
 
     // Get the repository or return error
-    let repository = get_repo(app_data, &namespace, &name)?;
+    let repository = get_repo_async(app_data, &namespace, &name).await?;
     let mut size: u64 = 0;
     let mut data_types: Vec<DataTypeCount> = vec![];
     let mut default_resource: Option<ParsedResourceView> = None;
 
     // If we have a commit on the main branch, we can get the size and data types from the commit
-    if let Ok(Some(commit)) = repositories::revisions::get(&repository, DEFAULT_BRANCH_NAME) {
+    if let Ok(Some(commit)) =
+        repositories::revisions::get_async(&repository, DEFAULT_BRANCH_NAME).await
+    {
         if let Some(dir_node) =
-            repositories::entries::get_directory(&repository, &commit, PathBuf::from(""))?
+            repositories::entries::get_directory_async(&repository, &commit, PathBuf::from(""))
+                .await?
         {
             size = dir_node.num_bytes();
             data_types = dir_node
@@ -107,10 +110,15 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
                 .collect();
         }
 
-        let branch = repositories::branches::get_by_name(&repository, DEFAULT_BRANCH_NAME).ok();
+        // The resolved commit is the head of the default branch, so its id is that branch's
+        // commit id; build the branch from it rather than re-reading the refs DB.
+        let branch = Branch {
+            name: DEFAULT_BRANCH_NAME.to_string(),
+            commit_id: commit.id.clone(),
+        };
         default_resource = Some(ParsedResourceView::from(ParsedResource {
             commit: Some(commit),
-            branch,
+            branch: Some(branch),
             workspace: None,
             path: PathBuf::from(""),
             version: PathBuf::from(DEFAULT_BRANCH_NAME),
@@ -118,6 +126,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
         }));
     }
 
+    // A repo with no branches is empty; derive it from the same scan rather than a second read.
     let branch_count = repositories::branches::list(&repository).await?.len();
 
     // Return the repository view
@@ -129,7 +138,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
                 namespace,
                 name,
                 min_version: Some(repository.min_version().to_string()),
-                is_empty: repositories::is_empty(&repository).await?,
+                is_empty: branch_count == 0,
                 storage_kind: repository.storage_config().kind,
             },
             size,
