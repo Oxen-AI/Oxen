@@ -380,12 +380,15 @@ async fn export_tabular_data_frames(
                                 workspace, &node_path,
                             )?
                         {
-                            return Err(OxenError::basic_str(format!(
-                                "Cannot commit workspace: the staged data frame {node_path:?} \
-                                 was indexed by an older version of oxen. Re-index the data \
-                                 frame (discarding its staged edits) or unstage it, then \
-                                 commit again."
-                            )));
+                            return Err(OxenError::WorkspaceStaleStagedIndex(
+                                format!(
+                                    "Cannot commit workspace: the staged data frame {node_path:?} \
+                                     was indexed by an older version of oxen. Re-index the data \
+                                     frame (discarding its staged edits) or unstage it, then \
+                                     commit again."
+                                )
+                                .into(),
+                            ));
                         }
                         new_dir_entries
                             .entry(dir_path.to_path_buf())

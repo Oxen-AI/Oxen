@@ -1296,9 +1296,11 @@ mod tests {
                 message: "Committing stale staged df".to_string(),
             };
             let result = workspaces::commit(&workspace, &new_commit, branch_name).await;
+            // Must be the typed stale-index error (maps to 409, not a retryable
+            // 500), since the user has to re-index or unstage first.
             assert!(
-                result.is_err(),
-                "commit of a stale staged data frame must fail, got {result:?}"
+                matches!(result, Err(OxenError::WorkspaceStaleStagedIndex(_))),
+                "commit of a stale staged data frame must fail with WorkspaceStaleStagedIndex, got {result:?}"
             );
 
             // The base version is still intact and readable.
