@@ -2,7 +2,6 @@ use std::path::Path;
 
 use crate::config::RepositoryConfig;
 use crate::core::db::merkle_node::{DEFAULT_MERKLE_NODE_BACKEND, MerkleNodeBackend};
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::storage::StorageConfig;
@@ -16,7 +15,7 @@ pub fn init(path: &Path) -> Result<LocalRepository, OxenError> {
     }
 
     // Cleanup the .oxen dir if init fails
-    match init_with_version_default(path, MinOxenVersion::LATEST) {
+    match init_with_version_default(path) {
         Ok(result) => Ok(result),
         Err(error) => {
             util::fs::remove_dir_all(hidden_dir)?;
@@ -26,10 +25,7 @@ pub fn init(path: &Path) -> Result<LocalRepository, OxenError> {
 }
 
 // default storage backend is local
-pub fn init_with_version_default(
-    path: &Path,
-    version: MinOxenVersion,
-) -> Result<LocalRepository, OxenError> {
+pub fn init_with_version_default(path: &Path) -> Result<LocalRepository, OxenError> {
     let hidden_dir = util::fs::oxen_hidden_dir(path);
 
     util::fs::create_dir_all(hidden_dir)?;
@@ -38,11 +34,7 @@ pub fn init_with_version_default(
         return Err(OxenError::basic_str(err));
     }
 
-    let config = RepositoryConfig {
-        min_version: Some(version.to_string()),
-        merkle_node_backend: Some(DEFAULT_MERKLE_NODE_BACKEND),
-        ..Default::default()
-    };
+    let config = RepositoryConfig::default();
     let repo = LocalRepository::new(path, config)?;
     repo.save()?;
 
@@ -51,7 +43,6 @@ pub fn init_with_version_default(
 
 pub async fn init_with_version_and_storage_config(
     path: &Path,
-    version: MinOxenVersion,
     storage_config: Option<StorageConfig>,
     merkle_backend: Option<MerkleNodeBackend>,
 ) -> Result<LocalRepository, OxenError> {
@@ -64,7 +55,6 @@ pub async fn init_with_version_and_storage_config(
     }
 
     let config = RepositoryConfig {
-        min_version: Some(version.to_string()),
         storage: storage_config,
         merkle_node_backend: Some(merkle_backend.unwrap_or(DEFAULT_MERKLE_NODE_BACKEND)),
         ..Default::default()

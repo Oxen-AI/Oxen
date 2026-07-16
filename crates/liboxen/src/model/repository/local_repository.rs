@@ -4,7 +4,6 @@ use crate::constants::{self, DEFAULT_VNODE_SIZE};
 use crate::core::db::merkle_node::{
     DEFAULT_MERKLE_NODE_BACKEND, MerkleNodeBackend, MerkleNodeStore, create_merkle_node_store,
 };
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::{Remote, RemoteRepository};
@@ -139,12 +138,11 @@ impl LocalRepository {
         config: RepositoryConfig,
         server_s3_opts: Option<&S3Opts>,
     ) -> Result<LocalRepository, OxenError> {
-        // Reject a repo whose on-disk format predates what this build supports (e.g. a config
-        // still pinned to 0.19.0) with a clear error, rather than letting the unsupported version
-        // surface as a panic when it is later read.
-        MinOxenVersion::or_earliest(config.min_version.clone())?;
-
         let path = path.as_ref().to_path_buf();
+        // Reject pre-0.25.0 on-disk formats this build can no longer read. See docs/deprecations.md.
+        if let Some(version @ ("0.10.0" | "0.19.0")) = config.min_version.as_deref() {
+            return Err(OxenError::UnsupportedRepoVersion(version.into()));
+        }
         let storage_config = config.storage.unwrap_or_default();
         let version_store = create_version_store(&path, &storage_config, server_s3_opts)?;
         let (merkle_node_store, merkle_node_backend) =
@@ -251,18 +249,8 @@ impl LocalRepository {
         })
     }
 
-    pub fn min_version(&self) -> MinOxenVersion {
-        // The stored version is validated at construction (`new_with_server_opts`), so this
-        // always parses; fall back to LATEST rather than panic.
-        MinOxenVersion::or_earliest(self.min_version.clone()).unwrap_or(MinOxenVersion::LATEST)
-    }
-
     pub fn set_remote_name(&mut self, name: impl AsRef<str>) {
         self.remote_name = Some(name.as_ref().to_string());
-    }
-
-    pub fn set_min_version(&mut self, version: MinOxenVersion) {
-        self.min_version = Some(version.to_string());
     }
 
     pub fn remotes(&self) -> &Vec<Remote> {
@@ -655,18 +643,6 @@ mod tests {
     use crate::test;
     use tempfile::TempDir;
 
-    #[test]
-    fn test_new_rejects_unsupported_repo_version() {
-        // A repo whose config is still pinned to a dropped format (e.g. 0.19.0) must surface a
-        // clean UnsupportedRepoVersion error at load, not panic when the version is later read.
-        let config = RepositoryConfig {
-            min_version: Some("0.19.0".to_string()),
-            ..Default::default()
-        };
-        let result = LocalRepository::new("unused/path", config);
-        assert!(matches!(result, Err(OxenError::UnsupportedRepoVersion(_))));
-    }
-
     #[tokio::test]
     async fn test_mtime_matches_honors_tolerance() -> Result<(), OxenError> {
         // Regression for ENG-94X: on coarse-mtime mounts (FAT/exFAT, HFS+, some NFS) a file's
@@ -870,6 +846,39 @@ mod tests {
         repo.save()?;
         let on_disk = RepositoryConfig::from_file(crate::util::fs::config_filepath(&repo_path))?;
         assert_eq!(on_disk.merkle_node_backend, Some(MerkleNodeBackend::Lmdb));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_new_rejects_unsupported_repo_version() -> Result<(), OxenError> {
+        // A config declaring a pre-0.25.0 on-disk format is rejected at construction.
+        for version in ["0.10.0", "0.19.0"] {
+            let temp_dir = TempDir::new()?;
+            let result = LocalRepository::new(
+                temp_dir.path(),
+                RepositoryConfig {
+                    min_version: Some(version.to_string()),
+                    ..Default::default()
+                },
+            );
+            assert!(
+                matches!(result, Err(OxenError::UnsupportedRepoVersion(_))),
+                "min_version {version} should be rejected as UnsupportedRepoVersion"
+            );
+        }
+
+        // Current / unset formats construct fine.
+        for version in [Some("0.25.0"), Some("0.36.0"), None] {
+            let temp_dir = TempDir::new()?;
+            LocalRepository::new(
+                temp_dir.path(),
+                RepositoryConfig {
+                    min_version: version.map(String::from),
+                    ..Default::default()
+                },
+            )?;
+        }
 
         Ok(())
     }

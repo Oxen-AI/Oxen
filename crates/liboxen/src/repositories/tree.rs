@@ -15,7 +15,6 @@ use crate::core::db::merkle_node::{MerkleNodeDB, MerkleNodeStore};
 use crate::core::node_sync_status;
 use crate::core::v_latest::index::CommitMerkleTree as CommitMerkleTreeLatest;
 use crate::core::v_latest::index::CommitMerkleTree;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::merkle_transport::{PackOptions, UnpackOptions};
 use crate::model::merkle_tree::node::{
@@ -35,9 +34,7 @@ pub fn get_root(
     repo: &LocalRepository,
     commit: &Commit,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::LATEST => CommitMerkleTreeLatest::root_without_children(repo, commit),
-    }
+    CommitMerkleTreeLatest::root_without_children(repo, commit)
 }
 
 /// This will return the MerkleTreeNode with type CommitNode if the Commit exists
@@ -47,9 +44,7 @@ pub fn get_root_with_children(
     repo: &LocalRepository,
     commit: &Commit,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::LATEST => CommitMerkleTreeLatest::root_with_children(repo, commit),
-    }
+    CommitMerkleTreeLatest::root_with_children(repo, commit)
 }
 
 /// This will return the MerkleTreeNode with type CommitNode if the Commit exists
@@ -62,15 +57,13 @@ pub fn get_root_with_children_and_node_hashes(
     unique_hashes: Option<&mut HashSet<MerkleHash>>,
     shared_hashes: Option<&mut HashSet<MerkleHash>>,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::LATEST => CommitMerkleTreeLatest::root_with_children_and_node_hashes(
-            repo,
-            commit,
-            base_hashes,
-            unique_hashes,
-            shared_hashes,
-        ),
-    }
+    CommitMerkleTreeLatest::root_with_children_and_node_hashes(
+        repo,
+        commit,
+        base_hashes,
+        unique_hashes,
+        shared_hashes,
+    )
 }
 
 /// This will return the MerkleTreeNode with type CommitNode if the Commit exists
@@ -84,16 +77,14 @@ pub fn get_root_with_children_and_partial_nodes(
     shared_hashes: Option<&mut HashSet<MerkleHash>>,
     partial_nodes: &mut HashMap<PathBuf, PartialNode>,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::LATEST => CommitMerkleTreeLatest::root_with_children_and_partial_nodes(
-            repo,
-            commit,
-            base_hashes,
-            unique_hashes,
-            shared_hashes,
-            partial_nodes,
-        ),
-    }
+    CommitMerkleTreeLatest::root_with_children_and_partial_nodes(
+        repo,
+        commit,
+        base_hashes,
+        unique_hashes,
+        shared_hashes,
+        partial_nodes,
+    )
 }
 
 /// If passed in a commit node, will return the root directory node
@@ -131,9 +122,7 @@ pub fn get_node_by_id(
     hash: &MerkleHash,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
     let load_recursive = false;
-    match repo.min_version() {
-        MinOxenVersion::LATEST => CommitMerkleTreeLatest::read_node(repo, hash, load_recursive),
-    }
+    CommitMerkleTreeLatest::read_node(repo, hash, load_recursive)
 }
 
 pub fn get_node_by_id_with_children(
@@ -141,9 +130,7 @@ pub fn get_node_by_id_with_children(
     hash: &MerkleHash,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
     let load_recursive = true;
-    match repo.min_version() {
-        MinOxenVersion::LATEST => CommitMerkleTreeLatest::read_node(repo, hash, load_recursive),
-    }
+    CommitMerkleTreeLatest::read_node(repo, hash, load_recursive)
 }
 
 pub fn has_dir(
@@ -185,15 +172,11 @@ pub fn get_node_by_path(
     path: impl AsRef<Path>,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
     let load_recursive = false;
-    match repo.min_version() {
-        MinOxenVersion::LATEST => {
-            match CommitMerkleTreeLatest::read_from_path(repo, commit, path, load_recursive) {
-                Ok(node) => Ok(node),
-                Err(e) => {
-                    log::warn!("Error getting node by path: {e:?}");
-                    Ok(None)
-                }
-            }
+    match CommitMerkleTreeLatest::read_from_path(repo, commit, path, load_recursive) {
+        Ok(node) => Ok(node),
+        Err(e) => {
+            log::warn!("Error getting node by path: {e:?}");
+            Ok(None)
         }
     }
 }
@@ -204,11 +187,7 @@ pub fn get_node_by_path_with_children(
     path: impl AsRef<Path>,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
     let load_recursive = true;
-    let node = match repo.min_version() {
-        MinOxenVersion::LATEST => {
-            CommitMerkleTreeLatest::read_from_path(repo, commit, path, load_recursive)?
-        }
-    };
+    let node = CommitMerkleTreeLatest::read_from_path(repo, commit, path, load_recursive)?;
 
     Ok(node)
 }
@@ -247,11 +226,7 @@ pub fn get_dir_with_children(
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
     let _perf = crate::perf_guard!("tree::get_dir_with_children");
 
-    match repo.min_version() {
-        MinOxenVersion::LATEST => {
-            CommitMerkleTreeLatest::dir_with_children(repo, commit, path, dir_hashes)
-        }
-    }
+    CommitMerkleTreeLatest::dir_with_children(repo, commit, path, dir_hashes)
 }
 
 pub fn get_dir_without_children(
@@ -260,11 +235,7 @@ pub fn get_dir_without_children(
     path: impl AsRef<Path>,
     dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::LATEST => {
-            CommitMerkleTreeLatest::dir_without_children(repo, commit, path, dir_hashes)
-        }
-    }
+    CommitMerkleTreeLatest::dir_without_children(repo, commit, path, dir_hashes)
 }
 
 pub fn get_dir_with_children_recursive(
@@ -273,11 +244,7 @@ pub fn get_dir_with_children_recursive(
     path: impl AsRef<Path>,
     dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::LATEST => {
-            CommitMerkleTreeLatest::dir_with_children_recursive(repo, commit, path, dir_hashes)
-        }
-    }
+    CommitMerkleTreeLatest::dir_with_children_recursive(repo, commit, path, dir_hashes)
 }
 
 /// Helper function where you can pass in Optional depth and Optional path and get a tree
@@ -317,11 +284,7 @@ pub fn get_subtree_by_depth(
     path: impl AsRef<Path>,
     depth: i32,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::LATEST => {
-            CommitMerkleTreeLatest::read_depth_from_path(repo, commit, path, depth)
-        }
-    }
+    CommitMerkleTreeLatest::read_depth_from_path(repo, commit, path, depth)
 }
 
 pub fn get_subtree_by_depth_with_unique_children(
@@ -333,17 +296,15 @@ pub fn get_subtree_by_depth_with_unique_children(
     shared_hashes: Option<&mut HashSet<MerkleHash>>,
     depth: i32,
 ) -> Result<Option<MerkleTreeNode>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::LATEST => CommitMerkleTreeLatest::read_depth_from_path_and_collect_hashes(
-            repo,
-            commit,
-            path,
-            base_hashes,
-            unique_hashes,
-            shared_hashes,
-            depth,
-        ),
-    }
+    CommitMerkleTreeLatest::read_depth_from_path_and_collect_hashes(
+        repo,
+        commit,
+        path,
+        base_hashes,
+        unique_hashes,
+        shared_hashes,
+        depth,
+    )
 }
 
 /// Given a set of paths, will return a map of the path to the FileNode or DirNode
@@ -352,9 +313,7 @@ pub fn list_nodes_from_paths(
     commit: &Commit,
     paths: &[PathBuf],
 ) -> Result<HashMap<PathBuf, MerkleTreeNode>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::LATEST => CommitMerkleTreeLatest::read_nodes(repo, commit, paths),
-    }
+    CommitMerkleTreeLatest::read_nodes(repo, commit, paths)
 }
 
 /// List the files and folders given a directory node
@@ -1666,11 +1625,7 @@ pub fn get_ancestor_nodes(
 // TODO: Deduplicate these
 pub fn print_tree(repo: &LocalRepository, commit: &Commit) -> Result<(), OxenError> {
     let tree = get_root_with_children(repo, commit)?.unwrap();
-    match repo.min_version() {
-        MinOxenVersion::LATEST => {
-            CommitMerkleTreeLatest::print_node(&tree);
-        }
-    }
+    CommitMerkleTreeLatest::print_node(&tree);
     Ok(())
 }
 
@@ -1681,11 +1636,7 @@ pub fn print_tree_depth_subtree(
     subtree: &PathBuf,
 ) -> Result<(), OxenError> {
     let tree = get_subtree_by_depth(repo, commit, subtree, depth)?.unwrap();
-    match repo.min_version() {
-        MinOxenVersion::LATEST => {
-            CommitMerkleTreeLatest::print_node_depth(&tree, depth);
-        }
-    }
+    CommitMerkleTreeLatest::print_node_depth(&tree, depth);
     Ok(())
 }
 
@@ -1695,11 +1646,7 @@ pub fn print_tree_path(
     path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
     let tree = get_node_by_path_with_children(repo, commit, path)?.unwrap();
-    match repo.min_version() {
-        MinOxenVersion::LATEST => {
-            CommitMerkleTreeLatest::print_node(&tree);
-        }
-    }
+    CommitMerkleTreeLatest::print_node(&tree);
     Ok(())
 }
 
@@ -1709,11 +1656,7 @@ pub fn print_tree_depth(
     depth: i32,
 ) -> Result<(), OxenError> {
     let tree = get_root_with_children(repo, commit)?.unwrap();
-    match repo.min_version() {
-        MinOxenVersion::LATEST => {
-            CommitMerkleTreeLatest::print_node_depth(&tree, depth);
-        }
-    }
+    CommitMerkleTreeLatest::print_node_depth(&tree, depth);
     Ok(())
 }
 
