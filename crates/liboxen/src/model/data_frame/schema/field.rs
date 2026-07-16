@@ -73,3 +73,68 @@ impl Field {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::Serialize;
+
+    // Mirrors the on-disk `Field` layout from before `changes` was briefly
+    // dropped: `changes` is the trailing element. Merkle nodes embed schema
+    // fields and are serialized positionally via `rmp_serde::to_vec`, so blobs
+    // written by older versions still carry (or omit) this trailing element and
+    // must keep deserializing into the current `Field`.
+    #[derive(Serialize)]
+    struct OldField {
+        name: String,
+        dtype: String,
+        metadata: Option<Value>,
+        changes: Option<OldChanges>,
+    }
+
+    #[derive(Serialize)]
+    struct OldChanges {
+        status: String,
+        previous: Option<Box<OldField>>,
+    }
+
+    #[test]
+    fn test_deserialize_field_missing_changes_element() {
+        // The interim format dropped `changes` entirely (three-element array).
+        #[derive(Serialize)]
+        struct FieldWithoutChanges {
+            name: String,
+            dtype: String,
+            metadata: Option<Value>,
+        }
+        let bytes = rmp_serde::to_vec(&FieldWithoutChanges {
+            name: "col".to_owned(),
+            dtype: "str".to_owned(),
+            metadata: None,
+        })
+        .expect("serialize field without changes");
+
+        let field: Field =
+            rmp_serde::from_slice(&bytes).expect("deserialize interim format into current Field");
+        assert_eq!(field.name, "col");
+        assert_eq!(field.dtype, "str");
+        assert!(field.changes.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_field_with_null_changes() {
+        let bytes = rmp_serde::to_vec(&OldField {
+            name: "col".to_owned(),
+            dtype: "str".to_owned(),
+            metadata: None,
+            changes: None,
+        })
+        .expect("serialize old field with null changes");
+
+        let field: Field =
+            rmp_serde::from_slice(&bytes).expect("deserialize old format into current Field");
+        assert_eq!(field.name, "col");
+        assert_eq!(field.dtype, "str");
+        assert!(field.changes.is_none());
+    }
+}
