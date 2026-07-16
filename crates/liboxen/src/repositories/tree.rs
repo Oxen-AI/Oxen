@@ -227,6 +227,18 @@ pub fn get_file_by_path(
     }
 }
 
+/// Get the file node at `path` in a commit, off the async worker.
+pub async fn get_file_by_path_async(
+    repo: &LocalRepository,
+    commit: &Commit,
+    path: impl AsRef<Path>,
+) -> Result<Option<FileNode>, OxenError> {
+    let repo = repo.clone();
+    let commit = commit.clone();
+    let path = path.as_ref().to_path_buf();
+    tokio::task::spawn_blocking(move || get_file_by_path(&repo, &commit, &path)).await?
+}
+
 pub fn get_dir_with_children(
     repo: &LocalRepository,
     commit: &Commit,
@@ -3376,6 +3388,34 @@ mod tests {
                     "hash {h} not readable in vfs-cloned repo"
                 );
             }
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_get_file_by_path_async_matches_sync() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            util::fs::write(repo.path.join("hello.txt"), "hello world")?;
+            repositories::add(&repo, &repo.path).await?;
+            let commit = repositories::commit(&repo, "Adding hello.txt")?;
+
+            let sync = repositories::tree::get_file_by_path(&repo, &commit, "hello.txt")?;
+            let async_ =
+                repositories::tree::get_file_by_path_async(&repo, &commit, "hello.txt").await?;
+            assert_eq!(
+                async_.as_ref().map(|f| f.hash()),
+                sync.as_ref().map(|f| f.hash())
+            );
+            assert!(sync.is_some());
+
+            // A directory path resolves to None on the async path too.
+            assert!(
+                repositories::tree::get_file_by_path_async(&repo, &commit, "")
+                    .await?
+                    .is_none()
+            );
+
             Ok(())
         })
         .await
