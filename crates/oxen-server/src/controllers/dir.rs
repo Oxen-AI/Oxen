@@ -68,7 +68,7 @@ pub async fn get(
     };
 
     let _perf_list = perf_guard!("dir::get_list_directory");
-    let paginated_entries = repositories::entries::list_directory_w_workspace_depth(
+    let paginated_entries = repositories::entries::list_directory_w_workspace_depth_async(
         &repo,
         &resource.path,
         revision,
@@ -79,7 +79,8 @@ pub async fn get(
         },
         &sort_opts,
         depth,
-    )?;
+    )
+    .await?;
     drop(_perf_list);
 
     let _perf_serialize = perf_guard!("dir::get_serialize_response");
