@@ -346,13 +346,15 @@ async fn export_tabular_data_frames(
                         // staged node already carries the edit (e.g. a
                         // metadata-only change bumps its combined hash), so
                         // comparing against it would wrongly skip real edits.
-                        let base_node = repositories::tree::get_file_by_path(
-                            &workspace.base_repo,
-                            &workspace.commit,
-                            &node_path,
-                        )?;
+                        // Only a Modified entry can be a no-op revert, so do
+                        // the base-node lookup (a merkle traversal) only then —
+                        // not for every Added/Removed export.
                         if entry_status == StagedEntryStatus::Modified
-                            && let Some(base_node) = &base_node
+                            && let Some(base_node) = repositories::tree::get_file_by_path(
+                                &workspace.base_repo,
+                                &workspace.commit,
+                                &node_path,
+                            )?
                             && new_staged_merkle_tree_node.node.file()?.combined_hash()
                                 == base_node.combined_hash()
                         {
