@@ -23,9 +23,9 @@ use os_path::OsPath;
 
 use crate::app_data::OxenAppData;
 use crate::errors::OxenHttpError;
-use crate::helpers::get_repo;
+use crate::helpers::{get_repo, get_repo_async};
 use crate::params::PageNumQuery;
-use crate::params::parse_resource;
+use crate::params::parse_resource_async;
 use crate::params::{app_data, path_param};
 
 use actix_web::{Error, HttpRequest, HttpResponse, web};
@@ -122,7 +122,7 @@ pub async fn history(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(app_data, namespace, repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let resource_param = path_param(&req, "resource")?.to_string();
 
     let pagination = PaginateOpts {
@@ -145,7 +145,7 @@ pub async fn history(
     let (resource, revision, commit) = if resource_param.contains("..") {
         (None, Some(resource_param), None)
     } else {
-        let resource = parse_resource(&req, &repo)?;
+        let resource = parse_resource_async(&req, &repo).await?;
         let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
         (Some(resource), None, Some(commit))
     };
@@ -160,7 +160,8 @@ pub async fn history(
                 commit.as_ref().unwrap(), // Safe unwrap: `commit` is Some if `resource` is Some
                 &resource.path,
                 pagination,
-            )?;
+            )
+            .await?;
 
             log::debug!("commit_history got {} commits", commits.commits.len());
 
@@ -173,7 +174,8 @@ pub async fn history(
             if let Some(revision_id) = revision_id {
                 let _perf_list = perf_guard!("commits::history_list_from_revision");
                 let commits =
-                    repositories::commits::list_from_paginated(&repo, revision_id, pagination)?;
+                    repositories::commits::list_from_paginated(&repo, revision_id, pagination)
+                        .await?;
 
                 log::debug!("commit_history got {} commits", commits.commits.len());
                 // log::debug!("commit_history commits: {:?}", commits.commits);
