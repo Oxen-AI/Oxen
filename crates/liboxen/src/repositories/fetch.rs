@@ -26,7 +26,7 @@ pub async fn fetch_all(
 
     api::client::repositories::pre_fetch(&remote_repo).await?;
     let remote_branches = api::client::branches::list(&remote_repo).await?;
-    let local_branches = repositories::branches::list(repo)?;
+    let local_branches = repositories::branches::list(repo).await?;
 
     // Find branches that are on the remote but not on the local
     let mut branches_to_create = vec![];
@@ -157,13 +157,13 @@ mod tests {
                     &new_repo_dir.join("new_repo"),
                 )
                 .await?;
-                let branches = repositories::branches::list(&cloned_repo)?;
+                let branches = repositories::branches::list(&cloned_repo).await?;
 
                 assert_eq!(1, branches.len());
 
                 repositories::fetch_all(&cloned_repo, &FetchOpts::new()).await?;
 
-                let branches = repositories::branches::list(&cloned_repo)?;
+                let branches = repositories::branches::list(&cloned_repo).await?;
                 assert_eq!(3, branches.len());
 
                 let current_branch = repositories::branches::current_branch(&cloned_repo)?.unwrap();

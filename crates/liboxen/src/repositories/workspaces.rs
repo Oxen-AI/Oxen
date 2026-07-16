@@ -25,7 +25,9 @@ pub use df::df;
 pub use upload::upload;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex as StdMutex, PoisonError};
+use tokio::sync::Mutex as TokioMutex;
 use uuid::Uuid;
 
 /// Loads a workspace from the filesystem. Must call create() first to create the workspace.
@@ -292,20 +294,104 @@ fn validate_create_constraints(
     Ok(())
 }
 
+// Serializes the one-time name-index build per repo. Without it, concurrent
+// first callers each run `rebuild_from_disk`, which clears the index and
+// rescans disk. One of those rebuilds can land between another caller's config
+// write and its `put_if_absent`, pre-claiming that caller's name from disk so
+// it collides with itself and rolls back. Keyed by repo path, in-process.
+static NAME_INDEX_LOCKS: LazyLock<StdMutex<HashMap<PathBuf, Arc<TokioMutex<()>>>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+fn name_index_lock_for(key: &Path) -> Arc<TokioMutex<()>> {
+    // Poisoning only means a holder panicked; the map of Arc handles is still
+    // sound, so recover the guard.
+    let mut locks = NAME_INDEX_LOCKS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    locks.entry(key.to_path_buf()).or_default().clone()
+}
+
+fn cleanup_name_index_lock(key: &Path) {
+    let mut locks = NAME_INDEX_LOCKS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if let Some(lock) = locks.get(key) {
+        // The registry's handle is the only one left — no holder, no waiter — so
+        // the entry can be dropped. A late caller simply gets a fresh mutex, which
+        // is equivalent since nobody holds this one.
+        if Arc::strong_count(lock) == 1 {
+            locks.remove(key);
+        }
+    }
+}
+
 /// Ensures the workspace name index exists, lazily creating it if needed.
 /// On first call for a repo, rebuilds the index from disk (one-time O(n))
 /// on a blocking thread to avoid stalling the async runtime.
 async fn ensure_name_index(repo: &LocalRepository) -> Result<(), OxenError> {
-    if !workspace_name_index::index_exists(repo) {
-        let repo = repo.clone();
-        tokio::task::spawn_blocking(move || {
-            let idx = workspace_name_index::get_index(&repo)?;
-            idx.rebuild_from_disk(&repo)
-        })
-        .await
-        .map_err(|e| OxenError::basic_str(format!("spawn_blocking join error: {e}")))??;
+    let lock = name_index_lock_for(&repo.path);
+    if workspace_name_index::index_exists(repo) && lock.try_lock().is_ok() {
+        drop(lock);
+        cleanup_name_index_lock(&repo.path);
+        return Ok(());
     }
-    Ok(())
+    let result = {
+        let _guard = lock.lock().await;
+        // Re-check under the lock: the first caller builds the index (creating the
+        // dir), so everyone waiting behind it sees the dir and skips the rebuild.
+        if workspace_name_index::index_exists(repo) {
+            Ok(())
+        } else {
+            let repo_for_task = repo.clone();
+            match tokio::task::spawn_blocking(move || {
+                let result = (|| {
+                    let idx = workspace_name_index::get_index(&repo_for_task)?;
+                    idx.rebuild_from_disk(&repo_for_task)
+                })();
+                // `get_index` creates the index dir before the rebuild populates it,
+                // so a failed build would leave a dir that `index_exists` reports as
+                // ready. Remove it so the next call rebuilds instead of trusting an
+                // empty index.
+                if result.is_err() {
+                    invalidate_name_index(&repo_for_task);
+                }
+                result
+            })
+            .await
+            {
+                Ok(rebuild_result) => rebuild_result.map_err(OxenError::from),
+                Err(join_err) => {
+                    // The blocking task panicked after `get_index` may have created
+                    // the dir; invalidate so a retry rebuilds rather than trusting a
+                    // never-populated index. The cleanup does filesystem IO, so it
+                    // runs on a blocking thread rather than the async worker.
+                    let repo_for_cleanup = repo.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        invalidate_name_index(&repo_for_cleanup);
+                    })
+                    .await;
+                    Err(OxenError::basic_str(format!(
+                        "spawn_blocking join error: {join_err}"
+                    )))
+                }
+            }
+        }
+    };
+    drop(lock);
+    cleanup_name_index_lock(&repo.path);
+    result
+}
+
+/// Removes a partially-built workspace name index so the next `ensure_name_index`
+/// rebuilds it from disk. Evicts the cached DB handle, then removes the index dir.
+fn invalidate_name_index(repo: &LocalRepository) {
+    workspace_name_index::remove_from_cache(repo);
+    let dir = workspace_name_index::index_dir(repo);
+    if dir.exists()
+        && let Err(e) = util::fs::remove_dir_all(&dir)
+    {
+        log::error!("ensure_name_index: failed to remove partial index dir {dir:?}: {e}");
+    }
 }
 
 /// A wrapper around Workspace that automatically deletes the workspace when dropped
@@ -1114,6 +1200,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_name_index_lock_registry_shares_and_cleans_up() -> Result<(), OxenError> {
+        let key = PathBuf::from("test-name-index-lock-registry");
+
+        // Two lookups for the same key must return the same underlying mutex.
+        let lock_a = name_index_lock_for(&key);
+        let lock_b = name_index_lock_for(&key);
+        let guard = lock_a.lock().await;
+        assert!(
+            lock_b.try_lock().is_err(),
+            "second handle should contend on the same mutex"
+        );
+        drop(guard);
+        assert!(lock_b.try_lock().is_ok());
+
+        // A different key gets an independent mutex.
+        let other = name_index_lock_for(Path::new("test-name-index-lock-registry-other"));
+        let _guard = lock_a.lock().await;
+        assert!(other.try_lock().is_ok());
+
+        // Once all handles are dropped, cleanup removes the entry.
+        drop(_guard);
+        drop(lock_a);
+        drop(lock_b);
+        cleanup_name_index_lock(&key);
+        let registry = NAME_INDEX_LOCKS.lock().unwrap();
+        assert!(!registry.contains_key(&key));
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_concurrent_create_with_name_exactly_one_succeeds() -> Result<(), OxenError> {
         const NUM_TASKS: usize = 10;
         const SHARED_NAME: &str = "shared-workspace-name";
@@ -1174,6 +1291,42 @@ mod tests {
             // The index maps the name to the winner.
             let idx = workspace_name_index::get_index(&repo)?;
             assert_eq!(idx.get_id_by_name(SHARED_NAME)?, Some(winner.id.clone()));
+
+            Ok(())
+        })
+        .await
+    }
+
+    // A failed rebuild leaves an index dir that `index_exists` would otherwise
+    // report as ready, short-circuiting future `ensure_name_index` calls onto an
+    // empty index. Invalidation must remove that dir so the next call rebuilds.
+    #[tokio::test]
+    async fn test_ensure_name_index_rebuilds_after_invalidation() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+
+            // Create a named workspace so a correct rebuild has an entry to find.
+            create_with_name(
+                &repo,
+                &commit,
+                "ws-id-1",
+                Some("named-ws".to_string()),
+                true,
+            )
+            .await?;
+            assert!(workspace_name_index::index_exists(&repo));
+
+            // Invalidation stands in for the cleanup done on a failed build: the
+            // on-disk index dir is gone, so `index_exists` no longer short-circuits.
+            invalidate_name_index(&repo);
+            assert!(!workspace_name_index::index_exists(&repo));
+
+            // The next call rebuilds from disk rather than trusting a missing index.
+            ensure_name_index(&repo).await?;
+            assert!(workspace_name_index::index_exists(&repo));
+
+            let idx = workspace_name_index::get_index(&repo)?;
+            assert_eq!(idx.get_id_by_name("named-ws")?, Some("ws-id-1".to_string()));
 
             Ok(())
         })

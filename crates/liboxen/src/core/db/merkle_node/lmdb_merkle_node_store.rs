@@ -176,6 +176,31 @@ impl MerkleNodeStore for LmdbMerkleNodeStore {
         })
     }
 
+    fn write_nodes(
+        &self,
+        nodes: Vec<(MerkleHash, Bytes, Bytes)>,
+        overwrite_existing: bool,
+    ) -> Result<Vec<MerkleHash>, MerkleDbError> {
+        // The whole batch commits in one transaction, so LMDB fsyncs once for it. That single
+        // fsync keeps a large unpack fast, even at tens of thousands of nodes. A node counts as
+        // present only when both of its keys are there, matching `exists`, so if a node key ever
+        // lost its children key, this writes it again.
+        self.write(|db, txn| {
+            let mut written = Vec::new();
+            for (hash, node, children) in &nodes {
+                let present = db.contains(txn, &Self::key(hash, NODE_TAG))?
+                    && db.contains(txn, &Self::key(hash, CHILDREN_TAG))?;
+                if !overwrite_existing && present {
+                    continue;
+                }
+                db.put(txn, &Self::key(hash, NODE_TAG), node.as_ref())?;
+                db.put(txn, &Self::key(hash, CHILDREN_TAG), children.as_ref())?;
+                written.push(*hash);
+            }
+            Ok(written)
+        })
+    }
+
     fn delete(&self, hash: &MerkleHash) -> Result<(), MerkleDbError> {
         self.write(|db, txn| {
             db.delete(txn, &Self::key(hash, NODE_TAG))?;
@@ -286,6 +311,91 @@ mod tests {
         assert_eq!(fs.read_children(&hash)?, lmdb.read_children(&hash)?);
         assert_eq!(fs.node_byte_sizes(&hash)?, lmdb.node_byte_sizes(&hash)?);
         assert_eq!(fs.list_hashes()?, lmdb.list_hashes()?);
+        Ok(())
+    }
+
+    /// `write_nodes` commits the whole batch in one transaction, returns exactly the hashes it newly
+    /// wrote, and skips nodes already present unless overwriting. This is the same batch contract the
+    /// filesystem backend satisfies, checked here over LMDB's single transaction path.
+    #[test]
+    fn lmdb_write_nodes_batches_and_respects_existing() -> Result<(), OxenError> {
+        use std::collections::HashSet;
+        let (_dir, store) = test_store();
+
+        let a = MerkleHash::new(0xa);
+        let b = MerkleHash::new(0xb);
+        let batch = vec![
+            (
+                a,
+                Bytes::from_static(b"node-a"),
+                Bytes::from_static(b"kids-a"),
+            ),
+            (b, Bytes::from_static(b"node-b"), Bytes::new()),
+        ];
+
+        // A fresh batch writes every node and reports both hashes.
+        let written: HashSet<_> = store
+            .write_nodes(batch.clone(), false)?
+            .into_iter()
+            .collect();
+        assert_eq!(written, HashSet::from([a, b]));
+        assert_eq!(store.read_node(&a)?, Bytes::from_static(b"node-a"));
+        assert!(store.read_children(&b)?.is_empty());
+
+        // Re-running without overwrite writes nothing.
+        assert!(store.write_nodes(batch.clone(), false)?.is_empty());
+
+        // Overwriting must change the stored blobs, so read all four back and confirm the new
+        // bytes. b's children started empty.
+        let replacement = vec![
+            (
+                a,
+                Bytes::from_static(b"node-a2"),
+                Bytes::from_static(b"kids-a2"),
+            ),
+            (
+                b,
+                Bytes::from_static(b"node-b2"),
+                Bytes::from_static(b"kids-b2"),
+            ),
+        ];
+        let rewritten: HashSet<_> = store.write_nodes(replacement, true)?.into_iter().collect();
+        assert_eq!(rewritten, HashSet::from([a, b]));
+        assert_eq!(store.read_node(&a)?, Bytes::from_static(b"node-a2"));
+        assert_eq!(store.read_children(&a)?, Bytes::from_static(b"kids-a2"));
+        assert_eq!(store.read_node(&b)?, Bytes::from_static(b"node-b2"));
+        assert_eq!(store.read_children(&b)?, Bytes::from_static(b"kids-b2"));
+        Ok(())
+    }
+
+    /// A record with its node key but no children key counts as absent, so `write_nodes` writes it
+    /// even when `overwrite_existing` is false. Only corruption produces that state, since
+    /// `write_node` writes both keys in one transaction. This test guards the presence check that
+    /// requires both keys.
+    #[test]
+    fn lmdb_write_nodes_rewrites_a_half_written_node() -> Result<(), OxenError> {
+        let (_dir, store) = test_store();
+        let hash = MerkleHash::new(0xc);
+
+        // Plant a broken record with the node key present and no children key.
+        store.write(|db, txn| -> Result<(), MerkleDbError> {
+            db.put(txn, &LmdbMerkleNodeStore::key(&hash, NODE_TAG), b"stale")?;
+            Ok(())
+        })?;
+        assert!(
+            !store.exists(&hash)?,
+            "a node missing its children key is not present"
+        );
+
+        // With overwrite off, `write_nodes` does not skip the broken record. It writes both blobs.
+        let batch = vec![(
+            hash,
+            Bytes::from_static(b"node-c"),
+            Bytes::from_static(b"kids-c"),
+        )];
+        assert_eq!(store.write_nodes(batch, false)?, vec![hash]);
+        assert_eq!(store.read_node(&hash)?, Bytes::from_static(b"node-c"));
+        assert_eq!(store.read_children(&hash)?, Bytes::from_static(b"kids-c"));
         Ok(())
     }
 }

@@ -202,7 +202,8 @@ impl PyRepo {
 
     fn list_branches(&self) -> Result<Vec<PyBranch>, PyOxenError> {
         let repo = LocalRepository::from_dir(&self.path)?;
-        let branches = repositories::branches::list(&repo)?;
+        let branches = pyo3_async_runtimes::tokio::get_runtime()
+            .block_on(async { repositories::branches::list(&repo).await })?;
         Ok(branches
             .iter()
             .map(|b| PyBranch::new(b.name.clone(), b.commit_id.clone()))

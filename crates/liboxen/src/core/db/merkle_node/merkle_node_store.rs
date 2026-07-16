@@ -107,6 +107,19 @@ pub(crate) trait MerkleNodeStore: Debug + Send + Sync {
         children: Bytes,
     ) -> Result<(), MerkleDbError>;
 
+    /// Persist many nodes at once and return the hashes actually written. With `overwrite_existing`
+    /// false, a node already present is left untouched and kept out of the returned set.
+    ///
+    /// Unpacking a commit's tree writes one node for every directory and vnode. A large repo has
+    /// tens of thousands of them, and writing them one at a time means tens of thousands of
+    /// separate trips to the store. Each backend implements batching: the filesystem backend writes
+    /// files in parallel across threads; the LMDB backend commits the batch in a single transaction.
+    fn write_nodes(
+        &self,
+        nodes: Vec<(MerkleHash, Bytes, Bytes)>,
+        overwrite_existing: bool,
+    ) -> Result<Vec<MerkleHash>, MerkleDbError>;
+
     /// Remove the node for `hash` (both blobs). Idempotent: deleting an absent node is `Ok`.
     fn delete(&self, hash: &MerkleHash) -> Result<(), MerkleDbError>;
 
