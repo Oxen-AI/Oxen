@@ -1,5 +1,5 @@
 //! Log backtraces on panic and fatal signals so CloudWatch captures the site of
-//! abrupt exits (SIGBUS, SIGSEGV, SIGABRT) that otherwise leave no application log.
+//! abrupt exits (SIGBUS, SIGABRT) that otherwise leave no application log.
 
 use std::backtrace::Backtrace;
 use std::io::{self, Write};
@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 #[cfg(unix)]
-use signal_hook::consts::signal::{SIGABRT, SIGBUS, SIGSEGV};
+use signal_hook::consts::signal::{SIGABRT, SIGBUS};
 
 static FATAL_SIGNAL_LOGGED: AtomicBool = AtomicBool::new(false);
 
@@ -29,8 +29,7 @@ fn install_panic_hook() {
 #[cfg(unix)]
 fn install_fatal_signal_handler() {
     thread::spawn(|| {
-        let Ok(mut signals) = signal_hook::iterator::Signals::new([SIGBUS, SIGSEGV, SIGABRT])
-        else {
+        let Ok(mut signals) = signal_hook::iterator::Signals::new([SIGBUS, SIGABRT]) else {
             return;
         };
 
@@ -46,7 +45,6 @@ fn install_fatal_signal_handler() {
 
             let name = match signal {
                 SIGBUS => "SIGBUS",
-                SIGSEGV => "SIGSEGV",
                 SIGABRT => "SIGABRT",
                 _ => "SIGNAL",
             };
