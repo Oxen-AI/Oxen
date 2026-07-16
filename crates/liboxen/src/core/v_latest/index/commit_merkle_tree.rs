@@ -596,7 +596,13 @@ impl CommitMerkleTree {
         commit: &Commit,
         path: impl AsRef<Path>,
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        // "." denotes the repo root, which is stored under the empty path.
         let node_path = path.as_ref();
+        let node_path = if node_path == Path::new(".") {
+            Path::new("")
+        } else {
+            node_path
+        };
         let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
         match dir_hashes.get(node_path).cloned() {
             Some(node_hash) => Ok(Some(MerkleTreeNode::from_hash(repo, &node_hash)?)),
