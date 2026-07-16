@@ -118,7 +118,9 @@ pub const VERSION_CHUNK_FILE_NAME: &str = "chunk";
 pub const VERSION_CHUNKS_DIR: &str = "chunks";
 /// merge/ is where any merge conflicts are stored so that we can get rid of them
 pub const MERGE_DIR: &str = "merge";
-/// mods/ is where we can stage appends, modifications, deletions to files to be merged later
+/// mods/ holds the per-data-frame DuckDB databases used to query and edit
+/// workspace data frames (path kept for on-disk compatibility with existing
+/// indexed workspaces).
 pub const MODS_DIR: &str = "mods";
 /// workspaces/ is where we can make remote changes without having to clone locally
 pub const WORKSPACES_DIR: &str = "workspaces";

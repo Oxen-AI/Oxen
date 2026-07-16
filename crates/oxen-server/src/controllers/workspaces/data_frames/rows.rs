@@ -74,7 +74,6 @@ pub async fn create(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
         status: StatusMessage::resource_found(),
         resource: None,
         row_id,
-        row_index: None,
     };
 
     Ok(HttpResponse::Ok().json(response))
@@ -121,7 +120,6 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
         status: StatusMessage::resource_found(),
         resource: None,
         row_id,
-        row_index: None,
     };
 
     Ok(HttpResponse::Ok().json(response))
@@ -188,7 +186,6 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
         status: StatusMessage::resource_updated(),
         resource: None,
         row_id,
-        row_index: None,
     }))
 }
 
@@ -230,7 +227,6 @@ pub async fn delete(req: HttpRequest, _bytes: Bytes) -> Result<HttpResponse, Oxe
         status: StatusMessage::resource_deleted(),
         resource: None,
         row_id: None,
-        row_index: None,
     }))
 }
 
@@ -277,20 +273,12 @@ pub async fn batch_update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse
 
     let mut responses = Vec::new();
 
-    for modified_row in modified_rows {
-        let response = match modified_row {
-            UpdateResult::Success(row_id, _data_frame) => BatchUpdateResponse {
-                row_id,
-                code: 200,
-                error: None,
-            },
-            UpdateResult::Error(row_id, error) => BatchUpdateResponse {
-                row_id,
-                code: 500,
-                error: Some(error.to_string()),
-            },
-        };
-        responses.push(response);
+    for UpdateResult(row_id) in modified_rows {
+        responses.push(BatchUpdateResponse {
+            row_id,
+            code: 200,
+            error: None,
+        });
     }
 
     Ok(HttpResponse::Ok().json(VecBatchUpdateResponse {

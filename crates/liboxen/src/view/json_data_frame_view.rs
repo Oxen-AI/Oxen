@@ -67,7 +67,6 @@ pub struct JsonDataFrameRowResponse {
     pub resource: Option<ResourceVersion>,
     pub derived_resource: Option<DerivedDFResource>,
     pub row_id: Option<String>,
-    pub row_index: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

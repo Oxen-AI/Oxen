@@ -9,7 +9,6 @@ use crate::constants::{MODS_DIR, OXEN_HIDDEN_DIR};
 use crate::constants::{OXEN_COLS, TABLE_NAME};
 use crate::core;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
-use crate::core::db::data_frames::workspace_df_db::select_cols_from_schema;
 use crate::core::db::data_frames::{DataFrameError, df_db};
 use crate::core::df::sql;
 use crate::error::OxenError;
@@ -25,12 +24,6 @@ pub mod columns;
 pub mod embeddings;
 pub mod rows;
 pub mod schemas;
-
-pub fn is_behind(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool, OxenError> {
-    let commit_path = previous_commit_ref_path(workspace, path);
-    let commit_id = util::fs::read_from_path(commit_path)?;
-    Ok(commit_id != workspace.commit.id)
-}
 
 pub fn is_indexed(workspace: &Workspace, path: &Path) -> Result<bool, DataFrameError> {
     log::debug!("checking dataset is indexed for {path:?}");
@@ -131,11 +124,6 @@ pub fn query(
 
     with_df_db_manager(&db_path, |manager| {
         manager.with_conn_mut(|conn| {
-            // Get the schema of this commit entry
-            let schema = df_db::get_schema(conn, TABLE_NAME)?;
-
-            let col_names = select_cols_from_schema(&schema);
-
             // Right now embeddings and sql are mutually exclusive
             let df = if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
                 log::debug!("querying embeddings: {embedding_opts:?}");
@@ -148,8 +136,7 @@ pub fn query(
                 log::debug!("querying sql: {sql:?}");
                 return sql::query_df(conn, sql.clone(), None);
             } else {
-                log::debug!("querying select cols: {col_names:?}");
-                let select = Select::new().select(&col_names).from(TABLE_NAME);
+                let select = Select::new().select("*").from(TABLE_NAME);
                 df_db::select(conn, &select, Some(opts))?
             };
 
@@ -388,17 +375,6 @@ pub fn duckdb_path(workspace: &Workspace, path: &Path) -> PathBuf {
         .join("duckdb")
         .join(path_hash)
         .join("db")
-}
-
-pub fn previous_commit_ref_path(workspace: &Workspace, path: impl AsRef<Path>) -> PathBuf {
-    let path_hash = util::hasher::hash_str(path.as_ref().to_string_lossy());
-    workspace
-        .dir()
-        .join(OXEN_HIDDEN_DIR)
-        .join(MODS_DIR)
-        .join("duckdb")
-        .join(path_hash)
-        .join("COMMIT_ID")
 }
 
 // Add this function after the existing imports
