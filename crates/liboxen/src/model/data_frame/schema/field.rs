@@ -10,6 +10,20 @@ pub struct Field {
     pub name: String,
     pub dtype: String,
     pub metadata: Option<Value>,
+    pub changes: Option<Changes>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+pub struct PreviousField {
+    pub name: String,
+    pub dtype: String,
+    pub metadata: Option<Value>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+pub struct Changes {
+    pub status: String,
+    pub previous: Option<PreviousField>,
 }
 
 impl PartialEq for Field {
@@ -24,6 +38,7 @@ impl Field {
             name: name.to_owned(),
             dtype: dtype.to_owned(),
             metadata: None,
+            changes: None,
         }
     }
 

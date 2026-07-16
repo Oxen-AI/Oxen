@@ -256,6 +256,7 @@ fn sync_workspace_columns_into_metadata(
                 name: table_field.name,
                 dtype: table_field.dtype,
                 metadata: carried.and_then(|f| f.metadata.clone()),
+                changes: None,
             }
         })
         .collect();
