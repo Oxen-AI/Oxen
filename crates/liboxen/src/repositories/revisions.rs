@@ -24,6 +24,17 @@ pub fn get(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<Option<C
     Ok(commit)
 }
 
+/// Get a commit object from a commit id or branch name, off the async worker.
+/// Returns Ok(None) if the revision does not exist
+pub async fn get_async(
+    repo: &LocalRepository,
+    revision: &str,
+) -> Result<Option<Commit>, OxenError> {
+    let repo = repo.clone();
+    let revision = revision.to_string();
+    tokio::task::spawn_blocking(move || get(&repo, &revision)).await?
+}
+
 /// Streams the raw bytes of `path` as it existed at `revision`.
 ///
 /// `revision` may be a branch name, a commit id, or `HEAD`. May make a network call to the
