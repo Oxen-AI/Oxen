@@ -1,6 +1,6 @@
 use crate::errors::OxenHttpError;
-use crate::helpers::get_repo;
-use crate::params::{PageNumVersionQuery, app_data, parse_resource, path_param};
+use crate::helpers::get_repo_async;
+use crate::params::{PageNumVersionQuery, app_data, parse_resource_async, path_param};
 
 use liboxen::opts::{PaginateOpts, SortOpts};
 use liboxen::perf_guard;
@@ -37,8 +37,8 @@ pub async fn get(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(app_data, &namespace, &repo_name)?;
-    let resource = parse_resource(&req, &repo)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
+    let resource = parse_resource_async(&req, &repo).await?;
 
     let page: usize = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size: usize = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);

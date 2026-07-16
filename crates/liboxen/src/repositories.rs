@@ -85,6 +85,23 @@ pub fn get_by_namespace_and_name(
         .map(Some)
 }
 
+/// Look up a repo by `<namespace>/<name>` under `sync_dir`, off the async worker.
+pub async fn get_by_namespace_and_name_async(
+    sync_dir: &Path,
+    namespace: &str,
+    name: &str,
+    server_s3_opts: Option<&S3Opts>,
+) -> Result<Option<LocalRepository>, OxenError> {
+    let sync_dir = sync_dir.to_path_buf();
+    let namespace = namespace.to_string();
+    let name = name.to_string();
+    let server_s3_opts = server_s3_opts.cloned();
+    tokio::task::spawn_blocking(move || {
+        get_by_namespace_and_name(&sync_dir, &namespace, &name, server_s3_opts.as_ref())
+    })
+    .await?
+}
+
 pub async fn is_empty(repo: &LocalRepository) -> Result<bool, OxenError> {
     let repo = repo.clone();
     tokio::task::spawn_blocking(move || with_ref_manager(&repo, |manager| manager.is_empty()))

@@ -33,6 +33,31 @@ pub fn get_repo(
     Ok(repo)
 }
 
+/// Look up a repo by `<namespace>/<name>` under the server's sync dir, off the async worker.
+pub async fn get_repo_async(
+    app_data: &OxenAppData,
+    namespace: &str,
+    name: &str,
+) -> Result<LocalRepository, OxenHttpError> {
+    let repo = repositories::get_by_namespace_and_name_async(
+        &app_data.path,
+        namespace,
+        name,
+        app_data.config.storage.s3(),
+    )
+    .await?;
+    let Some(repo) = repo else {
+        return Err(
+            OxenError::RepoNotFound(Box::new(RepoNew::from_namespace_name(
+                namespace, name, None,
+            )))
+            .into(),
+        );
+    };
+
+    Ok(repo)
+}
+
 // Helper function for user creation
 pub fn create_user_from_options(
     name: Option<String>,
