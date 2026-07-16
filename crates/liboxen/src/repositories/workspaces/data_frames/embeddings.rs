@@ -264,18 +264,25 @@ fn validate_where_clause_columns(schema: &Schema, query: &str) -> Result<(), Dat
     // aliases, so any other qualifier is itself an unknown name.
     let unknown = visit_expressions(&statements, |expr| {
         let name = match expr {
-            Expr::Identifier(ident) => Some(&ident.value),
+            Expr::Identifier(ident) => &ident.value,
             Expr::CompoundIdentifier(parts) => match parts.as_slice() {
-                [table, column] if table.value.eq_ignore_ascii_case(TABLE_NAME) => {
-                    Some(&column.value)
+                // Only `df.<column>` is a valid qualified reference here (the
+                // clause we embed has no other tables or aliases). Reject every
+                // other compound identifier outright — a real column name in the
+                // first segment must not mask a bad qualifier, e.g. `id.nope`.
+                [table, column] if table.value.eq_ignore_ascii_case(TABLE_NAME) => &column.value,
+                _ => {
+                    let joined = parts
+                        .iter()
+                        .map(|p| p.value.as_str())
+                        .collect::<Vec<_>>()
+                        .join(".");
+                    return ControlFlow::Break(joined);
                 }
-                _ => parts.first().map(|ident| &ident.value),
             },
-            _ => None,
+            _ => return ControlFlow::Continue(()),
         };
-        if let Some(name) = name
-            && !schema.has_column(name)
-        {
+        if !schema.has_column(name) {
             return ControlFlow::Break(name.clone());
         }
         ControlFlow::Continue(())
@@ -682,9 +689,17 @@ mod tests {
         let result = validate_where_clause_columns(&schema, "id = test");
         assert!(matches!(result, Err(DataFrameError::ColumnNameNotFound(name)) if name == "test"));
 
-        // A qualifier other than the staged table name is unknown.
+        // A qualifier other than the staged table name is rejected as a whole,
+        // even when its first segment is a real column (must not mask a bad
+        // qualifier).
         let result = validate_where_clause_columns(&schema, "other.id = 1");
-        assert!(matches!(result, Err(DataFrameError::ColumnNameNotFound(name)) if name == "other"));
+        assert!(
+            matches!(result, Err(DataFrameError::ColumnNameNotFound(name)) if name == "other.id")
+        );
+        let result = validate_where_clause_columns(&schema, "id.nope = 1");
+        assert!(
+            matches!(result, Err(DataFrameError::ColumnNameNotFound(name)) if name == "id.nope")
+        );
 
         // Qualified reference to a column the table does not have.
         let result = validate_where_clause_columns(&schema, "df.nope = 1");

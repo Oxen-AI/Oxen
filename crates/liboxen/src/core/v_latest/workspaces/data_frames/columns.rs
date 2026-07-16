@@ -2,8 +2,9 @@ use polars::frame::DataFrame;
 
 use crate::constants::TABLE_NAME;
 use crate::core::db::data_frames::DataFrameError;
+use crate::core::db::data_frames::columns;
+use crate::core::db::data_frames::df_db::{self, with_df_db_manager};
 use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
-use crate::core::db::data_frames::{columns, df_db::with_df_db_manager};
 use crate::core::staged::staged_db_manager::get_staged_db_manager;
 use crate::core::v_latest::workspaces;
 use crate::error::OxenError;
@@ -205,10 +206,13 @@ pub fn add_column_metadata(
     }
 }
 
-/// Append any column that exists in the workspace's staged DuckDB table but
-/// not yet in the file node's tabular metadata schema, so metadata can attach
-/// to a column that was added by a workspace edit (the committed schema does
-/// not know it yet). A data frame that isn't indexed is left untouched.
+/// Reconcile the file node's tabular metadata schema with the workspace's
+/// staged DuckDB table, so metadata reflects the edited state (columns a
+/// workspace edit added/removed/retyped) that the committed schema does not
+/// know yet. The staged table is authoritative: fields are rebuilt in its
+/// order with its dtypes, dropping columns no longer present and adding new
+/// ones, while any per-column metadata already attached is carried over by
+/// matching name. A data frame that isn't indexed is left untouched.
 fn sync_workspace_columns_into_metadata(
     workspace: &Workspace,
     path: &Path,
@@ -224,27 +228,35 @@ fn sync_workspace_columns_into_metadata(
         // Never indexed: nothing to sync.
         return Ok(());
     }
-    // A db without the staged table yields an empty schema (harmless no-op
-    // below), so any error here is a genuine failure and must propagate.
+    // Only reconcile when the staged table actually exists. A db file without
+    // it yields an empty schema, and rebuilding against that would wipe the
+    // committed metadata — so treat "no table" as a no-op, and let any real
+    // DB error propagate.
     let table_schema = with_df_db_manager(&db_path, |manager| {
-        manager.with_conn(|conn| schema_without_oxen_cols(conn, TABLE_NAME))
+        manager.with_conn(|conn| {
+            if !df_db::table_exists(conn, TABLE_NAME)? {
+                return Ok(None);
+            }
+            Ok(Some(schema_without_oxen_cols(conn, TABLE_NAME)?))
+        })
     })?;
+    let Some(table_schema) = table_schema else {
+        return Ok(());
+    };
 
-    for field in table_schema.fields {
-        let exists = metadata_tabular
-            .tabular
-            .schema
-            .fields
-            .iter()
-            .any(|f| f.name == field.name);
-        if !exists {
-            metadata_tabular.tabular.schema.fields.push(Field {
-                name: field.name,
-                dtype: field.dtype,
-                changes: None,
-                metadata: None,
-            });
-        }
-    }
+    let old_fields = std::mem::take(&mut metadata_tabular.tabular.schema.fields);
+    metadata_tabular.tabular.schema.fields = table_schema
+        .fields
+        .into_iter()
+        .map(|table_field| {
+            let carried = old_fields.iter().find(|f| f.name == table_field.name);
+            Field {
+                name: table_field.name,
+                dtype: table_field.dtype,
+                metadata: carried.and_then(|f| f.metadata.clone()),
+                changes: carried.and_then(|f| f.changes.clone()),
+            }
+        })
+        .collect();
     Ok(())
 }

@@ -1035,6 +1035,57 @@ mod tests {
         })
         .await
     }
+    /// add_column_metadata reconciles the staged metadata schema with the
+    /// workspace table: a column deleted by a workspace edit is dropped from
+    /// the schema (not left as a phantom), and the reconciled schema matches
+    /// the table's columns.
+    #[tokio::test]
+    async fn test_add_column_metadata_reconciles_deleted_column() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        use crate::view::data_frames::columns::ColumnToDelete;
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-reconcile")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            // Delete the `label` column via a workspace edit.
+            workspaces::data_frames::columns::delete(
+                &repo,
+                &workspace,
+                &file_path,
+                &ColumnToDelete {
+                    name: "label".to_string(),
+                },
+            )?;
+
+            // Attaching metadata to a still-present column reconciles the schema.
+            let results = workspaces::data_frames::columns::add_column_metadata(
+                &repo,
+                &workspace,
+                file_path.clone(),
+                "file".to_string(),
+                &json!({"root": "images"}),
+            )?;
+
+            let schema = results.values().next().expect("a schema was returned");
+            let names: Vec<&str> = schema.fields.iter().map(|f| f.name.as_str()).collect();
+            assert!(
+                !names.contains(&"label"),
+                "deleted column should be gone: {names:?}"
+            );
+            assert!(names.contains(&"file"));
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_commit_tabular_append_invalid_column() -> Result<(), OxenError> {
         // Skip if on windows
