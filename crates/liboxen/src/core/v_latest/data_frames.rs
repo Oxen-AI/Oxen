@@ -155,7 +155,10 @@ async fn handle_sql_querying(
 
     if let (Some(sql), Some(workspace)) = (opts.sql.clone(), workspace) {
         let db_path = repositories::workspaces::data_frames::duckdb_path(&workspace, path);
-        let df = with_hardened_query_conn(&db_path, |conn| sql::query_df(conn, sql, None))?;
+        let df = tokio::task::spawn_blocking(move || {
+            with_hardened_query_conn(&db_path, |conn| sql::query_df(conn, sql, None))
+        })
+        .await??;
         log::debug!("handle_sql_querying got df {df:?}");
         let paginated_df = tabular::collect_with_opts(df.clone().lazy(), opts.clone()).await?;
 
