@@ -187,14 +187,16 @@ impl JsonDataFrameView {
         // Unpaginated means we don't need to slice the df
         let mut opts = opts.clone();
         opts.slice = None;
-        // Sorting was likewise already applied upstream (DuckDB's ORDER BY for
-        // indexed workspace frames, the read-time transform otherwise) and may
-        // name SQL-only pseudo-columns like `rowid` that don't exist in the
-        // materialized frame — re-sorting here would panic on them.
-        opts.sort_by = None;
 
+        // Keep the requested sort visible in the response metadata, but do not
+        // re-apply it here: sorting was already applied upstream (DuckDB's
+        // ORDER BY for indexed workspace frames, the read-time transform
+        // otherwise) and may name SQL-only pseudo-columns like `rowid` that
+        // don't exist in the materialized frame — re-sorting would panic.
         let opts_view = DFOptsView::from_df_opts(&opts);
-        let mut sliced_df = tabular::transform(df, opts.clone()).await.unwrap();
+        let mut transform_opts = opts.clone();
+        transform_opts.sort_by = None;
+        let mut sliced_df = tabular::transform(df, transform_opts).await.unwrap();
 
         // Merge the metadata from the original schema
         let mut slice_schema = Schema::from_polars(sliced_df.schema());

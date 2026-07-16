@@ -416,8 +416,8 @@ class DataFrame:
 
     def restore(self):
         """
-        Discard all staged edits to the data frame by re-indexing it from
-        the committed version
+        Discard all uncommitted edits to the data frame by re-indexing it
+        from the committed version
         """
         self.data_frame.restore()
 
