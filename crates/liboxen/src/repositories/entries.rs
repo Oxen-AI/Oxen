@@ -1209,6 +1209,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_directory_preserves_aggregates_without_children() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            let commits = repositories::commits::list(&repo)?;
+            let commit = commits.first().unwrap();
+            let path = Path::new("annotations").join("train");
+
+            // get_directory reads only the directory node.
+            let dir_node = repositories::entries::get_directory(&repo, commit, &path)?
+                .expect("directory should exist");
+
+            // A full-depth read of the same directory must report identical aggregates, since
+            // num_bytes and data_type_counts are stored on the directory node itself.
+            let full = repositories::tree::get_node_by_path(&repo, commit, &path)?
+                .expect("directory node should exist")
+                .dir()?;
+
+            assert_eq!(dir_node.num_bytes(), full.num_bytes());
+            assert_eq!(dir_node.data_type_counts(), full.data_type_counts());
+            assert!(dir_node.num_bytes() > 0);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_get_meta_entry_async_matches_sync() -> Result<(), OxenError> {
         test::run_training_data_repo_test_fully_committed_async(|repo| async move {
             let commits = repositories::commits::list(&repo)?;

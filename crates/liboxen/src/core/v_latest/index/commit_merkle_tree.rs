@@ -586,6 +586,24 @@ impl CommitMerkleTree {
         }
     }
 
+    /// Read the directory node at `path` for `commit` without loading any children.
+    ///
+    /// The node's own fields — including the precomputed `num_bytes` and `data_type_counts`
+    /// aggregates — are populated; none of its VNodes or entries are read. Returns `Ok(None)`
+    /// when `path` is not a directory in the commit.
+    pub fn dir_node_only(
+        repo: &LocalRepository,
+        commit: &Commit,
+        path: impl AsRef<Path>,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        let node_path = path.as_ref();
+        let dir_hashes = CommitMerkleTree::dir_hashes(repo, commit)?;
+        match dir_hashes.get(node_path).cloned() {
+            Some(node_hash) => Ok(Some(MerkleTreeNode::from_hash(repo, &node_hash)?)),
+            None => Ok(None),
+        }
+    }
+
     pub fn dir_with_children(
         repo: &LocalRepository,
         commit: &Commit,
