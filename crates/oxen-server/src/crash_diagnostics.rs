@@ -31,12 +31,11 @@ fn install_panic_hook() {
 }
 
 #[cfg(unix)]
-fn install_fatal_signal_handler() {
-    thread::spawn(|| {
-        let Ok(mut signals) = signal_hook::iterator::Signals::new([SIGBUS, SIGABRT]) else {
-            return;
-        };
+fn install_fatal_signal_handler() -> Result<(), String> {
+    let mut signals = signal_hook::iterator::Signals::new([SIGBUS, SIGABRT])
+        .map_err(|e| format!("failed to register fatal signal handlers: {e}"))?;
 
+    thread::spawn(move || {
         for signal in signals.forever() {
             if FATAL_SIGNAL_LOGGED
                 .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -62,12 +61,16 @@ fn install_fatal_signal_handler() {
             }
         }
     });
+
+    Ok(())
 }
 
 #[cfg(not(unix))]
-fn install_fatal_signal_handler() {}
+fn install_fatal_signal_handler() -> Result<(), String> {
+    Ok(())
+}
 
-pub fn install() {
+pub fn install() -> Result<(), String> {
     install_panic_hook();
-    install_fatal_signal_handler();
+    install_fatal_signal_handler()
 }

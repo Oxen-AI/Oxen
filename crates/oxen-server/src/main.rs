@@ -384,7 +384,7 @@ enum ServerCommand {
 
 #[actix_web::main]
 async fn main() {
-    crash_diagnostics::install();
+    crash_diagnostics::install().expect("failed to install crash diagnostics");
 
     // fail-fast if we cannot initialize logging
     let _tracing_guard = util::telemetry::init_tracing("oxen-server", LevelFilter::WARN)
