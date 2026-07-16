@@ -1,10 +1,8 @@
 [target.x86_64-pc-windows-msvc]
 linker = "rust-lld.exe"
 
-# Do NOT pass `-Wl,-no_compact_unwind` on aarch64-apple-darwin (it used to live
-# here to silence compact-unwind linker warnings). On arm64 Mach-O the C++
-# objects in our bundled native deps (DuckDB, RocksDB) carry their unwind info
-# as compact unwind; stripping it leaves C++ exceptions with no reachable
-# handler, so every internal DuckDB error (bad SQL bind, WAL replay failure)
-# calls std::terminate and SIGABRTs the whole process instead of surfacing as
-# a duckdb::Error.
+# Do NOT add `-Wl,-no_compact_unwind` for aarch64-apple-darwin here (it once
+# was, to silence a linker warning). It breaks C++ exception unwinding in the
+# bundled DuckDB, so any DuckDB error crashed oxen-server on Apple Silicon:
+# `libc++abi: terminating due to uncaught exception of type duckdb::...` +
+# SIGABRT, e.g. on bad SQL or replaying a workspace data frame's WAL.

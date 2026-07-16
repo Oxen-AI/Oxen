@@ -24,6 +24,14 @@ rust-version = "1.94"
 [workspace.lints.clippy]
 disallowed-methods = "deny"
 
+[workspace.lints.rust]
+# Allows the expected macOS "__eh_frame section too large" note from the
+# bundled DuckDB/RocksDB (slower unwind lookups; harmless). Never silence it
+# with -Wl,-no_compact_unwind instead — that turned every DuckDB error into a
+# `libc++abi: terminating due to uncaught exception` SIGABRT of the whole
+# server (see .cargo/config.toml).
+linker_messages = "allow"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [workspace.dependencies]
