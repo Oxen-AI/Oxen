@@ -69,19 +69,25 @@ pub const STATS_DIR: &str = "stats";
 pub const STAGED_DIR: &str = "staged";
 /// Name of the table in the duckdb db used for remote staging
 pub const TABLE_NAME: &str = "df";
-/// Oxen's internal row id column in duckdb remote staging tables
-pub const OXEN_COLS: [&str; 4] = [OXEN_ID_COL, DIFF_STATUS_COL, OXEN_ROW_ID_COL, DIFF_HASH_COL];
-/// Oxen's internal row id column to exclude from dfs
-pub const EXCLUDE_OXEN_COLS: [&str; 7] = [
+/// Oxen's internal columns in duckdb remote staging tables
+pub const OXEN_COLS: [&str; 1] = [OXEN_ID_COL];
+/// Columns written by older versions' change tracking. Clients in the field
+/// still round-trip these keys in row-update payloads, so the edit paths
+/// strip them like they always did.
+pub const LEGACY_OXEN_COLS: [&str; 3] = [DIFF_STATUS_COL, "_oxen_row_id", "_oxen_diff_hash"];
+/// Marker table written by the indexer alongside [`TABLE_NAME`]. Its presence
+/// is the provenance signal that the staged table was produced by the current
+/// indexer — a db without it (written by an older version, which tracked
+/// changes in extra columns, or left by an interrupted index) must be
+/// rebuilt. A table, unlike a column, can never collide with user data.
+pub const INDEX_META_TABLE: &str = "_oxen_index_meta";
+/// Oxen's internal columns to exclude from dfs
+pub const EXCLUDE_OXEN_COLS: [&str; 4] = [
     OXEN_ID_COL,
-    DIFF_STATUS_COL,
-    OXEN_ROW_ID_COL,
-    DIFF_HASH_COL,
     EVAL_STATUS_COL,
     EVAL_ERROR_COL,
     EVAL_DURATION_COL,
 ];
-pub const OXEN_ROW_ID_COL: &str = "_oxen_row_id";
 /// Oxen's internal id column in duckdb remote staging tables
 pub const OXEN_ID_COL: &str = "_oxen_id";
 /// Name of the folder of the cache dir in which dfs are indexed as duckdbs
@@ -112,7 +118,9 @@ pub const VERSION_CHUNK_FILE_NAME: &str = "chunk";
 pub const VERSION_CHUNKS_DIR: &str = "chunks";
 /// merge/ is where any merge conflicts are stored so that we can get rid of them
 pub const MERGE_DIR: &str = "merge";
-/// mods/ is where we can stage appends, modifications, deletions to files to be merged later
+/// mods/ holds the per-data-frame DuckDB databases used to query and edit
+/// workspace data frames (path kept for on-disk compatibility with existing
+/// indexed workspaces).
 pub const MODS_DIR: &str = "mods";
 /// workspaces/ is where we can make remote changes without having to clone locally
 pub const WORKSPACES_DIR: &str = "workspaces";
@@ -160,8 +168,6 @@ pub const TARGETS_HASH_COL: &str = "_targets_hash";
 pub const KEYS_HASH_COL: &str = "_keys_hash";
 // Internal Name When Performing Computation
 pub const DIFF_STATUS_COL: &str = "_oxen_diff_status";
-// Internal Name When Performing Computation
-pub const DIFF_HASH_COL: &str = "_oxen_diff_hash";
 
 /// Internal Name For Evaluations Status
 pub const EVAL_STATUS_COL: &str = "_oxen_eval_status";

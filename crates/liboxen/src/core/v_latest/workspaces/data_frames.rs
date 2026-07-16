@@ -1,24 +1,21 @@
 use duckdb::Connection;
 
-use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL, EXCLUDE_OXEN_COLS, TABLE_NAME};
+use crate::constants::{EXCLUDE_OXEN_COLS, TABLE_NAME};
 use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::df_db;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::staged::get_staged_db_manager;
 use crate::core::v_latest::workspaces::files::{add, track_modified_data_frame};
 use parking_lot::Mutex;
-use sql_query_builder::Delete;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode};
-use crate::model::staged_row_status::StagedRowStatus;
 use crate::model::{
     Commit, EntryDataType, LocalRepository, MerkleHash, StagedEntryStatus, Workspace,
 };
 use crate::repositories;
-use crate::util::fs::AtomicFile;
 use crate::{error::OxenError, util};
 use std::path::{Path, PathBuf};
 
@@ -191,15 +188,14 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
                     df_db::drop_table(conn, TABLE_NAME)?;
                 }
 
-                // A workspace data frame is only queryable once every OXEN_COLS
-                // tracking column is present, so build the table inside a
+                // A workspace data frame is only queryable once the hidden
+                // `_oxen_id` column is present, so build the table inside a
                 // transaction and publish it only on success. On any failure, roll
-                // back (and drop defensively) so the read path never sees a table
-                // that is missing tracking columns.
+                // back (and drop defensively) so the read path never sees a
+                // half-built table.
                 conn.execute_batch("BEGIN TRANSACTION")?;
                 let build = (|| -> Result<(), DataFrameError> {
                     df_db::index_file_with_id(&version_path, conn, &extension)?;
-                    add_row_status_cols(conn)?;
                     Ok(())
                 })();
                 match build {
@@ -219,11 +215,6 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     .await??;
 
     log::debug!("core::v_latest::index::workspaces::data_frames::index({path:?}) finished!");
-
-    // Save the current commit id so we know if the branch has advanced
-    let commit_path =
-        repositories::workspaces::data_frames::previous_commit_ref_path(workspace, path);
-    AtomicFile::new(&commit_path).write(commit.id.as_bytes())?;
 
     Ok(())
 }
@@ -344,21 +335,6 @@ pub async fn rename(
     Ok(relative_path)
 }
 
-fn add_row_status_cols(conn: &Connection) -> Result<(), duckdb::Error> {
-    let query_status = format!(
-        "ALTER TABLE \"{}\" ADD COLUMN \"{}\" VARCHAR DEFAULT '{}'",
-        TABLE_NAME,
-        DIFF_STATUS_COL,
-        StagedRowStatus::Unchanged
-    );
-    conn.execute(&query_status, [])?;
-
-    let query_hash =
-        format!("ALTER TABLE \"{TABLE_NAME}\" ADD COLUMN \"{DIFF_HASH_COL}\" VARCHAR DEFAULT NULL");
-    conn.execute(&query_hash, [])?;
-    Ok(())
-}
-
 pub fn extract_file_node_to_working_dir(
     workspace: &Workspace,
     dir_path: &Path,
@@ -398,14 +374,6 @@ pub fn extract_file_node_to_working_dir(
 
     with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
-            let delete = Delete::new().delete_from(TABLE_NAME).where_clause(&format!(
-                "\"{}\" = '{}'",
-                DIFF_STATUS_COL,
-                StagedRowStatus::Removed
-            ));
-            let res = conn.execute(&delete.to_string(), [])?;
-            log::debug!("delete query result is: {res:?}");
-
             let projection = build_export_projection(conn, TABLE_NAME)?;
             let sql = format!("SELECT {projection} FROM '{TABLE_NAME}'");
             let query = wrap_sql_for_export(&sql, &export_path);
@@ -570,9 +538,9 @@ mod tests {
                        \"count\" BIGINT, \
                        \"tags\" JSON[], \
                        \"{oxen_id}\" VARCHAR, \
-                       \"{DIFF_STATUS_COL}\" VARCHAR, \
-                       \"{DIFF_HASH_COL}\" VARCHAR)",
+                       \"{eval_status}\" VARCHAR)",
                     oxen_id = crate::constants::OXEN_ID_COL,
+                    eval_status = crate::constants::EVAL_STATUS_COL,
                 ),
                 [],
             )?;
@@ -592,8 +560,7 @@ mod tests {
             assert!(projection.contains("to_json"));
             // Oxen-internal columns are dropped, never emitted.
             assert!(!projection.contains(crate::constants::OXEN_ID_COL));
-            assert!(!projection.contains(DIFF_STATUS_COL));
-            assert!(!projection.contains(DIFF_HASH_COL));
+            assert!(!projection.contains(crate::constants::EVAL_STATUS_COL));
             Ok(())
         })
     }

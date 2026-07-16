@@ -151,10 +151,12 @@ pub fn add_column_metadata(
             file_node
         };
 
+        // Sync the workspace columns into the metadata before staging anything,
+        // so a failure here leaves no partially-staged parent nodes behind.
+        sync_workspace_columns_into_metadata(workspace, &path, file_node.get_mut_metadata())?;
+
         // Stage parent nodes
         staged_db_manager.upsert_staged_nodes(&staged_nodes)?;
-
-        sync_workspace_columns_into_metadata(workspace, &path, file_node.get_mut_metadata())?;
 
         // Update the column metadata
         let mut results = HashMap::new();
@@ -254,7 +256,6 @@ fn sync_workspace_columns_into_metadata(
                 name: table_field.name,
                 dtype: table_field.dtype,
                 metadata: carried.and_then(|f| f.metadata.clone()),
-                changes: carried.and_then(|f| f.changes.clone()),
             }
         })
         .collect();

@@ -2,7 +2,7 @@
 //!
 
 use crate::constants::{
-    DEFAULT_PAGE_SIZE, DUCKDB_DF_TABLE_NAME, OXEN_COLS, OXEN_ID_COL, OXEN_ROW_ID_COL, TABLE_NAME,
+    DEFAULT_PAGE_SIZE, DUCKDB_DF_TABLE_NAME, INDEX_META_TABLE, OXEN_COLS, OXEN_ID_COL, TABLE_NAME,
 };
 
 use crate::core::db::data_frames::{DataFrameError, rows};
@@ -332,6 +332,15 @@ pub fn table_is_fully_indexed(
     if !table_exists(conn, table_name)? {
         return Ok(false);
     }
+    // The marker table is written last by index_file_with_id, so its absence
+    // means the table was left by an older version (which may hold rows
+    // tombstoned as 'removed' by the old delete flow) or by an interrupted
+    // index. Report it as not indexed so callers rebuild it. Checking a
+    // separate table rather than column names means user data that happens to
+    // contain a column like _oxen_diff_status can never be misread as stale.
+    if !table_exists(conn, INDEX_META_TABLE)? {
+        return Ok(false);
+    }
     let schema = get_schema(conn, table_name)?;
     Ok(OXEN_COLS
         .iter()
@@ -620,9 +629,20 @@ pub fn select_str(
 }
 
 pub fn select_raw(conn: &duckdb::Connection, stmt: &str) -> Result<DataFrame, DataFrameError> {
+    select_raw_with_params(conn, stmt, [])
+}
+
+/// Like [`select_raw`] but binds `params` into the prepared statement. Use this
+/// (rather than interpolating) whenever a value in the predicate comes from a
+/// request, so a value containing a quote can't alter the query.
+pub fn select_raw_with_params<P: duckdb::Params>(
+    conn: &duckdb::Connection,
+    stmt: &str,
+    params: P,
+) -> Result<DataFrame, DataFrameError> {
     let records: Vec<RecordBatch> = {
         let mut stmt = conn.prepare(stmt)?;
-        stmt.query_arrow([])?.collect()
+        stmt.query_arrow(params)?.collect()
     };
 
     if records.is_empty() {
@@ -657,16 +677,18 @@ pub fn modify_row_with_polars_df(
         .collect::<Vec<String>>()
         .join(", ");
 
-    let where_clause = format!("\"{OXEN_ID_COL}\" = '{id}'");
-
-    let sql = format!("UPDATE {table_name} SET {set_clauses} WHERE {where_clause} RETURNING *");
+    // The id is bound, not interpolated: a request-supplied id containing a
+    // quote must not be able to alter the predicate.
+    let sql =
+        format!("UPDATE {table_name} SET {set_clauses} WHERE \"{OXEN_ID_COL}\" = ? RETURNING *");
 
     let values = df.get(0).unwrap(); // Checked above
 
-    let boxed_values: Vec<Box<dyn ToSql>> = values
+    let mut boxed_values: Vec<Box<dyn ToSql>> = values
         .iter()
         .map(|v| tabular::value_to_tosql(v.to_owned()))
         .collect();
+    boxed_values.push(Box::new(id.to_string()));
 
     let params: Vec<&dyn ToSql> = boxed_values
         .iter()
@@ -715,13 +737,13 @@ pub fn modify_rows_with_polars_df(
                 let series = df.column(col_name)?;
                 let value = series.get(0)?;
 
-                let boxed_value: Box<dyn ToSql> = Box::new(tabular::value_to_tosql(value));
-
-                case_clauses.push(format!(
-                    "WHEN \"{OXEN_ID_COL}\" = '{id}' THEN {placeholder}"
-                ));
-
-                all_params.push(boxed_value);
+                // Bind the id as well as the value: an id from a request must
+                // not be interpolated into the predicate. row_map.iter() yields
+                // a stable order across columns (the map is not mutated), so the
+                // (id, value) params line up with the placeholders positionally.
+                case_clauses.push(format!("WHEN \"{OXEN_ID_COL}\" = ? THEN {placeholder}"));
+                all_params.push(Box::new(id.clone()));
+                all_params.push(Box::new(tabular::value_to_tosql(value)));
             }
             set_clauses.push(format!(
                 "\"{}\" = CASE {} END",
@@ -806,13 +828,6 @@ pub fn index_file_with_id(
 ) -> Result<(), DataFrameError> {
     log::debug!("df_db:index_file() at path {path:?} into path {conn:?}");
     let path_str = path.to_string_lossy().to_string();
-    let counter = "counter";
-    // Drop sequence if exists
-    let drop_sequence_query = format!("DROP SEQUENCE IF EXISTS {counter}");
-    conn.execute(&drop_sequence_query, [])?;
-
-    let add_row_id_sequence_query = format!("CREATE SEQUENCE {counter} START 1");
-    conn.execute(&add_row_id_sequence_query, [])?;
 
     match extension {
         "csv" => {
@@ -904,10 +919,13 @@ pub fn index_file_with_id(
 
     conn.execute(&add_default_query, [])?;
 
-    let add_row_id_query = format!(
-        "ALTER TABLE {DUCKDB_DF_TABLE_NAME} ADD COLUMN {OXEN_ROW_ID_COL} INTEGER DEFAULT nextval('{counter}');"
+    // Written last: its presence certifies the table above was fully built by
+    // the current indexer (see table_is_fully_indexed).
+    let meta_query = format!(
+        "CREATE OR REPLACE TABLE \"{INDEX_META_TABLE}\" (schema_version INTEGER); \
+         INSERT INTO \"{INDEX_META_TABLE}\" VALUES (1);"
     );
-    conn.execute(&add_row_id_query, [])?;
+    conn.execute_batch(&meta_query)?;
 
     Ok(())
 }
@@ -1004,7 +1022,7 @@ mod tests {
                     "CREATE TABLE {TABLE_NAME} (
                         color VARCHAR,
                         {OXEN_ID_COL} VARCHAR DEFAULT (uuid()::VARCHAR),
-                        {OXEN_ROW_ID_COL} INTEGER
+                        num INTEGER
                     )"
                 ),
                 [],
@@ -1012,7 +1030,7 @@ mod tests {
 
             // Insert rows with duplicate 'color' values
             conn.execute(
-                &format!("INSERT INTO {TABLE_NAME} (color, {OXEN_ROW_ID_COL}) VALUES ('red', 1), ('red', 2), ('blue', 3)"),
+                &format!("INSERT INTO {TABLE_NAME} (color, num) VALUES ('red', 1), ('red', 2), ('blue', 3)"),
                 [],
             )?;
 
@@ -1336,9 +1354,7 @@ mod tests {
     /// VARCHAR[] at index time. This test goes through that path end-to-end.
     #[test]
     fn test_rows_modify_row_round_trip_preserves_json_array_strings() -> Result<(), OxenError> {
-        use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL};
         use crate::core::db::data_frames::rows;
-        use crate::model::staged_row_status::StagedRowStatus;
 
         test::run_empty_dir_test(|data_dir| {
             let jsonl_path = data_dir.join("data.jsonl");
@@ -1357,30 +1373,6 @@ mod tests {
             // what the workspace controller calls and is where the column
             // type gets locked in.
             index_file_with_id(&jsonl_path, &conn, "jsonl")?;
-
-            // `rows::modify_row` requires the diff-status bookkeeping columns
-            // and a non-null status value. The full server flow adds these via
-            // `add_row_status_cols` after indexing — replicate inline so this
-            // test stays scoped to the type-coercion bug.
-            conn.execute(
-                &format!(
-                    "ALTER TABLE {TABLE_NAME} ADD COLUMN {DIFF_STATUS_COL} VARCHAR DEFAULT '{}'",
-                    StagedRowStatus::Unchanged
-                ),
-                [],
-            )?;
-            conn.execute(
-                &format!("ALTER TABLE {TABLE_NAME} ADD COLUMN {DIFF_HASH_COL} VARCHAR DEFAULT '0'"),
-                [],
-            )?;
-            conn.execute(
-                &format!(
-                    "UPDATE {TABLE_NAME} \
-                       SET {DIFF_STATUS_COL} = '{}', {DIFF_HASH_COL} = '0'",
-                    StagedRowStatus::Unchanged
-                ),
-                [],
-            )?;
 
             // Grab the auto-assigned _oxen_id for row 'a'.
             let row_id: String = conn.query_row(
@@ -1468,8 +1460,7 @@ mod tests {
     /// exception and aborts the whole process instead of returning an error.
     #[test]
     fn test_modify_rows_with_list_column_binds_cleanly() -> Result<(), OxenError> {
-        use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL, OXEN_ID_COL};
-        use crate::model::staged_row_status::StagedRowStatus;
+        use crate::constants::OXEN_ID_COL;
         use polars::prelude::NamedFrom;
         use polars::series::Series;
         use std::collections::HashMap;
@@ -1487,19 +1478,6 @@ mod tests {
             let db_file = data_dir.join("data.db");
             let conn = get_connection(&db_file)?;
             index_file_with_id(&jsonl_path, &conn, "jsonl")?;
-            conn.execute(
-                &format!(
-                    "ALTER TABLE {TABLE_NAME} ADD COLUMN {DIFF_STATUS_COL} VARCHAR DEFAULT '{}'",
-                    StagedRowStatus::Unchanged
-                ),
-                [],
-            )?;
-            conn.execute(
-                &format!(
-                    "ALTER TABLE {TABLE_NAME} ADD COLUMN {DIFF_HASH_COL} VARCHAR DEFAULT NULL"
-                ),
-                [],
-            )?;
 
             // Build the row_map the way the batch-update flow does: the full
             // row selected from the table, with the changed column replaced.

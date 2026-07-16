@@ -119,7 +119,7 @@ pub fn batch_update(
 
     let results: Vec<UpdateResult> = keys
         .iter()
-        .map(|key| UpdateResult::Success(key.to_owned(), None))
+        .map(|key| UpdateResult(key.to_owned()))
         .collect();
 
     Ok(results)
