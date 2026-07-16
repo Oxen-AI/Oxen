@@ -118,7 +118,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
         }));
     }
 
-    let branch_count = repositories::branches::list(&repository)?.len();
+    let branch_count = repositories::branches::list(&repository).await?.len();
 
     // Return the repository view
     Ok(HttpResponse::Ok().json(RepositoryDataTypesResponse {
@@ -129,7 +129,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
                 namespace,
                 name,
                 min_version: Some(repository.min_version().to_string()),
-                is_empty: repositories::is_empty(&repository)?,
+                is_empty: repositories::is_empty(&repository).await?,
                 storage_kind: repository.storage_config().kind,
             },
             size,
@@ -568,7 +568,7 @@ pub async fn transfer_namespace(
             namespace: to_namespace,
             name,
             min_version: Some(repo.min_version().to_string()),
-            is_empty: repositories::is_empty(&repo)?,
+            is_empty: repositories::is_empty(&repo).await?,
             storage_kind: repo.storage_config().kind,
         },
     }))

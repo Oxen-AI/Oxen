@@ -14,8 +14,10 @@ use crate::repositories;
 use crate::{core, util};
 
 /// List all the local branches within a repo
-pub fn list(repo: &LocalRepository) -> Result<Vec<Branch>, OxenError> {
-    with_ref_manager(repo, |manager| manager.list_branches())
+pub async fn list(repo: &LocalRepository) -> Result<Vec<Branch>, OxenError> {
+    let repo = repo.clone();
+    tokio::task::spawn_blocking(move || with_ref_manager(&repo, |manager| manager.list_branches()))
+        .await?
 }
 
 /// List all the local branches within a repo along with their head commits
@@ -542,7 +544,7 @@ mod tests {
     async fn test_local_delete_branch() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|repo| async move {
             // Get the original branches
-            let og_branches = repositories::branches::list(&repo)?;
+            let og_branches = repositories::branches::list(&repo).await?;
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             let branch_name = "my-branch";
@@ -555,7 +557,7 @@ mod tests {
             repositories::branches::delete(&repo, branch_name)?;
 
             // Should be same num as og_branches
-            let leftover_branches = repositories::branches::list(&repo)?;
+            let leftover_branches = repositories::branches::list(&repo).await?;
             assert_eq!(og_branches.len(), leftover_branches.len());
 
             Ok(())

@@ -130,7 +130,7 @@ pub async fn history(
         page_size: query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE),
     };
 
-    if repositories::is_empty(&repo)? {
+    if repositories::is_empty(&repo).await? {
         return Ok(HttpResponse::Ok().json(PaginatedCommits::success(
             vec![],
             Pagination::empty(pagination),

@@ -102,11 +102,10 @@ pub async fn get_by_namespace_and_name_async(
     .await?
 }
 
-pub fn is_empty(repo: &LocalRepository) -> Result<bool, OxenError> {
-    match branches::list(repo) {
-        Ok(branches) => Ok(branches.is_empty()),
-        Err(err) => Err(err),
-    }
+pub async fn is_empty(repo: &LocalRepository) -> Result<bool, OxenError> {
+    let repo = repo.clone();
+    tokio::task::spawn_blocking(move || with_ref_manager(&repo, |manager| manager.is_empty()))
+        .await?
 }
 
 pub fn list_namespaces(sync_dir: &Path) -> Result<Vec<String>, OxenError> {

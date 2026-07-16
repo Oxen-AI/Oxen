@@ -1335,7 +1335,7 @@ A: Oxen.ai
         test::run_empty_data_repo_test_no_commits_async(|repo| async move {
             // Verify repo is empty (no commits)
             assert!(head_commit_maybe(&repo)?.is_none());
-            assert!(repositories::branches::list(&repo)?.is_empty());
+            assert!(repositories::branches::list(&repo).await?.is_empty());
 
             // Create initial commit
             let user = crate::model::User {
@@ -1356,7 +1356,7 @@ A: Oxen.ai
             assert_eq!(head.unwrap().id, commit.id);
 
             // Verify branch was created
-            let branches = repositories::branches::list(&repo)?;
+            let branches = repositories::branches::list(&repo).await?;
             assert_eq!(branches.len(), 1);
             assert_eq!(branches[0].name, "main");
             assert_eq!(branches[0].commit_id, commit.id);
@@ -1402,7 +1402,7 @@ A: Oxen.ai
             let commit = create_initial_commit(&repo, "develop", &user, "Initial commit")?;
 
             // Verify branch was created with custom name
-            let branches = repositories::branches::list(&repo)?;
+            let branches = repositories::branches::list(&repo).await?;
             assert_eq!(branches.len(), 1);
             assert_eq!(branches[0].name, "develop");
             assert_eq!(branches[0].commit_id, commit.id);
