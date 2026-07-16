@@ -1386,6 +1386,57 @@ mod tests {
         .await
     }
 
+    /// A metadata-only workspace edit (add_column_metadata, no row changes)
+    /// must survive commit: the no-op-export skip compares against the BASE
+    /// commit's file node, so the metadata change — which the staged node
+    /// already carries — is not mistaken for an unchanged file and dropped.
+    #[tokio::test]
+    async fn test_commit_keeps_metadata_only_edit() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch_name = "test-metadata-only";
+            let branch = repositories::branches::create_checkout(&repo, branch_name)?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            // Attach column metadata only — no row/content changes.
+            workspaces::data_frames::columns::add_column_metadata(
+                &repo,
+                &workspace,
+                file_path.clone(),
+                "file".to_string(),
+                &json!({"_oxen": {"render": {"func": "image"}}}),
+            )?;
+
+            let new_commit = NewCommitBody {
+                author: "author".to_string(),
+                email: "email".to_string(),
+                message: "Metadata-only edit".to_string(),
+            };
+            let committed = workspaces::commit(&workspace, &new_commit, branch_name).await?;
+
+            // The metadata edit must be present in the committed file node's
+            // tabular schema — it must not have been skipped as a no-op.
+            let file_node = repositories::tree::get_file_by_path(&repo, &committed, &file_path)?
+                .expect("committed file node should exist");
+            let has_metadata = matches!(
+                file_node.metadata(),
+                Some(crate::model::metadata::generic_metadata::GenericMetadata::MetadataTabular(m))
+                    if m.tabular.schema.fields.iter().any(|f| f.name == "file" && f.metadata.is_some())
+            );
+            assert!(has_metadata, "metadata-only edit must survive commit");
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_commit_tabular_append_invalid_column() -> Result<(), OxenError> {
         // Skip if on windows

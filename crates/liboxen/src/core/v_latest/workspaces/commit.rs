@@ -338,15 +338,23 @@ async fn export_tabular_data_frames(
                             "export_tabular_data_frames new_staged_merkle_tree_node: {new_staged_merkle_tree_node:?}"
                         );
 
-                        // The re-export produced a file identical (content and
-                        // metadata) to the base commit's: the staged edits
-                        // cancelled out, so drop the entry instead of
-                        // committing a rewritten copy. When this was the only
-                        // staged entry the commit fails with "No changes to
-                        // commit", like an unedited workspace.
+                        // Drop the entry only when the re-export is identical
+                        // (content and metadata) to the BASE commit's file node
+                        // — i.e. the staged edits net to nothing — so a
+                        // rewritten-but-unchanged file isn't committed. Compare
+                        // against the base node, not the staged `file_node`: the
+                        // staged node already carries the edit (e.g. a
+                        // metadata-only change bumps its combined hash), so
+                        // comparing against it would wrongly skip real edits.
+                        let base_node = repositories::tree::get_file_by_path(
+                            &workspace.base_repo,
+                            &workspace.commit,
+                            &node_path,
+                        )?;
                         if entry_status == StagedEntryStatus::Modified
+                            && let Some(base_node) = &base_node
                             && new_staged_merkle_tree_node.node.file()?.combined_hash()
-                                == file_node.combined_hash()
+                                == base_node.combined_hash()
                         {
                             log::debug!(
                                 "export_tabular_data_frames export identical to base, skipping: {node_path:?}"
