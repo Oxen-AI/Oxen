@@ -12,13 +12,18 @@
 #   --no-ramdisk    Skip ramdisk setup and run tests against the regular filesystem.
 #   -p|--python     Run the oxen-python test suite (via pytest) instead of the Rust test suite.
 #                   Builds the native extension with maturin.
-#   All remaining arguments are forwarded to `cargo nextest run` or `pytest` (with -p).
+#   All remaining arguments are forwarded after `--` to the libtest binaries (or `pytest` under -p).
 #
 # Examples:
 #   test-rust                       # Run all Rust tests
 #   test-rust test_name             # Run Rust tests matching test_name
 #   test-rust -p                    # Run all Python tests
 #   test-rust -p -k test_init      # Run Python tests matching test_init
+#
+# Logs (Rust runs — overwritten each invocation):
+#   ./data/test/oxen-server.log     # oxen-server subprocess stdout+stderr
+#   ./data/test/cargo-test.log      # cargo test's stderr (indicatif progress bars, any
+#                                     tracing that leaks around libtest's per-thread capture)
 
 # Check for flags
 FEATURE_ARGS=""
@@ -61,9 +66,9 @@ export OXEN_METRICS_PORT='off'
 # crates/liboxen/src/constants.rs.
 export OXEN_STREAM_SEGMENT_SIZE=131072  # 128 KiB
 
-# On macOS, SIP strips DYLD_LIBRARY_PATH from processes launched by system
-# binaries (like /usr/bin/env bash), so cargo nextest can't find libpython.
-# Re-derive the path from the active Python install if needed.
+# On macOS, SIP strips DYLD_LIBRARY_PATH from processes launched by system binaries (like
+# /usr/bin/env bash), so cargo can't find libpython. Re-derive the path from the active Python
+# install if needed.
 if [ "$(uname)" = "Darwin" ] && [ -z "${DYLD_LIBRARY_PATH:-}" ] && command -v python3 &>/dev/null; then
     _pylib="$(python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))' 2>/dev/null)"
     if [ -n "$_pylib" ] && [ -d "$_pylib" ]; then
@@ -160,7 +165,7 @@ if [ "$CURRENT_ULIMIT" -lt "$DESIRED_ULIMIT" ]; then
     echo "==> ulimit -n is $CURRENT_ULIMIT (< $DESIRED_ULIMIT). Attempting to raise..."
     ulimit -n "$DESIRED_ULIMIT" 2>/dev/null || {
         echo "Warning: Could not raise ulimit -n to $DESIRED_ULIMIT. You may need to limit"
-        echo "the number of threads used by nextest to avoid running out of file descriptors."
+        echo "the number of test threads (RUST_TEST_THREADS=N) to avoid running out of file descriptors."
     }
 fi
 
@@ -206,8 +211,12 @@ fi
 
 export OXEN_TEST_HOST="localhost:${OXEN_PORT}"
 
-echo "==> Starting oxen-server on port ${OXEN_PORT}..."
-./target/debug/oxen-server start -p "${OXEN_PORT}" --test &
+# Route the server's stdout/stderr to a log file so its tracing output doesn't interleave
+# with libtest's per-test progress on the terminal. Tail the file to debug server-side failures.
+SERVER_LOG="./data/test/oxen-server.log"
+mkdir -p "$(dirname "$SERVER_LOG")"
+echo "==> Starting oxen-server on port ${OXEN_PORT} (logs at ${SERVER_LOG})..."
+./target/debug/oxen-server start -p "${OXEN_PORT}" --test >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
 wait_for_server() {
@@ -243,10 +252,18 @@ if [ "$RUN_PYTHON" = true ]; then
         pytest -s tests "$@"
     )
 else
-    # Run Rust tests
-    echo "==> Running tests with 'cargo nextest run $FEATURE_ARGS $*' ..."
+    # Run Rust tests. Redirect stderr to a log file: libtest's per-test progress and summary
+    # write to stdout, so the terminal still shows those. The noisy things that libtest can't
+    # capture — `indicatif` progress bars (direct TTY drawing), any `tracing` output emitted on
+    # tokio worker threads that don't inherit libtest's per-thread capture, C-library writes to
+    # stderr — go to the log file. `indicatif` also auto-hides itself once it detects the
+    # redirected non-TTY stderr, so most progress-bar output goes away entirely rather than being
+    # written to the log at all. Tail the log to debug what would have shown on stderr.
+    CARGO_TEST_LOG="./data/test/cargo-test.log"
+    mkdir -p "$(dirname "$CARGO_TEST_LOG")"
+    echo "==> Running tests with 'cargo test --workspace --no-fail-fast $FEATURE_ARGS -- $*' (stderr at ${CARGO_TEST_LOG}) ..."
     # shellcheck disable=SC2086
-    cargo nextest run $FEATURE_ARGS "$@"
+    cargo test --workspace --no-fail-fast $FEATURE_ARGS -- "$@" 2>"$CARGO_TEST_LOG"
 fi
 
 # cleanup handled via the trapped cleanup function
