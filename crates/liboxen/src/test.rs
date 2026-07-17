@@ -454,7 +454,7 @@ pub fn init_fs_merkle_backend(path: &Path) -> Result<LocalRepository, OxenError>
 /// on-disk `tree/nodes` layout that only the filesystem backend produces. The env override outranks
 /// the per-repo config that [`init_fs_merkle_backend`] persists (see `resolve_backend` in
 /// `core::db::merkle_node`), so under it these tests cannot pin the filesystem backend and must skip
-/// rather than fail. Logs the skip, keyed by the nextest thread name (the test's path). The CI
+/// rather than fail. Logs the skip, keyed by the test thread's name (the test's path). The CI
 /// filesystem job leaves the variable unset, so they still run there.
 pub fn skip_fs_pinned_under_lmdb() -> bool {
     if matches!(MerkleNodeBackend::from_env(), Some(MerkleNodeBackend::Lmdb)) {

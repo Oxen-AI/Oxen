@@ -231,6 +231,8 @@ docker load -i result
 
 # Unit & Integration Tests
 
+`bin/test-rust` is the standard, supported way to run the tests — see [Automatic Test Setup](#automatic-test-setup). It builds the workspace, raises the file-handle limit, provisions a ramdisk, starts an `oxen-server`, exports the environment the tests expect, runs `cargo test`, and tears everything down. Prefer it. Running `cargo test` directly (the [Manual Test Setup](#manual-test-setup) below) is supported only once you have reproduced that same setup by hand; `bin/test-rust` remains the source of truth for the full environment, so without it some tests fail or behave differently.
+
 ## Manual Test Setup
 
 Here are the steps to manually configure and run tests (see also the [Automatic Test Setup](#automatic-test-setup) section). Make sure your user is configured and server is running on the default port and host, by following these setup steps:
