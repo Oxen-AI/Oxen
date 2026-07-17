@@ -255,7 +255,7 @@ pub fn max_retries() -> usize {
 /// Reads `OXEN_STREAM_SEGMENT_SIZE` once at first call and caches the result for the
 /// remainder of the process. The env var must be set before this function is first
 /// invoked — that's why `bin/test-rust` exports it before launching `oxen-server` and
-/// `cargo nextest`.
+/// the test runner.
 pub fn stream_segment_size() -> u64 {
     static CACHED: LazyLock<u64> = LazyLock::new(|| {
         std::env::var("OXEN_STREAM_SEGMENT_SIZE")
