@@ -296,7 +296,19 @@ pub async fn list_diff_entries(
     })
 }
 
-pub fn list_changed_dirs(
+pub async fn list_changed_dirs(
+    repo: &LocalRepository,
+    base_commit: &Commit,
+    head_commit: &Commit,
+) -> Result<Vec<(PathBuf, DiffEntryStatus)>, OxenError> {
+    let repo = repo.clone();
+    let base_commit = base_commit.clone();
+    let head_commit = head_commit.clone();
+    tokio::task::spawn_blocking(move || list_changed_dirs_sync(&repo, &base_commit, &head_commit))
+        .await?
+}
+
+fn list_changed_dirs_sync(
     repo: &LocalRepository,
     base_commit: &Commit,
     head_commit: &Commit,
