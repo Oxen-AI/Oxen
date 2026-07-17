@@ -5,6 +5,7 @@ addopts = ["-v", "-s", "--tb=short", "--strict-markers", "--timeout=120"]
 markers = [
     "performance: marks tests as performance tests",
     "integration: marks tests as integration tests",
+    "needs_oxen_server: test requires a running oxen-server",
 ]
 timeout = 120
 timeout_method = "thread"

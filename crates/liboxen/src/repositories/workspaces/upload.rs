@@ -31,6 +31,7 @@ mod tests {
 
     use crate::constants;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_upload_file_to_root_dir() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut repo| async move {
@@ -90,6 +91,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_upload_file_to_sub_dir() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut repo| async move {
@@ -152,6 +154,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_upload_file_to_new_branch() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut repo| async move {

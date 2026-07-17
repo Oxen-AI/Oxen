@@ -49,6 +49,7 @@ mod tests {
     use crate::util;
 
     // NOTE: Keep this test to ensure we compute sizes on the backend
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_get_stats() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut local_repo| async move {

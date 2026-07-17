@@ -50,7 +50,7 @@ Monitor the workflow run in the **Actions** tab. If any platform build fails, th
 | Linux x86_64 | `oxen-linux-x86_64.tar.gz`, `oxen-server-linux-x86_64.tar.gz`, `oxen-linux-x86_64.deb`, `oxen-server-linux-x86_64.deb`, `oxen-wheels-linux-x86_64.tar.gz` |
 | macOS arm64 | `oxen-macos-arm64.tar.gz`, `oxen-server-macos-arm64.tar.gz`, `oxen-wheels-macos-arm64.tar.gz` |
 | macOS x86_64 | `oxen-macos-x86_64.tar.gz`, `oxen-server-macos-x86_64.tar.gz`, `oxen-wheels-macos-x86_64.tar.gz` |
-| Windows x86_64 | `oxen-windows-x86_64.exe.zip`, `oxen-server-windows-x86_64.exe.zip`, `oxen-wheels-windows-x86_64.zip` |
+| Windows x86_64 | `oxen-windows-x86_64.exe.zip`, `oxen-wheels-windows-x86_64.zip` (no server — oxen-server is not supported on Windows) |
 | Docker arm64 | `oxen-server-docker-arm64.tar` |
 | Docker x86_64 | `oxen-server-docker-x86_64.tar` |
 

@@ -59,6 +59,7 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_command_push_clone_pull_push() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut repo| async move {
@@ -200,6 +201,7 @@ mod tests {
     // * remove file *
     // push
     // pull
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_command_add_modify_remove_push_pull() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut repo| async move {
@@ -265,6 +267,7 @@ mod tests {
     }
 
     // Make sure we can push again after pulling on the other side, then pull again
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_push_pull_push_pull_on_branch() -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits_async(|mut repo| async move {
@@ -372,6 +375,7 @@ mod tests {
     }
 
     // Make sure we can push again after pulling on the other side, then pull again
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_push_pull_push_pull_on_other_branch() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut repo| async move {
@@ -458,6 +462,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_push_pull_file_without_extension() -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits_async(|mut repo| async move {
@@ -523,6 +528,7 @@ mod tests {
         # should only have the data on main
 
     */
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_push_pull_separate_branch_less_files() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut repo| async move {
@@ -603,6 +609,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_push_pull_separate_branch_more_files() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut repo| async move {
@@ -676,6 +683,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_push_pull_moved_files() -> Result<(), OxenError> {
         // Push the Remote Repo
@@ -727,6 +735,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_push_new_branch_default_clone() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_, remote_repo| async move {
@@ -784,6 +793,7 @@ mod tests {
     // 4) User B changes same file, commits, and pushes and fails
     // 5) User B pulls user A's changes, there is a merge conflict
     // 6) User B cannot push until merge conflict is resolved
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_flags_merge_conflict_on_subtree_pull() -> Result<(), OxenError> {
         // Push the Remote Repo
@@ -874,6 +884,7 @@ mod tests {
     // 4) User B changes same file, commits, and pushes and fails
     // 5) User B pulls user A's changes, there is a merge conflict
     // 6) User B cannot push until merge conflict is resolved
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_flags_merge_conflict_on_root_subtree_pull() -> Result<(), OxenError> {
         // Push the Remote Repo
@@ -961,6 +972,7 @@ mod tests {
     // 4) User B changes same file, commits, and pushes and fails
     // 5) User B pulls user A's changes, there is a merge conflict
     // 6) User B cannot push until merge conflict is resolved
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_flags_merge_conflict_on_pull() -> Result<(), OxenError> {
         // Push the Remote Repo
@@ -1031,6 +1043,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_pull_does_not_remove_local_files() -> Result<(), OxenError> {
         // Push the Remote Repo
@@ -1094,6 +1107,7 @@ mod tests {
         })
         .await
     }
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_pull_does_not_remove_untracked_files() -> Result<(), OxenError> {
         // Push the Remote Repo
@@ -1218,6 +1232,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_pull_multiple_commits() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut repo| async move {
@@ -1361,6 +1376,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_pull_data_frame() -> Result<(), OxenError> {
         test::run_select_data_repo_test_no_commits_async("annotations", |mut repo| async move {
@@ -1416,6 +1432,7 @@ mod tests {
     }
 
     // Test that we pull down the proper data frames
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_pull_multiple_data_frames_multiple_schemas() -> Result<(), OxenError> {
         test::run_training_data_repo_test_fully_committed_async(|mut repo| async move {
@@ -1478,6 +1495,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_pull_full_commit_history() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut repo| async move {
@@ -1552,6 +1570,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_pull_full_commit_history_after_shallow_clone() -> Result<(), OxenError> {
         test::run_training_data_repo_test_fully_committed_async(|mut repo| async move {
@@ -1595,6 +1614,7 @@ mod tests {
     When the remote advances, and you have local changes,
     you do not want to overwrite when pulling from the remote
     */
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_pull_does_not_overwrite_new_file_modified_by_remote() -> Result<(), OxenError> {
         // Push the Remote Repo
@@ -1660,6 +1680,7 @@ mod tests {
     When the remote advances, and you have local changes,
     you do not want to overwrite when pulling from the remote
     */
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_pull_does_not_overwrite_modified_files_after_remote_modification()
     -> Result<(), OxenError> {
@@ -1723,6 +1744,7 @@ mod tests {
     This one tests modifying the file on the local before it is modified on the remote
     Regardless, the local file should not be overwritten
     */
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_pull_does_not_overwrite_modified_files_before_remote_modification()
     -> Result<(), OxenError> {
@@ -1795,6 +1817,7 @@ mod tests {
     /*
     Modify a different file on the remote, and modify the readme locally, and make sure that the local readme is not overwritten
     */
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_pull_does_not_overwrite_modified_files_after_modifying_different_file()
     -> Result<(), OxenError> {
@@ -1864,6 +1887,7 @@ mod tests {
     /*
     Remove the README.md on the remote, and modify the readme locally, and make sure that the local readme is not overwritten
     */
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_pull_does_not_overwrite_modified_files_after_removing_file()
     -> Result<(), OxenError> {
@@ -1932,6 +1956,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_subtree_clone_branch_push_pull() -> Result<(), OxenError> {
         // Push the Remote Repo
@@ -2018,6 +2043,7 @@ mod tests {
     }
 
     // Pull and merge a non-empty remote with a non-empty repo
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_pull_and_merge_non_empty_repos() -> Result<(), OxenError> {
         // Create a remote repo with a commit
@@ -2061,6 +2087,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_pull_missing_files_redownloads_deleted_versions() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|_local_repo, remote_repo| async move {

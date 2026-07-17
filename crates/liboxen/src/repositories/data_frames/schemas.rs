@@ -697,6 +697,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_schemas_merge_fast_forward_pull() -> Result<(), OxenError> {
         test::run_select_data_sync_remote("README.md", |_local_repo, remote_repo| async move {

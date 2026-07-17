@@ -126,6 +126,7 @@ mod tests {
     use crate::repositories;
     use crate::test;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_fetch_branches() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|mut repo| async move {

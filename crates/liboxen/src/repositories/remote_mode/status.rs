@@ -118,6 +118,7 @@ mod tests {
     // LICENSE
     // README.md
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_repo_clean_with_all_files_unsynced_after_remote_mode_clone()
     -> Result<(), OxenError> {
@@ -158,6 +159,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_subdirectory_status() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
@@ -308,6 +310,7 @@ mod tests {
     // from local disk should still surface as unsynced — only `Removed`-status entries
     // should suppress the unsynced classification. Earlier the gate used a plain
     // `contains_key` check on the staged-files map, which over-suppressed.
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_status_unsynced_when_modified_stage_missing_on_disk()
     -> Result<(), OxenError> {
@@ -394,6 +397,7 @@ mod tests {
     //       TODO: Consider fixing this
 
     /*
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_status_move_regular_file() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {

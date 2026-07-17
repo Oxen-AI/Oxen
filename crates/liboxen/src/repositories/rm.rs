@@ -143,6 +143,7 @@ mod tests {
 
     When loading the remote, only the README.md remained.
     */
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_rm_r_dir_at_root() -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {

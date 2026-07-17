@@ -584,6 +584,7 @@ mod tests {
 
     // Every server ref-advance path — branch update, new-branch create, and push-time merge —
     // must refuse to point a ref at a commit whose newly-added blob is missing.
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_ref_advance_gates_reject_incomplete_commit() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async {
@@ -684,6 +685,7 @@ mod tests {
     // The gate also refuses a commit whose objects are all present but whose dir-hashes index is
     // missing — the tree can't be served by path without it. The check lives in the shared
     // `verify_reachable_objects`, so exercising the update gate covers all three ref-advance paths.
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_ref_advance_gate_requires_dir_hashes() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async {
@@ -743,6 +745,7 @@ mod tests {
 
     // Creating a branch *from another branch* is a ref advance too: it must refuse when the source
     // branch's head commit is missing an added blob, just like commit-based creation.
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_ref_advance_gate_rejects_create_from_incomplete_branch() -> Result<(), OxenError>
     {

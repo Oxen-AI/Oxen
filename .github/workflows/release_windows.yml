@@ -64,7 +64,7 @@ jobs:
             ]
 
   release_windows:
-    name: Build Oxen CLI, Server, and Python wheels
+    name: Build Oxen CLI and Python wheels
     needs: start-self-hosted-runner
     runs-on: ${{ needs.start-self-hosted-runner.outputs.label }}
     defaults:
@@ -162,7 +162,8 @@ jobs:
       - name: Build oxen binaries
         run: |
           refreshenv
-          cargo build --workspace --exclude oxen-py --release
+          # oxen-server is not supported on Windows; build the CLI only.
+          cargo build --workspace --exclude oxen-py --exclude oxen-server --release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build Python wheels
@@ -198,10 +199,9 @@ jobs:
           aws s3 cp C:\deptree-out.tar s3://oxen-release-build-cache/deptree/$env:DEPTREE_KEY.tar
           Write-Host "DEPTREE saved ($env:DEPTREE_KEY)"
 
-      - name: Create zip with oxen binaries
+      - name: Create zip with oxen binary
         run: |
           Compress-Archive -Path "${{ github.workspace }}\target\release\oxen.exe" -DestinationPath "${{ github.workspace }}\release\oxen-windows-${{ inputs.ARCHITECTURE }}.exe.zip"
-          Compress-Archive -Path "${{ github.workspace }}\target\release\oxen-server.exe" -DestinationPath "${{ github.workspace }}\release\oxen-server-windows-${{ inputs.ARCHITECTURE }}.exe.zip"
 
       - name: Create zip with Python wheels
         run: |

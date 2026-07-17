@@ -112,9 +112,7 @@ jobs:
         if: matrix.platform == 'windows'
         run: |
           echo "OXEN_TEST_RUN_DIR=$env:RUNNER_TEMP\oxen_test\test" >> $env:GITHUB_ENV
-          echo "SYNC_DIR=$env:RUNNER_TEMP\oxen_test\sync" >> $env:GITHUB_ENV
           mkdir $env:RUNNER_TEMP\oxen_test\test
-          mkdir $env:RUNNER_TEMP\oxen_test\sync
 
       # Oxen Rust Tests
       - name: Setup test directories (Linux/macOS)
@@ -128,7 +126,8 @@ jobs:
         run: |
           mkdir .\data\test\runs
 
-      - name: Build oxen rust project
+      - name: Build oxen rust project (Linux/macOS)
+        if: matrix.platform != 'windows'
         run: cargo build --workspace
 
       - name: Setup oxen-server user (Linux/macOS)
@@ -137,23 +136,17 @@ jobs:
           ./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
           cp user_config.toml data/test/config/user_config.toml
 
-      - name: Setup oxen-server user (Windows)
-        if: matrix.platform == 'windows'
-        run: |
-          .\target\debug\oxen-server.exe add-user --email ox@oxen.ai --name Ox --output user_config.toml
-          copy user_config.toml data\test\config\user_config.toml
-
       - name: Run oxen rust tests (Linux/macOS)
         if: matrix.platform != 'windows'
         run: |
           ./target/debug/oxen-server start --test &
           cargo test --workspace --no-fail-fast
 
+      # oxen-server is unsupported on Windows: exclude its crate; the
+      # server-dependent tests are marked #[cfg_attr(windows, ignore)].
       - name: Run oxen rust tests (Windows)
         if: matrix.platform == 'windows'
-        run: |
-          Start-Process ".\target\debug\oxen-server.exe" -ArgumentList "start","--test"
-          cargo test --workspace --no-fail-fast
+        run: cargo test --workspace --exclude oxen-server --no-fail-fast
 
   python-test:
     name: Python Tests
@@ -226,8 +219,15 @@ jobs:
         run: |
           mkdir .\data\test\runs
 
-      - name: Build oxen rust project
+      - name: Build oxen rust project (Linux/macOS)
+        if: matrix.platform != 'windows'
         run: cargo build --workspace
+
+      # oxen-server is unsupported on Windows: build only the client crates
+      # (the oxen CLI backs the CLI tests). Server tests skip via each conftest.
+      - name: Build oxen rust project (Windows)
+        if: matrix.platform == 'windows'
+        run: cargo build --workspace --exclude oxen-server
 
       - name: Setup oxen-server user (Linux/macOS)
         if: matrix.platform != 'windows'
@@ -235,19 +235,9 @@ jobs:
           ./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
           cp user_config.toml data/test/config/user_config.toml
 
-      - name: Setup oxen-server user (Windows)
-        if: matrix.platform == 'windows'
-        run: |
-          .\target\debug\oxen-server.exe add-user --email ox@oxen.ai --name Ox --output user_config.toml
-          copy user_config.toml data\test\config\user_config.toml
-
       - name: Start oxen-server (Linux/macOS)
         if: matrix.platform != 'windows'
         run: ./target/debug/oxen-server start &
-
-      - name: Start oxen-server (Windows)
-        if: matrix.platform == 'windows'
-        run: Start-Process ".\target\debug\oxen-server.exe" -ArgumentList "start"
 
       # CLI Tests
       - name: Run CLI tests (Linux/macOS)

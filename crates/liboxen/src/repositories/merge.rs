@@ -849,6 +849,7 @@ mod tests {
     oxen push
     oxen pull repo_a (should be fast forward)
     */
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_command_merge_fast_forward_pull() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {

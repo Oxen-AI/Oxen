@@ -498,6 +498,7 @@ mod tests {
     use std::collections::HashSet;
     use std::path::PathBuf;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_has_node() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
@@ -511,6 +512,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_tree_from_path() -> Result<(), OxenError> {
         // FS-pinned: this test counts node directories under the on-disk `tree/nodes` layout, which
@@ -588,6 +590,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_trees_from() -> Result<(), OxenError> {
         // FS-pinned: this test counts node directories under the on-disk `tree/nodes` layout, which
@@ -676,6 +679,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_missing_node_hashes() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {

@@ -83,6 +83,16 @@ To learn what everything Oxen can do, the full documentation can be found at [ht
 
 You can install through homebrew or pip or from our [releases page](https://github.com/Oxen-AI/Oxen/releases).
 
+### 🖥️ Platform Support
+
+| Component | Linux | macOS | Windows |
+|---|:---:|:---:|:---:|
+| `oxen` CLI | ✅ | ✅ | ✅ |
+| `oxenai` Python package | ✅ | ✅ | ✅ |
+| `oxen-server` | ✅ | ✅ | ❌ |
+
+`oxen-server` is not supported on Windows — run it on Linux, macOS, or in Docker. The `oxen` CLI and Python client are supported on Windows and connect to a server hosted on a supported platform.
+
 ### 🐂 Install Command Line Tool
 
 Install via [Homebrew](https://brew.sh/):

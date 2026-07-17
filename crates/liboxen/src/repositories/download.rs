@@ -76,6 +76,7 @@ mod tests {
 
     use crate::constants;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_download_directory() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut repo| async move {
@@ -120,6 +121,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_download_directory_with_large_file() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut repo| async move {
@@ -170,6 +172,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_download_directory_local_path() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut repo| async move {
@@ -215,6 +218,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_one_file() -> Result<(), OxenError> {
         test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
@@ -250,6 +254,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_dir() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
