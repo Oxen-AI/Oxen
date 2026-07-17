@@ -51,7 +51,7 @@ cargo build --workspace                           # Debug build
 ```
 
 ### Testing
-Use the `bin/test-rust` script to run the tests — do not invoke `cargo test` directly. The script builds the workspace, raises the file-handle limit, sets up a ramdisk for test data, starts `oxen-server` on a free port, runs the suite with `cargo test --workspace --no-fail-fast`, and tears everything down on exit. Its full usage is documented in a comment at the top of the script.
+Use the `bin/test-rust` script to run the tests — it is the standard, supported path. The script builds the workspace, raises the file-handle limit, sets up a ramdisk for test data, starts `oxen-server` on a free port, exports the environment the tests expect, runs the suite with `cargo test --workspace --no-fail-fast`, and tears everything down on exit. Its full usage is documented in a comment at the top of the script. Running `cargo test` directly is supported only if you first reproduce that setup by hand (a running `oxen-server` on the default host/port, user config, a raised file-handle limit, and the env vars the script exports — see the "Manual Test Setup" section of `crates/liboxen/README.md`); without that setup the tests fail, so prefer `bin/test-rust`.
 ```bash
 bin/test-rust                         # Build and run all Rust tests
 bin/test-rust test_function_name      # Run only Rust tests matching test_function_name
