@@ -8,9 +8,9 @@ Central registry of deprecated behavior and the release each item should be **re
 
 | Item | Deprecated in | Remove in | Location | Notes |
 | --- | --- | --- | --- | --- |
-| JSON workspace-staging endpoint — `POST /repos/{ns}/{name}/workspaces/{id}/versions/{dir}` (`add_version_files`): returns **426** for clients at/above the deprecation release; clients use the multipart `files::add` endpoint instead. | 0.51.0 | ~0.56.0 *(estimate: ~5 releases after introduction — revisit to match actual release cadence)* | `crates/server/src/controllers/workspaces/files.rs` (`add_version_files`); gate in `crates/server/src/params.rs` (`client_must_use_multipart_staging`, version literal inlined at the check) | Added in S3 17d. Remove the version-gated 426 and, if the JSON endpoint is then unused, the endpoint itself. |
-| CLI `--workspace` flag (renamed to `--workspace-id`) | ≤ 0.50.4 (already shipped) | **TBD — assign a target** | `crates/cli/src/cmd/workspace/status.rs` | Existing "`--workspace` will be REMOVED in a future release" warning; pick a concrete release. |
-| `commits` no-op echo endpoint | ≤ 0.50.4 (already shipped) | **TBD — assign a target** | `crates/server/src/controllers/commits.rs` | Existing "will be removed in a future release" doc; pick a concrete release. |
+| JSON workspace-staging endpoint — `POST /repos/{ns}/{name}/workspaces/{id}/versions/{dir}` (`add_version_files`): returns **426** for clients at/above the deprecation release; clients use the multipart `files::add` endpoint instead. | 0.51.0 | ~0.54.0 | `crates/oxen-server/src/controllers/workspaces/files.rs` (`add_version_files`); gate in `crates/oxen-server/src/params.rs` (`client_must_use_multipart_staging`, version literal inlined at the check) | Added in S3 17d. Remove the version-gated 426 and, if the JSON endpoint is then unused, the endpoint itself. |
+| CLI `--workspace` flag (renamed to `--workspace-id`) | ≤ 0.50.4 (already shipped) | ~0.54.0 | `crates/oxen-cli/src/cmd/workspace/status.rs` | Update the "`--workspace` will be REMOVED in a future release" warning to name 0.54.0, then drop the flag at that release. |
+| `commits` no-op echo endpoint | ≤ 0.50.4 (already shipped) | ~0.54.0 | `crates/oxen-server/src/controllers/commits.rs` | Update the "will be removed in a future release" doc to name 0.54.0, then remove the endpoint at that release. |
 
 ## Removed without a deprecation window
 
