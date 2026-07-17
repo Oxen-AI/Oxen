@@ -24,11 +24,22 @@ pub async fn list_diff_entries(
     page: usize,
     page_size: usize,
 ) -> Result<DiffEntriesCounts, OxenError> {
-    log::debug!(
-        "list_diff_entries base_dir: '{base_path:?}', head_dir: '{head_path:?}' base_commit: '{base_commit}', head_commit: '{head_commit}'"
-    );
+    // Tree reads, directory/entry collection, and the first pagination are sync; run them off the
+    // worker in one blocking unit, then keep the file-entry fan-out on the async side below.
+    let base_path_for_fanout = base_path.clone();
+    let (files, pagination, dir_entries, counts, combined_len) = {
+        let repo = repo.clone();
+        let base_commit = base_commit.clone();
+        let head_commit = head_commit.clone();
+        tokio::task::spawn_blocking(move || -> Result<_, OxenError> {
+            let repo = &repo;
+            let base_commit = &base_commit;
+            let head_commit = &head_commit;
+            log::debug!(
+                "list_diff_entries base_dir: '{base_path:?}', head_dir: '{head_path:?}' base_commit: '{base_commit}', head_commit: '{head_commit}'"
+            );
 
-    let base_tree = CommitMerkleTree::read_from_path_maybe(repo, base_commit, &base_path, true)?;
+            let base_tree = CommitMerkleTree::read_from_path_maybe(repo, base_commit, &base_path, true)?;
     let head_tree = CommitMerkleTree::read_from_path_maybe(repo, head_commit, &head_path, true)?;
 
     let mut base_files: HashSet<FileNodeWithDir> = HashSet::new();
@@ -248,18 +259,27 @@ pub async fn list_diff_entries(
         combined.len()
     );
 
-    let (files, pagination) =
-        util::paginate::paginate_files_assuming_dirs(&combined, dir_entries.len(), page, page_size);
-    log::debug!(
-        "list_diff_entries dir: '{:?}' got {} initial dirs",
-        base_path,
-        dir_entries.len()
-    );
-    log::debug!(
-        "list_diff_entries dir: '{:?}' got {} files",
-        base_path,
-        files.len()
-    );
+            let (files, pagination) = util::paginate::paginate_files_assuming_dirs(
+                &combined,
+                dir_entries.len(),
+                page,
+                page_size,
+            );
+            log::debug!(
+                "list_diff_entries dir: '{:?}' got {} initial dirs",
+                base_path,
+                dir_entries.len()
+            );
+            log::debug!(
+                "list_diff_entries dir: '{:?}' got {} files",
+                base_path,
+                files.len()
+            );
+            Ok((files, pagination, dir_entries, counts, combined.len()))
+        })
+        .await??
+    };
+
     let file_entries: Vec<DiffEntry> = stream::iter(files)
         .map(|entry| async move {
             DiffEntry::from_file_nodes(
@@ -280,13 +300,15 @@ pub async fn list_diff_entries(
         .await?;
 
     let (dirs, _) =
-        util::paginate::paginate_dirs_assuming_files(&dir_entries, combined.len(), page, page_size);
+        util::paginate::paginate_dirs_assuming_files(&dir_entries, combined_len, page, page_size);
     log::debug!(
         "list_diff_entries dir: '{:?}' got {} filtered dirs",
-        base_path,
+        base_path_for_fanout,
         dirs.len()
     );
-    log::debug!("list_diff_entries dir: '{base_path:?}' Page num {page} Page size {page_size}");
+    log::debug!(
+        "list_diff_entries dir: '{base_path_for_fanout:?}' Page num {page} Page size {page_size}"
+    );
     let all = dirs.into_iter().chain(file_entries).collect();
 
     Ok(DiffEntriesCounts {
@@ -364,7 +386,23 @@ pub fn list_changed_dirs(
     Ok(changed_dirs)
 }
 
-pub fn get_dir_diff_entry_with_summary(
+pub async fn get_dir_diff_entry_with_summary(
+    repo: &LocalRepository,
+    dir: PathBuf,
+    base_commit: &Commit,
+    head_commit: &Commit,
+    summary: GenericDiffSummary,
+) -> Result<Option<DiffEntry>, OxenError> {
+    let repo = repo.clone();
+    let base_commit = base_commit.clone();
+    let head_commit = head_commit.clone();
+    tokio::task::spawn_blocking(move || {
+        get_dir_diff_entry_with_summary_sync(&repo, dir, &base_commit, &head_commit, summary)
+    })
+    .await?
+}
+
+fn get_dir_diff_entry_with_summary_sync(
     repo: &LocalRepository,
     dir: PathBuf,
     base_commit: &Commit,
