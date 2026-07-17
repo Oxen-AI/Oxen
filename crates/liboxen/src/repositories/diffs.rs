@@ -1077,14 +1077,21 @@ pub async fn compute_new_rows(
     head_df: &DataFrame,
     schema: &Schema,
 ) -> Result<DataFrameDiff, OxenError> {
-    // Compute row indices
-    let (added_indices, removed_indices) = compute_new_row_indices(base_df, head_df)?;
+    // Row hashing and the set-diff are sync CPU over both full frames; run them off the worker.
+    let (added_indices, removed_indices) = {
+        let base_df = base_df.clone();
+        let head_df = head_df.clone();
+        tokio::task::spawn_blocking(move || compute_new_row_indices(&base_df, &head_df)).await??
+    };
 
     // Take added from the current df
     let added_rows = if !added_indices.is_empty() {
         let opts = DFOpts::from_schema_columns(schema);
         let head_df = tabular::transform(head_df.clone(), opts).await?;
-        Some(tabular::take(head_df.lazy(), added_indices)?)
+        let taken =
+            tokio::task::spawn_blocking(move || tabular::take(head_df.lazy(), added_indices))
+                .await??;
+        Some(taken)
     } else {
         None
     };
@@ -1094,7 +1101,10 @@ pub async fn compute_new_rows(
     let removed_rows = if !removed_indices.is_empty() {
         let opts = DFOpts::from_schema_columns(schema);
         let base_df = tabular::transform(base_df.clone(), opts).await?;
-        Some(tabular::take(base_df.lazy(), removed_indices)?)
+        let taken =
+            tokio::task::spawn_blocking(move || tabular::take(base_df.lazy(), removed_indices))
+                .await??;
+        Some(taken)
     } else {
         None
     };
@@ -1121,14 +1131,21 @@ pub async fn compute_new_rows_proj(
     base_schema: &Schema,
     head_schema: &Schema,
 ) -> Result<DataFrameDiff, OxenError> {
-    // Compute row indices
-    let (added_indices, removed_indices) = compute_new_row_indices(base_df, head_df)?;
+    // Row hashing and the set-diff are sync CPU over both full frames; run them off the worker.
+    let (added_indices, removed_indices) = {
+        let base_df = base_df.clone();
+        let head_df = head_df.clone();
+        tokio::task::spawn_blocking(move || compute_new_row_indices(&base_df, &head_df)).await??
+    };
 
     // Take added from the current df
     let added_rows = if !added_indices.is_empty() {
         let opts = DFOpts::from_schema_columns(head_schema);
         let proj_head_df = tabular::transform(proj_head_df.clone(), opts).await?;
-        Some(tabular::take(proj_head_df.lazy(), added_indices)?)
+        let taken =
+            tokio::task::spawn_blocking(move || tabular::take(proj_head_df.lazy(), added_indices))
+                .await??;
+        Some(taken)
     } else {
         None
     };
@@ -1138,7 +1155,11 @@ pub async fn compute_new_rows_proj(
     let removed_rows = if !removed_indices.is_empty() {
         let opts = DFOpts::from_schema_columns(base_schema);
         let proj_base_df = tabular::transform(proj_base_df.clone(), opts).await?;
-        Some(tabular::take(proj_base_df.lazy(), removed_indices)?)
+        let taken = tokio::task::spawn_blocking(move || {
+            tabular::take(proj_base_df.lazy(), removed_indices)
+        })
+        .await??;
+        Some(taken)
     } else {
         None
     };
