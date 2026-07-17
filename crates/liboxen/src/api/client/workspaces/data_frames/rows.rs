@@ -217,6 +217,7 @@ mod tests {
 
     use std::path::Path;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_stage_row_on_dataframe_json() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -252,6 +253,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_should_not_stage_invalid_schema_for_dataframe() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
@@ -285,6 +287,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_status_modified_dataframe() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -334,6 +337,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_delete_row() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -414,6 +418,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_update_row() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -500,6 +505,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_stage_delete_row_keeps_remote_status_modified() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
@@ -576,6 +582,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_add_row_with_data() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -630,6 +637,7 @@ mod tests {
         }).await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_add_row_with_empty_data() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -707,6 +715,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_batch_update() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -817,6 +826,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_batch_update_with_embeddings() -> Result<(), OxenError> {
         // Skip duckdb if on windows

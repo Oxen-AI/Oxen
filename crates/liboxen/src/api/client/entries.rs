@@ -919,6 +919,7 @@ mod tests {
 
     use std::path::Path;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_tabular_entries() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
@@ -993,6 +994,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_file_large() -> Result<(), OxenError> {
         test::run_select_data_sync_remote("large_files", |local_repo, remote_repo| async move {
@@ -1009,6 +1011,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_file_large_to_dir() -> Result<(), OxenError> {
         test::run_select_data_sync_remote("large_files", |local_repo, remote_repo| async move {
@@ -1027,6 +1030,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_file_large_to_dir_does_not_exist() -> Result<(), OxenError> {
         test::run_select_data_sync_remote("large_files", |local_repo, remote_repo| async move {
@@ -1048,6 +1052,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_file_large_to_dir_does_exist() -> Result<(), OxenError> {
         test::run_select_data_sync_remote("large_files", |local_repo, remote_repo| async move {
@@ -1071,6 +1076,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_small_file_to_dir_does_exist() -> Result<(), OxenError> {
         test::run_select_data_sync_remote("annotations", |local_repo, remote_repo| async move {
@@ -1094,6 +1100,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_different_dir() -> Result<(), OxenError> {
         test::run_select_data_sync_remote("annotations", |local_repo, remote_repo| async move {
@@ -1117,6 +1124,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_get_root_entry_metadata() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|_local_repo, remote_repo| async move {
@@ -1131,6 +1139,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_small_entry_hash_mismatch_skips_publish() -> Result<(), OxenError> {
         // download_small_entry: pass a deliberately-wrong `expected_hash` and verify the

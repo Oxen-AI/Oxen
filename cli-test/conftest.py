@@ -3,6 +3,7 @@ Pytest configuration and shared fixtures for Oxen CLI tests.
 """
 
 import os
+import sys
 import shutil
 import subprocess
 import tempfile
@@ -15,6 +16,16 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+
+def pytest_collection_modifyitems(config, items):
+    # oxen-server is not supported on Windows, so skip tests marked needs_oxen_server.
+    if sys.platform != "win32":
+        return
+    skip = pytest.mark.skip(reason="oxen-server is not supported on Windows")
+    for item in items:
+        if "needs_oxen_server" in item.keywords:
+            item.add_marker(skip)
 
 
 def run_system_command(cmd: str, cwd: Optional[str] = None) -> None:
@@ -94,21 +105,23 @@ def setup_test_environment(tmp_path):
     """Setup test environment before each test."""
     # Configure oxen user
     run_system_command("oxen config --name python-test --email test@oxen.ai")
-    # Try to delete any existing test remote repos
-    subprocess.run(
-        "oxen delete-remote --name ox/performance-test --host localhost:3000 -y --scheme http",
-        shell=True,
-        capture_output=True
-    )
+    # Try to delete any existing test remote repos. There's no oxen-server on
+    # Windows, so skip the server round-trip there.
+    if sys.platform != "win32":
+        subprocess.run(
+            "oxen delete-remote --name ox/performance-test --host localhost:3000 -y --scheme http",
+            shell=True,
+            capture_output=True
+        )
 
     yield
 
-    # Cleanup after test
-    subprocess.run(
-        "oxen delete-remote --name ox/performance-test --host localhost:3000 -y --scheme http",
-        shell=True,
-        capture_output=True
-    )
+    if sys.platform != "win32":
+        subprocess.run(
+            "oxen delete-remote --name ox/performance-test --host localhost:3000 -y --scheme http",
+            shell=True,
+            capture_output=True
+        )
 
 
 @pytest.fixture

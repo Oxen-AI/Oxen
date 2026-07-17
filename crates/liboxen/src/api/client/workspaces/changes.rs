@@ -78,6 +78,7 @@ mod tests {
 
     use std::path::Path;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_empty_changes_none_pushed() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|mut local_repo, remote_repo| async move {
@@ -120,6 +121,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_empty_changes_all_data_pushed() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {

@@ -133,6 +133,7 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_dir_has_correct_commits() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|local_repo| async move {
@@ -344,6 +345,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_dir_has_populates_resource_path() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
@@ -388,6 +390,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_get_dir_encoding() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
@@ -438,6 +441,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_get_dir_with_workspace() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
@@ -516,6 +520,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_dir_sort_opts() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|local_repo| async move {
@@ -561,6 +566,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_dir_depth_and_nested_sort_opts() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|local_repo| async move {

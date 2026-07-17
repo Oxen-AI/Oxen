@@ -486,6 +486,7 @@ mod tests {
     use crate::test;
     use crate::view::entries::EMetadataEntry;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_repo_pre_and_post_clone() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|local_repo| async move {
@@ -520,6 +521,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_repo_pre_and_post_push() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|local_repo| async move {
@@ -558,6 +560,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_create_remote_repository() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|local_repo| async move {
@@ -577,6 +580,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_create_remote_repository_with_readme() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|local_repo| async move {
@@ -612,6 +616,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_get_by_name() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|local_repo| async move {
@@ -629,6 +634,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_delete_repository() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|local_repo| async move {
@@ -649,6 +655,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_transfer_remote_repository() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|local_repo| async move {

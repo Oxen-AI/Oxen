@@ -75,6 +75,7 @@ mod tests {
     use std::path::PathBuf;
     use zip::ZipArchive;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_dir_as_zip() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
