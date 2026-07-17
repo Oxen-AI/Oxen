@@ -261,7 +261,7 @@ cargo test --workspace -- --test-threads=$(getconf _NPROCESSORS_ONLN)
 
 ## Automatic Test Setup
 
-You can use [bin/test-rust](./bin/test-rust) to run tests. It will set up config files, build and run an oxen-server, run the tests against it, and shutdown the server. Any arguments passed to `test-rust` are forwarded after `--` to the libtest binaries, so you can use it to run specific tests or set test threads.
+You can use [bin/test-rust](../../bin/test-rust) to run tests. It will set up config files, build and run an oxen-server, run the tests against it, and shutdown the server. Arguments after `test-rust`'s own flags are forwarded after `--` to the libtest binaries, so you can use it to run specific tests or set test threads.
 
 ```bash
 bin/test-rust
