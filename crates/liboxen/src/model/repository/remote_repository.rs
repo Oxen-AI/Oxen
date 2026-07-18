@@ -1,5 +1,6 @@
 use crate::api;
 use crate::core::versions::MinOxenVersion;
+use crate::storage::StorageKind;
 use crate::view::RepositoryView;
 use crate::view::repository::RepositoryCreationView;
 use crate::{error::OxenError, model::Remote};
@@ -13,6 +14,8 @@ pub struct RemoteRepository {
     pub remote: Remote,
     pub min_version: Option<String>,
     pub is_empty: bool,
+    /// The server's version-store backend for this repo (local filesystem or S3).
+    pub storage_kind: StorageKind,
 }
 
 impl RemoteRepository {
@@ -23,6 +26,7 @@ impl RemoteRepository {
             remote: remote.clone(),
             min_version: repository.min_version.clone(),
             is_empty: repository.is_empty,
+            storage_kind: repository.storage_kind,
         }
     }
 
@@ -36,6 +40,7 @@ impl RemoteRepository {
             remote: remote.clone(),
             min_version: repository.min_version.clone(),
             is_empty: true,
+            storage_kind: repository.storage_kind,
         }
     }
 

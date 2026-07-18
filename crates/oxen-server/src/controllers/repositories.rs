@@ -1,6 +1,6 @@
 use crate::app_data::OxenAppData;
 use crate::errors::OxenHttpError;
-use crate::helpers::get_repo;
+use crate::helpers::{get_repo, get_repo_async};
 use crate::params::{app_data, path_param};
 
 use futures_util::TryStreamExt;
@@ -9,9 +9,9 @@ use liboxen::api::requests::RepoNew;
 // Import StreamExt for the next() method
 use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::error::OxenError;
-use liboxen::model::ParsedResource;
 use liboxen::model::file::{FileContents, FileNew};
 use liboxen::model::parsed_resource::ParsedResourceView;
+use liboxen::model::{Branch, ParsedResource};
 use liboxen::repositories;
 use liboxen::view::http::{MSG_RESOURCE_FOUND, MSG_RESOURCE_UPDATED, STATUS_SUCCESS};
 use liboxen::view::repository::{
@@ -86,15 +86,18 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     let name = path_param(&req, "repo_name")?.to_string();
 
     // Get the repository or return error
-    let repository = get_repo(app_data, &namespace, &name)?;
+    let repository = get_repo_async(app_data, &namespace, &name).await?;
     let mut size: u64 = 0;
     let mut data_types: Vec<DataTypeCount> = vec![];
     let mut default_resource: Option<ParsedResourceView> = None;
 
     // If we have a commit on the main branch, we can get the size and data types from the commit
-    if let Ok(Some(commit)) = repositories::revisions::get(&repository, DEFAULT_BRANCH_NAME) {
+    if let Ok(Some(commit)) =
+        repositories::revisions::get_async(&repository, DEFAULT_BRANCH_NAME).await
+    {
         if let Some(dir_node) =
-            repositories::entries::get_directory(&repository, &commit, PathBuf::from(""))?
+            repositories::entries::get_directory_async(&repository, &commit, PathBuf::from(""))
+                .await?
         {
             size = dir_node.num_bytes();
             data_types = dir_node
@@ -107,10 +110,15 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
                 .collect();
         }
 
-        let branch = repositories::branches::get_by_name(&repository, DEFAULT_BRANCH_NAME).ok();
+        // The resolved commit is the head of the default branch, so its id is that branch's
+        // commit id; build the branch from it rather than re-reading the refs DB.
+        let branch = Branch {
+            name: DEFAULT_BRANCH_NAME.to_string(),
+            commit_id: commit.id.clone(),
+        };
         default_resource = Some(ParsedResourceView::from(ParsedResource {
             commit: Some(commit),
-            branch,
+            branch: Some(branch),
             workspace: None,
             path: PathBuf::from(""),
             version: PathBuf::from(DEFAULT_BRANCH_NAME),
@@ -118,19 +126,23 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
         }));
     }
 
-    let branch_count = repositories::branches::list(&repository)?.len();
+    // A repo with no branches is empty; derive it from the same scan rather than a second read.
+    let branch_count = repositories::branches::list(&repository).await?.len();
 
     // Return the repository view
     Ok(HttpResponse::Ok().json(RepositoryDataTypesResponse {
         status: STATUS_SUCCESS.to_string(),
         status_message: MSG_RESOURCE_FOUND.to_string(),
         repository: RepositoryDataTypesView {
-            namespace,
-            name,
+            repository: RepositoryView {
+                namespace,
+                name,
+                min_version: Some(repository.min_version().to_string()),
+                is_empty: branch_count == 0,
+                storage_kind: repository.storage_config().kind,
+            },
             size,
             data_types,
-            min_version: Some(repository.min_version().to_string()),
-            is_empty: repositories::is_empty(&repository)?,
             branch_count,
             default_resource,
         },
@@ -298,7 +310,7 @@ pub async fn create(
                 println!("Failed to parse JSON: {e:?}");
                 OxenHttpError::BadRequest("Invalid JSON".into())
             })?;
-            return handle_json_creation(app_data, json_data).await;
+            return create_repo_response(app_data, json_data).await;
         } else {
             content_type
                 .to_str()
@@ -311,53 +323,6 @@ pub async fn create(
         }
     }
     Err(OxenHttpError::BadRequest("Unsupported Content-Type".into()))
-}
-
-async fn handle_json_creation(
-    app_data: &OxenAppData,
-    data: RepoNew,
-) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let data = {
-        let mut data = data;
-        data.storage_kind = Some(app_data.config.storage.resolve(data.storage_kind)?);
-        data
-    };
-
-    let repo_new_clone = data.clone();
-    match repositories::create(&app_data.path, data, app_data.config.storage.s3()).await {
-        Ok(repo) => match repositories::commits::latest_commit(&repo.local_repo) {
-            Ok(latest_commit) => Ok(HttpResponse::Ok().json(RepositoryCreationResponse {
-                status: STATUS_SUCCESS.to_string(),
-                status_message: MSG_RESOURCE_FOUND.to_string(),
-                repository: RepositoryCreationView {
-                    namespace: repo_new_clone.namespace.clone(),
-                    latest_commit: Some(latest_commit.clone()),
-                    name: repo_new_clone.name.clone(),
-                    min_version: Some(repo.local_repo.min_version().to_string()),
-                },
-                metadata_entries: None,
-            })),
-            Err(OxenError::NoCommitsFound) => {
-                Ok(HttpResponse::Ok().json(RepositoryCreationResponse {
-                    status: STATUS_SUCCESS.to_string(),
-                    status_message: MSG_RESOURCE_FOUND.to_string(),
-                    repository: RepositoryCreationView {
-                        namespace: repo_new_clone.namespace.clone(),
-                        latest_commit: None,
-                        name: repo_new_clone.name.clone(),
-                        min_version: Some(repo.local_repo.min_version().to_string()),
-                    },
-                    metadata_entries: None,
-                }))
-            }
-            Err(err) => {
-                log::error!("Err repositories::commits::latest_commit: {err:?}");
-                Ok(HttpResponse::InternalServerError()
-                    .json(StatusMessage::error("Failed to get latest commit.")))
-            }
-        },
-        Err(err) => Ok(map_create_error_to_response(err)),
-    }
 }
 
 async fn handle_multipart_creation(
@@ -455,45 +420,47 @@ async fn handle_multipart_creation(
         };
 
         repo_data.files = if !files.is_empty() { Some(files) } else { None };
-        repo_data.storage_kind = Some(app_data.config.storage.resolve(repo_data.storage_kind)?);
         repo_data
     };
 
-    let repo_data_clone = repo_data.clone();
-
     // Create repository
-    match repositories::create(&app_data.path, repo_data, app_data.config.storage.s3()).await {
-        Ok(repo) => match repositories::commits::latest_commit(&repo.local_repo) {
-            Ok(latest_commit) => Ok(HttpResponse::Ok().json(RepositoryCreationResponse {
+    create_repo_response(app_data, repo_data).await
+}
+
+/// Create the repository from a [`RepoNew`] and build the response that both creation routes
+/// (JSON and multipart) send back. `data.storage_kind` is resolved against the server's storage
+/// policy (`None` selects the server default).
+async fn create_repo_response(
+    app_data: &OxenAppData,
+    mut data: RepoNew,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    data.storage_kind = Some(app_data.config.storage.resolve(data.storage_kind)?);
+    let namespace = data.namespace.clone();
+    let name = data.name.clone();
+    match repositories::create(&app_data.path, data, app_data.config.storage.s3()).await {
+        Ok(repo) => {
+            // The repository exists by this point, so a failed lookup only degrades the
+            // response's latest_commit to None rather than failing the creation.
+            let latest_commit = match repositories::commits::latest_commit(&repo) {
+                Ok(commit) => Some(commit),
+                Err(OxenError::NoCommitsFound) => None,
+                Err(err) => {
+                    log::error!("Err repositories::commits::latest_commit: {err:?}");
+                    None
+                }
+            };
+            Ok(HttpResponse::Ok().json(RepositoryCreationResponse {
                 status: STATUS_SUCCESS.to_string(),
                 status_message: MSG_RESOURCE_FOUND.to_string(),
                 repository: RepositoryCreationView {
-                    namespace: repo_data_clone.namespace,
-                    latest_commit: Some(latest_commit),
-                    name: repo_data_clone.name,
-                    min_version: Some(repo.local_repo.min_version().to_string()),
+                    namespace,
+                    name,
+                    latest_commit,
+                    min_version: Some(repo.min_version().to_string()),
+                    storage_kind: repo.storage_config().kind,
                 },
-                metadata_entries: repo.entries,
-            })),
-            Err(OxenError::NoCommitsFound) => {
-                Ok(HttpResponse::Ok().json(RepositoryCreationResponse {
-                    status: STATUS_SUCCESS.to_string(),
-                    status_message: MSG_RESOURCE_FOUND.to_string(),
-                    repository: RepositoryCreationView {
-                        namespace: repo_data_clone.namespace,
-                        latest_commit: None,
-                        name: repo_data_clone.name,
-                        min_version: Some(repo.local_repo.min_version().to_string()),
-                    },
-                    metadata_entries: repo.entries,
-                }))
-            }
-            Err(err) => {
-                log::error!("Err repositories::commits::latest_commit: {err:?}");
-                Ok(HttpResponse::InternalServerError()
-                    .json(StatusMessage::error("Failed to get latest commit.")))
-            }
-        },
+            }))
+        }
         Err(err) => Ok(map_create_error_to_response(err)),
     }
 }
@@ -546,10 +513,13 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
         return Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()));
     };
 
-    // Delete in a background thread because it could take awhile
-    std::thread::spawn(move || match repositories::delete(&repository) {
-        Ok(_) => log::info!("Deleted repo: {namespace}/{name}"),
-        Err(err) => log::error!("Err deleting repo: {err}"),
+    // Delete in a background task because it could take awhile; the blocking directory
+    // removal runs inside delete's own spawn_blocking.
+    tokio::spawn(async move {
+        match repositories::delete(&repository).await {
+            Ok(_) => log::info!("Deleted repo: {namespace}/{name}"),
+            Err(err) => log::error!("Err deleting repo: {err}"),
+        }
     });
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
@@ -607,7 +577,8 @@ pub async fn transfer_namespace(
             namespace: to_namespace,
             name,
             min_version: Some(repo.min_version().to_string()),
-            is_empty: repositories::is_empty(&repo)?,
+            is_empty: repositories::is_empty(&repo).await?,
+            storage_kind: repo.storage_config().kind,
         },
     }))
 }

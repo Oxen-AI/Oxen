@@ -1,8 +1,6 @@
 use crate::errors::OxenHttpError;
-use crate::helpers::get_repo;
-use crate::params::{app_data, parse_resource, path_param};
-
-use liboxen::error::OxenError;
+use crate::helpers::{get_repo, get_repo_async};
+use crate::params::{app_data, parse_resource, parse_resource_async, path_param};
 
 use liboxen::view::StatusMessage;
 use liboxen::view::entries::EMetadataEntry;
@@ -33,8 +31,8 @@ pub async fn file(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(app_data, namespace, &repo_name)?;
-    let resource = parse_resource(&req, &repo)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
+    let resource = parse_resource_async(&req, &repo).await?;
     let workspace_ref = resource.workspace.as_ref();
 
     let commit = if let Some(workspace) = workspace_ref {
@@ -50,18 +48,15 @@ pub async fn file(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
         resource
     );
 
-    let latest_commit = repositories::commits::get_by_id(&repo, &commit.id)?
-        .ok_or_else(|| OxenError::RevisionNotFound(commit.id.as_str().into()))?;
-
     log::debug!(
         "{} resolve commit {} -> '{}'",
         current_function!(),
-        latest_commit.id,
-        latest_commit.message
+        commit.id,
+        commit.message
     );
 
     let meta = if let Some(workspace) = resource.workspace.as_ref() {
-        match repositories::entries::get_meta_entry(&repo, &commit, &resource.path) {
+        match repositories::entries::get_meta_entry_async(&repo, &commit, &resource.path).await {
             Ok(entry) => {
                 let mut entry = repositories::workspaces::populate_entry_with_workspace_data(
                     resource.path.as_ref(),
@@ -88,7 +83,8 @@ pub async fn file(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
             }
         }
     } else {
-        let mut entry = repositories::entries::get_meta_entry(&repo, &commit, &resource.path)?;
+        let mut entry =
+            repositories::entries::get_meta_entry_async(&repo, &commit, &resource.path).await?;
         entry.resource = Some(resource.clone().into());
         EMetadataEntryResponseView {
             status: StatusMessage::resource_found(),

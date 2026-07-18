@@ -192,65 +192,76 @@ pub fn search_entries(
 }
 
 /// List paginated commits starting from the given revision
-pub fn list_from_paginated(
+pub async fn list_from_paginated(
     repo: &LocalRepository,
     revision: &str,
     pagination: PaginateOpts,
 ) -> Result<PaginatedCommits, OxenError> {
-    let _perf = crate::perf_guard!("commits::list_from_paginated");
+    let repo = repo.clone();
+    let revision = revision.to_string();
+    tokio::task::spawn_blocking(move || {
+        let _perf = crate::perf_guard!("commits::list_from_paginated");
 
-    // Calculate skip and limit based on pagination parameters
-    let skip = if pagination.page_num == 0 {
-        0
-    } else {
-        (pagination.page_num - 1) * pagination.page_size
-    };
-    let limit = pagination.page_size;
+        // Calculate skip and limit based on pagination parameters
+        let skip = if pagination.page_num == 0 {
+            0
+        } else {
+            (pagination.page_num - 1) * pagination.page_size
+        };
+        let limit = pagination.page_size;
 
-    let _perf_list = crate::perf_guard!("commits::list_from_paginated_optimized");
-    let (commits, total_entries, cached) =
-        core::v_latest::commits::list_from_paginated_impl(repo, revision, skip, limit)?;
-    log::info!(
-        "list_from_paginated {} got {} commits out of {} total (cached: {})",
-        revision,
-        commits.len(),
-        total_entries,
-        cached
-    );
-    drop(_perf_list);
+        let _perf_list = crate::perf_guard!("commits::list_from_paginated_optimized");
+        let (commits, total_entries, cached) =
+            core::v_latest::commits::list_from_paginated_impl(&repo, &revision, skip, limit)?;
+        log::info!(
+            "list_from_paginated {} got {} commits out of {} total (cached: {})",
+            revision,
+            commits.len(),
+            total_entries,
+            cached
+        );
+        drop(_perf_list);
 
-    // Calculate pagination metadata
-    let total_pages = if pagination.page_size > 0 {
-        (total_entries as f64 / pagination.page_size as f64).ceil() as usize
-    } else {
-        0
-    };
+        // Calculate pagination metadata
+        let total_pages = if pagination.page_size > 0 {
+            (total_entries as f64 / pagination.page_size as f64).ceil() as usize
+        } else {
+            0
+        };
 
-    let pagination = crate::view::Pagination {
-        page_size: pagination.page_size,
-        page_number: pagination.page_num,
-        total_pages,
-        total_entries,
-    };
+        let pagination = crate::view::Pagination {
+            page_size: pagination.page_size,
+            page_number: pagination.page_num,
+            total_pages,
+            total_entries,
+        };
 
-    Ok(PaginatedCommits {
-        status: StatusMessage::resource_found(),
-        commits,
-        pagination,
+        Ok(PaginatedCommits {
+            status: StatusMessage::resource_found(),
+            commits,
+            pagination,
+        })
     })
+    .await?
 }
 
 /// List paginated commits by resource
-pub fn list_by_path_from_paginated(
+pub async fn list_by_path_from_paginated(
     repo: &LocalRepository,
     commit: &Commit,
     path: &Path,
     pagination: PaginateOpts,
 ) -> Result<PaginatedCommits, OxenError> {
-    let _perf = crate::perf_guard!("commits::list_by_path_from_paginated");
+    let repo = repo.clone();
+    let commit = commit.clone();
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let _perf = crate::perf_guard!("commits::list_by_path_from_paginated");
 
-    log::info!("list_by_path_from_paginated: {commit:?} {path:?}");
-    core::v_latest::commits::list_by_path_from_paginated(repo, commit, path, pagination)
+        log::info!("list_by_path_from_paginated: {commit:?} {path:?}");
+        core::v_latest::commits::list_by_path_from_paginated(&repo, &commit, &path, pagination)
+    })
+    .await?
 }
 
 pub use crate::core::v_latest::commits::count_from;
@@ -1314,7 +1325,8 @@ A: Oxen.ai
                 &head_commit,
                 &target_file_path,
                 pagination_opts,
-            )?;
+            )
+            .await?;
 
             assert_eq!(paginated_result.commits.len(), expected_commits.len());
 
@@ -1335,7 +1347,7 @@ A: Oxen.ai
         test::run_empty_data_repo_test_no_commits_async(|repo| async move {
             // Verify repo is empty (no commits)
             assert!(head_commit_maybe(&repo)?.is_none());
-            assert!(repositories::branches::list(&repo)?.is_empty());
+            assert!(repositories::branches::list(&repo).await?.is_empty());
 
             // Create initial commit
             let user = crate::model::User {
@@ -1356,7 +1368,7 @@ A: Oxen.ai
             assert_eq!(head.unwrap().id, commit.id);
 
             // Verify branch was created
-            let branches = repositories::branches::list(&repo)?;
+            let branches = repositories::branches::list(&repo).await?;
             assert_eq!(branches.len(), 1);
             assert_eq!(branches[0].name, "main");
             assert_eq!(branches[0].commit_id, commit.id);
@@ -1402,7 +1414,7 @@ A: Oxen.ai
             let commit = create_initial_commit(&repo, "develop", &user, "Initial commit")?;
 
             // Verify branch was created with custom name
-            let branches = repositories::branches::list(&repo)?;
+            let branches = repositories::branches::list(&repo).await?;
             assert_eq!(branches.len(), 1);
             assert_eq!(branches[0].name, "develop");
             assert_eq!(branches[0].commit_id, commit.id);
@@ -1508,7 +1520,8 @@ A: Oxen.ai
                 &head,
                 &PathBuf::from("data/a.txt"),
                 opts.clone(),
-            )?;
+            )
+            .await?;
             assert_eq!(
                 result.commits.len(),
                 4,
@@ -1522,7 +1535,8 @@ A: Oxen.ai
                 &head,
                 &PathBuf::from("src/b.txt"),
                 opts.clone(),
-            )?;
+            )
+            .await?;
             assert_eq!(
                 result.commits.len(),
                 2,
@@ -1536,7 +1550,8 @@ A: Oxen.ai
                 &head,
                 &PathBuf::from("src/c.txt"),
                 opts.clone(),
-            )?;
+            )
+            .await?;
             assert_eq!(
                 result.commits.len(),
                 1,
@@ -1550,7 +1565,8 @@ A: Oxen.ai
                 &head,
                 &PathBuf::from("other.txt"),
                 opts.clone(),
-            )?;
+            )
+            .await?;
             assert_eq!(
                 result.commits.len(),
                 1,
@@ -1564,7 +1580,8 @@ A: Oxen.ai
                 &head,
                 &PathBuf::from("data"),
                 opts.clone(),
-            )?;
+            )
+            .await?;
             assert_eq!(
                 result.commits.len(),
                 4,
@@ -1578,7 +1595,8 @@ A: Oxen.ai
                 &head,
                 &PathBuf::from("src"),
                 opts.clone(),
-            )?;
+            )
+            .await?;
             assert_eq!(
                 result.commits.len(),
                 3,

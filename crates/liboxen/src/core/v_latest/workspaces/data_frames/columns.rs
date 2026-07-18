@@ -2,10 +2,9 @@ use polars::frame::DataFrame;
 
 use crate::constants::TABLE_NAME;
 use crate::core::db::data_frames::DataFrameError;
+use crate::core::db::data_frames::columns;
+use crate::core::db::data_frames::df_db::{self, with_df_db_manager};
 use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
-use crate::core::db::data_frames::{
-    changes_db, column_changes_db, columns, df_db::with_df_db_manager,
-};
 use crate::core::staged::staged_db_manager::get_staged_db_manager;
 use crate::core::v_latest::workspaces;
 use crate::error::OxenError;
@@ -14,12 +13,8 @@ use crate::model::merkle_tree::node::StagedMerkleTreeNode;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{LocalRepository, MerkleHash, Schema, StagedEntryStatus, Workspace};
-use crate::repositories::workspaces::data_frames::columns::get_column_diff;
 
-use crate::view::data_frames::columns::{
-    ColumnToDelete, ColumnToRestore, ColumnToUpdate, NewColumn,
-};
-use crate::view::data_frames::{ColumnChange, DataFrameColumnChange};
+use crate::view::data_frames::columns::{ColumnToDelete, ColumnToUpdate, NewColumn};
 use crate::{repositories, util};
 
 use std::collections::HashMap;
@@ -32,24 +27,10 @@ pub fn add(
 ) -> Result<DataFrame, OxenError> {
     let file_path = file_path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
-    let column_changes_path =
-        repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
     log::debug!("add_column() got db_path: {db_path:?}");
     let result = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| columns::add_column(conn, new_column))
     })?;
-
-    let column_after = ColumnChange {
-        column_name: new_column.name.clone(),
-        column_data_type: Some(new_column.data_type.to_owned()),
-    };
-
-    columns::record_column_change(
-        &column_changes_path,
-        "added".to_owned(),
-        None,
-        Some(column_after),
-    )?;
 
     workspaces::files::track_modified_data_frame(workspace, file_path)?;
 
@@ -63,35 +44,10 @@ pub fn delete(
 ) -> Result<DataFrame, OxenError> {
     let file_path = file_path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
-    let column_changes_path =
-        repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
     log::debug!("delete_column() got db_path: {db_path:?}");
-    let (result, column_data_type) = with_df_db_manager(&db_path, |manager| {
-        manager.with_conn(|conn| {
-            let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
-            let column_data_type =
-                table_schema
-                    .get_field(&column_to_delete.name)
-                    .ok_or_else(|| {
-                        DataFrameError::ColumnNameNotFound(column_to_delete.name.to_string())
-                    })?;
-
-            let result = columns::delete_column(conn, column_to_delete)?;
-            Ok((result, column_data_type.to_owned()))
-        })
+    let result = with_df_db_manager(&db_path, |manager| {
+        manager.with_conn(|conn| columns::delete_column(conn, column_to_delete))
     })?;
-
-    let column_before = ColumnChange {
-        column_name: column_to_delete.name.clone(),
-        column_data_type: Some(column_data_type.dtype.clone()),
-    };
-
-    columns::record_column_change(
-        &column_changes_path,
-        "deleted".to_owned(),
-        Some(column_before),
-        None,
-    )?;
 
     workspaces::files::track_modified_data_frame(workspace, file_path)?;
 
@@ -105,15 +61,11 @@ pub async fn update(
 ) -> Result<DataFrame, OxenError> {
     let file_path = file_path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
-    let column_changes_path =
-        repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
     log::debug!("update_column() got db_path: {db_path:?}");
-    let (result, column_data_type) = with_df_db_manager(&db_path, |manager| {
+    let result = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
-            let result = columns::update_column(conn, column_to_update, &table_schema)?;
-            let column_data_type = table_schema.get_field(&column_to_update.name).unwrap();
-            Ok((result, column_data_type.clone()))
+            columns::update_column(conn, column_to_update, &table_schema)
         })
     })?;
 
@@ -121,28 +73,6 @@ pub async fn update(
         .new_name
         .clone()
         .unwrap_or(column_to_update.name.clone());
-
-    let column_after_data_type = column_to_update
-        .new_data_type
-        .clone()
-        .unwrap_or(column_data_type.dtype.clone());
-
-    let column_before = ColumnChange {
-        column_name: column_to_update.name.clone(),
-        column_data_type: Some(column_data_type.dtype.clone()),
-    };
-
-    let column_after = ColumnChange {
-        column_name: column_after_name.clone(),
-        column_data_type: Some(column_after_data_type),
-    };
-
-    columns::record_column_change(
-        &column_changes_path,
-        "modified".to_string(),
-        Some(column_before),
-        Some(column_after),
-    )?;
 
     let og_schema = repositories::data_frames::schemas::get_by_path(
         &workspace.base_repo,
@@ -160,214 +90,6 @@ pub async fn update(
 
     repositories::workspaces::files::add(workspace, file_path).await?;
 
-    Ok(result)
-}
-
-pub async fn restore(
-    workspace: &Workspace,
-    file_path: impl AsRef<Path>,
-    column_to_restore: &ColumnToRestore,
-) -> Result<DataFrame, OxenError> {
-    let file_path = file_path.as_ref();
-    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
-    let column_changes_path =
-        repositories::workspaces::data_frames::column_changes_path(workspace, file_path);
-
-    // Arc may cross `.await`; the guards taken below must not.
-    let handle = changes_db::get_changes_db(&column_changes_path)?;
-
-    log::debug!("restore_column() got db_path: {db_path:?}");
-
-    let og_schema = repositories::data_frames::schemas::get_by_path(
-        &workspace.base_repo,
-        &workspace.commit,
-        file_path,
-    )?;
-
-    // Hold one write guard from the change lookup through the DuckDB mutation and revert, so a
-    // concurrent `record_column_change` can't replace the entry between read and revert. Drop the
-    // guard before any `.await`.
-    let result = {
-        let db = handle.write();
-        let change = column_changes_db::get_data_frame_column_change(&db, &column_to_restore.name)?
-            .ok_or_else(|| {
-                DataFrameError::ColumnNameNotFound(column_to_restore.name.to_string())
-            })?;
-
-        match change.operation.as_str() {
-            "added" => {
-                log::debug!("restore_column() column is added, deleting");
-                let column_to_delete = ColumnToDelete {
-                    name: change
-                        .column_after
-                        .clone()
-                        .ok_or_else(|| {
-                            OxenError::Basic(
-                                "To restore an add, the column after object has to be defined"
-                                    .into(),
-                            )
-                        })?
-                        .column_name
-                        .clone(),
-                };
-                let result = with_df_db_manager(&db_path, |manager| {
-                    manager.with_conn(|conn| columns::delete_column(conn, &column_to_delete))
-                })?;
-                columns::revert_column_changes(
-                    &db,
-                    &change
-                        .column_after
-                        .ok_or_else(|| {
-                            OxenError::Basic(
-                                "To restore an add, the column after object has to be defined"
-                                    .into(),
-                            )
-                        })?
-                        .column_name,
-                )?;
-                result
-            }
-            "deleted" => {
-                log::debug!("restore_column() column was removed, adding it back");
-                let new_column = NewColumn {
-                    name: change
-                        .column_before
-                        .clone()
-                        .ok_or_else(|| {
-                            OxenError::Basic(
-                                "To restore a delete, the column before object has to be defined"
-                                    .into(),
-                            )
-                        })?
-                        .column_name,
-                    data_type: change
-                        .column_before
-                        .clone()
-                        .ok_or_else(|| {
-                            OxenError::Basic(
-                                "To restore a delete, the column before object has to be defined"
-                                    .into(),
-                            )
-                        })?
-                        .column_data_type
-                        .ok_or_else(|| {
-                            OxenError::Basic("Column data type is required but was None".into())
-                        })?,
-                };
-                let result = with_df_db_manager(&db_path, |manager| {
-                    manager.with_conn(|conn| columns::add_column(conn, &new_column))
-                })?;
-                columns::revert_column_changes(
-                    &db,
-                    &change
-                        .column_before
-                        .ok_or_else(|| {
-                            OxenError::Basic(
-                                "To restore a delete, the column before object has to be defined"
-                                    .into(),
-                            )
-                        })?
-                        .column_name,
-                )?;
-                result
-            }
-            "modified" => {
-                log::debug!("restore_column() column was modified, reverting changes");
-                let new_data_type = change
-                    .column_before
-                    .clone()
-                    .ok_or_else(|| {
-                        OxenError::Basic(
-                            "To restore a modify, the column before object has to be defined"
-                                .into(),
-                        )
-                    })?
-                    .column_data_type
-                    .ok_or_else(|| {
-                        OxenError::Basic("column_data_type is None, cannot unwrap".into())
-                    })?;
-                let column_to_update = ColumnToUpdate {
-                    name: change
-                        .column_after
-                        .clone()
-                        .ok_or_else(|| {
-                            OxenError::Basic(
-                                "To restore a modify, the column after object has to be defined"
-                                    .into(),
-                            )
-                        })?
-                        .column_name,
-                    new_data_type: Some(new_data_type.to_owned()),
-                    new_name: Some(
-                        change
-                            .column_before
-                            .clone()
-                            .ok_or_else(|| {
-                                OxenError::Basic(
-                                "To restore a modify, the column before object has to be defined"
-                                    .into(),
-                            )
-                            })?
-                            .column_name,
-                    ),
-                };
-
-                let result = with_df_db_manager(&db_path, |manager| {
-                    manager.with_conn(|conn| {
-                        let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
-                        columns::update_column(conn, &column_to_update, &table_schema)
-                    })
-                })?;
-                columns::revert_column_changes(
-                    &db,
-                    &change
-                        .column_after
-                        .clone()
-                        .ok_or_else(|| {
-                            OxenError::Basic(
-                                "To restore a modify, the column before object has to be defined"
-                                    .into(),
-                            )
-                        })?
-                        .column_name,
-                )?;
-                let og_schema =
-                    og_schema.ok_or_else(|| OxenError::basic_str("Original schema not found"))?;
-
-                repositories::data_frames::schemas::restore_schema(
-                    &workspace.workspace_repo,
-                    file_path,
-                    &og_schema,
-                    &change
-                        .column_before
-                        .clone()
-                        .ok_or_else(|| {
-                            OxenError::basic_str(
-                                "To restore a modify, the column before object has to be defined",
-                            )
-                        })?
-                        .column_name,
-                    &change
-                        .column_after
-                        .clone()
-                        .ok_or_else(|| {
-                            OxenError::basic_str(
-                                "To restore a modify, the column after object has to be defined",
-                            )
-                        })?
-                        .column_name,
-                )?;
-                result
-            }
-            _ => {
-                return Err(OxenError::UnsupportedOperation(
-                    change.operation.clone().into(),
-                ));
-            }
-        }
-    };
-
-    repositories::workspaces::files::add(workspace, file_path).await?;
     Ok(result)
 }
 
@@ -429,12 +151,12 @@ pub fn add_column_metadata(
             file_node
         };
 
+        // Sync the workspace columns into the metadata before staging anything,
+        // so a failure here leaves no partially-staged parent nodes behind.
+        sync_workspace_columns_into_metadata(workspace, &path, file_node.get_mut_metadata())?;
+
         // Stage parent nodes
         staged_db_manager.upsert_staged_nodes(&staged_nodes)?;
-
-        let column_diff = get_column_diff(workspace, &file_path)?;
-
-        update_column_names_in_metadata(&column_diff, file_node.get_mut_metadata());
 
         // Update the column metadata
         let mut results = HashMap::new();
@@ -486,40 +208,57 @@ pub fn add_column_metadata(
     }
 }
 
-pub fn update_column_names_in_metadata(
-    column_changes: &[DataFrameColumnChange],
+/// Reconcile the file node's tabular metadata schema with the workspace's
+/// staged DuckDB table, so metadata reflects the edited state (columns a
+/// workspace edit added/removed/retyped) that the committed schema does not
+/// know yet. The staged table is authoritative: fields are rebuilt in its
+/// order with its dtypes, dropping columns no longer present and adding new
+/// ones, while any per-column metadata already attached is carried over by
+/// matching name. A data frame that isn't indexed is left untouched.
+fn sync_workspace_columns_into_metadata(
+    workspace: &Workspace,
+    path: &Path,
     file_node_metadata: &mut Option<GenericMetadata>,
-) {
-    if let Some(GenericMetadata::MetadataTabular(metadata_tabular)) = file_node_metadata {
-        for change in column_changes {
-            if change.operation == "modified" {
-                let column_before = change.column_before.as_ref().unwrap();
-                let column_after = change.column_after.as_ref().unwrap();
-                if column_before.column_name != column_after.column_name {
-                    for field in &mut metadata_tabular.tabular.schema.fields {
-                        if field.name == column_before.column_name {
-                            field.name = column_after.column_name.clone();
-                            log::debug!(
-                                "Updated column name from {} to {}",
-                                column_before.column_name,
-                                column_after.column_name
-                            );
-                        }
-                    }
-                }
-            } else if change.operation == "added" {
-                let column_after = change.column_after.as_ref().unwrap();
-                // Create a new field and add it to the schema
-                metadata_tabular.tabular.schema.fields.push(Field {
-                    name: column_after.column_name.clone(),
-                    // Assuming you have a default data type or can derive it from column_after
-                    dtype: column_after.column_data_type.clone().unwrap_or_default(),
-                    changes: None, // or some default metadata if needed
-                    metadata: None,
-                });
-            }
-        }
-    } else {
+) -> Result<(), OxenError> {
+    let Some(GenericMetadata::MetadataTabular(metadata_tabular)) = file_node_metadata else {
         log::warn!("Metadata is not of type MetadataTabular or is None");
+        return Ok(());
+    };
+
+    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
+    if !db_path.exists() {
+        // Never indexed: nothing to sync.
+        return Ok(());
     }
+    // Only reconcile when the staged table actually exists. A db file without
+    // it yields an empty schema, and rebuilding against that would wipe the
+    // committed metadata — so treat "no table" as a no-op, and let any real
+    // DB error propagate.
+    let table_schema = with_df_db_manager(&db_path, |manager| {
+        manager.with_conn(|conn| {
+            if !df_db::table_exists(conn, TABLE_NAME)? {
+                return Ok(None);
+            }
+            Ok(Some(schema_without_oxen_cols(conn, TABLE_NAME)?))
+        })
+    })?;
+    let Some(table_schema) = table_schema else {
+        return Ok(());
+    };
+
+    let old_fields = std::mem::take(&mut metadata_tabular.tabular.schema.fields);
+    metadata_tabular.tabular.schema.fields = table_schema
+        .fields
+        .into_iter()
+        .map(|table_field| {
+            let carried = old_fields.iter().find(|f| f.name == table_field.name);
+            Field {
+                name: table_field.name,
+                dtype: table_field.dtype,
+                metadata: carried.and_then(|f| f.metadata.clone()),
+                changes: None,
+            }
+        })
+        .collect();
+    Ok(())
 }

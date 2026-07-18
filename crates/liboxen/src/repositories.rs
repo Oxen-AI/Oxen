@@ -10,11 +10,8 @@ use crate::core::refs::with_ref_manager;
 use crate::error::OxenError;
 use crate::model::Commit;
 use crate::model::LocalRepository;
-use crate::model::MetadataEntry;
 use crate::model::file::FileContents;
 use crate::model::merkle_tree;
-use crate::model::repository::local_repository::LocalRepositoryWithEntries;
-use crate::repositories;
 use crate::storage::S3Opts;
 use crate::util;
 use jwalk::WalkDir;
@@ -89,11 +86,27 @@ pub fn get_by_namespace_and_name(
         .map(Some)
 }
 
-pub fn is_empty(repo: &LocalRepository) -> Result<bool, OxenError> {
-    match branches::list(repo) {
-        Ok(branches) => Ok(branches.is_empty()),
-        Err(err) => Err(err),
-    }
+/// Look up a repo by `<namespace>/<name>` under `sync_dir`, off the async worker.
+pub async fn get_by_namespace_and_name_async(
+    sync_dir: &Path,
+    namespace: &str,
+    name: &str,
+    server_s3_opts: Option<&S3Opts>,
+) -> Result<Option<LocalRepository>, OxenError> {
+    let sync_dir = sync_dir.to_path_buf();
+    let namespace = namespace.to_string();
+    let name = name.to_string();
+    let server_s3_opts = server_s3_opts.cloned();
+    tokio::task::spawn_blocking(move || {
+        get_by_namespace_and_name(&sync_dir, &namespace, &name, server_s3_opts.as_ref())
+    })
+    .await?
+}
+
+pub async fn is_empty(repo: &LocalRepository) -> Result<bool, OxenError> {
+    let repo = repo.clone();
+    tokio::task::spawn_blocking(move || with_ref_manager(&repo, |manager| manager.is_empty()))
+        .await?
 }
 
 pub fn list_namespaces(sync_dir: &Path) -> Result<Vec<String>, OxenError> {
@@ -194,7 +207,7 @@ pub async fn create(
     root_dir: &Path,
     new_repo: RepoNew,
     server_s3_opts: Option<&S3Opts>,
-) -> Result<LocalRepositoryWithEntries, OxenError> {
+) -> Result<LocalRepository, OxenError> {
     // Validate repo name
     if !is_valid_repo_name(&new_repo.name) {
         return Err(OxenError::InvalidRepoName(new_repo.name.into()));
@@ -251,7 +264,6 @@ pub async fn create(
     })?;
 
     // If the user supplied files, add and commit them
-    let mut commit: Option<Commit> = None;
     if let Some(files) = &new_repo.files {
         let user = &files[0].user;
         // Add the files
@@ -277,59 +289,40 @@ pub async fn create(
             add(&local_repo, &full_path).await?;
         }
 
-        commit = Some(core::v_latest::commits::commit_with_user(
-            &local_repo,
-            "Initial commit",
-            user,
-        )?);
-        branches::create(
-            &local_repo,
-            constants::DEFAULT_BRANCH_NAME,
-            &commit.as_ref().unwrap().id,
-        )?;
+        let commit =
+            core::v_latest::commits::commit_with_user(&local_repo, "Initial commit", user)?;
+        branches::create(&local_repo, constants::DEFAULT_BRANCH_NAME, &commit.id)?;
     }
 
-    let metadata_entries: Option<Vec<MetadataEntry>> = if let Some(files) = &new_repo.files {
-        let entries: Vec<MetadataEntry> = files
-            .iter()
-            .filter_map(|file| {
-                repositories::entries::get_meta_entry(
-                    &local_repo,
-                    commit.as_ref().unwrap(),
-                    &file.path,
-                )
-                .ok()
-            })
-            .collect();
-
-        if entries.is_empty() {
-            None
-        } else {
-            Some(entries)
-        }
-    } else {
-        None
-    };
-
-    Ok(LocalRepositoryWithEntries {
-        local_repo,
-        entries: metadata_entries,
-    })
+    Ok(local_repo)
 }
 
-pub fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenError> {
+pub async fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenError> {
     if !repo.path.exists() {
         let err = format!("Repository does not exist {:?}", repo.path);
         return Err(OxenError::basic_str(err));
     }
 
-    // Close DB instances before trying to delete the directory
-    merkle_tree::merkle_tree_node_cache::remove_from_cache(&repo.path)?;
-    core::staged::remove_from_cache_with_children(&repo.path)?;
-    core::refs::ref_manager::remove_from_cache(&repo.path)?;
+    // Remove the stored version files first: for non-local backends (and local stores with a
+    // custom versions_path) they live outside the repo directory.
+    repo.version_store().destroy().await?;
 
-    log::debug!("Deleting repo directory: {repo:?}");
-    util::fs::remove_dir_all(&repo.path)?;
+    let path = repo.path.clone();
+    tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
+        // Close DB instances before trying to delete the directory
+        merkle_tree::merkle_tree_node_cache::remove_from_cache(&path)?;
+        core::staged::remove_from_cache_with_children(&path)?;
+        core::refs::ref_manager::remove_from_cache(&path)?;
+
+        // Drop cached DuckDB connections too. On NFS, unlinking a still-open file leaves a hidden
+        // .nfsXXXX entry that fails the rmdir with ENOTEMPTY.
+        core::db::data_frames::df_db::remove_df_db_from_cache_with_children(&path)?;
+
+        log::debug!("Deleting repo directory: {path:?}");
+        util::fs::remove_dir_all(&path)?;
+        Ok(())
+    })
+    .await??;
     Ok(repo)
 }
 
@@ -346,6 +339,52 @@ mod tests {
     use crate::util;
     use std::path::{Path, PathBuf};
     use time::OffsetDateTime;
+
+    #[tokio::test]
+    async fn test_delete_removes_custom_versions_path_outside_repo() -> Result<(), OxenError> {
+        use crate::config::RepositoryConfig;
+        use crate::storage::{StorageConfig, StorageKind};
+        use bytes::Bytes;
+
+        test::run_empty_dir_test_async(|dir| async move {
+            // A local store whose versions root lives OUTSIDE the repo directory: deleting
+            // the repo directory alone would leak it.
+            let repo_path = dir.join("repo");
+            let custom_root = dir.join("custom-versions");
+            util::fs::create_dir_all(util::fs::oxen_hidden_dir(&repo_path))?;
+
+            let repo = LocalRepository::new(
+                &repo_path,
+                RepositoryConfig {
+                    storage: Some(StorageConfig {
+                        kind: StorageKind::Local,
+                        versions_path: Some(custom_root.clone()),
+                    }),
+                    ..Default::default()
+                },
+            )?;
+            repo.save()?;
+
+            let data = b"leak check";
+            let hash = util::hasher::hash_buffer(data);
+
+            let store = repo.version_store();
+            store.init().await?;
+            store.store_version(&hash, Bytes::from_static(data)).await?;
+            assert!(store.version_exists(&hash).await?);
+            assert!(custom_root.exists());
+
+            repositories::delete(&repo).await?;
+
+            assert!(
+                !custom_root.exists(),
+                "custom versions root must be removed"
+            );
+            assert!(!repo_path.exists(), "repo directory must be removed");
+            Ok(())
+        })
+        .await
+    }
 
     #[tokio::test]
     async fn test_local_repository_api_create_empty_with_commit() -> Result<(), OxenError> {

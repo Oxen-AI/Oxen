@@ -1,25 +1,18 @@
 use std::collections::HashMap;
-use std::path::Path;
 
 use duckdb::ToSql;
 use duckdb::arrow::array::RecordBatch;
 use polars::frame::DataFrame;
-use rocksdb::DB;
-use serde_json::Value;
-use sql::Select;
-// use sql::Select;
-use sql_query_builder as sql;
+// use sql_query_builder as sql;
 
-use crate::constants::{DIFF_HASH_COL, DIFF_STATUS_COL, OXEN_COLS, OXEN_ID_COL};
+use crate::constants::{LEGACY_OXEN_COLS, OXEN_COLS, OXEN_ID_COL};
+use crate::model::data_frame::schema::Schema;
 
 use crate::constants::TABLE_NAME;
+use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
-use crate::core::db::data_frames::{DataFrameError, changes_db, row_changes_db};
 use crate::core::df::tabular;
 use crate::model::data_frame::schema::DataType;
-use crate::model::staged_row_status::StagedRowStatus;
-use crate::view::data_frames::DataFrameRowChange;
-use polars::prelude::*; // or use polars::lazy::*; if you're working in a lazy context
 
 use super::df_db;
 
@@ -35,34 +28,25 @@ pub fn append_row(conn: &duckdb::Connection, df: &DataFrame) -> Result<DataFrame
         });
     }
 
-    let added_column = Column::Series(
-        Series::new(
-            PlSmallStr::from_str(DIFF_STATUS_COL),
-            vec![StagedRowStatus::Added.to_string(); df.height()],
-        )
-        .into(),
-    );
-    let df = df.hstack(&[added_column])?;
+    // Handle completely null {} create objects coming over from the hub:
+    // insert a row of all defaults rather than building an empty INSERT.
+    if df.height() == 0 || df.width() == 0 {
+        let sql = format!("INSERT INTO {TABLE_NAME} DEFAULT VALUES RETURNING *");
+        let result_set: Vec<RecordBatch> = conn.prepare(&sql)?.query_arrow([])?.collect();
+        return df_db::record_batches_to_polars_df(result_set);
+    }
 
-    // Handle initialization for completely null {} create objects coming over from the hub
-    let df = if df.height() == 0 {
-        let added_column = Column::Series(
-            Series::new(
-                PlSmallStr::from_str(DIFF_STATUS_COL),
-                vec![StagedRowStatus::Added.to_string()],
-            )
-            .into(),
-        );
-        DataFrame::new(vec![added_column])?
-    } else {
-        df
-    };
+    insert_polars_df(conn, TABLE_NAME, df)
+}
 
-    let inserted_df = insert_polars_df(conn, TABLE_NAME, &df)?;
-
-    Ok(inserted_df)
-
-    // Proceed with appending `new_df` to the database
+/// Whether a column in an update payload should be dropped rather than applied.
+/// The hub sends the oxen-internal columns (and, from older clients, the legacy
+/// tracking columns) in row payloads; those must not be written — UNLESS the
+/// data frame genuinely has a column of that name, in which case it is user
+/// data and the update applies.
+fn drop_from_update_payload(table_schema: &Schema, col: &str) -> bool {
+    let is_reserved = OXEN_COLS.contains(&col) || LEGACY_OXEN_COLS.contains(&col);
+    is_reserved && !table_schema.has_column(col)
 }
 
 pub fn modify_row(
@@ -76,13 +60,17 @@ pub fn modify_row(
 
     let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
 
-    // Filter it down to exclude any of the OXEN_COLS, we don't want to modify these but hub sends them over
+    // Exclude the OXEN_COLS the hub sends over (never modifiable), and any
+    // legacy tracking columns the hub still round-trips — but only when they
+    // aren't real columns in this table. A user data frame can legitimately
+    // have a column named e.g. `_oxen_diff_status`, and updates to it must
+    // apply, so a legacy name present in the schema is treated as user data.
     let schema = df.schema();
     let df_col_names: Vec<String> = schema.iter_names().map(|s| s.to_string()).collect();
     let df_cols: Vec<String> = df_col_names
         .clone()
         .into_iter()
-        .filter(|col| !OXEN_COLS.contains(&col.as_str()))
+        .filter(|col| !drop_from_update_payload(&table_schema, col))
         .collect();
     let df = df.select(&df_cols)?;
     if !table_schema.has_field_names(&df_cols) {
@@ -93,41 +81,7 @@ pub fn modify_row(
         });
     }
 
-    // get existing hash and status from db
-    let select_hash = Select::new()
-        .select("*")
-        .from(TABLE_NAME)
-        .where_clause(&format!("\"{OXEN_ID_COL}\" = '{uuid}'"));
-    let maybe_db_data = df_db::select(conn, &select_hash, None)?;
-
-    let mut new_row = maybe_db_data.clone().to_owned();
-
-    for col in df.get_columns() {
-        // Replace that column - copy the entire Series to preserve complex types (lists, structs, etc.)
-        let col_name = col.name();
-        let col_series = df.column(col_name)?;
-        if let Some(col_idx) = new_row.get_column_index(col_name) {
-            new_row.replace_column(col_idx, col_series.clone())?;
-        } else {
-            new_row.with_column(col_series.clone())?;
-        }
-    }
-
-    // TODO could use a struct to return these more safely
-    let (insert_hash, updated_status) =
-        get_hash_and_status_for_modification(conn, &maybe_db_data, &new_row)?;
-
-    // Update with latest values pre insert
-    // TODO: Find a better way to do this than overwriting the entire column here.
-    new_row.with_column(Series::new(
-        PlSmallStr::from_str(DIFF_STATUS_COL),
-        vec![updated_status],
-    ))?;
-    new_row.with_column(Series::new(
-        PlSmallStr::from_str(DIFF_HASH_COL),
-        vec![insert_hash],
-    ))?;
-    let result = df_db::modify_row_with_polars_df(conn, TABLE_NAME, uuid, &new_row)?;
+    let result = df_db::modify_row_with_polars_df(conn, TABLE_NAME, uuid, &df)?;
     if result.height() == 0 {
         return Err(DataFrameError::MissingDataFrame(uuid.to_string()));
     }
@@ -142,7 +96,10 @@ pub fn modify_rows(
 
     let mut update_map: HashMap<String, DataFrame> = HashMap::new();
 
-    // Filter it down to exclude any of the OXEN_COLS, we don't want to modify these but hub sends them over
+    // Each entry may carry a different subset of columns, but the batch UPDATE
+    // below builds one CASE expression per column across all rows — so merge
+    // every change into its full current row first. Also excludes any of the
+    // OXEN_COLS the hub sends over, which must not be modified.
     for (row_id, df) in row_map.iter() {
         if df.height() != 1 {
             return Err(DataFrameError::ModifyOnly1Row);
@@ -152,7 +109,7 @@ pub fn modify_rows(
         let df_cols: Vec<String> = df_col_names
             .clone()
             .into_iter()
-            .filter(|col| !OXEN_COLS.contains(&col.as_str()))
+            .filter(|col| !drop_from_update_payload(&table_schema, col))
             .collect();
         let df = df.select(&df_cols)?;
         if !table_schema.has_field_names(&df_cols) {
@@ -163,14 +120,19 @@ pub fn modify_rows(
             });
         }
 
-        // get existing hash and status from db
-        let select_hash = Select::new()
-            .select("*")
-            .from(TABLE_NAME)
-            .where_clause(&format!("\"{OXEN_ID_COL}\" = '{row_id}'"));
-        let maybe_db_data = df_db::select(conn, &select_hash, None)?;
+        let current_row = df_db::select_raw_with_params(
+            conn,
+            &format!("SELECT * FROM {TABLE_NAME} WHERE \"{OXEN_ID_COL}\" = ?"),
+            [row_id.as_str()],
+        )?;
+        // Fail before ANY row is written: proceeding with a missing id would
+        // let the batch UPDATE run for the other rows and then error on the
+        // count check afterward — a partial write reported as a failure.
+        if current_row.height() == 0 {
+            return Err(DataFrameError::MissingDataFrame(row_id.to_string()));
+        }
 
-        let mut new_row = maybe_db_data.clone().to_owned();
+        let mut new_row = current_row.clone();
         for col in df.get_columns() {
             // Replace that column - copy the entire Series to preserve complex types (lists, structs, etc.)
             let col_name = col.name();
@@ -182,19 +144,6 @@ pub fn modify_rows(
             }
         }
 
-        // TODO could use a struct to return these more safely
-        let (insert_hash, updated_status) =
-            get_hash_and_status_for_modification(conn, &maybe_db_data, &new_row)?;
-
-        // TODO: Find a better way to do this than overwriting the entire column here.
-        new_row.with_column(Series::new(
-            PlSmallStr::from_str(DIFF_STATUS_COL),
-            vec![updated_status],
-        ))?;
-        new_row.with_column(Series::new(
-            PlSmallStr::from_str(DIFF_HASH_COL),
-            vec![insert_hash],
-        ))?;
         update_map.insert(row_id.to_owned(), new_row);
     }
 
@@ -214,108 +163,23 @@ pub fn modify_rows(
 }
 
 pub fn delete_row(conn: &duckdb::Connection, uuid: &str) -> Result<DataFrame, DataFrameError> {
-    let select_stmt = sql::Select::new()
-        .select("*")
-        .from(TABLE_NAME)
-        .where_clause(&format!("{OXEN_ID_COL} = '{uuid}'"));
-
-    let row_to_delete = df_db::select(conn, &select_stmt, None)?;
+    // The id is bound, not interpolated, so a request-supplied id can't alter
+    // the predicate and delete unrelated rows.
+    let row_to_delete = df_db::select_raw_with_params(
+        conn,
+        &format!("SELECT * FROM {TABLE_NAME} WHERE \"{OXEN_ID_COL}\" = ?"),
+        [uuid],
+    )?;
     if row_to_delete.height() == 0 {
         return Err(DataFrameError::MissingDataFrame(uuid.to_string()));
     }
 
-    // If it's newly added, delete it. Otherwise, set it to removed
-    let status = row_to_delete.column(DIFF_STATUS_COL)?.get(0)?;
-    let status_str = status.get_str();
-
-    let status = match status_str {
-        Some(status) => status,
-        None => return Err(DataFrameError::DiffStatusColNotStr),
-    };
-    log::debug!("status is: {status}");
-
-    // Rows that weren't in previous commits are just removed from the staging df, rows in previous commits are tombstoned as "Removed"
-    if status == StagedRowStatus::Added.to_string() {
-        log::debug!("staged_df_db::delete_row() deleting row");
-        let stmt = sql::Delete::new()
-            .delete_from(TABLE_NAME)
-            .where_clause(&format!("{OXEN_ID_COL} = '{uuid}'"));
-        log::debug!("staged_df_db::delete_row() sql: {stmt:?}");
-        conn.execute(&stmt.to_string(), [])?;
-    } else {
-        log::debug!("staged_df_db::delete_row() updating row to indicate deletion");
-        let stmt = sql::Update::new()
-            .update(TABLE_NAME)
-            .set(&format!(
-                "\"{}\" = '{}'",
-                DIFF_STATUS_COL,
-                StagedRowStatus::Removed
-            ))
-            .where_clause(&format!("{OXEN_ID_COL} = '{uuid}'"));
-        log::debug!("staged_df_db::delete_row() sql: {stmt:?}");
-        conn.execute(&stmt.to_string(), [])?;
-    };
+    conn.execute(
+        &format!("DELETE FROM {TABLE_NAME} WHERE \"{OXEN_ID_COL}\" = ?"),
+        [uuid],
+    )?;
 
     Ok(row_to_delete)
-}
-
-fn get_hash_and_status_for_modification(
-    conn: &duckdb::Connection,
-    old_row: &DataFrame,
-    new_row: &DataFrame,
-) -> Result<(String, String), DataFrameError> {
-    let schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
-    let col_names = schema.fields_names();
-    let old_status = old_row.column(DIFF_STATUS_COL)?.get(0)?;
-    let old_status = old_status
-        .get_str()
-        .ok_or_else(|| DataFrameError::DiffStatusColNotStr)?;
-
-    let old_hash = old_row.column(DIFF_HASH_COL)?.get(0)?;
-
-    let new_hash_df = tabular::df_hash_rows_on_cols(new_row.clone(), &col_names, "_temp_hash")?;
-    let new_hash = new_hash_df.column("_temp_hash")?.get(0)?;
-    let new_hash = new_hash
-        .get_str()
-        .ok_or_else(|| DataFrameError::DiffHashColNotStr)?;
-
-    // We need to calculate the original hash for the row
-    // Use a temp hash column to avoid collision with the column that's already there.
-    let insert_hash = if old_hash.is_null() {
-        let original_data_hash =
-            tabular::df_hash_rows_on_cols(old_row.clone(), &col_names, "_temp_hash")?;
-        let original_data_hash = original_data_hash.column("_temp_hash")?.get(0)?;
-        original_data_hash
-            .get_str()
-            .ok_or_else(|| DataFrameError::DiffHashColNotStr)?
-            .to_owned()
-    } else {
-        old_hash
-            .get_str()
-            .ok_or_else(|| DataFrameError::DiffHashColNotStr)?
-            .to_owned()
-    };
-
-    // Anything previously added must stay added regardless of any further modifications.
-    // Modifying back to original state changes it to unchanged
-    // If we have no prior hash info on the original hash state, it is now modified (this is the first modification)
-    let new_status = if old_status == StagedRowStatus::Added.to_string() {
-        StagedRowStatus::Added.to_string()
-    } else if old_status == StagedRowStatus::Removed.to_string() {
-        if insert_hash == new_hash {
-            StagedRowStatus::Unchanged.to_string()
-        } else {
-            StagedRowStatus::Modified.to_string()
-        }
-    } else if old_hash.is_null() {
-        StagedRowStatus::Modified.to_string()
-    } else if new_hash == insert_hash {
-        StagedRowStatus::Unchanged.to_string()
-    } else {
-        StagedRowStatus::Modified.to_string()
-    };
-
-    Ok((insert_hash.to_string(), new_status))
 }
 
 /// Insert a row from a polars dataframe into a duckdb table.
@@ -374,40 +238,6 @@ pub fn insert_polars_df(
     Ok(result_df)
 }
 
-pub fn record_row_change(
-    row_changes_path: &Path,
-    row_id: String,
-    operation: String,
-    value: Value,
-    new_value: Option<Value>,
-) -> Result<(), DataFrameError> {
-    let change = DataFrameRowChange {
-        row_id: row_id.to_owned(),
-        operation,
-        value,
-        new_value,
-    };
-
-    let handle = changes_db::get_changes_db(row_changes_path)?;
-
-    // One write guard across the revert-then-put compound. Must not cross `.await`.
-    let db = handle.write();
-    maybe_revert_row_changes(&db, row_id.to_owned())?;
-    row_changes_db::write_data_frame_row_change(&change, &db)
-}
-
-pub fn maybe_revert_row_changes(db: &DB, row_id: String) -> Result<(), DataFrameError> {
-    match row_changes_db::get_data_frame_row_change(db, &row_id) {
-        Ok(None) => revert_row_changes(db, row_id),
-        Ok(Some(_)) => Ok(()),
-        Err(e) => Err(e),
-    }
-}
-
-pub fn revert_row_changes(db: &DB, row_id: String) -> Result<(), DataFrameError> {
-    row_changes_db::delete_data_frame_row_changes(db, &row_id)
-}
-
 /// Build a column-name → SQL type map for the given DuckDB table.
 ///
 /// Used to wrap List/Struct/Embedding placeholders in `CAST(? AS <sql_type>)` so that
@@ -440,65 +270,4 @@ fn needs_explicit_cast(sql_type: &str) -> bool {
     // List columns end with `[]` (e.g. INTEGER[], VARCHAR[]); fixed-size arrays / embeddings end with `[N]`.
     // Structs are stored as JSON (which already accepts string binds), but cast for symmetry / clarity.
     sql_type.ends_with(']') || sql_type == "JSON"
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::error::OxenError;
-    use crate::test;
-
-    /// Concurrent `record_row_change` calls for the same `row_id` serialize: the final stored value
-    /// matches exactly one writer, with no torn state.
-    #[test]
-    fn test_concurrent_record_row_change_same_row_id_serializes() -> Result<(), OxenError> {
-        const NUM_THREADS: usize = 16;
-
-        test::run_empty_dir_test(|data_dir| {
-            let row_changes_path = data_dir.join("row_changes");
-            // Pre-open so all worker threads share the same cached handle.
-            let _bootstrap = changes_db::get_changes_db(&row_changes_path)?;
-
-            std::thread::scope(|scope| {
-                let workers: Vec<_> = (0..NUM_THREADS)
-                    .map(|i| {
-                        let row_changes_path = row_changes_path.clone();
-                        scope.spawn(move || -> Result<(), OxenError> {
-                            record_row_change(
-                                &row_changes_path,
-                                "shared-row".to_string(),
-                                "modified".to_string(),
-                                Value::String(format!("value-{i}")),
-                                None,
-                            )?;
-                            Ok(())
-                        })
-                    })
-                    .collect();
-                for w in workers {
-                    w.join()
-                        .expect("worker panicked")
-                        .expect("record_row_change must not race itself");
-                }
-            });
-
-            // Exactly one writer's change is stored (last-writer-wins on the
-            // atomic compound); no torn intermediate is visible.
-            let handle = changes_db::get_changes_db(&row_changes_path)?;
-            let stored = row_changes_db::get_data_frame_row_change(&handle.read(), "shared-row")?
-                .expect("a writer's change is present");
-            let value = match stored.value {
-                Value::String(s) => s,
-                other => panic!("unexpected stored value: {other:?}"),
-            };
-            assert!(
-                (0..NUM_THREADS).any(|i| value == format!("value-{i}")),
-                "stored value should match one of the writers, got {value:?}",
-            );
-            drop(handle);
-
-            changes_db::remove_from_cache(&row_changes_path)?;
-            Ok(())
-        })
-    }
 }

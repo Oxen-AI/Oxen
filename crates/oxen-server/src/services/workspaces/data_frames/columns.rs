@@ -21,8 +21,4 @@ pub fn columns() -> Scope {
             "{column_name:.*}/resource/{path:.*}",
             web::put().to(controllers::workspaces::data_frames::columns::update),
         )
-        .route(
-            "/{column_name:.*}/restore/{path:.*}",
-            web::post().to(controllers::workspaces::data_frames::columns::restore),
-        )
 }

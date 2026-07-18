@@ -4,7 +4,7 @@
 use crate::core;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
-use crate::model::merkle_tree::node::FileNode;
+use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::opts::{PaginateOpts, SortOpts};
 use crate::repositories;
 use crate::util::concurrency;
@@ -20,6 +20,18 @@ use std::path::{Path, PathBuf};
 
 /// Get a directory object for a commit
 pub use crate::core::v_latest::entries::get_directory;
+
+/// Get a directory object for a commit, off the async worker.
+pub async fn get_directory_async(
+    repo: &LocalRepository,
+    commit: &Commit,
+    path: impl AsRef<Path>,
+) -> Result<Option<DirNode>, OxenError> {
+    let repo = repo.clone();
+    let commit = commit.clone();
+    let path = path.as_ref().to_path_buf();
+    tokio::task::spawn_blocking(move || get_directory(&repo, &commit, &path)).await?
+}
 
 /// Get a file node for a commit
 pub fn get_file(
@@ -114,6 +126,36 @@ pub fn list_directory_w_workspace_depth(
     )
 }
 
+/// List the entries within a directory to a given depth, off the async worker.
+#[allow(clippy::too_many_arguments)]
+pub async fn list_directory_w_workspace_depth_async(
+    repo: &LocalRepository,
+    directory: impl AsRef<Path>,
+    revision: impl AsRef<str>,
+    workspace: Option<Workspace>,
+    paginate_opts: &PaginateOpts,
+    sort_opts: &SortOpts,
+    depth: usize,
+) -> Result<PaginatedDirEntries, OxenError> {
+    let repo = repo.clone();
+    let directory = directory.as_ref().to_path_buf();
+    let revision = revision.as_ref().to_string();
+    let paginate_opts = paginate_opts.clone();
+    let sort_opts = sort_opts.clone();
+    tokio::task::spawn_blocking(move || {
+        list_directory_w_workspace_depth(
+            &repo,
+            &directory,
+            &revision,
+            workspace,
+            &paginate_opts,
+            &sort_opts,
+            depth,
+        )
+    })
+    .await?
+}
+
 pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<(), OxenError> {
     match repo.min_version() {
         MinOxenVersion::LATEST => core::v_latest::entries::update_metadata(repo, revision),
@@ -141,6 +183,19 @@ pub fn get_meta_entry(
             core::v_latest::entries::get_meta_entry(repo, &parsed_resource, path)
         }
     }
+}
+
+/// Get the entry for a given path in a commit, off the async worker.
+/// Could be a file or a directory.
+pub async fn get_meta_entry_async(
+    repo: &LocalRepository,
+    commit: &Commit,
+    path: impl AsRef<Path>,
+) -> Result<MetadataEntry, OxenError> {
+    let repo = repo.clone();
+    let commit = commit.clone();
+    let path = path.as_ref().to_path_buf();
+    tokio::task::spawn_blocking(move || get_meta_entry(&repo, &commit, &path)).await?
 }
 
 /// List the paths of all the directories in a given commit
@@ -1130,6 +1185,115 @@ mod tests {
                 assert_eq!(sub_children.len(), 1);
                 assert_eq!(sub_children[0].filename, "file_sub.txt");
             }
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_get_directory_async_matches_sync() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            let commits = repositories::commits::list(&repo)?;
+            let commit = commits.first().unwrap();
+            let path = Path::new("annotations").join("train");
+
+            let sync = repositories::entries::get_directory(&repo, commit, &path)?;
+            let async_ = repositories::entries::get_directory_async(&repo, commit, &path).await?;
+            assert_eq!(async_, sync);
+            assert!(sync.is_some());
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_get_directory_preserves_aggregates_without_children() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            let commits = repositories::commits::list(&repo)?;
+            let commit = commits.first().unwrap();
+            // "" and "." both denote the repo root; a nested path resolves normally.
+            let nested = Path::new("annotations").join("train");
+            for path in [Path::new(""), Path::new("."), nested.as_path()] {
+                // get_directory reads only the directory node.
+                let dir_node = repositories::entries::get_directory(&repo, commit, path)?
+                    .expect("directory should exist");
+
+                // A full-depth read of the same directory must report identical aggregates, since
+                // num_bytes and data_type_counts are stored on the directory node itself.
+                let full = repositories::tree::get_node_by_path(&repo, commit, path)?
+                    .expect("directory node should exist")
+                    .dir()?;
+
+                assert_eq!(dir_node.num_bytes(), full.num_bytes());
+                assert_eq!(dir_node.data_type_counts(), full.data_type_counts());
+                assert!(dir_node.num_bytes() > 0);
+            }
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_get_meta_entry_async_matches_sync() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            let commits = repositories::commits::list(&repo)?;
+            let commit = commits.first().unwrap();
+
+            for path in [
+                Path::new("annotations").join("train"),
+                test::test_nlp_classification_csv(),
+            ] {
+                let sync = repositories::entries::get_meta_entry(&repo, commit, &path)?;
+                let async_ =
+                    repositories::entries::get_meta_entry_async(&repo, commit, &path).await?;
+                assert_eq!(async_.filename, sync.filename);
+                assert_eq!(async_.hash, sync.hash);
+                assert_eq!(async_.is_dir, sync.is_dir);
+            }
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_list_directory_w_workspace_depth_async_matches_sync() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            let commits = repositories::commits::list(&repo)?;
+            let commit = commits.first().unwrap();
+            let paginate_opts = PaginateOpts {
+                page_num: 1,
+                page_size: 100,
+            };
+
+            let sync = repositories::entries::list_directory_w_workspace_depth(
+                &repo,
+                Path::new(""),
+                &commit.id,
+                None,
+                &paginate_opts,
+                &SortOpts::default(),
+                1,
+            )?;
+            let async_ = repositories::entries::list_directory_w_workspace_depth_async(
+                &repo,
+                Path::new(""),
+                &commit.id,
+                None,
+                &paginate_opts,
+                &SortOpts::default(),
+                1,
+            )
+            .await?;
+
+            assert_eq!(async_.total_entries, sync.total_entries);
+            assert_eq!(async_.total_pages, sync.total_pages);
+            let async_names: Vec<&str> = async_.entries.iter().map(|e| e.filename()).collect();
+            let sync_names: Vec<&str> = sync.entries.iter().map(|e| e.filename()).collect();
+            assert_eq!(async_names, sync_names);
 
             Ok(())
         })

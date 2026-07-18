@@ -1,15 +1,7 @@
-use strum::VariantNames;
+use crate::{error::OxenError, model::Schema};
 
-use crate::{
-    error::OxenError,
-    model::{Schema, staged_row_status::StagedRowStatus},
-};
-
-pub mod changes_db;
-pub mod column_changes_db;
 pub mod columns;
 pub mod df_db;
-pub mod row_changes_db;
 pub mod rows;
 pub mod workspace_df_db;
 
@@ -44,23 +36,8 @@ pub enum DataFrameError {
         df_cols: Vec<String>,
     },
 
-    #[error("Diff status column is not a string")]
-    DiffStatusColNotStr,
-
-    #[error("Missing diff status column")]
-    MissingDiffStatusCol,
-
-    #[error("Diff hash column is not a string")]
-    DiffHashColNotStr,
-
     #[error("Expected {expected} rows to be modified, but got {actual}")]
     UnexpectedModifications { expected: usize, actual: usize },
-
-    #[error("Invalid row status: \"{0}\". Expecting one of: {valid}", valid=<StagedRowStatus as VariantNames>::VARIANTS.join(", "))]
-    InvalidRowStatus(String),
-
-    #[error("Row status not found")]
-    RowStatusNotFound,
 
     #[error("DataFrame with UUID {0} not found.")]
     MissingDataFrame(String),

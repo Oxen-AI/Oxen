@@ -24,7 +24,15 @@ pub fn get_directory(
     commit: &Commit,
     path: impl AsRef<Path>,
 ) -> Result<Option<DirNode>, OxenError> {
-    let node = repositories::tree::get_node_by_path(repo, commit, path)?;
+    // Read just the directory node: its num_bytes and data_type_counts are stored on the node
+    // itself, so its children (which the DirNode conversion drops) are never loaded.
+    let node = match CommitMerkleTree::dir_node_only(repo, commit, path) {
+        Ok(node) => node,
+        Err(e) => {
+            log::warn!("Error getting node by path: {e:?}");
+            return Ok(None);
+        }
+    };
     let Some(node) = node else {
         return Ok(None);
     };

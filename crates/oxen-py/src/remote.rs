@@ -36,9 +36,12 @@ pub fn get_repo(
     };
 
     Ok(Some(PyRemoteRepo {
-        repo: remote_repo.clone(),
+        namespace: remote_repo.namespace.clone(),
+        name: remote_repo.name.clone(),
+        url: remote_repo.url().to_string(),
         host: host.clone(),
         scheme: scheme.to_string(),
+        repo: Some(remote_repo),
         revision: Some(branch_name.to_string()),
         commit_id: revision.commit.map(|r| r.id),
     }))
@@ -85,9 +88,12 @@ pub fn create_repo(
 
             let repo = liboxen::api::client::repositories::create_empty(repo).await?;
             Ok(PyRemoteRepo {
-                repo: repo.clone(),
+                namespace: repo.namespace.clone(),
+                name: repo.name.clone(),
+                url: repo.url().to_string(),
                 host: host.clone(),
                 scheme: scheme.to_string(),
+                repo: Some(repo),
                 // Empty repo does not have a revision or commit_id
                 revision: None,
                 commit_id: None,
@@ -114,9 +120,12 @@ pub fn create_repo(
                 .unwrap();
 
             Ok(PyRemoteRepo {
-                repo: repo.clone(),
+                namespace: repo.namespace.clone(),
+                name: repo.name.clone(),
+                url: repo.url().to_string(),
                 host: host.clone(),
                 scheme: scheme.to_string(),
+                repo: Some(repo),
                 revision: Some(DEFAULT_BRANCH_NAME.to_string()),
                 commit_id: Some(branch.commit_id),
             })

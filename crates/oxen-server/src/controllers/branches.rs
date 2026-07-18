@@ -72,7 +72,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     let name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, namespace, name)?;
 
-    let branches = repositories::branches::list(&repo)?;
+    let branches = repositories::branches::list(&repo).await?;
 
     let view = ListBranchesResponse {
         status: StatusMessage::resource_found(),

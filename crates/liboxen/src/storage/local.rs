@@ -392,6 +392,15 @@ impl VersionStore for LocalVersionStore {
         Ok(())
     }
 
+    async fn destroy(&self) -> Result<(), OxenError> {
+        // The versions root may live outside the repo directory (custom `versions_path`), so it
+        // must be removed explicitly rather than relying on the repo-directory removal.
+        if self.root_path.exists() {
+            fs::remove_dir_all(&self.root_path).await?;
+        }
+        Ok(())
+    }
+
     async fn list_versions(&self) -> Result<Vec<String>, OxenError> {
         let mut versions = Vec::new();
 

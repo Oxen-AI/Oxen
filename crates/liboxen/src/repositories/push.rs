@@ -1832,4 +1832,82 @@ A: Checkout Oxen.ai
         })
         .await
     }
+
+    // `--missing-files` from a clone missing some of the files the remote needs must fail fast with
+    // CannotPushShallowClone and upload nothing — not partially upload and then error mid-stream.
+    #[tokio::test]
+    async fn test_missing_files_fails_fast_on_shallow_clone() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async {
+            let mut repo = repo;
+
+            let a_path = repo.path.join("a.txt");
+            test::write_txt_file_to_path(&a_path, "alpha")?;
+            let b_path = repo.path.join("b.txt");
+            test::write_txt_file_to_path(&b_path, "beta")?;
+            repositories::add(&repo, &a_path).await?;
+            repositories::add(&repo, &b_path).await?;
+            let commit = repositories::commit(&repo, "add a.txt and b.txt")?;
+
+            let remote = test::repo_remote_url_from(&repo.dirname());
+            command::config::set_remote(&mut repo, DEFAULT_REMOTE_NAME, &remote)?;
+            let remote_repo = test::create_remote_repo(&repo).await?;
+            repositories::push(&repo).await?;
+
+            let a_hash = repositories::tree::get_node_by_path(&repo, &commit, "a.txt")?
+                .expect("a.txt in commit")
+                .file()?
+                .hash()
+                .to_string();
+            let b_hash = repositories::tree::get_node_by_path(&repo, &commit, "b.txt")?
+                .expect("b.txt in commit")
+                .file()?
+                .hash()
+                .to_string();
+
+            // The server is missing both blobs, so both appear in the missing-files list.
+            let sync_dir =
+                PathBuf::from(std::env::var("SYNC_DIR").expect("SYNC_DIR set by bin/test-rust"));
+            let server = repositories::get_by_namespace_and_name(
+                &sync_dir,
+                constants::DEFAULT_NAMESPACE,
+                repo.dirname(),
+                None,
+            )?
+            .expect("server repo exists");
+            server.version_store().delete_version(&a_hash).await?;
+            server.version_store().delete_version(&b_hash).await?;
+
+            // This clone can supply a.txt but not b.txt.
+            repo.version_store().delete_version(&b_hash).await?;
+
+            let opts = PushOpts {
+                remote: DEFAULT_REMOTE_NAME.to_string(),
+                branch: DEFAULT_BRANCH_NAME.to_string(),
+                missing_files: true,
+                ..Default::default()
+            };
+            let result = repositories::push::push_remote_branch(&repo, &opts).await;
+
+            assert!(
+                matches!(&result, Err(OxenError::CannotPushShallowClone { .. })),
+                "expected CannotPushShallowClone, got {result:?}"
+            );
+            if let Err(OxenError::CannotPushShallowClone { help, .. }) = &result {
+                assert!(
+                    help.contains(&b_hash),
+                    "error should name the locally-absent hash {b_hash}: {help}"
+                );
+            }
+
+            // No partial repair: the file this clone *could* supply must not have been uploaded.
+            assert!(
+                !server.version_store().version_exists(&a_hash).await?,
+                "a failed shallow-clone push must upload nothing"
+            );
+
+            api::client::repositories::delete(&remote_repo).await?;
+            Ok(())
+        })
+        .await
+    }
 }

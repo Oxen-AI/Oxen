@@ -89,11 +89,16 @@ impl FileNode {
     pub fn deserialize(data: &[u8]) -> Result<FileNode, rmp_serde::decode::Error> {
         let file_node: FileNode = match rmp_serde::from_slice(data) {
             Ok(file_node) => file_node,
-            Err(_) => {
+            Err(primary_error) => {
                 // This is a fallback for old versions of the file node
-                let file_node: FileNodeDataV0_25_0 = rmp_serde::from_slice(data)?;
-                Self {
-                    node: EFileNode::V0_25_0(file_node),
+                match rmp_serde::from_slice(data) {
+                    Ok(file_node) => Self {
+                        node: EFileNode::V0_25_0(file_node),
+                    },
+                    // Wrapped nodes should report why their current representation failed to
+                    // decode, not the misleading error from interpreting `V0_25_0` as a raw
+                    // `MerkleTreeNodeType` in the legacy fallback.
+                    Err(_) => return Err(primary_error),
                 }
             }
         };

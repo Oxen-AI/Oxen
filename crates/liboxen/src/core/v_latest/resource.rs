@@ -63,6 +63,18 @@ pub fn parse_resource_from_path(
     Ok(None)
 }
 
+/// Parse a resource identifier from a URL-style path, off the async worker.
+///
+/// Resolution order: commits, then branches, then workspaces.
+pub async fn parse_resource_from_path_async(
+    repo: &LocalRepository,
+    path: &Path,
+) -> Result<Option<ParsedResource>, OxenError> {
+    let repo = repo.clone();
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || parse_resource_from_path(&repo, &path)).await?
+}
+
 fn parsed_from_commit(resource_path: &Path, commit: Commit, file_path: PathBuf) -> ParsedResource {
     ParsedResource {
         version: PathBuf::from(commit.id.to_string()),

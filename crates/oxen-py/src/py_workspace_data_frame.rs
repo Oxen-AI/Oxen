@@ -18,9 +18,9 @@ pub fn is_indexed(
     workspace_id: String,
     path: PathBuf,
 ) -> Result<bool, PyOxenError> {
-    let repo = workspace.repo.repo;
+    let repo = workspace.repo.repo()?;
     let data = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-        api::client::workspaces::data_frames::is_indexed(&repo, &workspace_id, &path).await
+        api::client::workspaces::data_frames::is_indexed(repo, &workspace_id, &path).await
     })?;
     Ok(data)
 }
@@ -31,9 +31,9 @@ pub fn index(
     workspace_id: String,
     path: PathBuf,
 ) -> Result<(), PyOxenError> {
-    let repo = workspace.repo.repo;
+    let repo = workspace.repo.repo()?;
     pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-        api::client::workspaces::data_frames::index(&repo, &workspace_id, &path).await
+        api::client::workspaces::data_frames::index(repo, &workspace_id, &path).await
     })?;
     Ok(())
 }
@@ -97,7 +97,7 @@ impl PyWorkspaceDataFrame {
         // Fetch the first page so that it is
         // quick to look up size and other pagination params
 
-        let df = _get(&workspace.repo.repo, &workspace_id, &path)?;
+        let df = _get(workspace.repo.repo()?, &workspace_id, &path)?;
         Ok(Self {
             workspace,
             path,
@@ -106,7 +106,7 @@ impl PyWorkspaceDataFrame {
     }
 
     fn size(&mut self) -> Result<(usize, usize), PyOxenError> {
-        let df = _get(&self.workspace.repo.repo, &self.workspace.id, &self.path)?;
+        let df = _get(self.workspace.repo.repo()?, &self.workspace.id, &self.path)?;
         let size = &df.view.size;
         let width = size.width;
         let height = df.view.pagination.total_entries;
@@ -115,7 +115,7 @@ impl PyWorkspaceDataFrame {
     }
 
     fn get_columns(&self) -> Result<Vec<PyColumn>, PyOxenError> {
-        let df = _get(&self.workspace.repo.repo, &self.workspace.id, &self.path)?;
+        let df = _get(self.workspace.repo.repo()?, &self.workspace.id, &self.path)?;
         let columns = &df.view.schema.fields;
         let columns = columns
             .iter()
@@ -138,7 +138,7 @@ impl PyWorkspaceDataFrame {
     pub fn is_indexed(&self) -> Result<bool, PyOxenError> {
         let is_indexed = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::data_frames::is_indexed(
-                &self.workspace.repo.repo,
+                self.workspace.repo.repo()?,
                 &self.workspace.id,
                 &self.path,
             )
@@ -150,7 +150,7 @@ impl PyWorkspaceDataFrame {
     pub fn index(&self) -> Result<(), PyOxenError> {
         pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::data_frames::index(
-                &self.workspace.repo.repo,
+                self.workspace.repo.repo()?,
                 &self.workspace.id,
                 &self.path,
             )
@@ -167,7 +167,7 @@ impl PyWorkspaceDataFrame {
 
         let data = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::data_frames::get(
-                &self.workspace.repo.repo,
+                self.workspace.repo.repo()?,
                 &self.workspace.id,
                 &self.path,
                 &opts,
@@ -190,7 +190,7 @@ impl PyWorkspaceDataFrame {
 
         match pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::data_frames::get(
-                &self.workspace.repo.repo,
+                self.workspace.repo.repo()?,
                 &self.workspace.id,
                 &self.path,
                 &opts,
@@ -212,7 +212,7 @@ impl PyWorkspaceDataFrame {
     fn is_nearest_neighbors_enabled(&self, column: String) -> Result<bool, PyOxenError> {
         let data = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::data_frames::embeddings::get(
-                &self.workspace.repo.repo,
+                self.workspace.repo.repo()?,
                 &self.workspace.id,
                 &self.path,
             )
@@ -230,7 +230,7 @@ impl PyWorkspaceDataFrame {
         pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             let use_background_thread = false;
             api::client::workspaces::data_frames::embeddings::index(
-                &self.workspace.repo.repo,
+                self.workspace.repo.repo()?,
                 &self.workspace.id,
                 &self.path,
                 &column,
@@ -254,7 +254,7 @@ impl PyWorkspaceDataFrame {
                 page_size,
             };
             api::client::workspaces::data_frames::embeddings::neighbors(
-                &self.workspace.repo.repo,
+                self.workspace.repo.repo()?,
                 &self.workspace.id,
                 &self.path,
                 &column,
@@ -287,7 +287,7 @@ impl PyWorkspaceDataFrame {
 
         let data = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::data_frames::get(
-                &self.workspace.repo.repo,
+                self.workspace.repo.repo()?,
                 &self.workspace.id,
                 &self.path,
                 &opts,
@@ -309,7 +309,7 @@ impl PyWorkspaceDataFrame {
             opts.sql = Some(format!("SELECT * FROM df LIMIT 1 OFFSET {row}"));
 
             let response = api::client::workspaces::data_frames::get(
-                &self.workspace.repo.repo,
+                self.workspace.repo.repo()?,
                 &self.workspace.id,
                 &self.path,
                 &opts,
@@ -330,7 +330,7 @@ impl PyWorkspaceDataFrame {
     fn get_row_by_id(&self, id: String) -> Result<String, PyOxenError> {
         let data = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::data_frames::rows::get(
-                &self.workspace.repo.repo,
+                self.workspace.repo.repo()?,
                 &self.workspace.id,
                 &self.path,
                 id.as_str(),
@@ -353,7 +353,7 @@ impl PyWorkspaceDataFrame {
 
         let (_, Some(row_id)) = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::data_frames::rows::add(
-                &self.workspace.repo.repo,
+                self.workspace.repo.repo()?,
                 &workspace_id,
                 &self.path,
                 data.to_string(),
@@ -374,7 +374,7 @@ impl PyWorkspaceDataFrame {
 
         let view = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::data_frames::rows::update(
-                &self.workspace.repo.repo,
+                self.workspace.repo.repo()?,
                 &self.workspace.id,
                 &self.path,
                 id.as_str(),
@@ -391,7 +391,7 @@ impl PyWorkspaceDataFrame {
     fn delete_row(&self, id: String) -> Result<(), PyOxenError> {
         pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::data_frames::rows::delete(
-                &self.workspace.repo.repo,
+                self.workspace.repo.repo()?,
                 &self.workspace.id,
                 &self.path,
                 id.as_str(),
@@ -410,7 +410,7 @@ impl PyWorkspaceDataFrame {
 
             let data = data.to_string();
             api::client::workspaces::data_frames::columns::create(
-                &self.workspace.repo.repo,
+                self.workspace.repo.repo()?,
                 &self.workspace.id,
                 &self.path,
                 data,
@@ -421,7 +421,7 @@ impl PyWorkspaceDataFrame {
     }
 
     fn restore(&self) -> Result<(), PyOxenError> {
-        let repo = &self.workspace.repo.repo;
+        let repo = self.workspace.repo.repo()?;
 
         pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::data_frames::restore(repo, &self.workspace.id, &self.path)
@@ -433,7 +433,7 @@ impl PyWorkspaceDataFrame {
 
     fn commit(&self, branch: &str, message: &str) -> Result<PyCommit, PyOxenError> {
         let user = UserConfig::get()?;
-        let repo = &self.workspace.repo.repo;
+        let repo = self.workspace.repo.repo()?;
 
         let commit = NewCommitBody {
             message: message.to_string(),

@@ -227,6 +227,18 @@ pub fn get_file_by_path(
     }
 }
 
+/// Get the file node at `path` in a commit, off the async worker.
+pub async fn get_file_by_path_async(
+    repo: &LocalRepository,
+    commit: &Commit,
+    path: impl AsRef<Path>,
+) -> Result<Option<FileNode>, OxenError> {
+    let repo = repo.clone();
+    let commit = commit.clone();
+    let path = path.as_ref().to_path_buf();
+    tokio::task::spawn_blocking(move || get_file_by_path(&repo, &commit, &path)).await?
+}
+
 pub fn get_dir_with_children(
     repo: &LocalRepository,
     commit: &Commit,
@@ -1046,6 +1058,17 @@ fn extract_tar_under<R: Read>(
     // and exhaust memory before the post-loop completeness check runs.
     let mut pending: Option<(MerkleHash, Option<Bytes>, Option<Bytes>)> = None;
 
+    // Completed nodes collect here and flush to the store in batches. Batching lets each backend
+    // write a whole group at once. The filesystem writes the files across threads, and LMDB commits
+    // them in one transaction. Each batch is capped by total bytes and by node count, so peak memory
+    // stays flat whether a batch holds a few large nodes or many tiny ones. The count cap matters
+    // because empty blobs add nothing to the byte total, so a hostile archive of empty nodes would
+    // otherwise grow the batch without bound.
+    const FLUSH_THRESHOLD_BYTES: usize = 64 * 1024 * 1024;
+    const FLUSH_THRESHOLD_NODES: usize = 100_000;
+    let mut batch: Vec<(MerkleHash, Bytes, Bytes)> = Vec::new();
+    let mut batch_bytes: usize = 0;
+
     let decoder = GzDecoder::new(reader);
     let mut archive = Archive::new(decoder);
     let entries = archive.entries().map_err(MerkleDbError::CannotReadMerkle)?;
@@ -1154,12 +1177,21 @@ fn extract_tar_under<R: Read>(
         };
         pending = None;
 
-        // Persist the node as a unit through the store.
-        if overwrite_existing || !store.exists(&hash)? {
-            store.write_node(&hash, node, children)?;
-            installed.insert(hash);
+        // Buffer the completed node and flush once the batch grows past the threshold. The store
+        // decides what was newly installed (skipping nodes already present unless overwriting), so
+        // only its returned hashes join `installed`.
+        batch_bytes += node.len() + children.len();
+        batch.push((hash, node, children));
+        if batch_bytes >= FLUSH_THRESHOLD_BYTES || batch.len() >= FLUSH_THRESHOLD_NODES {
+            installed.extend(store.write_nodes(std::mem::take(&mut batch), overwrite_existing)?);
+            batch_bytes = 0;
         }
     }
+
+    // Flush whatever is left in the final batch. A truncated archive still keeps every complete
+    // node it contained, so a later retry starts from there, and the partial node at the very end
+    // is rejected below.
+    installed.extend(store.write_nodes(batch, overwrite_existing)?);
 
     // EOF validation: a well-formed archive pairs every `node` blob with its `children` blob and
     // clears `pending` as each pair completes. A leftover entry means the archive was truncated
@@ -3356,6 +3388,34 @@ mod tests {
                     "hash {h} not readable in vfs-cloned repo"
                 );
             }
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_get_file_by_path_async_matches_sync() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            util::fs::write(repo.path.join("hello.txt"), "hello world")?;
+            repositories::add(&repo, &repo.path).await?;
+            let commit = repositories::commit(&repo, "Adding hello.txt")?;
+
+            let sync = repositories::tree::get_file_by_path(&repo, &commit, "hello.txt")?;
+            let async_ =
+                repositories::tree::get_file_by_path_async(&repo, &commit, "hello.txt").await?;
+            assert_eq!(
+                async_.as_ref().map(|f| f.hash()),
+                sync.as_ref().map(|f| f.hash())
+            );
+            assert!(sync.is_some());
+
+            // A directory path resolves to None on the async path too.
+            assert!(
+                repositories::tree::get_file_by_path_async(&repo, &commit, "")
+                    .await?
+                    .is_none()
+            );
+
             Ok(())
         })
         .await

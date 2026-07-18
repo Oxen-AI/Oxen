@@ -1,6 +1,6 @@
 use crate::errors::OxenHttpError;
-use crate::helpers::get_repo;
-use crate::params::{app_data, parse_resource, path_param};
+use crate::helpers::get_repo_async;
+use crate::params::{app_data, parse_resource_async, path_param};
 
 use actix_web::{HttpRequest, HttpResponse, Result};
 
@@ -30,9 +30,9 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repository = get_repo(app_data, namespace, repo_name)?;
+    let repository = get_repo_async(app_data, &namespace, &repo_name).await?;
 
-    let resource = parse_resource(&req, &repository)?;
+    let resource = parse_resource_async(&req, &repository).await?;
     let response = ParseResourceResponse {
         status: StatusMessage::resource_found(),
         resource: resource.into(),

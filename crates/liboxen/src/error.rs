@@ -97,6 +97,12 @@ pub enum OxenError {
     #[error("{0}")]
     UpstreamMergeConflict(StringError),
 
+    /// A workspace commit was attempted while a staged data frame is in a stale
+    /// format (indexed by an older version of oxen). The caller must re-index or
+    /// unstage it before committing — retrying as-is cannot succeed.
+    #[error("{0}")]
+    WorkspaceStaleStagedIndex(StringError),
+
     /// A prior client-side merge was interrupted before HEAD advanced, and a new merge targets a
     /// different commit than the in-progress one.
     #[error("Merge in progress targeting commit {expected}, but new merge targets {found}.")]
@@ -749,6 +755,9 @@ impl OxenError {
             | CommitEntryNotFound(_) => "Check the path and current branch with `oxen status`.",
             MergeInProgressMismatch { .. } => {
                 "Run `oxen merge --abort` to abandon the in-progress merge, or retry the original target."
+            }
+            WorkspaceStaleStagedIndex(_) => {
+                "Re-index the data frame (discarding its staged edits) or unstage it, then commit again."
             }
             VersionStoreDataMissing { .. } => {
                 "Run `oxen fetch --missing-files` to re-fetch missing version-store data, then retry `oxen restore`."

@@ -67,12 +67,12 @@ Oxen is built around ergonomics, ease of use, and it is easy to learn. If you kn
 
 * 🔥 Fast (efficient indexing and syncing of data)
 * 🧠 Easy to learn (same commands as git)
-* 💪 Handles large files (images, videos, audio, text, parquet, arrow, json, models, etc)
+* 💪 Handles large files (images, videos, audio, text, parquet, json, model weights, csv, etc)
 * 🗄️ Index lots of files (millions of images? no problem)
-* 📊 Native DataFrame processing (index, compare and serve up DataFrames)
+* 📊 Native tabular data handling (index and query csv, parquet, csv, jsonl files)
 * 📈 Tracks changes over time (never worry about losing the state of your data)
 * 🤝 Collaborate with your team (sync to an oxen-server)
-* 🌎 [Workspaces](https://docs.oxen.ai/concepts/workspace) to interact with the data without downloading it
+* 🌎 [Workspaces](https://docs.oxen.ai/examples/data/workspaces) to interact with the data on the centralized server
 * 👀 Better data visualization on [OxenHub](https://oxen.ai)
 
 ## 🐮 Learn The Basics

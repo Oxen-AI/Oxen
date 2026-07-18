@@ -586,6 +586,57 @@ impl CommitMerkleTree {
         }
     }
 
+    /// Resolve the merkle hash of the directory at `path` in `commit`, or `None` when `path` is
+    /// not a directory in the commit.
+    ///
+    /// A point-get on the dir-hashes DB resolves any path stored with slash separators — every
+    /// current client, and always the root. On a miss it falls back to the full dir-hashes map,
+    /// whose load heals legacy backslash-separated keys a point-get can't match. A miss always
+    /// consults the map, so the point-get is only ever a fast path, never the source of a false
+    /// `None`.
+    fn dir_hash(
+        repo: &LocalRepository,
+        commit: &Commit,
+        path: &Path,
+    ) -> Result<Option<MerkleHash>, OxenError> {
+        // "." denotes the repo root, which is stored under the empty path.
+        let path = if path == Path::new(".") {
+            Path::new("")
+        } else {
+            path
+        };
+        let key = crate::util::fs::linux_path_str(&path.to_string_lossy());
+        let point_get =
+            with_dir_hash_db_manager(repo, &commit.id, |db| match db.get(key.as_bytes())? {
+                Some(value) => Ok(Some(str::from_utf8(&value)?.parse()?)),
+                None => Ok(None),
+            })?;
+        if point_get.is_some() {
+            return Ok(point_get);
+        }
+        // Miss: consult the authoritative map, whose load heals legacy backslash keys a point-get
+        // can't match. Correctness never rests on the point-get — it is only ever a fast path.
+        Ok(CommitMerkleTree::dir_hashes(repo, commit)?
+            .get(path)
+            .cloned())
+    }
+
+    /// Read the directory node at `path` for `commit` without loading any children.
+    ///
+    /// The node's own fields — including the precomputed `num_bytes` and `data_type_counts`
+    /// aggregates — are populated; none of its VNodes or entries are read. Returns `Ok(None)`
+    /// when `path` is not a directory in the commit.
+    pub fn dir_node_only(
+        repo: &LocalRepository,
+        commit: &Commit,
+        path: impl AsRef<Path>,
+    ) -> Result<Option<MerkleTreeNode>, OxenError> {
+        match CommitMerkleTree::dir_hash(repo, commit, path.as_ref())? {
+            Some(node_hash) => Ok(Some(MerkleTreeNode::from_hash(repo, &node_hash)?)),
+            None => Ok(None),
+        }
+    }
+
     pub fn dir_with_children(
         repo: &LocalRepository,
         commit: &Commit,
@@ -1272,6 +1323,13 @@ mod tests {
             assert!(
                 repositories::tree::get_dir_with_children(&repo, &commit, &nested, None)?.is_some(),
                 "get_dir_with_children should resolve {nested:?} after the heal"
+            );
+
+            // The node-only read must also heal: a point-get on the slash path misses the
+            // backslash key, so it can only resolve via the dir-hashes-map fallback.
+            assert!(
+                repositories::entries::get_directory(&repo, &commit, &nested)?.is_some(),
+                "get_directory should resolve backslash-keyed {nested:?} via the map fallback"
             );
 
             Ok(())

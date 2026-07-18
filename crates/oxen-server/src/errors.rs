@@ -415,6 +415,21 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::Conflict().json(error_json)
                     }
+                    // The client's workspace is stale and must be re-indexed or
+                    // unstaged first — a 409 so it isn't blindly auto-retried.
+                    OxenError::WorkspaceStaleStagedIndex(desc) => {
+                        log::warn!("Workspace stale staged index: {desc}");
+                        let error_json = json!({
+                            "error": {
+                                "type": MSG_CONFLICT,
+                                "title": "Stale workspace data frame",
+                                "detail": format!("{desc}")
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_CONFLICT,
+                        });
+                        HttpResponse::Conflict().json(error_json)
+                    }
                     OxenError::InvalidSchema(schema) => {
                         log::error!("Invalid schema: {schema}");
                         HttpResponse::BadRequest().json(StatusMessageDescription::bad_request(
@@ -489,6 +504,19 @@ impl error::ResponseError for OxenHttpError {
                                         "Column Name Already Exists",
                                     "detail":
                                         format!("Column name '{}' already exists in schema", column_name)
+                                },
+                                "status": STATUS_ERROR,
+                                "status_message": MSG_BAD_REQUEST,
+                            });
+                            HttpResponse::BadRequest().json(error_json)
+                        }
+                        DataFrameError::SqlParse(e) => {
+                            log::error!("SQL parse error: {e}");
+                            let error_json = json!({
+                                "error": {
+                                    "type": "sql_parse_error",
+                                    "title": "Invalid SQL",
+                                    "detail": format!("{e}"),
                                 },
                                 "status": STATUS_ERROR,
                                 "status_message": MSG_BAD_REQUEST,

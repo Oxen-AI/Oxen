@@ -72,32 +72,11 @@ jobs:
         shell: powershell
 
     env:
-      RUSTC_WRAPPER: sccache
-      # cc-rs (duckdb/rocksdb/zstd bundled builds) intercepts via CC/CXX;
-      # cmake-driven builds (aws-lc) need the launcher vars plus a generator
-      # that honors them (Visual Studio generators ignore launchers).
-      CC: sccache cl
-      CXX: sccache cl
-      CMAKE_C_COMPILER_LAUNCHER: sccache
-      CMAKE_CXX_COMPILER_LAUNCHER: sccache
-      CMAKE_GENERATOR: Ninja
-      # aws-lc-sys's cc builder misdetects the compiler family behind the
-      # sccache wrapper and emits GCC-builtin calls that MSVC can't link;
-      # its cmake path probes the toolchain correctly (and NASM is installed)
-      AWS_LC_SYS_CMAKE_BUILDER: "1"
-      SCCACHE_BUCKET: oxen-release-build-cache
-      SCCACHE_REGION: us-west-1
-      # vcpkg rebuilds FFmpeg from source on every ephemeral runner without this
-      VCPKG_BINARY_SOURCES: clear;x-aws,s3://oxen-release-build-cache/vcpkg/,readwrite
-      # MSVC stamps wall-clock timestamps into linked PE files and .obj COFF
-      # headers; sccache hashes proc-macro dlls (--extern) and staticlib members
-      # into downstream Rust keys, so unstamped output churns those keys every
-      # run. /Brepro zeroes the timestamps.
-      RUSTFLAGS: -Clink-arg=/Brepro
-      CFLAGS: /Brepro
-      CXXFLAGS: /Brepro
       CARGO_INCREMENTAL: "0"
-      SCCACHE_IDLE_TIMEOUT: "0"
+      # FFmpeg is slow to build from source on a bare runner, so the binary
+      # cache restores it in seconds. The vcpkg checkout is pinned below so its
+      # ABI hash stays stable and the cache hits across releases.
+      VCPKG_BINARY_SOURCES: clear;x-aws,s3://oxen-release-build-cache/vcpkg/,readwrite
 
     steps:
       - name: Checkout
@@ -108,116 +87,89 @@ jobs:
       - name: Create release directory
         run: mkdir ${{ github.workspace }}\release
 
-      - name: Disable Windows Defender for build (ephemeral runner)
+      - name: Exclude build paths from Windows Defender
         run: |
           try {
-            # Same configuration GitHub applies to its hosted runner images
-            Set-MpPreference -DisableRealtimeMonitoring $true -DisableArchiveScanning $true -DisableBehaviorMonitoring $true -DisableIOAVProtection $true -DisableScriptScanning $true -MAPSReporting 0 -PUAProtection 0 -ScanAvgCPULoadFactor 5
             Set-MpPreference -ExclusionPath @("C:\Windows\System32\actions-runner", "C:\Users\Administrator\.cargo", "C:\Users\Administrator\.rustup", "C:\vcpkg", "C:\ProgramData\chocolatey", "$env:TEMP")
-            Set-MpPreference -ExclusionProcess @("rustc.exe", "cargo.exe", "sccache.exe", "cl.exe", "link.exe", "cmake.exe", "ninja.exe", "python.exe", "git.exe")
-            $s = Get-MpComputerStatus
-            Write-Host "Defender: RealTimeProtection=$($s.RealTimeProtectionEnabled) TamperProtected=$($s.IsTamperProtected)"
+            Set-MpPreference -ExclusionProcess @("rustc.exe", "cargo.exe", "cl.exe", "link.exe", "cmake.exe", "python.exe", "git.exe")
+            Write-Host "Defender exclusions applied"
           } catch {
             Write-Host "Defender configuration unavailable: $_"
           }
 
       - name: Install dependencies
         run: |
-          choco install -y cmake llvm uv rustup.install ninja nasm
+          # PowerShell doesn't stop on a failed native command, so a failed
+          # install would be masked by the next command and only surface later
+          # as a confusing build error. Check each critical command. choco
+          # returns 3010 to mean "installed, reboot pending", which is success.
+          choco install -y cmake llvm uv rustup.install nasm
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) { exit $LASTEXITCODE }
           if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
             choco install -y awscli
-            # choco appends to the machine PATH; this process needs it now for vcpkg's x-aws
+            if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) { exit $LASTEXITCODE }
+            # choco appends to the machine PATH, so this process needs it added now for the s3 caches
             $env:Path = "C:\Program Files\Amazon\AWSCLIV2;$env:Path"
           }
           aws --version
-          # Install sccache 0.16 to a machine-PATH dir so it survives refreshenv
-          Invoke-WebRequest -Uri "https://github.com/mozilla/sccache/releases/download/v0.16.0/sccache-v0.16.0-x86_64-pc-windows-msvc.zip" -OutFile C:\sccache.zip
-          Expand-Archive -Path C:\sccache.zip -DestinationPath C:\sccache-dl -Force
-          Copy-Item C:\sccache-dl\sccache-v0.16.0-x86_64-pc-windows-msvc\sccache.exe C:\ProgramData\chocolatey\bin\sccache.exe -Force
-          # Install vcpkg for FFmpeg development libraries
-          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Pin vcpkg so the FFmpeg binary-cache ABI hash stays stable across
+          # runs. An unpinned HEAD rotates the key and the cache never hits.
+          git clone --depth 1 --branch 2026.06.24 https://github.com/microsoft/vcpkg.git C:\vcpkg
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cd C:\vcpkg
           .\bootstrap-vcpkg.bat
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           .\vcpkg.exe install ffmpeg:x64-windows
-          # Set VCPKG_ROOT for cargo to find FFmpeg libraries
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
       - name: Restore dependency build tree
         run: |
           refreshenv
-          # Proc-macro dlls never link byte-identically across runs (PE content
-          # varies even with /Brepro), and sccache hashes them into every direct
-          # consumer's key, so those consumers and everything above them miss
-          # every run. Restoring the dependency slice of target\release plus the
-          # registry trees (mtimes preserved, so cargo's staleness math holds)
-          # makes cargo reuse the previous run's dlls verbatim; workspace crates
-          # stay dirty via fresh checkout mtimes and rebuild as usual.
-          $lock = (Get-FileHash Cargo.lock -Algorithm SHA256).Hash
+          # Windows proc-macro dlls never link byte-identically across runs, and
+          # a version bump rewrites every downstream crate's fingerprint, so a
+          # from-scratch build recompiles the whole graph every release. Restore
+          # the previous run's compiled dependencies (and the registry, mtimes
+          # intact) so cargo marks them Fresh and only workspace crates rebuild.
+          # The key hashes the third-party lockfile entries plus toolchain, so a
+          # workspace version bump alone keeps the same key.
+          $depText = ((Get-Content Cargo.lock -Raw) -split '\[\[package\]\]' | Where-Object { $_ -match 'source = ' }) -join ''
           $rv = (cmd /c "rustc -V 2>nul") -join ''
-          $keySrc = "$rv|$lock|-Clink-arg=/Brepro|v2"
-          $sha = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes($keySrc))).Replace("-","").Substring(0,32)
+          $sha = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes("$rv|$depText|v4"))).Replace("-","").Substring(0,32)
           echo "DEPTREE_KEY=$sha" >> $env:GITHUB_ENV
           cmd /c "aws s3 cp s3://oxen-release-build-cache/deptree/$sha.tar C:\deptree.tar 2>nul"
           if (Test-Path C:\deptree.tar) {
             tar -xf C:\deptree.tar -C C:\
+            echo "DEPTREE_EXACT_HIT=1" >> $env:GITHUB_ENV
             Write-Host "DEPTREE restore hit ($sha)"
           } else {
-            Write-Host "DEPTREE restore miss ($sha)"
+            # A third-party dependency changed, so the exact key is gone. Restore
+            # the most recent tree anyway, so cargo reuses the unchanged deps and
+            # rebuilds only what the bump touched. The save step then writes a
+            # fresh tree under the new key so the next release hits exactly.
+            $latest = (aws s3 ls "s3://oxen-release-build-cache/deptree/" | Where-Object { $_ -match '\.tar$' } | Sort-Object | Select-Object -Last 1) -replace '.*\s',''
+            if ($latest) { cmd /c "aws s3 cp s3://oxen-release-build-cache/deptree/$latest C:\deptree.tar 2>nul" }
+            if (Test-Path C:\deptree.tar) {
+              tar -xf C:\deptree.tar -C C:\
+              Write-Host "DEPTREE restore miss ($sha), fell back to $latest"
+            } else {
+              Write-Host "DEPTREE restore miss ($sha), no tree to fall back to"
+            }
           }
           exit 0
 
       - name: Build oxen binaries
         run: |
           refreshenv
-          # cc-rs only self-locates MSVC when CC is unset; with CC="sccache cl"
-          # the dev shell must put cl.exe (+ INCLUDE/LIB) in the environment
-          $vsPath = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          Import-Module (Join-Path $vsPath "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
-          Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments '-arch=x64'
-          $env:RUSTC_WRAPPER = "sccache"
-          $env:RUSTFLAGS = "-Clink-arg=/Brepro"
-          $env:CC = "sccache cl"
-          $env:CXX = "sccache cl"
-          $env:CFLAGS = "/Brepro"
-          $env:CXXFLAGS = "/Brepro"
-          $env:CMAKE_C_COMPILER_LAUNCHER = "sccache"
-          $env:CMAKE_CXX_COMPILER_LAUNCHER = "sccache"
-          $env:CMAKE_GENERATOR = "Ninja"
-          $env:AWS_LC_SYS_CMAKE_BUILDER = "1"
-          cmd /c "sccache --start-server"
           cargo build --workspace --exclude oxen-py --release
-          $cargoExit = $LASTEXITCODE
-          sccache --show-stats
-          exit $cargoExit
-
-      - name: Save dependency build tree
-        run: |
-          if (Test-Path C:\deptree.tar) { Write-Host "DEPTREE cache already present"; exit 0 }
-          refreshenv
-          $rel = "${{ github.workspace }}\target\release".Substring(3) -replace '\\','/'
-          $list = @("$rel/.fingerprint", "$rel/deps", "$rel/build", "Users/Administrator/.cargo/registry/src", "Users/Administrator/.cargo/registry/cache")
-          $list | Set-Content C:\deptree-list.txt
-          tar -cf C:\deptree-out.tar -C C:\ -T C:\deptree-list.txt
-          aws s3 cp C:\deptree-out.tar s3://oxen-release-build-cache/deptree/$env:DEPTREE_KEY.tar
-          Write-Host "DEPTREE saved ($env:DEPTREE_KEY)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build Python wheels
         run: |
           refreshenv
-          $vsPath = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          Import-Module (Join-Path $vsPath "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
-          Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments '-arch=x64'
-          $env:RUSTC_WRAPPER = "sccache"
-          $env:RUSTFLAGS = "-Clink-arg=/Brepro"
-          $env:CC = "sccache cl"
-          $env:CXX = "sccache cl"
-          $env:CFLAGS = "/Brepro"
-          $env:CXXFLAGS = "/Brepro"
-          $env:CMAKE_C_COMPILER_LAUNCHER = "sccache"
-          $env:CMAKE_CXX_COMPILER_LAUNCHER = "sccache"
-          $env:CMAKE_GENERATOR = "Ninja"
-          $env:AWS_LC_SYS_CMAKE_BUILDER = "1"
           uv python install ${{ inputs.PYTHON_VERSIONS }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           cd ${{ github.workspace }}\oxen-python
 
@@ -227,11 +179,24 @@ jobs:
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
-      - name: sccache stats
-        if: always()
+      - name: Save dependency build tree
+        # Only cache a tree from a fully successful build. A failed build can
+        # leave the tree incomplete, and saving it under the exact key would make
+        # later runs restore that partial tree and rebuild every time.
+        if: success()
         run: |
+          # Skip only on an exact-key hit. A fallback restore still has to write
+          # the tree under the current key so the next release hits exactly.
+          # Saved after both builds so the tree covers the binaries' deps and the
+          # pyo3/maturin deps that only the wheel build pulls in.
+          if ($env:DEPTREE_EXACT_HIT -eq "1") { Write-Host "DEPTREE exact hit, cache is current"; exit 0 }
           refreshenv
-          sccache --show-stats
+          $rel = "${{ github.workspace }}\target\release".Substring(3) -replace '\\','/'
+          $list = @("$rel/.fingerprint", "$rel/deps", "$rel/build", "Users/Administrator/.cargo/registry/src", "Users/Administrator/.cargo/registry/cache")
+          $list | Set-Content C:\deptree-list.txt
+          tar -cf C:\deptree-out.tar -C C:\ -T C:\deptree-list.txt
+          aws s3 cp C:\deptree-out.tar s3://oxen-release-build-cache/deptree/$env:DEPTREE_KEY.tar
+          Write-Host "DEPTREE saved ($env:DEPTREE_KEY)"
 
       - name: Create zip with oxen binaries
         run: |

@@ -9,19 +9,12 @@ use crate::constants::{MODS_DIR, OXEN_HIDDEN_DIR};
 use crate::constants::{OXEN_COLS, TABLE_NAME};
 use crate::core;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
-use crate::core::db::data_frames::workspace_df_db::select_cols_from_schema;
-use crate::core::db::data_frames::{DataFrameError, df_db, workspace_df_db};
+use crate::core::db::data_frames::{DataFrameError, df_db};
 use crate::core::df::sql;
 use crate::error::OxenError;
 use crate::model::{Branch, Commit, EntryDataType, LocalRepository, NewCommitBody, Workspace};
 use crate::opts::DFOpts;
 use crate::{repositories, util};
-
-use crate::model::diff::tabular_diff::{
-    TabularDiffDupes, TabularDiffMods, TabularDiffParameters, TabularDiffSchemas,
-    TabularDiffSummary, TabularSchemaDiff,
-};
-use crate::model::diff::{AddRemoveModifyCounts, DiffResult, TabularDiff};
 
 use crate::core::db::data_frames::columns::polar_insert_column;
 use duckdb::arrow::array::RecordBatch;
@@ -31,12 +24,6 @@ pub mod columns;
 pub mod embeddings;
 pub mod rows;
 pub mod schemas;
-
-pub fn is_behind(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool, OxenError> {
-    let commit_path = previous_commit_ref_path(workspace, path);
-    let commit_id = util::fs::read_from_path(commit_path)?;
-    Ok(commit_id != workspace.commit.id)
-}
 
 pub fn is_indexed(workspace: &Workspace, path: &Path) -> Result<bool, DataFrameError> {
     log::debug!("checking dataset is indexed for {path:?}");
@@ -51,6 +38,21 @@ pub fn is_indexed(workspace: &Workspace, path: &Path) -> Result<bool, DataFrameE
             log::debug!("dataset_is_indexed() got fully_indexed: {fully_indexed:?}");
             Ok(fully_indexed)
         })
+    })
+}
+
+/// Whether a staged DuckDB table exists on disk for this data frame,
+/// regardless of whether it passes the fully-indexed gate. A table that
+/// exists but is not fully indexed was left by an older version (or an
+/// interrupted index) and may hold staged edits the current code cannot
+/// export.
+pub fn has_staged_table(workspace: &Workspace, path: &Path) -> Result<bool, DataFrameError> {
+    let db_path = duckdb_path(workspace, path);
+    if !db_path.exists() {
+        return Ok(false);
+    }
+    with_df_db_manager(&db_path, |manager| {
+        manager.with_conn(|conn| Ok(df_db::table_exists(conn, TABLE_NAME)?))
     })
 }
 
@@ -122,11 +124,6 @@ pub fn query(
 
     with_df_db_manager(&db_path, |manager| {
         manager.with_conn_mut(|conn| {
-            // Get the schema of this commit entry
-            let schema = df_db::get_schema(conn, TABLE_NAME)?;
-
-            let col_names = select_cols_from_schema(&schema);
-
             // Right now embeddings and sql are mutually exclusive
             let df = if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
                 log::debug!("querying embeddings: {embedding_opts:?}");
@@ -139,8 +136,7 @@ pub fn query(
                 log::debug!("querying sql: {sql:?}");
                 return sql::query_df(conn, sql.clone(), None);
             } else {
-                log::debug!("querying select cols: {col_names:?}");
-                let select = Select::new().select(&col_names).from(TABLE_NAME);
+                let select = Select::new().select("*").from(TABLE_NAME);
                 df_db::select(conn, &select, Some(opts))?
             };
 
@@ -180,69 +176,6 @@ pub fn export(
             sql::export_df(conn, sql, Some(opts), temp_file)?;
 
             Ok(())
-        })
-    })
-}
-
-pub fn diff(workspace: &Workspace, file_path: &Path) -> Result<DataFrame, DataFrameError> {
-    let staged_db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
-
-    with_df_db_manager(&staged_db_path, |manager| {
-        manager.with_conn(|conn| {
-            let diff_df = workspace_df_db::df_diff(conn)?;
-            Ok(diff_df)
-        })
-    })
-}
-
-pub fn full_diff(workspace: &Workspace, path: &Path) -> Result<DiffResult, DataFrameError> {
-    let repo = &workspace.base_repo;
-    // Get commit for the branch head
-    log::debug!("diff_workspace_df got repo at path {:?}", repo.path);
-
-    if !is_indexed(workspace, path)? {
-        return Err(DataFrameError::NotIndexed);
-    };
-
-    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-
-    with_df_db_manager(&db_path, |manager| {
-        manager.with_conn(|conn| {
-            let diff_df = workspace_df_db::df_diff(conn)?;
-            log::debug!("full_diff() diff_df: {diff_df:?}");
-
-            if diff_df.is_empty() {
-                return Ok(DiffResult::Tabular(TabularDiff::empty()));
-            }
-
-            let row_mods = AddRemoveModifyCounts::from_diff_df(&diff_df)?;
-
-            let schema = workspace_df_db::schema_without_oxen_cols(conn, TABLE_NAME)?;
-
-            let schemas = TabularDiffSchemas {
-                left: schema.clone(),
-                right: schema.clone(),
-                diff: schema.clone(),
-            };
-
-            let diff_summary = TabularDiffSummary {
-                modifications: TabularDiffMods {
-                    row_counts: row_mods,
-                    col_changes: TabularSchemaDiff::empty(),
-                },
-                schemas,
-                dupes: TabularDiffDupes::empty(),
-            };
-
-            let diff_result = TabularDiff {
-                contents: diff_df,
-                parameters: TabularDiffParameters::empty(),
-                summary: diff_summary,
-                filename1: None,
-                filename2: None,
-            };
-
-            Ok(DiffResult::Tabular(diff_result))
         })
     })
 }
@@ -444,39 +377,6 @@ pub fn duckdb_path(workspace: &Workspace, path: &Path) -> PathBuf {
         .join("db")
 }
 
-pub fn previous_commit_ref_path(workspace: &Workspace, path: impl AsRef<Path>) -> PathBuf {
-    let path_hash = util::hasher::hash_str(path.as_ref().to_string_lossy());
-    workspace
-        .dir()
-        .join(OXEN_HIDDEN_DIR)
-        .join(MODS_DIR)
-        .join("duckdb")
-        .join(path_hash)
-        .join("COMMIT_ID")
-}
-
-pub fn column_changes_path(workspace: &Workspace, path: impl AsRef<Path>) -> PathBuf {
-    let path_hash = util::hasher::hash_str(path.as_ref().to_string_lossy());
-    workspace
-        .dir()
-        .join(OXEN_HIDDEN_DIR)
-        .join(MODS_DIR)
-        .join("duckdb")
-        .join(path_hash)
-        .join("column_changes")
-}
-
-pub fn row_changes_path(workspace: &Workspace, path: impl AsRef<Path>) -> PathBuf {
-    let path_hash = util::hasher::hash_str(path.as_ref().to_string_lossy());
-    workspace
-        .dir()
-        .join(OXEN_HIDDEN_DIR)
-        .join(MODS_DIR)
-        .join("duckdb")
-        .join(path_hash)
-        .join("row_changes")
-}
-
 // Add this function after the existing imports
 fn add_exclude_to_sql(sql: &str) -> Result<String, DataFrameError> {
     // Create the EXCLUDE clause
@@ -575,23 +475,58 @@ mod tests {
             let status = workspaces::status::status(&workspace)?;
             assert_eq!(status.staged_files.len(), 1);
 
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    assert_eq!(added_rows, 1);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
+            // The staged table has the original 6 rows plus the appended one
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 7);
 
             Ok(())
         })
         .await
     }
 
+    /// Indexing adds exactly one hidden column (`_oxen_id`) — the legacy
+    /// tracking columns (`_oxen_diff_status`, `_oxen_row_id`,
+    /// `_oxen_diff_hash`) are no longer created.
     #[tokio::test]
-    async fn test_partial_index_reads_as_not_indexed_and_reindex_repairs() -> Result<(), OxenError>
-    {
+    async fn test_index_adds_only_oxen_id_column() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-index-cols")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            let db_path = workspaces::data_frames::duckdb_path(&workspace, &file_path);
+            let columns: Vec<String> = super::with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| {
+                    let schema = df_db::get_schema(conn, crate::constants::TABLE_NAME)?;
+                    Ok(schema.fields.into_iter().map(|f| f.name).collect())
+                })
+            })?;
+
+            assert!(columns.contains(&OXEN_ID_COL.to_string()));
+            assert!(!columns.contains(&crate::constants::DIFF_STATUS_COL.to_string()));
+            assert!(!columns.iter().any(|c| c == "_oxen_row_id"));
+            assert!(!columns.iter().any(|c| c == "_oxen_diff_hash"));
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// A table left behind by an older version (no index marker table) or by
+    /// an interrupted index (missing `_oxen_id`) must read as NOT indexed so
+    /// callers rebuild it, and re-indexing must repair it.
+    #[tokio::test]
+    async fn test_stale_or_partial_index_reads_as_not_indexed_and_reindex_repairs()
+    -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
@@ -608,32 +543,84 @@ mod tests {
             workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
             assert!(workspaces::data_frames::is_indexed(&workspace, &file_path)?);
 
-            // Simulate the partial-index corruption an interrupted index leaves
-            // behind: a table that is missing one of the tracking columns.
             let db_path = workspaces::data_frames::duckdb_path(&workspace, &file_path);
+
+            // Simulate a table written by an older version: no index marker
+            // table. Such a table may hold rows tombstoned as 'removed' that
+            // the current code would wrongly export, so it must be rebuilt.
+            super::with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| {
+                    conn.execute(
+                        &format!("DROP TABLE \"{}\"", crate::constants::INDEX_META_TABLE),
+                        [],
+                    )?;
+                    Ok(())
+                })
+            })?;
+            assert!(!workspaces::data_frames::is_indexed(
+                &workspace, &file_path
+            )?);
+
+            // Re-indexing repairs the table.
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+            assert!(workspaces::data_frames::is_indexed(&workspace, &file_path)?);
+
+            // Simulate the partial-index corruption an interrupted index
+            // leaves behind: a table that is missing `_oxen_id`.
             super::with_df_db_manager(&db_path, |manager| {
                 manager.with_conn(|conn| {
                     conn.execute(
                         &format!(
                             "ALTER TABLE \"{}\" DROP COLUMN \"{}\"",
                             crate::constants::TABLE_NAME,
-                            crate::constants::DIFF_STATUS_COL
+                            OXEN_ID_COL
                         ),
                         [],
                     )?;
                     Ok(())
                 })
             })?;
-
-            // A partial table must read as NOT indexed so callers rebuild it
-            // instead of serving a table the read path cannot bind.
             assert!(!workspaces::data_frames::is_indexed(
                 &workspace, &file_path
             )?);
 
-            // Re-indexing repairs the table back to fully indexed.
             workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
             assert!(workspaces::data_frames::is_indexed(&workspace, &file_path)?);
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// User data legitimately containing columns named like the old tracking
+    /// columns (e.g. a committed `oxen diff` export, whose output includes
+    /// `_oxen_diff_status`) must index and read back as indexed — staleness is
+    /// signalled by the marker table, never by user-visible column names.
+    #[tokio::test]
+    async fn test_user_columns_named_like_legacy_tracking_are_indexable() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let file_path = Path::new("diff_output.csv");
+            let full_path = repo.path.join(file_path);
+            util::fs::write_to_path(
+                &full_path,
+                "file,label,_oxen_diff_status\na.jpg,dog,added\nb.jpg,cat,removed\n",
+            )?;
+            repositories::add(&repo, &full_path).await?;
+            let commit = repositories::commit(&repo, "add diff export")?;
+
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+
+            workspaces::data_frames::index(&repo, &workspace, file_path).await?;
+            assert!(workspaces::data_frames::is_indexed(&workspace, file_path)?);
+
+            // The user's rows — including the 'removed'-status row, which is
+            // plain data — are all present and queryable.
+            let count = workspaces::data_frames::count(&workspace, file_path)?;
+            assert_eq!(count, 2);
 
             Ok(())
         })
@@ -689,36 +676,28 @@ mod tests {
             log::debug!("status is {status:?}");
             assert_eq!(status.staged_files.len(), 1);
 
-            // List the staged mods
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    assert_eq!(added_rows, 2);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
+            // Both appended rows are in the staged table
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 8);
 
             // Delete the first append
             workspaces::data_frames::rows::delete(&repo, &workspace, &file_path, &append_1_id)?;
 
-            // Should only be one mod now
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    assert_eq!(added_rows, 1);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
+            // Only the second appended row remains
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 7);
 
             Ok(())
         })
         .await
     }
 
+    /// Edits are not reversible: even when deletes bring the table back to its
+    /// original contents, the data frame stays staged as modified. Un-staging
+    /// is an explicit operation (`workspaces::data_frames::restore`), not an
+    /// automatic side effect of edits cancelling out.
     #[tokio::test]
-    async fn test_clear_changes() -> Result<(), OxenError> {
+    async fn test_delete_added_rows_keeps_data_frame_staged() -> Result<(), OxenError> {
         // Skip duckdb if on windows
         if std::env::consts::OS == "windows" {
             return Ok(());
@@ -769,38 +748,24 @@ mod tests {
             let status = workspaces::status::status(&workspace)?;
             assert_eq!(status.staged_files.len(), 1);
 
-            // List the staged mods
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 8);
 
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    assert_eq!(added_rows, 2);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
             // Delete the first append
             workspaces::data_frames::rows::delete(&repo, &workspace, &file_path, append_1_id)?;
 
             // Delete the second append
             workspaces::data_frames::rows::delete(&repo, &workspace, &file_path, append_2_id)?;
 
-            // Should be zero staged files
+            // The table is back to its original contents...
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 6);
+
+            // ...but the data frame stays staged: edits are applied, not tracked,
+            // so nothing detects that they cancelled out.
             let status = workspaces::status::status(&workspace)?;
-            assert_eq!(status.staged_files.len(), 0);
+            assert_eq!(status.staged_files.len(), 1);
 
-            log::debug!("about to diff staged");
-            // Should be zero mods left
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            log::debug!("got diff staged");
-
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    assert_eq!(added_rows, 0);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
             Ok(())
         })
         .await
@@ -836,21 +801,15 @@ mod tests {
             let id_to_delete = staged_df.column(OXEN_ID_COL)?.get(0)?.to_string();
             let id_to_delete = id_to_delete.replace('"', "");
 
-            // Stage a deletion
+            // Stage a deletion — the row is deleted from the staged table
+            // immediately, not tombstoned.
             workspaces::data_frames::rows::delete(&repo, &workspace, &file_path, &id_to_delete)?;
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 5);
 
             // List the files that are changed
             let status = workspaces::status::status(&workspace)?;
             assert_eq!(status.staged_files.len(), 1);
-
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let removed_rows = tabular_diff.summary.modifications.row_counts.removed;
-                    assert_eq!(removed_rows, 1);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
 
             let status = repositories::status(&repo).await?;
             log::debug!("got this status {status:?}");
@@ -989,14 +948,8 @@ mod tests {
                 workspaces::data_frames::rows::add(&repo, &workspace, &file_path, &json_data)?;
 
             // 1 row added
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    assert_eq!(added_rows, 1);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 7);
 
             let id_to_modify = new_row.column(OXEN_ID_COL)?.get(0)?;
             let id_to_modify = id_to_modify.get_str().unwrap();
@@ -1012,21 +965,19 @@ mod tests {
                 id_to_modify,
                 &json_data,
             )?;
-            // List the files that are changed - this file should be back into unchanged state
+            // The data frame stays staged after the update
             let status = workspaces::status::status(&workspace)?;
             log::debug!("found mod entries: {status:?}");
             assert_eq!(status.staged_files.len(), 1);
 
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let modified_rows = tabular_diff.summary.modifications.row_counts.modified;
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    assert_eq!(modified_rows, 0);
-                    assert_eq!(added_rows, 1);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
+            // The update was applied in place to the same row
+            let row =
+                workspaces::data_frames::rows::get_by_id(&workspace, &file_path, id_to_modify)?;
+            assert_eq!(row.height(), 1);
+            let height = row.column("height")?.get(0)?;
+            assert_eq!(height.to_string(), "101");
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 7);
 
             Ok(())
         })
@@ -1065,34 +1016,23 @@ mod tests {
                 workspaces::data_frames::rows::add(&repo, &workspace, &file_path, &json_data)?;
 
             // 1 row added
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    assert_eq!(added_rows, 1);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 7);
 
             let id_to_delete = new_row.column(OXEN_ID_COL)?.get(0)?.to_string();
             let id_to_delete = id_to_delete.replace('"', "");
 
-            // Stage a deletion
+            // Delete the added row again
             workspaces::data_frames::rows::delete(&repo, &workspace, &file_path, &id_to_delete)?;
             log::debug!("done deleting row");
-            // List the files that are changed - this file should be back into unchanged state
+
+            // The table is back to its original contents, but the data frame
+            // stays staged: edits are applied, not tracked.
+            let count = workspaces::data_frames::count(&workspace, &file_path)?;
+            assert_eq!(count, 6);
             let status = workspaces::status::status(&workspace)?;
             log::debug!("found mod entries: {status:?}");
-            assert_eq!(status.staged_files.len(), 0);
-
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let removed_rows = tabular_diff.summary.modifications.row_counts.removed;
-                    assert_eq!(removed_rows, 0);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
+            assert_eq!(status.staged_files.len(), 1);
 
             Ok(())
         })
@@ -1146,14 +1086,10 @@ mod tests {
             let status = workspaces::status::status(&workspace)?;
             assert_eq!(status.staged_files.len(), 1);
 
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let modified_rows = tabular_diff.summary.modifications.row_counts.modified;
-                    assert_eq!(modified_rows, 1);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
+            let row =
+                workspaces::data_frames::rows::get_by_id(&workspace, &file_path, &id_to_modify)?;
+            let label = row.column("label")?.get(0)?;
+            assert_eq!(label.get_str(), Some("doggo"));
 
             // Now modify the row back to its original state
             let json_data = json!({
@@ -1170,29 +1106,163 @@ mod tests {
 
             log::debug!("res is... {res:?}");
 
-            let status = workspaces::status::status(&workspace)?;
-            assert_eq!(status.staged_files.len(), 0);
+            // The value is back to the original...
+            let row =
+                workspaces::data_frames::rows::get_by_id(&workspace, &file_path, &id_to_modify)?;
+            let label = row.column("label")?.get(0)?;
+            assert_eq!(label.get_str(), Some("dog"));
 
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let modified_rows = tabular_diff.summary.modifications.row_counts.modified;
-                    assert_eq!(modified_rows, 0);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
+            // ...but the data frame stays staged: edits are applied, not
+            // tracked, so nothing detects that they cancelled out.
+            let status = workspaces::status::status(&workspace)?;
+            assert_eq!(status.staged_files.len(), 1);
 
             Ok(())
         })
         .await
     }
+    /// A batch update containing a row id that doesn't exist must fail before
+    /// ANY row is written — not apply the valid rows and then report failure.
     #[tokio::test]
-    async fn test_restore_row_after_modification() -> Result<(), OxenError> {
+    async fn test_batch_update_with_missing_row_id_writes_nothing() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
         test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
-            let branch_name = "test-append";
+            let branch = repositories::branches::create_checkout(&repo, "test-batch-missing")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            let mut page_opts = DFOpts::empty();
+            page_opts.page = Some(0);
+            page_opts.page_size = Some(10);
+            let staged_df = workspaces::data_frames::query(&workspace, &file_path, &page_opts)?;
+            let real_id = staged_df.column(OXEN_ID_COL)?.get(0)?.to_string();
+            let real_id = real_id.replace('"', "");
+
+            let data = json!([
+                {"row_id": real_id, "value": {"label": "should-not-apply"}},
+                {"row_id": "no-such-row-id", "value": {"label": "phantom"}}
+            ]);
+            let result =
+                workspaces::data_frames::rows::batch_update(&repo, &workspace, &file_path, &data);
+            assert!(result.is_err(), "batch with a missing row id must fail");
+
+            // The valid row's update must NOT have been applied.
+            let row = workspaces::data_frames::rows::get_by_id(&workspace, &file_path, &real_id)?;
+            let label = row.column("label")?.get(0)?;
+            assert_ne!(label.get_str(), Some("should-not-apply"));
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// A user data frame with a column named like a legacy tracking column
+    /// (`_oxen_diff_status`) is editable: updates to that column apply rather
+    /// than being silently stripped as a reserved key.
+    #[tokio::test]
+    async fn test_update_user_owned_legacy_named_column_applies() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let file_path = Path::new("diff_output.csv");
+            let full_path = repo.path.join(file_path);
+            util::fs::write_to_path(
+                &full_path,
+                "file,_oxen_diff_status\na.jpg,added\nb.jpg,removed\n",
+            )?;
+            repositories::add(&repo, &full_path).await?;
+            let commit = repositories::commit(&repo, "add diff export")?;
+
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            workspaces::data_frames::index(&repo, &workspace, file_path).await?;
+
+            let mut page_opts = DFOpts::empty();
+            page_opts.page = Some(0);
+            page_opts.page_size = Some(10);
+            let staged = workspaces::data_frames::query(&workspace, file_path, &page_opts)?;
+            let id = staged
+                .column(OXEN_ID_COL)?
+                .get(0)?
+                .to_string()
+                .replace('"', "");
+
+            // Update the user's own _oxen_diff_status column.
+            let json_data = json!({ "_oxen_diff_status": "changed" });
+            workspaces::data_frames::rows::update(&repo, &workspace, file_path, &id, &json_data)?;
+
+            let row = workspaces::data_frames::rows::get_by_id(&workspace, file_path, &id)?;
+            let val = row.column("_oxen_diff_status")?.get(0)?;
+            assert_eq!(val.get_str(), Some("changed"));
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Row-update payloads that still carry the legacy tracking keys
+    /// (_oxen_diff_status etc.) — as older clients send — are accepted, with
+    /// the legacy keys stripped like they always were.
+    #[tokio::test]
+    async fn test_update_row_payload_with_legacy_tracking_keys_is_accepted() -> Result<(), OxenError>
+    {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-legacy-keys")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            let mut page_opts = DFOpts::empty();
+            page_opts.page = Some(0);
+            page_opts.page_size = Some(10);
+            let staged_df = workspaces::data_frames::query(&workspace, &file_path, &page_opts)?;
+            let id = staged_df.column(OXEN_ID_COL)?.get(0)?.to_string();
+            let id = id.replace('"', "");
+
+            // A pre-upgrade client round-trips the tracking columns it fetched.
+            let json_data = json!({
+                "label": "doggo",
+                "_oxen_diff_status": "unchanged",
+                "_oxen_diff_hash": null,
+                "_oxen_row_id": 1
+            });
+            let updated = workspaces::data_frames::rows::update(
+                &repo, &workspace, &file_path, &id, &json_data,
+            )?;
+            let label = updated.column("label")?.get(0)?;
+            assert_eq!(label.get_str(), Some("doggo"));
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Committing a workspace whose staged table was left by an older version
+    /// (no index marker) must fail loudly — the alternative is committing the
+    /// base file and silently discarding the staged edits.
+    #[tokio::test]
+    async fn test_commit_stale_staged_table_errors_instead_of_dropping_edits()
+    -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch_name = "test-stale-commit";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
             let workspace_id = UserConfig::identifier()?;
@@ -1200,86 +1270,111 @@ mod tests {
             let file_path = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
-
-            // Index the dataset
             workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
 
-            // Preview the dataset to grab some ids
-            let mut page_opts = DFOpts::empty();
-            page_opts.page = Some(0);
-            page_opts.page_size = Some(10);
-
-            let staged_df = workspaces::data_frames::query(&workspace, &file_path, &page_opts)?;
-
-            let id_to_modify = staged_df.column(OXEN_ID_COL)?.get(0)?.to_string();
-            let id_to_modify = id_to_modify.replace('"', "");
-
+            // Stage an edit, then simulate a table written by an older
+            // version by removing the index marker.
             let json_data = json!({
-                "label": "doggo"
+                "file": "stale.jpg", "label": "dog",
+                "min_x": 1, "min_y": 2, "width": 3, "height": 4
             });
+            workspaces::data_frames::rows::add(&repo, &workspace, &file_path, &json_data)?;
+            let db_path = workspaces::data_frames::duckdb_path(&workspace, &file_path);
+            super::with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| {
+                    conn.execute(
+                        &format!("DROP TABLE \"{}\"", crate::constants::INDEX_META_TABLE),
+                        [],
+                    )?;
+                    Ok(())
+                })
+            })?;
 
-            // Stage a modification
-            workspaces::data_frames::rows::update(
+            let new_commit = NewCommitBody {
+                author: "author".to_string(),
+                email: "email".to_string(),
+                message: "Committing stale staged df".to_string(),
+            };
+            let result = workspaces::commit(&workspace, &new_commit, branch_name).await;
+            // Must be the typed stale-index error (maps to 409, not a retryable
+            // 500), since the user has to re-index or unstage first.
+            assert!(
+                matches!(result, Err(OxenError::WorkspaceStaleStagedIndex(_))),
+                "commit of a stale staged data frame must fail with WorkspaceStaleStagedIndex, got {result:?}"
+            );
+
+            // The base version is still intact and readable.
+            let file_node = repositories::tree::get_file_by_path(&repo, &commit, &file_path)?
+                .expect("base file node should still exist");
+            assert!(file_node.metadata().is_some());
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// add_column_metadata reconciles the staged metadata schema with the
+    /// workspace table: a column deleted by a workspace edit is dropped from
+    /// the schema (not left as a phantom), and the reconciled schema matches
+    /// the table's columns.
+    #[tokio::test]
+    async fn test_add_column_metadata_reconciles_deleted_column() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        use crate::view::data_frames::columns::ColumnToDelete;
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-reconcile")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            // Delete the `label` column via a workspace edit.
+            workspaces::data_frames::columns::delete(
                 &repo,
                 &workspace,
                 &file_path,
-                &id_to_modify,
-                &json_data,
+                &ColumnToDelete {
+                    name: "label".to_string(),
+                },
             )?;
 
-            // List the files that are changed
-            let status = workspaces::status::status(&workspace)?;
-            println!("status: {status:?}");
-            assert_eq!(status.staged_files.len(), 1);
-
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let modified_rows = tabular_diff.summary.modifications.row_counts.modified;
-                    assert_eq!(modified_rows, 1);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
-
-            // Now restore the row
-            let res = workspaces::data_frames::rows::restore(
+            // Attaching metadata to a still-present column reconciles the schema.
+            let results = workspaces::data_frames::columns::add_column_metadata(
                 &repo,
                 &workspace,
-                &file_path,
-                &id_to_modify,
-            )
-            .await?;
+                file_path.clone(),
+                "file".to_string(),
+                &json!({"root": "images"}),
+            )?;
 
-            log::debug!("res is... {res:?}");
-
-            let status = workspaces::status::status(&workspace)?;
-            assert_eq!(status.staged_files.len(), 0);
-
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let modified_rows = tabular_diff.summary.modifications.row_counts.modified;
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    let removed_rows = tabular_diff.summary.modifications.row_counts.removed;
-                    assert_eq!(modified_rows, 0);
-                    assert_eq!(added_rows, 0);
-                    assert_eq!(removed_rows, 0);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
-
+            let schema = results.values().next().expect("a schema was returned");
+            let names: Vec<&str> = schema.fields.iter().map(|f| f.name.as_str()).collect();
+            assert!(
+                !names.contains(&"label"),
+                "deleted column should be gone: {names:?}"
+            );
+            assert!(names.contains(&"file"));
             Ok(())
         })
         .await
     }
 
+    /// A metadata-only workspace edit (add_column_metadata, no row changes)
+    /// must survive commit: the no-op-export skip compares against the BASE
+    /// commit's file node, so the metadata change — which the staged node
+    /// already carries — is not mistaken for an unchanged file and dropped.
     #[tokio::test]
-    async fn test_restore_row_delete() -> Result<(), OxenError> {
+    async fn test_commit_keeps_metadata_only_edit() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
         test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
-            let branch_name = "test-append";
+            let branch_name = "test-metadata-only";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
             let workspace_id = UserConfig::identifier()?;
@@ -1287,56 +1382,34 @@ mod tests {
             let file_path = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
-
-            // Index the dataset
             workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
 
-            // Preview the dataset to grab some ids
-            let mut page_opts = DFOpts::empty();
-            page_opts.page = Some(0);
-            page_opts.page_size = Some(10);
+            // Attach column metadata only — no row/content changes.
+            workspaces::data_frames::columns::add_column_metadata(
+                &repo,
+                &workspace,
+                file_path.clone(),
+                "file".to_string(),
+                &json!({"_oxen": {"render": {"func": "image"}}}),
+            )?;
 
-            let staged_df = workspaces::data_frames::query(&workspace, &file_path, &page_opts)?;
+            let new_commit = NewCommitBody {
+                author: "author".to_string(),
+                email: "email".to_string(),
+                message: "Metadata-only edit".to_string(),
+            };
+            let committed = workspaces::commit(&workspace, &new_commit, branch_name).await?;
 
-            let id_to_delete = staged_df.column(OXEN_ID_COL)?.get(0)?.to_string();
-            let id_to_delete = id_to_delete.replace('"', "");
-
-            // Stage a deletion
-            workspaces::data_frames::rows::delete(&repo, &workspace, &file_path, &id_to_delete)?;
-            let status = workspaces::status::status(&workspace)?;
-            println!("status: {status:?}");
-            assert_eq!(status.staged_files.len(), 1);
-
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let removed_rows = tabular_diff.summary.modifications.row_counts.removed;
-                    assert_eq!(removed_rows, 1);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
-
-            // Now restore the row
-            workspaces::data_frames::rows::restore(&repo, &workspace, &file_path, &id_to_delete)
-                .await?;
-
-            let status = workspaces::status::status(&workspace)?;
-            println!("status: {status:?}");
-            assert!(status.is_clean());
-
-            let diff = workspaces::diff(&repo, &workspace, &file_path)?;
-            match diff {
-                DiffResult::Tabular(tabular_diff) => {
-                    let modified_rows = tabular_diff.summary.modifications.row_counts.modified;
-                    let added_rows = tabular_diff.summary.modifications.row_counts.added;
-                    let removed_rows = tabular_diff.summary.modifications.row_counts.removed;
-                    assert_eq!(modified_rows, 0);
-                    assert_eq!(added_rows, 0);
-                    assert_eq!(removed_rows, 0);
-                }
-                _ => panic!("Expected tabular diff result"),
-            }
-
+            // The metadata edit must be present in the committed file node's
+            // tabular schema — it must not have been skipped as a no-op.
+            let file_node = repositories::tree::get_file_by_path(&repo, &committed, &file_path)?
+                .expect("committed file node should exist");
+            let has_metadata = matches!(
+                file_node.metadata(),
+                Some(crate::model::metadata::generic_metadata::GenericMetadata::MetadataTabular(m))
+                    if m.tabular.schema.fields.iter().any(|f| f.name == "file" && f.metadata.is_some())
+            );
+            assert!(has_metadata, "metadata-only edit must survive commit");
             Ok(())
         })
         .await
@@ -1497,10 +1570,7 @@ mod tests {
     fn test_add_exclude_to_simple_select() -> Result<(), OxenError> {
         let sql = "SELECT * FROM table";
         let result = add_exclude_to_sql(sql)?;
-        assert_eq!(
-            result,
-            "SELECT * EXCLUDE (\"_oxen_id\", \"_oxen_diff_status\", \"_oxen_row_id\", \"_oxen_diff_hash\") FROM table"
-        );
+        assert_eq!(result, "SELECT * EXCLUDE (\"_oxen_id\") FROM table");
         Ok(())
     }
 
@@ -1510,7 +1580,7 @@ mod tests {
         let result = add_exclude_to_sql(sql)?;
         assert_eq!(
             result,
-            "SELECT col1, col2, col3 EXCLUDE (\"_oxen_id\", \"_oxen_diff_status\", \"_oxen_row_id\", \"_oxen_diff_hash\") FROM table WHERE col1 = 'value'"
+            "SELECT col1, col2, col3 EXCLUDE (\"_oxen_id\") FROM table WHERE col1 = 'value'"
         );
         Ok(())
     }
@@ -1519,10 +1589,7 @@ mod tests {
     fn test_add_exclude_case_insensitive() -> Result<(), OxenError> {
         let sql = "select * from table";
         let result = add_exclude_to_sql(sql)?;
-        assert_eq!(
-            result,
-            "SELECT * EXCLUDE (\"_oxen_id\", \"_oxen_diff_status\", \"_oxen_row_id\", \"_oxen_diff_hash\") from table"
-        );
+        assert_eq!(result, "SELECT * EXCLUDE (\"_oxen_id\") from table");
         Ok(())
     }
 

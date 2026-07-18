@@ -5,7 +5,7 @@ use crate::core::db::merkle_node::{MerkleNodeBackend, MerkleNodeStore, create_me
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
-use crate::model::{MetadataEntry, Remote, RemoteRepository};
+use crate::model::{Remote, RemoteRepository};
 use crate::storage::{
     BLOCK_V1_MIN_OXEN_VERSION, ContentFormat, S3Opts, StorageConfig, VersionStore,
     create_version_store,
@@ -27,7 +27,7 @@ static MTIME_TOLERANCE_CACHE: LazyLock<Mutex<HashMap<PathBuf, Duration>>> =
 
 /// In-process model of a local working tree (CLI) or a server-side repo directory.
 /// Not part of any API wire shape — `RepositoryView` is what crosses the wire. Held by
-/// `Workspace` and `LocalRepositoryWithEntries`, both of which are likewise in-process.
+/// `Workspace`, which is likewise in-process.
 #[derive(Debug, Clone)]
 pub struct LocalRepository {
     pub path: PathBuf,
@@ -59,12 +59,6 @@ pub struct LocalRepository {
     /// The backend `merkle_node_store` resolved to. Persisted as `merkle_node_backend` in
     /// `config.toml` by [`save`](Self::save) so the choice is the authoritative record on the next load.
     merkle_node_backend: MerkleNodeBackend,
-}
-
-#[derive(Debug, Clone)]
-pub struct LocalRepositoryWithEntries {
-    pub local_repo: LocalRepository,
-    pub entries: Option<Vec<MetadataEntry>>,
 }
 
 impl LocalRepository {
