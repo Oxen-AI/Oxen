@@ -112,10 +112,9 @@ impl BlockEngine {
         } else {
             None
         };
-        let mut train_queue: Option<Vec<(u128, Vec<u8>)>> = (policy.codec == CodecId::ZSTD
-            && dict.is_none()
-            && self.io.supports_dictionaries())
-        .then(Vec::new);
+        let mut train_queue: Option<Vec<(u128, Vec<u8>)>> =
+            (policy.codec == CodecId::ZSTD && dict.is_none() && self.io.supports_dictionaries())
+                .then(Vec::new);
         let mut queued_bytes = 0usize;
 
         let mut file_hasher = Xxh3::new();
@@ -129,13 +128,13 @@ impl BlockEngine {
         let mut queued = std::collections::HashSet::new();
 
         let mut sketches: Vec<(u64, u128)> = Vec::new();
-        let mut encode_and_pack = |engine: &Self,
-                                   writer: &mut BlockWriter,
-                                   pending: &mut std::collections::HashSet<u128>,
-                                   sketches: &mut Vec<(u64, u128)>,
-                                   chunk_hash: u128,
-                                   raw: &[u8],
-                                   dict: Option<&(u128, Arc<PreparedDict>)>|
+        let encode_and_pack = |engine: &Self,
+                               writer: &mut BlockWriter,
+                               pending: &mut std::collections::HashSet<u128>,
+                               sketches: &mut Vec<(u64, u128)>,
+                               chunk_hash: u128,
+                               raw: &[u8],
+                               dict: Option<&(u128, Arc<PreparedDict>)>|
          -> Result<(), OxenError> {
             let mut encoded = encode_dict_chunk(policy.codec, raw, dict)?;
             // Near-duplicate delta: a prior chunk with the same prefix sketch is a
@@ -143,10 +142,10 @@ impl BlockEngine {
             if policy.codec == CodecId::ZSTD && raw.len() >= DELTA_MIN_RAW {
                 let sketch = xxhash_rust::xxh3::xxh3_64(&raw[..SKETCH_PREFIX.min(raw.len())]);
                 sketches.push((sketch, chunk_hash));
-                if let Some(delta) = engine.try_delta_encode(sketch, chunk_hash, raw)? {
-                    if delta.data.len() < encoded.data.len() {
-                        encoded = delta;
-                    }
+                if let Some(delta) = engine.try_delta_encode(sketch, chunk_hash, raw)?
+                    && delta.data.len() < encoded.data.len()
+                {
+                    encoded = delta;
                 }
             }
             if writer.would_exceed_max_size(encoded.data.len()) {
@@ -396,9 +395,12 @@ impl BlockEngine {
                 )),
             )?;
             let base_hash = u128::from_le_bytes(hash_bytes);
-            let base_loc = self.index.get(base_hash)?.ok_or(ChunkedError::MissingChunk {
-                chunk_hash: base_hash,
-            })?;
+            let base_loc = self
+                .index
+                .get(base_hash)?
+                .ok_or(ChunkedError::MissingChunk {
+                    chunk_hash: base_hash,
+                })?;
             if base_loc.codec == CodecId::ZSTD_DELTA {
                 return Err(ChunkedError::CorruptChunkIndex(format!(
                     "delta chunk {:x} has a delta base {base_hash:x} (chain depth > 1)",
@@ -525,26 +527,25 @@ impl BlockEngine {
                 .ok_or(ChunkedError::MissingChunk { chunk_hash })?;
             // Dictionary-compressed chunks never cross the wire (the receiver has
             // no dictionary context): re-encode them as plain zstd for transfer.
-            let encoded = if location.codec == CodecId::ZSTD_DICT
-                || location.codec == CodecId::ZSTD_DELTA
-            {
-                let raw = self.read_chunk(&ChunkEntry {
-                    hash: chunk_hash,
-                    offset: 0,
-                    len: location.raw_len,
-                })?;
-                encode_chunk(CodecId::ZSTD, &raw)?
-            } else {
-                let payload = self.io.read_block_range(
-                    location.block_hash,
-                    location.offset as u64,
-                    location.stored_len as u64,
-                )?;
-                EncodedChunk {
-                    codec: location.codec,
-                    data: payload,
-                }
-            };
+            let encoded =
+                if location.codec == CodecId::ZSTD_DICT || location.codec == CodecId::ZSTD_DELTA {
+                    let raw = self.read_chunk(&ChunkEntry {
+                        hash: chunk_hash,
+                        offset: 0,
+                        len: location.raw_len,
+                    })?;
+                    encode_chunk(CodecId::ZSTD, &raw)?
+                } else {
+                    let payload = self.io.read_block_range(
+                        location.block_hash,
+                        location.offset as u64,
+                        location.stored_len as u64,
+                    )?;
+                    EncodedChunk {
+                        codec: location.codec,
+                        data: payload,
+                    }
+                };
             if writer.would_exceed_max_size(encoded.data.len()) {
                 blocks.push(std::mem::take(&mut writer).seal()?);
             }
@@ -599,18 +600,18 @@ fn encode_dict_chunk(
     raw: &[u8],
     dict: Option<&(u128, Arc<PreparedDict>)>,
 ) -> Result<EncodedChunk, ChunkedError> {
-    if codec == CodecId::ZSTD {
-        if let Some((dict_hash, dict_bytes)) = dict {
-            let compressed = compress_with_dict(raw, dict_bytes)?;
-            if compressed.len() + 16 < raw.len() {
-                let mut data = Vec::with_capacity(16 + compressed.len());
-                data.extend_from_slice(&dict_hash.to_le_bytes());
-                data.extend_from_slice(&compressed);
-                return Ok(EncodedChunk {
-                    codec: CodecId::ZSTD_DICT,
-                    data,
-                });
-            }
+    if codec == CodecId::ZSTD
+        && let Some((dict_hash, dict_bytes)) = dict
+    {
+        let compressed = compress_with_dict(raw, dict_bytes)?;
+        if compressed.len() + 16 < raw.len() {
+            let mut data = Vec::with_capacity(16 + compressed.len());
+            data.extend_from_slice(&dict_hash.to_le_bytes());
+            data.extend_from_slice(&compressed);
+            return Ok(EncodedChunk {
+                codec: CodecId::ZSTD_DICT,
+                data,
+            });
         }
     }
     encode_chunk(codec, raw)
@@ -740,14 +741,12 @@ mod tests {
         for e in &m2.chunks {
             if let Some(loc) = t.engine.index().get(e.hash)? {
                 if loc.codec == CodecId::ZSTD_DELTA {
-                    let payload = t.engine.io.read_block_range(
-                        loc.block_hash,
-                        loc.offset as u64,
-                        16,
-                    )?;
-                    let base_hash = u128::from_le_bytes(
-                        payload.as_slice().try_into().expect("16-byte header"),
-                    );
+                    let payload =
+                        t.engine
+                            .io
+                            .read_block_range(loc.block_hash, loc.offset as u64, 16)?;
+                    let base_hash =
+                        u128::from_le_bytes(payload.as_slice().try_into().expect("16-byte header"));
                     let base = t
                         .engine
                         .index()
@@ -784,7 +783,12 @@ mod tests {
         };
 
         // A dictionary was trained and published.
-        assert!(t.engine.io.current_dictionary(csv_policy().chunker.as_u8())?.is_some());
+        assert!(
+            t.engine
+                .io
+                .current_dictionary(csv_policy().chunker.as_u8())?
+                .is_some()
+        );
         // At least some chunks encoded against it.
         let dict_chunks = manifest
             .chunks
@@ -837,14 +841,24 @@ mod tests {
             let mut r: &[u8] = &small;
             t.engine.ingest(&mut r, &csv_policy())?
         };
-        assert!(t.engine.io.current_dictionary(csv_policy().chunker.as_u8())?.is_none());
+        assert!(
+            t.engine
+                .io
+                .current_dictionary(csv_policy().chunker.as_u8())?
+                .is_none()
+        );
 
         let big = csv_bytes(8, DICT_MIN_SAMPLE + 32 * 1024);
         let m2 = {
             let mut r: &[u8] = &big;
             t.engine.ingest(&mut r, &csv_policy())?
         };
-        assert!(t.engine.io.current_dictionary(csv_policy().chunker.as_u8())?.is_some());
+        assert!(
+            t.engine
+                .io
+                .current_dictionary(csv_policy().chunker.as_u8())?
+                .is_some()
+        );
 
         for (m, d) in [(&m1, &small), (&m2, &big)] {
             let mut out = Vec::new();

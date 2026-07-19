@@ -222,8 +222,9 @@ impl BlockByteIo for LocalBlockIo {
             return Ok(None);
         }
         let hex = String::from_utf8_lossy(&util::fs::read_bytes_from_path(&path)?).to_string();
-        let hash = u128::from_str_radix(hex.trim(), 16)
-            .map_err(|_| OxenError::basic_str(format!("corrupt current-dictionary pointer: {hex}")))?;
+        let hash = u128::from_str_radix(hex.trim(), 16).map_err(|_| {
+            OxenError::basic_str(format!("corrupt current-dictionary pointer: {hex}"))
+        })?;
         Ok(Some(hash))
     }
 

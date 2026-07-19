@@ -346,10 +346,10 @@ A: Oxen.ai
                 }
             };
 
-            // Extension route: .jsonl → trace chunker.
+            // Extension route: .jsonl → the content-adaptive trace chunker.
             assert_eq!(
                 manifest_chunker("chats.jsonl").await?,
-                ChunkerId::TRACE_JSONL_V1
+                ChunkerId::TRACE_AUTO_V1
             );
             // Explicit mark overrides the .log extension.
             assert_eq!(

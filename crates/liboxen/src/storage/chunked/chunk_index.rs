@@ -112,13 +112,11 @@ impl ChunkIndex {
     pub fn sketch_candidate(&self, sketch: u64) -> Result<Option<u128>, OxenError> {
         let sketches = &self.sketches;
         self.read(|_db, txn| {
-            Ok(sketches
-                .get(txn, &sketch.to_le_bytes())?
-                .and_then(|bytes| {
-                    <[u8; 16]>::try_from(bytes.as_ref())
-                        .ok()
-                        .map(u128::from_le_bytes)
-                }))
+            Ok(sketches.get(txn, &sketch.to_le_bytes())?.and_then(|bytes| {
+                <[u8; 16]>::try_from(bytes.as_ref())
+                    .ok()
+                    .map(u128::from_le_bytes)
+            }))
         })
     }
 

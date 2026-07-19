@@ -711,10 +711,11 @@ impl VersionStore for LocalVersionStore {
                                 match fs::read(&manifest_path).await {
                                     Ok(manifest_bytes) => {
                                         stats_cl.incr_scanned();
-                                        let valid = ChunkManifest::from_stored_bytes(&manifest_bytes)
-                                            .is_ok_and(|m| {
-                                                m.file_hash.to_string() == expected_hash
-                                            });
+                                        let valid =
+                                            ChunkManifest::from_stored_bytes(&manifest_bytes)
+                                                .is_ok_and(|m| {
+                                                    m.file_hash.to_string() == expected_hash
+                                                });
                                         if !valid {
                                             stats_cl.incr_corrupted();
                                             if !dry_run

@@ -295,8 +295,7 @@ impl Chunker for AutoTraceChunker {
         };
         let long_rows = newlines == 0 || measured / newlines >= AUTO_ROW_THRESHOLD;
 
-        let replay: Box<dyn Read + Send + 'r> =
-            Box::new(std::io::Cursor::new(head).chain(reader));
+        let replay: Box<dyn Read + Send + 'r> = Box::new(std::io::Cursor::new(head).chain(reader));
         if long_rows {
             TraceJsonlChunker.chunk(replay)
         } else {

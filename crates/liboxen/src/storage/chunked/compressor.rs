@@ -39,8 +39,8 @@ impl std::fmt::Debug for PreparedDict {
 /// Compress a chunk as a delta against a base chunk's raw bytes (raw-content
 /// dictionary). Used for near-duplicate chunks found via prefix sketches.
 pub fn compress_with_base(raw: &[u8], base: &[u8]) -> Result<Vec<u8>, ChunkedError> {
-    let mut compressor =
-        zstd::bulk::Compressor::with_dictionary(ZSTD_LEVEL, base).map_err(ChunkedError::Compress)?;
+    let mut compressor = zstd::bulk::Compressor::with_dictionary(ZSTD_LEVEL, base)
+        .map_err(ChunkedError::Compress)?;
     compressor.compress(raw).map_err(ChunkedError::Compress)
 }
 
