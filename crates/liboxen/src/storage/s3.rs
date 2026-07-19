@@ -248,7 +248,7 @@ impl S3VersionStore {
     /// Load the published manifest for `hash`, if this store holds that version chunked.
     async fn read_manifest(&self, hash: &str) -> Result<Option<ChunkManifest>, OxenError> {
         match self.get_object_bytes_opt(&self.manifest_key(hash)).await? {
-            Some(bytes) => Ok(Some(ChunkManifest::from_bytes(&bytes)?)),
+            Some(bytes) => Ok(Some(ChunkManifest::from_stored_bytes(&bytes)?)),
             None => Ok(None),
         }
     }
@@ -1372,7 +1372,7 @@ impl ChunkedVersionStore for S3VersionStore {
             .put_object()
             .bucket(&self.bucket)
             .key(self.manifest_key(hash))
-            .body(ByteStream::from(manifest.to_bytes()?))
+            .body(ByteStream::from(manifest.to_stored_bytes()?))
             .send()
             .await
             .map_err(|e| OxenError::basic_str(format!("S3 put manifest failed: {e}")))?;
@@ -1420,7 +1420,7 @@ impl ChunkedVersionStore for S3VersionStore {
             .put_object()
             .bucket(&self.bucket)
             .key(self.manifest_key(&hash))
-            .body(ByteStream::from(manifest.to_bytes()?))
+            .body(ByteStream::from(manifest.to_stored_bytes()?))
             .send()
             .await
             .map_err(|e| OxenError::basic_str(format!("S3 put manifest failed: {e}")))?;

@@ -121,7 +121,7 @@ impl LocalVersionStore {
 /// callers wrap it in `spawn_blocking` per `docs/async_policy.md`.
 fn read_manifest_at(path: &Path) -> Result<Option<ChunkManifest>, OxenError> {
     match std::fs::read(path) {
-        Ok(bytes) => Ok(Some(ChunkManifest::from_bytes(&bytes)?)),
+        Ok(bytes) => Ok(Some(ChunkManifest::from_stored_bytes(&bytes)?)),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
         Err(err) => Err(err.into()),
     }
@@ -711,7 +711,7 @@ impl VersionStore for LocalVersionStore {
                                 match fs::read(&manifest_path).await {
                                     Ok(manifest_bytes) => {
                                         stats_cl.incr_scanned();
-                                        let valid = ChunkManifest::from_bytes(&manifest_bytes)
+                                        let valid = ChunkManifest::from_stored_bytes(&manifest_bytes)
                                             .is_ok_and(|m| {
                                                 m.file_hash.to_string() == expected_hash
                                             });
@@ -856,7 +856,7 @@ impl ChunkedVersionStore for LocalVersionStore {
                     actual: manifest.file_hash,
                 });
             }
-            AtomicFile::new(&manifest_path).write(&manifest.to_bytes()?)?;
+            AtomicFile::new(&manifest_path).write(&manifest.to_stored_bytes()?)?;
             Ok(manifest)
         })
         .await?
@@ -893,7 +893,7 @@ impl ChunkedVersionStore for LocalVersionStore {
                     actual,
                 });
             }
-            AtomicFile::new(&manifest_path).write(&manifest.to_bytes()?)
+            AtomicFile::new(&manifest_path).write(&manifest.to_stored_bytes()?)
         })
         .await?
     }

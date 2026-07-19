@@ -64,6 +64,31 @@ impl ChunkManifest {
         Ok(manifest)
     }
 
+    /// Serialize for at-rest storage: the msgpack encoding wrapped in a zstd
+    /// frame. Manifest entries share long runs (offsets, lengths, msgpack
+    /// framing), so the at-rest form is meaningfully smaller than the logical
+    /// encoding; the wire and validation formats are unchanged.
+    pub fn to_stored_bytes(&self) -> Result<Vec<u8>, ChunkedError> {
+        let logical = self.to_bytes()?;
+        zstd::bulk::compress(&logical, 19).map_err(ChunkedError::Compress)
+    }
+
+    /// Parse a manifest from its at-rest form. Accepts both the zstd-wrapped
+    /// encoding (sniffed by the zstd magic) and the bare msgpack encoding, so
+    /// stores written before compression remain readable.
+    pub fn from_stored_bytes(bytes: &[u8]) -> Result<Self, ChunkedError> {
+        const ZSTD_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
+        if bytes.len() >= 4 && bytes[..4] == ZSTD_MAGIC {
+            // Manifest size is bounded in practice (entries for a < 2^32-chunk
+            // file); cap decompression at a generous fixed bound.
+            const MAX_MANIFEST_BYTES: usize = 256 * 1024 * 1024;
+            let logical = zstd::bulk::decompress(bytes, MAX_MANIFEST_BYTES)
+                .map_err(ChunkedError::Decompress)?;
+            return Self::from_bytes(&logical);
+        }
+        Self::from_bytes(bytes)
+    }
+
     /// Structural validation: version and transform are supported, and the chunk
     /// list tiles the file exactly (contiguous offsets from zero, non-zero lengths
     /// within the chunk-size cap, lengths summing to `file_size`).
