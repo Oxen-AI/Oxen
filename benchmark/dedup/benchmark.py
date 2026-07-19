@@ -41,11 +41,11 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CORPUS = os.path.join(HERE, "corpus")
-RUN_DIR = os.path.join(HERE, ".run")
+# BENCH_CORPUS selects the corpus dir (default: the original corpus);
+# each corpus is its own fixed benchmark with its own baseline.
+CORPUS = os.path.join(HERE, os.environ.get("BENCH_CORPUS", "corpus"))
+RUN_DIR = os.path.join(HERE, ".run-" + os.environ.get("BENCH_CORPUS", "corpus"))
 OXEN = os.environ.get("OXEN_BIN", "oxen")
-DATA_FILES = ["traces.jsonl", "finetune.jsonl", "finetune_clean.jsonl",
-              "labels.csv", "traces_v1.parquet", "traces_v4.parquet"]
 
 
 def sh(args, cwd, capture=False):
