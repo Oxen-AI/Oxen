@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Storing every version of your training data — Oxen block-level dedup</title>
+<title>Format-aware storage for versioned AI data — Oxen block-level dedup</title>
 <style>
 :root {
   color-scheme: light;
@@ -104,9 +104,10 @@ footer { margin-top: 88px; padding-top: 20px; border-top: 1px solid var(--border
 <header class="hero">
   <div class="kicker">Oxen · block-level deduplication</div>
   <h1>Store every version of your training data.</h1>
-  <p class="lede">Agent traces, chat logs, and fine-tuning datasets change constantly:
-  sessions grow, prompts get revised, rows get relabeled. Oxen's block-v1 storage
-  engine versions that data the way you version code — and stores
+  <p class="lede">Training data changes constantly: sessions grow, prompts get
+  revised, rows get relabeled. Oxen's block-v1 storage engine versions that data the
+  way you version code — with compression that understands what the data <em>is</em>.
+  Its first format-aware profile, built for agent LLM traces, stores
   <strong>178&nbsp;MB of six-commit trace history in 8.4&nbsp;MB</strong>, byte-exact.</p>
 </header>
 
@@ -117,7 +118,38 @@ footer { margin-top: 88px; padding-top: 20px; border-top: 1px solid var(--border
   <div class="tile"><div class="n">1,188</div><div class="l">product tests passing on the final architecture</div></div>
 </div>
 
-<h2>The data has structure. Use it.</h2>
+<h2>Different data deserves different compression</h2>
+<p>General-purpose storage treats every file as a byte stream. That is the right
+floor — any bytes, always safe — but it leaves the biggest wins on the table,
+because every format has its own <em>edit grammar</em>: the specific ways files of
+that kind actually change between versions. A chat session grows by appending
+messages. A checkpoint changes densely but low-rank. An embedding table appends
+rows and never edits them. A video timeline shuffles references to immutable clips.</p>
+<p>Block-v1 is built so each of those can get its own pipeline. Chunkers, codecs,
+and transforms live behind append-only IDs in a registry; a policy — plus explicit
+per-path marks in your repo config — selects the pipeline per file. The choice is
+recorded in the manifest and is <strong>write-side only</strong>: readers
+reconstruct from manifests and never re-chunk, so a new profile ships without
+touching servers, old clients, or the wire protocol. Agent LLM traces are the
+first profile because that is where our users feel version-storage pain today.
+The same seam is waiting for the rest:</p>
+<ul>
+  <li><strong>Model checkpoints &amp; LoRA weights</strong> — tensor-aware deltas
+  between fine-tuning runs, where consecutive checkpoints differ everywhere but
+  shallowly.</li>
+  <li><strong>Embeddings and vector dumps</strong> — float-array-aware chunking for
+  <code>.npy</code>/<code>safetensors</code>/Arrow columns that append and re-index
+  but rarely rewrite.</li>
+  <li><strong>Logs, metrics, and event streams</strong> — the same append-heavy
+  line grammar as traces with different tokens.</li>
+  <li><strong>Genomics and scientific data</strong> — FASTA/FASTQ, sensor captures,
+  point clouds: record-structured, reference-heavy, huge.</li>
+  <li><strong>Creative assets</strong> — Ableton project files, OpenTimelineIO
+  JSON timelines, 3D scene formats: structured documents that reference large
+  immutable media and change by small structural edits.</li>
+</ul>
+
+<h2>Profile #1: agent LLM traces</h2>
 <p>Provider prompt caching exists because agent requests share a byte-identical
 prefix: tool definitions, then the system prompt, then the growing conversation —
 with exact-prefix matching and minimum cacheable sizes of 512–4,096 tokens
@@ -384,10 +416,68 @@ the marginal. Append-only workloads sit far lower still (0.011× — a 29&nbsp;M
 append stored 0.32&nbsp;MB), and the pattern is scale-free: the ratios are per-byte
 properties of the workload, not of corpus size.</p>
 
-<h2>Twenty experiments, including the failures</h2>
-<p class="sub">Every mechanism above survived a fixed benchmark with byte-exact
-reconstruction as a hard gate, ranked storage-first (a speed win never excuses a
-storage loss). The ones that didn't survive taught us as much:</p>
+<h2>This architecture was found by an agent</h2>
+<p>The trace profile was not designed on a whiteboard. We wrote a fixed benchmark —
+two deterministic multi-version corpora, byte-exact reconstruction as a hard gate,
+metrics ranked storage-first — and pointed <strong>Claude</strong> at it with a
+research charter: hypothesize, implement in the real engine, measure, keep only
+what wins, log everything including failures. It ran overnight, unattended.</p>
+
+<figure class="chart arch">
+<figcaption><strong>The research loop</strong><span>Every mechanism on this page earned its place through this loop; nothing shipped on intuition.</span></figcaption>
+<svg viewBox="0 0 720 190" role="img" aria-label="Autonomous research loop: hypothesis, implement, benchmark, compare, keep or discard">
+  <defs><marker id="larr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0,0 L8,4 L0,8 z" class="arrhead"/></marker></defs>
+  <g class="node"><rect x="8" y="52" width="118" height="54" rx="8"/>
+    <text x="67" y="74" text-anchor="middle">hypothesis</text>
+    <text x="67" y="90" text-anchor="middle" class="sub">one idea, stated</text>
+    <text x="67" y="101" text-anchor="middle" class="sub">with a falsifier</text></g>
+  <g class="node"><rect x="158" y="52" width="118" height="54" rx="8"/>
+    <text x="217" y="74" text-anchor="middle">implement</text>
+    <text x="217" y="90" text-anchor="middle" class="sub">own git branch,</text>
+    <text x="217" y="101" text-anchor="middle" class="sub">real engine code</text></g>
+  <g class="node"><rect x="308" y="52" width="128" height="54" rx="8"/>
+    <text x="372" y="74" text-anchor="middle">fixed benchmark</text>
+    <text x="372" y="90" text-anchor="middle" class="sub">byte-exact gate ·</text>
+    <text x="372" y="101" text-anchor="middle" class="sub">deterministic storage</text></g>
+  <g class="node"><rect x="468" y="52" width="118" height="54" rx="8"/>
+    <text x="527" y="74" text-anchor="middle">compare</text>
+    <text x="527" y="90" text-anchor="middle" class="sub">storage first, then</text>
+    <text x="527" y="101" text-anchor="middle" class="sub">reads, then ingest</text></g>
+  <g class="node"><rect x="618" y="24" width="94" height="42" rx="8"/>
+    <text x="665" y="42" text-anchor="middle">keep</text>
+    <text x="665" y="56" text-anchor="middle" class="sub">fast-forward</text></g>
+  <g class="node"><rect x="618" y="94" width="94" height="42" rx="8"/>
+    <text x="665" y="112" text-anchor="middle">discard</text>
+    <text x="665" y="126" text-anchor="middle" class="sub">logged anyway</text></g>
+  <path class="edge" d="M126,79 L154,79" marker-end="url(#larr)"/>
+  <path class="edge" d="M276,79 L304,79" marker-end="url(#larr)"/>
+  <path class="edge" d="M436,79 L464,79" marker-end="url(#larr)"/>
+  <path class="edge" d="M586,68 C598,62 604,54 614,48" marker-end="url(#larr)"/>
+  <path class="edge" d="M586,90 C598,96 604,104 614,110" marker-end="url(#larr)"/>
+  <path class="edge" d="M665,140 C665,168 200,178 67,170 C50,168 50,140 58,110" marker-end="url(#larr)"/>
+  <text class="sub" x="330" y="176">next hypothesis — including revisiting earlier conclusions as the architecture changes</text>
+</svg>
+</figure>
+<p>Twenty experiments came out of the loop. The rules did real work: the tie
+threshold (0.5%) discarded a clever index redesign because it couldn't beat the
+simpler code it replaced; the lexicographic ordering kept zstd-19 despite a 3×
+ingest cost because storage outranks speed; the benchmark overruled the authors'
+favorite idea twice — the structural chunker lost to plain FastCDC on short-row
+data the moment dictionaries existed, which is why routing is adaptive rather than
+ideological. And the loop compounds: three of the strongest mechanisms
+(the 16&nbsp;KB floor, midpoint sketches, in-flight delta bases) were found by
+chasing anomalies in earlier results, not by planning.</p>
+<p>An agent optimizing storage for agent traces is a pleasing loop, but the
+consequence is practical: <strong>the method transfers.</strong> A new data type
+needs a corpus that mirrors how that data really evolves, and the same loop will
+find its profile — the harness, the comparison rules, and the research charter are
+all in this repository. If your datasets have structure this engine doesn't exploit
+yet, that is what pull requests are for.</p>
+
+<h3>The experiment log, including the failures</h3>
+<p class="sub">Ranked storage-first — a speed win never excuses a storage loss.
+The ones that didn't survive taught us as much:</p>
 <table class="exp-table">
 <thead><tr><th>Hypothesis</th><th>Result</th><th>Verdict</th></tr></thead>
 <tbody>
