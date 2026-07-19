@@ -1,10 +1,10 @@
 # autoresearch-dedup
 
-This is an experiment in having an LLM autonomously research and optimize block-level deduplication and lossless compression strategies for versioned tabular datasets.
+This is an experiment in having an LLM autonomously research and optimize block-level deduplication and lossless compression strategies for versioned tabular datasets. You are working in a repository for the oxen version control tool, which looks a lot like git on the surface, but is optimized for large data (unlike git). The commands are `oxen add` and `oxen commit` similar to git. You will use git to track the experiments, but `oxen` is the version control tool we are optimizing.
 
 The repository already contains:
 
-- A base branch named `block-level-dedup`
+- A base git branch named `block-level-dedup`
 - The core storage and benchmark scaffolding
 - A working baseline implementation based on FastCDC
 - Documentation of all our planning so far in docs/block_level_dedup directory
