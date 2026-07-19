@@ -215,24 +215,25 @@ impl BlockEngine {
                 );
                 let suffix =
                     xxhash_rust::xxh3::xxh3_64(&raw[raw.len().saturating_sub(SKETCH_PREFIX)..]);
-                sketches.push((prefix, chunk_hash));
-                if middle != prefix {
-                    sketches.push((middle, chunk_hash));
+                // Content superfeatures (min-of-permuted rolling gear hash): a
+                // probe that survives edits anywhere the positional sketches
+                // look, and survives content reordering entirely — two chunks
+                // sharing most of their content (a permuted parquet page, a
+                // heavily edited row) almost surely share a minimizing window.
+                let [feat_a, feat_b, feat_c] = minhash_features(raw);
+                let probes = [prefix, middle, suffix, feat_a, feat_b, feat_c];
+                for (i, &probe) in probes.iter().enumerate() {
+                    if !probes[..i].contains(&probe) {
+                        sketches.push((probe, chunk_hash));
+                    }
                 }
-                if suffix != prefix && suffix != middle {
-                    sketches.push((suffix, chunk_hash));
-                }
-                if let Some(delta) = engine.try_delta_encode(
-                    &[prefix, middle, suffix],
-                    chunk_hash,
-                    raw,
-                    flight,
-                    writer,
-                )? && delta.data.len() < encoded.data.len()
+                if let Some(delta) =
+                    engine.try_delta_encode(&probes, chunk_hash, raw, flight, writer)?
+                    && delta.data.len() < encoded.data.len()
                 {
                     encoded = delta;
                 }
-                for sk in [prefix, middle, suffix] {
+                for sk in probes {
                     flight.insert(sk, chunk_hash);
                 }
             }
@@ -816,6 +817,47 @@ impl BlockEngine {
     pub fn list_blocks(&self) -> Result<Vec<u128>, OxenError> {
         self.io.list_blocks()
     }
+}
+
+/// Content superfeatures for delta-candidate discovery: one rolling gear-hash
+/// pass over the chunk, keeping the minimum of three independently permuted hash
+/// values (min-of-permutation ≈ MinHash over ~64-byte content windows). Two
+/// chunks sharing a substantial run of content almost surely share each
+/// minimizing window, wherever that run sits in either chunk — which is exactly
+/// the match the positional prefix/mid/suffix sketches cannot see.
+fn minhash_features(raw: &[u8]) -> [u64; 3] {
+    // Deterministic pseudo-random gear table (splitmix64): sketch values must be
+    // stable across processes because the sketch table persists.
+    static GEAR: std::sync::LazyLock<[u64; 256]> = std::sync::LazyLock::new(|| {
+        let mut table = [0u64; 256];
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        for slot in table.iter_mut() {
+            state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            *slot = z ^ (z >> 31);
+        }
+        table
+    });
+    const SALTS: [u64; 3] = [
+        0x9E37_79B9_7F4A_7C15,
+        0xC2B2_AE3D_27D4_EB4F,
+        0x1656_67B1_9E37_79F9,
+    ];
+    let gear = &*GEAR;
+    let mut h = 0u64;
+    let mut mins = [u64::MAX; 3];
+    for &byte in raw {
+        h = (h << 1).wrapping_add(gear[byte as usize]);
+        for (min, salt) in mins.iter_mut().zip(SALTS) {
+            let v = h.wrapping_mul(salt);
+            if v < *min {
+                *min = v;
+            }
+        }
+    }
+    mins
 }
 
 /// Encode a chunk, preferring the store's shared dictionary for zstd-eligible
