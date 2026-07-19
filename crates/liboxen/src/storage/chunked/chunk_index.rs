@@ -107,8 +107,8 @@ impl ChunkIndex {
         Ok(Self { env, db, sketches })
     }
 
-    /// A previously indexed chunk whose prefix sketch matches, as a delta-base
-    /// candidate. First indexed wins; purely advisory.
+    /// A previously indexed chunk whose sketch matches, as a delta-base
+    /// candidate. Most recently indexed wins; purely advisory.
     pub fn sketch_candidate(&self, sketch: u64) -> Result<Option<u128>, OxenError> {
         let sketches = &self.sketches;
         self.read(|_db, txn| {
@@ -120,7 +120,8 @@ impl ChunkIndex {
         })
     }
 
-    /// Record prefix sketches for newly stored chunks (first sketch wins).
+    /// Record sketches for newly stored chunks. Last write wins: recent chunks
+    /// make better delta bases than old ones (less version drift).
     pub fn insert_sketches(&self, entries: &[(u64, u128)]) -> Result<(), OxenError> {
         if entries.is_empty() {
             return Ok(());
@@ -128,11 +129,7 @@ impl ChunkIndex {
         let sketches = &self.sketches;
         self.write(|_db, txn| {
             for (sketch, chunk_hash) in entries {
-                let key = sketch.to_le_bytes();
-                if sketches.contains(txn, &key)? {
-                    continue;
-                }
-                sketches.put(txn, &key, &chunk_hash.to_le_bytes())?;
+                sketches.put(txn, &sketch.to_le_bytes(), &chunk_hash.to_le_bytes())?;
             }
             Ok(())
         })

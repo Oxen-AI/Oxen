@@ -165,9 +165,17 @@ impl BlockEngine {
             // Near-duplicate delta: a prior chunk with the same prefix sketch is a
             // base candidate; keep the delta only when it beats the plain form.
             if policy.codec == CodecId::ZSTD && raw.len() >= DELTA_MIN_RAW {
-                let sketch = xxhash_rust::xxh3::xxh3_64(&raw[..SKETCH_PREFIX.min(raw.len())]);
-                sketches.push((sketch, chunk_hash));
-                if let Some(delta) = engine.try_delta_encode(sketch, chunk_hash, raw)?
+                // Prefix and suffix sketches: edits at a chunk's head shift its
+                // prefix but usually keep its tail, and vice versa.
+                let prefix = xxhash_rust::xxh3::xxh3_64(&raw[..SKETCH_PREFIX.min(raw.len())]);
+                let suffix =
+                    xxhash_rust::xxh3::xxh3_64(&raw[raw.len().saturating_sub(SKETCH_PREFIX)..]);
+                sketches.push((prefix, chunk_hash));
+                if suffix != prefix {
+                    sketches.push((suffix, chunk_hash));
+                }
+                if let Some(delta) =
+                    engine.try_delta_encode(&[prefix, suffix], chunk_hash, raw)?
                     && delta.data.len() < encoded.data.len()
                 {
                     encoded = delta;
@@ -278,39 +286,72 @@ impl BlockEngine {
     /// the base's raw bytes must be readable from this store.
     fn try_delta_encode(
         &self,
-        sketch: u64,
+        sketches: &[u64],
         chunk_hash: u128,
         raw: &[u8],
     ) -> Result<Option<EncodedChunk>, OxenError> {
-        let Some(base_hash) = self.index.sketch_candidate(sketch)? else {
-            return Ok(None);
-        };
-        if base_hash == chunk_hash {
-            return Ok(None);
+        let mut best: Option<EncodedChunk> = None;
+        let mut tried = [0u128; 2];
+        let mut tried_count = 0usize;
+        for &sketch in sketches {
+            let Some(candidate) = self.index.sketch_candidate(sketch)? else {
+                continue;
+            };
+            if candidate == chunk_hash {
+                continue;
+            }
+            let Some(candidate_loc) = self.index.get(candidate)? else {
+                continue;
+            };
+            // Chain depth is at most one: a delta candidate's own base (a full
+            // chunk by construction) substitutes as the base.
+            let base_hash = if candidate_loc.codec == CodecId::ZSTD_DELTA {
+                let header =
+                    self.io
+                        .read_block_range(candidate_loc.block_hash, candidate_loc.offset as u64, 16)?;
+                let Ok(bytes) = <[u8; 16]>::try_from(header.as_slice()) else {
+                    continue;
+                };
+                u128::from_le_bytes(bytes)
+            } else {
+                candidate
+            };
+            if base_hash == chunk_hash || tried[..tried_count].contains(&base_hash) {
+                continue;
+            }
+            if tried_count < tried.len() {
+                tried[tried_count] = base_hash;
+                tried_count += 1;
+            }
+            let Some(base_loc) = self.index.get(base_hash)? else {
+                continue;
+            };
+            if base_loc.codec == CodecId::ZSTD_DELTA {
+                continue;
+            }
+            let base_raw = self.read_chunk(&ChunkEntry {
+                hash: base_hash,
+                offset: 0,
+                len: base_loc.raw_len,
+            })?;
+            let frame = compress_with_base(raw, &base_raw)?;
+            if frame.len() + 16 >= raw.len() {
+                continue;
+            }
+            if best
+                .as_ref()
+                .is_none_or(|b| frame.len() + 16 < b.data.len())
+            {
+                let mut data = Vec::with_capacity(16 + frame.len());
+                data.extend_from_slice(&base_hash.to_le_bytes());
+                data.extend_from_slice(&frame);
+                best = Some(EncodedChunk {
+                    codec: CodecId::ZSTD_DELTA,
+                    data,
+                });
+            }
         }
-        let Some(base_loc) = self.index.get(base_hash)? else {
-            return Ok(None);
-        };
-        // Chain depth is at most one: never delta against a delta.
-        if base_loc.codec == CodecId::ZSTD_DELTA {
-            return Ok(None);
-        }
-        let base_raw = self.read_chunk(&ChunkEntry {
-            hash: base_hash,
-            offset: 0,
-            len: base_loc.raw_len,
-        })?;
-        let frame = compress_with_base(raw, &base_raw)?;
-        if frame.len() + 16 >= raw.len() {
-            return Ok(None);
-        }
-        let mut data = Vec::with_capacity(16 + frame.len());
-        data.extend_from_slice(&base_hash.to_le_bytes());
-        data.extend_from_slice(&frame);
-        Ok(Some(EncodedChunk {
-            codec: CodecId::ZSTD_DELTA,
-            data,
-        }))
+        Ok(best)
     }
 
     /// The store's current shared dictionary for a content class, loaded through
