@@ -85,6 +85,9 @@ pub struct BlockEngine {
     window_cache: Mutex<Vec<((u128, u32, u32), Arc<PreparedDict>)>>,
     /// Recently decoded delta-base chunks (chunk hash → raw bytes).
     base_cache: Mutex<HashMap<u128, Arc<Vec<u8>>>>,
+    /// Serializes window-dictionary assembly so concurrent decoders of one window
+    /// build it once instead of stampeding (each build materializes megabytes).
+    window_build: Mutex<()>,
 }
 
 impl BlockEngine {
@@ -99,6 +102,7 @@ impl BlockEngine {
             footer_cache: Mutex::new(HashMap::new()),
             window_cache: Mutex::new(Vec::new()),
             base_cache: Mutex::new(HashMap::new()),
+            window_build: Mutex::new(()),
         })
     }
 
@@ -466,6 +470,17 @@ impl BlockEngine {
         count: u32,
     ) -> Result<Option<Arc<PreparedDict>>, OxenError> {
         let key = (block_hash, start, count);
+        if let Some(dict) = self
+            .window_cache
+            .lock()
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, d)| Arc::clone(d))
+        {
+            return Ok(Some(dict));
+        }
+        // Single-flight: build each window once even under parallel decoding.
+        let _build_guard = self.window_build.lock();
         if let Some(dict) = self
             .window_cache
             .lock()

@@ -16,17 +16,29 @@ const ZSTD_LEVEL: i32 = 19;
 /// A shared dictionary in digested (prepared) form, built once per dictionary and
 /// reused for every chunk — digesting a dictionary per chunk is orders of
 /// magnitude slower than compressing with one.
+///
+/// The decoder digest is built eagerly (cheap — no match finder); the encoder
+/// digest is built on first compression use. Read paths never pay the level-19
+/// match-table digestion, which for multi-megabyte window dictionaries is the
+/// difference between megabytes and hundreds of megabytes of transient memory.
 pub struct PreparedDict {
-    encoder: zstd::dict::EncoderDictionary<'static>,
+    bytes: Vec<u8>,
+    encoder: std::sync::OnceLock<zstd::dict::EncoderDictionary<'static>>,
     decoder: zstd::dict::DecoderDictionary<'static>,
 }
 
 impl PreparedDict {
     pub fn new(dict_bytes: &[u8]) -> Self {
         Self {
-            encoder: zstd::dict::EncoderDictionary::copy(dict_bytes, ZSTD_LEVEL),
+            bytes: dict_bytes.to_vec(),
+            encoder: std::sync::OnceLock::new(),
             decoder: zstd::dict::DecoderDictionary::copy(dict_bytes),
         }
+    }
+
+    fn encoder(&self) -> &zstd::dict::EncoderDictionary<'static> {
+        self.encoder
+            .get_or_init(|| zstd::dict::EncoderDictionary::copy(&self.bytes, ZSTD_LEVEL))
     }
 }
 
@@ -67,7 +79,7 @@ pub fn decompress_with_base(
 /// Compress a chunk against a shared dictionary ([`CodecId::ZSTD_DICT`] payloads;
 /// the block engine owns dictionary lifecycle and payload framing).
 pub fn compress_with_dict(raw: &[u8], dict: &PreparedDict) -> Result<Vec<u8>, ChunkedError> {
-    let mut compressor = zstd::bulk::Compressor::with_prepared_dictionary(&dict.encoder)
+    let mut compressor = zstd::bulk::Compressor::with_prepared_dictionary(dict.encoder())
         .map_err(ChunkedError::Compress)?;
     compressor.compress(raw).map_err(ChunkedError::Compress)
 }
