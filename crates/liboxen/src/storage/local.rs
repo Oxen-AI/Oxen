@@ -136,13 +136,14 @@ fn read_manifest_stored_bytes_at(
 ) -> Result<ChunkManifest, OxenError> {
     let dicts = manifest_dicts_dir(manifest_path)?;
     Ok(ChunkManifest::from_stored_bytes(bytes, |base_hash| {
-        crate::util::fs::read_bytes_from_path(dicts.join(format!("{base_hash:032x}"))).map_err(
-            |err| {
+        let blob = crate::util::fs::read_bytes_from_path(dicts.join(format!("{base_hash:032x}")))
+            .map_err(|err| {
                 super::chunked::ChunkedError::InvalidManifest(format!(
                     "missing manifest lineage base {base_hash:032x}: {err}"
                 ))
-            },
-        )
+            })?;
+        zstd::bulk::decompress(&blob, 256 * 1024 * 1024)
+            .map_err(super::chunked::ChunkedError::Decompress)
     })?)
 }
 
@@ -178,18 +179,22 @@ fn write_manifest_at(
     }
     let dicts = manifest_dicts_dir(manifest_path)?;
     if let Some(base_hash) = engine.index().manifest_base(first_chunk)?
-        && let Ok(base) = crate::util::fs::read_bytes_from_path(dicts.join(format!("{base_hash:032x}")))
+        && let Ok(blob) =
+            crate::util::fs::read_bytes_from_path(dicts.join(format!("{base_hash:032x}")))
+        && let Ok(base) = zstd::bulk::decompress(&blob, 256 * 1024 * 1024)
         && let Some(delta) = manifest.to_delta_bytes(base_hash, &base, full.len())?
     {
         return AtomicFile::new(manifest_path).write(&delta);
     }
-    // Full write; publish its logical bytes as the new lineage base
-    // (blob first, pointer last).
+    // Full write; publish its logical bytes (zstd-compressed at rest, named by
+    // the compressed hash) as the new lineage base — blob first, pointer last.
     let logical = manifest.to_bytes()?;
-    let blob_hash = crate::util::hasher::hash_buffer_128bit(&logical);
+    let blob = zstd::bulk::compress(&logical, 19)
+        .map_err(super::chunked::ChunkedError::Compress)?;
+    let blob_hash = crate::util::hasher::hash_buffer_128bit(&blob);
     AtomicFile::new(dicts.join(format!("{blob_hash:032x}")))
         .with_hash(crate::model::MerkleHash::new(blob_hash))
-        .write(&logical)?;
+        .write(&blob)?;
     engine.index().set_manifest_base(first_chunk, blob_hash)?;
     AtomicFile::new(manifest_path).write(&full)
 }
