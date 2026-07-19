@@ -153,10 +153,15 @@ impl BlockEngine {
         let mut queued = std::collections::HashSet::new();
 
         let mut sketches: Vec<(u64, u128)> = Vec::new();
+        // Same-pass delta bases: sketches of chunks already packed in this
+        // ingest, so a snapshot's later rows can delta against its earlier rows
+        // (the LMDB sketch table only has *prior* ingests).
+        let mut flight: HashMap<u64, u128> = HashMap::new();
         let encode_and_pack = |engine: &Self,
                                writer: &mut BlockWriter,
                                pending: &mut std::collections::HashSet<u128>,
                                sketches: &mut Vec<(u64, u128)>,
+                               flight: &mut HashMap<u64, u128>,
                                chunk_hash: u128,
                                raw: &[u8],
                                dict: Option<&(u128, Arc<PreparedDict>)>|
@@ -183,11 +188,18 @@ impl BlockEngine {
                 if suffix != prefix && suffix != middle {
                     sketches.push((suffix, chunk_hash));
                 }
-                if let Some(delta) =
-                    engine.try_delta_encode(&[prefix, middle, suffix], chunk_hash, raw)?
-                    && delta.data.len() < encoded.data.len()
+                if let Some(delta) = engine.try_delta_encode(
+                    &[prefix, middle, suffix],
+                    chunk_hash,
+                    raw,
+                    flight,
+                    writer,
+                )? && delta.data.len() < encoded.data.len()
                 {
                     encoded = delta;
+                }
+                for sk in [prefix, middle, suffix] {
+                    flight.insert(sk, chunk_hash);
                 }
             }
             if writer.would_exceed_max_size(encoded.data.len()) {
@@ -232,6 +244,7 @@ impl BlockEngine {
                             &mut writer,
                             &mut pending,
                             &mut sketches,
+                            &mut flight,
                             hash,
                             &raw,
                             dict.as_ref(),
@@ -247,6 +260,7 @@ impl BlockEngine {
                 &mut writer,
                 &mut pending,
                 &mut sketches,
+                &mut flight,
                 chunk_hash,
                 &raw_chunk.data,
                 dict.as_ref(),
@@ -265,6 +279,7 @@ impl BlockEngine {
                     &mut writer,
                     &mut pending,
                     &mut sketches,
+                    &mut flight,
                     hash,
                     &raw,
                     dict.as_ref(),
@@ -298,71 +313,128 @@ impl BlockEngine {
         sketches: &[u64],
         chunk_hash: u128,
         raw: &[u8],
+        flight: &HashMap<u64, u128>,
+        writer: &BlockWriter,
     ) -> Result<Option<EncodedChunk>, OxenError> {
         let mut best: Option<EncodedChunk> = None;
-        let mut tried = [0u128; 3];
+        let mut tried = [0u128; 6];
         let mut tried_count = 0usize;
         for &sketch in sketches {
-            let Some(candidate) = self.index.sketch_candidate(sketch)? else {
-                continue;
-            };
-            if candidate == chunk_hash {
-                continue;
-            }
-            let Some(candidate_loc) = self.index.get(candidate)? else {
-                continue;
-            };
-            // Chain depth is at most one: a delta candidate's own base (a full
-            // chunk by construction) substitutes as the base.
-            let base_hash = if candidate_loc.codec == CodecId::ZSTD_DELTA {
-                let header = self.io.read_block_range(
-                    candidate_loc.block_hash,
-                    candidate_loc.offset as u64,
-                    16,
-                )?;
-                let Ok(bytes) = <[u8; 16]>::try_from(header.as_slice()) else {
+            // Same-pass candidates first (most similar recency), then prior
+            // ingests via the persistent sketch table.
+            let candidates = [
+                flight.get(&sketch).copied(),
+                self.index.sketch_candidate(sketch)?,
+            ];
+            for candidate in candidates.into_iter().flatten() {
+                if candidate == chunk_hash {
+                    continue;
+                }
+                // Chain depth is at most one: a delta candidate's own base (a
+                // full chunk by construction) substitutes as the base.
+                let Some((base_hash, codec)) = self.chunk_codec(candidate, writer)? else {
                     continue;
                 };
-                u128::from_le_bytes(bytes)
-            } else {
-                candidate
-            };
-            if base_hash == chunk_hash || tried[..tried_count].contains(&base_hash) {
-                continue;
-            }
-            if tried_count < tried.len() {
+                let base_hash = if codec == CodecId::ZSTD_DELTA {
+                    base_hash
+                } else {
+                    candidate
+                };
+                if base_hash == chunk_hash || tried[..tried_count].contains(&base_hash) {
+                    continue;
+                }
+                if tried_count >= tried.len() {
+                    break;
+                }
                 tried[tried_count] = base_hash;
                 tried_count += 1;
-            }
-            let Some(base_loc) = self.index.get(base_hash)? else {
-                continue;
-            };
-            if base_loc.codec == CodecId::ZSTD_DELTA {
-                continue;
-            }
-            let base_raw = self.read_chunk(&ChunkEntry {
-                hash: base_hash,
-                offset: 0,
-                len: base_loc.raw_len,
-            })?;
-            let frame = compress_with_base(raw, &base_raw)?;
-            if frame.len() + 16 >= raw.len() {
-                continue;
-            }
-            if best
-                .as_ref()
-                .is_none_or(|b| frame.len() + 16 < b.data.len())
-            {
-                let mut data = Vec::with_capacity(16 + frame.len());
-                data.extend_from_slice(&base_hash.to_le_bytes());
-                data.extend_from_slice(&frame);
-                best = Some(EncodedChunk {
-                    codec: CodecId::ZSTD_DELTA,
-                    data,
-                });
+                let Some(base_raw) = self.read_raw_or_in_flight(base_hash, writer)? else {
+                    continue;
+                };
+                let frame = compress_with_base(raw, &base_raw)?;
+                if frame.len() + 16 >= raw.len() {
+                    continue;
+                }
+                if best
+                    .as_ref()
+                    .is_none_or(|b| frame.len() + 16 < b.data.len())
+                {
+                    let mut data = Vec::with_capacity(16 + frame.len());
+                    data.extend_from_slice(&base_hash.to_le_bytes());
+                    data.extend_from_slice(&frame);
+                    best = Some(EncodedChunk {
+                        codec: CodecId::ZSTD_DELTA,
+                        data,
+                    });
+                }
             }
         }
         Ok(best)
+    }
+
+    /// A chunk's codec plus (for deltas) its base hash, whether the chunk lives
+    /// in a published block or the open writer. `None` if unknown everywhere.
+    fn chunk_codec(
+        &self,
+        chunk_hash: u128,
+        writer: &BlockWriter,
+    ) -> Result<Option<(u128, CodecId)>, OxenError> {
+        if let Some(loc) = self.index.get(chunk_hash)? {
+            if loc.codec != CodecId::ZSTD_DELTA {
+                return Ok(Some((chunk_hash, loc.codec)));
+            }
+            let header = self
+                .io
+                .read_block_range(loc.block_hash, loc.offset as u64, 16)?;
+            let Ok(bytes) = <[u8; 16]>::try_from(header.as_slice()) else {
+                return Ok(None);
+            };
+            return Ok(Some((u128::from_le_bytes(bytes), loc.codec)));
+        }
+        if let Some((codec, payload, _raw_len)) = writer.encoded_chunk(chunk_hash) {
+            if codec != CodecId::ZSTD_DELTA {
+                return Ok(Some((chunk_hash, codec)));
+            }
+            let Ok(bytes) = <[u8; 16]>::try_from(&payload[..16.min(payload.len())]) else {
+                return Ok(None);
+            };
+            return Ok(Some((u128::from_le_bytes(bytes), codec)));
+        }
+        Ok(None)
+    }
+
+    /// Raw bytes of a non-delta chunk from the store or the open writer.
+    fn read_raw_or_in_flight(
+        &self,
+        chunk_hash: u128,
+        writer: &BlockWriter,
+    ) -> Result<Option<Vec<u8>>, OxenError> {
+        if let Some(loc) = self.index.get(chunk_hash)? {
+            if loc.codec == CodecId::ZSTD_DELTA {
+                return Ok(None);
+            }
+            return Ok(Some(self.read_chunk(&ChunkEntry {
+                hash: chunk_hash,
+                offset: 0,
+                len: loc.raw_len,
+            })?));
+        }
+        let Some((codec, payload, raw_len)) = writer.encoded_chunk(chunk_hash) else {
+            return Ok(None);
+        };
+        let raw = match codec {
+            CodecId::ZSTD_DELTA => return Ok(None),
+            CodecId::ZSTD_DICT => {
+                let Ok(hash_bytes) = <[u8; 16]>::try_from(&payload[..16.min(payload.len())])
+                else {
+                    return Ok(None);
+                };
+                let dict = self.load_dict(u128::from_le_bytes(hash_bytes))?;
+                decompress_with_dict(&payload[16..], raw_len as usize, &dict)?
+            }
+            _ => decode_chunk(codec, payload, raw_len as usize)?,
+        };
+        Ok(Some(raw))
     }
 
     /// The store's current shared dictionary for a content class, loaded through
@@ -782,6 +854,37 @@ mod tests {
 
     fn csv_policy() -> EncodePolicy {
         encode_policy(None, &EntryDataType::Tabular, "csv")
+    }
+
+    /// The first ingest of a snapshot whose rows share large verbatim regions
+    /// deltas later rows against earlier rows in the same pass — the sketch
+    /// table alone only covers prior ingests.
+    #[test]
+    fn same_pass_rows_delta_against_each_other() -> Result<(), OxenError> {
+        let t = test_engine();
+        // 40 "request log" rows: unique 40-byte head, shared 30KB middle,
+        // unique tail — both end sketches differ, the midpoint matches.
+        let shared = "tools-and-system-block ".repeat(1400);
+        let rows: String = (0..40)
+            .map(|i| format!("{{\"session\":\"{i:032}\",\"body\":\"{shared}\",\"turn\":\"reply number {i}\"}}\n"))
+            .collect();
+        let manifest = ingest(&t.engine, rows.as_bytes());
+
+        let delta_chunks = manifest
+            .chunks
+            .iter()
+            .filter_map(|e| t.engine.index().get(e.hash).transpose())
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|loc| loc.codec == CodecId::ZSTD_DELTA)
+            .count();
+        assert!(
+            delta_chunks >= manifest.chunks.len() / 2,
+            "expected most same-pass near-duplicate chunks to delta ({delta_chunks}/{})",
+            manifest.chunks.len()
+        );
+        assert_eq!(&reconstruct(&t.engine, &manifest), rows.as_bytes());
+        Ok(())
     }
 
     /// Near-duplicate chunks across versions delta-encode against a
