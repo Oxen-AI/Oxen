@@ -35,7 +35,16 @@ pub async fn add_all<T: AsRef<Path>>(
     repo: &LocalRepository,
     paths: impl IntoIterator<Item = T>,
 ) -> Result<(), OxenError> {
-    core::v_latest::add::add(repo, paths).await
+    core::v_latest::add::add(repo, paths).await?;
+    // Ingest accumulates page slack in the chunk index; reclaim it now that the
+    // batch's writes are done. Advisory maintenance: a failure (e.g. a concurrent
+    // writer) must never fail the add itself.
+    if let Some(chunked) = repo.version_store().chunked()
+        && let Err(err) = chunked.compact_chunk_index().await
+    {
+        log::warn!("chunk index compaction skipped: {err}");
+    }
+    Ok(())
 }
 
 #[cfg(test)]

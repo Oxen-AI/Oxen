@@ -29,5 +29,6 @@ pub mod txn;
 pub use env_registry::{LmdbEnvRegistry, open_shared_env, shared_env_is_live};
 pub use lmdb_db::{LmdbDb, open_db};
 pub use lmdb_env::{LmdbEnv, LmdbEnvConfig};
+pub(crate) use lmdb_env::compact_lmdb_env_in_place;
 pub use lmdb_error::LmdbLayerError;
 pub use txn::{with_read_txn, with_write_txn};

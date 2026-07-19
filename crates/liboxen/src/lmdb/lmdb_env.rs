@@ -21,7 +21,8 @@ use std::fs::create_dir_all;
 use std::path::{Path, PathBuf};
 
 use bytesize::ByteSize;
-use heed::{CompactionOption, Env, EnvOpenOptions, WithoutTls};
+use heed::types::Bytes as HeedBytes;
+use heed::{CompactionOption, Database, Env, EnvOpenOptions, PutFlags, WithoutTls};
 
 use super::lmdb_error::LmdbLayerError;
 
@@ -150,6 +151,84 @@ pub(crate) fn copy_lmdb_env_to_dir(
             source,
         })?;
     Ok(dst)
+}
+
+/// Minimum reclaimable slack (free pages) before a rebuild-compaction is worth its
+/// O(live index) copy. Small envs and freshly compacted envs skip the work.
+const COMPACT_MIN_RECLAIM: u64 = 256 * 1024;
+
+/// Rebuild-compact the env's data file: bulk-copy every entry of `db_names` (in LMDB
+/// key order, append-mode, so B-tree leaves pack near-full) into a fresh sibling env,
+/// then atomically rename the rebuilt data file over the live one. Returns whether a
+/// rebuild happened — the work is skipped when the env's free-page slack is under an
+/// internal floor, so calling this after every write batch stays cheap.
+///
+/// The live env keeps its mmap of the *old* inode: reads through existing handles stay
+/// correct (the rebuilt file is an equivalent point-in-time snapshot), but writes
+/// committed through them after this call are invisible to later opens of the path.
+/// Callers therefore run this only at the end of a write batch, and only for stores
+/// whose content is disposable, rebuildable derived state.
+pub(crate) fn compact_lmdb_env_in_place(
+    lmdb_env: &LmdbEnv,
+    config: &LmdbEnvConfig,
+    db_names: &[&str],
+) -> Result<bool, LmdbLayerError> {
+    let disk_size = lmdb_env.real_disk_size().map_err(LmdbLayerError::Read)?;
+    let live_size = lmdb_env
+        .non_free_pages_size()
+        .map_err(LmdbLayerError::Read)?;
+    if disk_size.saturating_sub(live_size) < COMPACT_MIN_RECLAIM {
+        return Ok(false);
+    }
+
+    let src_dir = lmdb_env.path().to_path_buf();
+    let tmp_dir = src_dir.with_extension(format!("compact-{}", std::process::id()));
+    if tmp_dir.exists() {
+        std::fs::remove_dir_all(&tmp_dir).map_err(|source| LmdbLayerError::Compact {
+            path: tmp_dir.clone(),
+            source,
+        })?;
+    }
+    let rebuilt_data = {
+        let dst_env = open_lmdb_env(&tmp_dir, config)?;
+        let rtxn = lmdb_env.read_txn().map_err(LmdbLayerError::Txn)?;
+        let mut wtxn = dst_env.write_txn().map_err(LmdbLayerError::Txn)?;
+        for name in db_names {
+            let src_db: Option<Database<HeedBytes, HeedBytes>> = lmdb_env
+                .open_database(&rtxn, Some(name))
+                .map_err(|source| LmdbLayerError::OpenDb {
+                    name: name.to_string(),
+                    source,
+                })?;
+            let Some(src_db) = src_db else {
+                continue;
+            };
+            let dst_db: Database<HeedBytes, HeedBytes> = dst_env
+                .create_database(&mut wtxn, Some(name))
+                .map_err(|source| LmdbLayerError::OpenDb {
+                    name: name.to_string(),
+                    source,
+                })?;
+            for item in src_db.iter(&rtxn).map_err(LmdbLayerError::Read)? {
+                let (key, value) = item.map_err(LmdbLayerError::Read)?;
+                dst_db
+                    .put_with_flags(&mut wtxn, PutFlags::APPEND, key, value)
+                    .map_err(LmdbLayerError::Write)?;
+            }
+        }
+        // Commit is the durability boundary (the env opens without NOSYNC), so the
+        // rebuilt file is fully on disk before the rename publishes it.
+        wtxn.commit().map_err(LmdbLayerError::Txn)?;
+        dst_env.path().join(LMDB_DATA_FILE)
+    };
+    std::fs::rename(&rebuilt_data, src_dir.join(LMDB_DATA_FILE)).map_err(|source| {
+        LmdbLayerError::Compact {
+            path: src_dir.clone(),
+            source,
+        }
+    })?;
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    Ok(true)
 }
 
 #[cfg(test)]

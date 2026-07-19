@@ -17,7 +17,9 @@ use bytesize::ByteSize;
 
 use crate::error::OxenError;
 use crate::lmdb::store::LmdbStore;
-use crate::lmdb::{LmdbDb, LmdbEnv, LmdbEnvConfig, open_db, open_shared_env};
+use crate::lmdb::{
+    LmdbDb, LmdbEnv, LmdbEnvConfig, compact_lmdb_env_in_place, open_db, open_shared_env,
+};
 
 use super::block::BlockChunk;
 use super::error::ChunkedError;
@@ -38,6 +40,11 @@ const MAX_DBS: u32 = 3;
 /// ~8.5 GB of entries for a 10 TB repo at 64 KiB average chunks), with headroom for
 /// LMDB page overhead — not copied from the merkle store's 256 GiB.
 const CHUNK_INDEX_MAP_SIZE: ByteSize = ByteSize::gib(32);
+/// Reader-lock-table size for this env. The lock file is persistent storage overhead
+/// proportional to `max_readers`, so this is sized to plausible concurrency for one
+/// store (not the crate-wide 1024 default): the CLI holds a handful of readers, the
+/// server a few per in-flight request.
+const CHUNK_INDEX_MAX_READERS: u32 = 256;
 
 /// Serialized size of one [`ChunkLocation`] value:
 /// block_hash u128 + offset u32 + stored_len u32 + raw_len u32 + codec u8.
@@ -104,9 +111,17 @@ impl std::fmt::Debug for ChunkIndex {
 }
 
 impl ChunkIndex {
+    fn env_config() -> LmdbEnvConfig {
+        LmdbEnvConfig {
+            map_size: CHUNK_INDEX_MAP_SIZE,
+            max_dbs: MAX_DBS,
+            max_readers: CHUNK_INDEX_MAX_READERS,
+        }
+    }
+
     /// Open (creating if absent) the chunk index env at `dir`.
     pub fn open(dir: &Path) -> Result<Self, OxenError> {
-        let config = LmdbEnvConfig::new(MAX_DBS, CHUNK_INDEX_MAP_SIZE);
+        let config = Self::env_config();
         let env = open_shared_env(dir, &config)?;
         let db = open_db(&env, CHUNKS_DB_NAME)?;
         let sketches = open_db(&env, SKETCHES_DB_NAME)?;
@@ -253,6 +268,22 @@ impl ChunkIndex {
             }
             Ok(())
         })
+    }
+
+    /// Reclaim the index's LMDB page slack: rebuild the data file with packed
+    /// leaves and atomically swap it in (no-op when there is little to reclaim).
+    /// Returns whether a rebuild happened.
+    ///
+    /// Call only at the end of a write batch: index writes committed through this
+    /// process's live env after a rebuild are invisible to later opens of the
+    /// path. The index is disposable derived state, so the worst case of a race
+    /// is a rebuildable miss, never data loss.
+    pub fn compact(&self) -> Result<bool, OxenError> {
+        Ok(compact_lmdb_env_in_place(
+            &self.env,
+            &Self::env_config(),
+            &[CHUNKS_DB_NAME, SKETCHES_DB_NAME, MANIFEST_BASES_DB_NAME],
+        )?)
     }
 
     /// Number of indexed chunks.

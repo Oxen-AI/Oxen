@@ -107,6 +107,15 @@ pub trait ChunkedVersionStore: Send + Sync {
     /// state). Returns the number of blocks scanned.
     async fn rebuild_chunk_index(&self) -> Result<u64, OxenError>;
 
+    /// Reclaim persistent page slack in the store-local chunk index (no-op when
+    /// there is little to reclaim, and for backends without a compactable local
+    /// index). Call only at the end of a write batch — index writes made by this
+    /// process after compaction may be invisible to later opens, which the index
+    /// tolerates because it is rebuildable derived state.
+    async fn compact_chunk_index(&self) -> Result<(), OxenError> {
+        Ok(())
+    }
+
     /// Clear the disposable chunk index while leaving blocks and manifests
     /// untouched. Reverse migration uses this before allowing pre-block binaries
     /// to open the repository, so a later forward migration cannot trust stale

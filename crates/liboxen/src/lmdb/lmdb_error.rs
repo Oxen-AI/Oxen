@@ -68,6 +68,13 @@ pub enum LmdbLayerError {
         #[source]
         source: heed::Error,
     },
+
+    #[error("Could not compact LMDB environment at {path}: {source}")]
+    Compact {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 impl LmdbLayerError {
