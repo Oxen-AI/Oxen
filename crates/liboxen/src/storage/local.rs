@@ -117,14 +117,81 @@ impl LocalVersionStore {
     }
 }
 
+/// Directory of manifest lineage-base blobs for the store containing
+/// `manifest_path` (= `<store root>/<xx>/<rest>/manifest`).
+fn manifest_dicts_dir(manifest_path: &Path) -> Result<PathBuf, OxenError> {
+    manifest_path
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .map(|root| root.join(crate::constants::MANIFEST_DICTS_DIR))
+        .ok_or_else(|| OxenError::basic_str("manifest path missing store root"))
+}
+
+/// Parse already-read manifest bytes, resolving any delta base through the
+/// store's lineage-blob dir (derived from `manifest_path`).
+fn read_manifest_stored_bytes_at(
+    bytes: &[u8],
+    manifest_path: &Path,
+) -> Result<ChunkManifest, OxenError> {
+    let dicts = manifest_dicts_dir(manifest_path)?;
+    Ok(ChunkManifest::from_stored_bytes(bytes, |base_hash| {
+        crate::util::fs::read_bytes_from_path(dicts.join(format!("{base_hash:032x}"))).map_err(
+            |err| {
+                super::chunked::ChunkedError::InvalidManifest(format!(
+                    "missing manifest lineage base {base_hash:032x}: {err}"
+                ))
+            },
+        )
+    })?)
+}
+
 /// Load the published manifest at `path`, if present. Sync on purpose; async
 /// callers wrap it in `spawn_blocking` per `docs/async_policy.md`.
 fn read_manifest_at(path: &Path) -> Result<Option<ChunkManifest>, OxenError> {
     match std::fs::read(path) {
-        Ok(bytes) => Ok(Some(ChunkManifest::from_stored_bytes(&bytes)?)),
+        Ok(bytes) => Ok(Some(read_manifest_stored_bytes_at(&bytes, path)?)),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
         Err(err) => Err(err.into()),
     }
+}
+
+/// Persist a manifest at rest: a delta against the lineage base for its
+/// first-chunk hash when that is smaller, otherwise the full form (which then
+/// becomes the new lineage base). Bases are content-addressed blobs under the
+/// reserved `manifest_dicts` dir, so deleting manifests never breaks a delta.
+fn write_manifest_at(
+    engine: &BlockEngine,
+    manifest_path: &Path,
+    manifest: &ChunkManifest,
+) -> Result<(), OxenError> {
+    /// Manifests below this at-rest size are stored full: delta bookkeeping
+    /// cannot pay for itself.
+    const MANIFEST_DELTA_MIN: usize = 2048;
+
+    let full = manifest.to_stored_bytes()?;
+    let Some(first_chunk) = manifest.chunks.first().map(|c| c.hash) else {
+        return AtomicFile::new(manifest_path).write(&full);
+    };
+    if full.len() < MANIFEST_DELTA_MIN {
+        return AtomicFile::new(manifest_path).write(&full);
+    }
+    let dicts = manifest_dicts_dir(manifest_path)?;
+    if let Some(base_hash) = engine.index().manifest_base(first_chunk)?
+        && let Ok(base) = crate::util::fs::read_bytes_from_path(dicts.join(format!("{base_hash:032x}")))
+        && let Some(delta) = manifest.to_delta_bytes(base_hash, &base, full.len())?
+    {
+        return AtomicFile::new(manifest_path).write(&delta);
+    }
+    // Full write; publish its logical bytes as the new lineage base
+    // (blob first, pointer last).
+    let logical = manifest.to_bytes()?;
+    let blob_hash = crate::util::hasher::hash_buffer_128bit(&logical);
+    AtomicFile::new(dicts.join(format!("{blob_hash:032x}")))
+        .with_hash(crate::model::MerkleHash::new(blob_hash))
+        .write(&logical)?;
+    engine.index().set_manifest_base(first_chunk, blob_hash)?;
+    AtomicFile::new(manifest_path).write(&full)
 }
 
 #[async_trait]
@@ -712,7 +779,10 @@ impl VersionStore for LocalVersionStore {
                                     Ok(manifest_bytes) => {
                                         stats_cl.incr_scanned();
                                         let valid =
-                                            ChunkManifest::from_stored_bytes(&manifest_bytes)
+                                            read_manifest_stored_bytes_at(
+                                                &manifest_bytes,
+                                                &manifest_path,
+                                            )
                                                 .is_ok_and(|m| {
                                                     m.file_hash.to_string() == expected_hash
                                                 });
@@ -857,7 +927,7 @@ impl ChunkedVersionStore for LocalVersionStore {
                     actual: manifest.file_hash,
                 });
             }
-            AtomicFile::new(&manifest_path).write(&manifest.to_stored_bytes()?)?;
+            write_manifest_at(&engine, &manifest_path, &manifest)?;
             Ok(manifest)
         })
         .await?
@@ -883,7 +953,7 @@ impl ChunkedVersionStore for LocalVersionStore {
             // Full streamed reconstruction (decision 11): the chunk list must
             // reproduce exactly `file_size` bytes hashing to the claimed file hash
             // before the manifest is published. A missing chunk fails here too.
-            let mut reader = ReconstructReader::new(engine, manifest.clone());
+            let mut reader = ReconstructReader::new(Arc::clone(&engine), manifest.clone());
             let mut hashing = HashingReader::new(&mut reader);
             let reconstructed_size = std::io::copy(&mut hashing, &mut std::io::sink())?;
             let actual = MerkleHash::new(hashing.digest128());
@@ -894,7 +964,7 @@ impl ChunkedVersionStore for LocalVersionStore {
                     actual,
                 });
             }
-            AtomicFile::new(&manifest_path).write(&manifest.to_stored_bytes()?)
+            write_manifest_at(&engine, &manifest_path, &manifest)
         })
         .await?
     }

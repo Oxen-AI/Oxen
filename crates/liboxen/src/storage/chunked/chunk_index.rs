@@ -28,7 +28,12 @@ const CHUNKS_DB_NAME: &str = "chunks";
 /// A second database maps prefix sketches to a candidate base chunk for delta
 /// encoding. Advisory derived state: losing it only costs future delta hits.
 const SKETCHES_DB_NAME: &str = "sketches";
-const MAX_DBS: u32 = 2;
+/// Manifest lineage bases: the first-chunk hash of a file's manifests maps to
+/// the blob hash of the last full-stored manifest with that first chunk, the
+/// dictionary base for delta-compressing successor manifests at rest. Advisory:
+/// losing it only costs future manifest-delta hits.
+const MANIFEST_BASES_DB_NAME: &str = "manifest_bases";
+const MAX_DBS: u32 = 3;
 /// Sparse upper bound on the mapped size. Sized from the math (~53 B/entry ⇒
 /// ~8.5 GB of entries for a 10 TB repo at 64 KiB average chunks), with headroom for
 /// LMDB page overhead — not copied from the merkle store's 256 GiB.
@@ -89,6 +94,7 @@ pub struct ChunkIndex {
     env: Arc<LmdbEnv>,
     db: LmdbDb,
     sketches: LmdbDb,
+    manifest_bases: LmdbDb,
 }
 
 impl std::fmt::Debug for ChunkIndex {
@@ -104,7 +110,34 @@ impl ChunkIndex {
         let env = open_shared_env(dir, &config)?;
         let db = open_db(&env, CHUNKS_DB_NAME)?;
         let sketches = open_db(&env, SKETCHES_DB_NAME)?;
-        Ok(Self { env, db, sketches })
+        let manifest_bases = open_db(&env, MANIFEST_BASES_DB_NAME)?;
+        Ok(Self {
+            env,
+            db,
+            sketches,
+            manifest_bases,
+        })
+    }
+
+    /// The lineage-base blob for manifests whose first chunk is `first_chunk`.
+    pub fn manifest_base(&self, first_chunk: u128) -> Result<Option<u128>, OxenError> {
+        let bases = &self.manifest_bases;
+        self.read(|_db, txn| {
+            Ok(bases.get(txn, &first_chunk.to_le_bytes())?.and_then(|bytes| {
+                <[u8; 16]>::try_from(bytes.as_ref())
+                    .ok()
+                    .map(u128::from_le_bytes)
+            }))
+        })
+    }
+
+    /// Point manifests whose first chunk is `first_chunk` at a new lineage base.
+    pub fn set_manifest_base(&self, first_chunk: u128, blob_hash: u128) -> Result<(), OxenError> {
+        let bases = &self.manifest_bases;
+        self.write(|_db, txn| {
+            bases.put(txn, &first_chunk.to_le_bytes(), &blob_hash.to_le_bytes())?;
+            Ok(())
+        })
     }
 
     /// A previously indexed chunk whose sketch matches, as a delta-base

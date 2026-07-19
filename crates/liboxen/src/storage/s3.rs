@@ -248,7 +248,13 @@ impl S3VersionStore {
     /// Load the published manifest for `hash`, if this store holds that version chunked.
     async fn read_manifest(&self, hash: &str) -> Result<Option<ChunkManifest>, OxenError> {
         match self.get_object_bytes_opt(&self.manifest_key(hash)).await? {
-            Some(bytes) => Ok(Some(ChunkManifest::from_stored_bytes(&bytes)?)),
+            Some(bytes) => Ok(Some(ChunkManifest::from_stored_bytes(&bytes, |base| {
+                // The S3 store writes only full manifests; a delta form here is
+                // corruption, not a supported encoding.
+                Err(crate::storage::chunked::ChunkedError::InvalidManifest(format!(
+                    "S3 manifests are stored full; unexpected delta base {base:032x}"
+                )))
+            })?)),
             None => Ok(None),
         }
     }

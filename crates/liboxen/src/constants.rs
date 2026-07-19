@@ -125,6 +125,8 @@ pub const BLOCKS_DIR: &str = "blocks";
 /// Directory of the store-local LMDB chunk index (sibling of the versions files
 /// dir, e.g. `.oxen/versions/chunk_index`)
 pub const CHUNK_INDEX_DIR: &str = "chunk_index";
+/// Reserved dir (inside a version store root) holding manifest lineage-base blobs.
+pub const MANIFEST_DICTS_DIR: &str = "manifest_dicts";
 /// merge/ is where any merge conflicts are stored so that we can get rid of them
 pub const MERGE_DIR: &str = "merge";
 /// mods/ holds the per-data-frame DuckDB databases used to query and edit

@@ -73,15 +73,59 @@ impl ChunkManifest {
         zstd::bulk::compress(&logical, 19).map_err(ChunkedError::Compress)
     }
 
-    /// Parse a manifest from its at-rest form. Accepts both the zstd-wrapped
-    /// encoding (sniffed by the zstd magic) and the bare msgpack encoding, so
-    /// stores written before compression remain readable.
-    pub fn from_stored_bytes(bytes: &[u8]) -> Result<Self, ChunkedError> {
+    /// Magic prefix of the delta at-rest form: `[OXMD][16-byte base blob hash
+    /// LE][zstd frame dictionary-compressed against the base blob's bytes]`.
+    pub const DELTA_MAGIC: [u8; 4] = *b"OXMD";
+
+    /// Serialize as a delta against a base manifest's logical bytes. Returns
+    /// `None` when the delta form is not smaller than `full_form`.
+    pub fn to_delta_bytes(
+        &self,
+        base_hash: u128,
+        base_logical: &[u8],
+        full_form_len: usize,
+    ) -> Result<Option<Vec<u8>>, ChunkedError> {
+        let logical = self.to_bytes()?;
+        let mut compressor = zstd::bulk::Compressor::with_dictionary(19, base_logical)
+            .map_err(ChunkedError::Compress)?;
+        let frame = compressor.compress(&logical).map_err(ChunkedError::Compress)?;
+        let total = 4 + 16 + frame.len();
+        // Rotate to a fresh full base once drift makes deltas fat.
+        if total >= full_form_len || total * 2 >= full_form_len {
+            return Ok(None);
+        }
+        let mut out = Vec::with_capacity(total);
+        out.extend_from_slice(&Self::DELTA_MAGIC);
+        out.extend_from_slice(&base_hash.to_le_bytes());
+        out.extend_from_slice(&frame);
+        Ok(Some(out))
+    }
+
+    /// Parse a manifest from its at-rest form. Accepts the delta form (resolving
+    /// its base blob through `load_base`), the zstd-wrapped full encoding, and
+    /// the bare msgpack encoding, so stores written before compression remain
+    /// readable.
+    pub fn from_stored_bytes(
+        bytes: &[u8],
+        load_base: impl FnOnce(u128) -> Result<Vec<u8>, ChunkedError>,
+    ) -> Result<Self, ChunkedError> {
         const ZSTD_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
+        // Manifest size is bounded in practice (entries for a < 2^32-chunk
+        // file); cap decompression at a generous fixed bound.
+        const MAX_MANIFEST_BYTES: usize = 256 * 1024 * 1024;
+        if bytes.len() >= 20 && bytes[..4] == Self::DELTA_MAGIC {
+            let base_hash = u128::from_le_bytes(bytes[4..20].try_into().map_err(|_| {
+                ChunkedError::InvalidManifest("truncated delta base header".to_string())
+            })?);
+            let base = load_base(base_hash)?;
+            let mut decompressor = zstd::bulk::Decompressor::with_dictionary(&base)
+                .map_err(ChunkedError::Decompress)?;
+            let logical = decompressor
+                .decompress(&bytes[20..], MAX_MANIFEST_BYTES)
+                .map_err(ChunkedError::Decompress)?;
+            return Self::from_bytes(&logical);
+        }
         if bytes.len() >= 4 && bytes[..4] == ZSTD_MAGIC {
-            // Manifest size is bounded in practice (entries for a < 2^32-chunk
-            // file); cap decompression at a generous fixed bound.
-            const MAX_MANIFEST_BYTES: usize = 256 * 1024 * 1024;
             let logical = zstd::bulk::decompress(bytes, MAX_MANIFEST_BYTES)
                 .map_err(ChunkedError::Decompress)?;
             return Self::from_bytes(&logical);
