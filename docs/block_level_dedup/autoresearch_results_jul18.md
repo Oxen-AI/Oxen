@@ -14,7 +14,9 @@ exploits, including 10 real Claude Code sessions from the public
 `trace-commons/agent-traces` dataset (CC-BY-4.0) versioned as live-logged
 growing files — `benchmark/dedup/`. Byte-exact reconstruction of every file
 at every commit was a hard gate; every retained experiment passes it, and the
-full product test suite passes on the final state.
+full product test suite passes on the final state. A standalone visual
+version of these findings lives at
+[`technical_report.html`](./technical_report.html).
 
 ## Headline result
 

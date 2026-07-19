@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Storing every version of your training data — Oxen block-level dedup</title>
+<style>
+:root {
+  color-scheme: light;
+  --surface: #fcfcfb; --surface-2: #f4f3f1; --border: #e4e2dd;
+  --ink: #0b0b0b; --ink-2: #52514e; --ink-3: #8a8880;
+  --oxen: #2a78d6; --zstd: #008300; --raw: #8a8880;
+  --serious: #ec835a;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --surface: #1a1a19; --surface-2: #232322; --border: #383835;
+    --ink: #ffffff; --ink-2: #c3c2b7; --ink-3: #8a8880;
+    --oxen: #3987e5; --zstd: #008300; --raw: #8a8880;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface: #1a1a19; --surface-2: #232322; --border: #383835;
+  --ink: #ffffff; --ink-2: #c3c2b7; --ink-3: #8a8880;
+  --oxen: #3987e5; --zstd: #008300; --raw: #8a8880;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface); color: var(--ink);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+main { max-width: 880px; margin: 0 auto; padding: 0 24px 96px; }
+header.hero { padding: 72px 0 8px; }
+.kicker { font: 600 13px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--oxen); }
+h1 { font-size: 44px; line-height: 1.12; letter-spacing: -.02em; margin: 14px 0 12px; }
+.lede { font-size: 19px; color: var(--ink-2); max-width: 46em; margin: 0 0 8px; }
+h2 { font-size: 26px; letter-spacing: -.01em; margin: 72px 0 6px; }
+h2 + p.sub { margin-top: 0; }
+h3 { font-size: 18px; margin: 32px 0 4px; }
+p, li { color: var(--ink-2); max-width: 46em; }
+strong { color: var(--ink); }
+a { color: var(--oxen); }
+code, pre { font-family: var(--mono); font-size: 13.5px; }
+code { background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; }
+pre { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 16px 18px; overflow-x: auto; line-height: 1.55; }
+pre code { background: none; border: none; padding: 0; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 36px 0 8px; }
+.tile { border: 1px solid var(--border); border-radius: 12px; padding: 18px 18px 14px; background: var(--surface); }
+.tile .n { font-size: 32px; font-weight: 650; letter-spacing: -.02em; color: var(--ink); }
+.tile .n em { font-style: normal; font-size: 17px; color: var(--ink-3); }
+.tile .l { font-size: 13px; color: var(--ink-2); margin-top: 2px; }
+figure.chart { margin: 28px 0; border: 1px solid var(--border); border-radius: 12px;
+  padding: 18px 18px 10px; background: var(--surface); }
+figure.chart figcaption { margin-bottom: 6px; }
+figure.chart figcaption strong { display: block; font-size: 15px; }
+figure.chart figcaption span { font-size: 13px; color: var(--ink-3); display: block; max-width: 60em; }
+.plotwrap { position: relative; }
+svg { width: 100%; height: auto; display: block; }
+.grid { stroke: var(--border); stroke-width: 1; }
+.tick, .axis { font: 11px var(--mono); fill: var(--ink-3); }
+.slabel { font: 600 11.5px var(--mono); }
+.slabel.oxen { fill: var(--oxen); } .slabel.zstd { fill: var(--zstd); } .slabel.raw { fill: var(--raw); }
+.s-oxen { fill: none; stroke: var(--oxen); stroke-width: 2.5; }
+.s-zstd { fill: none; stroke: var(--zstd); stroke-width: 2; }
+.s-raw { fill: none; stroke: var(--raw); stroke-width: 2; stroke-dasharray: 5 4; }
+.cross { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 2 3; }
+.bar rect { fill: var(--oxen); }
+.bar:hover rect { opacity: .82; }
+.blabel { font: 600 10.5px var(--mono); fill: var(--ink-2); }
+.tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--surface);
+  font: 12px var(--mono); padding: 7px 10px; border-radius: 7px; white-space: pre; z-index: 3; line-height: 1.5; }
+details { margin: 4px 0 6px; }
+summary { font: 12px var(--mono); color: var(--ink-3); cursor: pointer; }
+table { border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+th, td { border: 1px solid var(--border); padding: 5px 10px; text-align: right; color: var(--ink-2); }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--ink); font-weight: 600; background: var(--surface-2); }
+.arch .node rect { fill: var(--surface-2); stroke: var(--border); }
+.arch .node text { font: 600 12.5px -apple-system, sans-serif; fill: var(--ink); }
+.arch text.sub { font: 10.5px var(--mono); fill: var(--ink-3); font-weight: 400; }
+.arch .edge { fill: none; stroke: var(--ink-3); stroke-width: 1.3; }
+.arch .arrhead { fill: var(--ink-3); }
+.callout { border: 1px solid var(--border); border-left: 3px solid var(--serious);
+  border-radius: 10px; padding: 14px 18px; margin: 24px 0; background: var(--surface-2); }
+.callout p { margin: 6px 0; }
+.mech { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; margin: 24px 0; }
+.mech > div { border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+.mech h3 { margin: 0 0 4px; font-size: 15.5px; }
+.mech p { font-size: 14px; margin: 0; }
+.mech .delta { font: 600 12px var(--mono); color: var(--zstd); }
+.exp-table td:nth-child(3) { font-family: var(--mono); font-size: 12.5px; }
+footer { margin-top: 88px; padding-top: 20px; border-top: 1px solid var(--border);
+  font-size: 13px; color: var(--ink-3); }
+</style>
+</head>
+<body>
+<main>
+
+<header class="hero">
+  <div class="kicker">Oxen · block-level deduplication</div>
+  <h1>Store every version of your training data.</h1>
+  <p class="lede">Agent traces, chat logs, and fine-tuning datasets change constantly:
+  sessions grow, prompts get revised, rows get relabeled. Oxen's block-v1 storage
+  engine versions that data the way you version code — and stores
+  <strong>178&nbsp;MB of six-commit trace history in 9.4&nbsp;MB</strong>, byte-exact.</p>
+</header>
+
+<div class="tiles">
+  <div class="tile"><div class="n">0.053<em>×</em></div><div class="l">bytes stored per logical byte, prompt-cache corpus, full history</div></div>
+  <div class="tile"><div class="n">19<em>×</em></div><div class="l">smaller than storing raw snapshots</div></div>
+  <div class="tile"><div class="n">100<em>%</em></div><div class="l">byte-exact reconstruction, every file, every commit — a hard gate</div></div>
+  <div class="tile"><div class="n">1,188</div><div class="l">product tests passing on the final architecture</div></div>
+</div>
+
+<h2>The data has structure. Use it.</h2>
+<p>Provider prompt caching exists because agent requests share a byte-identical
+prefix: tool definitions, then the system prompt, then the growing conversation —
+with exact-prefix matching and minimum cacheable sizes of 512–4,096 tokens
+(2–16&nbsp;KB of text). The same structure dominates <em>stored</em> trace
+datasets:</p>
+<ul>
+  <li>Every session of an agent config repeats a verbatim 12–40&nbsp;KB system-prompt + tools prefix.</li>
+  <li>Request-level logs re-serialize the entire conversation prefix on every row.</li>
+  <li>Live session logs are append-only event streams, re-uploaded as they grow.</li>
+  <li>A one-line prompt edit "invalidates" the prefix of every session that used it.</li>
+</ul>
+<p>Generic content-defined chunking sees none of this. It cuts on byte statistics,
+so a chunk spans many rows and dies when any of them changes; per-chunk compression
+starts with an empty window, so a system prompt repeated 1,200 times compresses
+1,200 times. We measured that failure precisely, then built the engine around the
+structure instead.</p>
+
+<h2>What runs when you <code>oxen add</code></h2>
+
+<figure class="chart arch">
+<figcaption><strong>The write path</strong><span>Every decision is a pure function of file content; reads never re-chunk.</span></figcaption>
+<svg viewBox="0 0 720 240" role="img" aria-label="Architecture: file to chunks to encoded blocks">
+  <defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0,0 L8,4 L0,8 z" class="arrhead"/></marker></defs>
+  <g class="node"><rect x="8" y="92" width="92" height="56" rx="8"/>
+    <text x="54" y="116" text-anchor="middle">file</text>
+    <text x="54" y="132" text-anchor="middle" class="sub">any bytes</text></g>
+  <g class="node"><rect x="130" y="92" width="112" height="56" rx="8"/>
+    <text x="186" y="112" text-anchor="middle">row-size sniff</text>
+    <text x="186" y="128" text-anchor="middle" class="sub">first 64 KB</text>
+    <text x="186" y="141" text-anchor="middle" class="sub">content-determined</text></g>
+  <g class="node"><rect x="272" y="30" width="150" height="52" rx="8"/>
+    <text x="347" y="50" text-anchor="middle">structural chunker</text>
+    <text x="347" y="65" text-anchor="middle" class="sub">rows · messages ·</text>
+    <text x="347" y="77" text-anchor="middle" class="sub">prompt-prefix isolation</text></g>
+  <g class="node"><rect x="272" y="158" width="150" height="52" rx="8"/>
+    <text x="347" y="180" text-anchor="middle">FastCDC</text>
+    <text x="347" y="196" text-anchor="middle" class="sub">64 KB byte windows</text></g>
+  <g class="node"><rect x="452" y="92" width="120" height="56" rx="8"/>
+    <text x="512" y="112" text-anchor="middle">encode</text>
+    <text x="512" y="127" text-anchor="middle" class="sub">exact dedup → delta</text>
+    <text x="512" y="140" text-anchor="middle" class="sub">→ dict-zstd → raw</text></g>
+  <g class="node"><rect x="602" y="64" width="110" height="42" rx="8"/>
+    <text x="657" y="82" text-anchor="middle">blocks</text>
+    <text x="657" y="96" text-anchor="middle" class="sub">content-addressed</text></g>
+  <g class="node"><rect x="602" y="120" width="110" height="42" rx="8"/>
+    <text x="657" y="138" text-anchor="middle">manifest</text>
+    <text x="657" y="152" text-anchor="middle" class="sub">lineage-delta at rest</text></g>
+  <g class="node"><rect x="602" y="176" width="110" height="42" rx="8"/>
+    <text x="657" y="194" text-anchor="middle">chunk index</text>
+    <text x="657" y="208" text-anchor="middle" class="sub">rebuildable</text></g>
+  <path class="edge" d="M100,120 L126,120" marker-end="url(#arr)"/>
+  <path class="edge" d="M242,104 C258,90 258,70 268,60" marker-end="url(#arr)"/>
+  <path class="edge" d="M242,136 C258,150 258,172 268,182" marker-end="url(#arr)"/>
+  <path class="edge" d="M422,56 C438,66 438,96 448,104" marker-end="url(#arr)"/>
+  <path class="edge" d="M422,184 C438,174 438,146 448,136" marker-end="url(#arr)"/>
+  <path class="edge" d="M572,108 C582,104 588,96 598,88" marker-end="url(#arr)"/>
+  <path class="edge" d="M572,124 C580,128 588,134 598,138" marker-end="url(#arr)"/>
+  <path class="edge" d="M572,138 C582,152 588,182 598,192" marker-end="url(#arr)"/>
+  <text class="sub" x="252" y="24">rows ≥ 2 KB</text>
+  <text class="sub" x="252" y="230">small rows · other files</text>
+</svg>
+</figure>
+<div class="mech">
+  <div><h3>Content-adaptive chunking <span class="delta">−16%</span></h3>
+  <p>Line-delimited JSON sniffs its average row size (first 64&nbsp;KB) and routes:
+  long-trace rows get structural cuts at row and message boundaries — position-independent,
+  so reordering costs nothing and an appended session re-stores only its tail.
+  Small rows go through FastCDC, where 64&nbsp;KB windows compress better than
+  structure can save. The sniff is part of the frozen boundary function;
+  the manifest records exactly which chunker ran.</p></div>
+  <div><h3>Prompt-prefix isolation <span class="delta">−4.4%</span></h3>
+  <p>The storage twin of a cache breakpoint: any message-array element ≥&nbsp;4&nbsp;KB
+  is cut into its own chunk, separating the row's unique ID from the config's verbatim
+  prefix. A thousand sessions of one agent config share <em>one</em> stored prefix
+  chunk; a prompt rollout re-stores one chunk per config, not one per row.</p></div>
+  <div><h3>Per-class shared dictionaries <span class="delta">−10.5%</span></h3>
+  <p>A 64&nbsp;KB zstd dictionary per content family (long-row JSONL, small-row JSONL, CSV),
+  trained on the first ingest of each class. It captures what no chunker can:
+  repeated JSON keys, roles, tool names, and boilerplate scattered <em>across</em> rows.
+  Class purity matters — one mixed dictionary measurably poisons both classes.</p></div>
+  <div><h3>Bounded delta encoding <span class="delta">−14.1%</span></h3>
+  <p>Near-duplicate chunks are found by three positional sketches (head, middle, tail —
+  the middle catches request-log rows whose shared tools+system block sits between a
+  unique session ID and a fresh turn) and stored as a zstd delta against the base
+  chunk. Chain depth is capped at one; a delta is kept only when it is strictly
+  smaller than every other encoding.</p></div>
+</div>
+<p>Underneath: chunks are content-addressed (xxh3-128), packed into immutable
+64&nbsp;MB blocks, and indexed in a rebuildable LMDB. Manifests are pure content —
+they never name block placement — and are themselves delta-compressed at rest against
+a content-lineage base. Everything store-local re-encodes to plain zstd on the wire,
+so servers and older clients interoperate unchanged.</p>
+
+<h2>Measured</h2>
+<p class="sub">Two fixed corpora, replayed as real <code>oxen add</code>/<code>commit</code>
+sequences against a fresh repository. Storage results are deterministic — repeat runs
+are byte-identical. <em>zstd-19 each</em> is the strongest naive alternative:
+compress every snapshot whole.</p>
+
+
+<figure class="chart" id="v2chart">
+  <figcaption><strong>Prompt-cache corpus — cumulative stored bytes</strong><span>177.8 MB logical over 6 commits: 12–40 KB config prefixes, request-per-row logs, 10 real Claude Code sessions (trace-commons, CC-BY-4.0) growing live.</span></figcaption>
+  <div class="plotwrap" data-kind="line" data-unit="MB" data-points="v1;26.9;1;4.05|v2;55.9;2.2;4.99|v3;74;3.7;6.82|v4;108.5;4.7;7.73|v5;148.8;7.6;9.04|v6;177.8;8.5;9.36"
+       data-ml="64" data-pw="526" data-n="6">
+  <svg viewBox="0 0 720 320" role="img" aria-label="Prompt-cache corpus — cumulative stored bytes">
+    <line class="grid" x1="64" y1="276.0" x2="590" y2="276.0"/><text class="tick" x="56" y="280.0" text-anchor="end">0</text><line class="grid" x1="64" y1="233.0" x2="590" y2="233.0"/><text class="tick" x="56" y="237.0" text-anchor="end">30</text><line class="grid" x1="64" y1="190.0" x2="590" y2="190.0"/><text class="tick" x="56" y="194.0" text-anchor="end">60</text><line class="grid" x1="64" y1="147.0" x2="590" y2="147.0"/><text class="tick" x="56" y="151.0" text-anchor="end">90</text><line class="grid" x1="64" y1="104.0" x2="590" y2="104.0"/><text class="tick" x="56" y="108.0" text-anchor="end">120</text><line class="grid" x1="64" y1="61.0" x2="590" y2="61.0"/><text class="tick" x="56" y="65.0" text-anchor="end">150</text><line class="grid" x1="64" y1="18.0" x2="590" y2="18.0"/><text class="tick" x="56" y="22.0" text-anchor="end">180</text>
+    <text class="tick" x="64.0" y="296" text-anchor="middle">v1</text><text class="tick" x="169.2" y="296" text-anchor="middle">v2</text><text class="tick" x="274.4" y="296" text-anchor="middle">v3</text><text class="tick" x="379.6" y="296" text-anchor="middle">v4</text><text class="tick" x="484.8" y="296" text-anchor="middle">v5</text><text class="tick" x="590.0" y="296" text-anchor="middle">v6</text>
+    <text class="axis" x="18" y="14">MB</text>
+    <polyline class="s-raw" points="64.0,237.4 169.2,195.9 274.4,169.9 379.6,120.5 484.8,62.7 590.0,21.2"/>
+    <polyline class="s-zstd" points="64.0,274.6 169.2,272.8 274.4,270.7 379.6,269.3 484.8,265.1 590.0,263.8"/>
+    <polyline class="s-oxen" points="64.0,270.2 169.2,268.8 274.4,266.2 379.6,264.9 484.8,263.0 590.0,262.6"/>
+    <text class="slabel raw" x="598.0" y="25.15333333333331">raw snapshots · 177.8</text>
+    <text class="slabel zstd" x="598.0" y="267.81666666666666">zstd&#8209;19 each · 8.5</text>
+    <text class="slabel oxen" x="598.0" y="258.58399999999995">oxen block&#8209;v1 · 9.36</text>
+    <line class="cross" x1="0" y1="18" x2="0" y2="276" visibility="hidden"/>
+  </svg>
+  <div class="tip" hidden></div>
+  </div>
+  <details><summary>Data table</summary><table><thead><tr><th>commit</th>
+  <th>raw snapshots (MB)</th><th>zstd-19 each (MB)</th><th>oxen block-v1 (MB)</th></tr></thead><tbody>
+  <tr><td>v1</td><td>26.9</td><td>1</td><td>4.05</td></tr><tr><td>v2</td><td>55.9</td><td>2.2</td><td>4.99</td></tr><tr><td>v3</td><td>74</td><td>3.7</td><td>6.82</td></tr><tr><td>v4</td><td>108.5</td><td>4.7</td><td>7.73</td></tr><tr><td>v5</td><td>148.8</td><td>7.6</td><td>9.04</td></tr><tr><td>v6</td><td>177.8</td><td>8.5</td><td>9.36</td></tr>
+  </tbody></table></details>
+</figure>
+
+
+<figure class="chart" id="v1chart">
+  <figcaption><strong>General corpus — cumulative stored bytes</strong><span>100.6 MB logical over 7 commits: session traces, fine-tuning pairs, labels CSV, Parquet mirrors; appends, scattered edits, reorders, prompt edits, schema changes.</span></figcaption>
+  <div class="plotwrap" data-kind="line" data-unit="MB" data-points="v1;15.1;2.1;3.33|v2;25.3;3.6;3.93|v3;40.5;6;4.85|v4;56.3;8.1;5.45|v5;72.2;10.3;6.28|v6;96.5;13.9;8.57|v7;100.6;17.9;12.77"
+       data-ml="64" data-pw="526" data-n="7">
+  <svg viewBox="0 0 720 320" role="img" aria-label="General corpus — cumulative stored bytes">
+    <line class="grid" x1="64" y1="276.0" x2="590" y2="276.0"/><text class="tick" x="56" y="280.0" text-anchor="end">0</text><line class="grid" x1="64" y1="229.1" x2="590" y2="229.1"/><text class="tick" x="56" y="233.1" text-anchor="end">20</text><line class="grid" x1="64" y1="182.2" x2="590" y2="182.2"/><text class="tick" x="56" y="186.2" text-anchor="end">40</text><line class="grid" x1="64" y1="135.3" x2="590" y2="135.3"/><text class="tick" x="56" y="139.3" text-anchor="end">60</text><line class="grid" x1="64" y1="88.4" x2="590" y2="88.4"/><text class="tick" x="56" y="92.4" text-anchor="end">80</text><line class="grid" x1="64" y1="41.5" x2="590" y2="41.5"/><text class="tick" x="56" y="45.5" text-anchor="end">100</text>
+    <text class="tick" x="64.0" y="296" text-anchor="middle">v1</text><text class="tick" x="151.7" y="296" text-anchor="middle">v2</text><text class="tick" x="239.3" y="296" text-anchor="middle">v3</text><text class="tick" x="327.0" y="296" text-anchor="middle">v4</text><text class="tick" x="414.7" y="296" text-anchor="middle">v5</text><text class="tick" x="502.3" y="296" text-anchor="middle">v6</text><text class="tick" x="590.0" y="296" text-anchor="middle">v7</text>
+    <text class="axis" x="18" y="14">MB</text>
+    <polyline class="s-raw" points="64.0,240.6 151.7,216.7 239.3,181.0 327.0,144.0 414.7,106.7 502.3,49.7 590.0,40.0"/>
+    <polyline class="s-zstd" points="64.0,271.1 151.7,267.6 239.3,261.9 327.0,257.0 414.7,251.8 502.3,243.4 590.0,234.0"/>
+    <polyline class="s-oxen" points="64.0,268.2 151.7,266.8 239.3,264.6 327.0,263.2 414.7,261.3 502.3,255.9 590.0,246.0"/>
+    <text class="slabel raw" x="598.0" y="44.047272727272755">raw snapshots · 100.6</text>
+    <text class="slabel zstd" x="598.0" y="238.01636363636365">zstd&#8209;19 each · 17.9</text>
+    <text class="slabel oxen" x="598.0" y="264.04854545454543">oxen block&#8209;v1 · 12.77</text>
+    <line class="cross" x1="0" y1="18" x2="0" y2="276" visibility="hidden"/>
+  </svg>
+  <div class="tip" hidden></div>
+  </div>
+  <details><summary>Data table</summary><table><thead><tr><th>commit</th>
+  <th>raw snapshots (MB)</th><th>zstd-19 each (MB)</th><th>oxen block-v1 (MB)</th></tr></thead><tbody>
+  <tr><td>v1</td><td>15.1</td><td>2.1</td><td>3.33</td></tr><tr><td>v2</td><td>25.3</td><td>3.6</td><td>3.93</td></tr><tr><td>v3</td><td>40.5</td><td>6</td><td>4.85</td></tr><tr><td>v4</td><td>56.3</td><td>8.1</td><td>5.45</td></tr><tr><td>v5</td><td>72.2</td><td>10.3</td><td>6.28</td></tr><tr><td>v6</td><td>96.5</td><td>13.9</td><td>8.57</td></tr><tr><td>v7</td><td>100.6</td><td>17.9</td><td>12.77</td></tr>
+  </tbody></table></details>
+</figure>
+
+
+<figure class="chart">
+  <figcaption><strong>Bytes stored per logical byte, by workload</strong>
+  <span>Each commit presents the full snapshot; oxen stores this fraction of it. Measured, final architecture, both corpora.</span></figcaption>
+  <div class="plotwrap" data-kind="bar">
+  <svg viewBox="0 0 720 320" role="img" aria-label="Stored fraction by workload">
+    <line class="grid" x1="64" y1="276.0" x2="590" y2="276.0"/><text class="tick" x="56" y="280.0" text-anchor="end">0</text><line class="grid" x1="64" y1="211.5" x2="590" y2="211.5"/><text class="tick" x="56" y="215.5" text-anchor="end">0.04</text><line class="grid" x1="64" y1="147.0" x2="590" y2="147.0"/><text class="tick" x="56" y="151.0" text-anchor="end">0.08</text><line class="grid" x1="64" y1="82.5" x2="590" y2="82.5"/><text class="tick" x="56" y="86.5" text-anchor="end">0.12</text><line class="grid" x1="64" y1="18.0" x2="590" y2="18.0"/><text class="tick" x="56" y="22.0" text-anchor="end">0.16</text>
+    <text class="axis" x="18" y="14">ratio</text>
+    <g class="bar" data-name="Append-only growth" data-v="0.011"><rect x="82.875" y="258.3" width="28" height="17.7" rx="4"/><text class="blabel" x="96.875" y="252.3" text-anchor="middle">0.011</text></g><g class="bar" data-name="Scattered edits + new requests" data-v="0.026"><rect x="148.625" y="234.1" width="28" height="41.9" rx="4"/><text class="blabel" x="162.625" y="228.1" text-anchor="middle">0.026</text></g><g class="bar" data-name="Full row reorder" data-v="0.038"><rect x="214.375" y="214.7" width="28" height="61.3" rx="4"/><text class="blabel" x="228.375" y="208.7" text-anchor="middle">0.038</text></g><g class="bar" data-name="Prompt rollout (config edit)" data-v="0.032"><rect x="280.125" y="224.4" width="28" height="51.6" rx="4"/><text class="blabel" x="294.125" y="218.4" text-anchor="middle">0.032</text></g><g class="bar" data-name="Session growth (scatter)" data-v="0.061"><rect x="345.875" y="177.6" width="28" height="98.4" rx="4"/><text class="blabel" x="359.875" y="171.6" text-anchor="middle">0.061</text></g><g class="bar" data-name="Annotation column + filtered copy" data-v="0.094"><rect x="411.625" y="124.4" width="28" height="151.6" rx="4"/><text class="blabel" x="425.625" y="118.4" text-anchor="middle">0.094</text></g><g class="bar" data-name="Request-log + live sessions" data-v="0.101"><rect x="477.375" y="113.1" width="28" height="162.9" rx="4"/><text class="blabel" x="491.375" y="107.1" text-anchor="middle">0.101</text></g><g class="bar" data-name="First snapshot" data-v="0.151"><rect x="543.125" y="32.5" width="28" height="243.5" rx="4"/><text class="blabel" x="557.125" y="26.5" text-anchor="middle">0.151</text></g>
+    <text class="tick" x="96.875" y="292" text-anchor="middle">Append-only growth</text><text class="tick" x="162.625" y="292" text-anchor="middle">Scattered edits</text><text class="tick" x="228.375" y="292" text-anchor="middle">Full row<tspan x="228.375" dy="12">reorder</tspan></text><text class="tick" x="294.125" y="292" text-anchor="middle">Prompt rollout</text><text class="tick" x="359.875" y="292" text-anchor="middle">Session growth</text><text class="tick" x="425.625" y="292" text-anchor="middle">Annotation column</text><text class="tick" x="491.375" y="292" text-anchor="middle">Request-log</text><text class="tick" x="557.125" y="292" text-anchor="middle">First snapshot</text>
+  </svg>
+  <div class="tip" hidden></div>
+  </div>
+  <details><summary>Data table</summary><table><thead><tr><th>workload</th><th>stored / logical</th></tr></thead>
+  <tbody><tr><td>Append-only growth</td><td>0.011</td></tr><tr><td>Scattered edits + new requests</td><td>0.026</td></tr><tr><td>Full row reorder</td><td>0.038</td></tr><tr><td>Prompt rollout (config edit)</td><td>0.032</td></tr><tr><td>Session growth (scatter)</td><td>0.061</td></tr><tr><td>Annotation column + filtered copy</td><td>0.094</td></tr><tr><td>Request-log + live sessions</td><td>0.101</td></tr><tr><td>First snapshot</td><td>0.151</td></tr></tbody></table></details>
+</figure>
+
+<div class="callout">
+  <p><strong>Where whole-snapshot compression still wins.</strong> On the prompt-cache
+  corpus, zstd-19-ing every snapshot totals 8.5&nbsp;MB against our 9.4&nbsp;MB: its
+  8&nbsp;MB match window sees all prefix repetition in the <em>first</em> snapshot,
+  where our chunk-local encoder sees 64&nbsp;KB. That gap is one-time base cost — our
+  per-commit marginal is lower — and an archive of monolithic snapshots gives up
+  random access, partial fetch, incremental push, and cross-file dedup to get it.
+  We report it anyway; the roadmap item is long-range repacking of cold bases.</p>
+  <p><strong>And where nothing wins: compressed Parquet.</strong> We tested three
+  approaches and closed the question with evidence — writer-compressed zstd pages are
+  not byte-exactly reproducible by any recompression (bitstream divergence), and
+  reordered row groups leave ~0.2% of pages byte-identical. Re-encoded zstd Parquet
+  is a storage floor for byte-exact systems. Version evolving tables as JSONL
+  (measured 4.7× cheaper); write Parquet uncompressed with bounded row groups if you
+  must version it directly.</p>
+</div>
+
+<h2>How it scales</h2>
+<p class="sub">Storage cost separates into a one-time base (first snapshot,
+compressed) and a per-commit marginal (what your changes actually cost). The
+marginal is what compounds.</p>
+
+
+<figure class="chart" id="projection">
+  <figcaption><strong>Projected: 100 commits of a ~30&nbsp;MB trace dataset</strong>
+  <span>Each system's measured per-commit marginal cost on the prompt-cache corpus, extended. Not a benchmark — an extrapolation of measured slopes.</span></figcaption>
+  <div class="plotwrap" data-kind="proj" data-unit="GB"
+       data-marg="29.6|1.42|4.05:1.06" data-ml="64" data-pw="526">
+  <svg viewBox="0 0 720 320" role="img" aria-label="Projected storage over 100 commits">
+    <line class="grid" x1="64" y1="276.0" x2="590" y2="276.0"/><text class="tick" x="56" y="280.0" text-anchor="end">0</text><line class="grid" x1="64" y1="211.5" x2="590" y2="211.5"/><text class="tick" x="56" y="215.5" text-anchor="end">0.8</text><line class="grid" x1="64" y1="147.0" x2="590" y2="147.0"/><text class="tick" x="56" y="151.0" text-anchor="end">1.6</text><line class="grid" x1="64" y1="82.5" x2="590" y2="82.5"/><text class="tick" x="56" y="86.5" text-anchor="end">2.4</text><line class="grid" x1="64" y1="18.0" x2="590" y2="18.0"/><text class="tick" x="56" y="22.0" text-anchor="end">3.2</text>
+    <text class="tick" x="69" y="296" text-anchor="middle">1</text><text class="tick" x="196" y="296" text-anchor="middle">25</text><text class="tick" x="327" y="296" text-anchor="middle">50</text><text class="tick" x="458" y="296" text-anchor="middle">75</text><text class="tick" x="590" y="296" text-anchor="middle">100</text>
+    <text class="axis" x="18" y="14">GB</text>
+    <text class="tick" x="327.0" y="312" text-anchor="middle">commits</text>
+    <polyline class="s-raw" points="64.0,273.6 69.3,271.2 74.5,268.8 79.8,266.5 85.0,264.1 90.3,261.7 95.6,259.3 100.8,256.9 106.1,254.5 111.3,252.1 116.6,249.7 121.9,247.4 127.1,245.0 132.4,242.6 137.6,240.2 142.9,237.8 148.2,235.4 153.4,233.0 158.7,230.7 163.9,228.3 169.2,225.9 174.5,223.5 179.7,221.1 185.0,218.7 190.2,216.3 195.5,214.0 200.8,211.6 206.0,209.2 211.3,206.8 216.5,204.4 221.8,202.0 227.1,199.6 232.3,197.2 237.6,194.9 242.8,192.5 248.1,190.1 253.4,187.7 258.6,185.3 263.9,182.9 269.1,180.5 274.4,178.2 279.7,175.8 284.9,173.4 290.2,171.0 295.4,168.6 300.7,166.2 306.0,163.8 311.2,161.4 316.5,159.1 321.7,156.7 327.0,154.3 332.3,151.9 337.5,149.5 342.8,147.1 348.0,144.7 353.3,142.4 358.6,140.0 363.8,137.6 369.1,135.2 374.3,132.8 379.6,130.4 384.9,128.0 390.1,125.7 395.4,123.3 400.6,120.9 405.9,118.5 411.2,116.1 416.4,113.7 421.7,111.3 426.9,108.9 432.2,106.6 437.5,104.2 442.7,101.8 448.0,99.4 453.2,97.0 458.5,94.6 463.8,92.2 469.0,89.9 474.3,87.5 479.5,85.1 484.8,82.7 490.1,80.3 495.3,77.9 500.6,75.5 505.8,73.1 511.1,70.8 516.4,68.4 521.6,66.0 526.9,63.6 532.1,61.2 537.4,58.8 542.7,56.4 547.9,54.1 553.2,51.7 558.4,49.3 563.7,46.9 569.0,44.5 574.2,42.1 579.5,39.7 584.7,37.4 590.0,35.0"/>
+    <polyline class="s-zstd" points="64.0,275.9 69.3,275.8 74.5,275.7 79.8,275.5 85.0,275.4 90.3,275.3 95.6,275.2 100.8,275.1 106.1,275.0 111.3,274.9 116.6,274.7 121.9,274.6 127.1,274.5 132.4,274.4 137.6,274.3 142.9,274.2 148.2,274.1 153.4,273.9 158.7,273.8 163.9,273.7 169.2,273.6 174.5,273.5 179.7,273.4 185.0,273.3 190.2,273.1 195.5,273.0 200.8,272.9 206.0,272.8 211.3,272.7 216.5,272.6 221.8,272.5 227.1,272.3 232.3,272.2 237.6,272.1 242.8,272.0 248.1,271.9 253.4,271.8 258.6,271.6 263.9,271.5 269.1,271.4 274.4,271.3 279.7,271.2 284.9,271.1 290.2,271.0 295.4,270.8 300.7,270.7 306.0,270.6 311.2,270.5 316.5,270.4 321.7,270.3 327.0,270.2 332.3,270.0 337.5,269.9 342.8,269.8 348.0,269.7 353.3,269.6 358.6,269.5 363.8,269.4 369.1,269.2 374.3,269.1 379.6,269.0 384.9,268.9 390.1,268.8 395.4,268.7 400.6,268.6 405.9,268.4 411.2,268.3 416.4,268.2 421.7,268.1 426.9,268.0 432.2,267.9 437.5,267.8 442.7,267.6 448.0,267.5 453.2,267.4 458.5,267.3 463.8,267.2 469.0,267.1 474.3,267.0 479.5,266.8 484.8,266.7 490.1,266.6 495.3,266.5 500.6,266.4 505.8,266.3 511.1,266.2 516.4,266.0 521.6,265.9 526.9,265.8 532.1,265.7 537.4,265.6 542.7,265.5 547.9,265.4 553.2,265.2 558.4,265.1 563.7,265.0 569.0,264.9 574.2,264.8 579.5,264.7 584.7,264.6 590.0,264.4"/>
+    <polyline class="s-oxen" points="64.0,275.7 69.3,275.6 74.5,275.5 79.8,275.4 85.0,275.3 90.3,275.2 95.6,275.2 100.8,275.1 106.1,275.0 111.3,274.9 116.6,274.8 121.9,274.7 127.1,274.6 132.4,274.6 137.6,274.5 142.9,274.4 148.2,274.3 153.4,274.2 158.7,274.1 163.9,274.0 169.2,274.0 174.5,273.9 179.7,273.8 185.0,273.7 190.2,273.6 195.5,273.5 200.8,273.5 206.0,273.4 211.3,273.3 216.5,273.2 221.8,273.1 227.1,273.0 232.3,272.9 237.6,272.9 242.8,272.8 248.1,272.7 253.4,272.6 258.6,272.5 263.9,272.4 269.1,272.3 274.4,272.3 279.7,272.2 284.9,272.1 290.2,272.0 295.4,271.9 300.7,271.8 306.0,271.7 311.2,271.7 316.5,271.6 321.7,271.5 327.0,271.4 332.3,271.3 337.5,271.2 342.8,271.1 348.0,271.1 353.3,271.0 358.6,270.9 363.8,270.8 369.1,270.7 374.3,270.6 379.6,270.5 384.9,270.5 390.1,270.4 395.4,270.3 400.6,270.2 405.9,270.1 411.2,270.0 416.4,269.9 421.7,269.9 426.9,269.8 432.2,269.7 437.5,269.6 442.7,269.5 448.0,269.4 453.2,269.3 458.5,269.3 463.8,269.2 469.0,269.1 474.3,269.0 479.5,268.9 484.8,268.8 490.1,268.8 495.3,268.7 500.6,268.6 505.8,268.5 511.1,268.4 516.4,268.3 521.6,268.2 526.9,268.2 532.1,268.1 537.4,268.0 542.7,267.9 547.9,267.8 553.2,267.7 558.4,267.6 563.7,267.6 569.0,267.5 574.2,267.4 579.5,267.3 584.7,267.2 590.0,267.1"/>
+    <text class="slabel raw" x="598" y="39.0">raw · 2.99</text>
+    <text class="slabel zstd" x="598" y="260.4">zstd&#8209;19 · 0.14</text>
+    <text class="slabel oxen" x="598" y="281.1">oxen · 0.11</text>
+    <line class="cross" x1="0" y1="18" x2="0" y2="276" visibility="hidden"/>
+  </svg>
+  <div class="tip" hidden></div>
+  </div>
+  <details><summary>Data table</summary><table><thead><tr><th>commits</th>
+  <th>raw snapshots (GB)</th><th>zstd-19 each (GB)</th><th>oxen block-v1 (GB)</th></tr></thead><tbody>
+  <tr><td>10</td><td>0.30</td><td>0.01</td><td>0.01</td></tr><tr><td>25</td><td>0.74</td><td>0.04</td><td>0.03</td></tr><tr><td>50</td><td>1.48</td><td>0.07</td><td>0.06</td></tr><tr><td>75</td><td>2.22</td><td>0.11</td><td>0.08</td></tr><tr><td>100</td><td>2.96</td><td>0.14</td><td>0.11</td></tr>
+  </tbody></table></details>
+</figure>
+
+<p>On the prompt-cache corpus the measured marginals per commit are
+<strong>29.6&nbsp;MB raw</strong>, <strong>1.42&nbsp;MB</strong> for zstd-19
+snapshots, and <strong>1.06&nbsp;MB</strong> for oxen — a 28× slope difference
+against raw. Amortized over history, the first snapshot's cost vanishes: by commit
+six you are paying 1.6&nbsp;MB per version of a ~30&nbsp;MB dataset, trending toward
+the marginal. Append-only workloads sit far lower still (0.011× — a 29&nbsp;MB
+append stored 0.32&nbsp;MB), and the pattern is scale-free: the ratios are per-byte
+properties of the workload, not of corpus size.</p>
+
+<h2>Nineteen experiments, including the failures</h2>
+<p class="sub">Every mechanism above survived a fixed benchmark with byte-exact
+reconstruction as a hard gate, ranked storage-first (a speed win never excuses a
+storage loss). The ones that didn't survive taught us as much:</p>
+<table class="exp-table">
+<thead><tr><th>Hypothesis</th><th>Result</th><th>Verdict</th></tr></thead>
+<tbody>
+<tr><td>zstd level 19 for chunk payloads</td><td>−6.4%</td><td>keep</td></tr>
+<tr><td>One store-wide dictionary, digested per chunk</td><td>+1.0%, 40× slower ingest</td><td>discard — per-class, digest once</td></tr>
+<tr><td>Per-class prepared dictionaries</td><td>−10.5%</td><td>keep</td></tr>
+<tr><td>Row-anchored chunking for CSV</td><td>+32%</td><td>discard — small rows want big windows</td></tr>
+<tr><td>Content-adaptive chunker routing</td><td>−16%</td><td>keep</td></tr>
+<tr><td>Bounded delta encoding (3 sketches)</td><td>−14.1% then −2.1%</td><td>keep</td></tr>
+<tr><td>Dictionary sizing sweep</td><td>knee at 64 KB (32 &lt; 64 &gt; 112 &gt; 256)</td><td>keep 64 KB</td></tr>
+<tr><td>FastCDC average-chunk sweep</td><td>64 KB optimal both directions</td><td>keep 64 KB</td></tr>
+<tr><td>Block-id index indirection</td><td>−0.25%</td><td>discard — under tie threshold, simpler wins</td></tr>
+<tr><td>1 MiB chunking floor → 16 KB</td><td><strong>−37.8%</strong></td><td>keep — sub-MB live logs were raw blobs</td></tr>
+<tr><td>Prompt-prefix (large-element) isolation</td><td>−4.4%, other corpus byte-identical</td><td>keep</td></tr>
+<tr><td>Manifest offset omission</td><td>−0.4%</td><td>discard — zstd already ate the offsets</td></tr>
+<tr><td>Manifest lineage-deltas at rest</td><td>−1.3%</td><td>keep</td></tr>
+</tbody></table>
+<p>The most valuable finding wasn't clever: the 1&nbsp;MiB chunking floor —
+sensible before dictionaries and deltas existed — was silently re-storing every
+sub-megabyte live log as a raw, uncompressed blob on every growth step. Measure,
+don't assume: the second most valuable finding was that our own structural chunker
+<em>lost</em> to plain FastCDC on short-row data once dictionaries existed, which is
+why routing is adaptive rather than ideological.</p>
+
+<h2>What you can rely on</h2>
+<ul>
+  <li><strong>Byte-exact, always.</strong> Every read path reconstructs original bytes and
+  verifies the whole-file hash. The benchmark treats any mismatch as total failure; none occurred.</li>
+  <li><strong>History is untouched.</strong> Chunking lives below the Merkle tree — commit IDs,
+  tree hashes, and file identities never change when storage format does. Migration runs both
+  directions, resumable, with every version keeping at least one complete representation at all times.</li>
+  <li><strong>Wire-compatible.</strong> Dictionary and delta codecs are store-local; transfer
+  packing re-encodes to plain zstd. A server without them verifies pushes exactly as before.</li>
+  <li><strong>Recoverable.</strong> The chunk index is derived state — delete it and
+  <code>oxen storage rebuild-index</code> rebuilds it from self-describing block footers.</li>
+  <li><strong>Frozen behavior.</strong> Chunkers, codecs, and thresholds are pinned behind
+  append-only IDs with golden fixtures; a behavior change ships as a new ID, never a silent drift.</li>
+  <li><strong>Extensible.</strong> The structural trace chunker is ~200 lines behind a trait.
+  Adding a format-aware pipeline touches the registry and policy — manifests, blocks, the wire
+  protocol, and old clients are untouched, because chunker choice is write-local.</li>
+</ul>
+
+<h2>Run it</h2>
+<pre><code># enable block-v1 storage
+oxen init my-datasets && cd my-datasets
+printf '[storage]\ncontent_format = "block-v1"\n' >> .oxen/config.toml
+
+# commit your evolving dataset like code
+oxen add traces.jsonl && oxen commit -m "nightly export"
+
+# see what storage is doing
+oxen storage status
+
+# reproduce every number in this report
+oxen-python/.venv/bin/python benchmark/dedup/prepare.py
+oxen-python/.venv/bin/python benchmark/dedup/prepare_promptcache.py
+OXEN_BIN=$PWD/target/debug/oxen python3 benchmark/dedup/benchmark.py
+BENCH_CORPUS=corpus-promptcache OXEN_BIN=$PWD/target/debug/oxen \
+    python3 benchmark/dedup/benchmark.py</code></pre>
+<p>The full research record — the autonomous experiment loop, per-experiment
+commits, raw results including every discard, and the design docs — lives in
+<code>docs/block_level_dedup/</code> on the research branch. Real-session data
+courtesy of the public <code>trace-commons/agent-traces</code> dataset (CC-BY-4.0).</p>
+
+<footer>Oxen block-level dedup · technical report · benchmarks run July 2026 on the
+<code>autoresearch-block-dedup/jul18</code> branch. All storage numbers are measured
+except the marked projection, which extends measured per-commit marginals.</footer>
+
+</main>
+<script>
+(() => {
+  // Crosshair + tooltip for line charts; per-mark tooltip for bars.
+  for (const wrap of document.querySelectorAll('.plotwrap[data-kind="line"]')) {
+    const svg = wrap.querySelector('svg'), tip = wrap.querySelector('.tip'),
+          cross = wrap.querySelector('.cross'),
+          pts = wrap.dataset.points.split('|').map(r => r.split(';')),
+          ml = +wrap.dataset.ml, pw = +wrap.dataset.pw, n = +wrap.dataset.n,
+          unit = wrap.dataset.unit;
+    svg.addEventListener('pointermove', e => {
+      const r = svg.getBoundingClientRect(), sx = 720 / r.width;
+      const x = (e.clientX - r.left) * sx;
+      const i = Math.max(0, Math.min(n - 1, Math.round((x - ml) / pw * (n - 1))));
+      const cx = ml + pw * i / (n - 1);
+      cross.setAttribute('x1', cx); cross.setAttribute('x2', cx);
+      cross.setAttribute('visibility', 'visible');
+      const [c, raw, z, o] = pts[i];
+      tip.hidden = false;
+      tip.textContent = `${c}\nraw snapshots  ${raw} ${unit}\nzstd-19 each   ${z} ${unit}\noxen block-v1  ${o} ${unit}`;
+      const half = tip.offsetWidth / 2, px = cx / sx;
+      tip.style.left = Math.min(Math.max(px - half, 0), r.width - tip.offsetWidth) + 'px';
+      tip.style.top = '18px';
+    });
+    svg.addEventListener('pointerleave', () => {
+      tip.hidden = true; cross.setAttribute('visibility', 'hidden');
+    });
+  }
+  for (const wrap of document.querySelectorAll('.plotwrap[data-kind="proj"]')) {
+    const svg = wrap.querySelector('svg'), tip = wrap.querySelector('.tip'),
+          cross = wrap.querySelector('.cross'),
+          [rawM, zstdM, oxen] = wrap.dataset.marg.split('|'),
+          [oBase, oM] = oxen.split(':').map(Number),
+          ml = +wrap.dataset.ml, pw = +wrap.dataset.pw;
+    svg.addEventListener('pointermove', e => {
+      const r = svg.getBoundingClientRect(), sx = 720 / r.width;
+      const x = (e.clientX - r.left) * sx;
+      const c = Math.max(1, Math.min(100, Math.round((x - ml) / pw * 99) + 1));
+      const cx = ml + pw * (c - 1) / 99;
+      cross.setAttribute('x1', cx); cross.setAttribute('x2', cx);
+      cross.setAttribute('visibility', 'visible');
+      const fmt = v => v >= 1000 ? (v / 1000).toFixed(2) + ' GB' : v.toFixed(0) + ' MB';
+      tip.hidden = false;
+      tip.textContent = `commit ${c}\nraw snapshots  ${fmt(rawM * c)}\nzstd-19 each   ${fmt(zstdM * c)}\noxen block-v1  ${fmt(oBase + oM * (c - 1))}`;
+      const half = tip.offsetWidth / 2, px = cx / sx;
+      tip.style.left = Math.min(Math.max(px - half, 0), r.width - tip.offsetWidth) + 'px';
+      tip.style.top = '18px';
+    });
+    svg.addEventListener('pointerleave', () => {
+      tip.hidden = true; cross.setAttribute('visibility', 'hidden');
+    });
+  }
+  for (const wrap of document.querySelectorAll('.plotwrap[data-kind="bar"]')) {
+    const tip = wrap.querySelector('.tip');
+    for (const bar of wrap.querySelectorAll('.bar')) {
+      bar.addEventListener('pointerenter', e => {
+        tip.hidden = false;
+        tip.textContent = `${bar.dataset.name}\nstored/logical  ${bar.dataset.v}`;
+        const r = wrap.getBoundingClientRect(), b = bar.getBoundingClientRect();
+        tip.style.left = Math.min(b.left - r.left, r.width - tip.offsetWidth - 4) + 'px';
+        tip.style.top = (b.top - r.top - 44) + 'px';
+      });
+      bar.addEventListener('pointerleave', () => tip.hidden = true);
+    }
+  }
+})();
+</script>
+</body>
+</html>
