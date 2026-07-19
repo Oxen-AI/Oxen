@@ -39,12 +39,12 @@ use super::trace_chunker::{AUTO_SNIFF_BYTES, sniff_long_rows};
 
 /// Maximum bytes of raw chunk samples buffered to train the store's shared
 /// dictionary (also bounds the deferred-encode queue during the first ingest).
-const DICT_SAMPLE_CAP: usize = 4 * 1024 * 1024;
+const DICT_SAMPLE_CAP: usize = 8 * 1024 * 1024;
 /// Minimum sample bytes worth training a dictionary from; below this the first
 /// ingest simply encodes without one and a later, larger ingest trains it.
 const DICT_MIN_SAMPLE: usize = 256 * 1024;
 /// Maximum trained dictionary size.
-const DICT_MAX_SIZE: usize = 112 * 1024;
+const DICT_MAX_SIZE: usize = 256 * 1024;
 /// Raw bytes hashed for a chunk's prefix sketch (delta-base candidate lookup).
 const SKETCH_PREFIX: usize = 256;
 /// Only chunks at least this large attempt delta encoding — building a per-base
