@@ -88,7 +88,9 @@ impl ChunkManifest {
         let logical = self.to_bytes()?;
         let mut compressor = zstd::bulk::Compressor::with_dictionary(19, base_logical)
             .map_err(ChunkedError::Compress)?;
-        let frame = compressor.compress(&logical).map_err(ChunkedError::Compress)?;
+        let frame = compressor
+            .compress(&logical)
+            .map_err(ChunkedError::Compress)?;
         let total = 4 + 16 + frame.len();
         // Rotate to a fresh full base once drift makes deltas fat.
         if total >= full_form_len || total * 2 >= full_form_len {

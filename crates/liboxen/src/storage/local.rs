@@ -138,10 +138,10 @@ fn read_manifest_stored_bytes_at(
     Ok(ChunkManifest::from_stored_bytes(bytes, |base_hash| {
         let blob = crate::util::fs::read_bytes_from_path(dicts.join(format!("{base_hash:032x}")))
             .map_err(|err| {
-                super::chunked::ChunkedError::InvalidManifest(format!(
-                    "missing manifest lineage base {base_hash:032x}: {err}"
-                ))
-            })?;
+            super::chunked::ChunkedError::InvalidManifest(format!(
+                "missing manifest lineage base {base_hash:032x}: {err}"
+            ))
+        })?;
         zstd::bulk::decompress(&blob, 256 * 1024 * 1024)
             .map_err(super::chunked::ChunkedError::Decompress)
     })?)
@@ -189,8 +189,8 @@ fn write_manifest_at(
     // Full write; publish its logical bytes (zstd-compressed at rest, named by
     // the compressed hash) as the new lineage base — blob first, pointer last.
     let logical = manifest.to_bytes()?;
-    let blob = zstd::bulk::compress(&logical, 19)
-        .map_err(super::chunked::ChunkedError::Compress)?;
+    let blob =
+        zstd::bulk::compress(&logical, 19).map_err(super::chunked::ChunkedError::Compress)?;
     let blob_hash = crate::util::hasher::hash_buffer_128bit(&blob);
     AtomicFile::new(dicts.join(format!("{blob_hash:032x}")))
         .with_hash(crate::model::MerkleHash::new(blob_hash))
@@ -783,14 +783,11 @@ impl VersionStore for LocalVersionStore {
                                 match fs::read(&manifest_path).await {
                                     Ok(manifest_bytes) => {
                                         stats_cl.incr_scanned();
-                                        let valid =
-                                            read_manifest_stored_bytes_at(
-                                                &manifest_bytes,
-                                                &manifest_path,
-                                            )
-                                                .is_ok_and(|m| {
-                                                    m.file_hash.to_string() == expected_hash
-                                                });
+                                        let valid = read_manifest_stored_bytes_at(
+                                            &manifest_bytes,
+                                            &manifest_path,
+                                        )
+                                        .is_ok_and(|m| m.file_hash.to_string() == expected_hash);
                                         if !valid {
                                             stats_cl.incr_corrupted();
                                             if !dry_run

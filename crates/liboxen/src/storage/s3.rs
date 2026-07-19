@@ -251,9 +251,9 @@ impl S3VersionStore {
             Some(bytes) => Ok(Some(ChunkManifest::from_stored_bytes(&bytes, |base| {
                 // The S3 store writes only full manifests; a delta form here is
                 // corruption, not a supported encoding.
-                Err(crate::storage::chunked::ChunkedError::InvalidManifest(format!(
-                    "S3 manifests are stored full; unexpected delta base {base:032x}"
-                )))
+                Err(crate::storage::chunked::ChunkedError::InvalidManifest(
+                    format!("S3 manifests are stored full; unexpected delta base {base:032x}"),
+                ))
             })?)),
             None => Ok(None),
         }

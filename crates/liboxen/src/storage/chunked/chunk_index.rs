@@ -123,11 +123,13 @@ impl ChunkIndex {
     pub fn manifest_base(&self, first_chunk: u128) -> Result<Option<u128>, OxenError> {
         let bases = &self.manifest_bases;
         self.read(|_db, txn| {
-            Ok(bases.get(txn, &first_chunk.to_le_bytes())?.and_then(|bytes| {
-                <[u8; 16]>::try_from(bytes.as_ref())
-                    .ok()
-                    .map(u128::from_le_bytes)
-            }))
+            Ok(bases
+                .get(txn, &first_chunk.to_le_bytes())?
+                .and_then(|bytes| {
+                    <[u8; 16]>::try_from(bytes.as_ref())
+                        .ok()
+                        .map(u128::from_le_bytes)
+                }))
         })
     }
 

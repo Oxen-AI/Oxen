@@ -259,8 +259,7 @@ impl Iterator for TraceChunkIter<'_> {
                 if event == ScanEvent::ElementsClose {
                     self.pending.push(byte);
                 }
-                self.element_start =
-                    (event == ScanEvent::ElementSeparator).then_some(0);
+                self.element_start = (event == ScanEvent::ElementSeparator).then_some(0);
                 self.row_len += 1;
                 if row_end {
                     self.row_len = 0;
@@ -293,8 +292,7 @@ impl Iterator for TraceChunkIter<'_> {
             let cut = self.pending.len() >= MAX_CHUNK_SIZE as usize
                 || (row_end
                     && (self.row_len >= ROW_ISOLATE_MIN || self.pending.len() >= ROW_ISOLATE_MIN))
-                || (event == ScanEvent::ElementSeparator
-                    && self.pending.len() >= INTRA_ROW_TARGET);
+                || (event == ScanEvent::ElementSeparator && self.pending.len() >= INTRA_ROW_TARGET);
             if row_end {
                 self.row_len = 0;
             }
@@ -761,7 +759,11 @@ mod tests {
             .expect("row B isolates its prompt prefix");
         assert_eq!(hash(iso_a), hash(iso_b));
         // The unique headers land in separate, different chunks.
-        assert!(chunks_a[0].data.starts_with(b"{\"uuid\":\"session-00000001"));
+        assert!(
+            chunks_a[0]
+                .data
+                .starts_with(b"{\"uuid\":\"session-00000001")
+        );
         assert_ne!(chunks_a[0].data, chunks_b[0].data);
     }
 
