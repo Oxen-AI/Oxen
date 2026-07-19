@@ -3,8 +3,8 @@
 Findings of the autonomous research run defined in
 [`autoresearch_block_level_dedup.md`](./autoresearch_block_level_dedup.md),
 conducted on branch `autoresearch-block-dedup/jul18` (base:
-`block-level-dedup`). Seven experiments were benchmarked on a fixed,
-deterministic 100.6 MB multi-version corpus (agent-trace JSONL, fine-tuning
+`block-level-dedup`). Fourteen experiments across two sessions were
+benchmarked on a fixed, deterministic 100.6 MB multi-version corpus (agent-trace JSONL, fine-tuning
 JSONL, labels CSV, Parquet mirrors; append / scattered-growth / reorder /
 shared-prompt-edit / insert+delete / annotation-column / cross-format
 lifecycle over 7 commits — `benchmark/dedup/`). Byte-exact reconstruction of
@@ -15,48 +15,57 @@ it, and the full product test suite passes on the final state.
 
 | | Session baseline | Final retained | Δ |
 | --- | --- | --- | --- |
-| stored_bytes (100.6 MB logical) | 24.19 MB | **14.37 MB** | **−40.6%** |
-| storage_ratio | 0.2405 | **0.1428** | |
-| incremental_stored_bytes | 16.95 MB | **11.45 MB** | −32.4% |
-| incremental_ratio | 0.1982 | **0.1340** | |
-| restore_seconds / restore_mb_s | 2.6 / 39.4 | 2.4 / 42.7 | ≈ tied (better) |
-| random_read_ms (single-file, historical commit) | 262 | 269 | tied |
-| compression_seconds | 10.4 | 56.6 | 5.4× (within the ≥10%-storage guardrail exemption) |
-| peak_memory_mb | 121 | 139 | bounded |
+| stored_bytes (100.6 MB logical) | 24.19 MB | **12.90 MB** | **−46.7%** |
+| storage_ratio | 0.2405 | **0.1282** | |
+| incremental_stored_bytes | 16.95 MB | **9.63 MB** | −43.2% |
+| incremental_ratio | 0.1982 | **0.1127** | |
+| restore_seconds / restore_mb_s | 2.6 / 39.4 | 2.4 / 41.3 | ≈ tied (better) |
+| random_read_ms (single-file, historical commit) | 262 | 252 | tied |
+| compression_seconds | 10.4 | 39.9 | 3.8× (within the ≥10%-storage guardrail exemption) |
+| peak_memory_mb | 121 | 142 | bounded |
 | correctness | pass | pass | |
 
 Against the *pure FastCDC* configuration (the guide's reference baseline,
-measured via a config-only profile mark): 20.40 MB → 14.37 MB = **−29.6%**.
+measured via a config-only profile mark): 20.40 MB → 12.90 MB = **−36.8%**.
+Storage results are deterministic (repeat runs are byte-identical).
 
 ## The final architecture (what actually won)
 
 Four retained mechanisms, each independently benchmarked, composing into one
 pipeline:
 
-1. **Content-adaptive chunking (`TRACE_AUTO_V1`)** — line-delimited JSON
-   sniffs the average row size of its first 64 KB and delegates the whole
-   stream: rows ≥ 4 KB (long agent traces, where edit locality dominates) →
-   the structure-anchored `TRACE_JSONL_V1` chunker (row-isolated,
-   prefix-stable intra-row cuts at message boundaries); smaller rows → generic
-   FastCDC (64 KB windows, where compression and metadata economy dominate).
-   The sniff rule is part of the frozen chunker ID: boundaries stay a pure
-   function of content. Everything non-JSONL stays on FastCDC.
+1. **Content-adaptive chunking** — line-delimited JSON sniffs the average
+   row size of its first 64 KB (now resolved in the engine, so the manifest
+   records the actual delegate chunker) and routes the stream: rows ≥ 2 KB
+   (agent traces, where edit locality and reorder robustness dominate) → the
+   structure-anchored `TRACE_JSONL_V1` chunker (row-isolated at 1 KB,
+   prefix-stable intra-row cuts at message boundaries, 8 KB target); smaller
+   rows → generic FastCDC (64 KB windows, where compression and metadata
+   economy dominate). The threshold moved from 4 KB to 2 KB once delta
+   encoding existed — structural chunking wins sooner when near-duplicate
+   tails delta away. Everything non-JSONL stays on FastCDC (64 KB average
+   re-confirmed optimal in both directions under the full stack).
 2. **Per-class shared zstd dictionaries (`ZSTD_DICT`)** — the single biggest
-   storage lever. A 112 KB dictionary per content class (keyed by chunker),
-   trained once from the first ≥256 KB ingest of that class (4 KB training
-   slices, deferred first-file encode) and stored content-addressed under
-   `blocks/dicts/`. Captures the cross-row redundancy no chunker can see —
-   repeated system prompts, tool schemas, JSON keys, log/code boilerplate —
-   and rescues small-chunk compression. Dictionaries are digested once
-   (prepared-dict cache); the naive per-chunk digest was a 40× compression
-   blowup.
+   storage lever. A 64 KB dictionary per **content family** (extension family
+   refined by the row-size sniff: long-row JSONL, small-row JSONL, and CSV
+   are distinct classes), trained once from the first ≥256 KB ingest of that
+   class (4 KB training slices, deferred first-file encode) and stored
+   content-addressed under `blocks/dicts/`. Captures the cross-row redundancy
+   no chunker can see — repeated system prompts, tool schemas, JSON keys,
+   log/code boilerplate — and rescues small-chunk compression. Class purity
+   matters as much as existence: one mixed-content dictionary measurably
+   poisons both classes (+33% on this corpus). 64 KB is the sweep knee
+   (32 < **64** > 112 > 256); dictionaries are digested once (prepared-dict
+   cache) — the naive per-chunk digest was a 40× compression blowup.
 3. **Bounded delta encoding (`ZSTD_DELTA`)** — near-duplicate chunks (edited
-   versions of prior chunks) are found by an 8-byte prefix sketch (xxh3-64 of
-   the first 256 raw bytes, an advisory LMDB table) and stored as a zstd
+   versions of prior chunks) are found by prefix *and suffix* sketches
+   (xxh3-64 of the first/last 256 raw bytes, an advisory LMDB table,
+   last-writer-wins so bases track recent versions) and stored as a zstd
    frame over the base chunk's raw bytes. Strictly bounded: chain depth ≤ 1
-   (a base is never itself a delta), attempted only for chunks ≥ 8 KB, kept
-   only when smaller than the dict/plain form. This is what finally captured
-   scattered-edit redundancy: −14.1% stored on its own.
+   (a delta-coded candidate contributes its own full base transitively),
+   attempted only for chunks ≥ 8 KB, kept only when smaller than the
+   dict/plain form. This is what finally captured scattered-edit redundancy:
+   −14.1% stored on its own, plus −0.9% from the v2 refinements.
 4. **Storage-first compression settings** — chunk zstd at level 19 (storage
    dominates ingest speed per the research policy; the level is
    decode-compatible and can become adaptive later), and manifests
@@ -82,13 +91,24 @@ never uses them. Reads are transparent; reconstruction never re-chunks.
 | 005 | 8 KB intra-row target (16 KB tied) | 19,906,421 | −0.8% | **keep** |
 | — | reference: all-generic + dict + level 19 (config-only) | 17,745,123 | — | reference |
 | 006 | `TRACE_AUTO_V1` adaptive chunker | 16,727,892 | −16.0% | **keep** |
-| 007 | bounded delta encoding | **14,367,173** | −14.1% | **keep** |
+| 007 | bounded delta encoding | 14,367,173 | −14.1% | **keep** |
+| 008a | 2 KB auto threshold alone | 17,441,237 | +21% | diagnosed |
+| 008b | engine-resolved sniff + content-family dict classes | 13,097,917 | −8.8% | **keep** |
+| 009 | delta v2: suffix sketches, last-wins, transitive bases | 12,978,816 | −0.9% | **keep** |
+| 010a | 256 KB dictionaries | 13,192,291 | +1.6% | discard |
+| 010b | 64 KB dictionaries (knee of 32/64/112/256) | **12,900,104** | −0.6% | **keep** |
+| 011 | FastCDC avg 32 KB / 96 KB | 12,984,608 / 13,000,189 | +0.7% / +0.8% | discard |
+| 012 | zstd 9 recheck under full stack | 13,590,530 | +5.4%, 2.6× faster | discard |
+| 013 | 2 KB row isolation | 13,695,144 | +6.2% | discard |
+| 014 | block-id chunk-index indirection | 12,867,336 | −0.25% (tie) | discard (simpler wins) |
 
 Read metrics stayed within the 5% tie band throughout (restore 2.3–3.1 s;
-random read 262–270 ms, dominated by CLI process startup in the debug-build
-harness). Compression grew from 10.4 s to 56.6 s — permitted at each step by
-the guardrail (≥10% storage reduction lifts the 5× cap), but it is the
-architecture's main operational debt; see roadmap.
+random read ~250–270 ms, dominated by CLI process startup in the debug-build
+harness). Compression sits at 39.9 s vs 10.4 s baseline (3.8×) — permitted at
+each step by the guardrail (≥10% storage reduction lifts the 5× cap), and
+experiment 012 quantified the tiering trade exactly: a fast-ingest mode
+(zstd 9) costs +5.4% storage for 2.6× faster ingest, which is the repack
+opportunity in the roadmap.
 
 ## Per-workload behavior of the final pipeline
 
@@ -96,19 +116,21 @@ Physical bytes added by each benchmark commit (final architecture):
 
 | Commit | Workload | Logical MB | Stored MB | Ratio |
 | --- | --- | --- | --- | --- |
-| c1 | base snapshots (3 files) | 15.1 | 2.91 | 0.193 |
-| c2 | traces append-only | 10.2 | 0.32 | **0.031** |
-| c3 | scattered session growth + finetune append | 15.2 | 1.38 | 0.091 |
-| c4 | full row reorder + growth + labels append | 15.8 | 2.16 | 0.137 |
-| c5 | shared-prompt edit + deletes + inserts + label edits | 15.9 | 1.44 | 0.090 |
-| c6 | big append + filtered copy + annotation column | 24.3 | 2.06 | 0.085 |
-| c7 | Parquet mirrors of trace content | 4.1 | 4.10 | **1.00** |
+| c1 | base snapshots (3 files) | 15.1 | 3.27 | 0.216 |
+| c2 | traces append-only | 10.2 | 0.67 | 0.065 |
+| c3 | scattered session growth + finetune append | 15.2 | 0.95 | 0.062 |
+| c4 | full row reorder + growth + labels append | 15.8 | 0.52 | **0.033** |
+| c5 | shared-prompt edit + deletes + inserts + label edits | 15.9 | 1.11 | 0.070 |
+| c6 | big append + filtered copy + annotation column | 24.3 | 2.01 | 0.083 |
+| c7 | Parquet mirrors of trace content | 4.1 | 4.38 | **1.07** |
 
-Appends approach the theoretical floor; scattered edits and even the
-adversarial shared-prompt edit (which touches the first message of a quarter
-of all rows) land near 0.09 thanks to delta encoding; the full reorder costs
-most among text workloads (FastCDC boundary phase shifts; the trace chunker
-path avoids this for long-row data). Parquet is the outlier: stored ≈ 1.0×.
+Every text workload sits between 0.03 and 0.09 — the full row reorder, once
+the worst text case, is now the *cheapest* (structural row isolation makes
+chunks position-independent), and the adversarial shared-prompt edit (which
+touches the first message of a quarter of all rows) delta-encodes to 0.07.
+The base snapshot pays a small structural-chunking premium over pure FastCDC
+(0.216 vs 0.19) that the version chain repays many times over. Parquet is
+the outlier at ≈ 1.0×, now with a measured explanation (below).
 
 ## What failed, and what it taught
 
@@ -125,10 +147,32 @@ path avoids this for long-row data). Parquet is the outlier: stored ≈ 1.0×.
   hence the measured, frozen sniff rule of `TRACE_AUTO_V1`. The broader
   lesson: **granularity trades compression for edit locality, and the
   break-even moves with row size and redundancy — measure, don't assume.**
-- **zstd 19 vs 9**: −2.5% storage for 2.9× compression time was kept under
-  the storage-first policy, but a production default likely wants
-  level-tiering (fast on ingest, repack cold blocks at 19) — recorded as
-  roadmap, since the benchmark's policy ranks storage strictly first.
+- **zstd 19 vs 9**: kept 19 under the storage-first policy; the session-2
+  recheck under the full stack pinned the trade at +5.4% storage for 2.6×
+  faster ingest — the exact economics for a future level-tiered repack.
+- **Dictionary-class identity by chunker ID (008a)**: keying dictionaries on
+  the chunker mixed long-row and small-row JSONL into one dictionary and
+  regressed 21%; content family (extension × row-size class) is the correct
+  identity. A one-line-sounding decision was worth 4.3 MB.
+- **Bigger dictionaries and bigger/smaller chunks (010a/011/013)**: every
+  capacity knob is now at a measured optimum — 64 KB dictionaries, 64 KB
+  FastCDC average, 1 KB row isolation, 8 KB intra-row target. All four were
+  swept in both directions under the final stack.
+- **Chunk-index micro-layout (014)**: block-id indirection shrank index
+  values 41% but total storage only 0.25% (LMDB page overhead dominates) —
+  under the tie threshold, so the simpler layout stays.
+- **Parquet, closed with evidence (three probes)**: (1) pyarrow's zstd pages
+  are *not* byte-exactly reproducible by single-shot libzstd at any level
+  (frame divergence, not level mismatch) — a decompress/recompress transform
+  cannot reconstruct original bytes for zstd parquet; (2) between the two
+  benchmark mirrors (reordered row groups), only 8 of 39 pages (~4 KB of
+  2.35 MB) are byte-identical — page-aligned chunking has nothing to grab;
+  (3) append-stable parquet already dedups through plain FastCDC. Conclusion:
+  re-encoded/reordered zstd parquet is a storage floor for byte-exact
+  systems. Product guidance: version evolving traces as JSONL (4.7× better,
+  see `chat_jsonl_report.md`); where parquet must be versioned, write it
+  uncompressed (or snappy) with bounded row groups so the store's own
+  dictionary+zstd-19 stack sees byte-stable pages.
 
 ## Answers to the guide's architecture checklist
 
@@ -163,16 +207,21 @@ path avoids this for long-row data). Parquet is the outlier: stored ≈ 1.0×.
 
 ## Roadmap (in expected-value order)
 
-1. **Parquet transform** (`parquet-shred-v1`): the single remaining 1.0×
-   workload; requires the manifest-version bump for the reserved transform
-   slot.
-2. **Compression-time tiering**: level-3/9 on the ingest hot path plus a
-   cold-block repack (`oxen storage repack`) to level 19 + dict + delta —
-   removes the 5.4× ingest cost without giving back storage.
+1. **Compression-time tiering**: zstd-9 ingest (+5.4% storage, 2.6× faster —
+   measured) plus a cold-block repack (`oxen storage repack`) back to
+   level 19 + dict + delta: hot-path speed without giving back storage.
+2. **Uncompressed-parquet ingestion path**: let the policy try zstd on
+   parquet whose pages are uncompressed (raw fallback already makes this
+   safe), pairing with the guidance above — the only parquet lever that
+   survives the byte-exactness evidence. A decompress-transform remains
+   viable for *snappy* parquet (deterministic codec) if demand exists.
 3. **Dictionary lifecycle**: retraining generations as content drifts;
    S3-backend dictionary persistence (trait hooks exist, unimplemented).
-4. **GC/fsck awareness** of dictionaries, delta bases, and sketch rebuild.
-5. **CSV columnar decomposition** and message-level logical interning —
+4. **GC/fsck awareness** of dictionaries, delta bases (parseable from delta
+   payload headers), and sketch-table rebuild.
+5. **Compaction**: retro-delta of superseded full chunks against newer
+   versions (reverse-chain packs), bounded by the same depth-1 rule.
+6. **CSV columnar decomposition** and message-level logical interning —
    plausible wins the dictionary only partially captures.
 
 ## Reproduction
