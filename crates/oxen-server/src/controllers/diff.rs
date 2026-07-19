@@ -35,6 +35,24 @@ use crate::params::{
     resolve_base_head,
 };
 
+/// The base a diff should range from. With `three_dot`, diff from the merge base
+/// (git `base...head`) so commits that landed on the base branch after the fork
+/// don't read as part of head's changes. Falls back to the given base when the
+/// two commits share no common ancestor.
+fn diff_base(
+    repository: &LocalRepository,
+    base: Commit,
+    head: &Commit,
+    three_dot: bool,
+) -> Result<Commit, OxenError> {
+    if !three_dot {
+        return Ok(base);
+    }
+    let merge_base =
+        repositories::merge::lowest_common_ancestor_from_commits(repository, &base, head)?;
+    Ok(merge_base.unwrap_or(base))
+}
+
 /// List commits between two revisions
 #[utoipa::path(
     get,
@@ -105,7 +123,8 @@ pub async fn commits(
         ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
         ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
         ("page" = Option<usize>, Query, description = "Page number for pagination (starts at 1)"),
-        ("page_size" = Option<usize>, Query, description = "Page size for pagination")
+        ("page_size" = Option<usize>, Query, description = "Page size for pagination"),
+        ("three_dot" = Option<bool>, Query, description = "Diff from the merge base (base...head)")
     ),
     responses(
         (status = 200, description = "Entries found successfully", body = CompareEntriesResponse),
@@ -135,6 +154,12 @@ pub async fn entries(
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
+    let base_commit = diff_base(
+        &repository,
+        base_commit,
+        &head_commit,
+        query.three_dot.unwrap_or(false),
+    )?;
 
     let entries_diff = repositories::diffs::list_diff_entries(
         &repository,
@@ -189,13 +214,17 @@ pub async fn entries(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
         ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+        ("three_dot" = Option<bool>, Query, description = "Diff from the merge base (base...head)")
     ),
     responses(
         (status = 200, description = "Directory diff tree found successfully", body = DirTreeDiffResponse),
         (status = 404, description = "Repository or one of the revisions not found")
     )
 )]
-pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
+pub async fn dir_tree(
+    req: HttpRequest,
+    query: web::Query<PageNumQuery>,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
@@ -210,6 +239,12 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
+    let base_commit = diff_base(
+        &repository,
+        base_commit,
+        &head_commit,
+        query.three_dot.unwrap_or(false),
+    )?;
 
     let dir_diffs =
         repositories::diffs::list_changed_dirs(&repository, &base_commit, &head_commit)?;
@@ -237,7 +272,8 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
         ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
         ("dir" = String, Path, description = "The directory path to list entries for", example = "data/test"),
         ("page" = Option<usize>, Query, description = "Page number for pagination (starts at 1)"),
-        ("page_size" = Option<usize>, Query, description = "Page size for pagination")
+        ("page_size" = Option<usize>, Query, description = "Page size for pagination"),
+        ("three_dot" = Option<bool>, Query, description = "Diff from the merge base (base...head)")
     ),
     responses(
         (status = 200, description = "Entries found successfully", body = CompareEntriesResponse),
@@ -267,6 +303,12 @@ pub async fn dir_entries(
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
+    let base_commit = diff_base(
+        &repository,
+        base_commit,
+        &head_commit,
+        query.three_dot.unwrap_or(false),
+    )?;
     let dir = PathBuf::from(dir);
 
     let entries_diff = repositories::diffs::list_diff_entries(

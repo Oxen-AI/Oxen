@@ -5,6 +5,8 @@ use utoipa::IntoParams;
 pub struct PageNumQuery {
     pub page: Option<usize>,
     pub page_size: Option<usize>,
+    /// Diff from the merge base (git `base...head`) rather than the base tip.
+    pub three_dot: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, IntoParams)]
