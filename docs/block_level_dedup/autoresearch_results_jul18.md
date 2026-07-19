@@ -37,8 +37,14 @@ measured via a config-only profile mark): 20.40 MB → 12.73 MB = **−37.6%**.
 Storage results are deterministic (repeat runs are byte-identical).
 
 On the prompt-cache corpus (177.8 MB logical), the session-3 experiments took
-the same architecture from 16.02 MB to **9.56 MB (ratio 0.0538, −40.4%)** —
-storing 6 commits' full history of 178 MB of agent-trace data in under 10 MB.
+the same architecture from 16.02 MB to **8.40 MB (ratio 0.0473, −47.6%)** —
+storing 6 commits' full history of 178 MB of agent-trace data in 8.4 MB,
+beating even whole-snapshot zstd-19 (8.5 MB) on its best corpus while keeping
+random access and incremental transfer. The last two mechanisms were driven by
+chasing that baseline: a midpoint sketch (rows whose shared tools+system block
+sits between a unique head and tail), and in-flight delta bases (a snapshot's
+later rows delta against its earlier rows during the first ingest — the sketch
+table alone only covers prior ingests).
 
 ## The final architecture (what actually won)
 
@@ -116,7 +122,9 @@ never uses them. Reads are transparent; reconstruction never re-chunks.
 | 015 | omit offsets from stored manifests | 15,957,584 (v2) | −0.4% (tie both corpora) | discard |
 | 016 | manifest lineage-delta at rest (first-chunk-keyed bases) | 16,081,229 (v2) / 12,733,068 (v1) | v2 tie, v1 −1.3% | **keep** |
 | 017 | 16 KB chunking floor (was 1 MiB; 4 KB tied) | **9,999,967** (v2) | **−37.8%** | **keep** |
-| 018 | large-element isolation ≥ 4 KB (prompt-prefix chunks) | **9,555,852** (v2) | −4.4%; v1 byte-identical | **keep** |
+| 018 | large-element isolation ≥ 4 KB (prompt-prefix chunks) | 9,555,852 (v2) | −4.4%; v1 byte-identical | **keep** |
+| 019 | midpoint sketch (shared verbatim middles) | 9,355,374 (v2) | −2.1%; v1 tie | **keep** |
+| 020 | in-flight delta bases (same-pass rows) | **8,404,019** (v2) | −10.2%; first snapshot −23%; v1 byte-identical | **keep** |
 
 Read metrics stayed within the 5% tie band throughout (restore 2.3–3.1 s;
 random read ~250–270 ms, dominated by CLI process startup in the debug-build
