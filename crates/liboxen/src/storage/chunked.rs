@@ -24,6 +24,7 @@ pub mod registry;
 pub mod seekable;
 pub mod store;
 pub mod trace_chunker;
+pub mod unwrap_transform;
 
 pub use block::{BlockChunk, BlockWriter, SealedBlock, parse_block_footer, verify_block};
 pub use block_engine::{BlockEngine, ReconstructReader};

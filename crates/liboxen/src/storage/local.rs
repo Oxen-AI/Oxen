@@ -11,7 +11,7 @@ use crate::error::OxenError;
 use crate::model::{EntryDataType, MerkleHash};
 use crate::storage::chunked::manifest::ChunkManifest;
 use crate::storage::chunked::{
-    BlockEngine, ChunkedVersionStore, ReconstructReader, SealedBlock, SeekableVersionReader,
+    BlockEngine, ChunkedVersionStore, ReconstructReader, SealedBlock, SeekableVersionReader, TransformId,
     StorageProfile, encode_policy,
 };
 use crate::storage::version_store::{
@@ -959,7 +959,12 @@ impl ChunkedVersionStore for LocalVersionStore {
             let mut hashing = HashingReader::new(&mut reader);
             let reconstructed_size = std::io::copy(&mut hashing, &mut std::io::sink())?;
             let actual = MerkleHash::new(hashing.digest128());
-            if reconstructed_size != manifest.file_size || actual != manifest.file_hash {
+            // Under a transform, `file_size` is the transformed stream's size while
+            // the reader yields original bytes — the hash comparison alone is the
+            // end-to-end check there.
+            let size_ok = manifest.transform_id != TransformId::IDENTITY
+                || reconstructed_size == manifest.file_size;
+            if !size_ok || actual != manifest.file_hash {
                 return Err(OxenError::HashMismatch {
                     path: manifest_path,
                     expected: manifest.file_hash,
@@ -998,7 +1003,7 @@ impl ChunkedVersionStore for LocalVersionStore {
             let manifest = read_manifest_at(&manifest_path)?.ok_or_else(|| {
                 OxenError::basic_str(format!("no chunked version found for hash {hash}"))
             })?;
-            Ok(SeekableVersionReader::new(engine, manifest))
+            SeekableVersionReader::new(engine, manifest)
         })
         .await?
     }

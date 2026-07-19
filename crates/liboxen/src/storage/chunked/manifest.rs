@@ -39,14 +39,16 @@ pub struct ChunkManifest {
     pub version: u8,
     /// xxh3-128 of the complete original file — the logical file identity.
     pub file_hash: MerkleHash,
-    /// Size of the complete original file in bytes.
+    /// Size of the chunked stream in bytes: the original file under the identity
+    /// transform, the transformed stream otherwise (the original size is then
+    /// recoverable from the transformed stream's own recipe).
     pub file_size: u64,
     /// The boundary function that produced these chunks.
     pub chunker_id: ChunkerId,
-    /// Reversible pre-chunking transform. v1 always [`TransformId::IDENTITY`]; any
-    /// other value is rejected on read with an upgrade-required error.
+    /// Reversible pre-chunking transform. IDs this build does not know are
+    /// rejected on read with an upgrade-required error.
     pub transform_id: TransformId,
-    /// The chunks, ordered by offset, tiling the file exactly.
+    /// The chunks, ordered by offset, tiling the chunked stream exactly.
     pub chunks: Vec<ChunkEntry>,
 }
 
@@ -146,7 +148,9 @@ impl ChunkManifest {
         if self.version != MANIFEST_VERSION {
             return Err(ChunkedError::UnsupportedManifestVersion(self.version));
         }
-        if self.transform_id != TransformId::IDENTITY {
+        if self.transform_id != TransformId::IDENTITY
+            && self.transform_id != TransformId::ZSTD_UNWRAP_V1
+        {
             return Err(ChunkedError::UnknownTransformId(self.transform_id.as_u8()));
         }
         if self.chunks.is_empty() != (self.file_size == 0) {

@@ -102,6 +102,12 @@ impl TransformId {
     /// No transform: chunk the original file bytes.
     pub const IDENTITY: TransformId = TransformId(0);
 
+    /// Embedded-zstd unwrap: zstd frames found in the file (parquet pages, arrow
+    /// buffers, bare `.zst`) whose bytes this build's encoder provably reproduces
+    /// are stored decompressed, with a recipe to re-compress them on
+    /// reconstruction. See `unwrap_transform`.
+    pub const ZSTD_UNWRAP_V1: TransformId = TransformId(1);
+
     pub fn as_u8(&self) -> u8 {
         self.0
     }
@@ -235,5 +241,6 @@ mod tests {
         assert_eq!(CodecId::ZSTD_DICT.as_u8(), 2);
         assert_eq!(CodecId::ZSTD_DELTA.as_u8(), 3);
         assert_eq!(TransformId::IDENTITY.as_u8(), 0);
+        assert_eq!(TransformId::ZSTD_UNWRAP_V1.as_u8(), 1);
     }
 }

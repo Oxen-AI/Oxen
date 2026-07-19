@@ -84,4 +84,7 @@ pub enum ChunkedError {
         block_hash: u128,
         source: std::io::Error,
     },
+
+    #[error("corrupt transformed stream: {0}")]
+    Transform(String),
 }

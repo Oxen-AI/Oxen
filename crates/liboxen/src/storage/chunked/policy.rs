@@ -63,6 +63,13 @@ const COMPRESSED_CONTAINER_EXTENSIONS: &[&str] = &[
     "parquet", "arrow", "feather", "gz", "gzip", "zip", "zst", "bz2", "xz", "7z",
 ];
 
+/// Compressed-container extensions that may embed reproducible zstd frames
+/// (zstd-page parquet, zstd-buffer arrow IPC, bare zstd files). These get the
+/// embedded-zstd unwrap transform: verified frames are stored decompressed (so
+/// their content dedups, dictionary-compresses, and deltas like any text), and
+/// everything else falls back to identity via the transform's own verification.
+const ZSTD_UNWRAP_EXTENSIONS: &[&str] = &["parquet", "arrow", "feather", "zst"];
+
 /// Extensions treated as line-delimited JSON: rows are records, and records that
 /// grow do so by appending to nested arrays (chat sessions, agent traces). These
 /// route to the structure-anchored trace chunker so dedup granularity follows the
@@ -128,8 +135,13 @@ pub fn encode_policy(
 ) -> EncodePolicy {
     let extension = extension.to_lowercase();
     let compressed_container = COMPRESSED_CONTAINER_EXTENSIONS.contains(&extension.as_str());
+    let unwrap = ZSTD_UNWRAP_EXTENSIONS.contains(&extension.as_str());
 
+    // Unwrapped container content is decompressed page/buffer bytes, which
+    // compress like text; the transform's verification gate means files that stay
+    // wrapped fall through to the raw codec via the universal raw fallback.
     let codec = match data_type {
+        _ if unwrap => CodecId::ZSTD,
         EntryDataType::Text | EntryDataType::Tabular if !compressed_container => CodecId::ZSTD,
         _ => CodecId::RAW,
     };
@@ -143,7 +155,9 @@ pub fn encode_policy(
         None => ChunkerId::GENERIC_FASTCDC_V1,
     };
 
-    let dict_class = if LINE_DELIMITED_JSON_EXTENSIONS.contains(&extension.as_str()) {
+    let dict_class = if unwrap {
+        3
+    } else if LINE_DELIMITED_JSON_EXTENSIONS.contains(&extension.as_str()) {
         2
     } else if matches!(extension.as_str(), "csv" | "tsv") {
         1
@@ -154,7 +168,11 @@ pub fn encode_policy(
     EncodePolicy {
         chunker,
         codec,
-        transform: TransformId::IDENTITY,
+        transform: if unwrap {
+            TransformId::ZSTD_UNWRAP_V1
+        } else {
+            TransformId::IDENTITY
+        },
         dict_class,
     }
 }
@@ -192,9 +210,11 @@ mod tests {
         assert_eq!(policy(&EntryDataType::Tabular, "jsonl"), CodecId::ZSTD);
         assert_eq!(policy(&EntryDataType::Text, "txt"), CodecId::ZSTD);
 
-        assert_eq!(policy(&EntryDataType::Tabular, "parquet"), CodecId::RAW);
-        assert_eq!(policy(&EntryDataType::Tabular, "PARQUET"), CodecId::RAW);
-        assert_eq!(policy(&EntryDataType::Tabular, "arrow"), CodecId::RAW);
+        // Unwrap-eligible containers compress their (decompressed) transformed
+        // stream; non-unwrap containers still skip the zstd attempt.
+        assert_eq!(policy(&EntryDataType::Tabular, "parquet"), CodecId::ZSTD);
+        assert_eq!(policy(&EntryDataType::Tabular, "PARQUET"), CodecId::ZSTD);
+        assert_eq!(policy(&EntryDataType::Tabular, "arrow"), CodecId::ZSTD);
         assert_eq!(policy(&EntryDataType::Text, "gz"), CodecId::RAW);
         assert_eq!(policy(&EntryDataType::Binary, "bin"), CodecId::RAW);
         assert_eq!(policy(&EntryDataType::Image, "png"), CodecId::RAW);
@@ -202,12 +222,21 @@ mod tests {
         assert_eq!(policy(&EntryDataType::Audio, "wav"), CodecId::RAW);
     }
 
-    /// Every policy result uses registered IDs and the identity transform in v1.
+    /// Every policy result uses registered IDs; the unwrap transform applies to
+    /// exactly the zstd-capable container extensions.
     #[test]
     fn policy_pins_chunker_and_transform() {
         let policy = encode_policy(None, &EntryDataType::Tabular, "csv");
         assert_eq!(policy.chunker, ChunkerId::GENERIC_FASTCDC_V1);
         assert_eq!(policy.transform, TransformId::IDENTITY);
+
+        for ext in ["parquet", "arrow", "feather", "zst"] {
+            let policy = encode_policy(None, &EntryDataType::Tabular, ext);
+            assert_eq!(policy.transform, TransformId::ZSTD_UNWRAP_V1);
+            assert_eq!(policy.dict_class, 3);
+        }
+        let gz = encode_policy(None, &EntryDataType::Text, "gz");
+        assert_eq!(gz.transform, TransformId::IDENTITY);
     }
 
     /// An explicit storage-profile mark decides the chunker outright, overriding

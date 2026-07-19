@@ -34,8 +34,9 @@ use super::compressor::{
 use super::error::ChunkedError;
 use super::manifest::{ChunkEntry, ChunkManifest, MANIFEST_VERSION};
 use super::policy::EncodePolicy;
-use super::registry::{ChunkerId, CodecId, chunker};
+use super::registry::{ChunkerId, CodecId, TransformId, chunker};
 use super::trace_chunker::{AUTO_SNIFF_BYTES, sniff_long_rows};
+use super::unwrap_transform::{try_unwrap, unwrap_inverse};
 
 /// Maximum bytes of raw chunk samples buffered to train the store's shared
 /// dictionary (also bounds the deferred-encode queue during the first ingest).
@@ -50,6 +51,9 @@ const SKETCH_PREFIX: usize = 256;
 /// Only chunks at least this large attempt delta encoding — building a per-base
 /// dictionary costs CPU that tiny chunks can't repay.
 const DELTA_MIN_RAW: usize = 8 * 1024;
+/// Files larger than this skip the unwrap transform (it needs the whole file in
+/// memory for frame scanning and verification) and ingest under identity.
+const UNWRAP_INPUT_CAP: usize = 64 * 1024 * 1024;
 
 /// Packs, indexes, and reconstructs chunked file versions over a block byte-IO
 /// backend and a local chunk index.
@@ -99,12 +103,42 @@ impl BlockEngine {
         reader: &mut (dyn Read + Send),
         policy: &EncodePolicy,
     ) -> Result<ChunkManifest, OxenError> {
+        // The unwrap transform needs the whole file for frame scanning and
+        // verification: buffer it (bounded), and on success chunk the transformed
+        // stream while keeping the original bytes' hash as the manifest identity.
+        // Files over the cap, and files with no provably reproducible frame,
+        // ingest under the identity transform — a pure function of content.
+        let mut transform_id = TransformId::IDENTITY;
+        let mut original_identity: Option<u128> = None;
+        let mut head: Vec<u8> = Vec::new();
+        if policy.transform == TransformId::ZSTD_UNWRAP_V1 {
+            let mut buf = vec![0u8; 64 * 1024];
+            while head.len() <= UNWRAP_INPUT_CAP {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => head.extend_from_slice(&buf[..n]),
+                    Err(err) => return Err(ChunkedError::ChunkRead(err).into()),
+                }
+            }
+            if head.len() <= UNWRAP_INPUT_CAP
+                && let Some(transformed) = try_unwrap(&head)
+            {
+                original_identity = Some(hash_buffer_128bit(&head));
+                transform_id = TransformId::ZSTD_UNWRAP_V1;
+                head = transformed;
+            }
+        }
+
         // Resolve the content-adaptive chunker here so the manifest records the
         // actual boundary function used, and so the dictionary class can honor
         // the sniff outcome (long-row and small-row line-delimited JSON are
         // distinct content families).
         let mut dict_class = policy.dict_class;
-        let mut head: Vec<u8> = Vec::new();
+        debug_assert!(
+            policy.transform == TransformId::IDENTITY
+                || policy.chunker != ChunkerId::TRACE_AUTO_V1,
+            "unwrap and auto-sniff policies are mutually exclusive by extension"
+        );
         let chunker_id = if policy.chunker == ChunkerId::TRACE_AUTO_V1 {
             head = vec![0u8; AUTO_SNIFF_BYTES];
             let mut filled = 0usize;
@@ -295,10 +329,12 @@ impl BlockEngine {
 
         let manifest = ChunkManifest {
             version: MANIFEST_VERSION,
-            file_hash: MerkleHash::new(file_hasher.digest128()),
+            // The manifest identity is always the ORIGINAL file's hash; under a
+            // transform the chunk stream (hashed incrementally above) differs.
+            file_hash: MerkleHash::new(original_identity.unwrap_or_else(|| file_hasher.digest128())),
             file_size,
             chunker_id,
-            transform_id: policy.transform,
+            transform_id,
             chunks: entries,
         };
         manifest.validate()?;
@@ -604,6 +640,11 @@ impl BlockEngine {
         manifest: &ChunkManifest,
         writer: &mut dyn Write,
     ) -> Result<(), OxenError> {
+        if manifest.transform_id != TransformId::IDENTITY {
+            let original = self.reconstruct_original_bytes(manifest)?;
+            writer.write_all(&original)?;
+            return Ok(());
+        }
         for entry in &manifest.chunks {
             let raw = self.read_chunk(entry)?;
             writer.write_all(&raw)?;
@@ -611,15 +652,51 @@ impl BlockEngine {
         Ok(())
     }
 
+    /// The stored (post-transform) chunk stream a manifest describes, in memory.
+    fn reconstruct_stored_stream(&self, manifest: &ChunkManifest) -> Result<Vec<u8>, OxenError> {
+        let mut out = Vec::with_capacity(manifest.file_size as usize);
+        for entry in &manifest.chunks {
+            out.extend_from_slice(&self.read_chunk(entry)?);
+        }
+        Ok(out)
+    }
+
+    /// The complete original file bytes for a manifest, applying the inverse
+    /// transform when one was recorded. Materializes the whole file; transformed
+    /// files are bounded by the ingest-side input cap.
+    pub fn reconstruct_original_bytes(
+        &self,
+        manifest: &ChunkManifest,
+    ) -> Result<Vec<u8>, OxenError> {
+        let stored = self.reconstruct_stored_stream(manifest)?;
+        match manifest.transform_id {
+            TransformId::IDENTITY => Ok(stored),
+            TransformId::ZSTD_UNWRAP_V1 => Ok(unwrap_inverse(&stored)?),
+            other => Err(ChunkedError::UnknownTransformId(other.as_u8()).into()),
+        }
+    }
+
     /// Read `len` bytes at `offset` of the reconstructed file — a binary search for
     /// the covering chunks plus partial chunk reads, never a whole-file pass. Reads
     /// past EOF truncate (like `pread`).
+    ///
+    /// Transformed manifests reconstruct the whole file to serve the range
+    /// (offsets address the original file, which chunk offsets no longer tile) —
+    /// a known read amplification bounded by the transform's ingest cap.
     pub fn read_range(
         &self,
         manifest: &ChunkManifest,
         offset: u64,
         len: u64,
     ) -> Result<Vec<u8>, OxenError> {
+        if manifest.transform_id != TransformId::IDENTITY {
+            let original = self.reconstruct_original_bytes(manifest)?;
+            let end = offset.saturating_add(len).min(original.len() as u64);
+            if offset >= end {
+                return Ok(Vec::new());
+            }
+            return Ok(original[offset as usize..end as usize].to_vec());
+        }
         let end = offset.saturating_add(len).min(manifest.file_size);
         if offset >= end {
             return Ok(Vec::new());
@@ -791,6 +868,19 @@ impl ReconstructReader {
 
 impl Read for ReconstructReader {
     fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        // A transformed manifest yields the original file, materialized once into
+        // the buffer (bounded by the transform's ingest cap).
+        if self.manifest.transform_id != TransformId::IDENTITY
+            && self.next_chunk == 0
+            && self.buf.is_empty()
+        {
+            self.buf = self
+                .engine
+                .reconstruct_original_bytes(&self.manifest)
+                .map_err(std::io::Error::other)?;
+            self.buf_pos = 0;
+            self.next_chunk = self.manifest.chunks.len();
+        }
         while self.buf_pos == self.buf.len() {
             let Some(entry) = self.manifest.chunks.get(self.next_chunk) else {
                 return Ok(0); // clean EOF

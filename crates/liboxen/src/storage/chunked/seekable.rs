@@ -19,6 +19,7 @@ use crate::error::OxenError;
 
 use super::block_engine::BlockEngine;
 use super::manifest::ChunkManifest;
+use super::registry::TransformId;
 
 /// Sync `Read + Seek` over a chunked version's logical bytes.
 pub struct SeekableVersionReader {
@@ -29,21 +30,33 @@ pub struct SeekableVersionReader {
     pos: u64,
     /// The most recently decoded chunk: `(chunk_index, raw_bytes)`.
     cached_chunk: Option<(usize, Vec<u8>)>,
+    /// The whole original file, materialized up front for transformed manifests
+    /// (chunk offsets tile the transformed stream, not the original bytes, so
+    /// random access has to go through the inverse transform; bounded by the
+    /// transform's ingest cap).
+    materialized: Option<Vec<u8>>,
 }
 
 impl SeekableVersionReader {
-    pub fn new(engine: Arc<BlockEngine>, manifest: ChunkManifest) -> Self {
-        Self {
+    pub fn new(engine: Arc<BlockEngine>, manifest: ChunkManifest) -> Result<Self, OxenError> {
+        let materialized = (manifest.transform_id != TransformId::IDENTITY)
+            .then(|| engine.reconstruct_original_bytes(&manifest))
+            .transpose()?;
+        Ok(Self {
             engine,
             manifest,
             pos: 0,
             cached_chunk: None,
-        }
+            materialized,
+        })
     }
 
     /// Logical size of the reconstructed file.
     pub fn file_size(&self) -> u64 {
-        self.manifest.file_size
+        match &self.materialized {
+            Some(original) => original.len() as u64,
+            None => self.manifest.file_size,
+        }
     }
 
     /// The decoded bytes of chunk `idx`, from cache or via one block range read.
@@ -62,6 +75,16 @@ impl SeekableVersionReader {
 
 impl Read for SeekableVersionReader {
     fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        if let Some(original) = &self.materialized {
+            if self.pos >= original.len() as u64 {
+                return Ok(0);
+            }
+            let start = self.pos as usize;
+            let n = out.len().min(original.len() - start);
+            out[..n].copy_from_slice(&original[start..start + n]);
+            self.pos += n as u64;
+            return Ok(n);
+        }
         let Some(idx) = self.manifest.chunk_index_at(self.pos) else {
             return Ok(0); // at or past EOF
         };
@@ -79,7 +102,7 @@ impl Seek for SeekableVersionReader {
     fn seek(&mut self, target: SeekFrom) -> std::io::Result<u64> {
         let new_pos = match target {
             SeekFrom::Start(offset) => Some(offset),
-            SeekFrom::End(delta) => self.manifest.file_size.checked_add_signed(delta),
+            SeekFrom::End(delta) => self.file_size().checked_add_signed(delta),
             SeekFrom::Current(delta) => self.pos.checked_add_signed(delta),
         };
         match new_pos {
@@ -131,7 +154,8 @@ mod tests {
             .expect("ingest test data");
         assert!(manifest.chunks.len() > 2, "test data must span chunks");
 
-        let reader = SeekableVersionReader::new(Arc::new(engine), manifest);
+        let reader =
+            SeekableVersionReader::new(Arc::new(engine), manifest).expect("open seekable reader");
         TestReader {
             _dir: dir,
             reader,

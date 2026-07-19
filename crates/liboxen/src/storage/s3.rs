@@ -1409,8 +1409,13 @@ impl ChunkedVersionStore for S3VersionStore {
             let mut hashing = HashingReader::new(&mut reader);
             let reconstructed_size = std::io::copy(&mut hashing, &mut std::io::sink())?;
             let actual = MerkleHash::new(hashing.digest128());
-            if reconstructed_size != manifest_clone.file_size || actual != manifest_clone.file_hash
-            {
+            // Under a transform, `file_size` is the transformed stream's size while
+            // the reader yields original bytes — the hash comparison alone is the
+            // end-to-end check there.
+            let size_ok = manifest_clone.transform_id
+                != crate::storage::chunked::TransformId::IDENTITY
+                || reconstructed_size == manifest_clone.file_size;
+            if !size_ok || actual != manifest_clone.file_hash {
                 return Err(OxenError::HashMismatch {
                     path: PathBuf::from(manifest_clone.file_hash.to_string()),
                     expected: manifest_clone.file_hash,
@@ -1457,7 +1462,7 @@ impl ChunkedVersionStore for S3VersionStore {
             OxenError::basic_str(format!("no chunked version found for hash {hash}"))
         })?;
         let engine = self.engine().await?;
-        Ok(SeekableVersionReader::new(engine, manifest))
+        spawn_blocking(move || SeekableVersionReader::new(engine, manifest)).await?
     }
 
     async fn rebuild_chunk_index(&self) -> Result<u64, OxenError> {
