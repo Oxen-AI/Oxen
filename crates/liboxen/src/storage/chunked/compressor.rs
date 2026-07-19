@@ -13,22 +13,45 @@ use super::registry::{CodecId, codec};
 /// dedup research policy (stored bytes dominate ingest speed).
 const ZSTD_LEVEL: i32 = 19;
 
+/// A shared dictionary in digested (prepared) form, built once per dictionary and
+/// reused for every chunk — digesting a dictionary per chunk is orders of
+/// magnitude slower than compressing with one.
+pub struct PreparedDict {
+    encoder: zstd::dict::EncoderDictionary<'static>,
+    decoder: zstd::dict::DecoderDictionary<'static>,
+}
+
+impl PreparedDict {
+    pub fn new(dict_bytes: &[u8]) -> Self {
+        Self {
+            encoder: zstd::dict::EncoderDictionary::copy(dict_bytes, ZSTD_LEVEL),
+            decoder: zstd::dict::DecoderDictionary::copy(dict_bytes),
+        }
+    }
+}
+
+impl std::fmt::Debug for PreparedDict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PreparedDict")
+    }
+}
+
 /// Compress a chunk against a shared dictionary ([`CodecId::ZSTD_DICT`] payloads;
 /// the block engine owns dictionary lifecycle and payload framing).
-pub fn compress_with_dict(raw: &[u8], dict: &[u8]) -> Result<Vec<u8>, ChunkedError> {
-    let mut compressor =
-        zstd::bulk::Compressor::with_dictionary(ZSTD_LEVEL, dict).map_err(ChunkedError::Compress)?;
+pub fn compress_with_dict(raw: &[u8], dict: &PreparedDict) -> Result<Vec<u8>, ChunkedError> {
+    let mut compressor = zstd::bulk::Compressor::with_prepared_dictionary(&dict.encoder)
+        .map_err(ChunkedError::Compress)?;
     compressor.compress(raw).map_err(ChunkedError::Compress)
 }
 
-/// Decompress a dictionary-compressed chunk back to exactly `raw_len` bytes.
+/// Decompress a dictionary-compressed chunk back to exactly `raw_len` raw bytes.
 pub fn decompress_with_dict(
     stored: &[u8],
     raw_len: usize,
-    dict: &[u8],
+    dict: &PreparedDict,
 ) -> Result<Vec<u8>, ChunkedError> {
-    let mut decompressor =
-        zstd::bulk::Decompressor::with_dictionary(dict).map_err(ChunkedError::Decompress)?;
+    let mut decompressor = zstd::bulk::Decompressor::with_prepared_dictionary(&dict.decoder)
+        .map_err(ChunkedError::Decompress)?;
     // Capacity is fixed to the declared raw length (decompression-bomb bound).
     let decoded = decompressor
         .decompress(stored, raw_len)

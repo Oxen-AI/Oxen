@@ -28,7 +28,8 @@ use super::block::{BlockWriter, SealedBlock, parse_block_footer, verify_block};
 use super::block_io::{BlockByteIo, LocalBlockIo};
 use super::chunk_index::ChunkIndex;
 use super::compressor::{
-    EncodedChunk, compress_with_dict, decode_chunk, decompress_with_dict, encode_chunk,
+    EncodedChunk, PreparedDict, compress_with_dict, decode_chunk, decompress_with_dict,
+    encode_chunk,
 };
 use super::error::ChunkedError;
 use super::manifest::{ChunkEntry, ChunkManifest, MANIFEST_VERSION};
@@ -50,8 +51,8 @@ const DICT_MAX_SIZE: usize = 112 * 1024;
 pub struct BlockEngine {
     io: Arc<dyn BlockByteIo>,
     index: ChunkIndex,
-    /// Loaded dictionary blobs by content hash (a store rarely has more than one).
-    dict_cache: Mutex<HashMap<u128, Arc<Vec<u8>>>>,
+    /// Prepared dictionaries by content hash (a store has one per content class).
+    dict_cache: Mutex<HashMap<u128, Arc<PreparedDict>>>,
 }
 
 impl BlockEngine {
@@ -98,8 +99,11 @@ impl BlockEngine {
         // store has no dictionary yet (and the backend can persist one), the
         // first zstd-eligible ingest defers encoding of up to DICT_SAMPLE_CAP raw
         // chunk bytes, trains a dictionary from them, then encodes the queue.
+        // Dictionaries are per content class: content trained on one chunker's
+        // format is useless for another's, so the class is the chunker ID.
+        let dict_class = policy.chunker.as_u8();
         let mut dict = if policy.codec == CodecId::ZSTD {
-            self.current_dict()?
+            self.current_dict(dict_class)?
         } else {
             None
         };
@@ -124,7 +128,7 @@ impl BlockEngine {
                                    pending: &mut std::collections::HashSet<u128>,
                                    chunk_hash: u128,
                                    raw: &[u8],
-                                   dict: Option<&(u128, Arc<Vec<u8>>)>|
+                                   dict: Option<&(u128, Arc<PreparedDict>)>|
          -> Result<(), OxenError> {
             let encoded = encode_dict_chunk(policy.codec, raw, dict)?;
             if writer.would_exceed_max_size(encoded.data.len()) {
@@ -162,7 +166,7 @@ impl BlockEngine {
                 }
                 if queued_bytes >= DICT_SAMPLE_CAP {
                     let drained = train_queue.take().unwrap_or_default();
-                    dict = self.train_dictionary(&drained)?;
+                    dict = self.train_dictionary(dict_class, &drained)?;
                     for (hash, raw) in drained {
                         encode_and_pack(self, &mut writer, &mut pending, hash, &raw, dict.as_ref())?;
                     }
@@ -185,7 +189,7 @@ impl BlockEngine {
         // material, then encode the queue either way.
         if let Some(queue) = train_queue.take() {
             if queued_bytes >= DICT_MIN_SAMPLE {
-                dict = self.train_dictionary(&queue)?;
+                dict = self.train_dictionary(dict_class, &queue)?;
             }
             for (hash, raw) in queue {
                 encode_and_pack(self, &mut writer, &mut pending, hash, &raw, dict.as_ref())?;
@@ -208,19 +212,20 @@ impl BlockEngine {
         Ok(manifest)
     }
 
-    /// The store's current shared dictionary, loaded through the cache.
-    fn current_dict(&self) -> Result<Option<(u128, Arc<Vec<u8>>)>, OxenError> {
-        let Some(hash) = self.io.current_dictionary()? else {
+    /// The store's current shared dictionary for a content class, loaded through
+    /// the prepared-dictionary cache.
+    fn current_dict(&self, class: u8) -> Result<Option<(u128, Arc<PreparedDict>)>, OxenError> {
+        let Some(hash) = self.io.current_dictionary(class)? else {
             return Ok(None);
         };
         Ok(Some((hash, self.load_dict(hash)?)))
     }
 
-    fn load_dict(&self, dict_hash: u128) -> Result<Arc<Vec<u8>>, OxenError> {
+    fn load_dict(&self, dict_hash: u128) -> Result<Arc<PreparedDict>, OxenError> {
         if let Some(dict) = self.dict_cache.lock().get(&dict_hash) {
             return Ok(Arc::clone(dict));
         }
-        let dict = Arc::new(self.io.read_dictionary(dict_hash)?);
+        let dict = Arc::new(PreparedDict::new(&self.io.read_dictionary(dict_hash)?));
         self.dict_cache.lock().insert(dict_hash, Arc::clone(&dict));
         Ok(dict)
     }
@@ -230,8 +235,9 @@ impl BlockEngine {
     /// store simply continues without a dictionary.
     fn train_dictionary(
         &self,
+        class: u8,
         samples: &[(u128, Vec<u8>)],
-    ) -> Result<Option<(u128, Arc<Vec<u8>>)>, OxenError> {
+    ) -> Result<Option<(u128, Arc<PreparedDict>)>, OxenError> {
         let total: usize = samples.iter().map(|(_, raw)| raw.len()).sum();
         let mut concat = Vec::with_capacity(total);
         for (_, raw) in samples {
@@ -250,10 +256,10 @@ impl BlockEngine {
             }
         };
         let dict_hash = hash_buffer_128bit(&dict_bytes);
+        let dict = Arc::new(PreparedDict::new(&dict_bytes));
         self.io
-            .put_dictionary(dict_hash, &bytes::Bytes::from(dict_bytes.clone()))?;
-        self.io.set_current_dictionary(dict_hash)?;
-        let dict = Arc::new(dict_bytes);
+            .put_dictionary(dict_hash, &bytes::Bytes::from(dict_bytes))?;
+        self.io.set_current_dictionary(class, dict_hash)?;
         self.dict_cache.lock().insert(dict_hash, Arc::clone(&dict));
         Ok(Some((dict_hash, dict)))
     }
@@ -482,7 +488,7 @@ impl BlockEngine {
 fn encode_dict_chunk(
     codec: CodecId,
     raw: &[u8],
-    dict: Option<&(u128, Arc<Vec<u8>>)>,
+    dict: Option<&(u128, Arc<PreparedDict>)>,
 ) -> Result<EncodedChunk, ChunkedError> {
     if codec == CodecId::ZSTD {
         if let Some((dict_hash, dict_bytes)) = dict {
@@ -605,7 +611,7 @@ mod tests {
         };
 
         // A dictionary was trained and published.
-        assert!(t.engine.io.current_dictionary()?.is_some());
+        assert!(t.engine.io.current_dictionary(csv_policy().chunker.as_u8())?.is_some());
         // At least some chunks encoded against it.
         let dict_chunks = manifest
             .chunks
@@ -658,14 +664,14 @@ mod tests {
             let mut r: &[u8] = &small;
             t.engine.ingest(&mut r, &csv_policy())?
         };
-        assert!(t.engine.io.current_dictionary()?.is_none());
+        assert!(t.engine.io.current_dictionary(csv_policy().chunker.as_u8())?.is_none());
 
         let big = csv_bytes(8, DICT_MIN_SAMPLE + 32 * 1024);
         let m2 = {
             let mut r: &[u8] = &big;
             t.engine.ingest(&mut r, &csv_policy())?
         };
-        assert!(t.engine.io.current_dictionary()?.is_some());
+        assert!(t.engine.io.current_dictionary(csv_policy().chunker.as_u8())?.is_some());
 
         for (m, d) in [(&m1, &small), (&m2, &big)] {
             let mut out = Vec::new();

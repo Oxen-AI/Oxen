@@ -74,13 +74,15 @@ pub trait BlockByteIo: Send + Sync + std::fmt::Debug + 'static {
         ))
     }
 
-    /// The store's current dictionary for new writes, if one has been published.
-    fn current_dictionary(&self) -> Result<Option<u128>, OxenError> {
+    /// The store's current dictionary for new writes of the given content class
+    /// (dictionaries are per class: content trained on one format is useless for
+    /// another). `None` when no dictionary has been published for the class.
+    fn current_dictionary(&self, _class: u8) -> Result<Option<u128>, OxenError> {
         Ok(None)
     }
 
-    /// Point new writes at `dict_hash` (already durably published).
-    fn set_current_dictionary(&self, _dict_hash: u128) -> Result<(), OxenError> {
+    /// Point new writes of `class` at `dict_hash` (already durably published).
+    fn set_current_dictionary(&self, _class: u8, _dict_hash: u128) -> Result<(), OxenError> {
         Err(OxenError::basic_str(
             "this block store does not support compression dictionaries",
         ))
@@ -214,8 +216,8 @@ impl BlockByteIo for LocalBlockIo {
         util::fs::read_bytes_from_path(self.dict_path(dict_hash))
     }
 
-    fn current_dictionary(&self) -> Result<Option<u128>, OxenError> {
-        let path = self.dicts_dir().join("current");
+    fn current_dictionary(&self, class: u8) -> Result<Option<u128>, OxenError> {
+        let path = self.dicts_dir().join(format!("current-{class}"));
         if !path.exists() {
             return Ok(None);
         }
@@ -225,8 +227,8 @@ impl BlockByteIo for LocalBlockIo {
         Ok(Some(hash))
     }
 
-    fn set_current_dictionary(&self, dict_hash: u128) -> Result<(), OxenError> {
-        AtomicFile::new(self.dicts_dir().join("current"))
+    fn set_current_dictionary(&self, class: u8, dict_hash: u128) -> Result<(), OxenError> {
+        AtomicFile::new(self.dicts_dir().join(format!("current-{class}")))
             .write(format!("{dict_hash:032x}").as_bytes())
     }
 }
