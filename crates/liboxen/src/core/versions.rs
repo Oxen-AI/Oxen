@@ -37,10 +37,10 @@ impl MinOxenVersion {
             // "0.25.0" in their .oxen/config.toml; the on-disk format is identical to LATEST.
             "0.25.0" => Ok(MinOxenVersion::LATEST),
             "0.36.0" => Ok(MinOxenVersion::LATEST),
-            // Repos holding block-v1 chunked versions carry "0.52.0" so binaries
-            // that predate chunked storage refuse to open them; the merkle tree
-            // format is identical to LATEST.
-            "0.52.0" => Ok(MinOxenVersion::LATEST),
+            // Repos holding block-v1 chunked versions carry "0.53.0" so binaries
+            // that predate chunked storage (0.52.0 and earlier) refuse to open
+            // them; the merkle tree format is identical to LATEST.
+            "0.53.0" => Ok(MinOxenVersion::LATEST),
             _ => Err(OxenError::invalid_version(s.as_ref())),
         }
     }

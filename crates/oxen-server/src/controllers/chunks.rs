@@ -254,7 +254,7 @@ mod tests {
 
         let config = std::fs::read_to_string(util::fs::config_filepath(&repo.path))?;
         assert!(
-            config.contains("min_version = \"0.52.0\""),
+            config.contains("min_version = \"0.53.0\""),
             "manifest was published without the block-v1 fence: {config}"
         );
 

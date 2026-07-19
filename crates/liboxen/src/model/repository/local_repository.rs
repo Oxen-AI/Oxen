@@ -700,11 +700,11 @@ mod tests {
     fn test_set_block_v1_content_format_raises_min_version_fence() -> Result<(), OxenError> {
         test::run_empty_local_repo_test(|mut repo| {
             repo.set_content_format(ContentFormat::BlockV1);
-            assert_eq!(repo.min_version.as_deref(), Some("0.52.0"));
+            assert_eq!(repo.min_version.as_deref(), Some("0.53.0"));
             repo.save()?;
 
             let config = RepositoryConfig::from_repo(&repo)?;
-            assert_eq!(config.min_version.as_deref(), Some("0.52.0"));
+            assert_eq!(config.min_version.as_deref(), Some("0.53.0"));
             Ok(())
         })
     }

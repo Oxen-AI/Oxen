@@ -398,7 +398,7 @@ mod tests {
             let config = std::fs::read_to_string(util::fs::config_filepath(&repo.path))
                 .map_err(OxenError::from)?;
             assert!(
-                config.contains("min_version = \"0.52.0\""),
+                config.contains("min_version = \"0.53.0\""),
                 "expected block-v1 fence in config: {config}"
             );
             let reopened = crate::model::LocalRepository::from_dir(&repo.path)?;
