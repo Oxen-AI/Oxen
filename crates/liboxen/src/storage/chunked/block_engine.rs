@@ -400,7 +400,7 @@ mod tests {
     }
 
     fn csv_policy() -> EncodePolicy {
-        encode_policy(&EntryDataType::Tabular, "csv")
+        encode_policy(None, &EntryDataType::Tabular, "csv")
     }
 
     fn ingest(engine: &BlockEngine, data: &[u8]) -> ChunkManifest {

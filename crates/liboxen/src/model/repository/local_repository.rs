@@ -878,7 +878,7 @@ mod tests {
         let custom = StorageConfig {
             kind: StorageKind::Local,
             versions_path: Some(PathBuf::from("/mnt/nfs/customer/.oxen/versions/files")),
-            content_format: Default::default(),
+            ..Default::default()
         };
         let repo = LocalRepository::new(
             &repo_path,

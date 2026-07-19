@@ -7,5 +7,5 @@ pub use local::LocalVersionStore;
 pub use s3::{S3Opts, S3VersionStore, verify_s3_bucket_reachable};
 pub use version_store::{
     BLOCK_V1_MIN_OXEN_VERSION, BoxedByteStream, ContentFormat, LocalFilePath, StorageConfig,
-    StorageKind, VersionLocation, VersionStore, create_version_store,
+    StorageKind, StorageProfileRule, VersionLocation, VersionStore, create_version_store,
 };

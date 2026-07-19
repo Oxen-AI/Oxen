@@ -1,9 +1,11 @@
 //! The single policy function: which files get chunked, and with which chunker,
 //! codec, and transform.
 //!
-//! Behavior is versioned, not ambient: repo config selects a stable *named* policy
-//! (v1 ships only `generic-fastcdc-v1`), and a new mapping ships as a new named
-//! policy ID — never a silent change to an existing one.
+//! Behavior is versioned, not ambient: an explicit [`StorageProfile`] mark (from
+//! the repo config's `[[storage.profiles]]` rules) selects a stable named
+//! pipeline, extension sniffing fills in the default, and any behavior change
+//! ships as a new profile name / registry ID — never a silent change to an
+//! existing one.
 
 use std::sync::LazyLock;
 
@@ -56,13 +58,69 @@ const COMPRESSED_CONTAINER_EXTENSIONS: &[&str] = &[
     "parquet", "arrow", "feather", "gz", "gzip", "zip", "zst", "bz2", "xz", "7z",
 ];
 
-/// Select the chunker, codec, and transform for a file — the one place the
-/// `(EntryDataType, extension)` → pipeline mapping lives (`generic-fastcdc-v1`).
+/// Extensions treated as line-delimited JSON: rows are records, and records that
+/// grow do so by appending to nested arrays (chat sessions, agent traces). These
+/// route to the structure-anchored trace chunker so dedup granularity follows the
+/// data's row/message structure instead of raw byte windows.
+const LINE_DELIMITED_JSON_EXTENSIONS: &[&str] = &["jsonl", "ndjson"];
+
+/// An explicit, user-set mark selecting a file's chunking + compression pipeline,
+/// overriding data-type/extension sniffing. Marks are attached per path (repo config
+/// `[[storage.profiles]]` rules; see `StorageConfig::profile_for_path`) and resolved
+/// at ingest.
 ///
-/// Text-like content (text; tabular in text encodings such as CSV/TSV/JSONL) tries
-/// zstd with raw fallback. Already-compressed media, binaries, and compressed
-/// containers (notably parquet, which is `Tabular` by data type) skip the attempt.
-pub fn encode_policy(data_type: &EntryDataType, extension: &str) -> EncodePolicy {
+/// Profile names are part of the repo-config contract: **append-only, never
+/// renamed**. A profile pins which pipeline a mark selects; behavior changes ship as
+/// a new profile name, never a silent remap of an existing one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageProfile {
+    /// Byte-oriented content-defined chunking (FastCDC) with sniffed codec — the
+    /// default pipeline, and the explicit opt-out from any smarter routing.
+    Generic,
+    /// Structure-anchored chunking for line-delimited JSON traces whose rows grow
+    /// by appending (chat sessions, agent traces). See `TraceJsonlChunker`.
+    TraceJsonl,
+}
+
+impl StorageProfile {
+    /// Parse a profile mark by name. `None` for unknown names — callers surface
+    /// that loudly (a typo'd mark must never silently fall back to sniffing).
+    pub fn from_name(name: &str) -> Option<StorageProfile> {
+        match name {
+            "generic" => Some(StorageProfile::Generic),
+            "trace-jsonl" => Some(StorageProfile::TraceJsonl),
+            _ => None,
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            StorageProfile::Generic => "generic",
+            StorageProfile::TraceJsonl => "trace-jsonl",
+        }
+    }
+
+    /// Every registered profile name, for error messages.
+    pub fn known_names() -> &'static [&'static str] {
+        &["generic", "trace-jsonl"]
+    }
+}
+
+/// Select the chunker, codec, and transform for a file — the one place the
+/// `(profile, EntryDataType, extension)` → pipeline mapping lives.
+///
+/// An explicit [`StorageProfile`] mark decides the chunker outright. Without one,
+/// the extension routes line-delimited JSON to the structure-anchored trace chunker
+/// and everything else to generic FastCDC. The codec is sniffed either way:
+/// text-like content (text; tabular in text encodings such as CSV/TSV/JSONL) tries
+/// zstd with raw fallback, while already-compressed media, binaries, and compressed
+/// containers (notably parquet, which is `Tabular` by data type) skip the attempt —
+/// the universal raw fallback makes the codec choice safe for any bytes.
+pub fn encode_policy(
+    profile: Option<StorageProfile>,
+    data_type: &EntryDataType,
+    extension: &str,
+) -> EncodePolicy {
     let extension = extension.to_lowercase();
     let compressed_container = COMPRESSED_CONTAINER_EXTENSIONS.contains(&extension.as_str());
 
@@ -71,8 +129,17 @@ pub fn encode_policy(data_type: &EntryDataType, extension: &str) -> EncodePolicy
         _ => CodecId::RAW,
     };
 
+    let chunker = match profile {
+        Some(StorageProfile::Generic) => ChunkerId::GENERIC_FASTCDC_V1,
+        Some(StorageProfile::TraceJsonl) => ChunkerId::TRACE_JSONL_V1,
+        None if LINE_DELIMITED_JSON_EXTENSIONS.contains(&extension.as_str()) => {
+            ChunkerId::TRACE_JSONL_V1
+        }
+        None => ChunkerId::GENERIC_FASTCDC_V1,
+    };
+
     EncodePolicy {
-        chunker: ChunkerId::GENERIC_FASTCDC_V1,
+        chunker,
         codec,
         transform: TransformId::IDENTITY,
     }
@@ -104,7 +171,7 @@ mod tests {
     /// already-compressed container by extension) and media/binary skip zstd.
     #[test]
     fn codec_policy_by_type_and_extension() {
-        let policy = |dt: &EntryDataType, ext: &str| encode_policy(dt, ext).codec;
+        let policy = |dt: &EntryDataType, ext: &str| encode_policy(None, dt, ext).codec;
 
         assert_eq!(policy(&EntryDataType::Tabular, "csv"), CodecId::ZSTD);
         assert_eq!(policy(&EntryDataType::Tabular, "tsv"), CodecId::ZSTD);
@@ -124,8 +191,80 @@ mod tests {
     /// Every policy result uses registered IDs and the identity transform in v1.
     #[test]
     fn policy_pins_chunker_and_transform() {
-        let policy = encode_policy(&EntryDataType::Tabular, "csv");
+        let policy = encode_policy(None, &EntryDataType::Tabular, "csv");
         assert_eq!(policy.chunker, ChunkerId::GENERIC_FASTCDC_V1);
         assert_eq!(policy.transform, TransformId::IDENTITY);
+    }
+
+    /// An explicit storage-profile mark decides the chunker outright, overriding
+    /// extension sniffing in both directions.
+    #[test]
+    fn explicit_profile_overrides_sniffing() {
+        // Mark a .txt file as a trace: trace chunker despite the extension.
+        let marked_trace = encode_policy(
+            Some(StorageProfile::TraceJsonl),
+            &EntryDataType::Text,
+            "txt",
+        );
+        assert_eq!(marked_trace.chunker, ChunkerId::TRACE_JSONL_V1);
+
+        // Mark a .jsonl file generic: opts out of the trace chunker.
+        let marked_generic = encode_policy(
+            Some(StorageProfile::Generic),
+            &EntryDataType::Tabular,
+            "jsonl",
+        );
+        assert_eq!(marked_generic.chunker, ChunkerId::GENERIC_FASTCDC_V1);
+    }
+
+    /// Profile names are a stable, append-only contract; unknown names parse to
+    /// `None` so callers can fail loudly.
+    #[test]
+    fn profile_names_round_trip() {
+        for name in StorageProfile::known_names() {
+            let profile = StorageProfile::from_name(name).expect("known name parses");
+            assert_eq!(profile.name(), *name);
+        }
+        assert_eq!(StorageProfile::from_name("trace-parquet"), None);
+        assert_eq!(StorageProfile::from_name(""), None);
+    }
+
+    /// Line-delimited JSON routes to the structure-anchored trace chunker (any data
+    /// type — the chunker is safe on arbitrary bytes); everything else stays on
+    /// generic FastCDC.
+    #[test]
+    fn line_delimited_json_uses_trace_chunker() {
+        let chunker = |dt: &EntryDataType, ext: &str| encode_policy(None, dt, ext).chunker;
+
+        assert_eq!(
+            chunker(&EntryDataType::Tabular, "jsonl"),
+            ChunkerId::TRACE_JSONL_V1
+        );
+        assert_eq!(
+            chunker(&EntryDataType::Tabular, "JSONL"),
+            ChunkerId::TRACE_JSONL_V1
+        );
+        assert_eq!(
+            chunker(&EntryDataType::Text, "ndjson"),
+            ChunkerId::TRACE_JSONL_V1
+        );
+        assert_eq!(
+            chunker(&EntryDataType::Binary, "jsonl"),
+            ChunkerId::TRACE_JSONL_V1
+        );
+
+        // Whole-file JSON is not line-delimited; CSV rows are tiny and stay generic.
+        assert_eq!(
+            chunker(&EntryDataType::Text, "json"),
+            ChunkerId::GENERIC_FASTCDC_V1
+        );
+        assert_eq!(
+            chunker(&EntryDataType::Tabular, "csv"),
+            ChunkerId::GENERIC_FASTCDC_V1
+        );
+        assert_eq!(
+            chunker(&EntryDataType::Tabular, "parquet"),
+            ChunkerId::GENERIC_FASTCDC_V1
+        );
     }
 }

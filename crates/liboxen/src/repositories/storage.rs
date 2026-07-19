@@ -9,7 +9,7 @@
 //! each version has at least one complete representation. Commits, merkle tree
 //! nodes, and hashes are never touched — the format is purely a storage concern.
 //!
-//! Design reference: `docs/block_level_dedup_plan.md` §9. This is the local,
+//! Design reference: `docs/block_level_dedup/plan.md` §9. This is the local,
 //! single-machine subset (no maintenance lease or reachable-set inventory yet:
 //! every stored version migrates, reachable or not — extra chunks are safe and
 //! reclaimable by future GC).
@@ -119,7 +119,7 @@ pub async fn migrate_to_block_v1(repo: &mut LocalRepository) -> Result<Migration
             store.get_version_stream(&hash).await?,
         ));
         chunked
-            .store_version_chunked(&hash, &EntryDataType::Text, "", reader)
+            .store_version_chunked(&hash, None, &EntryDataType::Text, "", reader)
             .await?;
         // The manifest is durable and verified; the blob is now redundant.
         chunked.delete_whole_file_blob(&hash).await?;

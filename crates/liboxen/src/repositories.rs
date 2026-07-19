@@ -243,6 +243,7 @@ pub async fn create(
                 kind,
                 versions_path: None,
                 content_format: Default::default(),
+                profiles: Vec::new(),
             }),
         ..Default::default()
     };
@@ -359,6 +360,7 @@ mod tests {
                     storage: Some(StorageConfig {
                         kind: StorageKind::Local,
                         versions_path: Some(custom_root.clone()),
+                        ..Default::default()
                     }),
                     ..Default::default()
                 },

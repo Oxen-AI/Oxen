@@ -125,7 +125,7 @@ mod tests {
         }
         data.truncate(len);
 
-        let policy = encode_policy(&EntryDataType::Tabular, "csv");
+        let policy = encode_policy(None, &EntryDataType::Tabular, "csv");
         let manifest = engine
             .ingest(&mut &data[..], &policy)
             .expect("ingest test data");

@@ -12,7 +12,7 @@ use crate::model::{EntryDataType, MerkleHash};
 use crate::storage::chunked::manifest::ChunkManifest;
 use crate::storage::chunked::{
     BlockEngine, ChunkedVersionStore, ReconstructReader, SealedBlock, SeekableVersionReader,
-    encode_policy,
+    StorageProfile, encode_policy,
 };
 use crate::storage::version_store::{
     BoxedByteStream, LocalFilePath, VersionLocation, VersionStore,
@@ -829,6 +829,7 @@ impl ChunkedVersionStore for LocalVersionStore {
     async fn store_version_chunked(
         &self,
         hash: &str,
+        profile: Option<StorageProfile>,
         data_type: &EntryDataType,
         extension: &str,
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
@@ -836,7 +837,7 @@ impl ChunkedVersionStore for LocalVersionStore {
         let manifest_path = self.manifest_path(hash);
         let engine = self.engine()?;
         let expected_hash: MerkleHash = hash.parse()?;
-        let policy = encode_policy(data_type, extension);
+        let policy = encode_policy(profile, data_type, extension);
         // The bridge must be constructed on the async runtime; its reads then run
         // on the blocking pool inside the spawn_blocking below.
         let mut sync_reader = SyncIoBridge::new(reader);
@@ -1395,6 +1396,7 @@ mod tests {
                 .expect("local store supports chunked versions")
                 .store_version_chunked(
                     &hash,
+                    None,
                     &EntryDataType::Tabular,
                     "csv",
                     Box::new(Cursor::new(data.to_vec())),
@@ -1478,6 +1480,7 @@ mod tests {
                 .expect("local store supports chunked versions")
                 .store_version_chunked(
                     &wrong_hash,
+                    None,
                     &EntryDataType::Tabular,
                     "csv",
                     Box::new(Cursor::new(data.clone())),

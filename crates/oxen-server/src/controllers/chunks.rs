@@ -215,6 +215,7 @@ mod tests {
         let manifest = source_chunked
             .store_version_chunked(
                 &hash,
+                None,
                 &EntryDataType::Text,
                 "txt",
                 Box::new(Cursor::new(data)),

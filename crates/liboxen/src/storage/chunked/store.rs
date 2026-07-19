@@ -21,6 +21,7 @@ use crate::model::EntryDataType;
 
 use super::block::SealedBlock;
 use super::manifest::ChunkManifest;
+use super::policy::StorageProfile;
 use super::seekable::SeekableVersionReader;
 
 /// Explicit chunked-version operations for stores that support block-backed storage.
@@ -40,11 +41,13 @@ pub trait ChunkedVersionStore: Send + Sync {
     /// `hash` is already published, the reader is not consumed and the existing
     /// manifest is returned — a published manifest is never overwritten.
     ///
-    /// `data_type` and `extension` drive the codec policy (e.g. parquet skips the
-    /// zstd attempt).
+    /// `profile` is the file's explicit storage-profile mark, if any; with
+    /// `data_type` and `extension` it drives the encode policy (chunker selection,
+    /// and e.g. parquet skipping the zstd attempt).
     async fn store_version_chunked(
         &self,
         hash: &str,
+        profile: Option<StorageProfile>,
         data_type: &EntryDataType,
         extension: &str,
         reader: Box<dyn AsyncRead + Send + Unpin>,

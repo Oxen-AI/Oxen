@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use super::chunker::{Chunker, FastCdc2020Chunker};
 use super::compressor::{Compressor, RawCodec, ZstdCodec};
 use super::error::ChunkedError;
+use super::trace_chunker::TraceJsonlChunker;
 
 /// Identifies the exact chunk-boundary function used to produce a manifest.
 ///
@@ -33,6 +34,11 @@ impl ChunkerId {
     /// This freezes the *boundary function*, not the crate: golden boundary fixtures
     /// pin it, and a `fastcdc` upgrade that shifts boundaries must ship as a new ID.
     pub const GENERIC_FASTCDC_V1: ChunkerId = ChunkerId(1);
+
+    /// Structure-anchored chunking for line-delimited JSON traces: cuts only at row
+    /// boundaries and depth-2 array element separators, with prefix-stable intra-row
+    /// cuts. Built for chat/agent-trace tables whose rows grow by appending.
+    pub const TRACE_JSONL_V1: ChunkerId = ChunkerId(2);
 
     // 0 is permanently reserved as "never a valid chunker" so zeroed data can't
     // masquerade as a manifest.
@@ -88,8 +94,10 @@ impl TransformId {
 /// Look up the chunker for `id`.
 pub fn chunker(id: ChunkerId) -> Result<&'static dyn Chunker, ChunkedError> {
     static FASTCDC: FastCdc2020Chunker = FastCdc2020Chunker;
+    static TRACE_JSONL: TraceJsonlChunker = TraceJsonlChunker;
     match id {
         ChunkerId::GENERIC_FASTCDC_V1 => Ok(&FASTCDC),
+        ChunkerId::TRACE_JSONL_V1 => Ok(&TRACE_JSONL),
         ChunkerId(other) => Err(ChunkedError::UnknownChunkerId(other)),
     }
 }
@@ -117,6 +125,10 @@ mod tests {
             chunker(ChunkerId::GENERIC_FASTCDC_V1)?.id(),
             ChunkerId::GENERIC_FASTCDC_V1
         );
+        assert_eq!(
+            chunker(ChunkerId::TRACE_JSONL_V1)?.id(),
+            ChunkerId::TRACE_JSONL_V1
+        );
         assert_eq!(codec(CodecId::RAW)?.id(), CodecId::RAW);
         assert_eq!(codec(CodecId::ZSTD)?.id(), CodecId::ZSTD);
 
@@ -143,6 +155,7 @@ mod tests {
     #[test]
     fn ids_are_stable() {
         assert_eq!(ChunkerId::GENERIC_FASTCDC_V1.as_u8(), 1);
+        assert_eq!(ChunkerId::TRACE_JSONL_V1.as_u8(), 2);
         assert_eq!(CodecId::RAW.as_u8(), 0);
         assert_eq!(CodecId::ZSTD.as_u8(), 1);
         assert_eq!(TransformId::IDENTITY.as_u8(), 0);

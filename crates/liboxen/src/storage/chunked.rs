@@ -1,7 +1,7 @@
 //! Block-level deduplication: content-defined chunking, per-chunk compression,
 //! and block-packed storage for large version files.
 //!
-//! Design reference: `docs/block_level_dedup_plan.md`. The vocabulary is fixed there:
+//! Design reference: `docs/block_level_dedup/plan.md`. The vocabulary is fixed there:
 //! a **chunk** is a content-defined slice of a file (~64 KiB target, the unit of
 //! deduplication); a **block** is an immutable content-addressed pack of chunk payloads
 //! (≤64 MiB, the unit of storage and transfer); a **manifest** is the ordered
@@ -23,6 +23,7 @@ pub mod policy;
 pub mod registry;
 pub mod seekable;
 pub mod store;
+pub mod trace_chunker;
 
 pub use block::{BlockChunk, BlockWriter, SealedBlock, parse_block_footer, verify_block};
 pub use block_engine::{BlockEngine, ReconstructReader};
@@ -32,7 +33,7 @@ pub use chunker::{Chunker, RawChunk};
 pub use compressor::{Compressor, EncodedChunk, decode_chunk, encode_chunk};
 pub use error::ChunkedError;
 pub use manifest::{ChunkEntry, ChunkManifest};
-pub use policy::{EncodePolicy, dedup_min_file_size, encode_policy, should_chunk};
+pub use policy::{EncodePolicy, StorageProfile, dedup_min_file_size, encode_policy, should_chunk};
 pub use registry::{ChunkerId, CodecId, TransformId, chunker, codec};
 pub use seekable::SeekableVersionReader;
 pub use store::ChunkedVersionStore;

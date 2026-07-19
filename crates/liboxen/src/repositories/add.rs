@@ -279,6 +279,94 @@ A: Oxen.ai
         .await
     }
 
+    /// Storage-profile routing, end to end: `.jsonl` files chunk with the trace
+    /// chunker by extension, an explicit `[[storage.profiles]]` mark in the repo
+    /// config routes any file to the marked pipeline (and can opt a `.jsonl` file
+    /// back out), and the chosen chunker is recorded in the published manifest.
+    #[tokio::test]
+    async fn test_add_block_v1_storage_profile_routing() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|mut repo| async move {
+            use crate::config::RepositoryConfig;
+            use crate::storage::chunked::dedup_min_file_size;
+            use crate::storage::chunked::registry::ChunkerId;
+            use crate::storage::{ContentFormat, StorageProfileRule};
+
+            repo.set_content_format(ContentFormat::BlockV1);
+            repo.save()?;
+
+            // Mark *.log files as traces and opt raw/*.jsonl back to generic.
+            let mut config = RepositoryConfig::from_repo(&repo)?;
+            let storage = config.storage.get_or_insert_with(Default::default);
+            storage.profiles = vec![
+                StorageProfileRule {
+                    pattern: "*.log".to_string(),
+                    profile: "trace-jsonl".to_string(),
+                },
+                StorageProfileRule {
+                    pattern: "raw/*.jsonl".to_string(),
+                    profile: "generic".to_string(),
+                },
+            ];
+            config.save(util::fs::config_filepath(&repo.path))?;
+            let repo = crate::model::LocalRepository::from_dir(&repo.path)?;
+
+            // Distinct content per file: identical bytes would share one version
+            // hash (and thus one manifest), hiding the per-file routing.
+            let floor = dedup_min_file_size() as usize;
+            let body = |tag: &str| {
+                let mut jsonl = String::new();
+                let mut row = 0u64;
+                while jsonl.len() < floor * 2 {
+                    jsonl.push_str(&format!(
+                        "{{\"uuid\":\"{tag}-{row}\",\"messages\":[{{\"role\":\"user\",\"content\":\"turn {row}\"}}],\"source\":\"web\"}}\n"
+                    ));
+                    row += 1;
+                }
+                jsonl
+            };
+            util::fs::write_to_path(repo.path.join("chats.jsonl"), body("chat"))?;
+            util::fs::write_to_path(repo.path.join("trace.log"), body("log"))?;
+            util::fs::create_dir_all(repo.path.join("raw"))?;
+            util::fs::write_to_path(repo.path.join("raw").join("dump.jsonl"), body("raw"))?;
+
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "profile routing")?;
+
+            let store = repo.version_store();
+            let chunked = store.chunked().expect("block-v1 store supports chunks");
+            let manifest_chunker = |name: &'static str| {
+                let repo = &repo;
+                async move {
+                    let hash = util::hasher::hash_file_contents(&repo.path.join(name))?;
+                    let manifest = chunked
+                        .get_manifest(&hash)
+                        .await?
+                        .ok_or_else(|| OxenError::basic_str(format!("{name} not chunked")))?;
+                    Ok::<ChunkerId, OxenError>(manifest.chunker_id)
+                }
+            };
+
+            // Extension route: .jsonl → trace chunker.
+            assert_eq!(
+                manifest_chunker("chats.jsonl").await?,
+                ChunkerId::TRACE_JSONL_V1
+            );
+            // Explicit mark overrides the .log extension.
+            assert_eq!(
+                manifest_chunker("trace.log").await?,
+                ChunkerId::TRACE_JSONL_V1
+            );
+            // Explicit generic mark opts a .jsonl file back out.
+            assert_eq!(
+                manifest_chunker("raw/dump.jsonl").await?,
+                ChunkerId::GENERIC_FASTCDC_V1
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
     /// Re-adding an unchanged file whose version data went missing (e.g. a blob
     /// removed by a corruption clean) restores the bytes to the version store
     /// instead of silently no-oping.

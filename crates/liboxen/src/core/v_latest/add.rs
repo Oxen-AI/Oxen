@@ -671,9 +671,14 @@ async fn store_file_version(
         && should_chunk(file_node.data_type(), size);
     match version_store.chunked() {
         Some(chunked) if use_blocks => {
+            // An explicit per-path storage-profile mark from the repo config
+            // overrides extension sniffing in the encode policy.
+            let relative_path = util::fs::path_relative_to_dir(path, &repo.path)?;
+            let profile = repo.storage_config().profile_for_path(&relative_path)?;
             chunked
                 .store_version_chunked(
                     &hash.to_string(),
+                    profile,
                     file_node.data_type(),
                     file_node.extension(),
                     Box::new(reader),

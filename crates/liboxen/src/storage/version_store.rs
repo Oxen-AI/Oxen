@@ -16,6 +16,7 @@ use crate::constants;
 use crate::constants::MAX_CONCURRENT_VERSION_PROBES;
 use crate::error::OxenError;
 use crate::storage::chunked::ChunkedVersionStore;
+use crate::storage::chunked::policy::StorageProfile;
 use crate::storage::{LocalVersionStore, S3Opts, S3VersionStore};
 use crate::util;
 use crate::view::versions::CleanCorruptedVersionsResult;
@@ -147,7 +148,7 @@ impl std::str::FromStr for StorageKind {
 /// The repository's content storage format — a repository format feature, not a
 /// client preference. Serializes as `"legacy"` / `"block-v1"`.
 ///
-/// `BlockV1` turns on block-level dedup (see `docs/block_level_dedup_plan.md`):
+/// `BlockV1` turns on block-level dedup (see `docs/block_level_dedup/plan.md`):
 /// eligible files (≥ the `should_chunk` floor) are stored as manifests + blocks
 /// instead of whole-file blobs. Reads are transparent either way. Merkle hashes
 /// and commit IDs are never affected by the format.
@@ -165,6 +166,14 @@ impl ContentFormat {
     }
 }
 
+/// One per-path storage-profile mark: files matching `pattern` (a glob over the
+/// repo-relative path, `/`-separated) ingest with the named [`StorageProfile`].
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StorageProfileRule {
+    pub pattern: String,
+    pub profile: String,
+}
+
 /// Configuration for version storage backend.
 ///
 /// Persisted in each repo's `config.toml` under `[storage]`. On-disk shape:
@@ -174,6 +183,10 @@ impl ContentFormat {
 /// kind = "local"
 /// versions_path = "/mnt/nfs/..."      # only when set
 /// content_format = "block-v1"         # only when set; "legacy" if absent
+///
+/// [[storage.profiles]]                # only when set: per-path pipeline marks
+/// pattern = "traces/**/*.jsonl"
+/// profile = "trace-jsonl"
 /// ```
 ///
 /// A custom [`Deserialize`] impl also accepts the pre-rename layout
@@ -193,6 +206,40 @@ pub struct StorageConfig {
     /// so pre-dedup configs and new configs stay byte-identical.
     #[serde(skip_serializing_if = "ContentFormat::is_legacy")]
     pub content_format: ContentFormat,
+    /// Per-path storage-profile marks, first match wins. Empty (and omitted from
+    /// the persisted config) unless the user marks paths.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<StorageProfileRule>,
+}
+
+impl StorageConfig {
+    /// Resolve the storage-profile mark for a repo-relative path: the first rule
+    /// whose glob matches wins; no match means no mark (the encode policy sniffs).
+    ///
+    /// A rule naming an unknown profile is an error, not a silent fallback — a
+    /// typo'd mark changing how data is stored must be loud.
+    pub fn profile_for_path(&self, path: &Path) -> Result<Option<StorageProfile>, OxenError> {
+        if self.profiles.is_empty() {
+            return Ok(None);
+        }
+        // Glob patterns are `/`-separated regardless of platform.
+        let path = path.to_string_lossy().replace('\\', "/");
+        for rule in &self.profiles {
+            if glob_match::glob_match(&rule.pattern, &path) {
+                return StorageProfile::from_name(&rule.profile)
+                    .map(Some)
+                    .ok_or_else(|| {
+                        OxenError::basic_str(format!(
+                            "unknown storage profile '{}' for pattern '{}' (known profiles: {})",
+                            rule.profile,
+                            rule.pattern,
+                            StorageProfile::known_names().join(", ")
+                        ))
+                    });
+            }
+        }
+        Ok(None)
+    }
 }
 
 impl<'de> Deserialize<'de> for StorageConfig {
@@ -214,6 +261,8 @@ impl<'de> Deserialize<'de> for StorageConfig {
             versions_path: Option<PathBuf>,
             #[serde(default)]
             content_format: ContentFormat,
+            #[serde(default)]
+            profiles: Vec<StorageProfileRule>,
             // Pre-rename location; consumed on load for backwards compatibility,
             // never re-emitted.
             #[serde(default)]
@@ -228,6 +277,7 @@ impl<'de> Deserialize<'de> for StorageConfig {
             kind: raw.kind,
             versions_path,
             content_format: raw.content_format,
+            profiles: raw.profiles,
         })
     }
 }
@@ -593,8 +643,7 @@ mod tests {
     fn s3_config() -> StorageConfig {
         StorageConfig {
             kind: StorageKind::S3,
-            versions_path: None,
-            content_format: Default::default(),
+            ..Default::default()
         }
     }
 
@@ -621,5 +670,75 @@ mod tests {
         let store = create_version_store(&repo_dir, &s3_config(), Some(&opts))
             .expect("S3 store should construct when server opts are present");
         assert_eq!(store.storage_kind(), StorageKind::S3);
+    }
+
+    /// Per-path storage-profile marks: first matching glob wins, non-matches fall
+    /// through to no mark, and an unknown profile name is a loud error rather than
+    /// a silent fallback.
+    #[test]
+    fn profile_for_path_resolves_marks() -> Result<(), OxenError> {
+        let config = StorageConfig {
+            profiles: vec![
+                StorageProfileRule {
+                    pattern: "traces/**/*.jsonl".to_string(),
+                    profile: "trace-jsonl".to_string(),
+                },
+                StorageProfileRule {
+                    pattern: "traces/raw/**".to_string(),
+                    profile: "generic".to_string(),
+                },
+            ],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            config.profile_for_path(Path::new("traces/prod/day1.jsonl"))?,
+            Some(StorageProfile::TraceJsonl)
+        );
+        // First match wins even though the second rule also matches.
+        assert_eq!(
+            config.profile_for_path(Path::new("traces/raw/day1.jsonl"))?,
+            Some(StorageProfile::TraceJsonl)
+        );
+        assert_eq!(
+            config.profile_for_path(Path::new("traces/raw/dump.bin"))?,
+            Some(StorageProfile::Generic)
+        );
+        assert_eq!(config.profile_for_path(Path::new("images/cat.png"))?, None);
+
+        let typo = StorageConfig {
+            profiles: vec![StorageProfileRule {
+                pattern: "**/*.jsonl".to_string(),
+                profile: "trace-jsnol".to_string(),
+            }],
+            ..Default::default()
+        };
+        let err = typo
+            .profile_for_path(Path::new("a.jsonl"))
+            .expect_err("typo'd profile must error");
+        assert!(err.to_string().contains("trace-jsnol"));
+        Ok(())
+    }
+
+    /// Profile rules round-trip through the persisted `[storage]` TOML, and configs
+    /// without rules keep their exact pre-profile shape.
+    #[test]
+    fn storage_config_profiles_round_trip() {
+        let config = StorageConfig {
+            profiles: vec![StorageProfileRule {
+                pattern: "*.jsonl".to_string(),
+                profile: "trace-jsonl".to_string(),
+            }],
+            ..Default::default()
+        };
+        let toml = toml::to_string(&config).expect("serialize config");
+        assert!(toml.contains("[[profiles]]"));
+        let parsed: StorageConfig = toml::from_str(&toml).expect("parse config");
+        assert_eq!(parsed.profiles, config.profiles);
+
+        let bare: StorageConfig = toml::from_str("kind = \"local\"").expect("parse bare");
+        assert!(bare.profiles.is_empty());
+        let bare_toml = toml::to_string(&bare).expect("serialize bare");
+        assert!(!bare_toml.contains("profiles"));
     }
 }

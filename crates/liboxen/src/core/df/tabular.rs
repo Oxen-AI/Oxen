@@ -1882,6 +1882,7 @@ mod tests {
         chunked
             .store_version_chunked(
                 &parquet_hash,
+                None,
                 &EntryDataType::Tabular,
                 "parquet",
                 Box::new(Cursor::new(parquet_bytes)),
@@ -1901,6 +1902,7 @@ mod tests {
         chunked
             .store_version_chunked(
                 &csv_hash,
+                None,
                 &EntryDataType::Tabular,
                 "csv",
                 Box::new(Cursor::new(csv.into_bytes())),
