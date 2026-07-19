@@ -165,16 +165,26 @@ impl BlockEngine {
             // Near-duplicate delta: a prior chunk with the same prefix sketch is a
             // base candidate; keep the delta only when it beats the plain form.
             if policy.codec == CodecId::ZSTD && raw.len() >= DELTA_MIN_RAW {
-                // Prefix and suffix sketches: edits at a chunk's head shift its
-                // prefix but usually keep its tail, and vice versa.
+                // Prefix, midpoint, and suffix sketches: edits at a chunk's head
+                // shift its prefix but usually keep its tail and vice versa, and
+                // rows that share a large verbatim middle (the tools+system block
+                // of request logs) match at the midpoint when both ends differ.
                 let prefix = xxhash_rust::xxh3::xxh3_64(&raw[..SKETCH_PREFIX.min(raw.len())]);
+                let mid_at = (raw.len() / 2).saturating_sub(SKETCH_PREFIX / 2);
+                let middle = xxhash_rust::xxh3::xxh3_64(
+                    &raw[mid_at..(mid_at + SKETCH_PREFIX).min(raw.len())],
+                );
                 let suffix =
                     xxhash_rust::xxh3::xxh3_64(&raw[raw.len().saturating_sub(SKETCH_PREFIX)..]);
                 sketches.push((prefix, chunk_hash));
-                if suffix != prefix {
+                if middle != prefix {
+                    sketches.push((middle, chunk_hash));
+                }
+                if suffix != prefix && suffix != middle {
                     sketches.push((suffix, chunk_hash));
                 }
-                if let Some(delta) = engine.try_delta_encode(&[prefix, suffix], chunk_hash, raw)?
+                if let Some(delta) =
+                    engine.try_delta_encode(&[prefix, middle, suffix], chunk_hash, raw)?
                     && delta.data.len() < encoded.data.len()
                 {
                     encoded = delta;
@@ -290,7 +300,7 @@ impl BlockEngine {
         raw: &[u8],
     ) -> Result<Option<EncodedChunk>, OxenError> {
         let mut best: Option<EncodedChunk> = None;
-        let mut tried = [0u128; 2];
+        let mut tried = [0u128; 3];
         let mut tried_count = 0usize;
         for &sketch in sketches {
             let Some(candidate) = self.index.sketch_candidate(sketch)? else {
