@@ -179,8 +179,25 @@ impl BlockEngine {
                 }
             }
             head.truncate(filled);
-            if sniff_long_rows(&head) {
+            let long_rows = sniff_long_rows(&head);
+            if long_rows {
                 dict_class |= 0x10;
+            }
+            // Append-lineage routing: successive versions whose first bytes are
+            // unchanged are growing by appends — rows never mutate, so byte-window
+            // FastCDC beats row-isolating structural chunks there (fewer, larger,
+            // better-compressing chunks). Switching chunkers costs one full
+            // re-chunk (no dedup against the prior representation), so the
+            // threshold is deliberately high: only a long same-head streak — the
+            // signature of a many-version append-only log — pays for the switch,
+            // while short-lived streaks in mutating lineages (whose edits change
+            // the head sooner or later) never trigger. Advisory store state: the
+            // resolved delegate is what the manifest records, so reconstruction
+            // is unaffected.
+            const APPEND_STREAK_SWITCH: u32 = 8;
+            let head_key = xxhash_rust::xxh3::xxh3_64(&head[..4096.min(head.len())]);
+            let append_streak = self.index.observe_lineage_head(head_key)?;
+            if long_rows && append_streak < APPEND_STREAK_SWITCH {
                 ChunkerId::TRACE_JSONL_V1
             } else {
                 ChunkerId::GENERIC_FASTCDC_V1

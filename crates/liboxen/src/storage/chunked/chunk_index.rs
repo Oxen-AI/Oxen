@@ -35,7 +35,12 @@ const SKETCHES_DB_NAME: &str = "sketches";
 /// dictionary base for delta-compressing successor manifests at rest. Advisory:
 /// losing it only costs future manifest-delta hits.
 const MANIFEST_BASES_DB_NAME: &str = "manifest_bases";
-const MAX_DBS: u32 = 3;
+/// Append-lineage heads: xxh3-64 of a file's first bytes maps to how many times
+/// a version with that exact head has been ingested. Successive versions with
+/// an unchanged head are growing by appends, which routes the auto chunker.
+/// Advisory: losing it only costs a routing hint.
+const LINEAGE_HEADS_DB_NAME: &str = "lineage_heads";
+const MAX_DBS: u32 = 4;
 /// Sparse upper bound on the mapped size. Sized from the math (~53 B/entry ⇒
 /// ~8.5 GB of entries for a 10 TB repo at 64 KiB average chunks), with headroom for
 /// LMDB page overhead — not copied from the merkle store's 256 GiB.
@@ -102,6 +107,7 @@ pub struct ChunkIndex {
     db: LmdbDb,
     sketches: LmdbDb,
     manifest_bases: LmdbDb,
+    lineage_heads: LmdbDb,
 }
 
 impl std::fmt::Debug for ChunkIndex {
@@ -126,11 +132,30 @@ impl ChunkIndex {
         let db = open_db(&env, CHUNKS_DB_NAME)?;
         let sketches = open_db(&env, SKETCHES_DB_NAME)?;
         let manifest_bases = open_db(&env, MANIFEST_BASES_DB_NAME)?;
+        let lineage_heads = open_db(&env, LINEAGE_HEADS_DB_NAME)?;
         Ok(Self {
             env,
             db,
             sketches,
             manifest_bases,
+            lineage_heads,
+        })
+    }
+
+    /// Record one observation of a file head and return how many times this
+    /// exact head has now been seen (including this observation). Successive
+    /// observations of one head mean successive versions growing by appends.
+    pub fn observe_lineage_head(&self, head_hash: u64) -> Result<u32, OxenError> {
+        let heads = &self.lineage_heads;
+        self.write(|_db, txn| {
+            let count = heads
+                .get(txn, &head_hash.to_le_bytes())?
+                .and_then(|bytes| <[u8; 4]>::try_from(bytes.as_ref()).ok())
+                .map(u32::from_le_bytes)
+                .unwrap_or(0)
+                .saturating_add(1);
+            heads.put(txn, &head_hash.to_le_bytes(), &count.to_le_bytes())?;
+            Ok(count)
         })
     }
 
@@ -282,7 +307,12 @@ impl ChunkIndex {
         Ok(compact_lmdb_env_in_place(
             &self.env,
             &Self::env_config(),
-            &[CHUNKS_DB_NAME, SKETCHES_DB_NAME, MANIFEST_BASES_DB_NAME],
+            &[
+                CHUNKS_DB_NAME,
+                SKETCHES_DB_NAME,
+                MANIFEST_BASES_DB_NAME,
+                LINEAGE_HEADS_DB_NAME,
+            ],
         )?)
     }
 
