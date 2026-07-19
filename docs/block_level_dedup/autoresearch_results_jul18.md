@@ -50,6 +50,16 @@ at 1,009 MB)**, byte-verified at all 80 commits with 277 MB peak memory. The
 stored-per-logical ratios hold across all four corpora (100 MB → 6.75 GB),
 which is the basis for the report's clearly-labeled year-scale projection.
 
+Running both chunker routes on the large corpora exposed a routing finding:
+the row-size sniff routes RL rollout rows (~14 KB) structurally, but rollouts
+are append-only — rows never mutate — so byte-window FastCDC wins there
+(36.8 MB vs 52.4 MB) while the 60-day mutating-session corpus shows the
+mirror image (structural 30.0 MB vs generic 68.0 MB). Row size predicts
+"long records", not "records that mutate". Mitigation today: a per-path
+`generic` profile mark. Roadmap: an append-detection signal in the auto
+sniff (e.g., is the head of the file byte-identical to the previous version
+of the same lineage — knowable at ingest via the manifest lineage base).
+
 On the prompt-cache corpus (177.8 MB logical), the session-3 experiments took
 the same architecture from 16.02 MB to **8.40 MB (ratio 0.0473, −47.6%)** —
 storing 6 commits' full history of 178 MB of agent-trace data in 8.4 MB,
