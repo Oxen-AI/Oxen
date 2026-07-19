@@ -1,7 +1,7 @@
 # Block-Level Dedup — Implementation Quiz (Questions)
 
 Instructions for the quizzing agent: ask these one at a time, in order or
-sampled. The grading key is in `block_level_dedup_quiz_answers.md` — each
+sampled. The grading key is in `quiz_answers.md` — each
 answer there lists the **required points** (must be mentioned to count as
 correct) and **bonus points** (signs of deeper understanding). Encourage
 answers in the quiz-taker's own words; exact file names matter less than the

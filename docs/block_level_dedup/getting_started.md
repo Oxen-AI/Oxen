@@ -1,10 +1,11 @@
 # Block-Level Deduplication — Getting Started
 
-This is the practical companion to [`block_level_dedup_plan.md`](./block_level_dedup_plan.md)
+This is the practical companion to [`plan.md`](./plan.md)
 (the design reference). It covers what is implemented today on the
 `block-level-dedup` branch, how to try it, and how migration of existing
 repositories works — both what you can do now and what the finished migration
-tooling will look like.
+tooling will look like. For running the test suite and manual verification
+walkthroughs, see [`testing.md`](./testing.md).
 
 ## What it is, in three sentences
 
@@ -34,6 +35,7 @@ transparently.
 | Pull of chunked-on-server versions | ✅ correct via the server's transparent reads (whole-file on the wire); chunk-level pull dedup is planned |
 | S3 backend parity (plan Phase 4) | ✅ implemented — blocks and manifests live in S3, the chunk index stays on the server's local disk; same transparent reads and wire endpoints as local |
 | `oxen storage status` / `oxen storage migrate --to block-v1\|legacy` | ✅ implemented (local, resumable; converts every stored version) |
+| Per-file storage profiles: `[[storage.profiles]]` marks + `trace-jsonl` structure-anchored chunker for agent-trace/chat JSONL | ✅ implemented — see [`trace_compression.md`](./trace_compression.md) |
 | Maintenance lease, reachable-set inventory, GC, fsck (plan §9–11) | ⬜ not yet — reverse migration leaves blocks on disk until GC ships |
 
 **In short: block-v1 is an experimental format with a working local + push
@@ -52,16 +54,19 @@ path (correct, not yet dedup-optimized on the wire).
    oxen init my-repo && cd my-repo
    ```
 
-2. Enable the block format by adding one line to `.oxen/config.toml` under the
-   `[storage]` table (create the table if it isn't there):
+2. Enable the block format in `.oxen/config.toml`. Both lines are required —
+   the repository refuses to load a block-v1 config without the matching
+   `min_version` fence:
 
    ```toml
+   min_version = "0.53.0"
+
    [storage]
    content_format = "block-v1"
    ```
 
-   (There is no CLI command for this yet; the planned surface is
-   `oxen storage migrate --to block-v1`, plan §12.)
+   (Or, from any repository, `oxen storage migrate --to block-v1` — which also
+   converts existing history; see the migration section below.)
 
 3. Add and commit a large file:
 
