@@ -54,6 +54,15 @@ const DELTA_MIN_RAW: usize = 8 * 1024;
 /// Files larger than this skip the unwrap transform (it needs the whole file in
 /// memory for frame scanning and verification) and ingest under identity.
 const UNWRAP_INPUT_CAP: usize = 64 * 1024 * 1024;
+/// Maximum raw bytes assembled into one block-window delta base. Bounds the
+/// memory and one-time digestion cost of a window dictionary.
+const WINDOW_RAW_CAP: usize = 8 * 1024 * 1024;
+/// Window start positions quantize to this many members, so near-miss ranges
+/// share one cached window dictionary instead of digesting per chunk.
+const WINDOW_SEGMENT_MEMBERS: usize = 128;
+/// Assembled window dictionaries kept warm (each up to [`WINDOW_RAW_CAP`] raw
+/// bytes plus digest tables).
+const WINDOW_CACHE_ENTRIES: usize = 2;
 
 /// Packs, indexes, and reconstructs chunked file versions over a block byte-IO
 /// backend and a local chunk index.
@@ -63,6 +72,10 @@ pub struct BlockEngine {
     index: ChunkIndex,
     /// Prepared dictionaries by content hash (a store has one per content class).
     dict_cache: Mutex<HashMap<u128, Arc<PreparedDict>>>,
+    /// Parsed block footers, keyed by block hash (footers are immutable).
+    footer_cache: Mutex<HashMap<u128, Arc<Vec<super::block::BlockChunk>>>>,
+    /// Recently assembled window-delta dictionaries, most recent last.
+    window_cache: Mutex<Vec<((u128, u32, u32), Arc<PreparedDict>)>>,
 }
 
 impl BlockEngine {
@@ -74,6 +87,8 @@ impl BlockEngine {
             io,
             index,
             dict_cache: Mutex::new(HashMap::new()),
+            footer_cache: Mutex::new(HashMap::new()),
+            window_cache: Mutex::new(Vec::new()),
         })
     }
 
@@ -232,6 +247,11 @@ impl BlockEngine {
                     && delta.data.len() < encoded.data.len()
                 {
                     encoded = delta;
+                }
+                if let Some(window) = engine.try_window_delta(&probes, chunk_hash, raw)?
+                    && window.data.len() < encoded.data.len()
+                {
+                    encoded = window;
                 }
                 for sk in probes {
                     flight.insert(sk, chunk_hash);
@@ -409,6 +429,175 @@ impl BlockEngine {
         Ok(best)
     }
 
+    /// The parsed footer of a sealed block, cached (footers are immutable).
+    fn block_footer(
+        &self,
+        block_hash: u128,
+    ) -> Result<Arc<Vec<super::block::BlockChunk>>, OxenError> {
+        if let Some(footer) = self.footer_cache.lock().get(&block_hash) {
+            return Ok(Arc::clone(footer));
+        }
+        let data = self.io.read_block(block_hash)?;
+        let footer = Arc::new(parse_block_footer(&data)?);
+        self.footer_cache
+            .lock()
+            .insert(block_hash, Arc::clone(&footer));
+        Ok(footer)
+    }
+
+    /// Assemble (or fetch from cache) the window dictionary for members
+    /// `[start, start+count)` of a sealed block: the concatenated raw bytes of
+    /// the range's non-delta chunks, digested once for reuse. `None` when the
+    /// range contains nothing usable.
+    fn window_dict(
+        &self,
+        block_hash: u128,
+        start: u32,
+        count: u32,
+    ) -> Result<Option<Arc<PreparedDict>>, OxenError> {
+        let key = (block_hash, start, count);
+        if let Some(dict) = self
+            .window_cache
+            .lock()
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, d)| Arc::clone(d))
+        {
+            return Ok(Some(dict));
+        }
+        let footer = self.block_footer(block_hash)?;
+        let end = (start as usize).saturating_add(count as usize).min(footer.len());
+        let members = &footer[start as usize..end];
+        let mut raw = Vec::new();
+        for member in members {
+            // Delta-coded members are skipped (never recursed into), so window
+            // assembly is always depth one; the same rule applies on decode.
+            if member.codec == CodecId::ZSTD_DELTA || member.codec == CodecId::ZSTD_WINDOW_DELTA {
+                continue;
+            }
+            let payload = self.io.read_block_range(
+                block_hash,
+                member.offset as u64,
+                member.stored_len as u64,
+            )?;
+            let bytes = if member.codec == CodecId::ZSTD_DICT {
+                let hash_bytes: [u8; 16] = payload
+                    .get(..16)
+                    .and_then(|b| b.try_into().ok())
+                    .ok_or_else(|| {
+                        ChunkedError::CorruptBlock("dict chunk shorter than header".to_string())
+                    })?;
+                let dict = self.load_dict(u128::from_le_bytes(hash_bytes))?;
+                decompress_with_dict(&payload[16..], member.raw_len as usize, &dict)?
+            } else {
+                decode_chunk(member.codec, &payload, member.raw_len as usize)?
+            };
+            raw.extend_from_slice(&bytes);
+            if raw.len() >= WINDOW_RAW_CAP {
+                raw.truncate(WINDOW_RAW_CAP);
+                break;
+            }
+        }
+        if raw.is_empty() {
+            return Ok(None);
+        }
+        let dict = Arc::new(PreparedDict::new(&raw));
+        let mut cache = self.window_cache.lock();
+        if cache.len() >= WINDOW_CACHE_ENTRIES {
+            cache.remove(0);
+        }
+        cache.push((key, Arc::clone(&dict)));
+        Ok(Some(dict))
+    }
+
+    /// Attempt a window delta: when several probes hit distinct chunks of one
+    /// sealed block, the chunk's redundancy is dispersed across that block — a
+    /// window of the block becomes the dictionary no single base chunk can be.
+    fn try_window_delta(
+        &self,
+        probes: &[u64],
+        chunk_hash: u128,
+        raw: &[u8],
+    ) -> Result<Option<EncodedChunk>, OxenError> {
+        // Distinct sealed-block candidates per probe, grouped by block.
+        let mut hits: Vec<(u128, u128)> = Vec::new(); // (block, base chunk)
+        for &probe in probes {
+            let Some(candidate) = self.index.sketch_candidate(probe)? else {
+                continue;
+            };
+            if candidate == chunk_hash {
+                continue;
+            }
+            let Some(location) = self.index.get(candidate)? else {
+                continue;
+            };
+            if !hits.contains(&(location.block_hash, candidate)) {
+                hits.push((location.block_hash, candidate));
+            }
+        }
+        let mut best_block = None;
+        let mut best_count = 0usize;
+        for &(block, _) in &hits {
+            let count = hits.iter().filter(|(b, _)| *b == block).count();
+            if count > best_count {
+                best_count = count;
+                best_block = Some(block);
+            }
+        }
+        // One hit is single-base territory (already tried); a window pays off
+        // only when the match evidence is dispersed.
+        let Some(block_hash) = best_block else {
+            return Ok(None);
+        };
+        if best_count < 2 {
+            return Ok(None);
+        }
+
+        let footer = self.block_footer(block_hash)?;
+        let total_raw: u64 = footer.iter().map(|m| m.raw_len as u64).sum();
+        let (start, count) = if total_raw <= WINDOW_RAW_CAP as u64 {
+            // The whole block fits one window: a single cache entry serves every
+            // chunk that resolves here.
+            (0u32, footer.len() as u32)
+        } else {
+            // Quantize the first hit to a segment boundary and take members up
+            // to the raw cap, so nearby chunks share a cached window.
+            let first_hit = footer
+                .iter()
+                .position(|m| hits.iter().any(|(b, c)| *b == block_hash && *c == m.chunk_hash))
+                .unwrap_or(0);
+            let start = (first_hit / WINDOW_SEGMENT_MEMBERS) * WINDOW_SEGMENT_MEMBERS;
+            let mut acc = 0u64;
+            let mut count = 0u32;
+            for member in &footer[start..] {
+                acc += member.raw_len as u64;
+                count += 1;
+                if acc >= WINDOW_RAW_CAP as u64 {
+                    break;
+                }
+            }
+            (start as u32, count)
+        };
+
+        let Some(dict) = self.window_dict(block_hash, start, count)? else {
+            return Ok(None);
+        };
+        let frame = compress_with_dict(raw, &dict)?;
+        let total = 16 + 4 + 4 + frame.len();
+        if total >= raw.len() {
+            return Ok(None);
+        }
+        let mut data = Vec::with_capacity(total);
+        data.extend_from_slice(&block_hash.to_le_bytes());
+        data.extend_from_slice(&start.to_le_bytes());
+        data.extend_from_slice(&count.to_le_bytes());
+        data.extend_from_slice(&frame);
+        Ok(Some(EncodedChunk {
+            codec: CodecId::ZSTD_WINDOW_DELTA,
+            data,
+        }))
+    }
+
     /// A chunk's codec plus (for deltas) its base hash, whether the chunk lives
     /// in a published block or the open writer. `None` if unknown everywhere.
     fn chunk_codec(
@@ -447,7 +636,7 @@ impl BlockEngine {
         writer: &BlockWriter,
     ) -> Result<Option<Vec<u8>>, OxenError> {
         if let Some(loc) = self.index.get(chunk_hash)? {
-            if loc.codec == CodecId::ZSTD_DELTA {
+            if loc.codec == CodecId::ZSTD_DELTA || loc.codec == CodecId::ZSTD_WINDOW_DELTA {
                 return Ok(None);
             }
             return Ok(Some(self.read_chunk(&ChunkEntry {
@@ -460,7 +649,7 @@ impl BlockEngine {
             return Ok(None);
         };
         let raw = match codec {
-            CodecId::ZSTD_DELTA => return Ok(None),
+            CodecId::ZSTD_DELTA | CodecId::ZSTD_WINDOW_DELTA => return Ok(None),
             CodecId::ZSTD_DICT => {
                 let Ok(hash_bytes) = <[u8; 16]>::try_from(&payload[..16.min(payload.len())])
                 else {
@@ -603,6 +792,35 @@ impl BlockEngine {
                 &payload[16..],
                 location.raw_len as usize,
                 &base_raw,
+            )?);
+        }
+        if location.codec == CodecId::ZSTD_WINDOW_DELTA {
+            // Payload = [16-byte block hash LE][u32 start][u32 count][zstd frame].
+            let header = payload.get(..24).ok_or_else(|| {
+                ChunkedError::CorruptChunkIndex(format!(
+                    "window-delta chunk {:x} payload shorter than its header",
+                    entry.hash
+                ))
+            })?;
+            let block_hash = u128::from_le_bytes(header[..16].try_into().map_err(|_| {
+                ChunkedError::CorruptChunkIndex("window-delta header".to_string())
+            })?);
+            let start = u32::from_le_bytes(header[16..20].try_into().map_err(|_| {
+                ChunkedError::CorruptChunkIndex("window-delta header".to_string())
+            })?);
+            let count = u32::from_le_bytes(header[20..24].try_into().map_err(|_| {
+                ChunkedError::CorruptChunkIndex("window-delta header".to_string())
+            })?);
+            let dict = self.window_dict(block_hash, start, count)?.ok_or_else(|| {
+                ChunkedError::CorruptChunkIndex(format!(
+                    "window-delta chunk {:x} references an empty window",
+                    entry.hash
+                ))
+            })?;
+            return Ok(decompress_with_dict(
+                &payload[24..],
+                location.raw_len as usize,
+                &dict,
             )?);
         }
         if location.codec == CodecId::ZSTD_DICT {
@@ -755,7 +973,10 @@ impl BlockEngine {
             // Dictionary-compressed chunks never cross the wire (the receiver has
             // no dictionary context): re-encode them as plain zstd for transfer.
             let encoded =
-                if location.codec == CodecId::ZSTD_DICT || location.codec == CodecId::ZSTD_DELTA {
+                if location.codec == CodecId::ZSTD_DICT
+                    || location.codec == CodecId::ZSTD_DELTA
+                    || location.codec == CodecId::ZSTD_WINDOW_DELTA
+                {
                     let raw = self.read_chunk(&ChunkEntry {
                         hash: chunk_hash,
                         offset: 0,

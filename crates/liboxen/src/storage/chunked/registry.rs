@@ -78,6 +78,15 @@ impl CodecId {
     /// dictionary]`. Chain depth is at most one (a base is never itself a delta).
     /// Store-local; transfer packing re-encodes as plain [`CodecId::ZSTD`].
     pub const ZSTD_DELTA: CodecId = CodecId(3);
+    /// Zstandard delta against a **window of a sealed block**: the dictionary is
+    /// the concatenated raw bytes of the non-delta chunks in a contiguous member
+    /// range of an existing block. Payload = `[16-byte block hash LE][u32 LE
+    /// start member][u32 LE member count][zstd frame]`. Captures redundancy
+    /// dispersed across megabytes (e.g. content-permuted parquet pages) that no
+    /// single ≤128 KiB base chunk can cover, with zero extra base storage —
+    /// blocks are immutable and self-describing. Store-local; transfer packing
+    /// re-encodes as plain [`CodecId::ZSTD`].
+    pub const ZSTD_WINDOW_DELTA: CodecId = CodecId(4);
 
     pub fn as_u8(&self) -> u8 {
         self.0
@@ -132,11 +141,13 @@ pub fn codec(id: CodecId) -> Result<&'static dyn Compressor, ChunkedError> {
     static ZSTD: ZstdCodec = ZstdCodec;
     static ZSTD_DICT: ZstdDictMarker = ZstdDictMarker;
     static ZSTD_DELTA: ZstdDeltaMarker = ZstdDeltaMarker;
+    static ZSTD_WINDOW_DELTA: ZstdWindowDeltaMarker = ZstdWindowDeltaMarker;
     match id {
         CodecId::RAW => Ok(&RAW),
         CodecId::ZSTD => Ok(&ZSTD),
         CodecId::ZSTD_DICT => Ok(&ZSTD_DICT),
         CodecId::ZSTD_DELTA => Ok(&ZSTD_DELTA),
+        CodecId::ZSTD_WINDOW_DELTA => Ok(&ZSTD_WINDOW_DELTA),
         CodecId(other) => Err(ChunkedError::UnknownCodecId(other)),
     }
 }
@@ -161,6 +172,29 @@ impl crate::storage::chunked::compressor::Compressor for ZstdDictMarker {
     fn decompress(&self, _stored: &[u8], _raw_len: usize) -> Result<Vec<u8>, ChunkedError> {
         Err(ChunkedError::Decompress(std::io::Error::other(
             "dictionary-compressed chunks require store-local dictionary context",
+        )))
+    }
+}
+
+/// Registry marker for [`CodecId::ZSTD_WINDOW_DELTA`]: same contract as
+/// [`ZstdDictMarker`] — the ID is valid, but decoding requires the base block
+/// window, which only the block engine can assemble.
+struct ZstdWindowDeltaMarker;
+
+impl crate::storage::chunked::compressor::Compressor for ZstdWindowDeltaMarker {
+    fn id(&self) -> CodecId {
+        CodecId::ZSTD_WINDOW_DELTA
+    }
+
+    fn compress(&self, _raw: &[u8]) -> Result<Vec<u8>, ChunkedError> {
+        Err(ChunkedError::Compress(std::io::Error::other(
+            "window-delta chunks are encoded only by the block engine",
+        )))
+    }
+
+    fn decompress(&self, _stored: &[u8], _raw_len: usize) -> Result<Vec<u8>, ChunkedError> {
+        Err(ChunkedError::Decompress(std::io::Error::other(
+            "window-delta chunks require their base block window to decode",
         )))
     }
 }
@@ -240,6 +274,7 @@ mod tests {
         assert_eq!(CodecId::ZSTD.as_u8(), 1);
         assert_eq!(CodecId::ZSTD_DICT.as_u8(), 2);
         assert_eq!(CodecId::ZSTD_DELTA.as_u8(), 3);
+        assert_eq!(CodecId::ZSTD_WINDOW_DELTA.as_u8(), 4);
         assert_eq!(TransformId::IDENTITY.as_u8(), 0);
         assert_eq!(TransformId::ZSTD_UNWRAP_V1.as_u8(), 1);
     }
