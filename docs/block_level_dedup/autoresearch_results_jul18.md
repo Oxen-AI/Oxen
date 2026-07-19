@@ -3,13 +3,18 @@
 Findings of the autonomous research run defined in
 [`autoresearch_block_level_dedup.md`](./autoresearch_block_level_dedup.md),
 conducted on branch `autoresearch-block-dedup/jul18` (base:
-`block-level-dedup`). Fourteen experiments across two sessions were
-benchmarked on a fixed, deterministic 100.6 MB multi-version corpus (agent-trace JSONL, fine-tuning
-JSONL, labels CSV, Parquet mirrors; append / scattered-growth / reorder /
-shared-prompt-edit / insert+delete / annotation-column / cross-format
-lifecycle over 7 commits — `benchmark/dedup/`). Byte-exact reconstruction of
-every file at every commit was a hard gate; every retained experiment passes
-it, and the full product test suite passes on the final state.
+`block-level-dedup`). Eighteen experiments across three sessions were
+benchmarked on two fixed, deterministic corpora: the original 100.6 MB
+multi-version corpus (agent-trace JSONL, fine-tuning JSONL, labels CSV,
+Parquet mirrors; append / scattered-growth / reorder / shared-prompt-edit /
+insert+delete / annotation-column / cross-format lifecycle over 7 commits),
+and a 177.8 MB **prompt-cache-structured corpus** (see below) modeling the
+tools → system → messages prefix hierarchy that provider prompt caching
+exploits, including 10 real Claude Code sessions from the public
+`trace-commons/agent-traces` dataset (CC-BY-4.0) versioned as live-logged
+growing files — `benchmark/dedup/`. Byte-exact reconstruction of every file
+at every commit was a hard gate; every retained experiment passes it, and the
+full product test suite passes on the final state.
 
 ## Headline result
 
@@ -26,8 +31,12 @@ it, and the full product test suite passes on the final state.
 | correctness | pass | pass | |
 
 Against the *pure FastCDC* configuration (the guide's reference baseline,
-measured via a config-only profile mark): 20.40 MB → 12.90 MB = **−36.8%**.
+measured via a config-only profile mark): 20.40 MB → 12.73 MB = **−37.6%**.
 Storage results are deterministic (repeat runs are byte-identical).
+
+On the prompt-cache corpus (177.8 MB logical), the session-3 experiments took
+the same architecture from 16.02 MB to **9.56 MB (ratio 0.0538, −40.4%)** —
+storing 6 commits' full history of 178 MB of agent-trace data in under 10 MB.
 
 ## The final architecture (what actually won)
 
@@ -101,6 +110,11 @@ never uses them. Reads are transparent; reconstruction never re-chunks.
 | 012 | zstd 9 recheck under full stack | 13,590,530 | +5.4%, 2.6× faster | discard |
 | 013 | 2 KB row isolation | 13,695,144 | +6.2% | discard |
 | 014 | block-id chunk-index indirection | 12,867,336 | −0.25% (tie) | discard (simpler wins) |
+| — | baseline-v2: final session-2 stack on the prompt-cache corpus | 16,024,098 (v2) | — | baseline |
+| 015 | omit offsets from stored manifests | 15,957,584 (v2) | −0.4% (tie both corpora) | discard |
+| 016 | manifest lineage-delta at rest (first-chunk-keyed bases) | 16,081,229 (v2) / 12,733,068 (v1) | v2 tie, v1 −1.3% | **keep** |
+| 017 | 16 KB chunking floor (was 1 MiB; 4 KB tied) | **9,999,967** (v2) | **−37.8%** | **keep** |
+| 018 | large-element isolation ≥ 4 KB (prompt-prefix chunks) | **9,555,852** (v2) | −4.4%; v1 byte-identical | **keep** |
 
 Read metrics stayed within the 5% tie band throughout (restore 2.3–3.1 s;
 random read ~250–270 ms, dominated by CLI process startup in the debug-build
@@ -109,6 +123,53 @@ each step by the guardrail (≥10% storage reduction lifts the 5× cap), and
 experiment 012 quantified the tiering trade exactly: a fast-ingest mode
 (zstd 9) costs +5.4% storage for 2.6× faster ingest, which is the repack
 opportunity in the roadmap.
+
+## Session 3: the prompt-caching insight
+
+Provider prompt caching works because agent requests share a byte-identical
+prefix — tool definitions, then system prompt, then the growing message
+history — with exact-prefix matching and per-model minimum cacheable sizes of
+512–4,096 tokens (≈2–16 KB of text). The same redundancy structure dominates
+*stored* agent-trace datasets. A second fixed corpus was built to measure it:
+session-per-row traces carrying 12–40 KB verbatim config prefixes (with a
+config-rollout edit as the cache-invalidation analog), request-per-row logs
+where consecutive rows re-serialize the conversation prefix, and 10 real
+Claude Code sessions versioned as live-logged append-only files.
+
+Findings, in the order they were forced by measurement:
+
+1. **The current stack already captures most cross-row prefix redundancy** —
+   baseline-v2 landed at 0.090 stored ratio before any new work, because
+   suffix sketches delta near-identical prefix chunks and prefix-stable
+   intra-row cuts make request-log rows share their predecessors' chunks.
+2. **The 1 MiB chunking floor was the real bottleneck** (−37.8%): live-logged
+   session files under 1 MiB bypassed the entire dedup+compression machine
+   and were re-stored as raw whole-file blobs at every growth step. The
+   floor's rationale (chunking small files is pure overhead) predates
+   dictionaries and deltas; at 16 KB every version of a growing log chunk,
+   compresses, and dedups. This is likely the most broadly applicable single
+   finding of the whole run.
+3. **Large-element isolation** (−4.4% v2, byte-identical on v1): a cut at the
+   start and end of any depth-2 array element ≥ 4 KB is the storage twin of a
+   cache breakpoint — the row's unique header (uuid) separates from the
+   config's verbatim system+tools element, so every row of a config shares
+   *one* stored prefix chunk exactly, and the config-rollout edit re-stores
+   one chunk per config rather than one per row. Decisions stay
+   lookahead-free (the element's start is recorded when it begins, the split
+   is emitted at its end), preserving all prefix-stability properties.
+4. **Manifest lineage-deltas** (kept for v1's −1.3%): manifests of successive
+   versions share long entry runs; at rest they now delta against a
+   content-lineage base keyed by first-chunk hash, with bases as separate
+   compressed blobs so manifest deletion can never break a chain. Modest
+   today; grows with version count.
+5. **Offset omission from manifests: discarded** — zstd was already
+   compressing the monotonic offset sequences to almost nothing; the
+   incompressible hashes are the real manifest weight (hence #4).
+
+Per-commit behavior on the prompt-cache corpus (final architecture): base
+snapshot 0.167→0.150 after isolation, appends 0.011–0.033, request-log growth
+0.024–0.113, config-rollout commit 0.033 — and the real Claude Code sessions
+version at append-only cost despite full-file rewrites each commit.
 
 ## Per-workload behavior of the final pipeline
 
@@ -228,10 +289,18 @@ the outlier at ≈ 1.0×, now with a measured explanation (below).
 
 ```bash
 git checkout autoresearch-block-dedup/jul18
-oxen-python/.venv/bin/python benchmark/dedup/prepare.py   # deterministic corpus
+oxen-python/.venv/bin/python benchmark/dedup/prepare.py               # corpus v1
+oxen-python/.venv/bin/python benchmark/dedup/prepare_promptcache.py   # corpus v2
 cargo build --workspace
 OXEN_BIN=$PWD/target/debug/oxen python3 benchmark/dedup/benchmark.py
+BENCH_CORPUS=corpus-promptcache OXEN_BIN=$PWD/target/debug/oxen \
+    python3 benchmark/dedup/benchmark.py
 ```
+
+Corpus v2 additionally requires the real-session source files in
+`benchmark/dedup/corpus-v2-src/` (10 Claude Code sessions from
+`trace-commons/agent-traces`, CC-BY-4.0; content pinned by the corpus
+manifest).
 
 Per-experiment rows (including discards) are in the run's untracked
 `results.tsv`; every experiment is one commit on this branch's history.
