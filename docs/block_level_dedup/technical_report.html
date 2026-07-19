@@ -70,6 +70,11 @@ svg { width: 100%; height: auto; display: block; }
 .bar.b-zstd rect, .lg-zstd { fill: var(--zstd); }
 .bar.b-oxen rect, .lg-oxen { fill: var(--oxen); }
 .ltext { font: 11px var(--mono); fill: var(--ink-2); }
+.legend-row { display: flex; gap: 18px; font: 12px var(--mono); color: var(--ink-2); margin: 2px 0 4px; }
+.legend-row .chip { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.chip.c-raw { background: var(--raw); }
+.chip.c-zstd { background: var(--zstd); }
+.chip.c-oxen { background: var(--oxen); }
 .bar:hover rect { opacity: .82; }
 .blabel { font: 600 10.5px var(--mono); fill: var(--ink-2); }
 .tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--surface);
@@ -112,10 +117,10 @@ footer { margin-top: 88px; padding-top: 20px; border-top: 1px solid var(--border
 </header>
 
 <div class="tiles">
-  <div class="tile"><div class="n">0.047<em>×</em></div><div class="l">bytes stored per logical byte, prompt-cache corpus, full history</div></div>
-  <div class="tile"><div class="n">21<em>×</em></div><div class="l">smaller than storing raw snapshots</div></div>
+  <div class="tile"><div class="n">89<em>×</em></div><div class="l">smaller than raw snapshots: 60 daily commits, 2.68&nbsp;GB → 30&nbsp;MB</div></div>
+  <div class="tile"><div class="n">8.5<em>×</em></div><div class="l">smaller than zstd-19-compressing every snapshot, same 60 commits</div></div>
+  <div class="tile"><div class="n">0.46<em> MB</em></div><div class="l">added per daily commit of a ~45&nbsp;MB dataset, versus 4.3&nbsp;MB for snapshot compression</div></div>
   <div class="tile"><div class="n">100<em>%</em></div><div class="l">byte-exact reconstruction, every file, every commit — a hard gate</div></div>
-  <div class="tile"><div class="n">1,188</div><div class="l">product tests passing on the final architecture</div></div>
 </div>
 
 <h2>Different data deserves different compression</h2>
@@ -246,14 +251,55 @@ a content-lineage base. Everything store-local re-encodes to plain zstd on the w
 so servers and older clients interoperate unchanged.</p>
 
 <h2>Measured</h2>
-<p class="sub">Two fixed corpora, replayed as real <code>oxen add</code>/<code>commit</code>
-sequences against a fresh repository. Storage results are deterministic — repeat runs
+<p class="sub">Three fixed corpora, replayed as real <code>oxen add</code>/<code>commit</code>
+sequences against fresh repositories. Storage results are deterministic — repeat runs
 are byte-identical. <em>zstd-19 each</em> is the strongest naive alternative:
-compress every snapshot whole.</p>
+compress every snapshot whole. It is genuinely hard to beat over a handful of
+commits; versioning advantages are slopes, and slopes need time. So we measured
+time:</p>
+
+
+<figure class="chart" id="longhorizon">
+  <figcaption><strong>Sixty daily commits of one growing trace table — measured</strong>
+  <span>One traces.jsonl exported and committed every day for 60 days (18.6&nbsp;MB → 69.7&nbsp;MB
+  snapshots; appends, recency-weighted session growth, a prompt rollout every tenth day, one
+  full re-order). Raw snapshots total 2.68&nbsp;GB — ten times the top of this chart. Every
+  commit byte-verified.</span></figcaption>
+  <div class="legend-row">
+  <span><i class="chip c-zstd"></i>zstd&#8209;19 each snapshot</span>
+  <span><i class="chip c-oxen"></i>oxen block&#8209;v1</span></div>
+  <div class="plotwrap" data-kind="lh" data-points="1;1.2;2.7|2;2.8;4|3;4.4;4.9|4;6.1;5.2|5;8;5.5|6;9.9;6|7;12;6.9|8;14.2;7.3|9;16.6;8.3|10;19;8.9|11;21.6;9.2|12;24.2;9.6|13;26.9;9.9|14;29.6;10.3|15;32.5;10.6|16;35.5;10.9|17;38.5;11.2|18;41.7;11.9|19;44.9;12.1|20;48.2;12.3|21;51.5;12.6|22;55;12.9|23;58.6;13.2|24;62.2;13.5|25;65.9;13.7|26;69.7;14.1|27;73.6;14.5|28;77.6;14.8|29;81.6;15.3|30;85.8;16.3|31;90;16.5|32;94.3;16.8|33;98.7;17.1|34;103.3;17.4|35;107.9;17.7|36;112.6;19.2|37;117.4;19.6|38;122.3;20.3|39;127.3;20.7|40;132.3;21|41;137.5;21.4|42;142.7;22|43;148.1;22.4|44;153.5;22.8|45;159.1;23.2|46;164.7;23.6|47;170.4;24|48;176.3;24.4|49;182.2;25.3|50;188.3;25.8|51;194.4;26.8|52;200.7;27.1|53;207;27.4|54;213.5;27.8|55;220;28.2|56;226.6;28.5|57;233.3;28.9|58;240.1;29.3|59;247;29.7|60;254;30" data-ml="64" data-pw="526" data-n="60">
+  <svg viewBox="0 0 720 320" role="img" aria-label="Cumulative storage over 60 daily commits">
+    <line class="grid" x1="64" y1="276.0" x2="590" y2="276.0"/><text class="tick" x="56" y="280.0" text-anchor="end">0</text><line class="grid" x1="64" y1="236.3" x2="590" y2="236.3"/><text class="tick" x="56" y="240.3" text-anchor="end">40</text><line class="grid" x1="64" y1="196.6" x2="590" y2="196.6"/><text class="tick" x="56" y="200.6" text-anchor="end">80</text><line class="grid" x1="64" y1="156.9" x2="590" y2="156.9"/><text class="tick" x="56" y="160.9" text-anchor="end">120</text><line class="grid" x1="64" y1="117.2" x2="590" y2="117.2"/><text class="tick" x="56" y="121.2" text-anchor="end">160</text><line class="grid" x1="64" y1="77.5" x2="590" y2="77.5"/><text class="tick" x="56" y="81.5" text-anchor="end">200</text><line class="grid" x1="64" y1="37.8" x2="590" y2="37.8"/><text class="tick" x="56" y="41.8" text-anchor="end">240</text>
+    <text class="tick" x="64" y="296" text-anchor="middle">1</text><text class="tick" x="144" y="296" text-anchor="middle">10</text><text class="tick" x="233" y="296" text-anchor="middle">20</text><text class="tick" x="323" y="296" text-anchor="middle">30</text><text class="tick" x="412" y="296" text-anchor="middle">40</text><text class="tick" x="501" y="296" text-anchor="middle">50</text><text class="tick" x="590" y="296" text-anchor="middle">60</text>
+    <text class="axis" x="18" y="14">MB</text>
+    <text class="tick" x="327.0" y="312" text-anchor="middle">daily commits</text>
+    <polyline class="s-zstd" points="64.0,274.8 72.9,273.2 81.8,271.6 90.7,269.9 99.7,268.1 108.6,266.2 117.5,264.1 126.4,261.9 135.3,259.5 144.2,257.1 153.2,254.6 162.1,252.0 171.0,249.3 179.9,246.6 188.8,243.8 197.7,240.8 206.6,237.8 215.6,234.6 224.5,231.4 233.4,228.2 242.3,224.9 251.2,221.4 260.1,217.9 269.1,214.3 278.0,210.6 286.9,206.8 295.8,203.0 304.7,199.0 313.6,195.0 322.5,190.9 331.5,186.7 340.4,182.4 349.3,178.1 358.2,173.5 367.1,168.9 376.0,164.3 384.9,159.5 393.9,154.6 402.8,149.7 411.7,144.7 420.6,139.6 429.5,134.4 438.4,129.0 447.4,123.7 456.3,118.1 465.2,112.6 474.1,106.9 483.0,101.1 491.9,95.2 500.8,89.1 509.8,83.1 518.7,76.8 527.6,70.6 536.5,64.1 545.4,57.7 554.3,51.1 563.3,44.5 572.2,37.7 581.1,30.9 590.0,24.0"/>
+    <polyline class="s-oxen" points="64.0,273.3 72.9,272.0 81.8,271.1 90.7,270.8 99.7,270.5 108.6,270.0 117.5,269.2 126.4,268.8 135.3,267.8 144.2,267.2 153.2,266.9 162.1,266.5 171.0,266.2 179.9,265.8 188.8,265.5 197.7,265.2 206.6,264.9 215.6,264.2 224.5,264.0 233.4,263.8 242.3,263.5 251.2,263.2 260.1,262.9 269.1,262.6 278.0,262.4 286.9,262.0 295.8,261.6 304.7,261.3 313.6,260.8 322.5,259.8 331.5,259.6 340.4,259.3 349.3,259.0 358.2,258.7 367.1,258.4 376.0,256.9 384.9,256.6 393.9,255.9 402.8,255.5 411.7,255.2 420.6,254.8 429.5,254.2 438.4,253.8 447.4,253.4 456.3,253.0 465.2,252.6 474.1,252.2 483.0,251.8 491.9,250.9 500.8,250.4 509.8,249.4 518.7,249.1 527.6,248.8 536.5,248.4 545.4,248.0 554.3,247.7 563.3,247.3 572.2,246.9 581.1,246.5 590.0,246.2"/>
+    <text class="slabel zstd" x="598" y="28.0">zstd&#8209;19 · 254</text>
+    <text class="slabel oxen" x="598" y="250.2">oxen · 30</text>
+    <line class="cross" x1="0" y1="18" x2="0" y2="276" visibility="hidden"/>
+  </svg>
+  <div class="tip" hidden></div>
+  </div>
+  <details><summary>Data table (selected days)</summary><table><thead>
+  <tr><th>day</th><th>zstd-19 each (MB)</th><th>oxen block-v1 (MB)</th></tr></thead>
+  <tbody><tr><td>day 1</td><td>1.2</td><td>2.7</td></tr><tr><td>day 10</td><td>19</td><td>8.9</td></tr><tr><td>day 20</td><td>48.2</td><td>12.3</td></tr><tr><td>day 30</td><td>85.8</td><td>16.3</td></tr><tr><td>day 40</td><td>132.3</td><td>21</td></tr><tr><td>day 50</td><td>188.3</td><td>25.8</td></tr><tr><td>day 60</td><td>254</td><td>30</td></tr></tbody></table></details>
+</figure>
+
+<p>By day 60 the gap is 254&nbsp;MB against 30&nbsp;MB and widening by ~3.9&nbsp;MB
+per day: snapshot compression pays for the whole snapshot every day, oxen pays for
+what changed. The curves separate within the first ten commits and never converge
+again. The shorter, workload-diverse corpora underneath show the same engine across
+mixed file types and hostile edit patterns:</p>
 
 
 <figure class="chart" id="v2chart">
   <figcaption><strong>Prompt-cache corpus — cumulative stored bytes</strong><span>177.8 MB logical over 6 commits: 12–40 KB config prefixes, request-per-row logs, 10 real Claude Code sessions (trace-commons, CC-BY-4.0) growing live.</span></figcaption>
+  <div class="legend-row">
+  <span><i class="chip c-raw"></i>raw snapshots</span>
+  <span><i class="chip c-zstd"></i>zstd&#8209;19 each snapshot</span>
+  <span><i class="chip c-oxen"></i>oxen block&#8209;v1</span></div>
   <div class="plotwrap" data-kind="line" data-unit="MB" data-points="v1;26.9;1;3.12|v2;55.9;2.2;4.06|v3;74;3.7;5.86|v4;108.5;4.7;6.78|v5;148.8;7.6;8.09|v6;177.8;8.5;8.4"
        data-ml="64" data-pw="526" data-n="6">
   <svg viewBox="0 0 720 320" role="img" aria-label="Prompt-cache corpus — cumulative stored bytes">
@@ -263,9 +309,9 @@ compress every snapshot whole.</p>
     <polyline class="s-raw" points="64.0,237.4 169.2,195.9 274.4,169.9 379.6,120.5 484.8,62.7 590.0,21.2"/>
     <polyline class="s-zstd" points="64.0,274.6 169.2,272.8 274.4,270.7 379.6,269.3 484.8,265.1 590.0,263.8"/>
     <polyline class="s-oxen" points="64.0,271.5 169.2,270.2 274.4,267.6 379.6,266.3 484.8,264.4 590.0,264.0"/>
-    <text class="slabel raw" x="598.0" y="25.15333333333331">raw snapshots · 177.8</text>
-    <text class="slabel zstd" x="598.0" y="267.81666666666666">zstd&#8209;19 each · 8.5</text>
-    <text class="slabel oxen" x="598.0" y="281.96000000000004">oxen block&#8209;v1 · 8.4</text>
+    <text class="slabel raw" x="598.0" y="25.15333333333331">raw · 177.8</text>
+    <text class="slabel zstd" x="598.0" y="267.81666666666666">zstd&#8209;19 · 8.5</text>
+    <text class="slabel oxen" x="598.0" y="281.96000000000004">oxen · 8.4</text>
     <line class="cross" x1="0" y1="18" x2="0" y2="276" visibility="hidden"/>
   </svg>
   <div class="tip" hidden></div>
@@ -279,6 +325,10 @@ compress every snapshot whole.</p>
 
 <figure class="chart" id="v1chart">
   <figcaption><strong>General corpus — cumulative stored bytes</strong><span>100.6 MB logical over 7 commits: session traces, fine-tuning pairs, labels CSV, Parquet mirrors; appends, scattered edits, reorders, prompt edits, schema changes.</span></figcaption>
+  <div class="legend-row">
+  <span><i class="chip c-raw"></i>raw snapshots</span>
+  <span><i class="chip c-zstd"></i>zstd&#8209;19 each snapshot</span>
+  <span><i class="chip c-oxen"></i>oxen block&#8209;v1</span></div>
   <div class="plotwrap" data-kind="line" data-unit="MB" data-points="v1;15.1;2.1;3.33|v2;25.3;3.6;3.93|v3;40.5;6;4.85|v4;56.3;8.1;5.45|v5;72.2;10.3;6.28|v6;96.5;13.9;8.57|v7;100.6;17.9;12.77"
        data-ml="64" data-pw="526" data-n="7">
   <svg viewBox="0 0 720 320" role="img" aria-label="General corpus — cumulative stored bytes">
@@ -288,9 +338,9 @@ compress every snapshot whole.</p>
     <polyline class="s-raw" points="64.0,240.6 151.7,216.7 239.3,181.0 327.0,144.0 414.7,106.7 502.3,49.7 590.0,40.0"/>
     <polyline class="s-zstd" points="64.0,271.1 151.7,267.6 239.3,261.9 327.0,257.0 414.7,251.8 502.3,243.4 590.0,234.0"/>
     <polyline class="s-oxen" points="64.0,268.2 151.7,266.8 239.3,264.6 327.0,263.2 414.7,261.3 502.3,255.9 590.0,246.0"/>
-    <text class="slabel raw" x="598.0" y="44.047272727272755">raw snapshots · 100.6</text>
-    <text class="slabel zstd" x="598.0" y="238.01636363636365">zstd&#8209;19 each · 17.9</text>
-    <text class="slabel oxen" x="598.0" y="264.04854545454543">oxen block&#8209;v1 · 12.77</text>
+    <text class="slabel raw" x="598.0" y="44.047272727272755">raw · 100.6</text>
+    <text class="slabel zstd" x="598.0" y="238.01636363636365">zstd&#8209;19 · 17.9</text>
+    <text class="slabel oxen" x="598.0" y="264.04854545454543">oxen · 12.77</text>
     <line class="cross" x1="0" y1="18" x2="0" y2="276" visibility="hidden"/>
   </svg>
   <div class="tip" hidden></div>
@@ -318,7 +368,7 @@ Cumulative curves hide the number that compounds, so here it is directly: what t
     <line class="grid" x1="64" y1="276.0" x2="590" y2="276.0"/><text class="tick" x="56" y="280.0" text-anchor="end">0</text><line class="grid" x1="64" y1="211.5" x2="590" y2="211.5"/><text class="tick" x="56" y="215.5" text-anchor="end">0.8</text><line class="grid" x1="64" y1="147.0" x2="590" y2="147.0"/><text class="tick" x="56" y="151.0" text-anchor="end">1.6</text><line class="grid" x1="64" y1="82.5" x2="590" y2="82.5"/><text class="tick" x="56" y="86.5" text-anchor="end">2.4</text><line class="grid" x1="64" y1="18.0" x2="590" y2="18.0"/><text class="tick" x="56" y="22.0" text-anchor="end">3.2</text>
     <text class="axis" x="18" y="14">MB</text>
     <g class="bar b-zstd" data-name="v2 — 300 new sessions appended" data-raw="29.0" data-z="1.2" data-o="0.94"><rect x="89.6" y="179.2" width="26" height="96.8" rx="4"/><text class="blabel" x="102.6" y="173.2" text-anchor="middle">1.2</text></g><g class="bar b-oxen" data-name="v2 — 300 new sessions appended" data-raw="29.0" data-z="1.2" data-o="0.94"><rect x="117.6" y="200.2" width="26" height="75.8" rx="4"/><text class="blabel" x="130.6" y="194.2" text-anchor="middle">0.94</text></g><g class="bar b-zstd" data-name="v3 — conversations continue; sessions grow" data-raw="18.1" data-z="1.5" data-o="1.8"><rect x="194.8" y="155.1" width="26" height="120.9" rx="4"/><text class="blabel" x="207.8" y="149.1" text-anchor="middle">1.5</text></g><g class="bar b-oxen" data-name="v3 — conversations continue; sessions grow" data-raw="18.1" data-z="1.5" data-o="1.8"><rect x="222.8" y="130.9" width="26" height="145.1" rx="4"/><text class="blabel" x="235.8" y="124.9" text-anchor="middle">1.8</text></g><g class="bar b-zstd" data-name="v4 — scattered growth + more requests" data-raw="34.5" data-z="1.0" data-o="0.92"><rect x="300.0" y="195.4" width="26" height="80.6" rx="4"/><text class="blabel" x="313.0" y="189.4" text-anchor="middle">1</text></g><g class="bar b-oxen" data-name="v4 — scattered growth + more requests" data-raw="34.5" data-z="1.0" data-o="0.92"><rect x="328.0" y="201.8" width="26" height="74.2" rx="4"/><text class="blabel" x="341.0" y="195.8" text-anchor="middle">0.92</text></g><g class="bar b-zstd" data-name="v5 — prompt rollout edit; sessions complete" data-raw="40.3" data-z="2.9" data-o="1.3"><rect x="405.2" y="42.2" width="26" height="233.8" rx="4"/><text class="blabel" x="418.2" y="36.2" text-anchor="middle">2.9</text></g><g class="bar b-oxen" data-name="v5 — prompt rollout edit; sessions complete" data-raw="40.3" data-z="2.9" data-o="1.3"><rect x="433.2" y="171.2" width="26" height="104.8" rx="4"/><text class="blabel" x="446.2" y="165.2" text-anchor="middle">1.3</text></g><g class="bar b-zstd" data-name="v6 — shuffle + append" data-raw="29.0" data-z="0.9" data-o="0.32"><rect x="510.4" y="203.4" width="26" height="72.6" rx="4"/><text class="blabel" x="523.4" y="197.4" text-anchor="middle">0.9</text></g><g class="bar b-oxen" data-name="v6 — shuffle + append" data-raw="29.0" data-z="0.9" data-o="0.32"><rect x="538.4" y="250.2" width="26" height="25.8" rx="4"/><text class="blabel" x="551.4" y="244.2" text-anchor="middle">0.32</text></g>
-    <text class="tick" x="116.6" y="292" text-anchor="middle">v2<tspan x="116.6" dy="12">(vs 29 MB raw)</tspan></text><text class="tick" x="221.8" y="292" text-anchor="middle">v3<tspan x="221.8" dy="12">(vs 18.1 MB raw)</tspan></text><text class="tick" x="327.0" y="292" text-anchor="middle">v4<tspan x="327.0" dy="12">(vs 34.5 MB raw)</tspan></text><text class="tick" x="432.2" y="292" text-anchor="middle">v5<tspan x="432.2" dy="12">(vs 40.3 MB raw)</tspan></text><text class="tick" x="537.4" y="292" text-anchor="middle">v6<tspan x="537.4" dy="12">(vs 29 MB raw)</tspan></text>
+    <text class="tick" x="116.6" y="292" text-anchor="middle">Append</text><text class="tick" x="221.8" y="292" text-anchor="middle">Sessions grow</text><text class="tick" x="327.0" y="292" text-anchor="middle">Scatter</text><text class="tick" x="432.2" y="292" text-anchor="middle">Rollout</text><text class="tick" x="537.4" y="292" text-anchor="middle">Shuffle</text>
     <g class="legend" transform="translate(400,18)">
       <rect class="lg-zstd" x="0" y="0" width="12" height="12" rx="3"/>
       <text class="ltext" x="18" y="10">zstd&#8209;19 each</text>
@@ -348,7 +398,7 @@ fetch, and every restore decompresses a monolith.</p>
     <line class="grid" x1="64" y1="276.0" x2="590" y2="276.0"/><text class="tick" x="56" y="280.0" text-anchor="end">0</text><line class="grid" x1="64" y1="211.5" x2="590" y2="211.5"/><text class="tick" x="56" y="215.5" text-anchor="end">0.04</text><line class="grid" x1="64" y1="147.0" x2="590" y2="147.0"/><text class="tick" x="56" y="151.0" text-anchor="end">0.08</text><line class="grid" x1="64" y1="82.5" x2="590" y2="82.5"/><text class="tick" x="56" y="86.5" text-anchor="end">0.12</text><line class="grid" x1="64" y1="18.0" x2="590" y2="18.0"/><text class="tick" x="56" y="22.0" text-anchor="end">0.16</text>
     <text class="axis" x="18" y="14">ratio</text>
     <g class="bar" data-name="Append-only growth" data-v="0.011"><rect x="82.875" y="258.3" width="28" height="17.7" rx="4"/><text class="blabel" x="96.875" y="252.3" text-anchor="middle">0.011</text></g><g class="bar" data-name="Scattered edits + new requests" data-v="0.026"><rect x="148.625" y="234.1" width="28" height="41.9" rx="4"/><text class="blabel" x="162.625" y="228.1" text-anchor="middle">0.026</text></g><g class="bar" data-name="Full row reorder" data-v="0.038"><rect x="214.375" y="214.7" width="28" height="61.3" rx="4"/><text class="blabel" x="228.375" y="208.7" text-anchor="middle">0.038</text></g><g class="bar" data-name="Prompt rollout (config edit)" data-v="0.032"><rect x="280.125" y="224.4" width="28" height="51.6" rx="4"/><text class="blabel" x="294.125" y="218.4" text-anchor="middle">0.032</text></g><g class="bar" data-name="Session growth (scatter)" data-v="0.061"><rect x="345.875" y="177.6" width="28" height="98.4" rx="4"/><text class="blabel" x="359.875" y="171.6" text-anchor="middle">0.061</text></g><g class="bar" data-name="Annotation column + filtered copy" data-v="0.094"><rect x="411.625" y="124.4" width="28" height="151.6" rx="4"/><text class="blabel" x="425.625" y="118.4" text-anchor="middle">0.094</text></g><g class="bar" data-name="Request-log + live sessions" data-v="0.101"><rect x="477.375" y="113.1" width="28" height="162.9" rx="4"/><text class="blabel" x="491.375" y="107.1" text-anchor="middle">0.101</text></g><g class="bar" data-name="First snapshot" data-v="0.151"><rect x="543.125" y="32.5" width="28" height="243.5" rx="4"/><text class="blabel" x="557.125" y="26.5" text-anchor="middle">0.151</text></g>
-    <text class="tick" x="96.875" y="292" text-anchor="middle">Append-only growth</text><text class="tick" x="162.625" y="292" text-anchor="middle">Scattered edits</text><text class="tick" x="228.375" y="292" text-anchor="middle">Full row<tspan x="228.375" dy="12">reorder</tspan></text><text class="tick" x="294.125" y="292" text-anchor="middle">Prompt rollout</text><text class="tick" x="359.875" y="292" text-anchor="middle">Session growth</text><text class="tick" x="425.625" y="292" text-anchor="middle">Annotation column</text><text class="tick" x="491.375" y="292" text-anchor="middle">Request-log</text><text class="tick" x="557.125" y="292" text-anchor="middle">First snapshot</text>
+    <text class="tick" x="96.875" y="292" text-anchor="middle">Append</text><text class="tick" x="162.625" y="292" text-anchor="middle">Scatter</text><text class="tick" x="228.375" y="292" text-anchor="middle">Reorder</text><text class="tick" x="294.125" y="292" text-anchor="middle">Rollout</text><text class="tick" x="359.875" y="292" text-anchor="middle">Growth</text><text class="tick" x="425.625" y="292" text-anchor="middle">Annotate</text><text class="tick" x="491.375" y="292" text-anchor="middle">Req-log</text><text class="tick" x="557.125" y="292" text-anchor="middle">Snapshot 1</text>
   </svg>
   <div class="tip" hidden></div>
   </div>
@@ -366,55 +416,57 @@ fetch, and every restore decompresses a monolith.</p>
   during the <em>first</em> ingest. Final: 8.40&nbsp;MB vs 8.5 on totals, 1.06 vs
   1.42&nbsp;MB on per-commit marginals — while keeping random access, partial fetch,
   and incremental push that a monolithic archive gives up.</p>
-  <p><strong>And where nothing wins: compressed Parquet.</strong> We tested three
-  approaches and closed the question with evidence — writer-compressed zstd pages are
-  not byte-exactly reproducible by any recompression (bitstream divergence), and
-  reordered row groups leave ~0.2% of pages byte-identical. Re-encoded zstd Parquet
-  is a storage floor for byte-exact systems. Version evolving tables as JSONL
-  (measured 4.7× cheaper); write Parquet uncompressed with bounded row groups if you
-  must version it directly.</p>
+  <p><strong>Parquet: solved by a writer flag, bounded by arithmetic.</strong> Our
+  first verdict was that compressed Parquet is a storage floor — writer-compressed
+  zstd pages aren't byte-exactly reproducible by recompression, and reordered row
+  groups leave ~0.2% of pages identical. That still holds for uncooperative
+  writers. But Parquet's own content-defined chunking (pyarrow ≥ 21,
+  <code>use_content_defined_chunking=True</code> — the approach described in
+  Hugging Face's parquet-cdc work) makes page boundaries follow content, and
+  byte-identical pages dedup through this engine unchanged; see the measurement
+  below. The boundary we verified along the way: at ~500 rows per page, densely
+  <em>scattered</em> row edits dirty every page in any layout — the same
+  rows-per-chunk amplification law we measured for byte chunks — which is exactly
+  the workload the JSONL trace profile exists for.</p>
 </div>
 
-<h2>How it scales</h2>
-<p class="sub">Storage cost separates into a one-time base (first snapshot,
-compressed) and a per-commit marginal (what your changes actually cost). The
-marginal is what compounds.</p>
 
-
-<figure class="chart" id="projection">
-  <figcaption><strong>Projected: 100 commits of a ~30&nbsp;MB trace dataset</strong>
-  <span>Each system's measured per-commit marginal cost on the prompt-cache corpus, extended. Not a benchmark — an extrapolation of measured slopes.</span></figcaption>
-  <div class="plotwrap" data-kind="proj" data-unit="GB"
-       data-marg="29.6|1.42|3.12:1.06" data-ml="64" data-pw="526">
-  <svg viewBox="0 0 720 320" role="img" aria-label="Projected storage over 100 commits">
-    <line class="grid" x1="64" y1="276.0" x2="590" y2="276.0"/><text class="tick" x="56" y="280.0" text-anchor="end">0</text><line class="grid" x1="64" y1="211.5" x2="590" y2="211.5"/><text class="tick" x="56" y="215.5" text-anchor="end">0.8</text><line class="grid" x1="64" y1="147.0" x2="590" y2="147.0"/><text class="tick" x="56" y="151.0" text-anchor="end">1.6</text><line class="grid" x1="64" y1="82.5" x2="590" y2="82.5"/><text class="tick" x="56" y="86.5" text-anchor="end">2.4</text><line class="grid" x1="64" y1="18.0" x2="590" y2="18.0"/><text class="tick" x="56" y="22.0" text-anchor="end">3.2</text>
-    <text class="tick" x="69" y="296" text-anchor="middle">1</text><text class="tick" x="196" y="296" text-anchor="middle">25</text><text class="tick" x="327" y="296" text-anchor="middle">50</text><text class="tick" x="458" y="296" text-anchor="middle">75</text><text class="tick" x="590" y="296" text-anchor="middle">100</text>
-    <text class="axis" x="18" y="14">GB</text>
-    <text class="tick" x="327.0" y="312" text-anchor="middle">commits</text>
-    <polyline class="s-raw" points="64.0,273.6 69.3,271.2 74.5,268.8 79.8,266.5 85.0,264.1 90.3,261.7 95.6,259.3 100.8,256.9 106.1,254.5 111.3,252.1 116.6,249.7 121.9,247.4 127.1,245.0 132.4,242.6 137.6,240.2 142.9,237.8 148.2,235.4 153.4,233.0 158.7,230.7 163.9,228.3 169.2,225.9 174.5,223.5 179.7,221.1 185.0,218.7 190.2,216.3 195.5,214.0 200.8,211.6 206.0,209.2 211.3,206.8 216.5,204.4 221.8,202.0 227.1,199.6 232.3,197.2 237.6,194.9 242.8,192.5 248.1,190.1 253.4,187.7 258.6,185.3 263.9,182.9 269.1,180.5 274.4,178.2 279.7,175.8 284.9,173.4 290.2,171.0 295.4,168.6 300.7,166.2 306.0,163.8 311.2,161.4 316.5,159.1 321.7,156.7 327.0,154.3 332.3,151.9 337.5,149.5 342.8,147.1 348.0,144.7 353.3,142.4 358.6,140.0 363.8,137.6 369.1,135.2 374.3,132.8 379.6,130.4 384.9,128.0 390.1,125.7 395.4,123.3 400.6,120.9 405.9,118.5 411.2,116.1 416.4,113.7 421.7,111.3 426.9,108.9 432.2,106.6 437.5,104.2 442.7,101.8 448.0,99.4 453.2,97.0 458.5,94.6 463.8,92.2 469.0,89.9 474.3,87.5 479.5,85.1 484.8,82.7 490.1,80.3 495.3,77.9 500.6,75.5 505.8,73.1 511.1,70.8 516.4,68.4 521.6,66.0 526.9,63.6 532.1,61.2 537.4,58.8 542.7,56.4 547.9,54.1 553.2,51.7 558.4,49.3 563.7,46.9 569.0,44.5 574.2,42.1 579.5,39.7 584.7,37.4 590.0,35.0"/>
-    <polyline class="s-zstd" points="64.0,275.9 69.3,275.8 74.5,275.7 79.8,275.5 85.0,275.4 90.3,275.3 95.6,275.2 100.8,275.1 106.1,275.0 111.3,274.9 116.6,274.7 121.9,274.6 127.1,274.5 132.4,274.4 137.6,274.3 142.9,274.2 148.2,274.1 153.4,273.9 158.7,273.8 163.9,273.7 169.2,273.6 174.5,273.5 179.7,273.4 185.0,273.3 190.2,273.1 195.5,273.0 200.8,272.9 206.0,272.8 211.3,272.7 216.5,272.6 221.8,272.5 227.1,272.3 232.3,272.2 237.6,272.1 242.8,272.0 248.1,271.9 253.4,271.8 258.6,271.6 263.9,271.5 269.1,271.4 274.4,271.3 279.7,271.2 284.9,271.1 290.2,271.0 295.4,270.8 300.7,270.7 306.0,270.6 311.2,270.5 316.5,270.4 321.7,270.3 327.0,270.2 332.3,270.0 337.5,269.9 342.8,269.8 348.0,269.7 353.3,269.6 358.6,269.5 363.8,269.4 369.1,269.2 374.3,269.1 379.6,269.0 384.9,268.9 390.1,268.8 395.4,268.7 400.6,268.6 405.9,268.4 411.2,268.3 416.4,268.2 421.7,268.1 426.9,268.0 432.2,267.9 437.5,267.8 442.7,267.6 448.0,267.5 453.2,267.4 458.5,267.3 463.8,267.2 469.0,267.1 474.3,267.0 479.5,266.8 484.8,266.7 490.1,266.6 495.3,266.5 500.6,266.4 505.8,266.3 511.1,266.2 516.4,266.0 521.6,265.9 526.9,265.8 532.1,265.7 537.4,265.6 542.7,265.5 547.9,265.4 553.2,265.2 558.4,265.1 563.7,265.0 569.0,264.9 574.2,264.8 579.5,264.7 584.7,264.6 590.0,264.4"/>
-    <polyline class="s-oxen" points="64.0,275.7 69.3,275.7 74.5,275.6 79.8,275.5 85.0,275.4 90.3,275.3 95.6,275.2 100.8,275.2 106.1,275.1 111.3,275.0 116.6,274.9 121.9,274.8 127.1,274.7 132.4,274.6 137.6,274.6 142.9,274.5 148.2,274.4 153.4,274.3 158.7,274.2 163.9,274.1 169.2,274.0 174.5,274.0 179.7,273.9 185.0,273.8 190.2,273.7 195.5,273.6 200.8,273.5 206.0,273.4 211.3,273.4 216.5,273.3 221.8,273.2 227.1,273.1 232.3,273.0 237.6,272.9 242.8,272.8 248.1,272.8 253.4,272.7 258.6,272.6 263.9,272.5 269.1,272.4 274.4,272.3 279.7,272.2 284.9,272.2 290.2,272.1 295.4,272.0 300.7,271.9 306.0,271.8 311.2,271.7 316.5,271.6 321.7,271.6 327.0,271.5 332.3,271.4 337.5,271.3 342.8,271.2 348.0,271.1 353.3,271.0 358.6,271.0 363.8,270.9 369.1,270.8 374.3,270.7 379.6,270.6 384.9,270.5 390.1,270.4 395.4,270.4 400.6,270.3 405.9,270.2 411.2,270.1 416.4,270.0 421.7,269.9 426.9,269.9 432.2,269.8 437.5,269.7 442.7,269.6 448.0,269.5 453.2,269.4 458.5,269.3 463.8,269.3 469.0,269.2 474.3,269.1 479.5,269.0 484.8,268.9 490.1,268.8 495.3,268.7 500.6,268.7 505.8,268.6 511.1,268.5 516.4,268.4 521.6,268.3 526.9,268.2 532.1,268.1 537.4,268.1 542.7,268.0 547.9,267.9 553.2,267.8 558.4,267.7 563.7,267.6 569.0,267.5 574.2,267.5 579.5,267.4 584.7,267.3 590.0,267.2"/>
-    <text class="slabel raw" x="598" y="39.0">raw · 2.99</text>
-    <text class="slabel zstd" x="598" y="260.4">zstd&#8209;19 · 0.14</text>
-    <text class="slabel oxen" x="598" y="281.2">oxen · 0.11</text>
-    <line class="cross" x1="0" y1="18" x2="0" y2="276" visibility="hidden"/>
+<figure class="chart" id="pqcdc">
+  <figcaption><strong>Parquet, one writer flag apart — bytes added per commit through oxen</strong>
+  <span>Identical logical evolution of a zstd Parquet trace table, written with pyarrow default
+  page layout vs <code>use_content_defined_chunking=True</code>. Same storage engine, no code
+  changes. Full history: 10.66&nbsp;MB → 6.40&nbsp;MB (−40%).</span></figcaption>
+  <div class="legend-row">
+    <span><i class="chip c-zstd"></i>default page layout</span>
+    <span><i class="chip c-oxen"></i>CDC page layout</span></div>
+  <div class="plotwrap" data-kind="pq">
+  <svg viewBox="0 0 720 320" role="img" aria-label="Parquet CDC on vs off, per-commit added bytes">
+    <line class="grid" x1="64" y1="276.0" x2="590" y2="276.0"/><text class="tick" x="56" y="280.0" text-anchor="end">0</text><line class="grid" x1="64" y1="215.3" x2="590" y2="215.3"/><text class="tick" x="56" y="219.3" text-anchor="end">0.8</text><line class="grid" x1="64" y1="154.6" x2="590" y2="154.6"/><text class="tick" x="56" y="158.6" text-anchor="end">1.6</text><line class="grid" x1="64" y1="93.9" x2="590" y2="93.9"/><text class="tick" x="56" y="97.9" text-anchor="end">2.4</text><line class="grid" x1="64" y1="33.2" x2="590" y2="33.2"/><text class="tick" x="56" y="37.2" text-anchor="end">3.2</text>
+    <text class="axis" x="18" y="14">MB</text>
+    <g class="bar b-zstd" data-name="v2 — day of new sessions appended" data-z="0.75" data-o="0.58"><rect x="89.6" y="219.1" width="26" height="56.9" rx="4"/><text class="blabel" x="102.6" y="213.1" text-anchor="middle">0.75</text></g><g class="bar b-oxen" data-name="v2 — day of new sessions appended" data-z="0.75" data-o="0.58"><rect x="117.6" y="232.0" width="26" height="44.0" rx="4"/><text class="blabel" x="130.6" y="226.0" text-anchor="middle">0.58</text></g><g class="bar b-zstd" data-name="v3 — contiguous backfill inserted" data-z="2.19" data-o="0.77"><rect x="194.8" y="109.8" width="26" height="166.2" rx="4"/><text class="blabel" x="207.8" y="103.8" text-anchor="middle">2.19</text></g><g class="bar b-oxen" data-name="v3 — contiguous backfill inserted" data-z="2.19" data-o="0.77"><rect x="222.8" y="217.6" width="26" height="58.4" rx="4"/><text class="blabel" x="235.8" y="211.6" text-anchor="middle">0.77</text></g><g class="bar b-zstd" data-name="v4 — contiguous range purged" data-z="3.17" data-o="0.6"><rect x="300.0" y="35.5" width="26" height="240.5" rx="4"/><text class="blabel" x="313.0" y="29.5" text-anchor="middle">3.17</text></g><g class="bar b-oxen" data-name="v4 — contiguous range purged" data-z="3.17" data-o="0.6"><rect x="328.0" y="230.5" width="26" height="45.5" rx="4"/><text class="blabel" x="341.0" y="224.5" text-anchor="middle">0.6</text></g><g class="bar b-zstd" data-name="v5 — recent sessions grow" data-z="0.71" data-o="0.56"><rect x="405.2" y="222.1" width="26" height="53.9" rx="4"/><text class="blabel" x="418.2" y="216.1" text-anchor="middle">0.71</text></g><g class="bar b-oxen" data-name="v5 — recent sessions grow" data-z="0.71" data-o="0.56"><rect x="433.2" y="233.5" width="26" height="42.5" rx="4"/><text class="blabel" x="446.2" y="227.5" text-anchor="middle">0.56</text></g><g class="bar b-zstd" data-name="v6 — day of new sessions appended" data-z="0.59" data-o="0.6"><rect x="510.4" y="231.2" width="26" height="44.8" rx="4"/><text class="blabel" x="523.4" y="225.2" text-anchor="middle">0.59</text></g><g class="bar b-oxen" data-name="v6 — day of new sessions appended" data-z="0.59" data-o="0.6"><rect x="538.4" y="230.5" width="26" height="45.5" rx="4"/><text class="blabel" x="551.4" y="224.5" text-anchor="middle">0.6</text></g>
+    <text class="tick" x="116.6" y="292" text-anchor="middle">Append</text><text class="tick" x="221.8" y="292" text-anchor="middle">Backfill</text><text class="tick" x="327.0" y="292" text-anchor="middle">Purge</text><text class="tick" x="432.2" y="292" text-anchor="middle">Growth</text><text class="tick" x="537.4" y="292" text-anchor="middle">Append</text>
   </svg>
   <div class="tip" hidden></div>
   </div>
-  <details><summary>Data table</summary><table><thead><tr><th>commits</th>
-  <th>raw snapshots (GB)</th><th>zstd-19 each (GB)</th><th>oxen block-v1 (GB)</th></tr></thead><tbody>
-  <tr><td>10</td><td>0.30</td><td>0.01</td><td>0.01</td></tr><tr><td>25</td><td>0.74</td><td>0.04</td><td>0.03</td></tr><tr><td>50</td><td>1.48</td><td>0.07</td><td>0.06</td></tr><tr><td>75</td><td>2.22</td><td>0.11</td><td>0.08</td></tr><tr><td>100</td><td>2.96</td><td>0.14</td><td>0.11</td></tr>
-  </tbody></table></details>
+  <details><summary>Data table</summary><table><thead><tr><th>commit</th>
+  <th>default layout (MB)</th><th>CDC layout (MB)</th></tr></thead><tbody><tr><td>v2 — day of new sessions appended</td><td>0.75</td><td>0.58</td></tr><tr><td>v3 — contiguous backfill inserted</td><td>2.19</td><td>0.77</td></tr><tr><td>v4 — contiguous range purged</td><td>3.17</td><td>0.6</td></tr><tr><td>v5 — recent sessions grow</td><td>0.71</td><td>0.56</td></tr><tr><td>v6 — day of new sessions appended</td><td>0.59</td><td>0.6</td></tr></tbody></table></details>
 </figure>
 
-<p>On the prompt-cache corpus the measured marginals per commit are
-<strong>29.6&nbsp;MB raw</strong>, <strong>1.42&nbsp;MB</strong> for zstd-19
-snapshots, and <strong>1.06&nbsp;MB</strong> for oxen — a 28× slope difference
-against raw. Amortized over history, the first snapshot's cost vanishes: by commit
-six you are paying 1.4&nbsp;MB per version of a ~30&nbsp;MB dataset, trending toward
-the marginal. Append-only workloads sit far lower still (0.011× — a 29&nbsp;MB
-append stored 0.32&nbsp;MB), and the pattern is scale-free: the ratios are per-byte
-properties of the workload, not of corpus size.</p>
+<p>Same engine, same logical data, one writer flag: full-history storage drops
+40%, a contiguous purge costs 5× less, a backfill 3× less. If you version
+Parquet, write it with CDC enabled; if your table takes dense scattered edits,
+version it as JSONL and export Parquet as a derived artifact.</p>
+
+<h2>How it scales</h2>
+
+<p>Storage cost separates into a one-time base (first snapshot, compressed) and a
+per-commit marginal — and the marginal is a per-byte property of the workload, not
+of corpus size. On the 60-day corpus the measured marginals are
+<strong>~45&nbsp;MB raw</strong>, <strong>~4.3&nbsp;MB</strong> for zstd-19
+snapshots, and <strong>~0.46&nbsp;MB</strong> for oxen per daily commit. Amortized
+over history the base vanishes: sixty versions of the table cost half a megabyte
+each. Append-only workloads sit lower still (0.011× — a 29&nbsp;MB append stored
+0.32&nbsp;MB).</p>
 
 <h2>This architecture was found by an agent</h2>
 <p>The trace profile was not designed on a whiteboard. We wrote a fixed benchmark —
@@ -530,6 +582,9 @@ printf '[storage]\ncontent_format = "block-v1"\n' >> .oxen/config.toml
 # commit your evolving dataset like code
 oxen add traces.jsonl && oxen commit -m "nightly export"
 
+# versioning Parquet? write it with content-defined chunking (pyarrow >= 21)
+# pq.write_table(table, path, use_content_defined_chunking=True)
+
 # see what storage is doing
 oxen storage status
 
@@ -544,7 +599,7 @@ commits, raw results including every discard, and the design docs — lives in
 <code>docs/block_level_dedup/</code> on the research branch. Real-session data
 courtesy of the public <code>trace-commons/agent-traces</code> dataset (CC-BY-4.0).</p>
 
-<footer>Oxen block-level dedup · technical report · benchmarks run July 2026 on the
+<footer>Oxen block-level dedup · technical report · benchmarks run July 2026 (three corpora + paired Parquet corpora) on the
 <code>autoresearch-block-dedup/jul18</code> branch. All storage numbers are measured
 except the marked projection, which extends measured per-commit marginals.</footer>
 
@@ -599,6 +654,47 @@ except the marked projection, which extends measured per-commit marginals.</foot
     svg.addEventListener('pointerleave', () => {
       tip.hidden = true; cross.setAttribute('visibility', 'hidden');
     });
+  }
+  for (const wrap of document.querySelectorAll('.plotwrap[data-kind="lh"]')) {
+    const svg = wrap.querySelector('svg'), tip = wrap.querySelector('.tip'),
+          cross = wrap.querySelector('.cross'),
+          pts = wrap.dataset.points.split('|').map(r => r.split(';')),
+          ml = +wrap.dataset.ml, pw = +wrap.dataset.pw, n = +wrap.dataset.n;
+    svg.addEventListener('pointermove', e => {
+      const r = svg.getBoundingClientRect(), sx = 720 / r.width;
+      const x = (e.clientX - r.left) * sx;
+      const i = Math.max(0, Math.min(n - 1, Math.round((x - ml) / pw * (n - 1))));
+      const cx = ml + pw * i / (n - 1);
+      cross.setAttribute('x1', cx); cross.setAttribute('x2', cx);
+      cross.setAttribute('visibility', 'visible');
+      const [d, z, o] = pts[i];
+      tip.hidden = false;
+      tip.textContent = `day ${d}
+zstd-19 each  ${z} MB
+oxen block-v1 ${o} MB
+(${(z / o).toFixed(1)}x)`;
+      const half = tip.offsetWidth / 2, px = cx / sx;
+      tip.style.left = Math.min(Math.max(px - half, 0), r.width - tip.offsetWidth) + 'px';
+      tip.style.top = '18px';
+    });
+    svg.addEventListener('pointerleave', () => {
+      tip.hidden = true; cross.setAttribute('visibility', 'hidden');
+    });
+  }
+  for (const wrap of document.querySelectorAll('.plotwrap[data-kind="pq"]')) {
+    const tip = wrap.querySelector('.tip');
+    for (const bar of wrap.querySelectorAll('.bar')) {
+      bar.addEventListener('pointerenter', () => {
+        tip.hidden = false;
+        tip.textContent = `${bar.dataset.name}
+default layout ${bar.dataset.z} MB
+CDC layout     ${bar.dataset.o} MB`;
+        const r = wrap.getBoundingClientRect(), b = bar.getBoundingClientRect();
+        tip.style.left = Math.min(b.left - r.left, r.width - tip.offsetWidth - 4) + 'px';
+        tip.style.top = (b.top - r.top - 56) + 'px';
+      });
+      bar.addEventListener('pointerleave', () => tip.hidden = true);
+    }
   }
   for (const wrap of document.querySelectorAll('.plotwrap[data-kind="bar"]')) {
     const tip = wrap.querySelector('.tip');

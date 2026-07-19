@@ -36,6 +36,12 @@ Against the *pure FastCDC* configuration (the guide's reference baseline,
 measured via a config-only profile mark): 20.40 MB → 12.73 MB = **−37.6%**.
 Storage results are deterministic (repeat runs are byte-identical).
 
+A long-horizon corpus (one trace table exported daily for 60 days, 2.68 GB
+logical) measures the versioning slope directly: **30.0 MB stored (ratio
+0.0112, 89× vs raw snapshots, 8.5× less than zstd-19-compressing every
+snapshot at 254 MB)**, with per-commit marginals of ~0.46 MB vs ~4.3 MB —
+byte-verified at all 60 commits.
+
 On the prompt-cache corpus (177.8 MB logical), the session-3 experiments took
 the same architecture from 16.02 MB to **8.40 MB (ratio 0.0473, −47.6%)** —
 storing 6 commits' full history of 178 MB of agent-trace data in 8.4 MB,
@@ -232,18 +238,20 @@ the outlier at ≈ 1.0×, now with a measured explanation (below).
 - **Chunk-index micro-layout (014)**: block-id indirection shrank index
   values 41% but total storage only 0.25% (LMDB page overhead dominates) —
   under the tie threshold, so the simpler layout stays.
-- **Parquet, closed with evidence (three probes)**: (1) pyarrow's zstd pages
-  are *not* byte-exactly reproducible by single-shot libzstd at any level
-  (frame divergence, not level mismatch) — a decompress/recompress transform
-  cannot reconstruct original bytes for zstd parquet; (2) between the two
-  benchmark mirrors (reordered row groups), only 8 of 39 pages (~4 KB of
-  2.35 MB) are byte-identical — page-aligned chunking has nothing to grab;
-  (3) append-stable parquet already dedups through plain FastCDC. Conclusion:
-  re-encoded/reordered zstd parquet is a storage floor for byte-exact
-  systems. Product guidance: version evolving traces as JSONL (4.7× better,
-  see `chat_jsonl_report.md`); where parquet must be versioned, write it
-  uncompressed (or snappy) with bounded row groups so the store's own
-  dictionary+zstd-19 stack sees byte-stable pages.
+- **Parquet, revised after the parquet-CDC follow-up**: our original three
+  probes stand for *uncooperative writers* — writer-compressed zstd pages are
+  not byte-exactly reproducible by recompression, and reordered row groups
+  leave ~0.2% of pages identical. But writer-side content-defined chunking
+  (pyarrow ≥ 21 `use_content_defined_chunking=True`, per Hugging Face's
+  parquet-cdc work) makes page boundaries follow content, and byte-identical
+  pages dedup through the unchanged engine. Measured on paired corpora with
+  identical logical evolution (append / contiguous backfill / contiguous
+  purge / recent-session growth): CDC-off 10.66 MB vs CDC-on **6.40 MB
+  (−40%)**; the purge commit costs 5.3× less, the backfill 2.8× less. The
+  verified boundary: at ~500 rows/page, densely *scattered* row edits dirty
+  every page in any layout (the same rows-per-chunk amplification law) — the
+  JSONL trace profile's territory. Guidance: write versioned parquet with CDC
+  enabled; keep high-churn scattered-edit tables in JSONL.
 
 ## Answers to the guide's architecture checklist
 
