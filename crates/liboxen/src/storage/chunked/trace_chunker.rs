@@ -239,6 +239,72 @@ impl Chunker for TraceJsonlChunker {
     }
 }
 
+/// Bytes sniffed from the head of the input to decide the auto chunker's
+/// delegation.
+const AUTO_SNIFF_BYTES: usize = 64 * 1024;
+
+/// Average-row-size threshold for the auto chunker: at or above this, rows are
+/// long traces whose structural chunking pays for itself; below it, small rows
+/// compress and dedup better through generic byte-CDC windows plus the shared
+/// dictionary.
+const AUTO_ROW_THRESHOLD: usize = 4 * 1024;
+
+/// Content-adaptive chunking for line-delimited JSON
+/// ([`ChunkerId::TRACE_AUTO_V1`]): sniff the first [`AUTO_SNIFF_BYTES`] of the
+/// stream, then delegate the whole stream to the structure-anchored trace chunker
+/// when average row size is at least [`AUTO_ROW_THRESHOLD`] (long traces — edit
+/// locality dominates), and to generic FastCDC otherwise (small rows — window
+/// compression and low metadata dominate).
+///
+/// The sniff rule is part of the frozen boundary function: boundaries remain a
+/// pure function of file content, so identical bytes always produce identical
+/// chunks. Editing a file may flip its delegation only by changing the content
+/// the rule measures — the benchmark's guardrail is that both delegates are
+/// themselves stable, well-tested chunkers.
+pub struct AutoTraceChunker;
+
+impl Chunker for AutoTraceChunker {
+    fn id(&self) -> ChunkerId {
+        ChunkerId::TRACE_AUTO_V1
+    }
+
+    fn chunk<'r>(
+        &self,
+        mut reader: Box<dyn Read + Send + 'r>,
+    ) -> Box<dyn Iterator<Item = Result<RawChunk, ChunkedError>> + Send + 'r> {
+        // Buffer the sniff window, decide, then replay it ahead of the rest.
+        let mut head = vec![0u8; AUTO_SNIFF_BYTES];
+        let mut filled = 0usize;
+        while filled < head.len() {
+            match reader.read(&mut head[filled..]) {
+                Ok(0) => break,
+                Ok(n) => filled += n,
+                Err(err) => {
+                    return Box::new(std::iter::once(Err(ChunkedError::ChunkRead(err))));
+                }
+            }
+        }
+        head.truncate(filled);
+
+        // Average row size over complete rows in the window. With no newline in
+        // the window, rows are at least window-sized — long traces.
+        let newlines = head.iter().filter(|&&b| b == b'\n').count();
+        let measured = match head.iter().rposition(|&b| b == b'\n') {
+            Some(last) => last + 1,
+            None => head.len(),
+        };
+        let long_rows = newlines == 0 || measured / newlines >= AUTO_ROW_THRESHOLD;
+
+        let replay: Box<dyn Read + Send + 'r> =
+            Box::new(std::io::Cursor::new(head).chain(reader));
+        if long_rows {
+            TraceJsonlChunker.chunk(replay)
+        } else {
+            super::chunker::FastCdc2020Chunker.chunk(replay)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -516,6 +582,49 @@ mod tests {
                 String::from_utf8_lossy(&data[data.len().saturating_sub(12)..])
             );
         }
+    }
+
+    /// The auto chunker's delegation is a pure function of content: long-trace
+    /// rows produce exactly the structural chunker's boundaries, small rows
+    /// produce exactly generic FastCDC's, and both tile the input.
+    #[test]
+    fn auto_chunker_delegates_by_row_size() {
+        let chunk_with = |c: &dyn Chunker, data: &[u8]| -> Vec<(u64, usize)> {
+            c.chunk(Box::new(data.to_vec().as_slice() as &[u8]))
+                .collect::<Result<Vec<_>, _>>()
+                .expect("chunk in-memory data")
+                .iter()
+                .map(|c| (c.offset, c.data.len()))
+                .collect()
+        };
+
+        // Long rows: 16 large messages per session (well over the threshold).
+        let long: String = (0..20).map(|i| session_row(i, 16)).collect();
+        let long_chunks = chunk_all(long.as_bytes());
+        assert_tiles_input(&long_chunks, long.as_bytes());
+        let expected: Vec<(u64, usize)> = long_chunks
+            .iter()
+            .map(|c| (c.offset, c.data.len()))
+            .collect();
+        let auto: Vec<(u64, usize)> = AutoTraceChunker
+            .chunk(Box::new(long.as_bytes()))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("auto chunk")
+            .iter()
+            .map(|c| (c.offset, c.data.len()))
+            .collect();
+        assert_eq!(auto, expected, "long rows must use the structural chunker");
+
+        // Small rows: prompt/completion pairs a few hundred bytes each.
+        let small: String = (0..8000)
+            .map(|i| format!("{{\"prompt\":\"question {i} lorem ipsum dolor\",\"completion\":\"answer {i}\"}}\n"))
+            .collect();
+        let fastcdc = chunk_with(
+            &crate::storage::chunked::chunker::FastCdc2020Chunker,
+            small.as_bytes(),
+        );
+        let auto_small = chunk_with(&AutoTraceChunker, small.as_bytes());
+        assert_eq!(auto_small, fastcdc, "small rows must use generic FastCDC");
     }
 
     /// Golden boundary fixture pinning TRACE_JSONL_V1's exact cut positions. If

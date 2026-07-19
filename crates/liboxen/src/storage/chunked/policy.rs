@@ -133,7 +133,7 @@ pub fn encode_policy(
         Some(StorageProfile::Generic) => ChunkerId::GENERIC_FASTCDC_V1,
         Some(StorageProfile::TraceJsonl) => ChunkerId::TRACE_JSONL_V1,
         None if LINE_DELIMITED_JSON_EXTENSIONS.contains(&extension.as_str()) => {
-            ChunkerId::TRACE_JSONL_V1
+            ChunkerId::TRACE_AUTO_V1
         }
         None => ChunkerId::GENERIC_FASTCDC_V1,
     };
@@ -238,19 +238,19 @@ mod tests {
 
         assert_eq!(
             chunker(&EntryDataType::Tabular, "jsonl"),
-            ChunkerId::TRACE_JSONL_V1
+            ChunkerId::TRACE_AUTO_V1
         );
         assert_eq!(
             chunker(&EntryDataType::Tabular, "JSONL"),
-            ChunkerId::TRACE_JSONL_V1
+            ChunkerId::TRACE_AUTO_V1
         );
         assert_eq!(
             chunker(&EntryDataType::Text, "ndjson"),
-            ChunkerId::TRACE_JSONL_V1
+            ChunkerId::TRACE_AUTO_V1
         );
         assert_eq!(
             chunker(&EntryDataType::Binary, "jsonl"),
-            ChunkerId::TRACE_JSONL_V1
+            ChunkerId::TRACE_AUTO_V1
         );
 
         // Whole-file JSON is not line-delimited; CSV rows are tiny and stay generic.
