@@ -25,7 +25,10 @@ use super::registry::CodecId;
 
 /// One database in the env holds every chunk location.
 const CHUNKS_DB_NAME: &str = "chunks";
-const MAX_DBS: u32 = 1;
+/// A second database maps prefix sketches to a candidate base chunk for delta
+/// encoding. Advisory derived state: losing it only costs future delta hits.
+const SKETCHES_DB_NAME: &str = "sketches";
+const MAX_DBS: u32 = 2;
 /// Sparse upper bound on the mapped size. Sized from the math (~53 B/entry ⇒
 /// ~8.5 GB of entries for a 10 TB repo at 64 KiB average chunks), with headroom for
 /// LMDB page overhead — not copied from the merkle store's 256 GiB.
@@ -85,6 +88,7 @@ impl ChunkLocation {
 pub struct ChunkIndex {
     env: Arc<LmdbEnv>,
     db: LmdbDb,
+    sketches: LmdbDb,
 }
 
 impl std::fmt::Debug for ChunkIndex {
@@ -99,7 +103,41 @@ impl ChunkIndex {
         let config = LmdbEnvConfig::new(MAX_DBS, CHUNK_INDEX_MAP_SIZE);
         let env = open_shared_env(dir, &config)?;
         let db = open_db(&env, CHUNKS_DB_NAME)?;
-        Ok(Self { env, db })
+        let sketches = open_db(&env, SKETCHES_DB_NAME)?;
+        Ok(Self { env, db, sketches })
+    }
+
+    /// A previously indexed chunk whose prefix sketch matches, as a delta-base
+    /// candidate. First indexed wins; purely advisory.
+    pub fn sketch_candidate(&self, sketch: u64) -> Result<Option<u128>, OxenError> {
+        let sketches = &self.sketches;
+        self.read(|_db, txn| {
+            Ok(sketches
+                .get(txn, &sketch.to_le_bytes())?
+                .and_then(|bytes| {
+                    <[u8; 16]>::try_from(bytes.as_ref())
+                        .ok()
+                        .map(u128::from_le_bytes)
+                }))
+        })
+    }
+
+    /// Record prefix sketches for newly stored chunks (first sketch wins).
+    pub fn insert_sketches(&self, entries: &[(u64, u128)]) -> Result<(), OxenError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let sketches = &self.sketches;
+        self.write(|_db, txn| {
+            for (sketch, chunk_hash) in entries {
+                let key = sketch.to_le_bytes();
+                if sketches.contains(txn, &key)? {
+                    continue;
+                }
+                sketches.put(txn, &key, &chunk_hash.to_le_bytes())?;
+            }
+            Ok(())
+        })
     }
 
     /// The location of `chunk_hash`, if this store has its payload in a block.

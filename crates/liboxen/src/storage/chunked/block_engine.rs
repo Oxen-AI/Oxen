@@ -28,8 +28,8 @@ use super::block::{BlockWriter, SealedBlock, parse_block_footer, verify_block};
 use super::block_io::{BlockByteIo, LocalBlockIo};
 use super::chunk_index::ChunkIndex;
 use super::compressor::{
-    EncodedChunk, PreparedDict, compress_with_dict, decode_chunk, decompress_with_dict,
-    encode_chunk,
+    EncodedChunk, PreparedDict, compress_with_base, compress_with_dict, decode_chunk,
+    decompress_with_base, decompress_with_dict, encode_chunk,
 };
 use super::error::ChunkedError;
 use super::manifest::{ChunkEntry, ChunkManifest, MANIFEST_VERSION};
@@ -44,6 +44,11 @@ const DICT_SAMPLE_CAP: usize = 4 * 1024 * 1024;
 const DICT_MIN_SAMPLE: usize = 256 * 1024;
 /// Maximum trained dictionary size.
 const DICT_MAX_SIZE: usize = 112 * 1024;
+/// Raw bytes hashed for a chunk's prefix sketch (delta-base candidate lookup).
+const SKETCH_PREFIX: usize = 256;
+/// Only chunks at least this large attempt delta encoding — building a per-base
+/// dictionary costs CPU that tiny chunks can't repay.
+const DELTA_MIN_RAW: usize = 8 * 1024;
 
 /// Packs, indexes, and reconstructs chunked file versions over a block byte-IO
 /// backend and a local chunk index.
@@ -123,14 +128,27 @@ impl BlockEngine {
         // Chunks held in the training queue, not yet packed or indexed.
         let mut queued = std::collections::HashSet::new();
 
+        let mut sketches: Vec<(u64, u128)> = Vec::new();
         let mut encode_and_pack = |engine: &Self,
                                    writer: &mut BlockWriter,
                                    pending: &mut std::collections::HashSet<u128>,
+                                   sketches: &mut Vec<(u64, u128)>,
                                    chunk_hash: u128,
                                    raw: &[u8],
                                    dict: Option<&(u128, Arc<PreparedDict>)>|
          -> Result<(), OxenError> {
-            let encoded = encode_dict_chunk(policy.codec, raw, dict)?;
+            let mut encoded = encode_dict_chunk(policy.codec, raw, dict)?;
+            // Near-duplicate delta: a prior chunk with the same prefix sketch is a
+            // base candidate; keep the delta only when it beats the plain form.
+            if policy.codec == CodecId::ZSTD && raw.len() >= DELTA_MIN_RAW {
+                let sketch = xxhash_rust::xxh3::xxh3_64(&raw[..SKETCH_PREFIX.min(raw.len())]);
+                sketches.push((sketch, chunk_hash));
+                if let Some(delta) = engine.try_delta_encode(sketch, chunk_hash, raw)? {
+                    if delta.data.len() < encoded.data.len() {
+                        encoded = delta;
+                    }
+                }
+            }
             if writer.would_exceed_max_size(encoded.data.len()) {
                 engine.publish_block(std::mem::take(writer).seal()?)?;
                 pending.clear();
@@ -168,7 +186,15 @@ impl BlockEngine {
                     let drained = train_queue.take().unwrap_or_default();
                     dict = self.train_dictionary(dict_class, &drained)?;
                     for (hash, raw) in drained {
-                        encode_and_pack(self, &mut writer, &mut pending, hash, &raw, dict.as_ref())?;
+                        encode_and_pack(
+                            self,
+                            &mut writer,
+                            &mut pending,
+                            &mut sketches,
+                            hash,
+                            &raw,
+                            dict.as_ref(),
+                        )?;
                     }
                     queued.clear();
                 }
@@ -179,6 +205,7 @@ impl BlockEngine {
                 self,
                 &mut writer,
                 &mut pending,
+                &mut sketches,
                 chunk_hash,
                 &raw_chunk.data,
                 dict.as_ref(),
@@ -192,13 +219,23 @@ impl BlockEngine {
                 dict = self.train_dictionary(dict_class, &queue)?;
             }
             for (hash, raw) in queue {
-                encode_and_pack(self, &mut writer, &mut pending, hash, &raw, dict.as_ref())?;
+                encode_and_pack(
+                    self,
+                    &mut writer,
+                    &mut pending,
+                    &mut sketches,
+                    hash,
+                    &raw,
+                    dict.as_ref(),
+                )?;
             }
         }
 
         if !writer.is_empty() {
             self.publish_block(writer.seal()?)?;
         }
+        // Advisory delta-base candidates; recorded after payloads are durable.
+        self.index.insert_sketches(&sketches)?;
 
         let manifest = ChunkManifest {
             version: MANIFEST_VERSION,
@@ -210,6 +247,46 @@ impl BlockEngine {
         };
         manifest.validate()?;
         Ok(manifest)
+    }
+
+    /// Attempt to encode `raw` as a delta against a sketch-matched base chunk.
+    /// Bounded: the base must itself be a non-delta chunk (chain depth one), and
+    /// the base's raw bytes must be readable from this store.
+    fn try_delta_encode(
+        &self,
+        sketch: u64,
+        chunk_hash: u128,
+        raw: &[u8],
+    ) -> Result<Option<EncodedChunk>, OxenError> {
+        let Some(base_hash) = self.index.sketch_candidate(sketch)? else {
+            return Ok(None);
+        };
+        if base_hash == chunk_hash {
+            return Ok(None);
+        }
+        let Some(base_loc) = self.index.get(base_hash)? else {
+            return Ok(None);
+        };
+        // Chain depth is at most one: never delta against a delta.
+        if base_loc.codec == CodecId::ZSTD_DELTA {
+            return Ok(None);
+        }
+        let base_raw = self.read_chunk(&ChunkEntry {
+            hash: base_hash,
+            offset: 0,
+            len: base_loc.raw_len,
+        })?;
+        let frame = compress_with_base(raw, &base_raw)?;
+        if frame.len() + 16 >= raw.len() {
+            return Ok(None);
+        }
+        let mut data = Vec::with_capacity(16 + frame.len());
+        data.extend_from_slice(&base_hash.to_le_bytes());
+        data.extend_from_slice(&frame);
+        Ok(Some(EncodedChunk {
+            codec: CodecId::ZSTD_DELTA,
+            data,
+        }))
     }
 
     /// The store's current shared dictionary for a content class, loaded through
@@ -310,6 +387,36 @@ impl BlockEngine {
             location.offset as u64,
             location.stored_len as u64,
         )?;
+        if location.codec == CodecId::ZSTD_DELTA {
+            // Payload = [16-byte base chunk hash LE][zstd frame over base dict].
+            let hash_bytes: [u8; 16] = payload.get(..16).and_then(|b| b.try_into().ok()).ok_or(
+                ChunkedError::CorruptChunkIndex(format!(
+                    "delta chunk {:x} payload shorter than its base header",
+                    entry.hash
+                )),
+            )?;
+            let base_hash = u128::from_le_bytes(hash_bytes);
+            let base_loc = self.index.get(base_hash)?.ok_or(ChunkedError::MissingChunk {
+                chunk_hash: base_hash,
+            })?;
+            if base_loc.codec == CodecId::ZSTD_DELTA {
+                return Err(ChunkedError::CorruptChunkIndex(format!(
+                    "delta chunk {:x} has a delta base {base_hash:x} (chain depth > 1)",
+                    entry.hash
+                ))
+                .into());
+            }
+            let base_raw = self.read_chunk(&ChunkEntry {
+                hash: base_hash,
+                offset: 0,
+                len: base_loc.raw_len,
+            })?;
+            return Ok(decompress_with_base(
+                &payload[16..],
+                location.raw_len as usize,
+                &base_raw,
+            )?);
+        }
         if location.codec == CodecId::ZSTD_DICT {
             // Payload = [16-byte dictionary hash LE][zstd frame].
             let hash_bytes: [u8; 16] = payload.get(..16).and_then(|b| b.try_into().ok()).ok_or(
@@ -418,7 +525,9 @@ impl BlockEngine {
                 .ok_or(ChunkedError::MissingChunk { chunk_hash })?;
             // Dictionary-compressed chunks never cross the wire (the receiver has
             // no dictionary context): re-encode them as plain zstd for transfer.
-            let encoded = if location.codec == CodecId::ZSTD_DICT {
+            let encoded = if location.codec == CodecId::ZSTD_DICT
+                || location.codec == CodecId::ZSTD_DELTA
+            {
                 let raw = self.read_chunk(&ChunkEntry {
                     hash: chunk_hash,
                     offset: 0,
@@ -595,6 +704,70 @@ mod tests {
 
     fn csv_policy() -> EncodePolicy {
         encode_policy(None, &EntryDataType::Tabular, "csv")
+    }
+
+    /// Near-duplicate chunks across versions delta-encode against a
+    /// sketch-matched base, round-trip exactly, respect the depth-one chain
+    /// bound, and are re-encoded for transfer.
+    #[test]
+    fn delta_encoding_round_trip() -> Result<(), OxenError> {
+        let t = test_engine();
+        // Version 1: a large file. Version 2: same content with a small edit in
+        // the middle of each 64KB region — near-duplicate chunks, same prefixes.
+        let v1 = csv_bytes(3, 512 * 1024);
+        let mut v2 = v1.clone();
+        for pos in (32 * 1024..v2.len()).step_by(64 * 1024) {
+            v2[pos] = b'#';
+        }
+        let m1 = ingest(&t.engine, &v1);
+        let m2 = ingest(&t.engine, &v2);
+
+        let delta_chunks = m2
+            .chunks
+            .iter()
+            .filter_map(|e| t.engine.index().get(e.hash).transpose())
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|loc| loc.codec == CodecId::ZSTD_DELTA)
+            .count();
+        assert!(delta_chunks > 0, "expected delta-encoded chunks");
+
+        for (m, d) in [(&m1, &v1), (&m2, &v2)] {
+            assert_eq!(&reconstruct(&t.engine, m), d);
+        }
+
+        // Depth bound: every delta chunk's base is a non-delta chunk.
+        for e in &m2.chunks {
+            if let Some(loc) = t.engine.index().get(e.hash)? {
+                if loc.codec == CodecId::ZSTD_DELTA {
+                    let payload = t.engine.io.read_block_range(
+                        loc.block_hash,
+                        loc.offset as u64,
+                        16,
+                    )?;
+                    let base_hash = u128::from_le_bytes(
+                        payload.as_slice().try_into().expect("16-byte header"),
+                    );
+                    let base = t
+                        .engine
+                        .index()
+                        .get(base_hash)?
+                        .expect("delta base must be indexed");
+                    assert_ne!(base.codec, CodecId::ZSTD_DELTA, "chain depth > 1");
+                }
+            }
+        }
+
+        // Transfer packing inflates deltas: a fresh store can verify and read.
+        let hashes: Vec<u128> = m2.chunks.iter().map(|c| c.hash).collect();
+        let receiver = test_engine();
+        for block in t.engine.pack_chunks(&hashes)? {
+            let parsed = verify_block(&block.data)?;
+            assert!(parsed.iter().all(|c| c.codec != CodecId::ZSTD_DELTA));
+            receiver.engine.store_block(block.hash, block.data)?;
+        }
+        assert_eq!(&reconstruct(&receiver.engine, &m2), &v2);
+        Ok(())
     }
 
     /// The shared-dictionary lifecycle: a large-enough first ingest trains and

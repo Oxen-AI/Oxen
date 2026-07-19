@@ -36,6 +36,34 @@ impl std::fmt::Debug for PreparedDict {
     }
 }
 
+/// Compress a chunk as a delta against a base chunk's raw bytes (raw-content
+/// dictionary). Used for near-duplicate chunks found via prefix sketches.
+pub fn compress_with_base(raw: &[u8], base: &[u8]) -> Result<Vec<u8>, ChunkedError> {
+    let mut compressor =
+        zstd::bulk::Compressor::with_dictionary(ZSTD_LEVEL, base).map_err(ChunkedError::Compress)?;
+    compressor.compress(raw).map_err(ChunkedError::Compress)
+}
+
+/// Decompress a delta chunk back to exactly `raw_len` bytes given its base.
+pub fn decompress_with_base(
+    stored: &[u8],
+    raw_len: usize,
+    base: &[u8],
+) -> Result<Vec<u8>, ChunkedError> {
+    let mut decompressor =
+        zstd::bulk::Decompressor::with_dictionary(base).map_err(ChunkedError::Decompress)?;
+    let decoded = decompressor
+        .decompress(stored, raw_len)
+        .map_err(ChunkedError::Decompress)?;
+    if decoded.len() != raw_len {
+        return Err(ChunkedError::DecodedLenMismatch {
+            expected: raw_len,
+            actual: decoded.len(),
+        });
+    }
+    Ok(decoded)
+}
+
 /// Compress a chunk against a shared dictionary ([`CodecId::ZSTD_DICT`] payloads;
 /// the block engine owns dictionary lifecycle and payload framing).
 pub fn compress_with_dict(raw: &[u8], dict: &PreparedDict) -> Result<Vec<u8>, ChunkedError> {

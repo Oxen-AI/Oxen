@@ -73,6 +73,11 @@ impl CodecId {
     /// (which owns dictionary storage); never crosses the wire — transfer packing
     /// re-encodes these chunks as plain [`CodecId::ZSTD`].
     pub const ZSTD_DICT: CodecId = CodecId(2);
+    /// Zstandard delta against a base chunk already stored in this store. Payload =
+    /// `[16-byte base chunk hash LE][zstd frame using the base's raw bytes as
+    /// dictionary]`. Chain depth is at most one (a base is never itself a delta).
+    /// Store-local; transfer packing re-encodes as plain [`CodecId::ZSTD`].
+    pub const ZSTD_DELTA: CodecId = CodecId(3);
 
     pub fn as_u8(&self) -> u8 {
         self.0
@@ -120,10 +125,12 @@ pub fn codec(id: CodecId) -> Result<&'static dyn Compressor, ChunkedError> {
     static RAW: RawCodec = RawCodec;
     static ZSTD: ZstdCodec = ZstdCodec;
     static ZSTD_DICT: ZstdDictMarker = ZstdDictMarker;
+    static ZSTD_DELTA: ZstdDeltaMarker = ZstdDeltaMarker;
     match id {
         CodecId::RAW => Ok(&RAW),
         CodecId::ZSTD => Ok(&ZSTD),
         CodecId::ZSTD_DICT => Ok(&ZSTD_DICT),
+        CodecId::ZSTD_DELTA => Ok(&ZSTD_DELTA),
         CodecId(other) => Err(ChunkedError::UnknownCodecId(other)),
     }
 }
@@ -148,6 +155,29 @@ impl crate::storage::chunked::compressor::Compressor for ZstdDictMarker {
     fn decompress(&self, _stored: &[u8], _raw_len: usize) -> Result<Vec<u8>, ChunkedError> {
         Err(ChunkedError::Decompress(std::io::Error::other(
             "dictionary-compressed chunks require store-local dictionary context",
+        )))
+    }
+}
+
+/// Registry marker for [`CodecId::ZSTD_DELTA`]: same contract as
+/// [`ZstdDictMarker`] — the ID is valid, but decoding requires the base chunk,
+/// which only the block engine can resolve.
+struct ZstdDeltaMarker;
+
+impl crate::storage::chunked::compressor::Compressor for ZstdDeltaMarker {
+    fn id(&self) -> CodecId {
+        CodecId::ZSTD_DELTA
+    }
+
+    fn compress(&self, _raw: &[u8]) -> Result<Vec<u8>, ChunkedError> {
+        Err(ChunkedError::Compress(std::io::Error::other(
+            "delta chunks are encoded only by the block engine",
+        )))
+    }
+
+    fn decompress(&self, _stored: &[u8], _raw_len: usize) -> Result<Vec<u8>, ChunkedError> {
+        Err(ChunkedError::Decompress(std::io::Error::other(
+            "delta chunks require their base chunk to decode",
         )))
     }
 }
@@ -203,6 +233,7 @@ mod tests {
         assert_eq!(CodecId::RAW.as_u8(), 0);
         assert_eq!(CodecId::ZSTD.as_u8(), 1);
         assert_eq!(CodecId::ZSTD_DICT.as_u8(), 2);
+        assert_eq!(CodecId::ZSTD_DELTA.as_u8(), 3);
         assert_eq!(TransformId::IDENTITY.as_u8(), 0);
     }
 }
