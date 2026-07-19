@@ -247,7 +247,7 @@ const AUTO_SNIFF_BYTES: usize = 64 * 1024;
 /// long traces whose structural chunking pays for itself; below it, small rows
 /// compress and dedup better through generic byte-CDC windows plus the shared
 /// dictionary.
-const AUTO_ROW_THRESHOLD: usize = 4 * 1024;
+const AUTO_ROW_THRESHOLD: usize = 2 * 1024;
 
 /// Content-adaptive chunking for line-delimited JSON
 /// ([`ChunkerId::TRACE_AUTO_V1`]): sniff the first [`AUTO_SNIFF_BYTES`] of the
