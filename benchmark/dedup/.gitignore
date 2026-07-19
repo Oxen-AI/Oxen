@@ -2,3 +2,4 @@ corpus/
 .run/
 run.log
 results.tsv
+.run.stderr
