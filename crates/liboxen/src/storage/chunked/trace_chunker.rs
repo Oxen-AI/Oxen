@@ -48,6 +48,13 @@ const ROW_ISOLATE_MIN: usize = 1024;
 /// row. Bounds the tail-chunk cost of appending to a row's array.
 const INTRA_ROW_TARGET: usize = 8 * 1024;
 
+/// Depth-2 array elements at least this large are isolated into their own chunk
+/// (cut at the element's start and end). Large first elements are the verbatim
+/// system-prompt + tool-definition prefixes that prompt caching exploits —
+/// isolating them from the row's unique header lets every row of a config share
+/// one stored chunk; large later elements are repeated big observations.
+const ELEMENT_ISOLATE_MIN: usize = 4 * 1024;
+
 /// How many bytes are read from the input per scan step.
 const READ_BUF_SIZE: usize = 64 * 1024;
 
@@ -85,9 +92,8 @@ impl LineScanner {
         self.overflow = 0;
     }
 
-    /// Consume one byte; report whether the byte is an element separator (`,`) of a
-    /// depth-2 array — the anchor after which an intra-row cut may be taken.
-    fn is_element_separator(&mut self, byte: u8) -> bool {
+    /// Consume one byte; report what it means for depth-2 array structure.
+    fn scan(&mut self, byte: u8) -> ScanEvent {
         if self.in_string {
             match byte {
                 _ if self.escaped => self.escaped = false,
@@ -95,13 +101,16 @@ impl LineScanner {
                 b'"' => self.in_string = false,
                 _ => {}
             }
-            return false;
+            return ScanEvent::None;
         }
         match byte {
             b'"' => self.in_string = true,
             b'{' | b'[' => {
                 if self.stack.len() < Self::STACK_CAP {
                     self.stack.push(byte == b'[');
+                    if byte == b'[' && self.overflow == 0 && self.stack == [false, true] {
+                        return ScanEvent::ElementsOpen;
+                    }
                 } else {
                     self.overflow = self.overflow.saturating_add(1);
                 }
@@ -110,17 +119,36 @@ impl LineScanner {
                 if self.overflow > 0 {
                     self.overflow -= 1;
                 } else {
+                    if byte == b']' && self.stack == [false, true] {
+                        self.stack.pop();
+                        return ScanEvent::ElementsClose;
+                    }
                     self.stack.pop();
                 }
             }
             b',' => {
-                // Depth-2 array element separator: root object -> array field.
-                return self.overflow == 0 && self.stack == [false, true];
+                if self.overflow == 0 && self.stack == [false, true] {
+                    // Depth-2 array element separator: root object -> array field.
+                    return ScanEvent::ElementSeparator;
+                }
             }
             _ => {}
         }
-        false
+        ScanEvent::None
     }
+}
+
+/// What one scanned byte means for the row's depth-2 array structure.
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum ScanEvent {
+    None,
+    /// A depth-2 array just opened: the next byte starts its first element.
+    ElementsOpen,
+    /// An element separator: the current element ended at this byte; the next
+    /// byte starts the following element.
+    ElementSeparator,
+    /// The depth-2 array closed: the current element ended before this byte.
+    ElementsClose,
 }
 
 /// Streaming iterator over the trace-chunked input: bounded memory (one pending
@@ -136,6 +164,12 @@ struct TraceChunkIter<'r> {
     /// [`ROW_ISOLATE_MIN`] always cut at their end, so a big row's chunks never
     /// leak into the next row.
     row_len: usize,
+    /// Start of the current depth-2 array element within `pending`, when no other
+    /// cut has fired since the element began (`None` otherwise).
+    element_start: Option<usize>,
+    /// A chunk already split off and waiting to be yielded before scanning
+    /// continues (isolation emits two chunks at one byte).
+    ready: Option<RawChunk>,
     /// Bytes read from the input but not yet scanned.
     buf: VecDeque<u8>,
     eof: bool,
@@ -152,6 +186,18 @@ impl TraceChunkIter<'_> {
         self.pending_offset += chunk.data.len() as u64;
         chunk
     }
+
+    /// Split `pending` at `at`: the head becomes a chunk, the tail stays pending.
+    fn take_pending_head(&mut self, at: usize) -> RawChunk {
+        let tail = self.pending.split_off(at);
+        let data = std::mem::replace(&mut self.pending, tail);
+        let chunk = RawChunk {
+            offset: self.pending_offset,
+            data,
+        };
+        self.pending_offset += chunk.data.len() as u64;
+        chunk
+    }
 }
 
 impl Iterator for TraceChunkIter<'_> {
@@ -160,6 +206,9 @@ impl Iterator for TraceChunkIter<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         if self.done {
             return None;
+        }
+        if let Some(chunk) = self.ready.take() {
+            return Some(Ok(chunk));
         }
         loop {
             // Refill the scan buffer before draining it.
@@ -184,13 +233,56 @@ impl Iterator for TraceChunkIter<'_> {
                 return Some(Ok(self.take_pending()));
             };
 
-            let element_separator = self.scanner.is_element_separator(byte);
+            let event = self.scanner.scan(byte);
             let row_end = byte == b'\n';
             if row_end {
                 self.scanner.reset();
             }
+
+            // Large-element isolation: when a depth-2 element ends and it grew to
+            // at least ELEMENT_ISOLATE_MIN (with no other cut having fired inside
+            // it), split it into its own chunk. Its start position was recorded
+            // when the element began, so the decision needs no lookahead — and a
+            // config's verbatim prompt prefix dedups exactly across rows because
+            // the row's unique header lands in the preceding chunk.
+            let element_ended =
+                event == ScanEvent::ElementSeparator || event == ScanEvent::ElementsClose;
+            if element_ended
+                && let Some(start) = self.element_start
+                && self.pending.len() - start >= ELEMENT_ISOLATE_MIN
+            {
+                if event == ScanEvent::ElementSeparator {
+                    self.pending.push(byte);
+                } // ElementsClose: the ']' stays with the following chunk region
+                let head = (start > 0).then(|| self.take_pending_head(start));
+                let element = self.take_pending();
+                if event == ScanEvent::ElementsClose {
+                    self.pending.push(byte);
+                }
+                self.element_start =
+                    (event == ScanEvent::ElementSeparator).then_some(0);
+                self.row_len += 1;
+                if row_end {
+                    self.row_len = 0;
+                }
+                match head {
+                    Some(h) => {
+                        self.ready = Some(element);
+                        return Some(Ok(h));
+                    }
+                    None => return Some(Ok(element)),
+                }
+            }
+
             self.pending.push(byte);
             self.row_len += 1;
+            match event {
+                ScanEvent::ElementsOpen | ScanEvent::ElementSeparator => {
+                    self.element_start = Some(self.pending.len());
+                }
+                ScanEvent::ElementsClose => self.element_start = None,
+                ScanEvent::None => {}
+            }
 
             // The cut rule frozen by TRACE_JSONL_V1, in priority order. Each cut
             // depends only on bytes already consumed — never on lookahead — so a
@@ -201,11 +293,13 @@ impl Iterator for TraceChunkIter<'_> {
             let cut = self.pending.len() >= MAX_CHUNK_SIZE as usize
                 || (row_end
                     && (self.row_len >= ROW_ISOLATE_MIN || self.pending.len() >= ROW_ISOLATE_MIN))
-                || (element_separator && self.pending.len() >= INTRA_ROW_TARGET);
+                || (event == ScanEvent::ElementSeparator
+                    && self.pending.len() >= INTRA_ROW_TARGET);
             if row_end {
                 self.row_len = 0;
             }
             if cut {
+                self.element_start = None;
                 return Some(Ok(self.take_pending()));
             }
         }
@@ -232,6 +326,8 @@ impl Chunker for TraceJsonlChunker {
             pending: Vec::new(),
             pending_offset: 0,
             row_len: 0,
+            element_start: None,
+            ready: None,
             buf: VecDeque::new(),
             eof: false,
             done: false,
@@ -628,6 +724,45 @@ mod tests {
         );
         let auto_small = chunk_with(&AutoTraceChunker, small.as_bytes());
         assert_eq!(auto_small, fastcdc, "small rows must use generic FastCDC");
+    }
+
+    /// Large first elements (verbatim system-prompt + tool-definition prefixes)
+    /// are isolated into their own chunks: rows sharing a config share the
+    /// stored prefix chunk exactly, while their unique headers stay separate.
+    #[test]
+    fn shared_prompt_prefix_dedups_across_rows() {
+        let prefix = format!(
+            r#"{{"role":"system","content":"You are agent config A. {}"}}"#,
+            "operating rules and tool definitions ".repeat(160)
+        );
+        assert!(prefix.len() >= ELEMENT_ISOLATE_MIN);
+        let row = |id: u64| {
+            format!(
+                "{{\"uuid\":\"session-{id:08}\",\"messages\":[{prefix},{{\"role\":\"user\",\"content\":\"question {id}\"}}],\"source\":\"web\"}}\n"
+            )
+        };
+        let a = row(1);
+        let b = row(2);
+        let chunks_a = chunk_all(a.as_bytes());
+        let chunks_b = chunk_all(b.as_bytes());
+        assert_tiles_input(&chunks_a, a.as_bytes());
+        assert_tiles_input(&chunks_b, b.as_bytes());
+
+        // The isolated prefix chunk (element + trailing separator) is shared.
+        let expected_element = format!("{prefix},");
+        let hash = |c: &RawChunk| hash_buffer_128bit(&c.data);
+        let iso_a = chunks_a
+            .iter()
+            .find(|c| c.data == expected_element.as_bytes())
+            .expect("row A isolates its prompt prefix");
+        let iso_b = chunks_b
+            .iter()
+            .find(|c| c.data == expected_element.as_bytes())
+            .expect("row B isolates its prompt prefix");
+        assert_eq!(hash(iso_a), hash(iso_b));
+        // The unique headers land in separate, different chunks.
+        assert!(chunks_a[0].data.starts_with(b"{\"uuid\":\"session-00000001"));
+        assert_ne!(chunks_a[0].data, chunks_b[0].data);
     }
 
     /// Golden boundary fixture pinning TRACE_JSONL_V1's exact cut positions. If
