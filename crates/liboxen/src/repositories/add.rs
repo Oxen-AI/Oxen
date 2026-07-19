@@ -313,12 +313,15 @@ A: Oxen.ai
             // Distinct content per file: identical bytes would share one version
             // hash (and thus one manifest), hiding the per-file routing.
             let floor = dedup_min_file_size() as usize;
+            // Rows over the auto chunker's sniff threshold, so .jsonl routing
+            // resolves to the structural trace chunker.
             let body = |tag: &str| {
                 let mut jsonl = String::new();
                 let mut row = 0u64;
+                let filler = "lorem ipsum dolor sit amet ".repeat(120);
                 while jsonl.len() < floor * 2 {
                     jsonl.push_str(&format!(
-                        "{{\"uuid\":\"{tag}-{row}\",\"messages\":[{{\"role\":\"user\",\"content\":\"turn {row}\"}}],\"source\":\"web\"}}\n"
+                        "{{\"uuid\":\"{tag}-{row}\",\"messages\":[{{\"role\":\"user\",\"content\":\"turn {row}: {filler}\"}}],\"source\":\"web\"}}\n"
                     ));
                     row += 1;
                 }
@@ -346,10 +349,11 @@ A: Oxen.ai
                 }
             };
 
-            // Extension route: .jsonl → the content-adaptive trace chunker.
+            // Extension route: .jsonl → auto sniff → the manifest records the
+            // resolved structural delegate (long rows here).
             assert_eq!(
                 manifest_chunker("chats.jsonl").await?,
-                ChunkerId::TRACE_AUTO_V1
+                ChunkerId::TRACE_JSONL_V1
             );
             // Explicit mark overrides the .log extension.
             assert_eq!(
