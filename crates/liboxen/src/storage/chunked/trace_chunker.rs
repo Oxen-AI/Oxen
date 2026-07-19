@@ -287,7 +287,7 @@ mod tests {
                 let role = if i % 2 == 0 { "user" } else { "assistant" };
                 format!(
                     r#"{{"role":"{role}","content":"message {i} of session {id}: {}"}}"#,
-                    "lorem ipsum dolor sit amet ".repeat(16)
+                    "lorem ipsum dolor sit amet ".repeat(40)
                 )
             })
             .collect();
@@ -531,22 +531,22 @@ mod tests {
         // GOLDEN: (offset, len) pairs for eight 16-message sessions: one intra-row
         // cut at the first element separator past the target, then the row-end cut.
         let expected: Vec<(u64, usize)> = vec![
-            (0, 4424),
-            (4424, 3438),
-            (7862, 4424),
-            (12286, 3438),
-            (15724, 4424),
-            (20148, 3438),
-            (23586, 4424),
-            (28010, 3438),
-            (31448, 4424),
-            (35872, 3438),
-            (39310, 4424),
-            (43734, 3438),
-            (47172, 4424),
-            (51596, 3438),
-            (55034, 4424),
-            (59458, 3438),
+            (0, 9123),
+            (9123, 9107),
+            (18230, 9123),
+            (27353, 9107),
+            (36460, 9123),
+            (45583, 9107),
+            (54690, 9123),
+            (63813, 9107),
+            (72920, 9123),
+            (82043, 9107),
+            (91150, 9123),
+            (100273, 9107),
+            (109380, 9123),
+            (118503, 9107),
+            (127610, 9123),
+            (136733, 9107),
         ];
         assert_eq!(boundaries, expected);
     }
