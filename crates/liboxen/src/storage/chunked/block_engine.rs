@@ -34,7 +34,8 @@ use super::compressor::{
 use super::error::ChunkedError;
 use super::manifest::{ChunkEntry, ChunkManifest, MANIFEST_VERSION};
 use super::policy::EncodePolicy;
-use super::registry::{CodecId, chunker};
+use super::registry::{ChunkerId, CodecId, chunker};
+use super::trace_chunker::{AUTO_SNIFF_BYTES, sniff_long_rows};
 
 /// Maximum bytes of raw chunk samples buffered to train the store's shared
 /// dictionary (also bounds the deferred-encode queue during the first ingest).
@@ -98,15 +99,39 @@ impl BlockEngine {
         reader: &mut (dyn Read + Send),
         policy: &EncodePolicy,
     ) -> Result<ChunkManifest, OxenError> {
-        let chunker = chunker(policy.chunker)?;
+        // Resolve the content-adaptive chunker here so the manifest records the
+        // actual boundary function used, and so the dictionary class can honor
+        // the sniff outcome (long-row and small-row line-delimited JSON are
+        // distinct content families).
+        let mut dict_class = policy.dict_class;
+        let mut head: Vec<u8> = Vec::new();
+        let chunker_id = if policy.chunker == ChunkerId::TRACE_AUTO_V1 {
+            head = vec![0u8; AUTO_SNIFF_BYTES];
+            let mut filled = 0usize;
+            while filled < head.len() {
+                match reader.read(&mut head[filled..]) {
+                    Ok(0) => break,
+                    Ok(n) => filled += n,
+                    Err(err) => return Err(ChunkedError::ChunkRead(err).into()),
+                }
+            }
+            head.truncate(filled);
+            if sniff_long_rows(&head) {
+                dict_class |= 0x10;
+                ChunkerId::TRACE_JSONL_V1
+            } else {
+                ChunkerId::GENERIC_FASTCDC_V1
+            }
+        } else {
+            policy.chunker
+        };
+        let chunker = chunker(chunker_id)?;
+        let mut sniffed_reader = std::io::Cursor::new(head).chain(&mut *reader);
 
         // Dictionary compression applies to zstd-eligible content only. If the
         // store has no dictionary yet (and the backend can persist one), the
         // first zstd-eligible ingest defers encoding of up to DICT_SAMPLE_CAP raw
         // chunk bytes, trains a dictionary from them, then encodes the queue.
-        // Dictionaries are per content class: content trained on one chunker's
-        // format is useless for another's, so the class is the chunker ID.
-        let dict_class = policy.chunker.as_u8();
         let mut dict = if policy.codec == CodecId::ZSTD {
             self.current_dict(dict_class)?
         } else {
@@ -157,7 +182,7 @@ impl BlockEngine {
             Ok(())
         };
 
-        for raw_chunk in chunker.chunk(Box::new(reader)) {
+        for raw_chunk in chunker.chunk(Box::new(&mut sniffed_reader)) {
             let raw_chunk = raw_chunk?;
             file_hasher.update(&raw_chunk.data);
             file_size += raw_chunk.data.len() as u64;
@@ -240,7 +265,7 @@ impl BlockEngine {
             version: MANIFEST_VERSION,
             file_hash: MerkleHash::new(file_hasher.digest128()),
             file_size,
-            chunker_id: policy.chunker,
+            chunker_id,
             transform_id: policy.transform,
             chunks: entries,
         };

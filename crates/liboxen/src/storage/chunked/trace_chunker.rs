@@ -241,13 +241,24 @@ impl Chunker for TraceJsonlChunker {
 
 /// Bytes sniffed from the head of the input to decide the auto chunker's
 /// delegation.
-const AUTO_SNIFF_BYTES: usize = 64 * 1024;
+pub const AUTO_SNIFF_BYTES: usize = 64 * 1024;
 
 /// Average-row-size threshold for the auto chunker: at or above this, rows are
 /// long traces whose structural chunking pays for itself; below it, small rows
 /// compress and dedup better through generic byte-CDC windows plus the shared
 /// dictionary.
 const AUTO_ROW_THRESHOLD: usize = 2 * 1024;
+
+/// Decide the auto chunker's delegation from a sniffed head: `true` routes to the
+/// structure-anchored trace chunker (long rows), `false` to generic FastCDC.
+pub fn sniff_long_rows(head: &[u8]) -> bool {
+    let newlines = head.iter().filter(|&&b| b == b'\n').count();
+    let measured = match head.iter().rposition(|&b| b == b'\n') {
+        Some(last) => last + 1,
+        None => head.len(),
+    };
+    newlines == 0 || measured / newlines >= AUTO_ROW_THRESHOLD
+}
 
 /// Content-adaptive chunking for line-delimited JSON
 /// ([`ChunkerId::TRACE_AUTO_V1`]): sniff the first [`AUTO_SNIFF_BYTES`] of the
@@ -286,14 +297,7 @@ impl Chunker for AutoTraceChunker {
         }
         head.truncate(filled);
 
-        // Average row size over complete rows in the window. With no newline in
-        // the window, rows are at least window-sized — long traces.
-        let newlines = head.iter().filter(|&&b| b == b'\n').count();
-        let measured = match head.iter().rposition(|&b| b == b'\n') {
-            Some(last) => last + 1,
-            None => head.len(),
-        };
-        let long_rows = newlines == 0 || measured / newlines >= AUTO_ROW_THRESHOLD;
+        let long_rows = sniff_long_rows(&head);
 
         let replay: Box<dyn Read + Send + 'r> = Box::new(std::io::Cursor::new(head).chain(reader));
         if long_rows {

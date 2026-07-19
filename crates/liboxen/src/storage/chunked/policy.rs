@@ -25,6 +25,11 @@ pub struct EncodePolicy {
     pub chunker: ChunkerId,
     pub codec: CodecId,
     pub transform: TransformId,
+    /// Shared-dictionary content class: dictionaries are trained and applied per
+    /// class so one format's patterns never dilute another's. Derived from the
+    /// extension family; the engine refines it with the auto chunker's row-size
+    /// sniff (long-row and small-row line-delimited JSON are distinct families).
+    pub dict_class: u8,
 }
 
 /// Returns the active minimum file size for chunking.
@@ -138,10 +143,19 @@ pub fn encode_policy(
         None => ChunkerId::GENERIC_FASTCDC_V1,
     };
 
+    let dict_class = if LINE_DELIMITED_JSON_EXTENSIONS.contains(&extension.as_str()) {
+        2
+    } else if matches!(extension.as_str(), "csv" | "tsv") {
+        1
+    } else {
+        0
+    };
+
     EncodePolicy {
         chunker,
         codec,
         transform: TransformId::IDENTITY,
+        dict_class,
     }
 }
 
