@@ -16,7 +16,7 @@ use super::registry::{ChunkerId, CodecId, TransformId};
 /// Files at or above this size are chunked; smaller files keep the whole-file path
 /// (chunking them is pure overhead). 1 MiB deliberately includes the small-but-hot
 /// labeled-CSV workload this feature targets.
-pub const DEDUP_MIN_FILE_SIZE: u64 = 1024 * 1024;
+pub const DEDUP_MIN_FILE_SIZE: u64 = 16 * 1024;
 
 /// The chunker/codec/transform selection for one file, from
 /// [`encode_policy`].
