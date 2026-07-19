@@ -46,7 +46,7 @@ const ROW_ISOLATE_MIN: usize = 1024;
 
 /// Minimum accumulated bytes for a cut at a depth-2 array element boundary inside a
 /// row. Bounds the tail-chunk cost of appending to a row's array.
-const INTRA_ROW_TARGET: usize = 4 * 1024;
+const INTRA_ROW_TARGET: usize = 8 * 1024;
 
 /// How many bytes are read from the input per scan step.
 const READ_BUF_SIZE: usize = 64 * 1024;
