@@ -1,0 +1,4 @@
+corpus/
+.run/
+run.log
+results.tsv
