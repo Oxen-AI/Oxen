@@ -11,7 +11,7 @@ use super::registry::{CodecId, codec};
 
 /// Zstd compression level for [`CodecId::ZSTD`]. Chosen for the add-path hot loop:
 /// good text/tabular ratios at high throughput.
-const ZSTD_LEVEL: i32 = 9;
+const ZSTD_LEVEL: i32 = 19;
 
 /// Encodes and decodes a chunk payload.
 ///
