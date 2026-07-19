@@ -1,5 +1,5 @@
 corpus/
-.run/
-run.log
-results.tsv
-.run.stderr
+corpus-promptcache/
+corpus-v2-src/
+.run*/
+run*.log
