@@ -63,6 +63,13 @@ const WINDOW_SEGMENT_MEMBERS: usize = 128;
 /// Assembled window dictionaries kept warm (each up to [`WINDOW_RAW_CAP`] raw
 /// bytes plus digest tables).
 const WINDOW_CACHE_ENTRIES: usize = 2;
+/// Chunks decoded per parallel reconstruction batch. Bounds reconstruction
+/// memory at roughly `RECONSTRUCT_BATCH × MAX_CHUNK_SIZE` per file.
+const RECONSTRUCT_BATCH: usize = 64;
+/// Decoded delta-base chunks kept warm during reads: many delta chunks share one
+/// base (request-log rows, page windows), and re-decoding the base per delta is
+/// the dominant repeated cost of reconstruction.
+const BASE_CACHE_ENTRIES: usize = 64;
 
 /// Packs, indexes, and reconstructs chunked file versions over a block byte-IO
 /// backend and a local chunk index.
@@ -76,6 +83,8 @@ pub struct BlockEngine {
     footer_cache: Mutex<HashMap<u128, Arc<Vec<super::block::BlockChunk>>>>,
     /// Recently assembled window-delta dictionaries, most recent last.
     window_cache: Mutex<Vec<((u128, u32, u32), Arc<PreparedDict>)>>,
+    /// Recently decoded delta-base chunks (chunk hash → raw bytes).
+    base_cache: Mutex<HashMap<u128, Arc<Vec<u8>>>>,
 }
 
 impl BlockEngine {
@@ -89,6 +98,7 @@ impl BlockEngine {
             dict_cache: Mutex::new(HashMap::new()),
             footer_cache: Mutex::new(HashMap::new()),
             window_cache: Mutex::new(Vec::new()),
+            base_cache: Mutex::new(HashMap::new()),
         })
     }
 
@@ -783,11 +793,21 @@ impl BlockEngine {
                 ))
                 .into());
             }
-            let base_raw = self.read_chunk(&ChunkEntry {
-                hash: base_hash,
-                offset: 0,
-                len: base_loc.raw_len,
-            })?;
+            let base_raw = if let Some(cached) = self.base_cache.lock().get(&base_hash) {
+                Arc::clone(cached)
+            } else {
+                let decoded = Arc::new(self.read_chunk(&ChunkEntry {
+                    hash: base_hash,
+                    offset: 0,
+                    len: base_loc.raw_len,
+                })?);
+                let mut cache = self.base_cache.lock();
+                if cache.len() >= BASE_CACHE_ENTRIES {
+                    cache.clear();
+                }
+                cache.insert(base_hash, Arc::clone(&decoded));
+                decoded
+            };
             return Ok(decompress_with_base(
                 &payload[16..],
                 location.raw_len as usize,
@@ -864,18 +884,35 @@ impl BlockEngine {
             writer.write_all(&original)?;
             return Ok(());
         }
-        for entry in &manifest.chunks {
-            let raw = self.read_chunk(entry)?;
-            writer.write_all(&raw)?;
+        for batch in manifest.chunks.chunks(RECONSTRUCT_BATCH) {
+            for raw in self.read_chunk_batch(batch)? {
+                writer.write_all(&raw)?;
+            }
         }
         Ok(())
+    }
+
+    /// Decode a run of manifest entries with rayon, preserving order. Decode is
+    /// CPU-bound (zstd) while block reads hit warm page cache, so batches scale
+    /// near-linearly with cores.
+    pub(super) fn read_chunk_batch(
+        &self,
+        entries: &[ChunkEntry],
+    ) -> Result<Vec<Vec<u8>>, OxenError> {
+        use rayon::prelude::*;
+        if entries.len() <= 1 {
+            return entries.iter().map(|e| self.read_chunk(e)).collect();
+        }
+        entries.par_iter().map(|e| self.read_chunk(e)).collect()
     }
 
     /// The stored (post-transform) chunk stream a manifest describes, in memory.
     fn reconstruct_stored_stream(&self, manifest: &ChunkManifest) -> Result<Vec<u8>, OxenError> {
         let mut out = Vec::with_capacity(manifest.file_size as usize);
-        for entry in &manifest.chunks {
-            out.extend_from_slice(&self.read_chunk(entry)?);
+        for batch in manifest.chunks.chunks(RECONSTRUCT_BATCH) {
+            for raw in self.read_chunk_batch(batch)? {
+                out.extend_from_slice(&raw);
+            }
         }
         Ok(out)
     }
@@ -1113,6 +1150,8 @@ pub struct ReconstructReader {
     engine: Arc<BlockEngine>,
     manifest: ChunkManifest,
     next_chunk: usize,
+    /// Chunks decoded ahead by the last parallel batch, in file order.
+    decoded: std::collections::VecDeque<Vec<u8>>,
     buf: Vec<u8>,
     buf_pos: usize,
 }
@@ -1123,6 +1162,7 @@ impl ReconstructReader {
             engine,
             manifest,
             next_chunk: 0,
+            decoded: std::collections::VecDeque::new(),
             buf: Vec::new(),
             buf_pos: 0,
         }
@@ -1145,15 +1185,22 @@ impl Read for ReconstructReader {
             self.next_chunk = self.manifest.chunks.len();
         }
         while self.buf_pos == self.buf.len() {
-            let Some(entry) = self.manifest.chunks.get(self.next_chunk) else {
+            if let Some(decoded) = self.decoded.pop_front() {
+                self.buf = decoded;
+                self.buf_pos = 0;
+                continue;
+            }
+            if self.next_chunk >= self.manifest.chunks.len() {
                 return Ok(0); // clean EOF
-            };
-            self.buf = self
+            }
+            let end = (self.next_chunk + RECONSTRUCT_BATCH).min(self.manifest.chunks.len());
+            let batch = &self.manifest.chunks[self.next_chunk..end];
+            self.decoded = self
                 .engine
-                .read_chunk(entry)
-                .map_err(std::io::Error::other)?;
-            self.buf_pos = 0;
-            self.next_chunk += 1;
+                .read_chunk_batch(batch)
+                .map_err(std::io::Error::other)?
+                .into();
+            self.next_chunk = end;
         }
         let n = out.len().min(self.buf.len() - self.buf_pos);
         out[..n].copy_from_slice(&self.buf[self.buf_pos..self.buf_pos + n]);
