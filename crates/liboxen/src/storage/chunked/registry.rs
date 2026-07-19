@@ -60,8 +60,13 @@ pub struct CodecId(u8);
 impl CodecId {
     /// Chunk bytes stored verbatim (the universal fallback).
     pub const RAW: CodecId = CodecId(0);
-    /// Zstandard, level 3.
+    /// Zstandard.
     pub const ZSTD: CodecId = CodecId(1);
+    /// Zstandard against a store-local shared dictionary. Payload =
+    /// `[16-byte dictionary hash LE][zstd frame]`. Decoded by the block engine
+    /// (which owns dictionary storage); never crosses the wire — transfer packing
+    /// re-encodes these chunks as plain [`CodecId::ZSTD`].
+    pub const ZSTD_DICT: CodecId = CodecId(2);
 
     pub fn as_u8(&self) -> u8 {
         self.0
@@ -106,10 +111,36 @@ pub fn chunker(id: ChunkerId) -> Result<&'static dyn Chunker, ChunkedError> {
 pub fn codec(id: CodecId) -> Result<&'static dyn Compressor, ChunkedError> {
     static RAW: RawCodec = RawCodec;
     static ZSTD: ZstdCodec = ZstdCodec;
+    static ZSTD_DICT: ZstdDictMarker = ZstdDictMarker;
     match id {
         CodecId::RAW => Ok(&RAW),
         CodecId::ZSTD => Ok(&ZSTD),
+        CodecId::ZSTD_DICT => Ok(&ZSTD_DICT),
         CodecId(other) => Err(ChunkedError::UnknownCodecId(other)),
+    }
+}
+
+/// Registry marker for [`CodecId::ZSTD_DICT`]: the ID is valid (footer parsing and
+/// index round-trips accept it), but encode/decode require dictionary context that
+/// only the block engine holds — a context-free decode attempt (e.g. a transfer
+/// block claiming this codec) fails loudly instead of guessing.
+struct ZstdDictMarker;
+
+impl crate::storage::chunked::compressor::Compressor for ZstdDictMarker {
+    fn id(&self) -> CodecId {
+        CodecId::ZSTD_DICT
+    }
+
+    fn compress(&self, _raw: &[u8]) -> Result<Vec<u8>, ChunkedError> {
+        Err(ChunkedError::Compress(std::io::Error::other(
+            "dictionary-compressed chunks are encoded only by the block engine",
+        )))
+    }
+
+    fn decompress(&self, _stored: &[u8], _raw_len: usize) -> Result<Vec<u8>, ChunkedError> {
+        Err(ChunkedError::Decompress(std::io::Error::other(
+            "dictionary-compressed chunks require store-local dictionary context",
+        )))
     }
 }
 
@@ -158,6 +189,7 @@ mod tests {
         assert_eq!(ChunkerId::TRACE_JSONL_V1.as_u8(), 2);
         assert_eq!(CodecId::RAW.as_u8(), 0);
         assert_eq!(CodecId::ZSTD.as_u8(), 1);
+        assert_eq!(CodecId::ZSTD_DICT.as_u8(), 2);
         assert_eq!(TransformId::IDENTITY.as_u8(), 0);
     }
 }

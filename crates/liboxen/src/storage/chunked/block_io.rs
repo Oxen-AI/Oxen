@@ -52,6 +52,39 @@ pub trait BlockByteIo: Send + Sync + std::fmt::Debug + 'static {
 
     /// Every block present in this store.
     fn list_blocks(&self) -> Result<Vec<u128>, OxenError>;
+
+    /// Whether this store persists shared compression dictionaries. Backends
+    /// without support keep working — the engine simply never trains or applies a
+    /// dictionary, and every chunk stays a self-contained codec.
+    fn supports_dictionaries(&self) -> bool {
+        false
+    }
+
+    /// Durably publish a dictionary blob under its content hash. Idempotent.
+    fn put_dictionary(&self, _dict_hash: u128, _data: &Bytes) -> Result<(), OxenError> {
+        Err(OxenError::basic_str(
+            "this block store does not support compression dictionaries",
+        ))
+    }
+
+    /// Read a dictionary blob previously published with [`Self::put_dictionary`].
+    fn read_dictionary(&self, _dict_hash: u128) -> Result<Vec<u8>, OxenError> {
+        Err(OxenError::basic_str(
+            "this block store does not support compression dictionaries",
+        ))
+    }
+
+    /// The store's current dictionary for new writes, if one has been published.
+    fn current_dictionary(&self) -> Result<Option<u128>, OxenError> {
+        Ok(None)
+    }
+
+    /// Point new writes at `dict_hash` (already durably published).
+    fn set_current_dictionary(&self, _dict_hash: u128) -> Result<(), OxenError> {
+        Err(OxenError::basic_str(
+            "this block store does not support compression dictionaries",
+        ))
+    }
 }
 
 /// Local-filesystem block IO. Layout:
@@ -81,6 +114,16 @@ impl LocalBlockIo {
             .join(&hex[..2])
             .join(&hex[2..])
             .join(BLOCK_DATA_FILE)
+    }
+
+    /// Directory holding shared compression dictionaries. Lives inside the blocks
+    /// dir (its name is not two hex chars, so block listing skips it).
+    fn dicts_dir(&self) -> PathBuf {
+        self.blocks_dir.join("dicts")
+    }
+
+    fn dict_path(&self, dict_hash: u128) -> PathBuf {
+        self.dicts_dir().join(format!("{dict_hash:032x}"))
     }
 }
 
@@ -130,6 +173,11 @@ impl BlockByteIo for LocalBlockIo {
             if !prefix_entry.metadata()?.is_dir() {
                 continue;
             }
+            // Block fan-out dirs are exactly two hex chars; anything else (e.g.
+            // the dictionaries dir) is not a block.
+            if prefix_entry.file_name().to_string_lossy().len() != 2 {
+                continue;
+            }
             for block_entry in std::fs::read_dir(prefix_entry.path())? {
                 let block_entry = block_entry?;
                 if !block_entry.metadata()?.is_dir() {
@@ -150,5 +198,35 @@ impl BlockByteIo for LocalBlockIo {
             }
         }
         Ok(blocks)
+    }
+
+    fn supports_dictionaries(&self) -> bool {
+        true
+    }
+
+    fn put_dictionary(&self, dict_hash: u128, data: &Bytes) -> Result<(), OxenError> {
+        AtomicFile::new(self.dict_path(dict_hash))
+            .with_hash(MerkleHash::new(dict_hash))
+            .write(data)
+    }
+
+    fn read_dictionary(&self, dict_hash: u128) -> Result<Vec<u8>, OxenError> {
+        util::fs::read_bytes_from_path(self.dict_path(dict_hash))
+    }
+
+    fn current_dictionary(&self) -> Result<Option<u128>, OxenError> {
+        let path = self.dicts_dir().join("current");
+        if !path.exists() {
+            return Ok(None);
+        }
+        let hex = String::from_utf8_lossy(&util::fs::read_bytes_from_path(&path)?).to_string();
+        let hash = u128::from_str_radix(hex.trim(), 16)
+            .map_err(|_| OxenError::basic_str(format!("corrupt current-dictionary pointer: {hex}")))?;
+        Ok(Some(hash))
+    }
+
+    fn set_current_dictionary(&self, dict_hash: u128) -> Result<(), OxenError> {
+        AtomicFile::new(self.dicts_dir().join("current"))
+            .write(format!("{dict_hash:032x}").as_bytes())
     }
 }

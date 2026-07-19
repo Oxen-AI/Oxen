@@ -9,9 +9,38 @@
 use super::error::ChunkedError;
 use super::registry::{CodecId, codec};
 
-/// Zstd compression level for [`CodecId::ZSTD`]. Chosen for the add-path hot loop:
-/// good text/tabular ratios at high throughput.
+/// Zstd compression level for [`CodecId::ZSTD`]. Chosen storage-first per the
+/// dedup research policy (stored bytes dominate ingest speed).
 const ZSTD_LEVEL: i32 = 19;
+
+/// Compress a chunk against a shared dictionary ([`CodecId::ZSTD_DICT`] payloads;
+/// the block engine owns dictionary lifecycle and payload framing).
+pub fn compress_with_dict(raw: &[u8], dict: &[u8]) -> Result<Vec<u8>, ChunkedError> {
+    let mut compressor =
+        zstd::bulk::Compressor::with_dictionary(ZSTD_LEVEL, dict).map_err(ChunkedError::Compress)?;
+    compressor.compress(raw).map_err(ChunkedError::Compress)
+}
+
+/// Decompress a dictionary-compressed chunk back to exactly `raw_len` bytes.
+pub fn decompress_with_dict(
+    stored: &[u8],
+    raw_len: usize,
+    dict: &[u8],
+) -> Result<Vec<u8>, ChunkedError> {
+    let mut decompressor =
+        zstd::bulk::Decompressor::with_dictionary(dict).map_err(ChunkedError::Decompress)?;
+    // Capacity is fixed to the declared raw length (decompression-bomb bound).
+    let decoded = decompressor
+        .decompress(stored, raw_len)
+        .map_err(ChunkedError::Decompress)?;
+    if decoded.len() != raw_len {
+        return Err(ChunkedError::DecodedLenMismatch {
+            expected: raw_len,
+            actual: decoded.len(),
+        });
+    }
+    Ok(decoded)
+}
 
 /// Encodes and decodes a chunk payload.
 ///

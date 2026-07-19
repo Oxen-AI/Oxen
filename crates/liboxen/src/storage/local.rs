@@ -1660,12 +1660,12 @@ mod tests {
             );
             assert_eq!(dst_chunked.missing_chunks(&all_hashes).await?, all_hashes);
 
-            // "Transfer" every block from src to dst, then publish the manifest.
-            let src_engine = src.engine()?;
-            for block_hash in src_engine.list_blocks()? {
-                let bytes = src_engine.read_block_bytes(block_hash)?;
+            // Transfer through the real wire mechanism: pack the needed chunks
+            // into transfer blocks (which re-encodes any store-local codecs) and
+            // store them on the receiver.
+            for block in src_chunked.pack_chunks(&all_hashes).await? {
                 dst_chunked
-                    .store_block(&format!("{block_hash:x}"), Bytes::from(bytes))
+                    .store_block(&format!("{:032x}", block.hash), block.data)
                     .await?;
             }
             assert_eq!(

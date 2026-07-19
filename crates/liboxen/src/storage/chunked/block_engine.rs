@@ -12,10 +12,12 @@
 //! leaves only a reclaimable orphan block that [`BlockEngine::rebuild_index`]
 //! discovers.
 
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
+use parking_lot::Mutex;
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::error::OxenError;
@@ -25,11 +27,22 @@ use crate::util::hasher::hash_buffer_128bit;
 use super::block::{BlockWriter, SealedBlock, parse_block_footer, verify_block};
 use super::block_io::{BlockByteIo, LocalBlockIo};
 use super::chunk_index::ChunkIndex;
-use super::compressor::{EncodedChunk, decode_chunk, encode_chunk};
+use super::compressor::{
+    EncodedChunk, compress_with_dict, decode_chunk, decompress_with_dict, encode_chunk,
+};
 use super::error::ChunkedError;
 use super::manifest::{ChunkEntry, ChunkManifest, MANIFEST_VERSION};
 use super::policy::EncodePolicy;
-use super::registry::chunker;
+use super::registry::{CodecId, chunker};
+
+/// Maximum bytes of raw chunk samples buffered to train the store's shared
+/// dictionary (also bounds the deferred-encode queue during the first ingest).
+const DICT_SAMPLE_CAP: usize = 4 * 1024 * 1024;
+/// Minimum sample bytes worth training a dictionary from; below this the first
+/// ingest simply encodes without one and a later, larger ingest trains it.
+const DICT_MIN_SAMPLE: usize = 256 * 1024;
+/// Maximum trained dictionary size.
+const DICT_MAX_SIZE: usize = 112 * 1024;
 
 /// Packs, indexes, and reconstructs chunked file versions over a block byte-IO
 /// backend and a local chunk index.
@@ -37,6 +50,8 @@ use super::registry::chunker;
 pub struct BlockEngine {
     io: Arc<dyn BlockByteIo>,
     index: ChunkIndex,
+    /// Loaded dictionary blobs by content hash (a store rarely has more than one).
+    dict_cache: Mutex<HashMap<u128, Arc<Vec<u8>>>>,
 }
 
 impl BlockEngine {
@@ -44,7 +59,11 @@ impl BlockEngine {
     /// `index_dir`.
     pub fn new(io: Arc<dyn BlockByteIo>, index_dir: &Path) -> Result<Self, OxenError> {
         let index = ChunkIndex::open(index_dir)?;
-        Ok(Self { io, index })
+        Ok(Self {
+            io,
+            index,
+            dict_cache: Mutex::new(HashMap::new()),
+        })
     }
 
     /// Open (creating if absent) a local-filesystem engine over `blocks_dir` and
@@ -75,6 +94,21 @@ impl BlockEngine {
     ) -> Result<ChunkManifest, OxenError> {
         let chunker = chunker(policy.chunker)?;
 
+        // Dictionary compression applies to zstd-eligible content only. If the
+        // store has no dictionary yet (and the backend can persist one), the
+        // first zstd-eligible ingest defers encoding of up to DICT_SAMPLE_CAP raw
+        // chunk bytes, trains a dictionary from them, then encodes the queue.
+        let mut dict = if policy.codec == CodecId::ZSTD {
+            self.current_dict()?
+        } else {
+            None
+        };
+        let mut train_queue: Option<Vec<(u128, Vec<u8>)>> = (policy.codec == CodecId::ZSTD
+            && dict.is_none()
+            && self.io.supports_dictionaries())
+        .then(Vec::new);
+        let mut queued_bytes = 0usize;
+
         let mut file_hasher = Xxh3::new();
         let mut file_size = 0u64;
         let mut entries: Vec<ChunkEntry> = Vec::new();
@@ -82,6 +116,25 @@ impl BlockEngine {
         // Chunks already appended to the open (unpublished) block; without this a
         // repeated chunk within one file would be packed twice.
         let mut pending = std::collections::HashSet::new();
+        // Chunks held in the training queue, not yet packed or indexed.
+        let mut queued = std::collections::HashSet::new();
+
+        let mut encode_and_pack = |engine: &Self,
+                                   writer: &mut BlockWriter,
+                                   pending: &mut std::collections::HashSet<u128>,
+                                   chunk_hash: u128,
+                                   raw: &[u8],
+                                   dict: Option<&(u128, Arc<Vec<u8>>)>|
+         -> Result<(), OxenError> {
+            let encoded = encode_dict_chunk(policy.codec, raw, dict)?;
+            if writer.would_exceed_max_size(encoded.data.len()) {
+                engine.publish_block(std::mem::take(writer).seal()?)?;
+                pending.clear();
+            }
+            writer.append(chunk_hash, raw.len() as u32, &encoded)?;
+            pending.insert(chunk_hash);
+            Ok(())
+        };
 
         for raw_chunk in chunker.chunk(Box::new(reader)) {
             let raw_chunk = raw_chunk?;
@@ -94,17 +147,51 @@ impl BlockEngine {
                 len: raw_chunk.data.len() as u32,
             });
 
-            if pending.contains(&chunk_hash) || self.index.contains(chunk_hash)? {
+            if pending.contains(&chunk_hash)
+                || queued.contains(&chunk_hash)
+                || self.index.contains(chunk_hash)?
+            {
                 continue;
             }
-            let encoded = encode_chunk(policy.codec, &raw_chunk.data)?;
-            if writer.would_exceed_max_size(encoded.data.len()) {
-                self.publish_block(std::mem::take(&mut writer).seal()?)?;
-                pending.clear();
+
+            if train_queue.is_some() {
+                queued_bytes += raw_chunk.data.len();
+                queued.insert(chunk_hash);
+                if let Some(queue) = train_queue.as_mut() {
+                    queue.push((chunk_hash, raw_chunk.data));
+                }
+                if queued_bytes >= DICT_SAMPLE_CAP {
+                    let drained = train_queue.take().unwrap_or_default();
+                    dict = self.train_dictionary(&drained)?;
+                    for (hash, raw) in drained {
+                        encode_and_pack(self, &mut writer, &mut pending, hash, &raw, dict.as_ref())?;
+                    }
+                    queued.clear();
+                }
+                continue;
             }
-            writer.append(chunk_hash, raw_chunk.data.len() as u32, &encoded)?;
-            pending.insert(chunk_hash);
+
+            encode_and_pack(
+                self,
+                &mut writer,
+                &mut pending,
+                chunk_hash,
+                &raw_chunk.data,
+                dict.as_ref(),
+            )?;
         }
+
+        // EOF with the training queue still open: train if there is enough sample
+        // material, then encode the queue either way.
+        if let Some(queue) = train_queue.take() {
+            if queued_bytes >= DICT_MIN_SAMPLE {
+                dict = self.train_dictionary(&queue)?;
+            }
+            for (hash, raw) in queue {
+                encode_and_pack(self, &mut writer, &mut pending, hash, &raw, dict.as_ref())?;
+            }
+        }
+
         if !writer.is_empty() {
             self.publish_block(writer.seal()?)?;
         }
@@ -119,6 +206,56 @@ impl BlockEngine {
         };
         manifest.validate()?;
         Ok(manifest)
+    }
+
+    /// The store's current shared dictionary, loaded through the cache.
+    fn current_dict(&self) -> Result<Option<(u128, Arc<Vec<u8>>)>, OxenError> {
+        let Some(hash) = self.io.current_dictionary()? else {
+            return Ok(None);
+        };
+        Ok(Some((hash, self.load_dict(hash)?)))
+    }
+
+    fn load_dict(&self, dict_hash: u128) -> Result<Arc<Vec<u8>>, OxenError> {
+        if let Some(dict) = self.dict_cache.lock().get(&dict_hash) {
+            return Ok(Arc::clone(dict));
+        }
+        let dict = Arc::new(self.io.read_dictionary(dict_hash)?);
+        self.dict_cache.lock().insert(dict_hash, Arc::clone(&dict));
+        Ok(dict)
+    }
+
+    /// Train a shared dictionary from raw chunk samples and durably publish it
+    /// (blob first, current-pointer last). Training failure is non-fatal: the
+    /// store simply continues without a dictionary.
+    fn train_dictionary(
+        &self,
+        samples: &[(u128, Vec<u8>)],
+    ) -> Result<Option<(u128, Arc<Vec<u8>>)>, OxenError> {
+        let total: usize = samples.iter().map(|(_, raw)| raw.len()).sum();
+        let mut concat = Vec::with_capacity(total);
+        for (_, raw) in samples {
+            concat.extend_from_slice(raw);
+        }
+        // zstd's trainer wants many small samples, not a few large ones: slice the
+        // buffer into fixed windows regardless of chunk boundaries.
+        const TRAIN_SLICE: usize = 4 * 1024;
+        let sizes: Vec<usize> = concat.chunks(TRAIN_SLICE).map(|s| s.len()).collect();
+        let dict_bytes = match zstd::dict::from_continuous(&concat, &sizes, DICT_MAX_SIZE) {
+            Ok(bytes) if !bytes.is_empty() => bytes,
+            Ok(_) => return Ok(None),
+            Err(err) => {
+                log::warn!("dictionary training failed, continuing without one: {err}");
+                return Ok(None);
+            }
+        };
+        let dict_hash = hash_buffer_128bit(&dict_bytes);
+        self.io
+            .put_dictionary(dict_hash, &bytes::Bytes::from(dict_bytes.clone()))?;
+        self.io.set_current_dictionary(dict_hash)?;
+        let dict = Arc::new(dict_bytes);
+        self.dict_cache.lock().insert(dict_hash, Arc::clone(&dict));
+        Ok(Some((dict_hash, dict)))
     }
 
     /// Durably publish a sealed block, then index its chunks (publish-last: the
@@ -167,6 +304,21 @@ impl BlockEngine {
             location.offset as u64,
             location.stored_len as u64,
         )?;
+        if location.codec == CodecId::ZSTD_DICT {
+            // Payload = [16-byte dictionary hash LE][zstd frame].
+            let hash_bytes: [u8; 16] = payload.get(..16).and_then(|b| b.try_into().ok()).ok_or(
+                ChunkedError::CorruptChunkIndex(format!(
+                    "dictionary chunk {:x} payload shorter than its dictionary header",
+                    entry.hash
+                )),
+            )?;
+            let dict = self.load_dict(u128::from_le_bytes(hash_bytes))?;
+            return Ok(decompress_with_dict(
+                &payload[16..],
+                location.raw_len as usize,
+                &dict,
+            )?);
+        }
         Ok(decode_chunk(
             location.codec,
             &payload,
@@ -258,14 +410,25 @@ impl BlockEngine {
                 .index
                 .get(chunk_hash)?
                 .ok_or(ChunkedError::MissingChunk { chunk_hash })?;
-            let payload = self.io.read_block_range(
-                location.block_hash,
-                location.offset as u64,
-                location.stored_len as u64,
-            )?;
-            let encoded = EncodedChunk {
-                codec: location.codec,
-                data: payload,
+            // Dictionary-compressed chunks never cross the wire (the receiver has
+            // no dictionary context): re-encode them as plain zstd for transfer.
+            let encoded = if location.codec == CodecId::ZSTD_DICT {
+                let raw = self.read_chunk(&ChunkEntry {
+                    hash: chunk_hash,
+                    offset: 0,
+                    len: location.raw_len,
+                })?;
+                encode_chunk(CodecId::ZSTD, &raw)?
+            } else {
+                let payload = self.io.read_block_range(
+                    location.block_hash,
+                    location.offset as u64,
+                    location.stored_len as u64,
+                )?;
+                EncodedChunk {
+                    codec: location.codec,
+                    data: payload,
+                }
             };
             if writer.would_exceed_max_size(encoded.data.len()) {
                 blocks.push(std::mem::take(&mut writer).seal()?);
@@ -311,6 +474,31 @@ impl BlockEngine {
     pub fn list_blocks(&self) -> Result<Vec<u128>, OxenError> {
         self.io.list_blocks()
     }
+}
+
+/// Encode a chunk, preferring the store's shared dictionary for zstd-eligible
+/// content. Falls through to the plain codec (with its universal raw fallback)
+/// when there is no dictionary or the dictionary form is not strictly smaller.
+fn encode_dict_chunk(
+    codec: CodecId,
+    raw: &[u8],
+    dict: Option<&(u128, Arc<Vec<u8>>)>,
+) -> Result<EncodedChunk, ChunkedError> {
+    if codec == CodecId::ZSTD {
+        if let Some((dict_hash, dict_bytes)) = dict {
+            let compressed = compress_with_dict(raw, dict_bytes)?;
+            if compressed.len() + 16 < raw.len() {
+                let mut data = Vec::with_capacity(16 + compressed.len());
+                data.extend_from_slice(&dict_hash.to_le_bytes());
+                data.extend_from_slice(&compressed);
+                return Ok(EncodedChunk {
+                    codec: CodecId::ZSTD_DICT,
+                    data,
+                });
+            }
+        }
+    }
+    encode_chunk(codec, raw)
 }
 
 /// A sync [`Read`] over the reconstructed bytes of a chunked version, decoding one
@@ -401,6 +589,90 @@ mod tests {
 
     fn csv_policy() -> EncodePolicy {
         encode_policy(None, &EntryDataType::Tabular, "csv")
+    }
+
+    /// The shared-dictionary lifecycle: a large-enough first ingest trains and
+    /// publishes a dictionary, chunks encode against it, reads round-trip, a
+    /// second engine instance (cold cache) reads the same store, and transfer
+    /// packing re-encodes dictionary chunks so they never cross the wire.
+    #[test]
+    fn shared_dictionary_round_trip() -> Result<(), OxenError> {
+        let t = test_engine();
+        let data = csv_bytes(42, DICT_MIN_SAMPLE + 64 * 1024);
+        let manifest = {
+            let mut reader: &[u8] = &data;
+            t.engine.ingest(&mut reader, &csv_policy())?
+        };
+
+        // A dictionary was trained and published.
+        assert!(t.engine.io.current_dictionary()?.is_some());
+        // At least some chunks encoded against it.
+        let dict_chunks = manifest
+            .chunks
+            .iter()
+            .filter_map(|e| t.engine.index().get(e.hash).transpose())
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|loc| loc.codec == CodecId::ZSTD_DICT)
+            .count();
+        assert!(dict_chunks > 0, "expected dictionary-compressed chunks");
+
+        // Reads reconstruct the exact bytes — including through a fresh engine
+        // with a cold dictionary cache.
+        let mut out = Vec::new();
+        t.engine.reconstruct_to(&manifest, &mut out)?;
+        assert_eq!(out, data);
+        let cold = BlockEngine::open(
+            &t._dir.path().join("blocks"),
+            &t._dir.path().join("chunk_index"),
+        )?;
+        let mut out = Vec::new();
+        cold.reconstruct_to(&manifest, &mut out)?;
+        assert_eq!(out, data);
+
+        // Transfer packing re-encodes: no packed chunk claims the dict codec, and
+        // a store without the dictionary can verify and read the packed blocks.
+        let hashes: Vec<u128> = manifest.chunks.iter().map(|c| c.hash).collect();
+        let receiver = test_engine();
+        for block in t.engine.pack_chunks(&hashes)? {
+            let parsed = verify_block(&block.data)?;
+            assert!(
+                parsed.iter().all(|c| c.codec != CodecId::ZSTD_DICT),
+                "dictionary chunks must not cross the wire"
+            );
+            receiver.engine.store_block(block.hash, block.data)?;
+        }
+        let mut out = Vec::new();
+        receiver.engine.reconstruct_to(&manifest, &mut out)?;
+        assert_eq!(out, data);
+        Ok(())
+    }
+
+    /// An ingest below the training floor stays dictionary-free and readable; a
+    /// later large ingest trains the dictionary for subsequent writes.
+    #[test]
+    fn small_first_ingest_defers_dictionary() -> Result<(), OxenError> {
+        let t = test_engine();
+        let small = csv_bytes(7, 64 * 1024);
+        let m1 = {
+            let mut r: &[u8] = &small;
+            t.engine.ingest(&mut r, &csv_policy())?
+        };
+        assert!(t.engine.io.current_dictionary()?.is_none());
+
+        let big = csv_bytes(8, DICT_MIN_SAMPLE + 32 * 1024);
+        let m2 = {
+            let mut r: &[u8] = &big;
+            t.engine.ingest(&mut r, &csv_policy())?
+        };
+        assert!(t.engine.io.current_dictionary()?.is_some());
+
+        for (m, d) in [(&m1, &small), (&m2, &big)] {
+            let mut out = Vec::new();
+            t.engine.reconstruct_to(m, &mut out)?;
+            assert_eq!(&out, d);
+        }
+        Ok(())
     }
 
     fn ingest(engine: &BlockEngine, data: &[u8]) -> ChunkManifest {
@@ -610,20 +882,19 @@ mod tests {
         let manifest = ingest(&source.engine, &data);
 
         let dest = test_engine();
-        for block_hash in source.engine.list_blocks()? {
-            let bytes = bytes::Bytes::from(source.engine.read_block_bytes(block_hash)?);
-
+        let hashes: Vec<u128> = manifest.chunks.iter().map(|c| c.hash).collect();
+        for block in source.engine.pack_chunks(&hashes)? {
             // Wrong expected hash is rejected before anything is written.
             assert!(matches!(
-                dest.engine.store_block(block_hash ^ 1, bytes.clone()),
+                dest.engine.store_block(block.hash ^ 1, block.data.clone()),
                 Err(OxenError::ChunkedError(
                     ChunkedError::BlockHashMismatch { .. }
                 ))
             ));
 
-            dest.engine.store_block(block_hash, bytes.clone())?;
+            dest.engine.store_block(block.hash, block.data.clone())?;
             // Idempotent: storing the same block again succeeds.
-            dest.engine.store_block(block_hash, bytes)?;
+            dest.engine.store_block(block.hash, block.data)?;
         }
         assert_eq!(reconstruct(&dest.engine, &manifest), data);
         Ok(())
