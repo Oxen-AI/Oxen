@@ -42,6 +42,14 @@ logical) measures the versioning slope directly: **30.0 MB stored (ratio
 snapshot at 254 MB)**, with per-commit marginals of ~0.46 MB vs ~4.3 MB —
 byte-verified at all 60 commits.
 
+An RL-scale corpus (80 training iterations of a rollout dataset, 6.75 GB
+logical: fresh rollout batches, reward relabels, curation pruning, policy
+config bumps) extends the same measurement to the multi-gigabyte range:
+**52.4 MB stored (ratio 0.0078, 129× vs raw, 19× less than zstd-19 snapshots
+at 1,009 MB)**, byte-verified at all 80 commits with 277 MB peak memory. The
+stored-per-logical ratios hold across all four corpora (100 MB → 6.75 GB),
+which is the basis for the report's clearly-labeled year-scale projection.
+
 On the prompt-cache corpus (177.8 MB logical), the session-3 experiments took
 the same architecture from 16.02 MB to **8.40 MB (ratio 0.0473, −47.6%)** —
 storing 6 commits' full history of 178 MB of agent-trace data in 8.4 MB,
