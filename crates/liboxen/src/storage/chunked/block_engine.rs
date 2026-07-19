@@ -174,8 +174,7 @@ impl BlockEngine {
                 if suffix != prefix {
                     sketches.push((suffix, chunk_hash));
                 }
-                if let Some(delta) =
-                    engine.try_delta_encode(&[prefix, suffix], chunk_hash, raw)?
+                if let Some(delta) = engine.try_delta_encode(&[prefix, suffix], chunk_hash, raw)?
                     && delta.data.len() < encoded.data.len()
                 {
                     encoded = delta;
@@ -306,9 +305,11 @@ impl BlockEngine {
             // Chain depth is at most one: a delta candidate's own base (a full
             // chunk by construction) substitutes as the base.
             let base_hash = if candidate_loc.codec == CodecId::ZSTD_DELTA {
-                let header =
-                    self.io
-                        .read_block_range(candidate_loc.block_hash, candidate_loc.offset as u64, 16)?;
+                let header = self.io.read_block_range(
+                    candidate_loc.block_hash,
+                    candidate_loc.offset as u64,
+                    16,
+                )?;
                 let Ok(bytes) = <[u8; 16]>::try_from(header.as_slice()) else {
                     continue;
                 };
