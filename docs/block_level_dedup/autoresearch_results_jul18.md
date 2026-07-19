@@ -338,5 +338,55 @@ Corpus v2 additionally requires the real-session source files in
 `trace-commons/agent-traces`, CC-BY-4.0; content pinned by the corpus
 manifest).
 
-Per-experiment rows (including discards) are in the run's untracked
-`results.tsv`; every experiment is one commit on this branch's history.
+Every experiment is one commit on this branch's history. The raw
+per-experiment measurement rows from both runs are archived below.
+
+## Appendix: raw measurement rows
+
+### results.tsv (corpus v1 run)
+
+```tsv
+commit	score	stored_bytes	storage_ratio	incremental_stored_bytes	incremental_ratio	restore_seconds	restore_mb_s	sequential_read_mb_s	random_read_ms	compression_seconds	compression_mb_s	memory_gb	status	description
+00bf5d189	0.240503	24194771	0.240503	16951778	0.198245	2.6	39.4	10.7	262.5	10.4	9.7	0.1	keep	baseline: block-level-dedup HEAD (FastCDC + trace-jsonl for .jsonl)
+00bf5d189	0.202792	20401059	0.202792	16766065	0.196073	2.7	38.0	10.5	260.0	10.2	9.9	0.1	keep	reference: pure FastCDC via generic profile mark (config-only measurement)
+54737f597	0.230854	23224133	0.230854	16291287	0.190519	2.5	41.0	10.7	262.0	11.9	8.5	0.1	discard	zstd level 9: -4.0% stored, +14% compress time (superseded by 19)
+54737f597	0.225029	22638108	0.225029	15939160	0.186402	2.5	41.0	10.7	262.0	34.2	2.9	0.1	keep	zstd level 19: -6.4% stored vs baseline, 3.3x compress (within guardrail)
+057879a31	0.227224	22858922	0.227224	15994655	0.187051	3.1	36.5	10.2	350.4	392.4	0.3	0.1	discard	dict v1: single store-wide dict, per-chunk digest — wrong class + 40x compress blowup
+057879a31	0.201498	20270857	0.201498	14384801	0.168225	2.8	36.6	10.5	268.1	29.8	3.4	0.1	keep	dict v2: per-class prepared dicts — -10.5% stored, compression back to normal
+057879a31	0.265938	26753583	0.265938	18616391	0.217712	2.9	35.0	10.4	270.0	24.0	4.2	0.1	discard	csv via row-anchored chunker: tiny rows explode metadata, -32% worse
+b2e4c3928	0.199547	20074570	0.199547	14220927	0.166308	2.8	36.6	10.5	268.0	30.2	3.3	0.1	keep	zstd-wrapped manifests at rest: -1.0% stored
+8abd39388	0.197875	19906421	0.197875	14095253	0.164839	2.8	36.6	10.5	268.0	30.0	3.4	0.1	keep	8KB intra-row target: -0.8% (16KB tied; 8KB wins granularity tie-break)
+8abd39388	0.176391	17745123	0.176391	14704108	0.171958	2.8	36.6	10.5	268.0	30.0	3.4	0.1	keep	reference: all-generic FastCDC + dict + zstd19 + manifest-zstd (config-only)
+c50af7621	0.166280	16727892	0.166280	13831455	0.161754	2.3	44.5	10.6	265.7	47.3	2.1	0.1	keep	TRACE_AUTO_V1 adaptive chunker + per-class dicts: -16% vs prior best
+bfdaa54f4	0.142814	14367173	0.142814	11454352	0.133954	2.4	42.7	10.6	269.1	56.6	1.8	0.1	keep	bounded delta encoding: -14.1% stored, chain depth 1, sketch-matched bases
+ad50eb7a9	0.173371	17441237	0.173371	12325149	0.144131	2.7	38.0	10.5	268.0	31.7	3.2	0.1	discard	2KB auto threshold alone: dict-class confound (auto id mixed content families)
+ad50eb7a9	0.130197	13097917	0.130197	9721043	0.113683	2.4	42.7	10.6	268.0	39.3	2.6	0.1	keep	engine-resolved sniff + content-family dict classes: -8.8%, manifests record true chunker
+934efefc3	0.129013	12978816	0.129013	9601942	0.112290	2.4	42.7	10.6	268.0	39.1	2.6	0.1	keep	delta v2 (suffix sketches, last-wins, transitive bases): -0.9%
+d754c8640	0.131135	13192291	0.131135	9498936	0.111085	2.4	42.7	10.6	268.0	42.7	2.4	0.1	discard	256KB dicts: blob cost exceeds capture gains
+d754c8640	0.128231	12900104	0.128231	9634539	0.112671	2.4	42.7	10.6	268.0	39.0	2.6	0.1	keep	64KB dicts (knee of 32/64/112/256 sweep): -0.6%
+d754c8640	0.129071	12984608	0.129071	9695238	0.113381	2.4	42.7	10.6	268.0	39.0	2.6	0.1	discard	FastCDC avg 32KB: +0.7%
+d754c8640	0.129226	13000189	0.129226	9752223	0.114047	2.4	42.7	10.6	268.0	39.0	2.6	0.1	discard	FastCDC avg 96KB: +0.8% (64KB optimal both directions)
+d754c8640	0.135094	13590530	0.135094	9989425	0.116821	2.4	42.7	10.6	268.0	15.2	6.6	0.1	discard	zstd 9 recheck under full stack: +5.4% storage for 2.6x faster ingest — level 19 stays
+d754c8640	0.136134	13695144	0.136134	10574123	0.123659	2.4	42.7	10.6	268.0	39.0	2.6	0.1	discard	ROW_ISOLATE 2KB: +6% (1KB confirmed; reorder robustness beats coalescing)
+d754c8640	0.135319	13613224	0.135319	10459435	0.122305	2.4	42.7	10.6	268.0	39.0	2.6	0.1	crash	block-id index first run: contaminated by leaked 013 row-isolation value
+d754c8640	0.127905	12867336	0.127905	9601771	0.112288	2.4	42.7	10.6	268.0	39.0	2.6	0.1	discard	block-id index clean run: -0.25% = under tie threshold; simpler impl wins
+c9a6e673c	0.126570	12733068	0.126570	9403814	0.109972	2.4	42.7	10.6	268.0	39.0	2.6	0.1	keep	manifest lineage-delta (corpus v1): -1.3%
+```
+
+### results-promptcache.tsv (corpus v2 / prompt-cache run)
+
+```tsv
+commit	score	stored_bytes	storage_ratio	incremental_stored_bytes	incremental_ratio	restore_seconds	restore_mb_s	sequential_read_mb_s	random_read_ms	compression_seconds	compression_mb_s	memory_gb	status	description
+1e0c59311	0.090149	16024098	0.090149	10449995	0.069294	2.4	74.0	10.6	250.0	30.8	5.8	0.1	keep	baseline-v2: current stack on prompt-cache corpus (metadata=56% of store)
+1e0c59311	0.089775	15957584	0.089775	10394121	0.068923	2.4	74.0	10.6	250.0	30.8	5.8	0.1	discard	omit manifest offsets: -0.4%/-0.46% both corpora = tie; zstd already ate offsets
+c9a6e673c	0.090471	16081229	0.090471	10415043	0.069063	2.4	74.0	10.6	250.0	31.0	5.7	0.1	keep	manifest lineage-delta: v1 -1.3%, v2 tie (+0.4%) — few manifest versions here yet
+2742bf9a7	0.056259	9999967	0.056259	5500488	0.036470	2.4	74.0	10.6	250.0	31.0	5.7	0.1	keep	16KB chunking floor: -37.8% on v2 (sub-1MiB live logs were raw blobs); v1 unchanged
+54a4729ec	0.053760	9555852	0.053760	5508262	0.036522	2.4	74.0	10.6	250.0	31.0	5.7	0.1	keep	large-element isolation: -4.4% v2 (config prefixes dedup exactly); v1 byte-identical
+c2587d284	0.052632	9355374	0.052632	5307784	0.035193	2.4	74.0	10.6	250.0	31.0	5.7	0.1	keep	midpoint sketch: -2.1% v2 (request-log shared middles); v1 tie (+0.26%)
+ab1dc97c8	0.047280	8404019	0.047280	5281294	0.035017	2.4	74.0	10.6	250.0	32.0	5.6	0.1	keep	in-flight delta bases: -10.2% v2, first snapshot 4.05->3.12MB, now beats zstd-19-each; v1 byte-identical
+e3ba0572b	0.011205	30033548	0.011205	27288862	0.010252	58.9	45.5	10.6	250.0	242.8	11.0	0.2	keep	long-horizon corpus: 60 daily commits, 2.68GB->30MB (89x raw, 8.5x vs zstd-19-each)
+e3ba0572b	0.312497	6395255	0.312497	3116684	0.180000	2.0	60.0	10.0	250.0	8.0	2.5	0.1	keep	parquet CDC-on corpus: 6.40MB vs CDC-off 10.66MB (-40%); purge 5.3x, backfill 2.8x cheaper
+5356be2bb	0.007775	52441332	0.007775	44023989	0.006563	93.1	72.5	10.6	250.0	524.0	12.9	0.3	keep	RL-scale corpus: 80 iterations, 6.75GB->52.4MB (129x raw); byte-verified
+0482a200d	0.005452	36772905	0.005452	29942688	0.004464	90.0	75.0	10.6	250.0	500.0	13.5	0.3	keep	RL corpus via generic profile mark: 36.8MB vs adaptive 52.4MB — append-only rollouts favor byte windows; routing finding
+0482a200d	0.025354	67957244	0.025354	66269644	0.024750	60.0	45.0	10.6	250.0	240.0	11.2	0.2	keep	60-day corpus via generic mark: 68.0MB vs adaptive 30.0MB — mutating sessions favor structural routing
+```
