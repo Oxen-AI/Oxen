@@ -92,18 +92,19 @@ byte-verified at every commit on both.
    **Storage byte-identical; v2 restore +39% (55.1 → 75.8 MB/s), sequential
    +41%; v1 restore +8%, random read −24%.**
 
-6. **Append-lineage chunker routing (008)** — jul18's routing finding: the
-   row-size sniff sends long-row *append-only* logs (RL rollouts) to the
+6. **Append-lineage chunker routing (008 + 010)** — jul18's routing finding:
+   the row-size sniff sends long-row *append-only* logs (RL rollouts) to the
    structural chunker, but rows that never mutate want byte-window FastCDC
-   (fewer, larger, better-compressing chunks; measured 36.8 vs 52.4 MB on
-   the RL corpus under the jul18 stack). New advisory signal: an xxh3 of the
-   file's first 4 KB is counted per ingest; a lineage whose head survives
-   **8** consecutive versions is an append-only log and routes to FastCDC.
-   The high threshold makes short mutating histories (whose edits change the
-   head sooner or later) never pay the one-time re-chunk a switch costs;
-   long-horizon logs capture nearly all the win. v1/v2: tie (within 0.5%);
-   RL-scale (6.75 GB, 80 iterations): **43.6 MB stored, ratio 0.00646,
-   byte-verified at all 80 commits** (control comparison below).
+   (fewer, larger, better-compressing chunks). The routing signal is a
+   **measured per-ingest append verdict**, not an inference from file bytes:
+   an ingest is append-like when its new chunks are confined to the tail
+   (≤2% interior tolerance, absorbing boundary noise and sparse relabels)
+   and a majority of its chunks are reused. Verdicts accumulate per lineage
+   (keyed by a head hash) in an advisory LMDB table; a **7-verdict streak**
+   switches the lineage to FastCDC. The first cut used head stability alone
+   and was falsified by the long-horizon corpus (see "What failed"); the
+   verdict form keeps the RL-scale win while never touching mutating
+   lineages. v1/v2: tie; scale numbers below.
 
 ## Experiment log (priority order: storage, then reads, then compression)
 
