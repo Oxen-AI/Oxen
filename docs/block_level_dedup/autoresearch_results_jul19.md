@@ -32,7 +32,7 @@ original session baseline (24.19 MB v1) is down **2.4×**, and pure FastCDC
 
 At scale, the final architecture stores the 6.75 GB RL corpus (80 training
 iterations) at **45.9 MB — ratio 0.0068, 147× vs raw snapshots** — and the
-2.68 GB long-horizon corpus (60 daily exports) at **25.4 MB — ratio 0.0095,
+2.68 GB long-horizon corpus (60 daily exports) at **25.43 MB — ratio 0.0095,
 105×, 15% below jul18's 30.0 MB** — byte-verified at every commit on both.
 
 ## Retained mechanisms (in the order they were found)
@@ -249,7 +249,7 @@ verified recompression.)
 | --- | --- | --- | --- | --- |
 | v1 multi-version (7 commits) | 100.6 MB | 10.21 MB | 0.1015 | 9.9× |
 | v2 prompt-cache (6 commits) | 177.8 MB | 6.76 MB | 0.0380 | 26× |
-| long-horizon (60 daily exports) | 2.68 GB | **25.45 MB** | **0.00949** | 105× |
+| long-horizon (60 daily exports) | 2.68 GB | **25.43 MB** | **0.00949** | 105× |
 | RL-scale (80 training iterations) | 6.75 GB | **45.89 MB** | **0.00680** | 147× |
 
 All byte-verified at every commit.
@@ -280,7 +280,36 @@ experiments are recorded in the log above and in the raw rows appendix.
 The untracked `results.tsv` rows for this run (columns per the guide):
 
 ```tsv
-RESULTS_TSV_PLACEHOLDER
+commit	score	stored_bytes	storage_ratio	incremental_stored_bytes	incremental_ratio	restore_seconds	restore_mb_s	sequential_read_mb_s	random_read_ms	compression_seconds	compression_mb_s	memory_gb	status	description
+9ad1af6a	0.126896	12765836	0.126896	9436582	0.110357	2.8	36.1	10.4	260.0	46.7	2.2	0.1	keep	baseline v1: jul18 final architecture (branch HEAD)
+9ad1af6a	0.047280	8404019	0.047280	5281294	0.035020	3.1	56.9	51.9	233.0	42.5	4.2	0.1	keep	baseline v2 (corpus-promptcache): jul18 final architecture
+8e4600f	0.118101	11881100	0.118101	8600998	0.100585	2.5	40.0	10.2	263.6	41.9	2.4	0.1	keep	001 v1: LMDB index append-rebuild compaction post-add + 256 max_readers (-6.9%)
+8e4600f	0.039998	7109683	0.039998	4478478	0.029697	3.1	56.5	40.4	237.9	31.5	5.6	0.1	keep	001 v2: same (-15.4%)
+38fa38c	0.110388	11105097	0.110388	7824995	0.091510	2.5	40.7	10.3	265.2	52.4	1.9	0.1	keep	002 v1: embedded-zstd unwrap transform, parquet pages verified+decompressed (-6.5%)
+38fa38c	0.039998	7109683	0.039998	4478478	0.029697	3.1	56.5	40.4	237.9	31.5	5.6	0.1	keep	002 v2: tie (no parquet in corpus)
+9efeb3a	0.108673	10932600	0.108673	7619730	0.089110	2.5	40.0	6.7	259.9	65.7	1.5	0.1	keep	003 v1: minhash superfeature delta probes (-1.6%)
+9efeb3a	0.038040	6761678	0.038040	4331992	0.028726	3.1	57.6	51.3	219.5	36.9	4.8	0.1	keep	003 v2: same (-4.9%)
+a68cc2e	0.101459	10206975	0.101459	6894105	0.080624	2.5	39.8	7.0	322.4	68.9	1.4	0.3	keep	004 v1: block-window deltas, 8MB sealed-block bases (-6.6%; parquet commit -20%)
+a68cc2e	0.038028	6759492	0.038028	4329806	0.028712	3.2	55.1	50.9	245.8	38.1	4.7	0.2	keep	004 v2: tie (-0.03%)
+5d78631ce	0.101459	10206975	0.101459	6894105	0.080624	2.3	44.5	7.9	245.7	68.4	1.4	0.4	keep	005 v1: parallel batched reconstruction + lazy encoder digests (storage tied, reads +8-24%)
+5d78631ce	0.038028	6759492	0.038028	4329806	0.028712	2.3	75.8	71.6	215.3	38.1	4.7	0.2	keep	005 v2: storage tied, restore +39%, sequential +41%
+9c0a1f0	0.101490	10210110	0.101490	6897240	0.080660	2.3	44.0	7.8	250.0	69.9	1.4	0.5	discard	006 v1: 16MB dict sample cap (tie +0.03%, +memory)
+e40f9c1	0.101459	10206975	0.101459	6894105	0.080624	2.3	44.1	7.8	250.1	68.7	1.4	0.6	discard	007 v1: single-hit window widening (storage byte-identical, +memory)
+-	-	-	-	-	-	-	-	-	-	-	-	-	discard	008-probe: self-window 4MB vs trained dict on first-file tails: only -8.5% of tail chunk bytes (<1% e2e) - not worth sentinel complexity
+05f66ab	0.101622	10223359	0.101622	6910489	0.080816	2.4	42.0	7.7	255.0	69.5	1.4	0.3	keep	008 v1: append-lineage routing (tie +0.16%)
+05f66ab	0.038120	6775876	0.038120	4346190	0.028821	3.1	57.0	50.2	230.0	38.6	4.6	0.2	keep	008 v2: tie +0.24%
+05f66ab	0.006462	43590720	0.006462	34993153	0.005400	200.0	33.7	0	0	751.9	9.0	0.8	keep	008 rlscale: -5.0% vs control 45891332 (restore 2.4x slower, under 3x guardrail)
+-	-	10203723	-	-	-	-	-	-	-	137.2	-	0.5	discard	009 v1: zstd 22 (tie -0.03%, 2x slower compress); v2 6758134 tie
+2778863	0.101622	10223359	0.101622	6894105	0.080624	2.3	44.0	7.7	241.2	69.0	1.5	0.3	keep	FINAL v1: complete jul19 architecture (clean timing run)
+2778863	0.038120	6775876	0.038120	4329806	0.028712	2.4	73.6	70.5	220.1	38.1	4.7	0.2	keep	FINAL v2: complete jul19 architecture (clean timing run)
+2778863	0.030004	80421415	0.030004	0	0	32.0	83.8	0	0	750.8	3.6	0.5	crash	008-as-shipped longhorizon: head-streak misroutes mutating corpus to generic (80.4MB vs jul18 30.0MB, 2.7x worse) - signal falsified
+8a41c33	0.013258	35534595	0.013258	0	0	0	0	0	0	0	0	0.5	discard	010a longhorizon: 2% verdict tolerance still switches late (~day 47), 35.5MB vs jul18 30.0 - tightened to 0.5%
+8f10f2c	0.009494	25446028	0.009494	0	0	53.0	50.6	0	0	236.1	11.4	0.5	keep	010b longhorizon: verdict routing 0.5% tolerance stays structural - 25.4MB, beats jul18 30.0MB by 15%
+8f10f2c	0.010664	71933125	0.010664	0	0	94.4	71.5	0	0	854.1	7.9	0.9	discard	010b rlscale: 0.5% symmetric reset flip-flops chunker (71.9MB vs control 45.9) - replaced with asymmetric mode hysteresis
+fc00cd6	0.009494	25446028	0.009494	0	0	0	0	0	0	0	0	0.5	keep	010c longhorizon: asymmetric hysteresis, byte-identical to 010b (never enters generic)
+fc00cd6	0.007080	47756643	0.007080	0	0	206.6	32.6	0	0	772.8	8.7	0.7	discard	010c rlscale: asymmetric hysteresis switches too late to recoup re-chunk (+4.1% vs control) - routing feature reverted entirely
+aabd115	0.009488	25429644	0.009488	0	0	51.6	51.9	0	0	240.5	11.1	0.5	keep	FINAL longhorizon: shipped state (no routing) 25.43MB, 15% below jul18 30.0MB
+aabd115	0.006804	45891332	0.006804	0	0	82.5	81.8	0	0	636.3	10.6	0.3	keep	FINAL rlscale: shipped state (no routing) 45.89MB ratio 0.0068
 ```
 
 ## Roadmap (in expected-value order)
