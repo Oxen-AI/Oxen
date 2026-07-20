@@ -149,5 +149,68 @@ verified recompression.)
   made both 004 and 005 production-shaped; it also fixed 004's random-read
   regression.
 
-TBD: RL-scale control comparison, further experiments, final numbers,
-architecture answers, roadmap.
+## Answers to the guide's architecture checklist (delta from jul18)
+
+- **Identities**: unchanged (xxh3-128 raw-chunk hashes; content-addressed
+  blocks, dictionaries, manifests) — with one addition: a *transformed*
+  manifest's `file_hash` is still the **original** file's hash (the version
+  identity), while its chunks tile the transformed stream; the original size
+  is recoverable from the stream's own recipe, so the manifest wire format is
+  unchanged.
+- **Boundaries**: unchanged chunkers; `TRACE_AUTO_V1`'s resolution gains the
+  append-lineage signal (advisory store state — the manifest still records
+  the resolved concrete chunker, so reconstruction and manifest purity are
+  unaffected).
+- **Codecs**: two new store-local codecs. `ZSTD_WINDOW_DELTA` (base = a
+  member range of a sealed block; zero base storage; depth-one by
+  construction — delta-coded members are skipped in window assembly, and its
+  own base is always plain/dict chunks). Both new codecs are re-encoded to
+  plain zstd by transfer packing, so the wire contract is untouched.
+- **Transforms**: the reserved seam is now active. `ZSTD_UNWRAP_V1` is
+  format-agnostic (frame scan + verified recompression), so "parquet support"
+  needs no parquet parser at all; the same transform covers arrow and `.zst`.
+  Its durability contract: the transform ID freezes the bundled encoder's
+  output for stored streams — a libzstd upgrade that changes compressed
+  output must ship as a new transform ID with the old encoder pinned for
+  reads (same discipline as chunker IDs).
+- **Indexes**: the LMDB env gains a fourth advisory table (`lineage_heads`)
+  and, after every `oxen add`, an append-mode rebuild-compaction with an
+  atomic file swap (skipped when there is little slack). The index remains
+  disposable derived state; compaction never touches blocks or manifests.
+- **Reads**: reconstruction decodes in rayon batches (order preserved);
+  decoded delta bases are cached; window dictionaries digest their decoder
+  half eagerly and their encoder half lazily, and assembly is
+  single-flighted. Random access on transformed manifests reconstructs the
+  file (bounded by the transform's 64 MB ingest cap) — the documented read
+  amplification of the unwrap path.
+
+## Roadmap (in expected-value order)
+
+1. **Generational dictionaries** (carried over, now sharper): the class
+   dictionary trains once, on the first ingest; long-horizon corpora drift
+   (curation, reward relabels, new tools). Track the per-ingest
+   dict-encoded compression ratio; when it degrades against its trailing
+   baseline, retrain from recent samples and publish a new content-addressed
+   generation (old chunks keep their old dictionary — the reference is in
+   the payload).
+2. **Chained-group ("solid") encoding for cold repack**: the self-window
+   probe caps same-file gains at ~8.5% of tail chunks; a repack pass that
+   compresses groups of 8–16 consecutive chunks with a shared context (with
+   group-restart bounds on read amplification) could bank that during
+   `oxen storage repack` without touching the hot ingest path.
+3. **Window deltas across blocks**: windows are currently single-block; a
+   lineage whose payload spans blocks (files > 64 MB) can't be covered by
+   one window. Multi-range windows (or per-lineage "anchor blocks") extend
+   the mechanism to large files.
+4. **Unwrap transform for snappy parquet**: snappy is deterministic and
+   self-framing; the same verified-recompression contract applies. Needs a
+   snappy encoder dependency decision.
+5. **Streaming unwrap**: the transform currently buffers files ≤64 MB in
+   memory; a temp-file spill extends it to arbitrary sizes, and the seekable
+   reader can learn to map original↔transformed offsets through the recipe
+   instead of materializing.
+6. **Index self-healing**: `MissingChunk` on read should trigger one
+   automatic `rebuild_index` retry — it makes the compaction swap (and any
+   crash window) fully self-repairing.
+
+TBD: RL-scale control comparison, final numbers on all four corpora.
