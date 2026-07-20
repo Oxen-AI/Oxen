@@ -34,8 +34,11 @@ use sql_query_builder as sql;
 
 const DF_DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 
+/// A cached DuckDB connection slot; `None` when no connection is currently open.
+type CachedConn = Arc<Mutex<Option<duckdb::Connection>>>;
+
 // Static cache of DuckDB instances with LRU eviction
-static DF_DB_INSTANCES: LazyLock<RwLock<LruCache<PathBuf, Arc<Mutex<duckdb::Connection>>>>> =
+static DF_DB_INSTANCES: LazyLock<RwLock<LruCache<PathBuf, CachedConn>>> =
     LazyLock::new(|| RwLock::new(LruCache::new(DF_DB_CACHE_SIZE)));
 
 /// Removes a database instance from the cache.
@@ -81,7 +84,7 @@ pub fn remove_df_db_from_cache_with_children(
 /// caller is expected to have stopped its own use of the cache before
 /// calling — anything still locked is a safety-net case, not the norm.
 pub fn flush_all_df_db_connections() {
-    let entries: Vec<(PathBuf, Arc<Mutex<duckdb::Connection>>)> = {
+    let entries: Vec<(PathBuf, CachedConn)> = {
         let mut instances = DF_DB_INSTANCES.write();
         std::iter::from_fn(|| instances.pop_lru()).collect()
     };
@@ -98,13 +101,21 @@ pub fn flush_all_df_db_connections() {
     let mut skipped = 0usize;
     for (path, conn_lock) in entries {
         match conn_lock.try_lock() {
-            Some(conn) => match conn.execute_batch("CHECKPOINT") {
-                Ok(()) => checkpointed += 1,
-                Err(e) => {
-                    failed += 1;
-                    log::warn!("flush_all_df_db_connections: CHECKPOINT failed for {path:?}: {e}");
+            // An empty slot has no open connection to checkpoint (a hardened query
+            // closed it and left it for lazy reopen).
+            Some(guard) => {
+                if let Some(conn) = guard.as_ref() {
+                    match conn.execute_batch("CHECKPOINT") {
+                        Ok(()) => checkpointed += 1,
+                        Err(e) => {
+                            failed += 1;
+                            log::warn!(
+                                "flush_all_df_db_connections: CHECKPOINT failed for {path:?}: {e}"
+                            );
+                        }
+                    }
                 }
-            },
+            }
             None => {
                 skipped += 1;
                 log::warn!(
@@ -122,7 +133,8 @@ pub fn flush_all_df_db_connections() {
 
 #[derive(Clone)]
 pub struct DfDBManager {
-    df_db: Arc<Mutex<duckdb::Connection>>,
+    db_path: PathBuf,
+    df_db: CachedConn,
 }
 
 pub fn with_df_db_manager<F, T>(db_path: &Path, operation: F) -> Result<T, DataFrameError>
@@ -139,7 +151,10 @@ where
             cache_r.peek(&db_path).cloned()
         } {
             // Read lock has been dropped before executing user code.
-            return operation(&DfDBManager { df_db: db_lock });
+            return operation(&DfDBManager {
+                db_path: db_path.clone(),
+                df_db: db_lock,
+            });
         }
 
         // 2. If not exists, create the directory and open the db
@@ -163,37 +178,51 @@ where
             })?;
 
             // Wrap the connection in a Mutex and store it in the cache
-            let db_lock = Arc::new(Mutex::new(conn));
+            let db_lock = Arc::new(Mutex::new(Some(conn)));
             cache_w.put(db_path.clone(), db_lock.clone());
             db_lock
         }
     };
 
-    let manager = DfDBManager { df_db };
+    let manager = DfDBManager { db_path, df_db };
 
     // Execute the operation with our DfDBManager instance
     operation(&manager)
 }
 
 impl DfDBManager {
-    /// Execute an operation with the database connection
+    /// Execute an operation with the database connection, opening it if it is not
+    /// currently open.
     pub fn with_conn<F, T>(&self, operation: F) -> Result<T, DataFrameError>
     where
         F: FnOnce(&duckdb::Connection) -> Result<T, DataFrameError>,
     {
-        let conn = self.df_db.lock();
-        operation(&conn)
+        let mut slot = self.df_db.lock();
+        if let Some(conn) = slot.as_ref() {
+            return operation(conn);
+        }
+        let conn =
+            get_connection(&self.db_path).map_err(|e| DataFrameError::FailOpenDfDb(Box::new(e)))?;
+        let result = operation(&conn);
+        *slot = Some(conn);
+        result
     }
 
-    /// Execute an operation with the database connection (mutable access)
-    /// Note: This provides mutable access to the connection for functions that require it
+    /// Execute an operation with mutable access to the database connection, opening
+    /// it if it is not currently open.
     pub fn with_conn_mut<F, T>(&self, operation: F) -> Result<T, DataFrameError>
     where
         F: FnOnce(&mut duckdb::Connection) -> Result<T, DataFrameError>,
     {
-        let mut conn = self.df_db.lock();
-
-        operation(&mut conn)
+        let mut slot = self.df_db.lock();
+        if let Some(conn) = slot.as_mut() {
+            return operation(conn);
+        }
+        let mut conn =
+            get_connection(&self.db_path).map_err(|e| DataFrameError::FailOpenDfDb(Box::new(e)))?;
+        let result = operation(&mut conn);
+        *slot = Some(conn);
+        result
     }
 }
 
@@ -220,24 +249,28 @@ fn open_hardened_query_connection(path: &Path) -> Result<duckdb::Connection, duc
 }
 
 /// Run `operation` against a hardened, read-only connection to the DuckDB file at
-/// `db_path` — for executing caller-supplied query text. Opens a fresh connection
-/// per call, and acquires the db's connection lock internally, so it must not be
-/// called while that lock is already held (it is not reentrant).
+/// `db_path` — for executing caller-supplied query text. Acquires the db's
+/// connection lock internally, so it must not be called while that lock is already
+/// held (it is not reentrant).
 pub fn with_hardened_query_conn<F, T>(db_path: &Path, operation: F) -> Result<T, DataFrameError>
 where
     F: FnOnce(&duckdb::Connection) -> Result<T, DataFrameError>,
 {
-    // Checkpoint under the read-write connection's lock and open the read-only connection before
-    // releasing it: a read-only connection can crash replaying sequence / default-column WAL
-    // entries, so it must open against a flushed WAL, and holding the lock keeps a concurrent
-    // write out of the WAL until it has.
-    let conn = with_df_db_manager(db_path, |manager| {
-        manager.with_conn(|rw_conn| {
+    with_df_db_manager(db_path, |manager| {
+        let mut slot = manager.df_db.lock();
+        // Checkpoint and close the read-write connection so the file has no open
+        // handle — some platforms won't open a second handle to it — then open the
+        // hardened read-only connection as the sole handle and query it while still
+        // holding the lock so a concurrent write can't open the file underneath us.
+        // Checkpointing first also spares the read-only connection a WAL replay,
+        // which can crash on sequence / default-column entries. The slot is left
+        // empty for the next caller to reopen.
+        if let Some(rw_conn) = slot.take() {
             rw_conn.execute_batch("CHECKPOINT")?;
-            Ok(open_hardened_query_connection(db_path)?)
-        })
-    })?;
-    operation(&conn)
+        }
+        let conn = open_hardened_query_connection(db_path)?;
+        operation(&conn)
+    })
 }
 
 /// Get a connection to a duckdb database.
