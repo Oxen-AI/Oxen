@@ -364,23 +364,14 @@ impl VersionStore for LocalVersionStore {
             .collect();
 
         // Run the full read-chunks + atomic-write + cleanup sequence in one `spawn_blocking`
-        // closure: chain each chunk file as a sync `Read` and pipe the concatenation through
-        // `AtomicFile::stream` with the expected hash so the rename only happens if the
-        // reassembled bytes hash to the file's canonical hash.
+        // closure: `stream_from_paths` concatenates the chunks in offset order.
         spawn_blocking(move || -> Result<(), OxenError> {
-            let mut combined: Box<dyn std::io::Read> = Box::new(std::io::empty());
-            for chunk_path in &chunk_paths {
-                let chunk_file = std::fs::File::open(chunk_path)?;
-                combined = Box::new(std::io::Read::chain(combined, chunk_file));
-            }
             AtomicFile::new(&version_path)
                 .with_hash(expected_hash)
-                .stream(&mut combined)?;
+                .stream_from_paths(&chunk_paths)?;
 
-            // Close the chunk file handles before removing their directory. On NFS, unlinking a
-            // still-open file leaves a hidden .nfsXXXX entry that fails the rmdir with ENOTEMPTY.
-            drop(combined);
-
+            // The reassembled file is committed and every chunk handle closed before this point,
+            // so removing the chunk directory is safe.
             if chunks_dir.exists() {
                 std::fs::remove_dir_all(&chunks_dir)?;
             }
