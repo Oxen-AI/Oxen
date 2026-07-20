@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 560" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="560" viewBox="0 0 1180 560" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
 <rect width="1180" height="560" fill="white"/>
 <text x="84" y="30" font-size="19" font-weight="600" fill="#3a3835">Encode, decode, and total stored by approach (jul19 oxen runs; zstd/raw baselines corpus-only)</text>
 <line x1="84" y1="482.0" x2="1150" y2="482.0" stroke="#e3e1dd"/>

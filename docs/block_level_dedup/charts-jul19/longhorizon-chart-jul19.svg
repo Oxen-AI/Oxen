@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 540" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="540" viewBox="0 0 1180 540" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
 <rect width="1180" height="540" fill="white"/>
 <text x="74" y="30" font-size="19" font-weight="600" fill="#3a3835">60-day corpus: cumulative storage over 60 daily commits, 2.68 GB logical (jul19 stack)</text>
 <line x1="74" y1="482.0" x2="950" y2="482.0" stroke="#e3e1dd" stroke-width="1"/>

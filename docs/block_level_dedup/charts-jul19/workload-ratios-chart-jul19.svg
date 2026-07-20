@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 540" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="540" viewBox="0 0 1180 540" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
 <rect width="1180" height="540" fill="white"/>
 <text x="74" y="30" font-size="19" font-weight="600" fill="#3a3835">Stored fraction by workload, general corpus (marginal stored bytes / logical bytes, jul19)</text>
 <line x1="74" y1="444.0" x2="1150" y2="444.0" stroke="#e3e1dd"/>
