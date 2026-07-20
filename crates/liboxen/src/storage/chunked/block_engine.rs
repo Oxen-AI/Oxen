@@ -192,14 +192,12 @@ impl BlockEngine {
             // bytes: a mutating table can keep a byte-stable head forever while
             // its middle churns) — is an append-only log. Rows there never
             // mutate, so byte-window FastCDC beats row-isolating structural
-            // chunks (fewer, larger, better-compressing chunks). Switching
-            // chunkers costs one full re-chunk, so the streak threshold is
-            // deliberately high: only many-version logs pay for it. Advisory
-            // store state: the resolved delegate is what the manifest records,
-            // so reconstruction is unaffected.
-            const APPEND_STREAK_SWITCH: u32 = 7;
-            let append_streak = self.index.lineage_append_streak(head_key)?;
-            if long_rows && append_streak < APPEND_STREAK_SWITCH {
+            // chunks (fewer, larger, better-compressing chunks). Mode changes
+            // use asymmetric hysteresis (see `record_lineage_verdict`) because
+            // every flip costs one full re-chunk. Advisory store state: the
+            // resolved delegate is what the manifest records, so reconstruction
+            // is unaffected.
+            if long_rows && !self.index.lineage_routes_generic(head_key)? {
                 ChunkerId::TRACE_JSONL_V1
             } else {
                 ChunkerId::GENERIC_FASTCDC_V1
