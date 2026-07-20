@@ -14,12 +14,26 @@ passes it on both corpora.
 
 | | jul18 final (this run's baseline) | jul19 final | Δ |
 | --- | --- | --- | --- |
-| v1 stored_bytes (100.6 MB logical) | 12.77 MB | TBD | TBD |
-| v1 storage_ratio | 0.1269 | TBD | |
-| v2 stored_bytes (177.8 MB logical) | 8.40 MB | TBD | TBD |
-| v2 storage_ratio | 0.0473 | TBD | |
-| v1 restore | 2.8 s / 36 MB/s | TBD | |
-| v2 restore | 3.1 s / 57 MB/s | TBD | |
+| v1 stored_bytes (100.6 MB logical) | 12.77 MB | **10.22 MB** | **−19.9%** |
+| v1 storage_ratio | 0.1269 | **0.1016** | |
+| v2 stored_bytes (177.8 MB logical) | 8.40 MB | **6.78 MB** | **−19.4%** |
+| v2 storage_ratio | 0.0473 | **0.0381** | |
+| v1 restore | 2.8 s / 36.1 MB/s | 2.3 s / 44.0 MB/s | **+22% throughput** |
+| v2 restore | 3.1 s / 56.9 MB/s | 2.4 s / 73.6 MB/s | **+29% throughput** |
+| v1 / v2 random read | 262 / 233 ms | 241 / 220 ms | better |
+| v1 / v2 compression | 46.7 / 42.5 s | 69.0 / 38.1 s | v1 1.5× slower (within guardrail) |
+| v1 / v2 peak memory | 141 / 151 MB | 332 / 182 MB | bounded by window caps |
+| correctness (both corpora, every commit) | pass | pass | |
+
+Storage results are deterministic; every retained experiment was gated on both
+corpora and byte-exact reconstruction. Cumulative over the two runs, the
+original session baseline (24.19 MB v1) is down **2.4×**, and pure FastCDC
+(20.40 MB) is down **2.0×**.
+
+At scale, the final architecture stores the 6.75 GB RL corpus (80 training
+iterations) at **43.6 MB — ratio 0.00646, 155× vs raw snapshots** — and the
+2.68 GB long-horizon corpus at the ratio reported in the scale section below,
+byte-verified at every commit on both.
 
 ## Retained mechanisms (in the order they were found)
 
@@ -104,7 +118,30 @@ passes it on both corpora.
 | 006 | 16 MB dictionary sample cap | 10,210,110 | — | discard (tie, +memory) |
 | 007 | window delta on single probe hit | 10,206,975 | — | discard (byte-identical, +memory) |
 | 008a | self-window probe (4 MB raw prefix as dict for first-file tails) | −8.5% of tail chunks only | — | discard (<1% e2e, high complexity) |
-| 008 | append-lineage chunker routing | 10,223,359 | 6,775,876 | TBD (RL-scale gate) |
+| 008 | append-lineage chunker routing | 10,223,359 (tie) | 6,775,876 (tie) | **keep** (RL-scale −5.0%) |
+| 009 | zstd level 22 | 10,203,723 (tie) | 6,758,134 (tie) | discard (2× slower compress for a tie) |
+
+### The RL-scale gate for 008
+
+Same 6.75 GB / 80-iteration corpus, same final stack, only the routing
+differs:
+
+| | without 008 (control) | with 008 | Δ |
+| --- | --- | --- | --- |
+| stored_bytes | 45,891,332 | **43,590,720** | **−5.0%** |
+| storage_ratio | 0.006804 | **0.006462** | |
+| restore_seconds | 82.5 | 200.0 | 2.4× slower (under the 3× guardrail) |
+| compression_seconds | 636 | 752 | +18% |
+| peak_memory_mb | 281 | 799 | window activity on generic chunks |
+| correctness | pass | pass | |
+
+Kept under the ordered rules (storage first), with the read cost stated
+plainly: on append-routed lineages the generic chunks delta heavily across
+versions, and resolving those bases during restore is the slowdown. The
+mitigations are known (larger decoded-base cache, or repacking cold deltas)
+and sit on the roadmap; a deployment that prioritizes restore latency over
+the 5% can simply not mark lineages or lower nothing — the switch requires an
+8-version same-head streak, so it never affects short-lived data.
 
 ## Per-workload behavior on v1 (final architecture vs jul18 final)
 
@@ -112,7 +149,7 @@ Physical bytes added by each benchmark commit:
 
 | Commit | Workload | Logical MB | jul18 stored MB | jul19 stored MB | jul19 ratio |
 | --- | --- | --- | --- | --- | --- |
-| c1 | base snapshots (3 files) | 15.1 | 3.27 | 3.31 | 0.219 |
+| c1 | base snapshots (3 files) | 15.1 | 3.27 | 3.33 | 0.221 |
 | c2 | traces append-only | 10.2 | 0.67 | **0.19** | **0.019** |
 | c3 | scattered session growth + finetune append | 15.2 | 0.95 | 0.79 | 0.052 |
 | c4 | full row reorder + growth + labels append | 15.8 | 0.52 | 0.55 | 0.035 |
