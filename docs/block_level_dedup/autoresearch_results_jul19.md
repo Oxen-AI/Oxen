@@ -31,9 +31,12 @@ original session baseline (24.19 MB v1) is down **2.4×**, and pure FastCDC
 (20.40 MB) is down **2.0×**.
 
 At scale, the final architecture stores the 6.75 GB RL corpus (80 training
-iterations) at **45.9 MB — ratio 0.0068, 147× vs raw snapshots** — and the
-2.68 GB long-horizon corpus (60 daily exports) at **25.43 MB — ratio 0.0095,
-105×, 15% below jul18's 30.0 MB** — byte-verified at every commit on both.
+iterations) at **45.9 MB on the automatic default (147× vs raw) and 32.75 MB
+with the one-line `generic` profile mark (ratio 0.0049, 206×, 11% below
+jul18's best)** — and the 2.68 GB long-horizon corpus (60 daily exports) at
+**25.43 MB — ratio 0.0095, 105×, 15% below jul18's 30.0 MB** — byte-verified
+at every commit on both. See "Scale measurements" for the full same-stack
+route comparison.
 
 ## Retained mechanisms (in the order they were found)
 
