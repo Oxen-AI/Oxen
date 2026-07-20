@@ -191,8 +191,12 @@ verified recompression.)
   append verdict from its actual chunk-dedup pattern — new chunks confined
   to the tail (≤2% interior tolerance for boundary noise and sparse
   relabels) and a majority of chunks reused — and only a 7-verdict streak
-  switches the lineage. One corpus away from shipping a 2.7× regression:
-  this is why every routing heuristic needs an adversarial corpus in the
+  switches the lineage. Even the verdict needed calibration: a 2% interior
+  tolerance still let the long-horizon corpus's slow old-session churn
+  (~1–1.5% interior per day) build streaks and switch late (35.5 MB); at
+  0.5% it stays structural for all 60 days and lands at **25.45 MB — 15%
+  better than jul18's 30.0 MB**. One corpus away from shipping a 2.7×
+  regression: every routing heuristic needs an adversarial corpus in the
   gate set.
 - **Parallel decode without dictionary discipline (005, first cut)**: naive
   rayon fan-out stampeded window-dictionary assembly and paid level-19
@@ -235,6 +239,38 @@ verified recompression.)
   single-flighted. Random access on transformed manifests reconstructs the
   file (bounded by the transform's 64 MB ingest cap) — the documented read
   amplification of the unwrap path.
+
+## Scale measurements (final architecture)
+
+| Corpus | Logical | Stored | Ratio | vs raw snapshots |
+| --- | --- | --- | --- | --- |
+| v1 multi-version (7 commits) | 100.6 MB | 10.22 MB | 0.1016 | 9.8× |
+| v2 prompt-cache (6 commits) | 177.8 MB | 6.78 MB | 0.0381 | 26× |
+| long-horizon (60 daily exports) | 2.68 GB | **25.45 MB** | **0.00949** | 105× |
+| RL-scale (80 training iterations) | 6.75 GB | RL_TBD | RL_RATIO | RL_X |
+
+All byte-verified at every commit.
+
+## Reproduction
+
+```bash
+git checkout autoresearch-block-dedup/jul19
+oxen-python/.venv/bin/python benchmark/dedup/prepare.py                # corpus v1
+oxen-python/.venv/bin/python benchmark/dedup/prepare_promptcache.py    # corpus v2
+python3 benchmark/dedup/prepare_longhorizon.py                         # 2.68 GB
+python3 benchmark/dedup/prepare_rlscale.py                             # 6.75 GB
+cargo build --workspace
+OXEN_BIN=$PWD/target/debug/oxen python3 benchmark/dedup/benchmark.py
+BENCH_CORPUS=corpus-promptcache OXEN_BIN=$PWD/target/debug/oxen \
+    python3 benchmark/dedup/benchmark.py
+BENCH_CORPUS=corpus-longhorizon OXEN_BIN=$PWD/target/debug/oxen \
+    python3 benchmark/dedup/benchmark.py
+BENCH_CORPUS=corpus-rlscale OXEN_BIN=$PWD/target/debug/oxen \
+    python3 benchmark/dedup/benchmark.py
+```
+
+Every experiment is one commit on this branch's history; discarded
+experiments are recorded in the log above and in the raw rows appendix.
 
 ## Roadmap (in expected-value order)
 
