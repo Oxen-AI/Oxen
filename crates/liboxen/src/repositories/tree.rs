@@ -2937,11 +2937,6 @@ mod tests {
     /// silent `id.len() == 32` gate that dropped these entries.
     #[tokio::test]
     async fn test_unpack_recovers_hash_with_leading_zero_nibbles() -> Result<(), OxenError> {
-        // FS-pinned: this asserts on the short-hex hash recovered from the on-disk `tree/nodes`
-        // path layout, which only the filesystem backend produces.
-        if test::skip_fs_pinned_under_lmdb() {
-            return Ok(());
-        }
         test::run_empty_dir_test_async(|dir| async move {
             let repo = test::init_fs_merkle_backend(&dir)?;
             // Pick a small `u128` whose hex form is much shorter than 32 chars.

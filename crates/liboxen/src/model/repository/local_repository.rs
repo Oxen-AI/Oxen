@@ -1,7 +1,9 @@
 use crate::config::RepositoryConfig;
 use crate::constants::SHALLOW_FLAG;
 use crate::constants::{self, DEFAULT_VNODE_SIZE};
-use crate::core::db::merkle_node::{MerkleNodeBackend, MerkleNodeStore, create_merkle_node_store};
+use crate::core::db::merkle_node::{
+    DEFAULT_MERKLE_NODE_BACKEND, MerkleNodeBackend, MerkleNodeStore, create_merkle_node_store,
+};
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
@@ -201,7 +203,8 @@ impl LocalRepository {
         let path = std::env::current_dir()?.join(view.name);
         let storage_config = StorageConfig::default();
         let version_store = create_version_store(&path, &storage_config, None)?;
-        let (merkle_node_store, merkle_node_backend) = create_merkle_node_store(&path, None)?;
+        let (merkle_node_store, merkle_node_backend) =
+            create_merkle_node_store(&path, Some(DEFAULT_MERKLE_NODE_BACKEND))?;
         Ok(LocalRepository {
             path,
             remotes: vec![],
@@ -226,7 +229,8 @@ impl LocalRepository {
         let path = path.to_owned();
         let storage_config = StorageConfig::default();
         let version_store = create_version_store(&path, &storage_config, None)?;
-        let (merkle_node_store, merkle_node_backend) = create_merkle_node_store(&path, None)?;
+        let (merkle_node_store, merkle_node_backend) =
+            create_merkle_node_store(&path, Some(DEFAULT_MERKLE_NODE_BACKEND))?;
         Ok(LocalRepository {
             path,
             remotes: vec![repo.remote],

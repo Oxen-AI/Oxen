@@ -513,11 +513,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_tree_from_path() -> Result<(), OxenError> {
-        // FS-pinned: this test counts node directories under the on-disk `tree/nodes` layout, which
-        // only the filesystem backend produces.
-        if test::skip_fs_pinned_under_lmdb() {
-            return Ok(());
-        }
         test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
             let commit = repositories::commits::head_commit(&local_repo)?;
             let remote_repo_clone = remote_repo.clone();
@@ -590,11 +585,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_download_trees_from() -> Result<(), OxenError> {
-        // FS-pinned: this test counts node directories under the on-disk `tree/nodes` layout, which
-        // only the filesystem backend produces.
-        if test::skip_fs_pinned_under_lmdb() {
-            return Ok(());
-        }
         test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
             let commit = repositories::commits::head_commit(&local_repo)?;
             let remote_repo_clone = remote_repo.clone();

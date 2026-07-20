@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use crate::constants::{DEFAULT_VNODE_SIZE, MIN_OXEN_VERSION};
-use crate::core::db::merkle_node::MerkleNodeBackend;
+use crate::core::db::merkle_node::{DEFAULT_MERKLE_NODE_BACKEND, MerkleNodeBackend};
 use crate::error::OxenError;
 use crate::model::{LocalRepository, Remote};
 use crate::storage::StorageConfig;
@@ -51,13 +51,17 @@ pub struct RepositoryConfig {
     pub workspaces: Option<Vec<String>>,
     /// Which engine backs this repo's Merkle node store. The authoritative record of the repo's
     /// backend: written at `init` and updated by the file ↔ LMDB migration. `None` for repos whose
-    /// config predates the field, which fall back to on-disk evidence (see `create_merkle_node_store`).
+    /// config predates the field, which fall back to on-disk evidence — an FS node tree means
+    /// filesystem, else LMDB (see `create_merkle_node_store`).
     pub merkle_node_backend: Option<MerkleNodeBackend>,
 }
 
 impl Default for RepositoryConfig {
     /// Default matches what `oxen init` writes to a fresh repo's `config.toml`: the current
-    /// `MIN_OXEN_VERSION`, the default vnode size, and `None` for every per-repo override.
+    /// `MIN_OXEN_VERSION`, the default vnode size, the default merkle node backend, and `None` for
+    /// every other per-repo override. A config *loaded* from disk that predates the
+    /// `merkle_node_backend` field deserializes it as `None` (not via this default), so the backend
+    /// is resolved from on-disk data — see `create_merkle_node_store`.
     fn default() -> Self {
         RepositoryConfig {
             remote_name: None,
@@ -71,7 +75,7 @@ impl Default for RepositoryConfig {
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
-            merkle_node_backend: None,
+            merkle_node_backend: Some(DEFAULT_MERKLE_NODE_BACKEND),
         }
     }
 }
@@ -133,6 +137,13 @@ mod tests {
 
     fn parse(toml_str: &str) -> RepositoryConfig {
         toml::from_str(toml_str).expect("test fixture must parse")
+    }
+
+    /// A config that predates the `merkle_node_backend` field deserializes it as `None` (not via
+    /// `Default`), so an existing repo's backend is resolved from on-disk data rather than assumed.
+    #[test]
+    fn missing_merkle_node_backend_deserializes_to_none() {
+        assert_eq!(parse("remotes = []\n").merkle_node_backend, None);
     }
 
     #[test]
