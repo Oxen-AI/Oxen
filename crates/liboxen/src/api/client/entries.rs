@@ -653,27 +653,20 @@ pub async fn download_large_entry(
         util::fs::create_dir_all(parent)?;
     }
 
-    // Chain the per-chunk files into one `Read`, stream that through the verify-before-commit
-    // atomic-write helper, then reclaim the chunk dir.
+    // Reassemble the per-chunk files through the verify-before-commit atomic-write helper, then
+    // reclaim the chunk dir.
     let chunk_paths: Vec<PathBuf> = (0..num_chunks)
         .map(|i| tmp_dir.join(format!("chunk_{i}")))
         .collect();
     let tmp_dir_for_cleanup = tmp_dir.clone();
     let local_path_for_blocking = local_path.to_path_buf();
     spawn_blocking(move || -> Result<(), OxenError> {
-        let mut combined: Box<dyn std::io::Read> = Box::new(std::io::empty());
-        for chunk_path in &chunk_paths {
-            let chunk_file = std::fs::File::open(chunk_path)?;
-            combined = Box::new(std::io::Read::chain(combined, chunk_file));
-        }
         AtomicFile::new(&local_path_for_blocking)
             .with_hash(expected_hash)
-            .stream(&mut combined)?;
+            .stream_from_paths(&chunk_paths)?;
 
-        // Close the chunk file handles before removing their directory. On NFS, unlinking a
-        // still-open file leaves a hidden .nfsXXXX entry that fails the rmdir with ENOTEMPTY.
-        drop(combined);
-
+        // The reassembled file is committed and every chunk handle closed before this point, so
+        // removing the chunk directory is safe.
         if tmp_dir_for_cleanup.exists() {
             std::fs::remove_dir_all(&tmp_dir_for_cleanup)?;
         }

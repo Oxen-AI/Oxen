@@ -7,7 +7,7 @@
 
 use bytes::{Bytes, BytesMut};
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use tokio::io::AsyncReadExt;
@@ -180,7 +180,7 @@ impl AtomicTempFile {
 /// `std::fs` and run inside a `tokio::task::spawn_blocking` provided by the calling operation.
 /// [`stream_async`][Self::stream_async] is the only `async` terminal, and uses the Channel
 /// hand-off pattern to bridge an async reader to a sync writer.
-#[must_use = "AtomicFile does nothing until a terminal method (write/stream/stream_async/copy_from) is called"]
+#[must_use = "AtomicFile does nothing until a terminal method (write/stream/stream_from_paths/stream_async/copy_from) is called"]
 #[derive(Debug, Clone)]
 pub struct AtomicFile {
     target: PathBuf,
@@ -258,6 +258,50 @@ impl AtomicFile {
             actual
         };
         if let (Some(expected), Some(actual)) = (self.expected_hash, actual_hash)
+            && actual != expected
+        {
+            return Err(OxenError::HashMismatch {
+                path: self.target,
+                expected,
+                actual,
+            });
+        }
+        if let Some(mtime) = self.mtime {
+            tmp.set_mtime(mtime)?;
+        }
+        tmp.commit()
+    }
+
+    /// Publish the in-order concatenation of `paths` to the target path, opening one source file
+    /// at a time. Bounds open file descriptors to O(1) regardless of how many paths there are —
+    /// the fit for reassembling a file from many chunk files. On success the concatenated bytes
+    /// are hash-verified — when a hash was set via [`with_hash`][Self::with_hash] — and atomically
+    /// renamed into place; on any error the scratch file drops without touching the target.
+    pub fn stream_from_paths(self, paths: &[PathBuf]) -> Result<(), OxenError> {
+        let mut tmp = AtomicTempFile::create(&self.target)?;
+        // Reuse one large buffer across every chunk and write each block straight to the temp
+        // file. At most one chunk descriptor and one buffer are live at a time, and both reads and
+        // writes move in ~10 MB blocks rather than the 8 KB `std::io::copy` default.
+        let mut hasher = self.expected_hash.map(|_| Xxh3::new());
+        let mut buf = vec![0u8; constants::STREAMING_BUF_SIZE];
+        {
+            let writer = tmp.as_writer();
+            for path in paths {
+                let mut src = File::open(path)?;
+                loop {
+                    let n = src.read(&mut buf)?;
+                    if n == 0 {
+                        break;
+                    }
+                    if let Some(h) = hasher.as_mut() {
+                        h.update(&buf[..n]);
+                    }
+                    writer.write_all(&buf[..n])?;
+                }
+            }
+        }
+        let hash_result = hasher.map(|h| MerkleHash::new(h.digest128()));
+        if let (Some(expected), Some(actual)) = (self.expected_hash, hash_result)
             && actual != expected
         {
             return Err(OxenError::HashMismatch {
@@ -515,6 +559,60 @@ mod tests {
             Ok(())
         })
         .await
+    }
+
+    #[test]
+    fn test_atomic_stream_from_paths_concatenates_and_verifies() -> Result<(), OxenError> {
+        use xxhash_rust::xxh3::xxh3_128;
+
+        test::run_empty_dir_test(|dir| {
+            let chunks_dir = dir.join("chunks");
+            std::fs::create_dir(&chunks_dir)?;
+            let parts: [&[u8]; 3] = [b"hello ", b"brave ", b"world"];
+            let mut paths = Vec::new();
+            for (i, part) in parts.iter().enumerate() {
+                let p = chunks_dir.join(format!("{i}"));
+                std::fs::write(&p, part)?;
+                paths.push(p);
+            }
+            let full: Vec<u8> = parts.concat();
+            let expected = MerkleHash::new(xxh3_128(&full));
+
+            let target = dir.join("blob.bin");
+            AtomicFile::new(&target)
+                .with_hash(expected)
+                .stream_from_paths(&paths)?;
+
+            let written = std::fs::read(&target)?;
+            assert_eq!(written, full);
+
+            // No stray `.oxentmp.<uuid>` next to the target (dir holds blob.bin + chunks/).
+            let mut names = Vec::new();
+            for entry in std::fs::read_dir(dir)? {
+                names.push(entry?.file_name().to_string_lossy().to_string());
+            }
+            names.sort();
+            assert_eq!(names, vec!["blob.bin".to_string(), "chunks".to_string()]);
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_atomic_stream_from_paths_aborts_on_mismatch() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let chunk = dir.join("chunk0");
+            std::fs::write(&chunk, b"payload")?;
+            let bogus = MerkleHash::new(0xdead_beef_dead_beef_dead_beef_dead_beefu128);
+
+            let target = dir.join("blob.bin");
+            let result = AtomicFile::new(&target)
+                .with_hash(bogus)
+                .stream_from_paths(&[chunk]);
+
+            assert!(matches!(result, Err(OxenError::HashMismatch { .. })));
+            assert!(!target.exists(), "target must not be published on mismatch");
+            Ok(())
+        })
     }
 
     #[tokio::test]
