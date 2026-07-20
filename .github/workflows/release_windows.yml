@@ -184,6 +184,9 @@ jobs:
         # leave the tree incomplete, and saving it under the exact key would make
         # later runs restore that partial tree and rebuild every time.
         if: success()
+        # Caching is best-effort: a save failure must not fail a release whose
+        # binaries and wheels already built.
+        continue-on-error: true
         run: |
           # Skip only on an exact-key hit. A fallback restore still has to write
           # the tree under the current key so the next release hits exactly.
@@ -194,8 +197,11 @@ jobs:
           $rel = "${{ github.workspace }}\target\release".Substring(3) -replace '\\','/'
           $list = @("$rel/.fingerprint", "$rel/deps", "$rel/build", "Users/Administrator/.cargo/registry/src", "Users/Administrator/.cargo/registry/cache")
           $list | Set-Content C:\deptree-list.txt
-          tar -cf C:\deptree-out.tar -C C:\ -T C:\deptree-list.txt
-          aws s3 cp C:\deptree-out.tar s3://oxen-release-build-cache/deptree/$env:DEPTREE_KEY.tar
+          # cmd (not PowerShell) runs the pipe so the bytes pass through raw; a
+          # PowerShell pipe re-encodes the stream and corrupts the tar. Streaming
+          # to S3 keeps the multi-GiB archive off the runner's disk.
+          cmd /c "tar -cf - -C C:\ -T C:\deptree-list.txt | aws s3 cp - s3://oxen-release-build-cache/deptree/%DEPTREE_KEY%.tar"
+          if ($LASTEXITCODE -ne 0) { Write-Host "DEPTREE save failed"; exit $LASTEXITCODE }
           Write-Host "DEPTREE saved ($env:DEPTREE_KEY)"
 
       - name: Create zip with oxen binaries
