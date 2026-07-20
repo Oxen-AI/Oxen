@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 540" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
+<rect width="1180" height="540" fill="white"/>
+<text x="74" y="30" font-size="19" font-weight="600" fill="#3a3835">Stored fraction by workload, general corpus (marginal stored bytes / logical bytes, jul19)</text>
+<line x1="74" y1="444.0" x2="1150" y2="444.0" stroke="#e3e1dd"/>
+<text x="66" y="448.0" font-size="13" text-anchor="end" fill="#8a8880">0</text>
+<line x1="74" y1="339.2" x2="1150" y2="339.2" stroke="#e3e1dd"/>
+<text x="66" y="343.2" font-size="13" text-anchor="end" fill="#8a8880">0.2</text>
+<line x1="74" y1="234.5" x2="1150" y2="234.5" stroke="#e3e1dd"/>
+<text x="66" y="238.5" font-size="13" text-anchor="end" fill="#8a8880">0.4</text>
+<line x1="74" y1="129.7" x2="1150" y2="129.7" stroke="#e3e1dd"/>
+<text x="66" y="133.7" font-size="13" text-anchor="end" fill="#8a8880">0.6</text>
+<rect x="103.2" y="329.0" width="95.3" height="115.0" fill="#1668c7" rx="3"/>
+<text x="150.9" y="322.0" font-size="13" font-weight="600" text-anchor="middle" fill="#3a3835">0.220</text>
+<text x="150.9" y="464" font-size="12.5" text-anchor="middle" fill="#3a3835">base snapshot</text>
+<text x="150.9" y="480" font-size="12.5" text-anchor="middle" fill="#3a3835">(3 files)</text>
+<rect x="256.9" y="434.1" width="95.3" height="9.9" fill="#1668c7" rx="3"/>
+<text x="304.6" y="427.1" font-size="13" font-weight="600" text-anchor="middle" fill="#3a3835">0.019</text>
+<text x="304.6" y="464" font-size="12.5" text-anchor="middle" fill="#3a3835">append-only</text>
+<text x="304.6" y="480" font-size="12.5" text-anchor="middle" fill="#3a3835">growth</text>
+<rect x="410.6" y="416.9" width="95.3" height="27.1" fill="#1668c7" rx="3"/>
+<text x="458.3" y="409.9" font-size="13" font-weight="600" text-anchor="middle" fill="#3a3835">0.052</text>
+<text x="458.3" y="464" font-size="12.5" text-anchor="middle" fill="#3a3835">scattered session</text>
+<text x="458.3" y="480" font-size="12.5" text-anchor="middle" fill="#3a3835">growth + append</text>
+<rect x="564.3" y="425.9" width="95.3" height="18.1" fill="#1668c7" rx="3"/>
+<text x="612.0" y="418.9" font-size="13" font-weight="600" text-anchor="middle" fill="#3a3835">0.035</text>
+<text x="612.0" y="464" font-size="12.5" text-anchor="middle" fill="#3a3835">full row reorder</text>
+<text x="612.0" y="480" font-size="12.5" text-anchor="middle" fill="#3a3835">+ growth</text>
+<rect x="718.1" y="419.7" width="95.3" height="24.3" fill="#1668c7" rx="3"/>
+<text x="765.7" y="412.7" font-size="13" font-weight="600" text-anchor="middle" fill="#3a3835">0.046</text>
+<text x="765.7" y="464" font-size="12.5" text-anchor="middle" fill="#3a3835">prompt edit +</text>
+<text x="765.7" y="480" font-size="12.5" text-anchor="middle" fill="#3a3835">deletes + inserts</text>
+<rect x="871.8" y="401.0" width="95.3" height="43.0" fill="#1668c7" rx="3"/>
+<text x="919.4" y="394.0" font-size="13" font-weight="600" text-anchor="middle" fill="#3a3835">0.082</text>
+<text x="919.4" y="464" font-size="12.5" text-anchor="middle" fill="#3a3835">big append + copy</text>
+<text x="919.4" y="480" font-size="12.5" text-anchor="middle" fill="#3a3835">+ annotation col</text>
+<rect x="1025.5" y="104.9" width="95.3" height="339.1" fill="#1668c7" rx="3"/>
+<text x="1073.1" y="97.9" font-size="13" font-weight="600" text-anchor="middle" fill="#3a3835">0.647</text>
+<text x="1073.1" y="464" font-size="12.5" text-anchor="middle" fill="#3a3835">parquet</text>
+<text x="1073.1" y="480" font-size="12.5" text-anchor="middle" fill="#3a3835">mirrors</text>
+<text x="20" y="249" font-size="14" text-anchor="middle" fill="#3a3835" transform="rotate(-90 20 249)">stored / logical</text>
+</svg>

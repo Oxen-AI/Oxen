@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 540" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
+<rect width="1180" height="540" fill="white"/>
+<text x="74" y="30" font-size="19" font-weight="600" fill="#3a3835">Projected year of daily 2 GB rollout commits (measured jul19 marginal ratios)</text>
+<line x1="74" y1="444.0" x2="1150" y2="444.0" stroke="#e3e1dd"/>
+<text x="66" y="448.0" font-size="13" text-anchor="end" fill="#8a8880">0</text>
+<line x1="74" y1="351.1" x2="1150" y2="351.1" stroke="#e3e1dd"/>
+<text x="66" y="355.1" font-size="13" text-anchor="end" fill="#8a8880">200</text>
+<line x1="74" y1="258.2" x2="1150" y2="258.2" stroke="#e3e1dd"/>
+<text x="66" y="262.2" font-size="13" text-anchor="end" fill="#8a8880">400</text>
+<line x1="74" y1="165.3" x2="1150" y2="165.3" stroke="#e3e1dd"/>
+<text x="66" y="169.3" font-size="13" text-anchor="end" fill="#8a8880">600</text>
+<line x1="74" y1="72.4" x2="1150" y2="72.4" stroke="#e3e1dd"/>
+<text x="66" y="76.4" font-size="13" text-anchor="end" fill="#8a8880">800</text>
+<rect x="125.1" y="104.9" width="166.8" height="339.1" fill="#8a8880" rx="3"/>
+<text x="208.5" y="97.9" font-size="13" font-weight="600" text-anchor="middle" fill="#3a3835">730 GB</text>
+<text x="208.5" y="464" font-size="12.5" text-anchor="middle" fill="#3a3835">raw snapshots</text>
+<text x="208.5" y="480" font-size="12.5" text-anchor="middle" fill="#3a3835">(today)</text>
+<rect x="394.1" y="393.4" width="166.8" height="50.6" fill="#008300" rx="3"/>
+<text x="477.5" y="386.4" font-size="13" font-weight="600" text-anchor="middle" fill="#3a3835">109 GB</text>
+<text x="477.5" y="464" font-size="12.5" text-anchor="middle" fill="#3a3835">zstd-19 each</text>
+<text x="477.5" y="480" font-size="12.5" text-anchor="middle" fill="#3a3835">snapshot</text>
+<rect x="663.1" y="442.1" width="166.8" height="1.9" fill="#1668c7" rx="3"/>
+<text x="746.5" y="435.1" font-size="13" font-weight="600" text-anchor="middle" fill="#3a3835">4.1 GB</text>
+<text x="746.5" y="464" font-size="12.5" text-anchor="middle" fill="#3a3835">oxen default</text>
+<text x="746.5" y="480" font-size="12.5" text-anchor="middle" fill="#3a3835">(structural)</text>
+<rect x="932.1" y="442.7" width="166.8" height="1.3" fill="#d55181" rx="3"/>
+<text x="1015.5" y="435.7" font-size="13" font-weight="600" text-anchor="middle" fill="#3a3835">2.8 GB</text>
+<text x="1015.5" y="464" font-size="12.5" text-anchor="middle" fill="#3a3835">oxen generic</text>
+<text x="1015.5" y="480" font-size="12.5" text-anchor="middle" fill="#3a3835">mark</text>
+<text x="20" y="249" font-size="14" text-anchor="middle" fill="#3a3835" transform="rotate(-90 20 249)">stored GB (log-scale values labeled)</text>
+</svg>

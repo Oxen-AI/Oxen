@@ -250,9 +250,53 @@ verified recompression.)
 | v1 multi-version (7 commits) | 100.6 MB | 10.21 MB | 0.1015 | 9.9× |
 | v2 prompt-cache (6 commits) | 177.8 MB | 6.76 MB | 0.0380 | 26× |
 | long-horizon (60 daily exports) | 2.68 GB | **25.43 MB** | **0.00949** | 105× |
-| RL-scale (80 training iterations) | 6.75 GB | **45.89 MB** | **0.00680** | 147× |
+| RL-scale (80 iterations), auto default | 6.75 GB | 45.89 MB | 0.00680 | 147× |
+| RL-scale (80 iterations), `generic` mark | 6.75 GB | **32.75 MB** | **0.00486** | 206× |
 
 All byte-verified at every commit.
+
+### Route comparison at scale (both routes, jul19 stack)
+
+Measured with a `[[storage.profiles]]` `generic` mark via `BENCH_STORAGE_PROFILES`
+— the first same-stack measurement of both routes (jul18's route table mixed
+stacks):
+
+| | Structural (auto default) | Generic mark | Winner |
+| --- | --- | --- | --- |
+| 60-day stored | **25.43 MB** | 64.51 MB | structural 2.5× (sessions mutate) |
+| 60-day encode / decode | 4.0 min / 51.6 s | 16.7 min / 25.1 s | encode: structural; decode: generic |
+| RL stored | 45.89 MB | **32.75 MB** | generic 1.4× (append-only) |
+| RL encode / decode | 10.6 min / 82.5 s | 9.7 min / 49.3 s | generic both |
+| RL incremental ratio | 0.00556 | **0.00386** | generic |
+
+The jul18 routing conclusion stands under the new stack, with the gap
+narrowed on both corpora (generic improved 68.0 → 64.5 on 60-day, 36.8 →
+32.75 on RL). Per-iteration RL marginals: 0.47 MB (default) / 0.33 MB
+(generic mark) vs 12.7 MB for per-snapshot zstd-19. Year-of-daily-2GB
+projection: 730 GB raw → ~109 GB zstd snapshots → 4.1 GB (default) /
+2.8 GB (generic mark).
+
+### Parquet-CDC pair, re-measured under the unwrap transform
+
+The jul18 measurement (pre-unwrap) was CDC-off 10.66 MB vs CDC-on 6.40 MB
+(−40%). Under the jul19 stack the unwrap transform recovers page content
+without writer cooperation and the pair collapses:
+
+| | CDC off | CDC on |
+| --- | --- | --- |
+| stored (≈20 MB logical, 6 commits) | 3.82 MB | **3.71 MB** |
+| gap | | **−2.9%** (was −40%) |
+| encode / decode | 32.8 s / 2.2 s | 23.0 s / 2.2 s |
+| correctness | pass | pass |
+
+Writer-side CDC remains the fallback for writers whose libzstd doesn't match
+the store's, and for non-zstd page codecs.
+
+The per-commit series behind every chart (including the corpus-only zstd-19
+baselines) are archived in
+[`charts-jul19/chart_data.tsv`](./charts-jul19/chart_data.tsv), and the
+rendered SVGs in [`charts-jul19/`](./charts-jul19/) — the same figures
+published on the Notion page.
 
 ## Reproduction
 
@@ -310,6 +354,10 @@ fc00cd6	0.009494	25446028	0.009494	0	0	0	0	0	0	0	0	0.5	keep	010c longhorizon: as
 fc00cd6	0.007080	47756643	0.007080	0	0	206.6	32.6	0	0	772.8	8.7	0.7	discard	010c rlscale: asymmetric hysteresis switches too late to recoup re-chunk (+4.1% vs control) - routing feature reverted entirely
 aabd115	0.009488	25429644	0.009488	0	0	51.6	51.9	0	0	240.5	11.1	0.5	keep	FINAL longhorizon: shipped state (no routing) 25.43MB, 15% below jul18 30.0MB
 aabd115	0.006804	45891332	0.006804	0	0	82.5	81.8	0	0	636.3	10.6	0.3	keep	FINAL rlscale: shipped state (no routing) 45.89MB ratio 0.0068
+aabd115	0.004856	32751810	0.004856	25905209	0.003862	49.3	136.7	171.3	426.0	584.0	11.5	0.5	keep	FINAL rlscale generic-mark jul19: 32.75MB (beats jul18 generic 36.8 by 11%), decode 137MB/s
+aabd115	0.024067	64507863	0.024067	0	0.023620	25.1	106.9	160.9	343.7	999.2	2.7	0.5	keep	FINAL longhorizon generic-mark jul19: 64.5MB (structural default 25.4 remains 2.5x winner)
+aabd115	0.188206	3818473	0.188206	0	0	2.2	9.1	9.2	380.3	32.8	0.6	0.5	keep	FINAL pqcdc-off jul19: 3.82MB (was 10.66 pre-unwrap)
+aabd115	0.181212	3708451	0.181212	0	0	2.2	9.2	9.1	379.1	23.0	0.9	0.4	keep	FINAL pqcdc-on jul19: 3.71MB - CDC gap collapsed to 2.9% under unwrap
 ```
 
 ## Roadmap (in expected-value order)

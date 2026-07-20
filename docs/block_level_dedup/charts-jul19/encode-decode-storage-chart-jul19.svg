@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 560" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
+<rect width="1180" height="560" fill="white"/>
+<text x="84" y="30" font-size="19" font-weight="600" fill="#3a3835">Encode, decode, and total stored by approach (jul19 oxen runs; zstd/raw baselines corpus-only)</text>
+<line x1="84" y1="482.0" x2="1150" y2="482.0" stroke="#e3e1dd"/>
+<text x="76" y="486.0" font-size="13" text-anchor="end" fill="#8a8880">0.01</text>
+<line x1="84" y1="415.7" x2="1150" y2="415.7" stroke="#e3e1dd"/>
+<text x="76" y="419.7" font-size="13" text-anchor="end" fill="#8a8880">0.1</text>
+<line x1="84" y1="349.3" x2="1150" y2="349.3" stroke="#e3e1dd"/>
+<text x="76" y="353.3" font-size="13" text-anchor="end" fill="#8a8880">1</text>
+<line x1="84" y1="283.0" x2="1150" y2="283.0" stroke="#e3e1dd"/>
+<text x="76" y="287.0" font-size="13" text-anchor="end" fill="#8a8880">10</text>
+<line x1="84" y1="216.7" x2="1150" y2="216.7" stroke="#e3e1dd"/>
+<text x="76" y="220.7" font-size="13" text-anchor="end" fill="#8a8880">100</text>
+<line x1="84" y1="150.3" x2="1150" y2="150.3" stroke="#e3e1dd"/>
+<text x="76" y="154.3" font-size="13" text-anchor="end" fill="#8a8880">1k</text>
+<line x1="84" y1="84.0" x2="1150" y2="84.0" stroke="#e3e1dd"/>
+<text x="76" y="88.0" font-size="13" text-anchor="end" fill="#8a8880">10k</text>
+<rect x="101.8" y="281.3" width="32.0" height="200.7" fill="#1668c7" rx="2"/>
+<text x="117.8" y="275.3" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">10.6</text>
+<rect x="137.3" y="283.9" width="32.0" height="198.1" fill="#d55181" rx="2"/>
+<text x="153.3" y="277.9" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">9.7</text>
+<rect x="172.8" y="270.0" width="32.0" height="212.0" fill="#008300" rx="2"/>
+<text x="188.8" y="264.0" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">15.7</text>
+<rect x="208.4" y="398.7" width="32.0" height="83.3" fill="#8a8880" rx="2"/>
+<text x="224.4" y="392.7" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">0.18</text>
+<text x="172.8" y="504" font-size="13" text-anchor="middle" fill="#3a3835">RL encode</text>
+<text x="172.8" y="520" font-size="13" text-anchor="middle" fill="#3a3835">(min)</text>
+<rect x="279.4" y="222.2" width="32.0" height="259.8" fill="#1668c7" rx="2"/>
+<text x="295.4" y="216.2" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">82.5</text>
+<rect x="315.0" y="237.0" width="32.0" height="245.0" fill="#d55181" rx="2"/>
+<text x="331.0" y="231.0" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">49.3</text>
+<rect x="350.5" y="290.9" width="32.0" height="191.1" fill="#008300" rx="2"/>
+<text x="366.5" y="284.9" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">7.6</text>
+<rect x="386.0" y="341.8" width="32.0" height="140.2" fill="#8a8880" rx="2"/>
+<text x="402.0" y="335.8" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">1.3</text>
+<text x="350.5" y="504" font-size="13" text-anchor="middle" fill="#3a3835">RL decode</text>
+<text x="350.5" y="520" font-size="13" text-anchor="middle" fill="#3a3835">(s)</text>
+<rect x="457.1" y="239.1" width="32.0" height="242.9" fill="#1668c7" rx="2"/>
+<text x="473.1" y="233.1" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">45.9</text>
+<rect x="492.6" y="248.8" width="32.0" height="233.2" fill="#d55181" rx="2"/>
+<text x="508.6" y="242.8" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">32.8</text>
+<rect x="528.2" y="150.1" width="32.0" height="331.9" fill="#008300" rx="2"/>
+<text x="544.2" y="144.1" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">1,009</text>
+<rect x="563.7" y="95.3" width="32.0" height="386.7" fill="#8a8880" rx="2"/>
+<text x="579.7" y="89.3" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">6,745</text>
+<text x="528.2" y="504" font-size="13" text-anchor="middle" fill="#3a3835">RL stored</text>
+<text x="528.2" y="520" font-size="13" text-anchor="middle" fill="#3a3835">(MB)</text>
+<rect x="634.8" y="309.4" width="32.0" height="172.6" fill="#1668c7" rx="2"/>
+<text x="650.8" y="303.4" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">4</text>
+<rect x="670.3" y="268.2" width="32.0" height="213.8" fill="#d55181" rx="2"/>
+<text x="686.3" y="262.2" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">16.7</text>
+<rect x="705.8" y="296.3" width="32.0" height="185.7" fill="#008300" rx="2"/>
+<text x="721.8" y="290.3" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">6.3</text>
+<rect x="741.4" y="425.1" width="32.0" height="56.9" fill="#8a8880" rx="2"/>
+<text x="757.4" y="419.1" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">0.072</text>
+<text x="705.8" y="504" font-size="13" text-anchor="middle" fill="#3a3835">60-day encode</text>
+<text x="705.8" y="520" font-size="13" text-anchor="middle" fill="#3a3835">(min)</text>
+<rect x="812.4" y="235.7" width="32.0" height="246.3" fill="#1668c7" rx="2"/>
+<text x="828.4" y="229.7" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">51.6</text>
+<rect x="848.0" y="256.5" width="32.0" height="225.5" fill="#d55181" rx="2"/>
+<text x="864.0" y="250.5" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">25.1</text>
+<rect x="883.5" y="317.7" width="32.0" height="164.3" fill="#008300" rx="2"/>
+<text x="899.5" y="311.7" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">3</text>
+<rect x="919.0" y="369.3" width="32.0" height="112.7" fill="#8a8880" rx="2"/>
+<text x="935.0" y="363.3" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">0.5</text>
+<text x="883.5" y="504" font-size="13" text-anchor="middle" fill="#3a3835">60-day decode</text>
+<text x="883.5" y="520" font-size="13" text-anchor="middle" fill="#3a3835">(s)</text>
+<rect x="990.1" y="256.1" width="32.0" height="225.9" fill="#1668c7" rx="2"/>
+<text x="1006.1" y="250.1" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">25.4</text>
+<rect x="1025.6" y="229.3" width="32.0" height="252.7" fill="#d55181" rx="2"/>
+<text x="1041.6" y="223.3" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">64.5</text>
+<rect x="1061.2" y="189.8" width="32.0" height="292.2" fill="#008300" rx="2"/>
+<text x="1077.2" y="183.8" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">254</text>
+<rect x="1096.7" y="121.9" width="32.0" height="360.1" fill="#8a8880" rx="2"/>
+<text x="1112.7" y="115.9" font-size="11.5" font-weight="600" text-anchor="middle" fill="#3a3835">2,680</text>
+<text x="1061.2" y="504" font-size="13" text-anchor="middle" fill="#3a3835">60-day stored</text>
+<text x="1061.2" y="520" font-size="13" text-anchor="middle" fill="#3a3835">(MB)</text>
+<rect x="84" y="46" width="14" height="14" fill="#1668c7" rx="2"/>
+<text x="104" y="58" font-size="13.5" fill="#3a3835">structural (oxen default)</text>
+<rect x="339.0" y="46" width="14" height="14" fill="#d55181" rx="2"/>
+<text x="359.0" y="58" font-size="13.5" fill="#3a3835">generic mark (oxen)</text>
+<rect x="544.8" y="46" width="14" height="14" fill="#008300" rx="2"/>
+<text x="564.8" y="58" font-size="13.5" fill="#3a3835">zstd-19 snapshots</text>
+<rect x="734.1999999999999" y="46" width="14" height="14" fill="#8a8880" rx="2"/>
+<text x="754.1999999999999" y="58" font-size="13.5" fill="#3a3835">raw copy</text>
+<text x="24" y="283" font-size="14" text-anchor="middle" fill="#3a3835" transform="rotate(-90 24 283)">log scale</text>
+</svg>

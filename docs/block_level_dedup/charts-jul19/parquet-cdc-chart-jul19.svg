@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 540" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
+<rect width="1180" height="540" fill="white"/>
+<text x="74" y="30" font-size="19" font-weight="600" fill="#3a3835">Parquet pair under the jul19 unwrap transform: cumulative stored MB (20 MB logical each)</text>
+<line x1="74" y1="482.0" x2="950" y2="482.0" stroke="#e3e1dd" stroke-width="1"/>
+<text x="66" y="486.0" font-size="13" text-anchor="end" fill="#8a8880">0</text>
+<line x1="74" y1="376.3" x2="950" y2="376.3" stroke="#e3e1dd" stroke-width="1"/>
+<text x="66" y="380.3" font-size="13" text-anchor="end" fill="#8a8880">1</text>
+<line x1="74" y1="270.5" x2="950" y2="270.5" stroke="#e3e1dd" stroke-width="1"/>
+<text x="66" y="274.5" font-size="13" text-anchor="end" fill="#8a8880">2</text>
+<line x1="74" y1="164.8" x2="950" y2="164.8" stroke="#e3e1dd" stroke-width="1"/>
+<text x="66" y="168.8" font-size="13" text-anchor="end" fill="#8a8880">3</text>
+<line x1="74" y1="59.0" x2="950" y2="59.0" stroke="#e3e1dd" stroke-width="1"/>
+<text x="66" y="63.0" font-size="13" text-anchor="end" fill="#8a8880">4</text>
+<text x="74.0" y="504" font-size="13" text-anchor="middle" fill="#8a8880">1</text>
+<text x="249.2" y="504" font-size="13" text-anchor="middle" fill="#8a8880">2</text>
+<text x="424.4" y="504" font-size="13" text-anchor="middle" fill="#8a8880">3</text>
+<text x="599.6" y="504" font-size="13" text-anchor="middle" fill="#8a8880">4</text>
+<text x="774.8" y="504" font-size="13" text-anchor="middle" fill="#8a8880">5</text>
+<text x="950.0" y="504" font-size="13" text-anchor="middle" fill="#8a8880">6</text>
+<text x="512" y="526" font-size="14" text-anchor="middle" fill="#3a3835">commit</text>
+<text x="20" y="268" font-size="14" text-anchor="middle" fill="#3a3835" transform="rotate(-90 20 268)">cumulative stored MB</text>
+<polyline points="74.0,193.6 249.2,153.9 424.4,129.2 599.6,120.9 774.8,103.8 950.0,78.2" fill="none" stroke="#4a9e4d" stroke-width="2.5"/>
+<text x="960" y="83.2" font-size="14" font-weight="600" fill="#4a9e4d">writer CDC off · 3.82</text>
+<polyline points="74.0,193.4 249.2,153.6 424.4,133.2 599.6,128.4 774.8,114.3 950.0,89.9" fill="none" stroke="#2a6fd6" stroke-width="2.5"/>
+<text x="960" y="103.2" font-size="14" font-weight="600" fill="#2a6fd6">writer CDC on · 3.71</text>
+</svg>
