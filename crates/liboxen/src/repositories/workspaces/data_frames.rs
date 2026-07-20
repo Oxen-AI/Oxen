@@ -5,8 +5,8 @@ use polars::frame::DataFrame;
 
 use sql_query_builder::Select;
 
+use crate::constants::{MAX_QUERYABLE_ROWS, OXEN_COLS, TABLE_NAME};
 use crate::constants::{MODS_DIR, OXEN_HIDDEN_DIR};
-use crate::constants::{OXEN_COLS, TABLE_NAME};
 use crate::core;
 use crate::core::db::data_frames::df_db::{with_df_db_manager, with_hardened_query_conn};
 use crate::core::db::data_frames::{DataFrameError, df_db};
@@ -173,7 +173,13 @@ pub fn export(
     } else if let Some(sql) = opts.sql.clone() {
         let sql = add_exclude_to_sql(&sql)?;
         log::debug!("exporting data frame with sql: {sql:?}");
-        let mut df = with_hardened_query_conn(&db_path, |conn| df_db::select_raw(conn, &sql))?;
+        // Cap the export at MAX_QUERYABLE_ROWS rows; larger results are refused, not truncated.
+        let capped = with_hardened_query_conn(&db_path, |conn| {
+            df_db::select_raw_capped(conn, &sql, MAX_QUERYABLE_ROWS)
+        })?;
+        let Some(mut df) = capped else {
+            return Err(DataFrameError::ExportResultTooLarge(MAX_QUERYABLE_ROWS).into());
+        };
         write_df(&mut df, temp_file)?;
     } else {
         with_df_db_manager(&db_path, |manager| {
