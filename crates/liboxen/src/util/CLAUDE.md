@@ -21,7 +21,7 @@ The builders are `.with_hash(expected)` and `.with_mtime(t)`; both default to `N
 - **`.with_hash(expected)`** when the bytes are content-addressed (the canonical filename embeds the hash) or arrive from an untrusted / network source. On mismatch the publish aborts without touching the canonical path. `write` hashes the in-memory bytes before opening any temp file (verify-before-publish); the streaming and copy variants hash in-passing and drop the temp on mismatch.
 - **`.with_mtime(t)`** when publishing into the working tree so the `oxen status` size+mtime fast path stays effective on the next pass. The mtime is stamped on the temp file atomically with the rename, so a kill can never leave a complete-but-wrong-mtime file behind.
 
-Terminal methods are `.write(bytes)` (in-memory) / `.stream(reader)` (sync `Read`) / `.stream_async(reader).await` (async `AsyncRead`, via the Channel hand-off pattern) / `.copy_from(src)` (file → file). Pick by the source-kind you have in hand.
+Terminal methods are `.write(bytes)` (in-memory) / `.stream(reader)` (sync `Read`) / `.stream_async(reader).await` (async `AsyncRead`, via the Channel hand-off pattern) / `.copy_from(src)` (file → file) / `.stream_from_paths(&[path])` (many files → file). Pick by the source-kind you have in hand.
 
 `AtomicFile` is `#[must_use]` — forgetting a terminal method is a compile-time warning, not a silent no-op. The full contract (including atime behavior, cancel-safety, and the verify-before-publish guarantee) lives on the struct rustdoc. Read it before adding a new caller.
 
