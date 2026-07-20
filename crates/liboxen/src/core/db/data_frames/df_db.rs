@@ -998,29 +998,6 @@ pub fn index_file_with_id(
     Ok(())
 }
 
-pub fn from_clause_from_disk_path(path: &Path) -> Result<String, DataFrameError> {
-    let extension: &str = &util::fs::extension_from_path(path);
-    match extension {
-        "csv" => {
-            let str_path = path.to_string_lossy().to_string();
-            Ok(format!("read_csv('{str_path}')"))
-        }
-        "tsv" => {
-            let str_path = path.to_string_lossy().to_string();
-            Ok(format!("read_csv('{str_path}')"))
-        }
-        "parquet" => {
-            let str_path = path.to_string_lossy().to_string();
-            Ok(format!("read_parquet('{str_path}')"))
-        }
-        "jsonl" | "json" | "ndjson" => {
-            let str_path = path.to_string_lossy().to_string();
-            Ok(format!("read_json('{str_path}')"))
-        }
-        _ => Err(DataFrameError::InvalidFileType),
-    }
-}
-
 pub fn preview(conn: &duckdb::Connection, table_name: &str) -> Result<DataFrame, DataFrameError> {
     let query = format!("SELECT * FROM {table_name} LIMIT 10");
     let df = select_raw(conn, &query)?;
