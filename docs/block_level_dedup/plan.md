@@ -399,9 +399,10 @@ pub struct ChunkEntry {
   ordered `len` values must sum exactly to `file_size`.
 - Deterministic from content ⇒ manifests dedup themselves and are identical
   across stores.
-- `transform_id` reserves the pre-chunking transform slot (§6.10). v1 always
-  writes `0` (identity) and rejects any other value on read with a
-  structured upgrade-required error.
+- `transform_id` is the pre-chunking transform slot (§6.10). Most files
+  write `0` (identity); zstd-capable containers may write `ZSTD_UNWRAP_V1`
+  (see `autoresearch_results_jul19.md`). Unknown IDs are rejected on read
+  with a structured upgrade-required error.
 - **No block placement** — placement is store-local (invariant 3).
 - `(offset, len)` per chunk makes `get_version_chunk(hash, offset, size)` a
   binary search + partial chunk reads.

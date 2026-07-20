@@ -32,10 +32,12 @@ encode_policy(profile, data_type, extension) -> { chunker_id, codec_id, transfor
   references; a store can adopt one for new blocks without any manifest or
   wire change. (A peer *receiving* blocks that use a codec it doesn't know
   fails with a structured upgrade-required error — loud, never silent.)
-- **Transforms** (`TransformId`): a reserved slot for reversible whole-file
-  transforms applied before chunking. This is the qualification: the slot is
-  fenced (`validate` rejects any non-identity transform), so activating one is
-  a manifest-version bump by design. Chunkers and codecs are not gated.
+- **Transforms** (`TransformId`): reversible whole-file transforms applied
+  before chunking. The first non-identity transform is live —
+  `ZSTD_UNWRAP_V1` (embedded-zstd unwrap with verified recompression; see
+  `unwrap_transform.rs` and `autoresearch_results_jul19.md`). `validate`
+  rejects transform IDs a build does not know with a structured
+  upgrade-required error. Chunkers and codecs are not gated.
 
 All IDs are append-only `u8`s; changing any frozen behavior ships as a new ID.
 Golden fixtures pin each boundary function and encoding.
