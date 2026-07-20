@@ -98,8 +98,9 @@ byte-verified at every commit on both.
    (fewer, larger, better-compressing chunks). The routing signal is a
    **measured per-ingest append verdict**, not an inference from file bytes:
    an ingest is append-like when its new chunks are confined to the tail
-   (≤2% interior tolerance, absorbing boundary noise and sparse relabels)
-   and a majority of its chunks are reused. Verdicts accumulate per lineage
+   (≤0.5% interior tolerance — enough for boundary noise and sparse relabels,
+   too tight for slow scattered churn) and a majority of its chunks are
+   reused. Verdicts accumulate per lineage
    (keyed by a head hash) in an advisory LMDB table; a **7-verdict streak**
    switches the lineage to FastCDC. The first cut used head stability alone
    and was falsified by the long-horizon corpus (see "What failed"); the
