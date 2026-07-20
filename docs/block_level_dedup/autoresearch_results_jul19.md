@@ -14,10 +14,10 @@ passes it on both corpora.
 
 | | jul18 final (this run's baseline) | jul19 final | Δ |
 | --- | --- | --- | --- |
-| v1 stored_bytes (100.6 MB logical) | 12.77 MB | **10.22 MB** | **−19.9%** |
-| v1 storage_ratio | 0.1269 | **0.1016** | |
-| v2 stored_bytes (177.8 MB logical) | 8.40 MB | **6.78 MB** | **−19.4%** |
-| v2 storage_ratio | 0.0473 | **0.0381** | |
+| v1 stored_bytes (100.6 MB logical) | 12.77 MB | **10.21 MB** | **−20.0%** |
+| v1 storage_ratio | 0.1269 | **0.1015** | |
+| v2 stored_bytes (177.8 MB logical) | 8.40 MB | **6.76 MB** | **−19.6%** |
+| v2 storage_ratio | 0.0473 | **0.0380** | |
 | v1 restore | 2.8 s / 36.1 MB/s | 2.3 s / 44.0 MB/s | **+22% throughput** |
 | v2 restore | 3.1 s / 56.9 MB/s | 2.4 s / 73.6 MB/s | **+29% throughput** |
 | v1 / v2 random read | 262 / 233 ms | 241 / 220 ms | better |
@@ -31,9 +31,9 @@ original session baseline (24.19 MB v1) is down **2.4×**, and pure FastCDC
 (20.40 MB) is down **2.0×**.
 
 At scale, the final architecture stores the 6.75 GB RL corpus (80 training
-iterations) at **43.6 MB — ratio 0.00646, 155× vs raw snapshots** — and the
-2.68 GB long-horizon corpus at the ratio reported in the scale section below,
-byte-verified at every commit on both.
+iterations) at **45.9 MB — ratio 0.0068, 147× vs raw snapshots** — and the
+2.68 GB long-horizon corpus (60 daily exports) at **25.4 MB — ratio 0.0095,
+105×, 15% below jul18's 30.0 MB** — byte-verified at every commit on both.
 
 ## Retained mechanisms (in the order they were found)
 
@@ -144,7 +144,7 @@ Physical bytes added by each benchmark commit:
 
 | Commit | Workload | Logical MB | jul18 stored MB | jul19 stored MB | jul19 ratio |
 | --- | --- | --- | --- | --- | --- |
-| c1 | base snapshots (3 files) | 15.1 | 3.27 | 3.33 | 0.221 |
+| c1 | base snapshots (3 files) | 15.1 | 3.27 | 3.31 | 0.219 |
 | c2 | traces append-only | 10.2 | 0.67 | **0.19** | **0.019** |
 | c3 | scattered session growth + finetune append | 15.2 | 0.95 | 0.79 | 0.052 |
 | c4 | full row reorder + growth + labels append | 15.8 | 0.52 | 0.55 | 0.035 |
@@ -247,10 +247,10 @@ verified recompression.)
 
 | Corpus | Logical | Stored | Ratio | vs raw snapshots |
 | --- | --- | --- | --- | --- |
-| v1 multi-version (7 commits) | 100.6 MB | 10.22 MB | 0.1016 | 9.8× |
-| v2 prompt-cache (6 commits) | 177.8 MB | 6.78 MB | 0.0381 | 26× |
+| v1 multi-version (7 commits) | 100.6 MB | 10.21 MB | 0.1015 | 9.9× |
+| v2 prompt-cache (6 commits) | 177.8 MB | 6.76 MB | 0.0380 | 26× |
 | long-horizon (60 daily exports) | 2.68 GB | **25.45 MB** | **0.00949** | 105× |
-| RL-scale (80 training iterations) | 6.75 GB | RL_TBD | RL_RATIO | RL_X |
+| RL-scale (80 training iterations) | 6.75 GB | **45.89 MB** | **0.00680** | 147× |
 
 All byte-verified at every commit.
 
