@@ -635,6 +635,13 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_rejects_mismatched_content() {
+        use crate::storage::version_store::verify_suite;
+        let (_temp_dir, store) = setup().await;
+        verify_suite::assert_rejects_mismatched_content(&store).await;
+    }
+
+    #[tokio::test]
     async fn test_version_location_returns_local_path() {
         let (_temp_dir, store) = setup().await;
         let hash = "abcdef1234567890";
