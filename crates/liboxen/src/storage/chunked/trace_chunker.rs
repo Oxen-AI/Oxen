@@ -126,11 +126,9 @@ impl LineScanner {
                     self.stack.pop();
                 }
             }
-            b',' => {
-                if self.overflow == 0 && self.stack == [false, true] {
-                    // Depth-2 array element separator: root object -> array field.
-                    return ScanEvent::ElementSeparator;
-                }
+            // Depth-2 array element separator: root object -> array field.
+            b',' if self.overflow == 0 && self.stack == [false, true] => {
+                return ScanEvent::ElementSeparator;
             }
             _ => {}
         }

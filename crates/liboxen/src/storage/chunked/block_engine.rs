@@ -71,6 +71,9 @@ const RECONSTRUCT_BATCH: usize = 64;
 /// the dominant repeated cost of reconstruction.
 const BASE_CACHE_ENTRIES: usize = 64;
 
+/// Key of one cached window dictionary: `(block hash, start member, member count)`.
+type WindowKey = (u128, u32, u32);
+
 /// Packs, indexes, and reconstructs chunked file versions over a block byte-IO
 /// backend and a local chunk index.
 #[derive(Debug)]
@@ -82,7 +85,7 @@ pub struct BlockEngine {
     /// Parsed block footers, keyed by block hash (footers are immutable).
     footer_cache: Mutex<HashMap<u128, Arc<Vec<super::block::BlockChunk>>>>,
     /// Recently assembled window-delta dictionaries, most recent last.
-    window_cache: Mutex<Vec<((u128, u32, u32), Arc<PreparedDict>)>>,
+    window_cache: Mutex<Vec<(WindowKey, Arc<PreparedDict>)>>,
     /// Recently decoded delta-base chunks (chunk hash → raw bytes).
     base_cache: Mutex<HashMap<u128, Arc<Vec<u8>>>>,
     /// Serializes window-dictionary assembly so concurrent decoders of one window
