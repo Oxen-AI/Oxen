@@ -184,6 +184,9 @@ jobs:
         # leave the tree incomplete, and saving it under the exact key would make
         # later runs restore that partial tree and rebuild every time.
         if: success()
+        # Caching is best-effort: a save failure must not fail a release whose
+        # binaries and wheels already built.
+        continue-on-error: true
         run: |
           # Skip only on an exact-key hit. A fallback restore still has to write
           # the tree under the current key so the next release hits exactly.
@@ -194,8 +197,21 @@ jobs:
           $rel = "${{ github.workspace }}\target\release".Substring(3) -replace '\\','/'
           $list = @("$rel/.fingerprint", "$rel/deps", "$rel/build", "Users/Administrator/.cargo/registry/src", "Users/Administrator/.cargo/registry/cache")
           $list | Set-Content C:\deptree-list.txt
-          tar -cf C:\deptree-out.tar -C C:\ -T C:\deptree-list.txt
-          aws s3 cp C:\deptree-out.tar s3://oxen-release-build-cache/deptree/$env:DEPTREE_KEY.tar
+          # cmd (not PowerShell) runs the pipe so the bytes pass through raw; a
+          # PowerShell pipe re-encodes the stream and corrupts the tar. Streaming
+          # to S3 keeps the multi-GiB archive off the runner's disk. A cmd pipe
+          # reports only aws's exit, so tar flags its own failure via a marker.
+          Remove-Item C:\deptree-tar-failed -ErrorAction SilentlyContinue
+          cmd /c "(tar -cf - -C C:\ -T C:\deptree-list.txt || echo fail>C:\deptree-tar-failed) | aws s3 cp - s3://oxen-release-build-cache/deptree/%DEPTREE_KEY%.tar"
+          $awsExit = $LASTEXITCODE
+          # aws finishes the upload even when tar dies mid-stream, so delete the
+          # object on any failure; restore treats an exact-key object as a
+          # permanent hit and would otherwise serve the truncated tree forever.
+          if ($awsExit -ne 0 -or (Test-Path C:\deptree-tar-failed)) {
+            Write-Host "DEPTREE save failed"
+            cmd /c "aws s3 rm s3://oxen-release-build-cache/deptree/%DEPTREE_KEY%.tar"
+            if ($awsExit -ne 0) { exit $awsExit } else { exit 1 }
+          }
           Write-Host "DEPTREE saved ($env:DEPTREE_KEY)"
 
       - name: Create zip with oxen binaries
