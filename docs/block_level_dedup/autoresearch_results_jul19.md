@@ -179,6 +179,20 @@ verified recompression.)
   just 8.5% *of those tail chunks* (<1% end-to-end) — same-file redundancy is
   already mostly captured by the trained dictionary plus in-flight deltas.
   Not worth a sentinel self-block reference and seal-rollover re-encoding.
+- **Head-streak append routing (008, first cut)**: the initial signal —
+  "same first-4KB across 8 versions ⇒ append-only" — passed v1, v2, *and* the
+  RL corpus (−5.0%), then failed loudly on the long-horizon corpus: a
+  mutating table whose oldest sessions sit at the head keeps a byte-stable
+  head forever, so the routing flipped it to generic at day 8 and stored
+  **80.4 MB instead of ~30 MB (2.7× worse)**. Head stability is necessary
+  but nowhere near sufficient evidence of append-only behavior. The keep
+  (010) replaces the inference with a *measurement*: each ingest computes an
+  append verdict from its actual chunk-dedup pattern — new chunks confined
+  to the tail (≤2% interior tolerance for boundary noise and sparse
+  relabels) and a majority of chunks reused — and only a 7-verdict streak
+  switches the lineage. One corpus away from shipping a 2.7× regression:
+  this is why every routing heuristic needs an adversarial corpus in the
+  gate set.
 - **Parallel decode without dictionary discipline (005, first cut)**: naive
   rayon fan-out stampeded window-dictionary assembly and paid level-19
   *encoder* digestion on the read path — 1.8 GB peak memory. The fix
