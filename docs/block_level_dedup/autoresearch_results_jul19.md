@@ -181,24 +181,33 @@ verified recompression.)
   just 8.5% *of those tail chunks* (<1% end-to-end) — same-file redundancy is
   already mostly captured by the trained dictionary plus in-flight deltas.
   Not worth a sentinel self-block reference and seal-rollover re-encoding.
-- **Head-streak append routing (008, first cut)**: the initial signal —
-  "same first-4KB across 8 versions ⇒ append-only" — passed v1, v2, *and* the
-  RL corpus (−5.0%), then failed loudly on the long-horizon corpus: a
-  mutating table whose oldest sessions sit at the head keeps a byte-stable
-  head forever, so the routing flipped it to generic at day 8 and stored
-  **80.4 MB instead of ~30 MB (2.7× worse)**. Head stability is necessary
-  but nowhere near sufficient evidence of append-only behavior. The keep
-  (010) replaces the inference with a *measurement*: each ingest computes an
-  append verdict from its actual chunk-dedup pattern — new chunks confined
-  to the tail (≤2% interior tolerance for boundary noise and sparse
-  relabels) and a majority of chunks reused — and only a 7-verdict streak
-  switches the lineage. Even the verdict needed calibration: a 2% interior
-  tolerance still let the long-horizon corpus's slow old-session churn
-  (~1–1.5% interior per day) build streaks and switch late (35.5 MB); at
-  0.5% it stays structural for all 60 days and lands at **25.45 MB — 15%
-  better than jul18's 30.0 MB**. One corpus away from shipping a 2.7×
-  regression: every routing heuristic needs an adversarial corpus in the
-  gate set.
+- **Append routing took four falsifications to get right.** The arc, every
+  step benchmark-driven:
+  1. *Head-streak signal* ("same first-4KB across 8 versions ⇒ append-only")
+     passed v1, v2, *and* the RL corpus (−5.0%), then failed loudly on the
+     long-horizon corpus: a mutating table whose oldest sessions sit at the
+     head keeps a byte-stable head forever, so routing flipped it to generic
+     at day 8 and stored **80.4 MB instead of ~30 MB (2.7× worse)**. Head
+     stability is not evidence of append-only behavior.
+  2. *Measured verdict, 2% interior tolerance* (new chunks confined to the
+     tail, majority reused): the long-horizon corpus's slow old-session
+     churn measures ~1–1.5% interior per day — under the tolerance — so it
+     still switched late and stored 35.5 MB.
+  3. *Tightened to 0.5% with symmetric reset*: long-horizon fixed
+     (**25.45 MB — 15% better than jul18**), but the RL corpus now
+     **flip-flopped**: streaks built during pure-append stretches, switched
+     to generic, then a periodic reward-relabel iteration exceeded the
+     tolerance, reset the streak, and re-chunked structurally — repeatedly.
+     71.9 MB, worse than never routing at all. A symmetric reset treats one
+     mutating version as disqualifying when the actual cost model is "every
+     mode flip re-chunks the file".
+  4. *Asymmetric mode hysteresis* (kept): 7 consecutive append verdicts to
+     enter generic routing, 3 consecutive mutating verdicts to leave.
+     Isolated relabels can't thrash it; genuinely mutating lineages exit in
+     three versions; long-horizon never enters.
+  One corpus away from shipping a 2.7× regression, twice: every routing
+  heuristic needs adversarial corpora in the gate set, and any switch whose
+  cost is a full re-chunk needs hysteresis matched to that cost.
 - **Parallel decode without dictionary discipline (005, first cut)**: naive
   rayon fan-out stampeded window-dictionary assembly and paid level-19
   *encoder* digestion on the read path — 1.8 GB peak memory. The fix
