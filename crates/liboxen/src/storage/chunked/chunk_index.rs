@@ -142,20 +142,37 @@ impl ChunkIndex {
         })
     }
 
-    /// Record one observation of a file head and return how many times this
-    /// exact head has now been seen (including this observation). Successive
-    /// observations of one head mean successive versions growing by appends.
-    pub fn observe_lineage_head(&self, head_hash: u64) -> Result<u32, OxenError> {
+    /// How many consecutive append-like versions this lineage (keyed by its
+    /// head hash) has accumulated. Zero for unknown lineages.
+    pub fn lineage_append_streak(&self, head_hash: u64) -> Result<u32, OxenError> {
         let heads = &self.lineage_heads;
-        self.write(|_db, txn| {
-            let count = heads
+        self.read(|_db, txn| {
+            Ok(heads
                 .get(txn, &head_hash.to_le_bytes())?
                 .and_then(|bytes| <[u8; 4]>::try_from(bytes.as_ref()).ok())
                 .map(u32::from_le_bytes)
-                .unwrap_or(0)
-                .saturating_add(1);
+                .unwrap_or(0))
+        })
+    }
+
+    /// Record one ingest's append verdict for a lineage: an append-like version
+    /// (new chunks only at the tail, majority of chunks reused) extends the
+    /// streak, anything else resets it.
+    pub fn record_lineage_verdict(&self, head_hash: u64, append_like: bool) -> Result<(), OxenError> {
+        let heads = &self.lineage_heads;
+        self.write(|_db, txn| {
+            let count = if append_like {
+                heads
+                    .get(txn, &head_hash.to_le_bytes())?
+                    .and_then(|bytes| <[u8; 4]>::try_from(bytes.as_ref()).ok())
+                    .map(u32::from_le_bytes)
+                    .unwrap_or(0)
+                    .saturating_add(1)
+            } else {
+                0
+            };
             heads.put(txn, &head_hash.to_le_bytes(), &count.to_le_bytes())?;
-            Ok(count)
+            Ok(())
         })
     }
 

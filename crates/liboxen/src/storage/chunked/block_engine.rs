@@ -168,6 +168,7 @@ impl BlockEngine {
                 || policy.chunker != ChunkerId::TRACE_AUTO_V1,
             "unwrap and auto-sniff policies are mutually exclusive by extension"
         );
+        let mut lineage_key: Option<u64> = None;
         let chunker_id = if policy.chunker == ChunkerId::TRACE_AUTO_V1 {
             head = vec![0u8; AUTO_SNIFF_BYTES];
             let mut filled = 0usize;
@@ -183,20 +184,21 @@ impl BlockEngine {
             if long_rows {
                 dict_class |= 0x10;
             }
-            // Append-lineage routing: successive versions whose first bytes are
-            // unchanged are growing by appends — rows never mutate, so byte-window
-            // FastCDC beats row-isolating structural chunks there (fewer, larger,
-            // better-compressing chunks). Switching chunkers costs one full
-            // re-chunk (no dedup against the prior representation), so the
-            // threshold is deliberately high: only a long same-head streak — the
-            // signature of a many-version append-only log — pays for the switch,
-            // while short-lived streaks in mutating lineages (whose edits change
-            // the head sooner or later) never trigger. Advisory store state: the
-            // resolved delegate is what the manifest records, so reconstruction
-            // is unaffected.
-            const APPEND_STREAK_SWITCH: u32 = 8;
             let head_key = xxhash_rust::xxh3::xxh3_64(&head[..4096.min(head.len())]);
-            let append_streak = self.index.observe_lineage_head(head_key)?;
+            lineage_key = Some(head_key);
+            // Append-lineage routing: a lineage whose versions keep proving to be
+            // pure appends — new chunks only at the tail, majority of chunks
+            // reused (measured per ingest below, not inferred from the head
+            // bytes: a mutating table can keep a byte-stable head forever while
+            // its middle churns) — is an append-only log. Rows there never
+            // mutate, so byte-window FastCDC beats row-isolating structural
+            // chunks (fewer, larger, better-compressing chunks). Switching
+            // chunkers costs one full re-chunk, so the streak threshold is
+            // deliberately high: only many-version logs pay for it. Advisory
+            // store state: the resolved delegate is what the manifest records,
+            // so reconstruction is unaffected.
+            const APPEND_STREAK_SWITCH: u32 = 7;
+            let append_streak = self.index.lineage_append_streak(head_key)?;
             if long_rows && append_streak < APPEND_STREAK_SWITCH {
                 ChunkerId::TRACE_JSONL_V1
             } else {
@@ -297,6 +299,14 @@ impl BlockEngine {
             Ok(())
         };
 
+        // Append-signature accounting for lineage routing: how many *new* chunks
+        // appear before a later *existing* chunk (interior news = mutation), and
+        // how much of the file is reused at all.
+        let mut interior_new = 0u64;
+        let mut pending_new_run = 0u64;
+        let mut existing_chunks = 0u64;
+        let mut total_chunks = 0u64;
+
         for raw_chunk in chunker.chunk(Box::new(&mut sniffed_reader)) {
             let raw_chunk = raw_chunk?;
             file_hasher.update(&raw_chunk.data);
@@ -308,10 +318,19 @@ impl BlockEngine {
                 len: raw_chunk.data.len() as u32,
             });
 
-            if pending.contains(&chunk_hash)
-                || queued.contains(&chunk_hash)
-                || self.index.contains(chunk_hash)?
-            {
+            let in_pass = pending.contains(&chunk_hash) || queued.contains(&chunk_hash);
+            let in_store = !in_pass && self.index.contains(chunk_hash)?;
+            if lineage_key.is_some() {
+                total_chunks += 1;
+                if in_store {
+                    existing_chunks += 1;
+                    interior_new += pending_new_run;
+                    pending_new_run = 0;
+                } else {
+                    pending_new_run += 1;
+                }
+            }
+            if in_pass || in_store {
                 continue;
             }
 
@@ -378,6 +397,19 @@ impl BlockEngine {
         }
         // Advisory delta-base candidates; recorded after payloads are durable.
         self.index.insert_sketches(&sketches)?;
+
+        // This version's append verdict, for the next version's routing: pure
+        // appends keep new chunks at the tail and reuse most of the file. The
+        // small interior tolerance absorbs boundary-shift noise and sparse
+        // in-place relabels (a few percent of rows) without letting genuinely
+        // scattered mutation pass — a mutating table can keep a byte-stable
+        // head forever, so the verdict must come from the chunk pattern, never
+        // from the head bytes alone.
+        if let Some(key) = lineage_key {
+            let append_like =
+                existing_chunks * 2 > total_chunks && interior_new * 50 <= total_chunks;
+            self.index.record_lineage_verdict(key, append_like)?;
+        }
 
         let manifest = ChunkManifest {
             version: MANIFEST_VERSION,
