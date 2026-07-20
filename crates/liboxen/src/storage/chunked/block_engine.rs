@@ -400,14 +400,16 @@ impl BlockEngine {
 
         // This version's append verdict, for the next version's routing: pure
         // appends keep new chunks at the tail and reuse most of the file. The
-        // small interior tolerance absorbs boundary-shift noise and sparse
-        // in-place relabels (a few percent of rows) without letting genuinely
-        // scattered mutation pass — a mutating table can keep a byte-stable
-        // head forever, so the verdict must come from the chunk pattern, never
-        // from the head bytes alone.
+        // interior tolerance (0.5%) absorbs boundary-shift noise and sparse
+        // in-place relabels without letting slow scattered mutation pass — a
+        // long-lived trace table whose old sessions still grow at ~1%/version
+        // measures 1–1.5% interior churn and must stay structural, while an
+        // RL rollout log's periodic reward relabels measure well under 0.5%.
+        // The verdict comes from the chunk pattern, never from the head bytes:
+        // a mutating table can keep a byte-stable head forever.
         if let Some(key) = lineage_key {
             let append_like =
-                existing_chunks * 2 > total_chunks && interior_new * 50 <= total_chunks;
+                existing_chunks * 2 > total_chunks && interior_new * 200 <= total_chunks;
             self.index.record_lineage_verdict(key, append_like)?;
         }
 
