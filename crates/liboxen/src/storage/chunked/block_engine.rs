@@ -168,7 +168,6 @@ impl BlockEngine {
                 || policy.chunker != ChunkerId::TRACE_AUTO_V1,
             "unwrap and auto-sniff policies are mutually exclusive by extension"
         );
-        let mut lineage_key: Option<u64> = None;
         let chunker_id = if policy.chunker == ChunkerId::TRACE_AUTO_V1 {
             head = vec![0u8; AUTO_SNIFF_BYTES];
             let mut filled = 0usize;
@@ -180,24 +179,8 @@ impl BlockEngine {
                 }
             }
             head.truncate(filled);
-            let long_rows = sniff_long_rows(&head);
-            if long_rows {
+            if sniff_long_rows(&head) {
                 dict_class |= 0x10;
-            }
-            let head_key = xxhash_rust::xxh3::xxh3_64(&head[..4096.min(head.len())]);
-            lineage_key = Some(head_key);
-            // Append-lineage routing: a lineage whose versions keep proving to be
-            // pure appends — new chunks only at the tail, majority of chunks
-            // reused (measured per ingest below, not inferred from the head
-            // bytes: a mutating table can keep a byte-stable head forever while
-            // its middle churns) — is an append-only log. Rows there never
-            // mutate, so byte-window FastCDC beats row-isolating structural
-            // chunks (fewer, larger, better-compressing chunks). Mode changes
-            // use asymmetric hysteresis (see `record_lineage_verdict`) because
-            // every flip costs one full re-chunk. Advisory store state: the
-            // resolved delegate is what the manifest records, so reconstruction
-            // is unaffected.
-            if long_rows && !self.index.lineage_routes_generic(head_key)? {
                 ChunkerId::TRACE_JSONL_V1
             } else {
                 ChunkerId::GENERIC_FASTCDC_V1
@@ -297,14 +280,6 @@ impl BlockEngine {
             Ok(())
         };
 
-        // Append-signature accounting for lineage routing: how many *new* chunks
-        // appear before a later *existing* chunk (interior news = mutation), and
-        // how much of the file is reused at all.
-        let mut interior_new = 0u64;
-        let mut pending_new_run = 0u64;
-        let mut existing_chunks = 0u64;
-        let mut total_chunks = 0u64;
-
         for raw_chunk in chunker.chunk(Box::new(&mut sniffed_reader)) {
             let raw_chunk = raw_chunk?;
             file_hasher.update(&raw_chunk.data);
@@ -316,19 +291,10 @@ impl BlockEngine {
                 len: raw_chunk.data.len() as u32,
             });
 
-            let in_pass = pending.contains(&chunk_hash) || queued.contains(&chunk_hash);
-            let in_store = !in_pass && self.index.contains(chunk_hash)?;
-            if lineage_key.is_some() {
-                total_chunks += 1;
-                if in_store {
-                    existing_chunks += 1;
-                    interior_new += pending_new_run;
-                    pending_new_run = 0;
-                } else {
-                    pending_new_run += 1;
-                }
-            }
-            if in_pass || in_store {
+            if pending.contains(&chunk_hash)
+                || queued.contains(&chunk_hash)
+                || self.index.contains(chunk_hash)?
+            {
                 continue;
             }
 
@@ -395,21 +361,6 @@ impl BlockEngine {
         }
         // Advisory delta-base candidates; recorded after payloads are durable.
         self.index.insert_sketches(&sketches)?;
-
-        // This version's append verdict, for the next version's routing: pure
-        // appends keep new chunks at the tail and reuse most of the file. The
-        // interior tolerance (0.5%) absorbs boundary-shift noise and sparse
-        // in-place relabels without letting slow scattered mutation pass — a
-        // long-lived trace table whose old sessions still grow at ~1%/version
-        // measures 1–1.5% interior churn and must stay structural, while an
-        // RL rollout log's periodic reward relabels measure well under 0.5%.
-        // The verdict comes from the chunk pattern, never from the head bytes:
-        // a mutating table can keep a byte-stable head forever.
-        if let Some(key) = lineage_key {
-            let append_like =
-                existing_chunks * 2 > total_chunks && interior_new * 200 <= total_chunks;
-            self.index.record_lineage_verdict(key, append_like)?;
-        }
 
         let manifest = ChunkManifest {
             version: MANIFEST_VERSION,

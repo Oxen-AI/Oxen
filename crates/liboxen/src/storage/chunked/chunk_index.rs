@@ -35,12 +35,7 @@ const SKETCHES_DB_NAME: &str = "sketches";
 /// dictionary base for delta-compressing successor manifests at rest. Advisory:
 /// losing it only costs future manifest-delta hits.
 const MANIFEST_BASES_DB_NAME: &str = "manifest_bases";
-/// Append-lineage heads: xxh3-64 of a file's first bytes maps to how many times
-/// a version with that exact head has been ingested. Successive versions with
-/// an unchanged head are growing by appends, which routes the auto chunker.
-/// Advisory: losing it only costs a routing hint.
-const LINEAGE_HEADS_DB_NAME: &str = "lineage_heads";
-const MAX_DBS: u32 = 4;
+const MAX_DBS: u32 = 3;
 /// Sparse upper bound on the mapped size. Sized from the math (~53 B/entry ⇒
 /// ~8.5 GB of entries for a 10 TB repo at 64 KiB average chunks), with headroom for
 /// LMDB page overhead — not copied from the merkle store's 256 GiB.
@@ -54,37 +49,6 @@ const CHUNK_INDEX_MAX_READERS: u32 = 256;
 /// Serialized size of one [`ChunkLocation`] value:
 /// block_hash u128 + offset u32 + stored_len u32 + raw_len u32 + codec u8.
 const LOCATION_SIZE: usize = 16 + 4 + 4 + 4 + 1;
-
-/// One lineage's routing state: the current mode and the streak of consecutive
-/// verdicts pushing toward the *other* mode.
-#[derive(Default, Clone, Copy)]
-struct LineageState {
-    /// Whether the lineage currently routes to generic byte-window chunking.
-    generic: bool,
-    /// Consecutive mode-opposing verdicts (append-like while structural,
-    /// mutating while generic).
-    streak: u32,
-}
-
-impl LineageState {
-    fn to_bytes(self) -> [u8; 5] {
-        let mut buf = [0u8; 5];
-        buf[..4].copy_from_slice(&self.streak.to_le_bytes());
-        buf[4] = self.generic as u8;
-        buf
-    }
-
-    fn from_bytes(bytes: &[u8]) -> Self {
-        // Malformed/legacy records read as the default state — advisory data.
-        let Ok(streak): Result<[u8; 4], _> = bytes.get(..4).unwrap_or_default().try_into() else {
-            return Self::default();
-        };
-        Self {
-            streak: u32::from_le_bytes(streak),
-            generic: bytes.get(4).copied().unwrap_or(0) == 1,
-        }
-    }
-}
 
 /// Where one chunk's payload lives: which block, where in it, and how it's encoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,7 +102,6 @@ pub struct ChunkIndex {
     db: LmdbDb,
     sketches: LmdbDb,
     manifest_bases: LmdbDb,
-    lineage_heads: LmdbDb,
 }
 
 impl std::fmt::Debug for ChunkIndex {
@@ -163,67 +126,13 @@ impl ChunkIndex {
         let db = open_db(&env, CHUNKS_DB_NAME)?;
         let sketches = open_db(&env, SKETCHES_DB_NAME)?;
         let manifest_bases = open_db(&env, MANIFEST_BASES_DB_NAME)?;
-        let lineage_heads = open_db(&env, LINEAGE_HEADS_DB_NAME)?;
         Ok(Self {
             env,
             db,
             sketches,
             manifest_bases,
-            lineage_heads,
         })
     }
-
-    /// Whether this lineage (keyed by its head hash) is currently routed as an
-    /// append-only log. False for unknown lineages.
-    pub fn lineage_routes_generic(&self, head_hash: u64) -> Result<bool, OxenError> {
-        let heads = &self.lineage_heads;
-        self.read(|_db, txn| {
-            Ok(heads
-                .get(txn, &head_hash.to_le_bytes())?
-                .map(|bytes| LineageState::from_bytes(&bytes).generic)
-                .unwrap_or(false))
-        })
-    }
-
-    /// Record one ingest's append verdict for a lineage and advance its routing
-    /// mode with asymmetric hysteresis: entering append-only routing takes
-    /// [`Self::APPEND_ENTER_STREAK`] consecutive append-like versions, leaving
-    /// it takes [`Self::APPEND_EXIT_STREAK`] *consecutive* mutating versions.
-    /// The asymmetry is deliberate: each mode flip costs one full re-chunk, and
-    /// real append-only logs see isolated mutating versions (periodic relabels)
-    /// that must not thrash the route, while a lineage that turns genuinely
-    /// mutating produces consecutive mutation verdicts and exits promptly.
-    pub fn record_lineage_verdict(
-        &self,
-        head_hash: u64,
-        append_like: bool,
-    ) -> Result<(), OxenError> {
-        let heads = &self.lineage_heads;
-        self.write(|_db, txn| {
-            let mut state = heads
-                .get(txn, &head_hash.to_le_bytes())?
-                .map(|bytes| LineageState::from_bytes(&bytes))
-                .unwrap_or_default();
-            if state.generic {
-                state.streak = if append_like { 0 } else { state.streak.saturating_add(1) };
-                if state.streak >= Self::APPEND_EXIT_STREAK {
-                    state = LineageState::default();
-                }
-            } else {
-                state.streak = if append_like { state.streak.saturating_add(1) } else { 0 };
-                if state.streak >= Self::APPEND_ENTER_STREAK {
-                    state = LineageState { generic: true, streak: 0 };
-                }
-            }
-            heads.put(txn, &head_hash.to_le_bytes(), &state.to_bytes())?;
-            Ok(())
-        })
-    }
-
-    /// Consecutive append-like versions before a lineage routes as append-only.
-    pub const APPEND_ENTER_STREAK: u32 = 7;
-    /// Consecutive mutating versions before an append-routed lineage reverts.
-    pub const APPEND_EXIT_STREAK: u32 = 3;
 
     /// The lineage-base blob for manifests whose first chunk is `first_chunk`.
     pub fn manifest_base(&self, first_chunk: u128) -> Result<Option<u128>, OxenError> {
@@ -373,12 +282,7 @@ impl ChunkIndex {
         Ok(compact_lmdb_env_in_place(
             &self.env,
             &Self::env_config(),
-            &[
-                CHUNKS_DB_NAME,
-                SKETCHES_DB_NAME,
-                MANIFEST_BASES_DB_NAME,
-                LINEAGE_HEADS_DB_NAME,
-            ],
+            &[CHUNKS_DB_NAME, SKETCHES_DB_NAME, MANIFEST_BASES_DB_NAME],
         )?)
     }
 
