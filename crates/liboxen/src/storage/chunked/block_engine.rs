@@ -1302,6 +1302,119 @@ mod tests {
         Ok(())
     }
 
+    /// Content dispersed across a prior version's block (a shuffled snapshot of
+    /// the same records) window-delta-encodes against a block window, round-trips
+    /// exactly, and is re-encoded to plain zstd for transfer.
+    #[test]
+    fn window_delta_round_trip() -> Result<(), OxenError> {
+        let t = test_engine();
+        // Version 1: ~2MB of distinct ~300-byte records. Version 2: the same
+        // records in a seeded-shuffled order — every v2 chunk's content is
+        // dispersed across v1's whole block, which no single ≤128KB base covers.
+        let mut records: Vec<String> = (0..7000)
+            .map(|i| {
+                let mut state = 0x9E37_79B9u64 ^ (i as u64) << 17;
+                state ^= state << 13;
+                state ^= state >> 7;
+                format!(
+                    "record {i:05} payload {state:016x} {}\n",
+                    "lorem ipsum dolor sit amet consectetur ".repeat(6)
+                )
+            })
+            .collect();
+        let v1: String = records.concat();
+        // Seeded Fisher-Yates so the shuffle is deterministic.
+        let mut state = 0xC0FF_EE00_D15E_A5E5u64;
+        for i in (1..records.len()).rev() {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            records.swap(i, (state as usize) % (i + 1));
+        }
+        let v2: String = records.concat();
+
+        let m1 = ingest(&t.engine, v1.as_bytes());
+        let m2 = ingest(&t.engine, v2.as_bytes());
+
+        let window_chunks = m2
+            .chunks
+            .iter()
+            .filter_map(|e| t.engine.index().get(e.hash).transpose())
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|loc| loc.codec == CodecId::ZSTD_WINDOW_DELTA)
+            .count();
+        assert!(
+            window_chunks > 0,
+            "shuffled snapshot must produce window-delta chunks"
+        );
+        assert_eq!(&reconstruct(&t.engine, &m1), v1.as_bytes());
+        assert_eq!(&reconstruct(&t.engine, &m2), v2.as_bytes());
+
+        // A cold engine (fresh caches) decodes window deltas too.
+        let cold = BlockEngine::open(
+            &t._dir.path().join("blocks"),
+            &t._dir.path().join("chunk_index"),
+        )?;
+        assert_eq!(&reconstruct(&cold, &m2), v2.as_bytes());
+
+        // Transfer packing re-encodes: window deltas never cross the wire.
+        let hashes: Vec<u128> = m2.chunks.iter().map(|c| c.hash).collect();
+        let receiver = test_engine();
+        for block in t.engine.pack_chunks(&hashes)? {
+            let parsed = verify_block(&block.data)?;
+            assert!(
+                parsed.iter().all(|c| c.codec != CodecId::ZSTD_WINDOW_DELTA),
+                "window-delta chunks must not cross the wire"
+            );
+            receiver.engine.store_block(block.hash, block.data)?;
+        }
+        assert_eq!(&reconstruct(&receiver.engine, &m2), v2.as_bytes());
+        Ok(())
+    }
+
+    /// A container with embedded zstd frames ingests through the unwrap
+    /// transform (manifest records it) and reconstructs byte-for-byte through
+    /// every read path.
+    #[test]
+    fn unwrap_transform_round_trip() -> Result<(), OxenError> {
+        use crate::model::EntryDataType;
+        use crate::storage::chunked::policy::encode_policy;
+        use crate::storage::chunked::registry::TransformId;
+
+        let t = test_engine();
+        let page: Vec<u8> = csv_bytes(91, 400 * 1024);
+        let mut container = b"PAR1".to_vec();
+        for part in page.chunks(64 * 1024) {
+            container.extend(zstd::bulk::compress(part, 1).map_err(ChunkedError::Compress)?);
+            container.extend_from_slice(b"page-header-bytes");
+        }
+        container.extend_from_slice(b"footer PAR1");
+
+        let policy = encode_policy(None, &EntryDataType::Tabular, "parquet");
+        let manifest = {
+            let mut reader: &[u8] = &container;
+            t.engine.ingest(&mut reader, &policy)?
+        };
+        assert_eq!(manifest.transform_id, TransformId::ZSTD_UNWRAP_V1);
+        assert_eq!(
+            manifest.file_hash.to_u128(),
+            hash_buffer_128bit(&container),
+            "manifest identity must be the original file's hash"
+        );
+
+        // Full reconstruction, range reads, and the streaming reader all yield
+        // the original container bytes.
+        assert_eq!(reconstruct(&t.engine, &manifest), container);
+        let range = t.engine.read_range(&manifest, 2, 100)?;
+        assert_eq!(&range, &container[2..102]);
+        let past_end = t
+            .engine
+            .read_range(&manifest, container.len() as u64 + 5, 10)?;
+        assert!(past_end.is_empty());
+        Ok(())
+    }
+
     /// Near-duplicate chunks across versions delta-encode against a
     /// sketch-matched base, round-trip exactly, respect the depth-one chain
     /// bound, and are re-encoded for transfer.
