@@ -92,20 +92,16 @@ byte-verified at every commit on both.
    **Storage byte-identical; v2 restore +39% (55.1 → 75.8 MB/s), sequential
    +41%; v1 restore +8%, random read −24%.**
 
-6. **Append-lineage chunker routing (008 + 010)** — jul18's routing finding:
-   the row-size sniff sends long-row *append-only* logs (RL rollouts) to the
-   structural chunker, but rows that never mutate want byte-window FastCDC
-   (fewer, larger, better-compressing chunks). The routing signal is a
-   **measured per-ingest append verdict**, not an inference from file bytes:
-   an ingest is append-like when its new chunks are confined to the tail
-   (≤0.5% interior tolerance — enough for boundary noise and sparse relabels,
-   too tight for slow scattered churn) and a majority of its chunks are
-   reused. Verdicts accumulate per lineage
-   (keyed by a head hash) in an advisory LMDB table; a **7-verdict streak**
-   switches the lineage to FastCDC. The first cut used head stability alone
-   and was falsified by the long-horizon corpus (see "What failed"); the
-   verdict form keeps the RL-scale win while never touching mutating
-   lineages. v1/v2: tie; scale numbers below.
+6. **Append-lineage chunker routing — attempted, measured, and reverted.**
+   Five gate iterations (full arc in "What failed") showed that switching an
+   existing lineage's chunker cannot reliably recoup its one-time re-chunk
+   cost under honest adversarial gates: the only variant that won on the RL
+   corpus was the one blind enough to break the long-horizon corpus by 2.7×.
+   The final architecture ships **no** automatic chunker switching; per-path
+   `[[storage.profiles]]` marks (`generic`) remain the way to route a known
+   append-only log, worth ~5% on the RL corpus. The negative result is the
+   deliverable: it cost four corpora and ~4 hours of benchmarks to avoid
+   shipping a regression that three of four corpora would never have shown.
 
 ## Experiment log (priority order: storage, then reads, then compression)
 
@@ -120,30 +116,27 @@ byte-verified at every commit on both.
 | 006 | 16 MB dictionary sample cap | 10,210,110 | — | discard (tie, +memory) |
 | 007 | window delta on single probe hit | 10,206,975 | — | discard (byte-identical, +memory) |
 | 008a | self-window probe (4 MB raw prefix as dict for first-file tails) | −8.5% of tail chunks only | — | discard (<1% e2e, high complexity) |
-| 008 | append-lineage chunker routing | 10,223,359 (tie) | 6,775,876 (tie) | **keep** (RL-scale −5.0%) |
+| 008 | append-lineage routing, head-streak signal | 10,223,359 (tie) | 6,775,876 (tie) | reverted (broke long-horizon 2.7×) |
 | 009 | zstd level 22 | 10,203,723 (tie) | 6,758,134 (tie) | discard (2× slower compress for a tie) |
+| 010a–c | append routing, measured-verdict variants | tie | tie | reverted (flip-flop / late switch at scale) |
 
-### The RL-scale gate for 008
+### The routing gates at scale (why it was reverted)
 
-Same 6.75 GB / 80-iteration corpus, same final stack, only the routing
-differs:
+Same final stack, only the routing policy differs. Control = no routing
+(structural chunking throughout, the shipped behavior):
 
-| | without 008 (control) | with 008 | Δ |
+| RL-scale (6.75 GB, 80 iters) | stored | restore | verdict |
 | --- | --- | --- | --- |
-| stored_bytes | 45,891,332 | **43,590,720** | **−5.0%** |
-| storage_ratio | 0.006804 | **0.006462** | |
-| restore_seconds | 82.5 | 200.0 | 2.4× slower (under the 3× guardrail) |
-| compression_seconds | 636 | 752 | +18% |
-| peak_memory_mb | 281 | 799 | window activity on generic chunks |
-| correctness | pass | pass | |
+| control (no routing — **shipped**) | 45,891,332 | 82.5 s | final |
+| head-streak switch at v8 | 43,590,720 (−5.0%) | 200 s | reverted: same signal stores the long-horizon corpus at 80.4 MB vs 25.4 MB |
+| measured verdict, 0.5% tolerance, symmetric reset | 71,933,125 (+57%) | 94 s | chunker flip-flop |
+| measured verdict, asymmetric hysteresis (7 in / 3 out) | 47,756,643 (+4.1%) | 207 s | switches too late to recoup the re-chunk |
 
-Kept under the ordered rules (storage first), with the read cost stated
-plainly: on append-routed lineages the generic chunks delta heavily across
-versions, and resolving those bases during restore is the slowdown. The
-mitigations are known (larger decoded-base cache, or repacking cold deltas)
-and sit on the roadmap; a deployment that prioritizes restore latency over
-the 5% can simply not mark lineages or lower nothing — the switch requires an
-8-version same-head streak, so it never affects short-lived data.
+| long-horizon (2.68 GB, 60 days) | stored | verdict |
+| --- | --- | --- |
+| no routing / verdict-routing that never fires (**shipped**) | 25,446,028 | final — **15% better than jul18's 30.0 MB** |
+| head-streak switch at day 8 | 80,421,415 (2.7×) | the falsifying measurement |
+| 2% verdict tolerance (switches ~day 47) | 35,534,595 | late-switch damage |
 
 ## Per-workload behavior on v1 (final architecture vs jul18 final)
 
@@ -281,6 +274,14 @@ BENCH_CORPUS=corpus-rlscale OXEN_BIN=$PWD/target/debug/oxen \
 
 Every experiment is one commit on this branch's history; discarded
 experiments are recorded in the log above and in the raw rows appendix.
+
+## Appendix: raw measurement rows
+
+The untracked `results.tsv` rows for this run (columns per the guide):
+
+```tsv
+RESULTS_TSV_PLACEHOLDER
+```
 
 ## Roadmap (in expected-value order)
 
