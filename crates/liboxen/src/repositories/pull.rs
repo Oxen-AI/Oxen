@@ -1291,6 +1291,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     /// `oxen pull` should always walks the merkle tree and re-fetch any missing blobs.
     async fn test_pull_re_fetches_missing_blobs() -> Result<(), OxenError> {
