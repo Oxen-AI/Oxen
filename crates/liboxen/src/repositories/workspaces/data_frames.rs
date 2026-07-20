@@ -1693,9 +1693,11 @@ mod tests {
                 "SELECT * FROM read_csv('{}')",
                 secret.to_string_lossy()
             ));
+            let err = export(&workspace, &path, &malicious, &out_bad)
+                .expect_err("export must not read host files through caller SQL");
             assert!(
-                export(&workspace, &path, &malicious, &out_bad).is_err(),
-                "export must not read host files through caller SQL"
+                format!("{err}").contains("disabled by configuration"),
+                "expected an external-access error, got: {err}"
             );
             assert!(
                 !out_bad.exists(),
