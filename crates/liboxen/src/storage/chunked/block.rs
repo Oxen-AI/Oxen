@@ -88,14 +88,17 @@ impl BlockWriter {
     /// present: `(codec, stored bytes, raw length)`. Lets the ingest path use
     /// same-pass chunks as delta bases before the block is published.
     pub fn encoded_chunk(&self, chunk_hash: u128) -> Option<(CodecId, &[u8], u32)> {
-        self.chunks.iter().find(|c| c.chunk_hash == chunk_hash).map(|c| {
-            let start = c.offset as usize;
-            (
-                c.codec,
-                &self.payloads[start..start + c.stored_len as usize],
-                c.raw_len,
-            )
-        })
+        self.chunks
+            .iter()
+            .find(|c| c.chunk_hash == chunk_hash)
+            .map(|c| {
+                let start = c.offset as usize;
+                (
+                    c.codec,
+                    &self.payloads[start..start + c.stored_len as usize],
+                    c.raw_len,
+                )
+            })
     }
 
     /// The complete encoded size of the block if sealed now.

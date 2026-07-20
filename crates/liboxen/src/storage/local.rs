@@ -11,8 +11,8 @@ use crate::error::OxenError;
 use crate::model::{EntryDataType, MerkleHash};
 use crate::storage::chunked::manifest::ChunkManifest;
 use crate::storage::chunked::{
-    BlockEngine, ChunkedVersionStore, ReconstructReader, SealedBlock, SeekableVersionReader, TransformId,
-    StorageProfile, encode_policy,
+    BlockEngine, ChunkedVersionStore, ReconstructReader, SealedBlock, SeekableVersionReader,
+    StorageProfile, TransformId, encode_policy,
 };
 use crate::storage::version_store::{
     BoxedByteStream, LocalFilePath, VersionLocation, VersionStore,

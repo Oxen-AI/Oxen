@@ -164,8 +164,7 @@ impl BlockEngine {
         // distinct content families).
         let mut dict_class = policy.dict_class;
         debug_assert!(
-            policy.transform == TransformId::IDENTITY
-                || policy.chunker != ChunkerId::TRACE_AUTO_V1,
+            policy.transform == TransformId::IDENTITY || policy.chunker != ChunkerId::TRACE_AUTO_V1,
             "unwrap and auto-sniff policies are mutually exclusive by extension"
         );
         let chunker_id = if policy.chunker == ChunkerId::TRACE_AUTO_V1 {
@@ -366,7 +365,9 @@ impl BlockEngine {
             version: MANIFEST_VERSION,
             // The manifest identity is always the ORIGINAL file's hash; under a
             // transform the chunk stream (hashed incrementally above) differs.
-            file_hash: MerkleHash::new(original_identity.unwrap_or_else(|| file_hasher.digest128())),
+            file_hash: MerkleHash::new(
+                original_identity.unwrap_or_else(|| file_hasher.digest128()),
+            ),
             file_size,
             chunker_id,
             transform_id,
@@ -491,7 +492,9 @@ impl BlockEngine {
             return Ok(Some(dict));
         }
         let footer = self.block_footer(block_hash)?;
-        let end = (start as usize).saturating_add(count as usize).min(footer.len());
+        let end = (start as usize)
+            .saturating_add(count as usize)
+            .min(footer.len());
         let members = &footer[start as usize..end];
         let mut raw = Vec::new();
         for member in members {
@@ -589,7 +592,10 @@ impl BlockEngine {
             // to the raw cap, so nearby chunks share a cached window.
             let first_hit = footer
                 .iter()
-                .position(|m| hits.iter().any(|(b, c)| *b == block_hash && *c == m.chunk_hash))
+                .position(|m| {
+                    hits.iter()
+                        .any(|(b, c)| *b == block_hash && *c == m.chunk_hash)
+                })
                 .unwrap_or(0);
             let start = (first_hit / WINDOW_SEGMENT_MEMBERS) * WINDOW_SEGMENT_MEMBERS;
             let mut acc = 0u64;
@@ -676,8 +682,7 @@ impl BlockEngine {
         let raw = match codec {
             CodecId::ZSTD_DELTA | CodecId::ZSTD_WINDOW_DELTA => return Ok(None),
             CodecId::ZSTD_DICT => {
-                let Ok(hash_bytes) = <[u8; 16]>::try_from(&payload[..16.min(payload.len())])
-                else {
+                let Ok(hash_bytes) = <[u8; 16]>::try_from(&payload[..16.min(payload.len())]) else {
                     return Ok(None);
                 };
                 let dict = self.load_dict(u128::from_le_bytes(hash_bytes))?;
@@ -837,15 +842,18 @@ impl BlockEngine {
                     entry.hash
                 ))
             })?;
-            let block_hash = u128::from_le_bytes(header[..16].try_into().map_err(|_| {
-                ChunkedError::CorruptChunkIndex("window-delta header".to_string())
-            })?);
-            let start = u32::from_le_bytes(header[16..20].try_into().map_err(|_| {
-                ChunkedError::CorruptChunkIndex("window-delta header".to_string())
-            })?);
-            let count = u32::from_le_bytes(header[20..24].try_into().map_err(|_| {
-                ChunkedError::CorruptChunkIndex("window-delta header".to_string())
-            })?);
+            let block_hash =
+                u128::from_le_bytes(header[..16].try_into().map_err(|_| {
+                    ChunkedError::CorruptChunkIndex("window-delta header".to_string())
+                })?);
+            let start =
+                u32::from_le_bytes(header[16..20].try_into().map_err(|_| {
+                    ChunkedError::CorruptChunkIndex("window-delta header".to_string())
+                })?);
+            let count =
+                u32::from_le_bytes(header[20..24].try_into().map_err(|_| {
+                    ChunkedError::CorruptChunkIndex("window-delta header".to_string())
+                })?);
             let dict = self.window_dict(block_hash, start, count)?.ok_or_else(|| {
                 ChunkedError::CorruptChunkIndex(format!(
                     "window-delta chunk {:x} references an empty window",
@@ -1024,28 +1032,27 @@ impl BlockEngine {
                 .ok_or(ChunkedError::MissingChunk { chunk_hash })?;
             // Dictionary-compressed chunks never cross the wire (the receiver has
             // no dictionary context): re-encode them as plain zstd for transfer.
-            let encoded =
-                if location.codec == CodecId::ZSTD_DICT
-                    || location.codec == CodecId::ZSTD_DELTA
-                    || location.codec == CodecId::ZSTD_WINDOW_DELTA
-                {
-                    let raw = self.read_chunk(&ChunkEntry {
-                        hash: chunk_hash,
-                        offset: 0,
-                        len: location.raw_len,
-                    })?;
-                    encode_chunk(CodecId::ZSTD, &raw)?
-                } else {
-                    let payload = self.io.read_block_range(
-                        location.block_hash,
-                        location.offset as u64,
-                        location.stored_len as u64,
-                    )?;
-                    EncodedChunk {
-                        codec: location.codec,
-                        data: payload,
-                    }
-                };
+            let encoded = if location.codec == CodecId::ZSTD_DICT
+                || location.codec == CodecId::ZSTD_DELTA
+                || location.codec == CodecId::ZSTD_WINDOW_DELTA
+            {
+                let raw = self.read_chunk(&ChunkEntry {
+                    hash: chunk_hash,
+                    offset: 0,
+                    len: location.raw_len,
+                })?;
+                encode_chunk(CodecId::ZSTD, &raw)?
+            } else {
+                let payload = self.io.read_block_range(
+                    location.block_hash,
+                    location.offset as u64,
+                    location.stored_len as u64,
+                )?;
+                EncodedChunk {
+                    codec: location.codec,
+                    data: payload,
+                }
+            };
             if writer.would_exceed_max_size(encoded.data.len()) {
                 blocks.push(std::mem::take(&mut writer).seal()?);
             }

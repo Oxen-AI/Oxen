@@ -111,7 +111,8 @@ pub fn try_unwrap(original: &[u8]) -> Option<Vec<u8>> {
         payload.extend_from_slice(&original[verbatim_start..]);
     }
 
-    let mut out = Vec::with_capacity(MAGIC.len() + 4 + segments.len() * SEGMENT_RECORD + payload.len());
+    let mut out =
+        Vec::with_capacity(MAGIC.len() + 4 + segments.len() * SEGMENT_RECORD + payload.len());
     out.extend_from_slice(MAGIC);
     out.extend_from_slice(&(segments.len() as u32).to_le_bytes());
     for seg in &segments {
@@ -146,7 +147,9 @@ pub fn unwrap_inverse(transformed: &[u8]) -> Result<Vec<u8>, ChunkedError> {
         let at = MAGIC.len() + 4 + i * SEGMENT_RECORD;
         let record = &transformed[at..at + SEGMENT_RECORD];
         let seg = Segment {
-            verbatim_len: u64::from_le_bytes(record[0..8].try_into().map_err(|_| corrupt("record"))?),
+            verbatim_len: u64::from_le_bytes(
+                record[0..8].try_into().map_err(|_| corrupt("record"))?,
+            ),
             raw_len: u64::from_le_bytes(record[8..16].try_into().map_err(|_| corrupt("record"))?),
             compressed_len: u64::from_le_bytes(
                 record[16..24].try_into().map_err(|_| corrupt("record"))?,
@@ -294,7 +297,10 @@ mod tests {
                 .windows(page1.len())
                 .any(|w| w == page1.as_slice())
         );
-        assert_eq!(unwrapped_original_size(&transformed)?, container.len() as u64);
+        assert_eq!(
+            unwrapped_original_size(&transformed)?,
+            container.len() as u64
+        );
         assert_eq!(unwrap_inverse(&transformed)?, container);
         Ok(())
     }

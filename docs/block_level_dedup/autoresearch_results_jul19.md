@@ -341,4 +341,3 @@ aabd115	0.006804	45891332	0.006804	0	0	82.5	81.8	0	0	636.3	10.6	0.3	keep	FINAL r
    automatic `rebuild_index` retry — it makes the compaction swap (and any
    crash window) fully self-repairing.
 
-TBD: RL-scale control comparison, final numbers on all four corpora.
