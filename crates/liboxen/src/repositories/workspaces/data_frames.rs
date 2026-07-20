@@ -8,7 +8,7 @@ use sql_query_builder::Select;
 use crate::constants::{MODS_DIR, OXEN_HIDDEN_DIR};
 use crate::constants::{OXEN_COLS, TABLE_NAME};
 use crate::core;
-use crate::core::db::data_frames::df_db::with_df_db_manager;
+use crate::core::db::data_frames::df_db::{with_df_db_manager, with_hardened_query_conn};
 use crate::core::db::data_frames::{DataFrameError, df_db};
 use crate::core::df::sql;
 use crate::error::OxenError;
@@ -122,27 +122,31 @@ pub fn query(
     log::debug!("query_staged_df() got db_path: {db_path:?}");
     log::debug!("query() opts: {opts:?}");
 
-    with_df_db_manager(&db_path, |manager| {
-        manager.with_conn_mut(|conn| {
-            // Right now embeddings and sql are mutually exclusive
-            let df = if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
-                log::debug!("querying embeddings: {embedding_opts:?}");
+    // Embeddings need the vss extension, so they run on the cached read-write connection;
+    // every other query is a read and runs on a hardened, read-only connection with no external
+    // file access. (Embeddings and sql are mutually exclusive.)
+    if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
+        log::debug!("querying embeddings: {embedding_opts:?}");
+        with_df_db_manager(&db_path, |manager| {
+            manager.with_conn_mut(|conn| {
                 repositories::workspaces::data_frames::embeddings::query_with_conn(
                     conn,
                     workspace,
                     &embedding_opts,
-                )?
-            } else if let Some(sql) = &opts.sql {
+                )
+            })
+        })
+    } else {
+        with_hardened_query_conn(&db_path, |conn| {
+            if let Some(sql) = &opts.sql {
                 log::debug!("querying sql: {sql:?}");
-                return sql::query_df(conn, sql.clone(), None);
+                sql::query_df(conn, sql.clone(), None)
             } else {
                 let select = Select::new().select("*").from(TABLE_NAME);
-                df_db::select(conn, &select, Some(opts))?
-            };
-
-            Ok(df)
+                df_db::select(conn, &select, Some(opts))
+            }
         })
-    })
+    }
 }
 
 pub fn export(

@@ -6,10 +6,7 @@ use crate::core::v_latest::workspaces;
 use crate::model::LocalRepository;
 use crate::opts::DFOpts;
 use crate::repositories;
-use crate::{
-    core::db::data_frames::df_db::{self, with_df_db_manager},
-    error::OxenError,
-};
+use crate::{core::db::data_frames::df_db, error::OxenError};
 use polars::frame::DataFrame;
 use uuid::Uuid;
 
@@ -33,9 +30,7 @@ pub async fn query_df_from_repo(
         workspaces::data_frames::get_queryable_data_frame_workspace(repo, path, &commit)?;
 
     let db_path = repositories::workspaces::data_frames::duckdb_path(&workspace, path);
-    let df = with_df_db_manager(&db_path, |manager| {
-        manager.with_conn_mut(|conn| query_df(conn, sql, Some(opts)))
-    })?;
+    let df = df_db::with_hardened_query_conn(&db_path, |conn| query_df(conn, sql, Some(opts)))?;
 
     // If we are doing this from the CLI, we don't want to export the hidden Oxen columns
     let df = tabular::strip_excluded_cols(df)?;
@@ -43,7 +38,7 @@ pub async fn query_df_from_repo(
 }
 
 pub fn query_df(
-    conn: &mut duckdb::Connection,
+    conn: &duckdb::Connection,
     sql: String,
     opts: Option<&DFOpts>,
 ) -> Result<DataFrame, DataFrameError> {

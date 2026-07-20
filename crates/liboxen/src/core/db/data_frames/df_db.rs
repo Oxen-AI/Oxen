@@ -197,12 +197,47 @@ impl DfDBManager {
     }
 }
 
-/// Open a DuckDB connection at `path`. All library-managed DuckDB connections
-/// are opened through this function.
+/// Open a read-write DuckDB connection at `path` with external file access enabled.
 // The one sanctioned `Connection::open` call; disallowed elsewhere (see clippy.toml).
 #[allow(clippy::disallowed_methods)]
 fn open_duckdb_connection(path: &Path) -> Result<duckdb::Connection, duckdb::Error> {
     duckdb::Connection::open(path)
+}
+
+/// Open a hardened, read-only DuckDB connection at `path`: external file access
+/// off, extension autoload/install off, configuration locked. Caller-supplied query
+/// text run on it can read the indexed tables but cannot read or write host files,
+/// attach other databases, or load extensions.
+// The one sanctioned `open_with_flags` call; disallowed elsewhere (see clippy.toml).
+#[allow(clippy::disallowed_methods)]
+fn open_hardened_query_connection(path: &Path) -> Result<duckdb::Connection, duckdb::Error> {
+    let config = duckdb::Config::default()
+        .access_mode(duckdb::AccessMode::ReadOnly)?
+        .enable_external_access(false)?
+        .enable_autoload_extension(false)?
+        .with("lock_configuration", "true")?;
+    duckdb::Connection::open_with_flags(path, config)
+}
+
+/// Run `operation` against a hardened, read-only connection to the DuckDB file at
+/// `db_path` — for executing caller-supplied query text. Opens a fresh connection
+/// per call, and acquires the db's connection lock internally, so it must not be
+/// called while that lock is already held (it is not reentrant).
+pub fn with_hardened_query_conn<F, T>(db_path: &Path, operation: F) -> Result<T, DataFrameError>
+where
+    F: FnOnce(&duckdb::Connection) -> Result<T, DataFrameError>,
+{
+    // Checkpoint under the read-write connection's lock and open the read-only connection before
+    // releasing it: a read-only connection can crash replaying sequence / default-column WAL
+    // entries, so it must open against a flushed WAL, and holding the lock keeps a concurrent
+    // write out of the WAL until it has.
+    let conn = with_df_db_manager(db_path, |manager| {
+        manager.with_conn(|rw_conn| {
+            rw_conn.execute_batch("CHECKPOINT")?;
+            Ok(open_hardened_query_connection(db_path)?)
+        })
+    })?;
+    operation(&conn)
 }
 
 /// Get a connection to a duckdb database.
@@ -991,6 +1026,77 @@ mod tests {
     use crate::test;
 
     use super::*;
+
+    #[test]
+    fn test_hardened_query_conn_blocks_file_access_but_reads_tables() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let db_file = dir.join("data.db");
+
+            // Populate via the cached read-write connection and leave it open, so the
+            // hardened connection is opened alongside it as it is in production.
+            with_df_db_manager(&db_file, |manager| {
+                manager.with_conn(|conn| {
+                    conn.execute_batch("CREATE TABLE df AS SELECT 42 AS x")?;
+                    Ok(())
+                })
+            })?;
+
+            // A host file that exists on disk — readable only if external access is on.
+            let secret = dir.join("secret.csv");
+            std::fs::write(&secret, "col\nvalue\n")?;
+            let secret_path = secret.to_string_lossy().to_string();
+            let out_path = dir.join("out.csv");
+            let out = out_path.to_string_lossy().to_string();
+
+            with_hardened_query_conn(&db_file, |conn| {
+                // Reads the indexed table (coexists with the cached read-write conn).
+                let x: i64 = conn.query_row("SELECT x FROM df", [], |r| r.get(0))?;
+                assert_eq!(x, 42);
+
+                // Refuses to read host files — and specifically because access is off,
+                // not because the file is missing (it exists).
+                match conn.execute_batch(&format!("SELECT * FROM read_csv('{secret_path}')")) {
+                    Ok(()) => panic!("read_csv on a hardened connection should be blocked"),
+                    Err(e) => assert!(
+                        format!("{e}").contains("disabled by configuration"),
+                        "expected an external-access error, got: {e}"
+                    ),
+                }
+
+                // Refuses to write host files.
+                assert!(
+                    conn.execute_batch(&format!("COPY (SELECT 1) TO '{out}'"))
+                        .is_err(),
+                    "COPY ... TO on a hardened connection should be blocked"
+                );
+                assert!(
+                    !out_path.exists(),
+                    "COPY ... TO must not have written a file"
+                );
+                Ok(())
+            })?;
+
+            // A fresh hardened connection sees rows committed after the previous one
+            // ran — each call opens a new connection and picks up the latest state.
+            with_df_db_manager(&db_file, |manager| {
+                manager.with_conn(|conn| {
+                    conn.execute_batch("INSERT INTO df VALUES (99)")?;
+                    Ok(())
+                })
+            })?;
+            with_hardened_query_conn(&db_file, |conn| {
+                let count: i64 = conn.query_row("SELECT COUNT(*) FROM df", [], |r| r.get(0))?;
+                assert_eq!(
+                    count, 2,
+                    "hardened connection must see the newly committed row"
+                );
+                Ok(())
+            })?;
+
+            remove_df_db_from_cache(&db_file)?;
+            Ok(())
+        })
+    }
 
     #[test]
     fn test_df_db_create() -> Result<(), OxenError> {

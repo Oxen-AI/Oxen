@@ -6,6 +6,7 @@ disallowed-methods = [
     { path = "std::path::Path::canonicalize", reason = "Use `liboxen::util::fs::canonicalize` — it falls back to `std::path::absolute` on filesystems that don't support canonicalization (e.g. Windows imdisk ramdisks used in the test suite)." },
 
     { path = "duckdb::Connection::open", reason = "Open DuckDB connections via `df_db::open_duckdb_connection` so connection-level configuration is applied in one place." },
+    { path = "duckdb::Connection::open_with_flags", reason = "Open hardened DuckDB connections via `df_db::open_hardened_query_connection` so hardened config (external access off, extensions off, locked) stays in one place." },
 
     # Non-atomic filesystem writes — production code must use `AtomicFile` # (`crates/liboxen/src/util/fs.rs`) so a crash
     # mid-write can never leave a torn or partially-written file. Commented out until the existing violations are migrated.
