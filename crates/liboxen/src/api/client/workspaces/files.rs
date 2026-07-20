@@ -679,15 +679,12 @@ fn staging_filename(staging_path: &Path) -> String {
 }
 
 /// The path the workspace `files` endpoint stages a file at (and echoes back in its response),
-/// given the request `directory` and the file's staging path. This MUST mirror the server `add`
-/// handler: it stages at `directory.join(validate_and_normalize_path(<multipart filename>))`.
-///
-/// Used to reconcile which files staged. Deriving the key the same way the server does — rather
-/// than joining the raw `staging_path` — keeps client and server in agreement across path
-/// normalization (`.` components, separators) so a file that staged isn't misread as failed.
+/// given the request `directory` and the file's staging path. Used to reconcile which files staged.
+/// Delegates to [`util::fs::workspace_staged_path`], the single source of truth the server `add`
+/// handler also stages through, so the two can't drift across path normalization.
 fn expected_staged_path(directory: &str, staging_path: &Path) -> Result<PathBuf, OxenError> {
-    let normalized = util::fs::validate_and_normalize_path(staging_filename(staging_path))?;
-    Ok(Path::new(directory).join(normalized))
+    let filename = staging_filename(staging_path);
+    util::fs::workspace_staged_path(directory, Path::new(&filename))
 }
 
 /// Build a gzipped multipart part whose filename is the staging path. The server reads the filename
@@ -1140,6 +1137,17 @@ mod tests {
             super::expected_staged_path("data", Path::new("train\\img.jpg")).unwrap(),
             PathBuf::from("data/train/img.jpg"),
         );
+        // The CLI's default directory is ".", which the server collapses when it normalizes the
+        // joined path. The client must collapse it too, or a successfully-staged file reconciles
+        // against "./img.jpg" while the server reports "img.jpg".
+        assert_eq!(
+            super::expected_staged_path(".", Path::new("img.jpg")).unwrap(),
+            PathBuf::from("img.jpg"),
+        );
+        assert_eq!(
+            super::expected_staged_path(".", Path::new("train/img.jpg")).unwrap(),
+            PathBuf::from("train/img.jpg"),
+        );
     }
 
     #[test]
@@ -1168,6 +1176,23 @@ mod tests {
         assert!(
             remaining.is_empty(),
             "all staged files should reconcile, got unstaged: {remaining:?}"
+        );
+    }
+
+    #[test]
+    fn test_unstaged_files_reconciles_dot_directory() {
+        // Regression for the "added 0 entries ... failed to upload 1 entries" bug: `oxen workspace
+        // add` stages with the default directory ".", the server collapses it and echoes back
+        // "logo.png", and the client must reconcile that rather than reporting a false failure.
+        let files = vec![super::FileToStage {
+            disk_path: PathBuf::from("/tmp/logo.png"),
+            staging_path: PathBuf::from("logo.png"),
+        }];
+        let staged = vec![PathBuf::from("logo.png")];
+        let remaining = super::unstaged_files(files, &staged, ".");
+        assert!(
+            remaining.is_empty(),
+            "a file staged under a '.' directory must reconcile, got unstaged: {remaining:?}"
         );
     }
 
@@ -1794,6 +1819,58 @@ mod tests {
             .await?;
             assert_eq!(entries.added_files.entries.len(), 2);
             assert_eq!(entries.added_files.total_entries, 2);
+
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_add_file_under_dot_directory_reports_no_failure() -> Result<(), OxenError> {
+        // `oxen workspace add` stages under the default "." directory, which the server collapses
+        // when it normalizes the joined path. The client must reconcile against the same collapsed
+        // path or a staged file reads as failed. The load-bearing assertion is that the returned
+        // failure list is empty -- the sibling add tests only check is_ok(), which stays true even
+        // when every file is wrongly reported as failed.
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
+            let branch_name = "add-under-dot-directory";
+            let branch = api::client::branches::create_from_branch(
+                &remote_repo,
+                branch_name,
+                DEFAULT_BRANCH_NAME,
+            )
+            .await?;
+            assert_eq!(branch.name, branch_name);
+
+            let workspace_id = uuid::Uuid::new_v4().to_string();
+            let workspace =
+                api::client::workspaces::create(&remote_repo, &branch_name, &workspace_id).await?;
+            assert_eq!(workspace.id, workspace_id);
+
+            // local_repo None mirrors the CLI: the staging path is the bare filename, sent under ".".
+            let failed = api::client::workspaces::files::add(
+                &remote_repo,
+                &workspace_id,
+                ".",
+                vec![test::test_img_file()],
+                &None,
+            )
+            .await?;
+            assert!(
+                failed.is_empty(),
+                "a file staged under the default '.' directory must not read as failed, got: {failed:?}"
+            );
+
+            // Confirm the file actually staged at the workspace root.
+            let entries = api::client::workspaces::changes::list(
+                &remote_repo,
+                &workspace_id,
+                Path::new(""),
+                constants::DEFAULT_PAGE_NUM,
+                constants::DEFAULT_PAGE_SIZE,
+            )
+            .await?;
+            assert_eq!(entries.added_files.total_entries, 1);
 
             Ok(remote_repo)
         })

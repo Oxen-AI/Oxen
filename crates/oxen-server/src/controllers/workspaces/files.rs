@@ -217,19 +217,21 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
         upload_files.len(),
     );
 
-    let base_dir = PathBuf::from(&directory);
     let mut files_to_stage = Vec::with_capacity(upload_files.len());
     for upload_file in upload_files {
-        // The multipart filename is the staging path relative to `directory`. Normalize the full
-        // destination so subdirectories are preserved while rejecting absolute paths and `..`
-        // traversal from either the untrusted `directory` or the filename. An empty or `.`
-        // directory normalizes to the workspace root.
-        let joined = base_dir.join(&upload_file.path);
-        let dst_path = match util::fs::validate_and_normalize_path(&joined) {
+        // The multipart filename is the staging path relative to `directory`. `workspace_staged_path`
+        // joins and normalizes both (preserving subdirectories, rejecting absolute paths and `..`
+        // traversal from either the untrusted `directory` or the filename, collapsing an empty or `.`
+        // directory to the workspace root) -- the client reconciles against the same helper.
+        let dst_path = match util::fs::workspace_staged_path(&directory, &upload_file.path) {
             Ok(dst_path) => dst_path,
             Err(e) => {
                 return Err(OxenHttpError::BadRequest(
-                    format!("Invalid staging path {joined:?}: {e}").into(),
+                    format!(
+                        "Invalid staging path (directory {directory:?}, file {:?}): {e}",
+                        upload_file.path
+                    )
+                    .into(),
                 ));
             }
         };
