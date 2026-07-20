@@ -561,18 +561,18 @@ mod tests {
         .await
     }
 
-    #[tokio::test]
-    async fn test_atomic_stream_from_paths_concatenates_and_verifies() -> Result<(), OxenError> {
+    #[test]
+    fn test_atomic_stream_from_paths_concatenates_and_verifies() -> Result<(), OxenError> {
         use xxhash_rust::xxh3::xxh3_128;
 
-        test::run_empty_dir_test_async(|dir| async move {
+        test::run_empty_dir_test(|dir| {
             let chunks_dir = dir.join("chunks");
-            tokio::fs::create_dir(&chunks_dir).await?;
+            std::fs::create_dir(&chunks_dir)?;
             let parts: [&[u8]; 3] = [b"hello ", b"brave ", b"world"];
             let mut paths = Vec::new();
             for (i, part) in parts.iter().enumerate() {
                 let p = chunks_dir.join(format!("{i}"));
-                tokio::fs::write(&p, part).await?;
+                std::fs::write(&p, part)?;
                 paths.push(p);
             }
             let full: Vec<u8> = parts.concat();
@@ -583,27 +583,25 @@ mod tests {
                 .with_hash(expected)
                 .stream_from_paths(&paths)?;
 
-            let written = tokio::fs::read(&target).await?;
+            let written = std::fs::read(&target)?;
             assert_eq!(written, full);
 
             // No stray `.oxentmp.<uuid>` next to the target (dir holds blob.bin + chunks/).
-            let mut entries = tokio::fs::read_dir(&dir).await?;
             let mut names = Vec::new();
-            while let Some(e) = entries.next_entry().await? {
-                names.push(e.file_name().to_string_lossy().to_string());
+            for entry in std::fs::read_dir(dir)? {
+                names.push(entry?.file_name().to_string_lossy().to_string());
             }
             names.sort();
             assert_eq!(names, vec!["blob.bin".to_string(), "chunks".to_string()]);
             Ok(())
         })
-        .await
     }
 
-    #[tokio::test]
-    async fn test_atomic_stream_from_paths_aborts_on_mismatch() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|dir| async move {
+    #[test]
+    fn test_atomic_stream_from_paths_aborts_on_mismatch() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
             let chunk = dir.join("chunk0");
-            tokio::fs::write(&chunk, b"payload").await?;
+            std::fs::write(&chunk, b"payload")?;
             let bogus = MerkleHash::new(0xdead_beef_dead_beef_dead_beef_dead_beefu128);
 
             let target = dir.join("blob.bin");
@@ -615,7 +613,6 @@ mod tests {
             assert!(!target.exists(), "target must not be published on mismatch");
             Ok(())
         })
-        .await
     }
 
     #[tokio::test]
