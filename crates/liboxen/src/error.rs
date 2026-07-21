@@ -652,6 +652,11 @@ pub enum OxenError {
     // liboxen API.
     #[error("{0}")]
     InternalError(StringError),
+
+    /// A whole-repo exclusive lock (migration / maintenance) is held, so a write was refused.
+    /// oxen-server maps this to HTTP 429 with `Retry-After`; the client should retry shortly.
+    #[error("{0}")]
+    LockTimeout(StringError),
 }
 
 /// Multi-line render for [`OxenError::DownloadBatchExhausted`]. Lists the file path first
@@ -731,6 +736,9 @@ impl OxenError {
                 "Verify the remote URL is correct. Check your remotes with `oxen remote -v`."
             }
             BranchNotFound(_) => "List available branches with `oxen branch --all`.",
+            LockTimeout(_) => {
+                "A maintenance operation holds the repository's exclusive lock. Wait a few seconds and retry."
+            }
             RevisionNotFound(_) => {
                 "Check available branches with `oxen branch --all` or commits with `oxen log`."
             }
