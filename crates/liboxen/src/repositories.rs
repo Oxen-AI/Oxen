@@ -329,6 +329,7 @@ mod tests {
     use crate::api::requests::RepoNew;
     use crate::config::UserConfig;
     use crate::constants;
+    use crate::core::db::merkle_node::MerkleNodeBackend;
     use crate::error::OxenError;
     use crate::model::file::{FileContents, FileNew};
     use crate::model::{Commit, LocalRepository};
@@ -532,6 +533,17 @@ mod tests {
                 other => panic!("Expected InvalidRepoName error, got: {other:?}"),
             }
 
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_create_defaults_to_filesystem_backend() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let repo_new = RepoNew::from_namespace_name("ns", "repo", None);
+            let repo = repositories::create(&sync_dir, repo_new, None).await?;
+            assert_eq!(repo.merkle_node_backend(), MerkleNodeBackend::Filesystem);
             Ok(())
         })
         .await

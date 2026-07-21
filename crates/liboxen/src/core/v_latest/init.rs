@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use crate::config::RepositoryConfig;
+use crate::core::db::merkle_node::DEFAULT_MERKLE_NODE_BACKEND;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
@@ -39,6 +40,7 @@ pub fn init_with_version_default(
 
     let config = RepositoryConfig {
         min_version: Some(version.to_string()),
+        merkle_node_backend: Some(DEFAULT_MERKLE_NODE_BACKEND),
         ..Default::default()
     };
     let repo = LocalRepository::new(path, config)?;
@@ -63,6 +65,7 @@ pub async fn init_with_version_and_storage_config(
     let config = RepositoryConfig {
         min_version: Some(version.to_string()),
         storage: storage_config,
+        merkle_node_backend: Some(DEFAULT_MERKLE_NODE_BACKEND),
         ..Default::default()
     };
     let repo = LocalRepository::new(path, config)?;

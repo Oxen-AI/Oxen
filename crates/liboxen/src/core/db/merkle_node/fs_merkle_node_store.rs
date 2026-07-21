@@ -28,6 +28,22 @@ impl FsMerkleNodeStore {
         }
     }
 
+    /// Whether a filesystem merkle node tree exists on disk for `repo_path`. Checks for the nodes
+    /// directory so a caller can pick a backend without touching node data.
+    pub(crate) fn exists_on_disk(repo_path: &Path) -> bool {
+        std::fs::metadata(Self::nodes_dir(repo_path))
+            .map(|meta| meta.is_dir())
+            .unwrap_or(false)
+    }
+
+    /// The nodes directory for the repo rooted at `repo_path` (`.oxen/tree/nodes`).
+    fn nodes_dir(repo_path: &Path) -> PathBuf {
+        repo_path
+            .join(constants::OXEN_HIDDEN_DIR)
+            .join(constants::TREE_DIR)
+            .join(constants::NODES_DIR)
+    }
+
     /// Read one of a node's files into owned bytes, mapping a missing file to
     /// [`MerkleDbError::MissingNodeDir`] so the absent-node contract matches across backends.
     fn read_blob(path: &Path, hash: &MerkleHash) -> Result<Bytes, MerkleDbError> {
@@ -85,11 +101,7 @@ impl MerkleNodeStore for FsMerkleNodeStore {
     }
 
     fn list_hashes(&self) -> Result<Vec<MerkleHash>, MerkleDbError> {
-        let nodes_dir = self
-            .repo_path
-            .join(constants::OXEN_HIDDEN_DIR)
-            .join(constants::TREE_DIR)
-            .join(constants::NODES_DIR);
+        let nodes_dir = Self::nodes_dir(&self.repo_path);
 
         // A repo with no committed nodes (e.g. freshly init'd) has no nodes dir yet.
         let prefix_entries = match std::fs::read_dir(&nodes_dir) {

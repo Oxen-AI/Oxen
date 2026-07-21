@@ -6,10 +6,9 @@
 //!   - **down** clears the FS node tree (the backup kept by `up`, which may have gone stale), copies
 //!     an LMDB-backed repo's nodes back into it, then removes the env.
 //!
-//! After `up`, `create_merkle_node_store` resolves the repo to the LMDB backend (it prefers an
-//! existing LMDB env over the FS tree), so the repo runs on LMDB from then on while the source
-//! directory stays untouched. The node blobs themselves are identical across backends — only their
-//! storage location changes.
+//! After `up`, the repo's config records the LMDB backend, so `create_merkle_node_store` resolves
+//! it to LMDB from then on while the source FS tree stays untouched. The node blobs themselves are
+//! identical across backends — only their storage location changes.
 //!
 //! Neither direction cleans up on error: a failed run leaves its partial artifacts on disk for
 //! inspection rather than rolling them back. Because the source backend always remains the repo's
@@ -264,11 +263,6 @@ mod tests {
     /// migrates back down to the filesystem — with the same node set throughout.
     #[tokio::test]
     async fn test_merkle_nodes_migrate_fs_to_lmdb_keeps_source_and_back() -> Result<(), OxenError> {
-        // FS-pinned: this exercises the FS→LMDB direction, so the repo must start on the filesystem
-        // backend regardless of the global `OXEN_MERKLE_NODE_BACKEND` default.
-        if test::skip_fs_pinned_under_lmdb() {
-            return Ok(());
-        }
         test::run_empty_dir_test_async(|dir| async move {
             let repo = test::init_fs_merkle_backend(&dir)?;
             // Commit a file so the repo has filesystem-backed merkle nodes.
@@ -365,11 +359,6 @@ mod tests {
     /// temp dir is left in place for inspection.
     #[tokio::test]
     async fn test_up_reports_leftover_temp_env_without_cleanup() -> Result<(), OxenError> {
-        // FS-pinned: `up` must start from the filesystem backend (not already on LMDB) for the
-        // leftover-temp-env guard to be the thing under test, regardless of the global default.
-        if test::skip_fs_pinned_under_lmdb() {
-            return Ok(());
-        }
         test::run_empty_dir_test_async(|dir| async move {
             let repo = test::init_fs_merkle_backend(&dir)?;
             let file = repo.path.join("a.txt");
