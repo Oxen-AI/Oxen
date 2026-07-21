@@ -909,6 +909,10 @@ mod tests {
             header::CONTENT_LENGTH.as_str()
         );
 
+        // Drain the body to close the streamed file handle before cleanup; on NFS an
+        // unlinked-but-still-open file lingers as .nfsXXXX and the rmdir fails with ENOTEMPTY.
+        actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
