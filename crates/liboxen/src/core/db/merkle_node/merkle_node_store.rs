@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::error::OxenError;
 use crate::model::MerkleHash;
@@ -37,13 +38,25 @@ use super::merkle_node_db::MerkleDbError;
 /// Persisted per-repo as `merkle_node_backend` in `config.toml` (serialized lowercase:
 /// `"filesystem"` / `"lmdb"`); see [`create_merkle_node_store`] for how a repo's backend is
 /// resolved.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum MerkleNodeBackend {
     /// Two files per node under `.oxen/tree/nodes` (the historical, default backend).
     Filesystem,
     /// One LMDB env under `.oxen/tree/nodes_lmdb`.
     Lmdb,
+}
+
+impl std::str::FromStr for MerkleNodeBackend {
+    type Err = OxenError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "filesystem" => Ok(MerkleNodeBackend::Filesystem),
+            "lmdb" => Ok(MerkleNodeBackend::Lmdb),
+            other => Err(OxenError::UnsupportedMerkleNodeBackend(other.to_string())),
+        }
+    }
 }
 
 /// The backend a newly created repo uses when the caller doesn't request a specific one.

@@ -6,6 +6,7 @@
 use crate::api::requests::RepoNew;
 use crate::constants;
 use crate::core;
+use crate::core::db::merkle_node::DEFAULT_MERKLE_NODE_BACKEND;
 use crate::core::refs::with_ref_manager;
 use crate::error::OxenError;
 use crate::model::Commit;
@@ -242,6 +243,11 @@ pub async fn create(
                 kind,
                 versions_path: None,
             }),
+        merkle_node_backend: Some(
+            new_repo
+                .merkle_node_backend
+                .unwrap_or(DEFAULT_MERKLE_NODE_BACKEND),
+        ),
         ..Default::default()
     };
     let local_repo = LocalRepository::new_with_server_opts(&repo_dir, config, server_s3_opts)?;
@@ -544,6 +550,18 @@ mod tests {
             let repo_new = RepoNew::from_namespace_name("ns", "repo", None);
             let repo = repositories::create(&sync_dir, repo_new, None).await?;
             assert_eq!(repo.merkle_node_backend(), MerkleNodeBackend::Filesystem);
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_create_honors_requested_merkle_backend() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let mut repo_new = RepoNew::from_namespace_name("ns", "repo", None);
+            repo_new.merkle_node_backend = Some(MerkleNodeBackend::Lmdb);
+            let repo = repositories::create(&sync_dir, repo_new, None).await?;
+            assert_eq!(repo.merkle_node_backend(), MerkleNodeBackend::Lmdb);
             Ok(())
         })
         .await
