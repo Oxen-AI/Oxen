@@ -9,6 +9,7 @@ use liboxen::api;
 use liboxen::api::requests::RepoNew;
 use liboxen::config::UserConfig;
 use liboxen::constants::{DEFAULT_HOST, DEFAULT_SCHEME};
+use liboxen::core::db::merkle_node::MerkleNodeBackend;
 use liboxen::model::file::{FileContents, FileNew};
 use liboxen::storage::StorageKind;
 
@@ -68,6 +69,13 @@ impl RunCmd for CreateRemoteCmd {
                 .value_parser(["local", "s3"])
                 .action(clap::ArgAction::Set),
         )
+        .arg(
+            Arg::new("merkle-backend")
+                .long("merkle-backend")
+                .help("Which engine backs the remote repo's Merkle node store (default: the server's default)")
+                .value_parser(["filesystem", "lmdb"])
+                .action(clap::ArgAction::Set),
+        )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
@@ -81,6 +89,11 @@ impl RunCmd for CreateRemoteCmd {
         let storage_kind = args
             .get_one::<String>("storage-backend")
             .map(|s| StorageKind::from_str(s))
+            .transpose()?;
+
+        let merkle_backend = args
+            .get_one::<String>("merkle-backend")
+            .map(|s| MerkleNodeBackend::from_str(s))
             .transpose()?;
 
         // Default the host to the oxen.ai hub
@@ -115,6 +128,7 @@ impl RunCmd for CreateRemoteCmd {
 
         if empty {
             let mut repo_new = RepoNew::from_namespace_name(namespace, name, storage_kind);
+            repo_new.merkle_node_backend = merkle_backend;
             repo_new.host = Some(host);
             repo_new.is_public = Some(is_public);
             repo_new.scheme = Some(scheme);
@@ -175,6 +189,7 @@ Happy Mooooooving of data 🐂
                 user,
             }];
             let mut repo = RepoNew::from_files(namespace, name, files, storage_kind);
+            repo.merkle_node_backend = merkle_backend;
             repo.host = Some(host);
             repo.is_public = Some(is_public);
             repo.scheme = Some(scheme);
