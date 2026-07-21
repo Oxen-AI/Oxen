@@ -2,6 +2,10 @@
 
 This is an experiment in having an LLM autonomously research and optimize block-level deduplication and lossless compression strategies for versioned tabular datasets. You are working in a repository for the oxen version control tool, which looks a lot like git on the surface, but is optimized for large data (unlike git). The commands are `oxen add` and `oxen commit` similar to git. You will use git to track the experiments, but `oxen` is the version control tool we are optimizing.
 
+We have already run some experiments and reported the findings and more context in this notion file: https://app.notion.com/p/oxenai/Block-level-Deduplication-1f2faad69c0880a4a124fc78fa581a33?source=copy_link
+
+Our goal is to explore new novel avenues, new algorithms, and try things no one has ever thought of before to improve on these baselines. The old experiments should still be on branches for your reference, but let's explore new territory rather than exploit old ideas. You may bring in wisdom from other fields as you are exploring new avenues.
+
 The repository already contains:
 
 - A base git branch named `block-level-dedup`
@@ -52,6 +56,8 @@ The optimization priorities are, in strict order:
 The primary objective is:
 
 > Minimize the total and incremental bytes required to store dataset versions, then maximize reconstruction and read performance, then minimize compression time.
+
+Read performance is very important as well. Make sure you explore some paths that exploit the ability to reconstruct the file extremely fast.
 
 Correctness is a hard gate. Any failure to reconstruct the original file byte-for-byte is an automatic failure regardless of storage savings or speed.
 
@@ -178,6 +184,16 @@ The best strategy may combine:
 - Adaptive compression selection
 
 The benchmark, not theoretical elegance, determines whether an idea is successful.
+
+## Resources
+
+Some nice research is done by the xet team at hugging face. Our objective is to BEAT their benchmarks, but you may get some inspiration from their work.
+
+- [From Files to Chunks: Improving HF Storage Efficiency](https://huggingface.co/blog/from-files-to-chunks)
+- [From Chunks to Blocks: Accelerating Uploads and Downloads on the Hub](https://huggingface.co/blog/from-chunks-to-blocks)
+- [Parquet Content-Defined Chunking](https://huggingface.co/blog/parquet-cdc)
+- [Xet Chunk-Level Deduplication Specification](https://huggingface.co/docs/xet/en/deduplication)
+- [Deduplication](https://huggingface.co/docs/hub/en/xet/deduplication)
 
 # Branch model
 
