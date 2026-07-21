@@ -146,14 +146,27 @@ jobs:
       - name: Run oxen rust tests (Linux/macOS)
         if: matrix.platform != 'windows'
         run: |
-          ./target/debug/oxen-server start --test &
+          RUST_LOG=warn,liboxen=debug,oxen_server=debug ./target/debug/oxen-server start --test > oxen-server.log 2>&1 &
           cargo test --workspace --no-fail-fast
 
       - name: Run oxen rust tests (Windows)
         if: matrix.platform == 'windows'
         run: |
-          Start-Process ".\target\debug\oxen-server.exe" -ArgumentList "start","--test"
+          $env:RUST_LOG = "warn,liboxen=debug,oxen_server=debug"
+          Start-Process ".\target\debug\oxen-server.exe" -ArgumentList "start","--test" -RedirectStandardOutput oxen-server.out.log -RedirectStandardError oxen-server.err.log
+          Remove-Item Env:\RUST_LOG
           cargo test --workspace --no-fail-fast
+
+      - name: Upload oxen-server log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: oxen-server-log-${{ matrix.platform }}
+          path: |
+            oxen-server.log
+            oxen-server.out.log
+            oxen-server.err.log
+          if-no-files-found: ignore
 
   python-test:
     name: Python Tests
