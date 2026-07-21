@@ -140,17 +140,19 @@ jobs:
         if: matrix.platform != 'windows'
         run: |
           RUST_LOG=warn,liboxen=debug,oxen_server=debug ./target/debug/oxen-server start --test > oxen-server.log 2>&1 &
+          # Wait for the server to be ready before running tests (mirrors bin/test-rust).
+          for i in $(seq 1 100); do
+            if curl -sf http://localhost:3000/api/health >/dev/null 2>&1; then break; fi
+            if [ "$i" -eq 100 ]; then echo "oxen-server did not become healthy"; exit 1; fi
+            sleep 0.1
+          done
           cargo test --workspace --no-fail-fast
 
       # oxen-server is unsupported on Windows: exclude its crate; the
       # server-dependent tests are marked #[cfg_attr(windows, ignore)].
       - name: Run oxen rust tests (Windows)
         if: matrix.platform == 'windows'
-        run: |
-          $env:RUST_LOG = "warn,liboxen=debug,oxen_server=debug"
-          Start-Process ".\target\debug\oxen-server.exe" -ArgumentList "start","--test" -RedirectStandardOutput oxen-server.out.log -RedirectStandardError oxen-server.err.log
-          Remove-Item Env:\RUST_LOG
-          cargo test --workspace --exclude oxen-server --no-fail-fast
+        run: cargo test --workspace --exclude oxen-server --no-fail-fast
 
       - name: Upload oxen-server log
         if: failure()
