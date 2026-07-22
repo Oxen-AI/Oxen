@@ -34,7 +34,7 @@ use actix_web::{App, HttpServer, web};
 use actix_web_httpauth::middleware::HttpAuthentication;
 use thiserror::Error;
 
-use middleware::{MetricsMiddleware, RequestIdMiddleware};
+use middleware::{MetricsMiddleware, RequestIdMiddleware, RequestStartLogMiddleware, request_id};
 use tracing_actix_web::TracingLogger;
 
 // Note: These 'view' imports are all for the auto-generated docs with utoipa
@@ -670,9 +670,15 @@ async fn start(
             .service(web::scope("/api/repos").configure(routes::config))
             .default_service(web::route().to(controllers::not_found::index))
             .wrap(DefaultHeaders::new().add(("oxen-version", OXEN_VERSION)))
-            .wrap(Logger::new(
-                "%a \"%r\" %s %b \"%{Referer}i\" \"%{User-Agent}i\" %T %{x-oxen-request-id}o",
-            ))
+            .wrap(
+                Logger::new(
+                    "end %a \"%r\" %s %b \"%{Referer}i\" \"%{User-Agent}i\" %T req=%{request_id}xo",
+                )
+                .custom_response_replace("request_id", |res| request_id(res.request())),
+            )
+            .wrap(RequestStartLogMiddleware)
+            // RequestId must stay outer of the Logger/RequestStartLog above (actix runs the last
+            // .wrap outermost) so the request-id extension those two read is populated before them.
             .wrap(RequestIdMiddleware)
             .wrap(MetricsMiddleware)
             .wrap(TracingLogger::default())
