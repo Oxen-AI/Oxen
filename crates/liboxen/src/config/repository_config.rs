@@ -52,7 +52,8 @@ pub struct RepositoryConfig {
     /// Which engine backs this repo's Merkle node store. The authoritative record of the repo's
     /// backend: written at `init` and updated by the file ↔ LMDB migration. `None` for repos whose
     /// config predates the field, which fall back to on-disk evidence — an FS node tree means
-    /// filesystem, else LMDB (see `create_merkle_node_store`).
+    /// filesystem, an existing LMDB env means LMDB, and neither means filesystem (see
+    /// `create_merkle_node_store`).
     pub merkle_node_backend: Option<MerkleNodeBackend>,
 }
 
