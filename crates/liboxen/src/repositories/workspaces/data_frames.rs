@@ -1,12 +1,12 @@
-use crate::core::df::tabular::write_df_parquet;
+use crate::core::df::tabular::{write_df, write_df_parquet};
 use crate::model::merkle_tree::node::FileNodeWithDir;
 use crate::view::data_frames::columns::NewColumn;
 use polars::frame::DataFrame;
 
 use sql_query_builder::Select;
 
+use crate::constants::{MAX_QUERYABLE_ROWS, OXEN_COLS, TABLE_NAME};
 use crate::constants::{MODS_DIR, OXEN_HIDDEN_DIR};
-use crate::constants::{OXEN_COLS, TABLE_NAME};
 use crate::core;
 use crate::core::db::data_frames::df_db::{with_df_db_manager, with_hardened_query_conn};
 use crate::core::db::data_frames::{DataFrameError, df_db};
@@ -154,34 +154,44 @@ pub fn export(
     path: &Path,
     opts: &DFOpts,
     temp_file: &Path,
-) -> Result<(), DataFrameError> {
+) -> Result<(), OxenError> {
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     log::debug!("export() got db_path: {db_path:?}");
 
-    with_df_db_manager(&db_path, |manager| {
-        manager.with_conn(|conn| {
-            let sql = if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
-                let exclude_cols = true;
-                repositories::workspaces::data_frames::embeddings::similarity_query_with_conn(
-                    conn,
-                    workspace,
-                    &embedding_opts,
-                    exclude_cols,
-                )?
-            } else if let Some(sql) = opts.sql.clone() {
-                add_exclude_to_sql(&sql)?
-            } else {
-                let sql = format!("SELECT * FROM {TABLE_NAME}");
-                add_exclude_to_sql(&sql)?
-            };
+    // Embeddings (vss extension) and the default full export use DuckDB's COPY
+    // writer on the read-write connection. Caller-supplied SQL runs on the hardened
+    // read-only connection and is serialized in Rust, never reaching the COPY path.
+    if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
+        with_df_db_manager(&db_path, |manager| {
+            manager.with_conn(|conn| {
+                let sql =
+                    embeddings::similarity_query_with_conn(conn, workspace, &embedding_opts, true)?;
+                sql::export_df(conn, sql, Some(opts), temp_file)?;
+                Ok(())
+            })
+        })?;
+    } else if let Some(sql) = opts.sql.clone() {
+        let sql = add_exclude_to_sql(&sql)?;
+        log::debug!("exporting data frame with sql: {sql:?}");
+        // Cap the export at MAX_QUERYABLE_ROWS rows; larger results are refused, not truncated.
+        let capped = with_hardened_query_conn(&db_path, |conn| {
+            df_db::select_raw_capped(conn, &sql, MAX_QUERYABLE_ROWS)
+        })?;
+        let Some(mut df) = capped else {
+            return Err(DataFrameError::ExportResultTooLarge(MAX_QUERYABLE_ROWS).into());
+        };
+        write_df(&mut df, temp_file)?;
+    } else {
+        with_df_db_manager(&db_path, |manager| {
+            manager.with_conn(|conn| {
+                let sql = add_exclude_to_sql(&format!("SELECT * FROM {TABLE_NAME}"))?;
+                sql::export_df(conn, sql, Some(opts), temp_file)?;
+                Ok(())
+            })
+        })?;
+    }
 
-            log::debug!("exporting data frame with sql: {sql:?}");
-
-            sql::export_df(conn, sql, Some(opts), temp_file)?;
-
-            Ok(())
-        })
-    })
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1657,6 +1667,53 @@ mod tests {
         Path::new("annotations")
             .join("train")
             .join("bounding_box.csv")
+    }
+
+    #[tokio::test]
+    async fn test_export_with_sql_cannot_read_host_files() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let path = list_typed_add_row_test_paths();
+            workspaces::data_frames::index(&repo, &workspace, &path).await?;
+
+            // A host file the export must not be able to read.
+            let secret = repo.path.join("secret.csv");
+            std::fs::write(&secret, "col\nvalue\n")?;
+
+            // Caller SQL that reads a host file runs on the hardened connection, so
+            // it is blocked and writes no output.
+            let out_bad = repo.path.join("bad_export.csv");
+            let mut malicious = DFOpts::empty();
+            malicious.sql = Some(format!(
+                "SELECT * FROM read_csv('{}')",
+                secret.to_string_lossy()
+            ));
+            let err = export(&workspace, &path, &malicious, &out_bad)
+                .expect_err("export must not read host files through caller SQL");
+            assert!(
+                format!("{err}").contains("disabled by configuration"),
+                "expected an external-access error, got: {err}"
+            );
+            assert!(
+                !out_bad.exists(),
+                "a blocked export must write no output file"
+            );
+
+            // A normal caller-SQL export still writes its output.
+            let out_ok = repo.path.join("ok_export.csv");
+            let mut normal = DFOpts::empty();
+            normal.sql = Some(format!("SELECT * FROM {TABLE_NAME}"));
+            export(&workspace, &path, &normal, &out_ok)?;
+            assert!(out_ok.exists(), "a normal export must write an output file");
+
+            Ok(())
+        })
+        .await
     }
 
     #[tokio::test]

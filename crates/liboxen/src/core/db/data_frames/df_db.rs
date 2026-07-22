@@ -722,6 +722,27 @@ pub fn select_raw_with_params<P: duckdb::Params>(
     Ok(df)
 }
 
+/// Like [`select_raw`], but returns `None` instead of a `DataFrame` when the
+/// result exceeds `max_rows`, and stops reading once it does.
+pub fn select_raw_capped(
+    conn: &duckdb::Connection,
+    stmt: &str,
+    max_rows: usize,
+) -> Result<Option<DataFrame>, DataFrameError> {
+    let mut records: Vec<RecordBatch> = Vec::new();
+    let mut total_rows: usize = 0;
+    let mut stmt = conn.prepare(stmt)?;
+    for batch in stmt.query_arrow([])? {
+        total_rows += batch.num_rows();
+        records.push(batch);
+        if total_rows > max_rows {
+            return Ok(None);
+        }
+    }
+
+    Ok(Some(record_batches_to_polars_df(records)?))
+}
+
 pub fn modify_row_with_polars_df(
     conn: &duckdb::Connection,
     table_name: &str,
@@ -998,29 +1019,6 @@ pub fn index_file_with_id(
     Ok(())
 }
 
-pub fn from_clause_from_disk_path(path: &Path) -> Result<String, DataFrameError> {
-    let extension: &str = &util::fs::extension_from_path(path);
-    match extension {
-        "csv" => {
-            let str_path = path.to_string_lossy().to_string();
-            Ok(format!("read_csv('{str_path}')"))
-        }
-        "tsv" => {
-            let str_path = path.to_string_lossy().to_string();
-            Ok(format!("read_csv('{str_path}')"))
-        }
-        "parquet" => {
-            let str_path = path.to_string_lossy().to_string();
-            Ok(format!("read_parquet('{str_path}')"))
-        }
-        "jsonl" | "json" | "ndjson" => {
-            let str_path = path.to_string_lossy().to_string();
-            Ok(format!("read_json('{str_path}')"))
-        }
-        _ => Err(DataFrameError::InvalidFileType),
-    }
-}
-
 pub fn preview(conn: &duckdb::Connection, table_name: &str) -> Result<DataFrame, DataFrameError> {
     let query = format!("SELECT * FROM {table_name} LIMIT 10");
     let df = select_raw(conn, &query)?;
@@ -1127,6 +1125,32 @@ mod tests {
             })?;
 
             remove_df_db_from_cache(&db_file)?;
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_select_raw_capped_refuses_results_over_the_cap() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let db_file = dir.join("data.db");
+            let conn = get_connection(&db_file)?;
+            conn.execute_batch("CREATE TABLE df AS SELECT * FROM range(5) t(x)")?;
+
+            // Result fits under the cap: full DataFrame is returned.
+            let under = select_raw_capped(&conn, "SELECT x FROM df", 10)?;
+            assert_eq!(
+                under.expect("expected a DataFrame under the cap").height(),
+                5
+            );
+
+            // Result exactly at the cap is still returned.
+            let at = select_raw_capped(&conn, "SELECT x FROM df", 5)?;
+            assert_eq!(at.expect("expected a DataFrame at the cap").height(), 5);
+
+            // Result over the cap is refused rather than materialized.
+            let over = select_raw_capped(&conn, "SELECT x FROM df", 4)?;
+            assert!(over.is_none(), "result over the cap must return None");
+
             Ok(())
         })
     }

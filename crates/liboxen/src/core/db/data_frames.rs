@@ -97,6 +97,9 @@ pub enum DataFrameError {
     #[error("No FROM found in query")]
     NoFromInQuery,
 
+    #[error("Export result exceeds the maximum of {0} rows; add a LIMIT to the query")]
+    ExportResultTooLarge(usize),
+
     #[error("Dataset is not indexed")]
     NotIndexed,
 
