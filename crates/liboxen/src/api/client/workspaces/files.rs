@@ -1887,6 +1887,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_add_file_with_absolute_path() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
