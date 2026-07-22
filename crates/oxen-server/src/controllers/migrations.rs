@@ -2,6 +2,7 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use liboxen::{
     command::migrate::{self, Direction, try_apply_migration},
     core::repo_locks,
+    error::OxenError,
     migrations,
     view::{ListRepositoryResponse, StatusMessage},
 };
@@ -84,9 +85,15 @@ pub async fn run(req: HttpRequest, body: web::Bytes) -> Result<HttpResponse, Oxe
 
     // Run the migration with the repo to itself: the exclusive lock blocks new writers and drains
     // in-flight ones before `up`/`down` runs, and serializes two concurrent migration POSTs for the
-    // same repo. Returns HTTP 429 if in-flight writes don't drain in time.
-    repo_locks::with_repo_exclusive(&repo, async {
-        try_apply_migration(migration, direction, run_optional, repo.clone())
+    // same repo. Returns HTTP 429 if in-flight writes don't drain in time. The synchronous transcode
+    // runs on the blocking pool so it doesn't starve other requests on the actix worker.
+    let migration_repo = repo.clone();
+    repo_locks::with_repo_exclusive(&repo, async move {
+        tokio::task::spawn_blocking(move || {
+            try_apply_migration(migration, direction, run_optional, migration_repo)
+        })
+        .await
+        .map_err(OxenError::from)?
     })
     .await?;
 
