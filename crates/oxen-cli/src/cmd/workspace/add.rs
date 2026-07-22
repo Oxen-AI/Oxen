@@ -99,7 +99,7 @@ impl RunCmd for WorkspaceAddCmd {
             ));
         }
 
-        api::client::workspaces::files::add(
+        let failed_to_upload = api::client::workspaces::files::add(
             &remote_repo,
             workspace_identifier,
             directory,
@@ -107,6 +107,13 @@ impl RunCmd for WorkspaceAddCmd {
             &None,
         )
         .await?;
+
+        if !failed_to_upload.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Failed to upload {} file(s) to the workspace",
+                failed_to_upload.len()
+            ));
+        }
 
         Ok(())
     }
