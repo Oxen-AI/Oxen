@@ -18,6 +18,8 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use bytes::Bytes;
+
 use super::{Direction, Migrate};
 use crate::config::RepositoryConfig;
 use crate::constants::{NODES_DIR, OXEN_HIDDEN_DIR, TREE_DIR};
@@ -79,6 +81,49 @@ fn fs_nodes_dir(repo_path: &Path) -> PathBuf {
         .join(NODES_DIR)
 }
 
+/// Soft byte budget for one batched `write_nodes` call while transcoding. Batching turns per-node
+/// store writes into one store transaction per batch (a single LMDB commit / one parallel FS sweep);
+/// the budget caps how much of the tree is held in memory at once so a large repo isn't buffered
+/// whole.
+const TRANSCODE_BATCH_BYTES: usize = 64 * 1024 * 1024;
+
+/// Copy every node in `hashes` from `src` into `dst`, batching writes to cut per-node transaction
+/// overhead while keeping peak memory bounded by [`TRANSCODE_BATCH_BYTES`]. The caller verifies the
+/// destination's full node set afterward.
+fn transcode_nodes(
+    src: &dyn MerkleNodeStore,
+    dst: &dyn MerkleNodeStore,
+    hashes: &[MerkleHash],
+) -> Result<(), OxenError> {
+    transcode_nodes_batched(src, dst, hashes, TRANSCODE_BATCH_BYTES)
+}
+
+/// [`transcode_nodes`] with an explicit batch budget so tests can force multi-batch flushing without
+/// materializing a budget's worth of data.
+fn transcode_nodes_batched(
+    src: &dyn MerkleNodeStore,
+    dst: &dyn MerkleNodeStore,
+    hashes: &[MerkleHash],
+    batch_budget_bytes: usize,
+) -> Result<(), OxenError> {
+    let mut batch: Vec<(MerkleHash, Bytes, Bytes)> = Vec::new();
+    let mut batch_bytes = 0usize;
+    for hash in hashes {
+        let node = src.read_node(hash)?;
+        let children = src.read_children(hash)?;
+        batch_bytes += node.len() + children.len();
+        batch.push((*hash, node, children));
+        if batch_bytes >= batch_budget_bytes {
+            dst.write_nodes(std::mem::take(&mut batch), true)?;
+            batch_bytes = 0;
+        }
+    }
+    if !batch.is_empty() {
+        dst.write_nodes(batch, true)?;
+    }
+    Ok(())
+}
+
 /// FS → LMDB. Build the LMDB env in a temp sibling directory, populate and verify it, atomically
 /// rename it into place, then record LMDB as the repo's backend in `config.toml`. The filesystem
 /// node tree is kept as a backup.
@@ -128,17 +173,14 @@ fn migrate_fs_to_lmdb(repo: &LocalRepository) -> Result<(), OxenError> {
     }
 
     let fs = FsMerkleNodeStore::new(&repo.path);
-    let expected: HashSet<MerkleHash> = fs.list_hashes()?.into_iter().collect();
+    let expected_hashes = fs.list_hashes()?;
+    let expected: HashSet<MerkleHash> = expected_hashes.iter().copied().collect();
 
     // Populate the env in the temp dir. On any error we return without removing temp_dir, leaving
     // the partial env in place for inspection.
     {
         let lmdb = LmdbMerkleNodeStore::new_at(&temp_dir)?;
-        for hash in &expected {
-            let node = fs.read_node(hash)?;
-            let children = fs.read_children(hash)?;
-            lmdb.write_node(hash, node, children)?;
-        }
+        transcode_nodes(&fs, &lmdb, &expected_hashes)?;
         verify_migrated(&lmdb.list_hashes()?, &expected, "FS→LMDB")?;
     } // drop the temp env so its directory can be renamed
 
@@ -194,11 +236,7 @@ fn migrate_lmdb_to_fs(repo: LocalRepository) -> Result<(), OxenError> {
     let expected: HashSet<MerkleHash> = {
         let lmdb = LmdbMerkleNodeStore::new(&repo_path)?;
         let hashes = lmdb.list_hashes()?;
-        for hash in &hashes {
-            let node = lmdb.read_node(hash)?;
-            let children = lmdb.read_children(hash)?;
-            fs.write_node(hash, node, children)?;
-        }
+        transcode_nodes(&lmdb, &fs, &hashes)?;
         hashes.into_iter().collect()
     }; // drop the lmdb env so its directory can be removed
 
@@ -257,6 +295,39 @@ mod tests {
     use crate::model::MerkleHash;
     use crate::repositories;
     use crate::test;
+
+    /// The batched transcode copies every node even when the byte budget forces a flush after each
+    /// one — the mid-loop flush path a whole-repo migration hits on a large tree.
+    #[test]
+    fn transcode_nodes_flushes_across_batches() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let fs = FsMerkleNodeStore::new(dir);
+            let mut hashes = Vec::new();
+            for i in 1..=5u128 {
+                let hash = MerkleHash::new(i);
+                fs.write_node(
+                    &hash,
+                    Bytes::from(format!("node-{i}")),
+                    Bytes::from(format!("children-{i}")),
+                )?;
+                hashes.push(hash);
+            }
+
+            // A 1-byte budget forces a flush after every node, exercising the multi-batch path.
+            let lmdb = LmdbMerkleNodeStore::new_at(&dir.join("nodes_lmdb"))?;
+            transcode_nodes_batched(&fs, &lmdb, &hashes, 1)?;
+
+            let migrated: HashSet<MerkleHash> = lmdb.list_hashes()?.into_iter().collect();
+            assert_eq!(
+                migrated,
+                hashes.iter().copied().collect::<HashSet<_>>(),
+                "every node must transcode regardless of batch boundaries"
+            );
+            assert_eq!(lmdb.read_node(&hashes[0])?, Bytes::from("node-1"));
+            assert_eq!(lmdb.read_children(&hashes[0])?, Bytes::from("children-1"));
+            Ok(())
+        })
+    }
 
     /// A committed FS-backed repo migrates up to LMDB with the source kept: the LMDB env holds every
     /// node, the filesystem node tree is still present, and the tree still reads back. Then it
