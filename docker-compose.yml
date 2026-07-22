@@ -17,8 +17,4 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.oxen.rule=Host(`0.0.0.0`)"
-  redis:
-    image: redis:latest
-    ports:
-      - "6379:6379"
 

@@ -102,10 +102,8 @@ parking_lot = { workspace = true }
 pathdiff = { workspace = true }
 polars = { workspace = true }
 qsv-sniffer = { workspace = true }
-r2d2 = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
-redis = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
 rmp-serde = { workspace = true }
