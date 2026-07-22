@@ -680,6 +680,7 @@ mod tests {
     }
 
     // Test the default clone (not --all or --shallow) can revert to files that are not local
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_checkout_deleted_after_clone() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
@@ -749,6 +750,7 @@ mod tests {
     IO(Os { code: 2, kind: NotFound, message: "No such file or directory" })
 
     */
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_clone_checkout_old_commit_checkout_new_commit() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
@@ -785,6 +787,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_checkout_local_does_not_remove_untracked_files() -> Result<(), OxenError> {
         // Push the Remote Repo
@@ -841,6 +844,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_checkout_remote_does_not_remove_untracked_files() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|_local_repo, remote_repo| async move {

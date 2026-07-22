@@ -100,6 +100,7 @@ mod tests {
 
     use serde_json::json;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_list_schemas() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|mut local_repo| async move {
@@ -152,6 +153,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_get_schema2() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut local_repo| async move {
@@ -245,6 +247,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_get_schema_on_branch() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut local_repo| async move {

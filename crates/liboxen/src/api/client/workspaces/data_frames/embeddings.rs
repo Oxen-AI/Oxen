@@ -146,6 +146,7 @@ mod tests {
         ))
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_no_embeddings_in_dataframe() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -188,6 +189,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_index_embeddings_in_dataframe() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -227,6 +229,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_query_embeddings_by_id() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -297,6 +300,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_query_embeddings_by_embedding() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
@@ -368,6 +372,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_embeddings_by_id() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -437,6 +442,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_query_embeddings_invalid_query() -> Result<(), OxenError> {
         // Skip duckdb if on windows

@@ -57,6 +57,7 @@ mod tests {
     use crate::model::staged_data::StagedDataOpts;
     use std::path::{Path, PathBuf};
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_commit_file() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
@@ -121,6 +122,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_commit_several_times() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
@@ -224,6 +226,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_add_and_commit_downloaded_dir() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
@@ -318,6 +321,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_cannot_commit_without_staged_files() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
@@ -362,6 +366,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_commit_removed_file() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
@@ -430,6 +435,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_commit_removed_dir() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
@@ -514,6 +520,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_commit_invalid_parquet_file() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {

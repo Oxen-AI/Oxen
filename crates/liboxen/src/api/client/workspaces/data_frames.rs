@@ -246,6 +246,7 @@ mod tests {
     use crate::{api, repositories, util};
     use crate::{command, test};
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_get_by_resource() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
@@ -280,6 +281,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_workspace_data_frames() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
@@ -308,6 +310,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_rename_data_frame() -> Result<(), OxenError> {
         // Skip workspace ops on windows
@@ -384,6 +387,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_edit_rename_and_commit_data_frame_to_nonexistent_folder() -> Result<(), OxenError>
     {
@@ -490,6 +494,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_edit_rename_and_commit_data_frame() -> Result<(), OxenError> {
         // Skip workspace ops on windows
@@ -595,6 +600,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_query_workspace_data_frames_with_sql() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_, remote_repo| async move {
@@ -637,6 +643,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_nonexistent_data_frame_returns_resource_not_found()
     -> Result<(), OxenError> {
@@ -676,6 +683,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_workspace_data_frames() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
@@ -719,6 +727,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_workspace_data_frames_to_different_format() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
@@ -763,6 +772,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_workspace_data_frames_with_sql() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_, remote_repo| async move {
@@ -807,6 +817,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_workspace_data_frames_with_aggregation_sql() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_, remote_repo| async move {
@@ -852,6 +863,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_index_workspace_data_frames() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
@@ -878,6 +890,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_index_workspace_data_frame_with_binary_column() -> Result<(), OxenError> {
         test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
@@ -913,6 +926,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_restore_modified_dataframe() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -988,6 +1002,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_get_modified_dataframe_row_count() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -1038,6 +1053,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_delete_row_from_modified_dataframe() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -1123,6 +1139,7 @@ mod tests {
     # update data frame file on server
     oxen pull repo_a (should be fast forward)
     */
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_update_df_on_server_fast_forward_pull() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
@@ -1224,6 +1241,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_update_root_df_on_server_fast_forward_pull() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {

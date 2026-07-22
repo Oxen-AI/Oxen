@@ -1037,6 +1037,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_concurrent_workspace_commits() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|repo, remote_repo| async move {
@@ -1126,6 +1127,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_fully_concurrent_workspace_operations() -> Result<(), OxenError> {
         // Number of concurrent tasks to run

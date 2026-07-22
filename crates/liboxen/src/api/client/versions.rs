@@ -603,6 +603,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::test;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_upload_large_file_in_chunks() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
@@ -639,6 +640,7 @@ mod tests {
     /// on the server, the server's pre-flight check returns a structured 404 and the
     /// client's retry loop short-circuits — instead of paying multiple rounds of
     /// exponential backoff that won't change the outcome.
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_bulk_download_short_circuits_on_missing_blob_on_server() -> Result<(), OxenError>
     {

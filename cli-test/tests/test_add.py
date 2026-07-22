@@ -5,6 +5,7 @@ Converted from Ruby/RSpec to Python/pytest.
 
 import os
 from pathlib import Path
+import pytest
 from tests.helpers import create_test_file, create_remote_repo, cleanup_remote_repo
 
 
@@ -55,6 +56,7 @@ class TestAddCommand:
         nested_path = Path("images") / "test" / "nested.txt"
         assert nested_path.read_text() == "nested\n"
 
+    @pytest.mark.needs_oxen_server
     def test_add_with_remote_mode_repo(self, test_dir, oxen, unique_id):
         """Test oxen add with remote mode repository."""
 

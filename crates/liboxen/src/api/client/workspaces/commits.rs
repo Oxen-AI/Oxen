@@ -76,6 +76,7 @@ mod tests {
     use crate::test;
     use crate::{api, util};
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_commit_staged_multiple_files() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
@@ -123,6 +124,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_mergeability_no_conflicts() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
@@ -156,6 +158,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_mergeability_with_no_conflicts_different_files() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
@@ -244,6 +247,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_mergeability_with_conflicts() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
@@ -337,6 +341,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_commit_added_column_in_dataframe() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -413,6 +418,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_commit_same_data_frame_file_twice() -> Result<(), OxenError> {
         test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
@@ -514,6 +520,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_reupload_unchanged_file_does_not_commit() -> Result<(), OxenError> {
         test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {

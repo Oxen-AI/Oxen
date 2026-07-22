@@ -1,11 +1,24 @@
 import pytest
 import logging
 
+import sys
 import uuid
 import os
 from pathlib import PurePath
 
 from oxen import Repo, RemoteRepo
+
+
+def pytest_collection_modifyitems(config, items):
+    # oxen-server is not supported on Windows, so skip tests that use a remote-repo
+    # fixture (those need a running server).
+    if sys.platform != "win32":
+        return
+    skip = pytest.mark.skip(reason="oxen-server is not supported on Windows")
+    for item in items:
+        if any("remote_repo" in name for name in getattr(item, "fixturenames", [])):
+            item.add_marker(skip)
+
 
 FORMAT = "%(levelname)s %(name)s %(asctime)-15s %(filename)s:%(lineno)d %(message)s"
 logging.basicConfig(format=FORMAT)

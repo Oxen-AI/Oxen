@@ -1399,6 +1399,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(df_db_cache)]
     fn test_flush_all_df_db_connections_drains_cache_and_checkpoints() -> Result<(), OxenError> {
         // Simulates the server-shutdown path: cached connection has uncheckpointed
         // work, we call flush_all_df_db_connections, and the data must be in the
@@ -1458,6 +1459,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(df_db_cache)]
     fn test_flush_all_df_db_connections_on_empty_cache_is_noop() {
         // Empty cache should not panic, error, or log a warning loudly. Just
         // exercises the early-return branch.
@@ -1465,6 +1467,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(df_db_cache)]
     fn test_with_df_db_manager_recovers_after_corrupt_wal() -> Result<(), OxenError> {
         test::run_empty_dir_test(|data_dir| {
             let db_file = data_dir.join("data.db");
@@ -1516,6 +1519,7 @@ mod tests {
     /// escapes the quotes again). The fix rewrites JSON[] columns to
     /// VARCHAR[] at index time. This test goes through that path end-to-end.
     #[test]
+    #[serial_test::serial(df_db_cache)]
     fn test_rows_modify_row_round_trip_preserves_json_array_strings() -> Result<(), OxenError> {
         use crate::core::db::data_frames::rows;
 

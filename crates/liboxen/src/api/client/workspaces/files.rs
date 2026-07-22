@@ -1218,6 +1218,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_stage_single_file() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
@@ -1274,6 +1275,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_stage_large_file() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
@@ -1322,6 +1324,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_stage_multiple_files() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
@@ -1373,6 +1376,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_create_remote_readme_repo_and_commit_multiple_data_frames()
     -> Result<(), OxenError> {
@@ -1505,6 +1509,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_commit_staged_single_file_and_pull() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
@@ -1581,6 +1586,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_commit_schema_on_branch() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
@@ -1669,6 +1675,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_rm_file() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
@@ -1723,6 +1730,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_stage_file_in_multiple_subdirectories() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
@@ -1770,6 +1778,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_add_multiple_files() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
@@ -1825,6 +1834,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_add_file_under_dot_directory_reports_no_failure() -> Result<(), OxenError> {
         // `oxen workspace add` stages under the default "." directory, which the server collapses
@@ -1934,6 +1944,7 @@ mod tests {
     }
 
     // Download file from the workspace's base repo using the workspace download endpoint
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_version_file_from_workspace() -> Result<(), OxenError> {
         test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
@@ -1967,6 +1978,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_mv_file() -> Result<(), OxenError> {
         // Skip workspace ops on windows
@@ -2046,6 +2058,7 @@ mod tests {
     }
 
     // Test that downloading a non-existent file returns OxenError::ResourceNotFound
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_file_from_nonexistent_workspace() -> Result<(), OxenError> {
         test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
@@ -2095,6 +2108,7 @@ mod tests {
     }
 
     // Test that downloading a file uploaded to the workspace works
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_uploaded_file_from_workspace() -> Result<(), OxenError> {
         test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
@@ -2148,6 +2162,7 @@ mod tests {
 
     // Test the fallback path: download from commit when file not in workspace
     // This tests the download_entry function which is used as fallback in CLI
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_entry_fallback_for_committed_file() -> Result<(), OxenError> {
         test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
@@ -2182,6 +2197,7 @@ mod tests {
     }
 
     // Test workspace lookup by name for download scenario
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_workspace_lookup_by_name_for_download() -> Result<(), OxenError> {
         test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
@@ -2226,6 +2242,7 @@ mod tests {
     }
 
     // Test that workspace lookup by non-existent name returns None
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_workspace_lookup_by_nonexistent_name() -> Result<(), OxenError> {
         test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
@@ -2240,6 +2257,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_nonexistent_file_returns_path_dne() -> Result<(), OxenError> {
         test::run_remote_created_and_readme_remote_repo_test(|remote_repo| async move {
@@ -2272,6 +2290,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_add_files_preserves_paths_local_repo_relative_paths() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
@@ -2281,6 +2300,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_add_files_preserves_paths_local_repo_absolute_paths() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
@@ -2295,6 +2315,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_add_files_preserves_paths_tempdir_relative_paths() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_, remote_repo| async move {
@@ -2306,6 +2327,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_add_files_preserves_paths_tempdir_absolute_paths() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_, remote_repo| async move {

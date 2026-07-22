@@ -76,6 +76,7 @@ mod tests {
     use crate::util;
 
     // Test diff add image
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_diff_entries_add_image() -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
@@ -156,6 +157,7 @@ mod tests {
     }
 
     // Test diff modify image
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_diff_entries_modify_image_resize() -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
@@ -248,6 +250,7 @@ mod tests {
     }
 
     // Test diff add rows to a csv
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_diff_entries_modify_add_rows_csv() -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
@@ -368,6 +371,7 @@ mod tests {
     }
 
     // Test diff add rows to a csv
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_diff_entries_modify_add_and_remove_rows_csv() -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
@@ -507,6 +511,7 @@ define the word,what does the word 'the' mean?,it is a stopword.,language
     }
 
     // Test diff add cols to a csv
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_diff_entries_modify_remove_columns_csv() -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
@@ -645,6 +650,7 @@ who won the game?,The packers beat up on the bears,packers
     }
 
     // Test diff modify image passing the commit ids instead of the branch names
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_diff_entries_modify_image_pass_commit_ids() -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
@@ -734,6 +740,7 @@ who won the game?,The packers beat up on the bears,packers
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_diff_entries_cifar_csvs() -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
@@ -846,6 +853,7 @@ who won the game?,The packers beat up on the bears,packers
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_diff_entries_added_images_in_dir() -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
@@ -938,6 +946,7 @@ who won the game?,The packers beat up on the bears,packers
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_diff_entries_added_images_in_subdirs() -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
@@ -1095,6 +1104,7 @@ who won the game?,The packers beat up on the bears,packers
     }
 
     /*
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_diff_entries_removing_images_in_subdir() -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
@@ -1210,6 +1220,7 @@ who won the game?,The packers beat up on the bears,packers
     }
     */
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_diff_entries_removing_images_by_rming_parent_in_subdir()
     -> Result<(), OxenError> {
@@ -1327,6 +1338,7 @@ who won the game?,The packers beat up on the bears,packers
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_diff_entries_adding_images_in_one_subdir_two_levels() -> Result<(), OxenError>
     {
@@ -1460,6 +1472,7 @@ who won the game?,The packers beat up on the bears,packers
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_diff_entries_adding_images_in_subdirs() -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
@@ -1601,6 +1614,7 @@ who won the game?,The packers beat up on the bears,packers
     }
 
     /*
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_diff_entries_modifying_images_in_subdir() -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
@@ -1715,6 +1729,7 @@ who won the game?,The packers beat up on the bears,packers
     }
     */
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_diff_entries_removing_images_in_dir() -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
@@ -1808,6 +1823,7 @@ who won the game?,The packers beat up on the bears,packers
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_diff_entries_changed_images_in_dir() -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {

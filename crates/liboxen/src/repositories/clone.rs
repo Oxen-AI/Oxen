@@ -111,6 +111,7 @@ mod tests {
 
     use super::*;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_clone_remote() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|local_repo| async move {
@@ -146,6 +147,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_move_local_repo_path_valid() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|local_repo| async move {
@@ -182,6 +184,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_clone_root_subtree_depth_1() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
@@ -215,6 +218,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_clone_annotations_subtree() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
@@ -267,6 +271,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_clone_annotations_test_subtree() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
@@ -297,6 +302,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_clone_multiple_subtrees() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
@@ -331,6 +337,7 @@ mod tests {
     }
 
     // Test for clone --all that checks to make sure we have all commits, all deleted files, etc
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_clone_dash_all() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
@@ -398,6 +405,7 @@ mod tests {
     }
 
     // Test for clone --all that checks to make sure we have all commits, all deleted files, etc
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_clone_all_push_all_full_commit_history() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|_local_repo, remote_repo| async move {
@@ -442,6 +450,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_clone_all_push_all_modified_deleted_files() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
@@ -519,6 +528,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_clone_full() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut repo| async move {
@@ -579,6 +589,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_oxen_clone_empty_repo() -> Result<(), OxenError> {
         test::run_no_commit_remote_repo_test(|remote_repo| async move {
@@ -604,6 +615,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_oxen_clone_empty_repo_then_push() -> Result<(), OxenError> {
         test::run_no_commit_remote_repo_test(|remote_repo| async move {
@@ -638,6 +650,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_clone_subtree_and_checkout_branch() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
@@ -750,6 +763,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_cloned_repos_not_set_as_remote_mode_by_default() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|mut _local_repo, remote_repo| async move {

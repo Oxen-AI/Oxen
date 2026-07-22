@@ -39,6 +39,7 @@ mod tests {
     use crate::repositories;
     use crate::test;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_get_revision_from_commit() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {
@@ -54,6 +55,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_get_revision_from_branch() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {

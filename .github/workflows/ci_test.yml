@@ -70,8 +70,8 @@ jobs:
           # main, a poisoned cache from one main run persists across PR runs
           # until something changes the cache key — that's the proximal cause of
           # the intermittent rustup-init failure described on the shell setting
-          # above. cargo-nextest is the only bin we'd otherwise cache here and
-          # it's already installed by taiki-e/install-action, so the cost is nil.
+          # above. Nothing else in ~/.cargo/bin is worth caching, so the cost is
+          # nil.
           cache-bin: false
 
       - name: Install Python
@@ -84,11 +84,6 @@ jobs:
         run: |
           brew update
           brew install pkg-config
-
-      - name: Install nextest runner
-        uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
-        with:
-          tool: nextest@0.9.114
 
       # Ramdisk for test data
       - name: Setup ramdisk (Linux)
@@ -116,9 +111,7 @@ jobs:
         if: matrix.platform == 'windows'
         run: |
           echo "OXEN_TEST_RUN_DIR=$env:RUNNER_TEMP\oxen_test\test" >> $env:GITHUB_ENV
-          echo "SYNC_DIR=$env:RUNNER_TEMP\oxen_test\sync" >> $env:GITHUB_ENV
           mkdir $env:RUNNER_TEMP\oxen_test\test
-          mkdir $env:RUNNER_TEMP\oxen_test\sync
 
       # Oxen Rust Tests
       - name: Setup test directories (Linux/macOS)
@@ -132,7 +125,8 @@ jobs:
         run: |
           mkdir .\data\test\runs
 
-      - name: Build oxen rust project
+      - name: Build oxen rust project (Linux/macOS)
+        if: matrix.platform != 'windows'
         run: cargo build --workspace
 
       - name: Setup oxen-server user (Linux/macOS)
@@ -141,23 +135,34 @@ jobs:
           ./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
           cp user_config.toml data/test/config/user_config.toml
 
-      - name: Setup oxen-server user (Windows)
-        if: matrix.platform == 'windows'
-        run: |
-          .\target\debug\oxen-server.exe add-user --email ox@oxen.ai --name Ox --output user_config.toml
-          copy user_config.toml data\test\config\user_config.toml
-
       - name: Run oxen rust tests (Linux/macOS)
         if: matrix.platform != 'windows'
         run: |
-          ./target/debug/oxen-server start --test &
-          cargo nextest run --workspace --profile ci
+          RUST_LOG=warn,liboxen=debug,oxen_server=debug ./target/debug/oxen-server start --test > oxen-server.log 2>&1 &
+          # Wait for the server to be ready before running tests (mirrors bin/test-rust).
+          for i in $(seq 1 100); do
+            if curl -sf http://localhost:3000/api/health >/dev/null 2>&1; then break; fi
+            if [ "$i" -eq 100 ]; then echo "oxen-server did not become healthy"; exit 1; fi
+            sleep 0.1
+          done
+          cargo test --workspace --no-fail-fast
 
+      # oxen-server is unsupported on Windows: exclude its crate; the
+      # server-dependent tests are marked #[cfg_attr(windows, ignore)].
       - name: Run oxen rust tests (Windows)
         if: matrix.platform == 'windows'
-        run: |
-          Start-Process ".\target\debug\oxen-server.exe" -ArgumentList "start","--test"
-          cargo nextest run --workspace --profile ci
+        run: cargo test --workspace --exclude oxen-server --no-fail-fast
+
+      - name: Upload oxen-server log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: oxen-server-log-${{ matrix.platform }}
+          path: |
+            oxen-server.log
+            oxen-server.out.log
+            oxen-server.err.log
+          if-no-files-found: ignore
 
   python-test:
     name: Python Tests
@@ -229,8 +234,15 @@ jobs:
         run: |
           mkdir .\data\test\runs
 
-      - name: Build oxen rust project
+      - name: Build oxen rust project (Linux/macOS)
+        if: matrix.platform != 'windows'
         run: cargo build --workspace
+
+      # oxen-server is unsupported on Windows: build only the client crates
+      # (the oxen CLI backs the CLI tests). Server tests skip via each conftest.
+      - name: Build oxen rust project (Windows)
+        if: matrix.platform == 'windows'
+        run: cargo build --workspace --exclude oxen-server
 
       - name: Setup oxen-server user (Linux/macOS)
         if: matrix.platform != 'windows'
@@ -238,19 +250,9 @@ jobs:
           ./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
           cp user_config.toml data/test/config/user_config.toml
 
-      - name: Setup oxen-server user (Windows)
-        if: matrix.platform == 'windows'
-        run: |
-          .\target\debug\oxen-server.exe add-user --email ox@oxen.ai --name Ox --output user_config.toml
-          copy user_config.toml data\test\config\user_config.toml
-
       - name: Start oxen-server (Linux/macOS)
         if: matrix.platform != 'windows'
         run: ./target/debug/oxen-server start &
-
-      - name: Start oxen-server (Windows)
-        if: matrix.platform == 'windows'
-        run: Start-Process ".\target\debug\oxen-server.exe" -ArgumentList "start"
 
       # CLI Tests
       - name: Run CLI tests (Linux/macOS)

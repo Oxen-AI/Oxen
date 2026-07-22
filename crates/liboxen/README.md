@@ -231,6 +231,8 @@ docker load -i result
 
 # Unit & Integration Tests
 
+`bin/test-rust` is the standard, supported way to run the tests — see [Automatic Test Setup](#automatic-test-setup). It builds the workspace, raises the file-handle limit, provisions a ramdisk, starts an `oxen-server`, exports the environment the tests expect, runs `cargo test`, and tears everything down. Prefer it. Running `cargo test` directly (the [Manual Test Setup](#manual-test-setup) below) is supported only once you have reproduced that same setup by hand; `bin/test-rust` remains the source of truth for the full environment, so without it some tests fail or behave differently.
+
 ## Manual Test Setup
 
 Here are the steps to manually configure and run tests (see also the [Automatic Test Setup](#automatic-test-setup) section). Make sure your user is configured and server is running on the default port and host, by following these setup steps:
@@ -251,7 +253,7 @@ You can also increase the number of open files your system allows ulimit before 
 ulimit -n 10240
 ```
 
-Then you can run the tests with the `cargo test` or `cargo nextest` (preferred) directly. To run all tests with the default number of threads:
+Then you can run the tests with `cargo test` directly. To run all tests with the default number of threads:
 
 ```bash
 cargo test --workspace -- --test-threads=$(getconf _NPROCESSORS_ONLN)
@@ -259,7 +261,7 @@ cargo test --workspace -- --test-threads=$(getconf _NPROCESSORS_ONLN)
 
 ## Automatic Test Setup
 
-You can use [bin/test-rust](./bin/test-rust) to run tests. It will set up config files, build and run an oxen-server, run the tests against it, and shutdown the server. Any arguments passed to `test-rust` will be passed to `cargo nextest run`, so you can use it to run specific tests or set test threads.
+You can use [bin/test-rust](../../bin/test-rust) to run tests. It will set up config files, build and run an oxen-server, run the tests against it, and shutdown the server. Arguments after `test-rust`'s own flags are forwarded after `--` to the libtest binaries, so you can use it to run specific tests or set test threads.
 
 ```bash
 bin/test-rust

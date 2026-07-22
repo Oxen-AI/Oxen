@@ -1193,6 +1193,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_clone_annotations_test_subtree_commit_file() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
@@ -1229,6 +1230,7 @@ A: Oxen.ai
     // Test for updating file size after cloning subtree
     // I cloned subtree, added an empty file, committed, pushed, then edited the file and committed again
     // The file size should be updated in the index
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_clone_subtree_commit_file_update_size() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|_local_repo, remote_repo| async move {

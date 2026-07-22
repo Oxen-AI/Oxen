@@ -198,6 +198,7 @@ mod tests {
 
     use std::path::Path;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_create_column_in_dataframe() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -262,6 +263,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_delete_column() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -335,6 +337,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_update_column() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -412,6 +415,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_rename_column_and_add_metadata() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -506,6 +510,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_add_column_and_add_metadata() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -587,6 +592,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_add_metadata_and_rename_column() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -681,6 +687,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_commit_metadata_and_rename_column() -> Result<(), OxenError> {
         // Skip duckdb if on windows
