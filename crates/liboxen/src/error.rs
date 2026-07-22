@@ -249,9 +249,6 @@ pub enum OxenError {
     #[error("Migration unimplemented for direction: {0}")]
     MigrationUnimplemented(Direction),
 
-    #[error("Migration failed to run")]
-    MigrationFailed,
-
     //
     // Version Store
     /// An error uploading a file to the version store

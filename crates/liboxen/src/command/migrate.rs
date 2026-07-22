@@ -1,17 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
-
-use crate::{
-    error::OxenError,
-    model::LocalRepository,
-    repositories,
-    util::{
-        self,
-        progress_bar::{ProgressBarType, oxen_progress_bar},
-    },
-};
+use crate::{error::OxenError, model::LocalRepository};
 
 use colored::Colorize;
 
@@ -112,99 +99,6 @@ pub fn all_migrations(migration_name: &str) -> Option<&dyn Migrate> {
         }
     }
     None
-}
-
-/// The successful vs. failed migrations per-repository.
-pub struct MigrationResults {
-    pub executed: Vec<(PathBuf, MigrationResult)>,
-    pub errored: Vec<(PathBuf, OxenError)>,
-}
-
-/// Run a migration on all repositories accessible from the given directory.
-///
-/// Assumes that `path` points to oxen repositories in the `namespace/repository`
-/// format. That is, `path`'s contents are only directories: each one of these is
-/// some `namespace`. Within each `namespace` directory is also only directories.
-/// Each one of these is a `repository` in the `namespace`.
-///
-/// This maps onto `oxen-server`'s concept of `namespace/repository`. It allows for
-/// a straightforward way to update all repositories being served.
-///
-/// If `is_sever` is `true`, then the progress bar is not printed and only log statements
-/// are used. If it is `false`, then there's a progress bar and only STDOUT messages.
-pub fn run_on_all_repos(
-    is_server: bool,
-    migration: &dyn Migrate,
-    direction: Direction,
-    run_optional: bool,
-    path: &Path,
-) -> Result<MigrationResults, OxenError> {
-    let msg = |msg: &str| {
-        if is_server {
-            log::info!("{msg}");
-        } else {
-            println!("{msg}");
-        }
-    };
-
-    let path = util::fs::canonicalize(path)?;
-    msg(&format!(
-        "🐂 Collecting namespaces to migrate in {}",
-        path.display()
-    ));
-
-    let namespaces = repositories::list_namespaces(&path)?;
-    msg(&format!("🐂 Migrating {} namespaces", namespaces.len()));
-
-    let bar = if is_server {
-        Arc::new(indicatif::ProgressBar::hidden())
-    } else {
-        oxen_progress_bar(namespaces.len() as u64, ProgressBarType::Counter)
-    };
-
-    let mut migration_results = MigrationResults {
-        executed: vec![],
-        errored: vec![],
-    };
-
-    for namespace in namespaces {
-        // is canoncial because we made sure `path` is
-        let namespace_path = path.join(namespace);
-        log::debug!(
-            "This is the namespace path we're walking: {}",
-            namespace_path.display()
-        );
-        for repo in repositories::list_repos_in_namespace(&namespace_path) {
-            log::debug!("Migrating repository: {}", repo.path.display());
-
-            let repo_path = repo.path.clone();
-            match try_apply_migration(migration, direction, run_optional, repo) {
-                Ok(mr) => {
-                    if !mr.did_run() {
-                        msg(&format!("Did not run migration: {}", mr.as_hint(is_server)));
-                        migration_results.executed.push((repo_path, mr));
-                    }
-                }
-                Err(err) => {
-                    let message = format!(
-                        "Could not run migration {direction} {} for repo {}\nError: {}",
-                        migration.name(),
-                        repo_path.display(),
-                        err
-                    );
-                    if is_server {
-                        log::error!("{message}");
-                    } else {
-                        println!("[ERROR] {message}");
-                    }
-                    migration_results.errored.push((repo_path, err));
-                }
-            }
-        }
-        bar.inc(1);
-    }
-
-    Ok(migration_results)
 }
 
 #[derive(Debug, thiserror::Error)]
