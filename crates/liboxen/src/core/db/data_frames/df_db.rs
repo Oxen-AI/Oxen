@@ -2,7 +2,8 @@
 //!
 
 use crate::constants::{
-    DEFAULT_PAGE_SIZE, DUCKDB_DF_TABLE_NAME, INDEX_META_TABLE, OXEN_COLS, OXEN_ID_COL, TABLE_NAME,
+    DEFAULT_PAGE_SIZE, DUCKDB_DF_TABLE_NAME, INDEX_META_TABLE, OXEN_COLS, OXEN_ID_COL,
+    OXEN_ROW_ID_COL, OXEN_ROW_ID_SEQ, TABLE_NAME,
 };
 
 use crate::core::db::data_frames::{DataFrameError, rows};
@@ -345,6 +346,15 @@ pub fn table_is_fully_indexed(
     Ok(OXEN_COLS
         .iter()
         .all(|col| schema.fields.iter().any(|field| field.name == *col)))
+}
+
+/// Whether `table_name` has a column named `column`.
+pub fn table_has_column(
+    conn: &duckdb::Connection,
+    table_name: &str,
+    column: &str,
+) -> Result<bool, DataFrameError> {
+    Ok(get_schema(conn, table_name)?.has_column(column))
 }
 
 /// Create a table from a set of oxen fields with data types.
@@ -918,6 +928,34 @@ pub fn index_file_with_id(
     );
 
     conn.execute(&add_default_query, [])?;
+
+    // Persist the file's row order. DuckDB UPDATEs physically relocate rows,
+    // so an unordered SELECT reshuffles pages after any edit — reads order by
+    // this column (see repositories::workspaces::data_frames::query). Skipped
+    // when the user's data genuinely has a `_oxen_row_id` column, in which
+    // case that column is user data and reads sort by it as-is.
+    if !get_schema(conn, DUCKDB_DF_TABLE_NAME)?.has_column(OXEN_ROW_ID_COL) {
+        // row_number() runs over the freshly created table, whose storage
+        // order is still the file's insertion order.
+        let add_row_id_query = format!(
+            "ALTER TABLE {DUCKDB_DF_TABLE_NAME} ADD COLUMN {OXEN_ROW_ID_COL} BIGINT; \
+             UPDATE {DUCKDB_DF_TABLE_NAME} SET {OXEN_ROW_ID_COL} = ids.rn \
+             FROM (SELECT {OXEN_ID_COL} AS oid, row_number() OVER () AS rn FROM {DUCKDB_DF_TABLE_NAME}) ids \
+             WHERE {DUCKDB_DF_TABLE_NAME}.{OXEN_ID_COL} = ids.oid;"
+        );
+        conn.execute_batch(&add_row_id_query)?;
+
+        let next_row_id: i64 = conn.query_row(
+            &format!("SELECT COALESCE(MAX({OXEN_ROW_ID_COL}), 0) + 1 FROM {DUCKDB_DF_TABLE_NAME}"),
+            [],
+            |row| row.get(0),
+        )?;
+        let seq_query = format!(
+            "CREATE SEQUENCE \"{OXEN_ROW_ID_SEQ}\" START WITH {next_row_id}; \
+             ALTER TABLE {DUCKDB_DF_TABLE_NAME} ALTER COLUMN {OXEN_ROW_ID_COL} SET DEFAULT nextval('{OXEN_ROW_ID_SEQ}');"
+        );
+        conn.execute_batch(&seq_query)?;
+    }
 
     // Written last: its presence certifies the table above was fully built by
     // the current indexer (see table_is_fully_indexed).
@@ -1519,6 +1557,179 @@ mod tests {
                 })
                 .collect();
             assert_eq!(files, vec!["a-updated", "b-updated"]);
+            Ok(())
+        })
+    }
+
+    /// Read the `name` column of an ordered page through the same path the
+    /// workspace query uses: `SELECT * ORDER BY _oxen_row_id` via
+    /// `prepare_sql`'s pagination.
+    fn read_names_ordered(conn: &duckdb::Connection) -> Result<Vec<String>, OxenError> {
+        let sql = format!("SELECT * FROM {TABLE_NAME} ORDER BY {OXEN_ROW_ID_COL}");
+        let mut opts = crate::opts::DFOpts::empty();
+        opts.page = Some(1);
+        opts.page_size = Some(100);
+        let df = select_str(conn, &sql, Some(&opts))?;
+        let names = (0..df.height())
+            .map(|i| {
+                df.column("name")
+                    .expect("name column present")
+                    .get(i)
+                    .expect("row present")
+                    .to_string()
+                    .trim_matches('\"')
+                    .to_string()
+            })
+            .collect();
+        Ok(names)
+    }
+
+    /// Indexing must persist the file's row order in `_oxen_row_id` (1-based,
+    /// file order) so paginated reads have a stable sort key.
+    #[test]
+    fn test_index_file_with_id_assigns_row_order() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|data_dir| {
+            let jsonl_path = data_dir.join("data.jsonl");
+            std::fs::write(
+                &jsonl_path,
+                "{\"name\":\"a\"}\n{\"name\":\"b\"}\n{\"name\":\"c\"}\n",
+            )
+            .map_err(|e| OxenError::basic_str(format!("write fixture: {e}")))?;
+
+            let conn = get_connection(&data_dir.join("data.db"))?;
+            index_file_with_id(&jsonl_path, &conn, "jsonl")?;
+
+            let mut stmt = conn.prepare(&format!(
+                "SELECT name, {OXEN_ROW_ID_COL} FROM {TABLE_NAME} ORDER BY {OXEN_ROW_ID_COL}"
+            ))?;
+            let rows: Vec<(String, i64)> = stmt
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<Result<_, _>>()?;
+            assert_eq!(
+                rows,
+                vec![
+                    ("a".to_string(), 1),
+                    ("b".to_string(), 2),
+                    ("c".to_string(), 3)
+                ],
+                "row ids should be 1-based in file order"
+            );
+            Ok(())
+        })
+    }
+
+    /// The regression this column exists for: a DuckDB UPDATE physically
+    /// relocates the row, so an unordered read reshuffles pages and the edit
+    /// looks lost. Ordering by `_oxen_row_id` must keep the edited row in
+    /// place.
+    #[test]
+    fn test_row_order_survives_modify_row() -> Result<(), OxenError> {
+        use crate::core::db::data_frames::rows;
+        use crate::core::df::tabular;
+
+        test::run_empty_dir_test(|data_dir| {
+            let jsonl_path = data_dir.join("data.jsonl");
+            std::fs::write(
+                &jsonl_path,
+                "{\"name\":\"a\"}\n{\"name\":\"b\"}\n{\"name\":\"c\"}\n",
+            )
+            .map_err(|e| OxenError::basic_str(format!("write fixture: {e}")))?;
+
+            let conn = get_connection(&data_dir.join("data.db"))?;
+            index_file_with_id(&jsonl_path, &conn, "jsonl")?;
+
+            let row_id: String = conn.query_row(
+                &format!("SELECT {OXEN_ID_COL} FROM {TABLE_NAME} WHERE name = 'a'"),
+                [],
+                |row| row.get(0),
+            )?;
+            let mut update_df = tabular::parse_json_to_df(&serde_json::json!({
+                "name": "a-edited"
+            }))?;
+            rows::modify_row(&conn, &mut update_df, &row_id)?;
+
+            assert_eq!(
+                read_names_ordered(&conn)?,
+                vec!["a-edited", "b", "c"],
+                "the edited row must stay first in the ordered read"
+            );
+            Ok(())
+        })
+    }
+
+    /// Appended rows draw their `_oxen_row_id` from the sequence, so they
+    /// land at the end of the ordered read instead of at an arbitrary spot.
+    #[test]
+    fn test_appended_row_lands_last() -> Result<(), OxenError> {
+        use crate::core::db::data_frames::rows;
+        use crate::core::df::tabular;
+
+        test::run_empty_dir_test(|data_dir| {
+            let jsonl_path = data_dir.join("data.jsonl");
+            std::fs::write(&jsonl_path, "{\"name\":\"a\"}\n{\"name\":\"b\"}\n")
+                .map_err(|e| OxenError::basic_str(format!("write fixture: {e}")))?;
+
+            let conn = get_connection(&data_dir.join("data.db"))?;
+            index_file_with_id(&jsonl_path, &conn, "jsonl")?;
+
+            let row_df = tabular::parse_json_to_df(&serde_json::json!({
+                "name": "c"
+            }))?;
+            rows::append_row(&conn, &row_df)?;
+            let row_df_2 = tabular::parse_json_to_df(&serde_json::json!({
+                "name": "d"
+            }))?;
+            rows::append_row(&conn, &row_df_2)?;
+
+            let ids: Vec<i64> = {
+                let mut stmt = conn.prepare(&format!(
+                    "SELECT {OXEN_ROW_ID_COL} FROM {TABLE_NAME} ORDER BY {OXEN_ROW_ID_COL}"
+                ))?;
+                stmt.query_map([], |row| row.get(0))?
+                    .collect::<Result<_, _>>()?
+            };
+            assert_eq!(ids, vec![1, 2, 3, 4], "appended rows get the next ids");
+            assert_eq!(read_names_ordered(&conn)?, vec!["a", "b", "c", "d"]);
+            Ok(())
+        })
+    }
+
+    /// A user data frame that already has a `_oxen_row_id` column must index
+    /// without error and keep the user's values untouched.
+    #[test]
+    fn test_index_respects_user_row_id_column() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|data_dir| {
+            let jsonl_path = data_dir.join("data.jsonl");
+            std::fs::write(
+                &jsonl_path,
+                "{\"name\":\"a\",\"_oxen_row_id\":42}\n{\"name\":\"b\",\"_oxen_row_id\":7}\n",
+            )
+            .map_err(|e| OxenError::basic_str(format!("write fixture: {e}")))?;
+
+            let conn = get_connection(&data_dir.join("data.db"))?;
+            index_file_with_id(&jsonl_path, &conn, "jsonl")?;
+
+            let ids: Vec<i64> = {
+                let mut stmt = conn.prepare(&format!(
+                    "SELECT {OXEN_ROW_ID_COL} FROM {TABLE_NAME} ORDER BY name"
+                ))?;
+                stmt.query_map([], |row| row.get(0))?
+                    .collect::<Result<_, _>>()?
+            };
+            assert_eq!(ids, vec![42, 7], "user values must not be overwritten");
+            Ok(())
+        })
+    }
+
+    /// `table_has_column` gates the default ORDER BY: tables indexed before
+    /// the row-id column existed must keep working unordered.
+    #[test]
+    fn test_table_has_column() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|data_dir| {
+            let conn = get_connection(&data_dir.join("data.db"))?;
+            conn.execute(&format!("CREATE TABLE {TABLE_NAME} (name VARCHAR)"), [])?;
+            assert!(table_has_column(&conn, TABLE_NAME, "name")?);
+            assert!(!table_has_column(&conn, TABLE_NAME, OXEN_ROW_ID_COL)?);
             Ok(())
         })
     }

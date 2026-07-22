@@ -6,7 +6,7 @@ use polars::frame::DataFrame;
 use sql_query_builder::Select;
 
 use crate::constants::{MODS_DIR, OXEN_HIDDEN_DIR};
-use crate::constants::{OXEN_COLS, TABLE_NAME};
+use crate::constants::{OXEN_COLS, OXEN_ROW_ID_COL, TABLE_NAME};
 use crate::core;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::db::data_frames::{DataFrameError, df_db};
@@ -136,7 +136,17 @@ pub fn query(
                 log::debug!("querying sql: {sql:?}");
                 return sql::query_df(conn, sql.clone(), None);
             } else {
-                let select = Select::new().select("*").from(TABLE_NAME);
+                let mut select = Select::new().select("*").from(TABLE_NAME);
+                // Deterministic page order: DuckDB UPDATEs physically relocate
+                // rows, so without an ORDER BY an edited row jumps to another
+                // page and the edit looks lost. Tables indexed before the
+                // row-id column existed keep the old (unordered) behavior
+                // until they are re-indexed.
+                if opts.sort_by.is_none()
+                    && df_db::table_has_column(conn, TABLE_NAME, OXEN_ROW_ID_COL)?
+                {
+                    select = select.order_by(OXEN_ROW_ID_COL);
+                }
                 df_db::select(conn, &select, Some(opts))?
             };
 
