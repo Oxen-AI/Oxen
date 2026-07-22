@@ -493,14 +493,6 @@ pub enum OxenError {
     #[error("Image processing error: {0}")]
     ImageError(#[from] image::ImageError),
 
-    /// Wraps any error that we get from Redis client use.
-    #[error("Redis error: {0}")]
-    RedisError(#[from] redis::RedisError),
-
-    /// Wraps any error that we get from using r2d2 (the connection pool).
-    #[error("Connection pool error: {0}")]
-    R2D2Error(#[from] r2d2::Error),
-
     /// Wraps any error that we get from using jwalk (directory traversal).
     #[error("Directory traversal error: {0}")]
     JwalkError(#[from] jwalk::Error),
@@ -787,8 +779,7 @@ impl OxenError {
             IO(io_err) if io_err.kind() == PermissionDenied => {
                 "Check file permissions and try again."
             }
-            DB(_) | ArrowError(_) | BinCodeError(_) | RedisError(_) | R2D2Error(_)
-            | RmpDecodeError(_) => {
+            DB(_) | ArrowError(_) | BinCodeError(_) | RmpDecodeError(_) => {
                 "This is an internal error. Run with RUST_LOG=debug for more details."
             }
             WorkspaceStagedDbCorrupted { .. } => {

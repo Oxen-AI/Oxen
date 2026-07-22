@@ -83,8 +83,7 @@ jobs:
         if: matrix.platform == 'macos'
         run: |
           brew update
-          brew install redis pkg-config
-          brew services start redis
+          brew install pkg-config
 
       - name: Install nextest runner
         uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
@@ -217,8 +216,7 @@ jobs:
         if: matrix.platform == 'macos'
         run: |
           brew update
-          brew install redis pkg-config
-          brew services start redis
+          brew install pkg-config
 
       - name: Setup test directories (Linux/macOS)
         if: matrix.platform != 'windows'
