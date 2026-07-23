@@ -224,31 +224,9 @@ fn list_conflicts(
         return Ok(vec![]);
     }
 
-    // Check to see if any of the staged entries have been updated on the target branch
-    // If so, mark the commit as behind
-    // Otherwise, we can just commit the changes
-    let Some(branch_commit) =
-        repositories::commits::get_by_id(&workspace.base_repo, &branch.commit_id)?
-    else {
-        return Err(OxenError::RevisionNotFound(
-            branch.commit_id.as_str().into(),
-        ));
-    };
-    let Some(branch_tree) =
-        repositories::tree::get_root_with_children(&workspace.base_repo, &branch_commit)?
-    else {
-        return Err(OxenError::RevisionNotFound(
-            branch.commit_id.as_str().into(),
-        ));
-    };
-    let Some(workspace_tree) =
-        repositories::tree::get_root_with_children(&workspace.base_repo, workspace_commit)?
-    else {
-        return Err(OxenError::RevisionNotFound(
-            workspace.commit.id.as_str().into(),
-        ));
-    };
-
+    // A staged file conflicts when it also changed on the target branch since the workspace's base
+    // commit. Resolve each staged file by a targeted path lookup in both commits rather than
+    // materializing either whole Merkle tree, so peak memory stays flat regardless of repo size.
     let mut conflicts = vec![];
     for (path, entries) in dir_entries {
         for entry in entries {
@@ -260,11 +238,21 @@ fn list_conflicts(
             log::debug!("checking if workspace is behind: {path:?} -> {entry}");
             let file_path = entry.node.maybe_path()?;
             log::debug!("checking if branch tree has file: {file_path:?}");
-            let Some(branch_node) = branch_tree.get_by_path(&file_path)? else {
+            let Some(branch_node) = repositories::tree::get_node_by_path(
+                &workspace.base_repo,
+                &branch_commit,
+                &file_path,
+            )?
+            else {
                 log::debug!("branch node not found: {file_path:?}");
                 continue;
             };
-            let Some(workspace_node) = workspace_tree.get_by_path(&file_path)? else {
+            let Some(workspace_node) = repositories::tree::get_node_by_path(
+                &workspace.base_repo,
+                workspace_commit,
+                &file_path,
+            )?
+            else {
                 log::debug!("workspace node not found: {file_path:?}");
                 continue;
             };
