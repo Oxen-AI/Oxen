@@ -3,9 +3,7 @@ use std::str::FromStr;
 
 use async_trait::async_trait;
 use clap::{Arg, Command};
-use liboxen::command::migrate::{
-    ALL_MIGRATIONS, MigrationResults, all_migrations, run_on_all_repos, try_apply_migration,
-};
+use liboxen::command::migrate::{ALL_MIGRATIONS, all_migrations, try_apply_migration};
 use liboxen::{command::migrate::Direction, error::OxenError, model::LocalRepository};
 
 use crate::cmd::RunCmd;
@@ -19,22 +17,9 @@ pub fn migrate_args(name: &'static str, desc: &'static str) -> Command {
             Arg::new("PATH")
                 .help(
                     "Directory in which to apply the migration. Must be the root \
-                    of the repository, unless --all is specified.",
+                    of the repository.",
                 )
                 .required(true),
-        )
-        .arg(
-            Arg::new("all")
-                .long("all")
-                .short('a')
-                .help(
-                    "Run the migration for all oxen repositories in the directory. \
-                    Expects the directory to contain \"namespace/repository\" format. \
-                    The direct directories inside must be namespaces. Each directory \
-                    inside the namespace must be a repository. (Skips directories \
-                    that don't have a .oxen/ directory in them).",
-                )
-                .action(clap::ArgAction::SetTrue),
         )
         .arg(
             Arg::new("run-optional")
@@ -68,7 +53,7 @@ impl RunCmd for MigrateCmd {
     fn args(&self) -> Command {
         // Setups the CLI args for the command
         Command::new(NAME)
-            .about("Run a named migration on a server repository or set of repositories")
+            .about("Run a named migration on a repository")
             .subcommand_required(true)
             .subcommand(subcommands("up", "Apply a named migration forward."))
             .subcommand(subcommands("down", "Apply a named migration backward."))
@@ -88,38 +73,15 @@ impl RunCmd for MigrateCmd {
             let path_str = sub_matches.get_one::<String>("PATH").expect("required");
             let path = Path::new(path_str);
 
-            let all = sub_matches.get_flag("all");
             let run_optional = sub_matches.get_flag("run-optional");
 
-            if all {
-                let MigrationResults { executed, errored } =
-                    run_on_all_repos(false, migration, direction, run_optional, path)?;
-
-                if errored.is_empty() {
-                    println!(
-                        "\u{2705} Migration completed: successfully migrated {} repositories",
-                        executed.len(),
-                    );
-                } else {
-                    println!(
-                        "\u{274C} [ERROR] Migration completed with {} success(es) and {} failure(s):",
-                        executed.len(),
-                        errored.len(),
-                    );
-                    for (repo_path, error) in errored {
-                        println!("\t[FAIL] \"{}\" due to: {error}", repo_path.display());
-                    }
-                    Err(OxenError::MigrationFailed)?;
-                }
-            } else {
-                let mr = try_apply_migration(
-                    migration,
-                    direction,
-                    run_optional,
-                    LocalRepository::from_dir(path)?,
-                )?;
-                println!("{}", mr.as_hint(false));
-            }
+            let mr = try_apply_migration(
+                migration,
+                direction,
+                run_optional,
+                LocalRepository::from_dir(path)?,
+            )?;
+            println!("{}", mr.as_hint(false));
         }
 
         Ok(())
