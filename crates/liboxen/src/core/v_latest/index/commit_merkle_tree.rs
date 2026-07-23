@@ -1260,7 +1260,6 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::core::v_latest::index::CommitMerkleTree;
-    use crate::core::versions::MinOxenVersion;
     use crate::error::OxenError;
     use crate::model::MerkleTreeNodeType;
     use crate::repositories;
@@ -1276,7 +1275,7 @@ mod tests {
     #[tokio::test]
     async fn test_dir_hashes_heal_windows_backslash_keys() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|dir| async move {
-            let repo = repositories::init::init_with_version(dir, MinOxenVersion::LATEST)?;
+            let repo = repositories::init::init_with_version(dir)?;
 
             let child_dir = repo.path.join("assets").join("characters");
             crate::util::fs::create_dir_all(&child_dir)?;
@@ -1341,7 +1340,7 @@ mod tests {
     async fn test_load_dir_nodes() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|dir| async move {
             // Instantiate the correct version of the repo
-            let repo = repositories::init::init_with_version(dir, MinOxenVersion::LATEST)?;
+            let repo = repositories::init::init_with_version(dir)?;
 
             // Write data to the repo
             add_n_files_m_dirs(&repo, 10, 3).await?;

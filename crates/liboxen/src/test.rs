@@ -10,7 +10,6 @@ use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::core;
 use crate::core::db::merkle_node::MerkleNodeBackend;
 use crate::core::df::duckdb_setup;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::Schema;
 use crate::model::User;
@@ -312,17 +311,14 @@ where
     Ok(())
 }
 
-pub fn run_empty_local_repo_test_w_version<T>(
-    version: MinOxenVersion,
-    test: T,
-) -> Result<(), OxenError>
+pub fn run_empty_local_repo_test_w_version<T>(test: T) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository) -> Result<(), OxenError> + std::panic::UnwindSafe,
 {
     init_test_env();
     log::info!("<<<<< run_empty_local_repo_test start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = repositories::init::init_with_version(&repo_dir, version)?;
+    let repo = repositories::init::init_with_version(&repo_dir)?;
 
     log::info!(">>>>> run_empty_local_repo_test running test");
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match test(repo) {
@@ -447,7 +443,7 @@ pub fn init_fs_merkle_backend(path: &Path) -> Result<LocalRepository, OxenError>
     }
     util::fs::create_dir_all(&hidden_dir)?;
     let config = RepositoryConfig {
-        min_version: Some(constants::MIN_OXEN_VERSION.to_string()),
+        min_version: Some("0.36.0".to_string()),
         merkle_node_backend: Some(MerkleNodeBackend::Filesystem),
         ..Default::default()
     };
@@ -1126,7 +1122,6 @@ where
 }
 
 pub async fn run_training_data_repo_test_no_commits_async_with_version<T, Fut>(
-    version: MinOxenVersion,
     test: T,
 ) -> Result<(), OxenError>
 where
@@ -1136,7 +1131,7 @@ where
     init_test_env();
     log::info!("<<<<< run_training_data_repo_test_no_commits_async start");
     let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = repositories::init::init_with_version(&repo_dir, version)?;
+    let repo = repositories::init::init_with_version(&repo_dir)?;
 
     // Write all the files
     populate_dir_with_training_data(&repo_dir)?;

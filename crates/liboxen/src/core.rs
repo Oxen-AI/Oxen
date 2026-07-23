@@ -11,5 +11,4 @@ pub mod refs;
 pub mod repo_locks;
 pub mod staged;
 pub mod v_latest;
-pub mod versions;
 pub mod workspaces;

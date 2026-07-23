@@ -55,7 +55,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
         .map(|repo| RepositoryListView {
             name: repo.dirname(),
             namespace: namespace.to_string(),
-            min_version: Some(repo.min_version().to_string()),
+            min_version: Some("0.36.0".to_string()),
         })
         .collect();
     let view = ListRepositoryResponse {
@@ -137,7 +137,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
             repository: RepositoryView {
                 namespace,
                 name,
-                min_version: Some(repository.min_version().to_string()),
+                min_version: Some("0.36.0".to_string()),
                 is_empty: branch_count == 0,
                 storage_kind: repository.storage_config().kind,
             },
@@ -456,7 +456,7 @@ async fn create_repo_response(
                     namespace,
                     name,
                     latest_commit,
-                    min_version: Some(repo.min_version().to_string()),
+                    min_version: Some("0.36.0".to_string()),
                     storage_kind: repo.storage_config().kind,
                 },
             }))
@@ -576,7 +576,7 @@ pub async fn transfer_namespace(
         repository: RepositoryView {
             namespace: to_namespace,
             name,
-            min_version: Some(repo.min_version().to_string()),
+            min_version: Some("0.36.0".to_string()),
             is_empty: repositories::is_empty(&repo).await?,
             storage_kind: repo.storage_config().kind,
         },

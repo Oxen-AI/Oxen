@@ -1,5 +1,4 @@
 use crate::api;
-use crate::core::versions::MinOxenVersion;
 use crate::storage::StorageKind;
 use crate::view::RepositoryView;
 use crate::view::repository::RepositoryCreationView;
@@ -42,12 +41,6 @@ impl RemoteRepository {
             is_empty: true,
             storage_kind: repository.storage_kind,
         }
-    }
-
-    /// The repo-format version the remote reports. Errors with `UnsupportedRepoVersion` when the
-    /// remote's version predates what this build can read.
-    pub fn min_version(&self) -> Result<MinOxenVersion, OxenError> {
-        MinOxenVersion::or_earliest(self.min_version.clone())
     }
 
     /// User friendly url for the remote repository
