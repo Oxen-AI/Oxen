@@ -4,6 +4,7 @@ use crate::params::df_opts_query::{self, DFOptsQuery};
 use crate::params::{app_data, parse_resource, path_param};
 
 use liboxen::constants;
+use liboxen::core::repo_locks;
 use liboxen::error::PathBufError;
 use liboxen::model::{DataFrameSize, NewCommitBody};
 use liboxen::opts::df_opts::DFOptsView;
@@ -144,6 +145,7 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
     let resource = parse_resource(&req, &repo)?;
     let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
 
@@ -212,6 +214,7 @@ pub async fn from_directory(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
     let resource = parse_resource(&req, &repo)?;
     let commit = resource.clone().commit.ok_or(OxenHttpError::NotFound)?;
     let branch = resource.clone().branch.ok_or(OxenHttpError::NotFound)?;

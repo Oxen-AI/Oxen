@@ -5,6 +5,7 @@ use crate::helpers::get_repo;
 use crate::params::{app_data, path_param};
 
 use actix_web::{HttpRequest, HttpResponse};
+use liboxen::core::repo_locks;
 use liboxen::error::StringError;
 use liboxen::model::Schema;
 use liboxen::model::data_frame::DataFrameSchemaSize;
@@ -24,6 +25,7 @@ pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(app_data, namespace.clone(), repo_name.clone())?;
+    let _write = repo_locks::acquire_write(&repo)?;
     let file_path = PathBuf::from(path_param(&req, "path")?);
 
     let mut body_json: Value = serde_json::from_str(&body).map_err(|_err| {
@@ -95,6 +97,7 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(app_data, namespace.clone(), repo_name.clone())?;
+    let _write = repo_locks::acquire_write(&repo)?;
     let file_path = PathBuf::from(path_param(&req, "path")?);
     let column_name = path_param(&req, "column_name")
         .map_err(|_| OxenHttpError::BadRequest("Column name missing in path parameters".into()))?;
@@ -162,6 +165,7 @@ pub async fn update(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(app_data, namespace.clone(), repo_name.clone())?;
+    let _write = repo_locks::acquire_write(&repo)?;
     let file_path = PathBuf::from(path_param(&req, "path")?);
     let column_name = path_param(&req, "column_name")
         .map_err(|_| OxenHttpError::BadRequest("Column name missing in path parameters".into()))?;
@@ -274,6 +278,7 @@ pub async fn add_column_metadata(
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let path = path_param(&req, "path")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
