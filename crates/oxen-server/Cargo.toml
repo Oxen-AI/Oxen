@@ -54,6 +54,7 @@ sanitize-filename = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tar = { workspace = true }
+tempfile = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
@@ -70,7 +71,6 @@ uuid = { workspace = true }
 actix-multipart-test = { workspace = true }
 liboxen = { workspace = true, features = ["test-utils"] }
 mockito = { workspace = true }
-tempfile = { workspace = true }
 
 [lints]
 workspace = true

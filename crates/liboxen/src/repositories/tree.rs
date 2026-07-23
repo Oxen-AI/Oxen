@@ -4,7 +4,7 @@ use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use std::collections::{HashMap, HashSet};
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::str;
 use tar::{Archive, EntryType, Header};
@@ -860,15 +860,33 @@ pub fn compress_commits(
     compress_nodes(repository, &hashes)
 }
 
-pub fn unpack_nodes(
-    repository: &LocalRepository,
-    buffer: &[u8],
-) -> Result<HashSet<MerkleHash>, OxenError> {
-    // The server-side upload consumer leaves nodes already present in the store untouched.
-    let mut reader: &[u8] = buffer;
+/// Whether an unpack collects the set of newly-written node hashes to return. The accumulation is
+/// one hash per node across the whole (potentially millions-of-nodes) unpack, so callers that
+/// discard the result pass [`NodeReport::Skip`] to avoid it; callers that assert on the reported
+/// set pass [`NodeReport::Collect`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NodeReport {
+    Collect,
+    Skip,
+}
+
+/// Unpack a merkle-node tar-gz stream into the repo's node store, reading it incrementally so an
+/// arbitrarily large uploaded archive is never held in memory all at once.
+///
+/// Nodes already present in the store are left untouched. This is the server upload consumer,
+/// whose caller discards the written-hash set, so it collects nothing ([`NodeReport::Skip`]).
+pub fn unpack_nodes(repository: &LocalRepository, reader: impl BufRead) -> Result<(), OxenError> {
     let oxen_hidden = repository.path.join(OXEN_HIDDEN_DIR);
     let store = repository.merkle_node_store();
-    extract_tar_under(&mut reader, &oxen_hidden, store.as_ref(), false).map_err(OxenError::from)
+    extract_tar_under(
+        reader,
+        &oxen_hidden,
+        store.as_ref(),
+        false,
+        NodeReport::Skip,
+    )
+    .map_err(OxenError::from)?;
+    Ok(())
 }
 
 /// Pack the tar-gz wire format for a set of merkle hashes into `out`, using the
@@ -1030,7 +1048,8 @@ fn write_all_tar<W: Write>(
 /// `oxen_hidden` (the repo's `.oxen/` dir) is used only to classify entry paths via
 /// [`extract_hash_from_entry_path`]; nothing is written to it directly.
 ///
-/// Returns the set of hashes that were written.
+/// Returns the set of hashes that were written, or an empty set when `report` is
+/// [`NodeReport::Skip`] (the accumulation is elided for callers that discard the result).
 ///
 /// Behaviour controls (to provide a backwards-compatible format that older clients & servers speak):
 /// - `overwrite_existing == true` rewrites nodes already present in the store; matches the
@@ -1048,7 +1067,9 @@ fn extract_tar_under<R: Read>(
     oxen_hidden: &Path,
     store: &dyn MerkleNodeStore,
     overwrite_existing: bool,
+    report: NodeReport,
 ) -> Result<HashSet<MerkleHash>, MerkleDbError> {
+    let collect = report == NodeReport::Collect;
     let mut installed: HashSet<MerkleHash> = HashSet::new();
     // A node's two blobs arrive as separate tar entries. Every producer writes them adjacent
     // (possibly separated by directory entries, and in either order — legacy packers go through
@@ -1183,7 +1204,10 @@ fn extract_tar_under<R: Read>(
         batch_bytes += node.len() + children.len();
         batch.push((hash, node, children));
         if batch_bytes >= FLUSH_THRESHOLD_BYTES || batch.len() >= FLUSH_THRESHOLD_NODES {
-            installed.extend(store.write_nodes(std::mem::take(&mut batch), overwrite_existing)?);
+            let written = store.write_nodes(std::mem::take(&mut batch), overwrite_existing)?;
+            if collect {
+                installed.extend(written);
+            }
             batch_bytes = 0;
         }
     }
@@ -1191,7 +1215,10 @@ fn extract_tar_under<R: Read>(
     // Flush whatever is left in the final batch. A truncated archive still keeps every complete
     // node it contained, so a later retry starts from there, and the partial node at the very end
     // is rejected below.
-    installed.extend(store.write_nodes(batch, overwrite_existing)?);
+    let written = store.write_nodes(batch, overwrite_existing)?;
+    if collect {
+        installed.extend(written);
+    }
 
     // EOF validation: a well-formed archive pairs every `node` blob with its `children` blob and
     // clears `pending` as each pair completes. A leftover entry means the archive was truncated
@@ -1349,12 +1376,19 @@ pub(crate) fn unpack(
     repo: &LocalRepository,
     reader: &mut dyn Read,
     opts: UnpackOptions,
+    report: NodeReport,
 ) -> Result<HashSet<MerkleHash>, OxenError> {
     let overwrite_existing = matches!(opts, UnpackOptions::Overwrite);
     let oxen_hidden = repo.path.join(OXEN_HIDDEN_DIR);
     let store = repo.merkle_node_store();
-    extract_tar_under(reader, &oxen_hidden, store.as_ref(), overwrite_existing)
-        .map_err(OxenError::from)
+    extract_tar_under(
+        reader,
+        &oxen_hidden,
+        store.as_ref(),
+        overwrite_existing,
+        report,
+    )
+    .map_err(OxenError::from)
 }
 
 /// Write a node to disk
@@ -2538,8 +2572,13 @@ mod tests {
 
             let tmp = tempfile::TempDir::new()?;
             let clone = repositories::init(tmp.path())?;
-            let installed =
-                unpack(&clone, &mut &packed[..], UnpackOptions::Overwrite).expect("unpack failed");
+            let installed = unpack(
+                &clone,
+                &mut &packed[..],
+                UnpackOptions::Overwrite,
+                NodeReport::Collect,
+            )
+            .expect("unpack failed");
             assert!(!installed.is_empty(), "unpack installed no nodes");
 
             for hash in &installed {
@@ -2724,14 +2763,19 @@ mod tests {
             // must read from disk to see the result.
             let tmp_old = tempfile::TempDir::new()?;
             let repo_old = test::init_fs_merkle_backend(tmp_old.path())?;
-            let old_hashes = unpack_nodes(&repo_old, &bytes).expect("old unpack_nodes failed");
+            let old_hashes = unpack_nodes(&repo_old, &bytes[..]).expect("old unpack_nodes failed");
 
             let tmp_new = tempfile::TempDir::new()?;
             let repo_new = test::init_fs_merkle_backend(tmp_new.path())?;
             // Old `unpack_nodes` skipped existing files; mirror that with
             // `UnpackOptions::SkipExisting` so the parity check is semantically faithful.
-            let new_hashes = unpack(&repo_new, &mut &bytes[..], UnpackOptions::SkipExisting)
-                .expect("new unpack failed");
+            let new_hashes = unpack(
+                &repo_new,
+                &mut &bytes[..],
+                UnpackOptions::SkipExisting,
+                NodeReport::Collect,
+            )
+            .expect("new unpack failed");
 
             assert_eq!(
                 old_hashes, new_hashes,
@@ -2812,8 +2856,13 @@ mod tests {
             // New client install path: `unpack`, with download-path overwrite semantics.
             let tmp_new = tempfile::TempDir::new()?;
             let repo_new = test::init_fs_merkle_backend(tmp_new.path())?;
-            let installed = unpack(&repo_new, &mut &packed[..], UnpackOptions::Overwrite)
-                .expect("new unpack failed");
+            let installed = unpack(
+                &repo_new,
+                &mut &packed[..],
+                UnpackOptions::Overwrite,
+                NodeReport::Collect,
+            )
+            .expect("new unpack failed");
 
             // 1. The on-disk node trees must be identical.
             let old_tree = collect_dir_contents(
@@ -2881,8 +2930,13 @@ mod tests {
 
         let tmp = tempfile::TempDir::new()?;
         let repo = repositories::init(tmp.path())?;
-        let err = unpack(&repo, &mut &buf[..], UnpackOptions::Overwrite)
-            .expect_err("path traversal must be rejected");
+        let err = unpack(
+            &repo,
+            &mut &buf[..],
+            UnpackOptions::Overwrite,
+            NodeReport::Collect,
+        )
+        .expect_err("path traversal must be rejected");
         let msg = format!("{err}");
         assert!(
             msg.contains("Path traversal"),
@@ -2918,8 +2972,13 @@ mod tests {
 
         let tmp = tempfile::TempDir::new()?;
         let repo = repositories::init(tmp.path())?;
-        let err = unpack(&repo, &mut &buf[..], UnpackOptions::Overwrite)
-            .expect_err("unsupported entry type must be rejected");
+        let err = unpack(
+            &repo,
+            &mut &buf[..],
+            UnpackOptions::Overwrite,
+            NodeReport::Collect,
+        )
+        .expect_err("unsupported entry type must be rejected");
         let msg = format!("{err}");
         assert!(
             msg.contains("Unsupported tar entry"),
@@ -2971,8 +3030,13 @@ mod tests {
             // Unpack into a fresh repo and confirm the short hash made it out.
             let tmp = tempfile::TempDir::new()?;
             let target = repositories::init(tmp.path())?;
-            let installed =
-                unpack(&target, &mut &buf[..], UnpackOptions::Overwrite).expect("unpack failed");
+            let installed = unpack(
+                &target,
+                &mut &buf[..],
+                UnpackOptions::Overwrite,
+                NodeReport::Collect,
+            )
+            .expect("unpack failed");
 
             assert!(
                 installed.contains(&stripped_hash),
@@ -3009,8 +3073,13 @@ mod tests {
 
         let tmp = tempfile::TempDir::new()?;
         let repo = repositories::init(tmp.path())?;
-        let err = unpack(&repo, &mut &buf[..], UnpackOptions::Overwrite)
-            .expect_err("non-hex node id must be rejected");
+        let err = unpack(
+            &repo,
+            &mut &buf[..],
+            UnpackOptions::Overwrite,
+            NodeReport::Collect,
+        )
+        .expect_err("non-hex node id must be rejected");
         let msg = format!("{err}");
         assert!(
             msg.contains("Invalid merkle node id") && msg.contains("abczzzznothex"),
@@ -3058,8 +3127,13 @@ mod tests {
 
         let tmp = tempfile::TempDir::new()?;
         let repo = repositories::init(tmp.path())?;
-        let err = unpack(&repo, &mut &buf[..], UnpackOptions::Overwrite)
-            .expect_err("over-deep entry must be rejected");
+        let err = unpack(
+            &repo,
+            &mut &buf[..],
+            UnpackOptions::Overwrite,
+            NodeReport::Collect,
+        )
+        .expect_err("over-deep entry must be rejected");
         let msg = format!("{err}");
         assert!(
             msg.contains("Invalid merkle tar archive structure"),
@@ -3101,8 +3175,13 @@ mod tests {
 
         let tmp = tempfile::TempDir::new()?;
         let repo = repositories::init(tmp.path())?;
-        let err = unpack(&repo, &mut &buf[..], UnpackOptions::Overwrite)
-            .expect_err("unknown leaf filename must be rejected");
+        let err = unpack(
+            &repo,
+            &mut &buf[..],
+            UnpackOptions::Overwrite,
+            NodeReport::Collect,
+        )
+        .expect_err("unknown leaf filename must be rejected");
         let msg = format!("{err}");
         assert!(
             msg.contains("Invalid merkle tar archive structure") && msg.contains("unexpected.txt"),
@@ -3255,8 +3334,13 @@ mod tests {
 
             let tmp = tempfile::TempDir::new()?;
             let target = repositories::init(tmp.path())?;
-            let installed = unpack(&target, &mut &buf[..], UnpackOptions::Overwrite)
-                .expect("unpack of empty tarball must not error");
+            let installed = unpack(
+                &target,
+                &mut &buf[..],
+                UnpackOptions::Overwrite,
+                NodeReport::Collect,
+            )
+            .expect("unpack of empty tarball must not error");
             assert!(
                 installed.is_empty(),
                 "expected empty hash set from unpacking an empty tarball, got {} entries",
@@ -3371,8 +3455,13 @@ mod tests {
             clone.set_vfs(Some(true));
             assert!(clone.is_vfs(), "vfs flag should be on for this test");
 
-            let installed = unpack(&clone, &mut &packed[..], UnpackOptions::Overwrite)
-                .expect("unpack via vfs branch failed");
+            let installed = unpack(
+                &clone,
+                &mut &packed[..],
+                UnpackOptions::Overwrite,
+                NodeReport::Collect,
+            )
+            .expect("unpack via vfs branch failed");
             assert!(
                 !installed.is_empty(),
                 "vfs unpack reported no installed hashes"

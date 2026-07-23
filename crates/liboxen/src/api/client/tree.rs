@@ -15,7 +15,7 @@ use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
 use crate::opts::download_tree_opts::DownloadTreeOpts;
 use crate::opts::fetch_opts::FetchOpts;
-use crate::repositories::tree::{pack_nodes, pack_nodes_byte_estimate, unpack};
+use crate::repositories::tree::{NodeReport, pack_nodes, pack_nodes_byte_estimate, unpack};
 use crate::view::tree::MerkleHashResponse;
 use crate::view::tree::merkle_hashes::MerkleHashes;
 use crate::view::{MerkleHashesResponse, StatusMessage};
@@ -386,7 +386,12 @@ async fn node_download_request(
     let repo = local_repo.clone();
     tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
         // Download path: overwrite existing files on disk
-        unpack(&repo, &mut sync_reader, UnpackOptions::Overwrite)?;
+        unpack(
+            &repo,
+            &mut sync_reader,
+            UnpackOptions::Overwrite,
+            NodeReport::Skip,
+        )?;
         Ok(())
     })
     .await
