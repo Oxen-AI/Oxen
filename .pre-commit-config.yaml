@@ -43,14 +43,14 @@ repos:
 
       - id: ruff-check-python-scripts
         name: ruff check (python scripts)
-        entry: bash -c 'uvx ruff check bin/'
+        entry: bash -c '. ./tool-versions.env && uvx ruff@"$RUFF_VERSION" check bin/'
         language: system
         files: ^bin/.*\.py$
         pass_filenames: false
 
       - id: ruff-format-python-scripts
         name: ruff format (python scripts)
-        entry: bash -c 'uvx ruff format bin/'
+        entry: bash -c '. ./tool-versions.env && uvx ruff@"$RUFF_VERSION" format bin/'
         language: system
         files: ^bin/.*\.py$
         pass_filenames: false
