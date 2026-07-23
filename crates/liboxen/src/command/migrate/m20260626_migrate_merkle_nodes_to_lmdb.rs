@@ -437,9 +437,10 @@ mod tests {
             repositories::add(&repo, &file).await?;
             repositories::commit(&repo, "first")?;
 
-            // Simulate a partial env left behind by a previous aborted run.
+            // Simulate a partial env left behind by a previous aborted run. The env opens lazily,
+            // so touch the store (a read) to actually create the env on disk.
             let temp_dir = LmdbMerkleNodeStore::env_dir(&repo.path).with_extension("building");
-            LmdbMerkleNodeStore::new_at(&temp_dir)?;
+            LmdbMerkleNodeStore::new_at(&temp_dir)?.list_hashes()?;
 
             let result = MerkleNodesToLmdbMigration.up(repo.clone());
             assert!(
