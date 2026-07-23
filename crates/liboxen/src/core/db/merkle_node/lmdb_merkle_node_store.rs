@@ -9,15 +9,18 @@
 //! blob (the same atomicity the FS backend gets from writing both files before anything reads).
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use bytes::Bytes;
 use bytesize::ByteSize;
+use heed::{RoTxn, RwTxn, WithoutTls};
 
 use crate::constants;
 use crate::error::OxenError;
-use crate::lmdb::store::LmdbStore;
-use crate::lmdb::{LmdbDb, LmdbEnv, LmdbEnvConfig, open_db, open_shared_env};
+use crate::lmdb::lmdb_env::copy_lmdb_env_to_dir;
+use crate::lmdb::{
+    LmdbDb, LmdbEnv, LmdbEnvConfig, open_db, open_shared_env, with_read_txn, with_write_txn,
+};
 use crate::model::MerkleHash;
 
 use super::merkle_node_db::MerkleDbError;
@@ -29,7 +32,7 @@ const NODES_DB_NAME: &str = "nodes";
 const MAX_DBS: u32 = 1;
 /// Sparse upper bound on the env's mapped size — LMDB reserves this much address space but only
 /// occupies what is written, so it is sized generously to avoid `MDB_MAP_FULL` on large repos.
-const MERKLE_NODE_MAP_SIZE: ByteSize = ByteSize::mib(512);
+const MERKLE_NODE_MAP_SIZE: ByteSize = ByteSize::gib(16);
 /// LMDB's data file name within the env directory (a stable LMDB convention); used only to detect
 /// an existing LMDB store without opening (and thereby creating) the env.
 const LMDB_DATA_FILE: &str = "data.mdb";
@@ -41,10 +44,18 @@ const CHILDREN_TAG: u8 = 1;
 /// 16-byte little-endian hash followed by the 1-byte tag.
 const KEY_LEN: usize = 17;
 
-/// Stores each node's two blobs as two tagged keys in a single LMDB env.
-pub(crate) struct LmdbMerkleNodeStore {
+/// The opened env and its primary database, created together on first access.
+struct Handles {
     env: Arc<LmdbEnv>,
     db: LmdbDb,
+}
+
+/// Stores each node's two blobs as two tagged keys in a single LMDB env. The env is opened
+/// (creating it if absent) on the first read or write, so a store that is never touched opens no
+/// env — as every workspace's does, since a workspace never reads or writes its own merkle nodes.
+pub(crate) struct LmdbMerkleNodeStore {
+    env_dir: PathBuf,
+    handles: OnceLock<Handles>,
 }
 
 // Manual `Debug` (the `MerkleNodeStore` trait requires it) — the LMDB env/db handles aren't
@@ -57,18 +68,57 @@ impl std::fmt::Debug for LmdbMerkleNodeStore {
 }
 
 impl LmdbMerkleNodeStore {
-    /// Open (creating if absent) the LMDB merkle node env for the repo rooted at `repo_path`.
+    /// Prepare the LMDB merkle node store for the repo rooted at `repo_path`. The env is opened
+    /// (creating it if absent) on the first read or write, not here.
     pub(crate) fn new(repo_path: &Path) -> Result<Self, OxenError> {
         Self::new_at(&Self::env_dir(repo_path))
     }
 
-    /// Open (creating if absent) an LMDB merkle node env at an explicit directory. Used by the
-    /// FS→LMDB migration to build the env in a temp dir before atomically publishing it.
+    /// Prepare an LMDB merkle node store at an explicit env directory. Used by the FS→LMDB
+    /// migration to build the env in a temp dir before atomically publishing it.
     pub(crate) fn new_at(env_dir: &Path) -> Result<Self, OxenError> {
+        Ok(Self {
+            env_dir: env_dir.to_path_buf(),
+            handles: OnceLock::new(),
+        })
+    }
+
+    /// The env and database, opened (creating the env if absent) on first call and cached after.
+    fn handles(&self) -> Result<&Handles, MerkleDbError> {
+        if let Some(handles) = self.handles.get() {
+            return Ok(handles);
+        }
         let config = LmdbEnvConfig::new(MAX_DBS, MERKLE_NODE_MAP_SIZE);
-        let env = open_shared_env(env_dir, &config)?;
+        let env = open_shared_env(&self.env_dir, &config)?;
         let db = open_db(&env, NODES_DB_NAME)?;
-        Ok(Self { env, db })
+        // A racing caller may have initialized first; `get_or_init` keeps whichever handles are
+        // stored and drops ours (both reference the same shared env).
+        Ok(self.handles.get_or_init(|| Handles { env, db }))
+    }
+
+    /// Run `f` in a read transaction against the (lazily opened) env with the database bound.
+    fn read<R>(
+        &self,
+        f: impl FnOnce(&LmdbDb, &RoTxn<'_, WithoutTls>) -> Result<R, MerkleDbError>,
+    ) -> Result<R, MerkleDbError> {
+        let handles = self.handles()?;
+        with_read_txn(&handles.env, |txn| f(&handles.db, txn))
+    }
+
+    /// Run `f` in a write transaction against the (lazily opened) env with the database bound,
+    /// committing iff `f` returns `Ok`.
+    fn write<R>(
+        &self,
+        f: impl FnOnce(&LmdbDb, &mut RwTxn<'_>) -> Result<R, MerkleDbError>,
+    ) -> Result<R, MerkleDbError> {
+        let handles = self.handles()?;
+        with_write_txn(&handles.env, |txn| f(&handles.db, txn))
+    }
+
+    /// Snapshot the (lazily opened) env into `dst_dir`, returning the copied data file's path.
+    fn snapshot_to(&self, dst_dir: &Path) -> Result<PathBuf, MerkleDbError> {
+        let handles = self.handles()?;
+        Ok(copy_lmdb_env_to_dir(&handles.env, dst_dir)?)
     }
 
     /// Whether an LMDB merkle node env already exists on disk for `repo_path`. Checks the data file
@@ -91,16 +141,6 @@ impl LmdbMerkleNodeStore {
         key[..16].copy_from_slice(&hash.to_le_bytes());
         key[16] = tag;
         key
-    }
-}
-
-impl LmdbStore for LmdbMerkleNodeStore {
-    fn lmdb_env(&self) -> &LmdbEnv {
-        &self.env
-    }
-
-    fn lmdb_db(&self) -> &LmdbDb {
-        &self.db
     }
 }
 
@@ -229,6 +269,28 @@ mod tests {
         let dir = tempfile::tempdir().expect("create temp dir");
         let store = LmdbMerkleNodeStore::new(dir.path()).expect("open lmdb merkle node store");
         (dir, store)
+    }
+
+    /// The env is opened only on first access: constructing a store that is never read or written
+    /// creates no env on disk. This is what keeps an untouched workspace store — which never reads
+    /// or writes its own merkle nodes — from opening an LMDB env at all.
+    #[test]
+    fn env_opens_lazily_on_first_access() -> Result<(), OxenError> {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let store = LmdbMerkleNodeStore::new(dir.path())?;
+
+        assert!(
+            !LmdbMerkleNodeStore::exists_on_disk(dir.path()),
+            "constructing a store must not open (create) an env"
+        );
+
+        // Any access opens (creates) the env; a read is enough.
+        store.list_hashes()?;
+        assert!(
+            LmdbMerkleNodeStore::exists_on_disk(dir.path()),
+            "the first access must open the env"
+        );
+        Ok(())
     }
 
     /// The LMDB backend must satisfy the same contract as the file backend: report absence,

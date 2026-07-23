@@ -5,10 +5,8 @@
 
 use std::path::Path;
 
-use crate::constants::MIN_OXEN_VERSION;
 use crate::core;
 use crate::core::db::merkle_node::MerkleNodeBackend;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::storage::StorageConfig;
@@ -23,38 +21,28 @@ use crate::storage::StorageConfig;
 /// assert!(base_dir.join(".oxen").exists());
 /// ```
 pub fn init(path: impl AsRef<Path>) -> Result<LocalRepository, OxenError> {
-    init_with_version(path, MIN_OXEN_VERSION)
+    init_with_version(path)
 }
 
-pub fn init_with_version(
-    path: impl AsRef<Path>,
-    version: MinOxenVersion,
-) -> Result<LocalRepository, OxenError> {
+pub fn init_with_version(path: impl AsRef<Path>) -> Result<LocalRepository, OxenError> {
     let path = path.as_ref();
-    core::v_latest::init_with_version_default(path, version)
+    core::v_latest::init_with_version_default(path)
 }
 
 pub async fn init_with_storage_config(
     path: impl AsRef<Path>,
     storage_config: Option<StorageConfig>,
 ) -> Result<LocalRepository, OxenError> {
-    init_with_version_and_storage_config(path, MIN_OXEN_VERSION, storage_config, None).await
+    init_with_version_and_storage_config(path, storage_config, None).await
 }
 
 pub async fn init_with_version_and_storage_config(
     path: impl AsRef<Path>,
-    version: MinOxenVersion,
     storage_config: Option<StorageConfig>,
     merkle_backend: Option<MerkleNodeBackend>,
 ) -> Result<LocalRepository, OxenError> {
     let path = path.as_ref();
-    core::v_latest::init_with_version_and_storage_config(
-        path,
-        version,
-        storage_config,
-        merkle_backend,
-    )
-    .await
+    core::v_latest::init_with_version_and_storage_config(path, storage_config, merkle_backend).await
 }
 
 #[cfg(test)]

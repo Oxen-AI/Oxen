@@ -2,7 +2,6 @@
 //!
 
 use crate::core;
-use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::opts::{PaginateOpts, SortOpts};
@@ -39,9 +38,7 @@ pub fn get_file(
     commit: &Commit,
     path: impl AsRef<Path>,
 ) -> Result<Option<FileNode>, OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::LATEST => core::v_latest::entries::get_file(repo, commit, path),
-    }
+    core::v_latest::entries::get_file(repo, commit, path)
 }
 
 /// List all the entries within a commit
@@ -157,9 +154,7 @@ pub async fn list_directory_w_workspace_depth_async(
 }
 
 pub fn update_metadata(repo: &LocalRepository, revision: impl AsRef<str>) -> Result<(), OxenError> {
-    match repo.min_version() {
-        MinOxenVersion::LATEST => core::v_latest::entries::update_metadata(repo, revision),
-    }
+    core::v_latest::entries::update_metadata(repo, revision)
 }
 
 /// Get the entry for a given path in a commit.
@@ -178,11 +173,7 @@ pub fn get_meta_entry(
         version: PathBuf::from(&commit.id),
         resource: PathBuf::from(&commit.id).join(path),
     };
-    match repo.min_version() {
-        MinOxenVersion::LATEST => {
-            core::v_latest::entries::get_meta_entry(repo, &parsed_resource, path)
-        }
-    }
+    core::v_latest::entries::get_meta_entry(repo, &parsed_resource, path)
 }
 
 /// Get the entry for a given path in a commit, off the async worker.

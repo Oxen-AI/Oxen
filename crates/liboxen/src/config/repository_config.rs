@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-use crate::constants::{DEFAULT_VNODE_SIZE, MIN_OXEN_VERSION};
+use crate::constants::DEFAULT_VNODE_SIZE;
 use crate::core::db::merkle_node::{DEFAULT_MERKLE_NODE_BACKEND, MerkleNodeBackend};
 use crate::error::OxenError;
 use crate::model::{LocalRepository, Remote};
@@ -59,7 +59,7 @@ pub struct RepositoryConfig {
 
 impl Default for RepositoryConfig {
     /// Default matches what `oxen init` writes to a fresh repo's `config.toml`: the current
-    /// `MIN_OXEN_VERSION`, the default vnode size, the default merkle node backend, and `None` for
+    /// repo-format version, the default vnode size, the default merkle node backend, and `None` for
     /// every other per-repo override. A config *loaded* from disk that predates the
     /// `merkle_node_backend` field deserializes it as `None` (not via this default), so the backend
     /// is resolved from on-disk data — see `create_merkle_node_store`.
@@ -69,7 +69,7 @@ impl Default for RepositoryConfig {
             remotes: Vec::new(),
             subtree_paths: None,
             depth: None,
-            min_version: Some(MIN_OXEN_VERSION.to_string()),
+            min_version: Some("0.36.0".to_string()),
             vnode_size: Some(DEFAULT_VNODE_SIZE),
             storage: None,
             vfs: None,

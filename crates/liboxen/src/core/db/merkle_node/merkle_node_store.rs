@@ -218,8 +218,13 @@ mod tests {
     #[test]
     fn resolve_load_backend_detects_lmdb_env() -> Result<(), OxenError> {
         let dir = tempfile::tempdir().expect("create temp dir");
-        // Opening the store creates the `.oxen/tree/nodes_lmdb` env the detector looks for.
-        LmdbMerkleNodeStore::new(dir.path())?;
+        // The env opens lazily, so write a node to create the `.oxen/tree/nodes_lmdb` env the
+        // detector looks for.
+        LmdbMerkleNodeStore::new(dir.path())?.write_node(
+            &MerkleHash::new(0x1),
+            Bytes::from_static(b"n"),
+            Bytes::new(),
+        )?;
         assert_eq!(
             resolve_load_backend(None, dir.path()),
             MerkleNodeBackend::Lmdb

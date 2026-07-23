@@ -4,7 +4,6 @@ use std::str::FromStr;
 use async_trait::async_trait;
 use clap::{Arg, Command, arg};
 use liboxen::core::db::merkle_node::MerkleNodeBackend;
-use liboxen::core::versions::MinOxenVersion;
 
 use crate::cmd::RunCmd;
 use crate::helpers::{check_remote_version, get_scheme_and_host_or_default};
@@ -35,13 +34,6 @@ impl RunCmd for InitCmd {
             .about("Initializes a local repository")
             .arg(arg!([PATH] "The directory to establish the repo in. Defaults to the current directory."))
             .arg(
-                Arg::new("oxen-version")
-                    .short('v')
-                    .long("oxen-version")
-                    .help("The oxen version to use, if you want to test older CLI versions (default: latest)")
-                    .action(clap::ArgAction::Set),
-            )
-            .arg(
                 Arg::new("merkle-backend")
                     .long("merkle-backend")
                     .help("Which engine backs the repo's Merkle node store (default: filesystem)")
@@ -60,11 +52,6 @@ impl RunCmd for InitCmd {
             .unwrap_or(".");
         log::info!("Repository path: {}", path);
 
-        let version_str = args
-            .get_one::<String>("oxen-version")
-            .map(|s| s.to_string());
-        let oxen_version = MinOxenVersion::or_latest(version_str)?;
-
         let merkle_backend = args
             .get_one::<String>("merkle-backend")
             .map(|s| MerkleNodeBackend::from_str(s))
@@ -77,13 +64,8 @@ impl RunCmd for InitCmd {
 
         // Initialize the repository
         let directory = util::fs::canonicalize(PathBuf::from(&path))?;
-        repositories::init::init_with_version_and_storage_config(
-            &directory,
-            oxen_version,
-            None,
-            merkle_backend,
-        )
-        .await?;
+        repositories::init::init_with_version_and_storage_config(&directory, None, merkle_backend)
+            .await?;
         println!("🐂 repository initialized at: {directory:?}");
         println!("{AFTER_INIT_MSG}");
         Ok(())

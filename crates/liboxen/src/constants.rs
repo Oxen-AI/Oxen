@@ -3,8 +3,6 @@
 
 use std::sync::LazyLock;
 
-use crate::core::versions::MinOxenVersion;
-
 /// Rust library version
 pub const OXEN_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -223,9 +221,6 @@ pub const DEFAULT_VNODE_SIZE: u64 = 10_000;
 pub const DEFAULT_PAGE_SIZE: usize = 100;
 /// Pagination page number of 1
 pub const DEFAULT_PAGE_NUM: usize = 1;
-
-/// Minimum allowable oxen version to push or pull data
-pub const MIN_OXEN_VERSION: MinOxenVersion = MinOxenVersion::LATEST;
 
 /// Minimum client (CLI) version the server accepts on the wire. A standalone client-protocol
 /// floor, independent of any repo/node format version.
