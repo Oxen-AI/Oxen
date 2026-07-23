@@ -136,6 +136,14 @@ rocksdb = { version = "0.22.0", default-features = false, features = ["lz4", "sn
 s3s = "0.13"
 s3s-fs = "0.13"
 sanitize-filename = "0.6.0"
+sentry = { version = "0.34", default-features = false, features = [
+    "backtrace",
+    "contexts",
+    "panic",
+    "reqwest",
+    "rustls",
+] }
+sentry-actix = "0.34"
 serde = { version = "1.0.188", features = ["derive"] }
 serde_derive = "1.0.188"
 serde_json = "1.0.106"

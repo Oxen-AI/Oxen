@@ -382,6 +382,24 @@ enum ServerCommand {
     },
 }
 
+/// Initialize Sentry crash reporting when `dsn` is set (from `SENTRY_DSN`). Hold the returned
+/// guard for the process lifetime; `None` — no DSN — leaves Sentry disabled, so self-hosted and
+/// OSS deployments report nothing.
+fn init_sentry(dsn: Option<String>) -> Option<sentry::ClientInitGuard> {
+    let dsn = dsn.filter(|dsn| !dsn.is_empty())?;
+    let options = sentry::ClientOptions {
+        release: Some(OXEN_VERSION.into()),
+        environment: env::var("SENTRY_ENVIRONMENT").ok().map(Into::into),
+        // A data server must never let Sentry attach request/user PII, and reports errors only —
+        // no performance tracing.
+        send_default_pii: false,
+        traces_sample_rate: 0.0,
+        attach_stacktrace: true,
+        ..Default::default()
+    };
+    Some(sentry::init((dsn, options)))
+}
+
 #[actix_web::main]
 async fn main() {
     crash_diagnostics::install().expect("failed to install crash diagnostics");
@@ -389,6 +407,10 @@ async fn main() {
     // fail-fast if we cannot initialize logging
     let _tracing_guard = util::telemetry::init_tracing("oxen-server", LevelFilter::WARN)
         .expect("Failed to initialize tracing & logging for oxen-server.");
+    // Capture panics when a Sentry DSN is configured; held for the whole process so the client
+    // flushes on exit. Must stay after `crash_diagnostics::install` — Sentry's panic hook chains
+    // onto whichever hook is already installed.
+    let _sentry_guard = init_sentry(env::var("SENTRY_DSN").ok());
     // We want to show the error's display(), not the debug() representation.
     // actix_web::main() will show the error's debug() representation.
     if let Err(e) = server().await {
@@ -686,6 +708,13 @@ async fn start(
             .wrap(RequestIdMiddleware)
             .wrap(MetricsMiddleware)
             .wrap(TracingLogger::default())
+            // Outermost: a per-request Sentry hub so a captured panic carries request context.
+            // Server-error auto-capture is disabled here.
+            .wrap(
+                sentry_actix::Sentry::builder()
+                    .capture_server_errors(false)
+                    .finish(),
+            )
     })
     .keep_alive(Duration::from_secs(ACTIX_KEEP_ALIVE_SECS))
     .bind((host.to_owned(), port))?
@@ -773,5 +802,11 @@ mod tests {
             source.to_string().contains("s3 bucket cannot be empty"),
             "expected EmptyS3Bucket message, got: {source}",
         );
+    }
+
+    #[test]
+    fn init_sentry_is_disabled_without_dsn() {
+        assert!(init_sentry(None).is_none());
+        assert!(init_sentry(Some(String::new())).is_none());
     }
 }

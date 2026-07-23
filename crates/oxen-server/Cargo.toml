@@ -51,6 +51,8 @@ percent-encoding = { workspace = true }
 regex = { workspace = true }
 rocksdb = { workspace = true }
 sanitize-filename = { workspace = true }
+sentry = { workspace = true }
+sentry-actix = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tar = { workspace = true }
