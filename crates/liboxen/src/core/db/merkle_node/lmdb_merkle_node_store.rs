@@ -32,7 +32,7 @@ const NODES_DB_NAME: &str = "nodes";
 const MAX_DBS: u32 = 1;
 /// Sparse upper bound on the env's mapped size — LMDB reserves this much address space but only
 /// occupies what is written, so it is sized generously to avoid `MDB_MAP_FULL` on large repos.
-const MERKLE_NODE_MAP_SIZE: ByteSize = ByteSize::mib(512);
+const MERKLE_NODE_MAP_SIZE: ByteSize = ByteSize::gib(16);
 /// LMDB's data file name within the env directory (a stable LMDB convention); used only to detect
 /// an existing LMDB store without opening (and thereby creating) the env.
 const LMDB_DATA_FILE: &str = "data.mdb";
