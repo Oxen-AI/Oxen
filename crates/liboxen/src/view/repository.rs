@@ -1,4 +1,5 @@
 use super::{DataTypeCount, StatusMessage};
+use crate::core::db::merkle_node::MerkleNodeBackend;
 use crate::model::parsed_resource::ParsedResourceView;
 use crate::model::{Commit, EntryDataType};
 use crate::storage::StorageKind;
@@ -20,6 +21,10 @@ pub struct RepositoryView {
     pub min_version: Option<String>,
     pub is_empty: bool,
     pub storage_kind: StorageKind,
+    /// The repo's Merkle node backend (`"filesystem"` / `"lmdb"`), read-only. `None` when deserialized
+    /// from a server that predates the field, so an older backend response still parses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merkle_node_backend: Option<MerkleNodeBackend>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
@@ -57,6 +62,10 @@ pub struct RepositoryCreationView {
     pub latest_commit: Option<Commit>,
     pub min_version: Option<String>,
     pub storage_kind: StorageKind,
+    /// The repo's Merkle node backend (`"filesystem"` / `"lmdb"`), read-only. `None` when deserialized
+    /// from a server that predates the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merkle_node_backend: Option<MerkleNodeBackend>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
@@ -240,6 +249,7 @@ mod tests {
                 min_version: Some("0.0.0".to_string()),
                 is_empty: false,
                 storage_kind: StorageKind::S3,
+                merkle_node_backend: Some(MerkleNodeBackend::Lmdb),
             },
             size: 42,
             data_types: vec![],
@@ -251,6 +261,7 @@ mod tests {
         // nested under a "repository" key.
         assert_eq!(json["namespace"], "ox");
         assert_eq!(json["storage_kind"], "s3");
+        assert_eq!(json["merkle_node_backend"], "lmdb");
         assert_eq!(json["size"], 42);
         assert!(json.get("repository").is_none());
     }
@@ -293,9 +304,11 @@ mod tests {
             latest_commit: None,
             min_version: Some("0.0.0".to_string()),
             storage_kind: StorageKind::S3,
+            merkle_node_backend: Some(MerkleNodeBackend::Filesystem),
         };
         let json = serde_json::to_value(&view).expect("view should serialize");
         assert_eq!(json["storage_kind"], "s3");
+        assert_eq!(json["merkle_node_backend"], "filesystem");
 
         // A create response missing storage_kind must fail rather than defaulting.
         let missing = serde_json::json!({ "namespace": "ox", "name": "test" });
@@ -313,6 +326,7 @@ mod tests {
                 min_version: Some("0.0.0".to_string()),
                 is_empty: false,
                 storage_kind: StorageKind::S3,
+                merkle_node_backend: Some(MerkleNodeBackend::Lmdb),
             },
             size: 1_073_741_824,
             data_types: vec![],
@@ -323,8 +337,39 @@ mod tests {
         let back: RepositoryDataTypesView =
             serde_json::from_str(&json).expect("view should round-trip through the flatten");
         assert_eq!(back.repository.storage_kind, StorageKind::S3);
+        assert_eq!(
+            back.repository.merkle_node_backend,
+            Some(MerkleNodeBackend::Lmdb)
+        );
         assert_eq!(back.repository.namespace, "ox");
         assert_eq!(back.size, 1_073_741_824);
         assert_eq!(back.branch_count, 3);
+    }
+
+    #[test]
+    fn repository_view_merkle_node_backend_is_optional_and_lowercase() {
+        // A payload from a server that predates the field still deserializes, with None — the
+        // no-flag-day guarantee that lets a newer client read an older server.
+        let without = serde_json::json!({
+            "namespace": "ox",
+            "name": "test",
+            "is_empty": false,
+            "storage_kind": "local",
+        });
+        let view: RepositoryView =
+            serde_json::from_value(without).expect("older payload without the field must parse");
+        assert_eq!(view.merkle_node_backend, None);
+
+        // When present it deserializes, and the enum round-trips as its lowercase token.
+        let with = serde_json::json!({
+            "namespace": "ox",
+            "name": "test",
+            "is_empty": false,
+            "storage_kind": "local",
+            "merkle_node_backend": "lmdb",
+        });
+        let view: RepositoryView =
+            serde_json::from_value(with).expect("payload with the field must parse");
+        assert_eq!(view.merkle_node_backend, Some(MerkleNodeBackend::Lmdb));
     }
 }
