@@ -54,7 +54,7 @@ impl Default for Direction {
     }
 }
 
-pub trait Migrate {
+pub trait Migrate: Send + Sync {
     /// Apply the migration.
     fn up(&self, repo: LocalRepository) -> Result<(), OxenError>;
 
@@ -103,7 +103,7 @@ pub const ALL_MIGRATIONS: [&dyn Migrate; 2] =
 
 /// Maps a registered migration's name to its implementation.
 /// The name is exactly the same value returned by `<dyn Migrate>::name()`.
-pub fn all_migrations(migration_name: &str) -> Option<&dyn Migrate> {
+pub fn all_migrations(migration_name: &str) -> Option<&'static dyn Migrate> {
     for migration in ALL_MIGRATIONS.iter() {
         if migration_name == migration.name() {
             // let m = &**migration;

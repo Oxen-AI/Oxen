@@ -119,6 +119,7 @@ mod tests {
 
     use serde_json::json;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_fetch_schema_metadata() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut local_repo| async move {
@@ -235,6 +236,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_paginate_df_page_one() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut local_repo| async move {
@@ -283,6 +285,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_paginate_df_page_1_page_size_20() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut local_repo| async move {
@@ -333,6 +336,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_paginate_df_after_sql() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
@@ -428,6 +432,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_get_schema_df_on_branch() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut local_repo| async move {
@@ -539,6 +544,7 @@ mod tests {
     }
 
     // Tests passing in no slice or page params for data/test/parquet/wiki_1k.parquet file
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_parquet_no_params() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut local_repo| async move {
@@ -605,6 +611,7 @@ mod tests {
     }
 
     // Tests page=4 page_size=6 for data/test/parquet/wiki_1k.parquet file
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_paginate_remote_parquet() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut local_repo| async move {
@@ -668,6 +675,7 @@ mod tests {
     }
 
     // Test slice=330..333 for data/test/parquet/wiki_1k.parquet file
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_slice_remote_parquet() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut local_repo| async move {
@@ -724,6 +732,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_from_directory() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut local_repo| async move {
@@ -832,6 +841,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_from_directory_with_images_sets_metadata() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut local_repo| async move {
@@ -932,6 +942,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_from_directory_mixed_files_no_image_metadata() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut local_repo| async move {

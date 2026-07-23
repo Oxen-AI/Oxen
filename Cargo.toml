@@ -4,7 +4,7 @@ members = ["crates/*"]
 exclude = ["crates/data", "experiments/*"]
 
 [workspace.package]
-version = "0.52.1"
+version = "0.52.3"
 edition = "2024"
 license-file = "LICENSE"
 description = "Oxen is a fast, unstructured data version control, to help version large machine learning datasets written in Rust."
@@ -101,7 +101,7 @@ libduckdb-sys = { version = "=1.10504.0" }
 # liboxen's `version` is kept in lockstep with `[workspace.package].version` by `bin/bump-version`.
 # `path` is used for local builds; `version` is used by `cargo publish` so oxen-cli and oxen-server
 # resolve liboxen from crates.io when published.
-liboxen = { path = "crates/liboxen", version = "=0.52.1" }
+liboxen = { path = "crates/liboxen", version = "=0.52.3" }
 lofty = "0.22.2"
 log = "0.4.20"
 lru = "0.14.0"
@@ -126,10 +126,8 @@ pyo3 = { version = "0.25", features = ["abi3-py311"] }
 pyo3-async-runtimes = { version = "0.25", features = ["attributes", "tokio-runtime"] }
 pyo3-polars = { version = "0.22", features = ["dtype-full"] }
 qsv-sniffer = "0.10.3"
-r2d2 = "0.8.10"
 rand = "0.8.5"
 rayon = "1.8.0"
-redis = { version = "0.27.2", features = ["r2d2"] }
 regex = "1.10.2"
 reqwest = { version = "0.13.2", features = ["multipart", "json", "gzip", "stream", "query"] }
 rmp-serde = "1.3.0"

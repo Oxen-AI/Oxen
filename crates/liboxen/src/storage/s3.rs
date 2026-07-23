@@ -438,6 +438,14 @@ impl VersionStore for S3VersionStore {
         log::debug!("Storing version to S3");
         let key = self.generate_key(hash);
 
+        // Reject data that does not hash to its key before uploading anything.
+        let computed = hasher::hash_buffer(&data);
+        if computed != hash {
+            return Err(OxenError::upload(&format!(
+                "store_version hash mismatch: expected {hash}, computed {computed}"
+            )));
+        }
+
         let body = ByteStream::from(data);
         client
             .put_object()
@@ -833,6 +841,7 @@ impl VersionStore for S3VersionStore {
         let mut part_buf: Vec<u8> = Vec::new();
         let mut part_num: i32 = 1;
         let mut completed_parts: Vec<CompletedPart> = Vec::new();
+        let mut hasher = Xxh3::new();
 
         let result: Result<(), OxenError> = async {
             for (i, offset) in offsets.iter().enumerate() {
@@ -855,6 +864,10 @@ impl VersionStore for S3VersionStore {
                         ))
                     })?
                     .into_bytes();
+
+                // Feed every byte through the hasher in offset order so the digest covers the whole
+                // reassembled file.
+                hasher.update(&chunk_bytes);
 
                 // Append to part buffer
                 part_buf.extend_from_slice(&chunk_bytes);
@@ -888,6 +901,15 @@ impl VersionStore for S3VersionStore {
                         break;
                     }
                 }
+            }
+
+            // The reassembled file must hash to its key; on mismatch we fall to the abort below and
+            // commit nothing.
+            let computed = format!("{:x}", hasher.digest128());
+            if computed != hash {
+                return Err(OxenError::upload(&format!(
+                    "combine_version_chunks hash mismatch: expected {hash}, computed {computed}"
+                )));
             }
             Ok(())
         }
@@ -1070,17 +1092,17 @@ mod tests {
     ) {
         let (addr, tmp, server_handle) = spawn_s3s().await;
 
+        // Unique bucket per test — `polars-io`'s cloud-store cache is keyed by bucket, so any two
+        // cloud_reads tests sharing a bucket name will collide on a stale endpoint (the first
+        // test's torn-down `s3s` port). A per-test bucket sidesteps the cache entirely.
+        let bucket = format!("test-bucket-{}", uuid::Uuid::new_v4());
+
         let client = build_test_client(addr);
-        client
-            .create_bucket()
-            .bucket("test-bucket")
-            .send()
-            .await
-            .unwrap();
+        client.create_bucket().bucket(&bucket).send().await.unwrap();
 
         let store = S3VersionStore::new_with_client(
             Arc::new(client),
-            "test-bucket".to_string(),
+            bucket,
             "us-west-1".to_string(),
             "test-namespace/test-repo".to_string(),
             Some(format!("http://{addr}")),
@@ -1135,8 +1157,10 @@ mod tests {
             Some(format!("http://{addr}")),
         );
 
+        let one_hash = hasher::hash_buffer(b"one");
+        let sibling_hash = hasher::hash_buffer(b"sibling");
         store
-            .store_version("aaaa1111", Bytes::from_static(b"one"))
+            .store_version(&one_hash, Bytes::from_static(b"one"))
             .await
             .unwrap();
         store
@@ -1144,15 +1168,15 @@ mod tests {
             .await
             .unwrap();
         sibling
-            .store_version("cccc3333", Bytes::from_static(b"sibling"))
+            .store_version(&sibling_hash, Bytes::from_static(b"sibling"))
             .await
             .unwrap();
 
         store.destroy().await.unwrap();
 
         assert!(store.list_versions().await.unwrap().is_empty());
-        assert!(!store.version_exists("aaaa1111").await.unwrap());
-        assert!(sibling.version_exists("cccc3333").await.unwrap());
+        assert!(!store.version_exists(&one_hash).await.unwrap());
+        assert!(sibling.version_exists(&sibling_hash).await.unwrap());
     }
 
     #[tokio::test]
@@ -1211,7 +1235,7 @@ mod tests {
             } => {
                 assert_eq!(
                     url,
-                    format!("s3://test-bucket/test-namespace/test-repo/{hash}/data")
+                    format!("s3://{}/test-namespace/test-repo/{hash}/data", store.bucket)
                 );
                 assert_eq!(region, "us-west-1");
                 let endpoint = endpoint_url.expect("test setup configures a loopback endpoint");
@@ -1296,9 +1320,10 @@ mod tests {
     async fn test_copy_version_to_path_streams_to_dest() {
         let (store, _tmp, _server) = setup().await;
         let data = b"streamed to destination";
+        let hash = hasher::hash_buffer(data);
 
         store
-            .store_version("eeedef1234567890", Bytes::from_static(data))
+            .store_version(&hash, Bytes::from_static(data))
             .await
             .unwrap();
 
@@ -1307,7 +1332,7 @@ mod tests {
         let mtime = SystemTime::UNIX_EPOCH + std::time::Duration::new(1_700_000_000, 123_456_789);
 
         store
-            .copy_version_to_path("eeedef1234567890", &dest_path, mtime)
+            .copy_version_to_path(&hash, &dest_path, mtime)
             .await
             .unwrap();
 
@@ -1395,7 +1420,8 @@ mod tests {
     #[tokio::test]
     async fn test_delete_version_removes_data_and_chunks() {
         let (store, _tmp, _server) = setup().await;
-        let hash = "abcdef1234567890abcdef1234567890";
+        let hash = hasher::hash_buffer(b"main data");
+        let hash = hash.as_str();
 
         // Store main data + two chunks
         store
@@ -1503,8 +1529,10 @@ mod tests {
     #[tokio::test]
     async fn test_delete_version_isolates_by_hash() {
         let (store, _tmp, _server) = setup().await;
-        let hash_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let hash_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let hash_a = hasher::hash_buffer(b"a data");
+        let hash_a = hash_a.as_str();
+        let hash_b = hasher::hash_buffer(b"b data");
+        let hash_b = hash_b.as_str();
 
         store
             .store_version(hash_a, Bytes::from_static(b"a data"))
@@ -1524,8 +1552,9 @@ mod tests {
     #[tokio::test]
     async fn test_get_version_chunk_mid_file() {
         let (store, _tmp, _server) = setup().await;
-        let hash = "abcdef1234567890abcdef1234567890";
         let data: Vec<u8> = (0..100u8).collect();
+        let hash = hasher::hash_buffer(&data);
+        let hash = hash.as_str();
         store
             .store_version(hash, Bytes::copy_from_slice(&data))
             .await
@@ -1538,8 +1567,9 @@ mod tests {
     #[tokio::test]
     async fn test_get_version_chunk_from_start() {
         let (store, _tmp, _server) = setup().await;
-        let hash = "abcdef1234567890abcdef1234567890";
         let data = b"hello world!";
+        let hash = hasher::hash_buffer(data);
+        let hash = hash.as_str();
         store
             .store_version(hash, Bytes::from_static(data))
             .await
@@ -1561,7 +1591,8 @@ mod tests {
     #[tokio::test]
     async fn test_get_version_chunk_past_eof_errors() {
         let (store, _tmp, _server) = setup().await;
-        let hash = "abcdef1234567890abcdef1234567890";
+        let hash = hasher::hash_buffer(b"small");
+        let hash = hash.as_str();
         store
             .store_version(hash, Bytes::from_static(b"small"))
             .await
@@ -1679,25 +1710,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_rejects_mismatched_content() {
+        use crate::storage::version_store::verify_suite;
+        let (store, _tmp, _server) = setup().await;
+        verify_suite::assert_rejects_mismatched_content(&store).await;
+    }
+
+    #[tokio::test]
     async fn test_list_versions() {
         let (store, _tmp, _server) = setup().await;
 
         // Insert out of order; list_versions is documented to return sorted results.
+        let hash_a = hasher::hash_buffer(b"a data");
+        let hash_b = hasher::hash_buffer(b"b data");
+        let hash_c = hasher::hash_buffer(b"c data");
         store
-            .store_version("cccc", Bytes::from_static(b"c data"))
+            .store_version(&hash_c, Bytes::from_static(b"c data"))
             .await
             .unwrap();
         store
-            .store_version("aaaa", Bytes::from_static(b"a data"))
+            .store_version(&hash_a, Bytes::from_static(b"a data"))
             .await
             .unwrap();
         store
-            .store_version("bbbb", Bytes::from_static(b"b data"))
+            .store_version(&hash_b, Bytes::from_static(b"b data"))
             .await
             .unwrap();
 
+        let mut expected = vec![hash_a, hash_b, hash_c];
+        expected.sort();
         let versions = store.list_versions().await.unwrap();
-        assert_eq!(versions, vec!["aaaa", "bbbb", "cccc"]);
+        assert_eq!(versions, expected);
     }
 
     #[tokio::test]
@@ -1714,7 +1757,8 @@ mod tests {
         // With common-prefix listing they should collapse to a single entry per hash.
         let (store, _tmp, _server) = setup().await;
 
-        let hash = "abcdef1234567890abcdef1234567890";
+        let hash = hasher::hash_buffer(b"main");
+        let hash = hash.as_str();
         store
             .store_version(hash, Bytes::from_static(b"main"))
             .await
@@ -1739,6 +1783,10 @@ mod tests {
     /// Tabular reads served directly from S3 via `tabular::read_version_df`. Exercises the Polars
     /// cloud-scan paths (Parquet/CSV/TSV/JSONL/IPC), the in-memory JSON path, and head-sample CSV
     /// dialect sniffing — all against the s3s fixture.
+    ///
+    /// Each test's `setup()` mints a UUID-tagged bucket so `polars-io`'s cloud-store cache (keyed
+    /// by bucket) never collides — without that, a second `test_read_s3_jsonl*` reuses the first
+    /// test's cached client and dials its now-dead loopback port.
     mod cloud_reads {
         use super::*;
         use crate::core::df::tabular;

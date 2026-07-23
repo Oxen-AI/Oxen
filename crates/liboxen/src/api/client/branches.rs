@@ -225,6 +225,7 @@ mod tests {
     use crate::test;
     use crate::util;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_create_remote_branch() -> Result<(), OxenError> {
         test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
@@ -251,6 +252,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_create_remote_branch_from_existing() -> Result<(), OxenError> {
         test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
@@ -280,6 +282,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_get_branch_by_name() -> Result<(), OxenError> {
         test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
@@ -308,6 +311,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_remote_branches() -> Result<(), OxenError> {
         test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
@@ -350,6 +354,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_delete_branch() -> Result<(), OxenError> {
         test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
@@ -424,6 +429,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_delete_remote_branch() -> Result<(), OxenError> {
         test::run_training_data_repo_test_fully_committed_async(|mut repo| async move {
@@ -463,6 +469,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_should_not_push_branch_that_does_not_exist() -> Result<(), OxenError> {
         test::run_training_data_repo_test_fully_committed_async(|mut repo| async move {
@@ -627,6 +634,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_entry_versions() -> Result<(), OxenError> {
         test::run_select_data_repo_test_committed_async("annotations", |mut repo| async move {

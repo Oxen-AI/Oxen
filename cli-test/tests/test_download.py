@@ -5,7 +5,11 @@ Converted from Ruby/RSpec to Python/pytest.
 
 import os
 from pathlib import Path
+import pytest
 from tests.helpers import create_test_file, create_remote_repo, cleanup_remote_repo
+
+# Every download test pushes to and pulls from an oxen-server.
+pytestmark = pytest.mark.needs_oxen_server
 
 
 class TestDownloadCommand:

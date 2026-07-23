@@ -83,6 +83,16 @@ To learn what everything Oxen can do, the full documentation can be found at [ht
 
 You can install through homebrew or pip or from our [releases page](https://github.com/Oxen-AI/Oxen/releases).
 
+### 🖥️ Platform Support
+
+| Component | Linux | macOS | Windows |
+|---|:---:|:---:|:---:|
+| `oxen` CLI | ✅ | ✅ | ✅ |
+| `oxenai` Python package | ✅ | ✅ | ✅ |
+| `oxen-server` | ✅ | ✅ | ❌ |
+
+`oxen-server` is not supported on Windows — run it on Linux, macOS, or in Docker. The `oxen` CLI and Python client are supported on Windows and connect to a server hosted on a supported platform.
+
 ### 🐂 Install Command Line Tool
 
 Install via [Homebrew](https://brew.sh/):
@@ -159,13 +169,11 @@ Once you have rust, install the following developer tools:
 - [`cargo-machete`](https://github.com/bnjbvr/cargo-machete): identify and remove unused dependencies
 - [`cargo-llvm-cov`](https://crates.io/crates/cargo-llvm-cov): calculate test code coverage
 - [`cargo-sort`](https://crates.io/crates/cargo-sort): ensure `Cargo.toml` files are organized
-- [`cargo-nextest`](https://crates.io/crates/cargo-nextest): run unit tests
 
-You can install all of these at once with the following commands:
+You can install all of these at once with the following command:
 
 ```bash
 cargo install bacon cargo-machete cargo-llvm-cov cargo-sort
-cargo install --locked cargo-nextest
 ```
 
 Make sure [`cmake`](https://cmake.org/download/) is installed. `cmake` can be installed on macOS with:

@@ -303,6 +303,21 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::NotFound().json(error_json)
                     }
+                    OxenError::LockTimeout(msg) => {
+                        log::warn!("Repository busy (exclusive lock held): {msg}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "lock_timeout",
+                                "title": "Repository is busy",
+                                "detail": msg.to_string(),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": "too_many_requests",
+                        });
+                        HttpResponse::TooManyRequests()
+                            .insert_header(("Retry-After", "5"))
+                            .json(error_json)
+                    }
                     OxenError::RevisionNotFound(revision) => {
                         let error_json = json!({
                             "error": {

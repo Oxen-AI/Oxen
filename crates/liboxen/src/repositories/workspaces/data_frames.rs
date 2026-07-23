@@ -1,14 +1,14 @@
-use crate::core::df::tabular::write_df_parquet;
+use crate::core::df::tabular::{write_df, write_df_parquet};
 use crate::model::merkle_tree::node::FileNodeWithDir;
 use crate::view::data_frames::columns::NewColumn;
 use polars::frame::DataFrame;
 
 use sql_query_builder::Select;
 
+use crate::constants::{MAX_QUERYABLE_ROWS, OXEN_COLS, OXEN_ROW_ID_COL, TABLE_NAME};
 use crate::constants::{MODS_DIR, OXEN_HIDDEN_DIR};
-use crate::constants::{OXEN_COLS, OXEN_ROW_ID_COL, TABLE_NAME};
 use crate::core;
-use crate::core::db::data_frames::df_db::with_df_db_manager;
+use crate::core::db::data_frames::df_db::{with_df_db_manager, with_hardened_query_conn};
 use crate::core::db::data_frames::{DataFrameError, df_db};
 use crate::core::df::sql;
 use crate::error::OxenError;
@@ -122,19 +122,25 @@ pub fn query(
     log::debug!("query_staged_df() got db_path: {db_path:?}");
     log::debug!("query() opts: {opts:?}");
 
-    with_df_db_manager(&db_path, |manager| {
-        manager.with_conn_mut(|conn| {
-            // Right now embeddings and sql are mutually exclusive
-            let df = if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
-                log::debug!("querying embeddings: {embedding_opts:?}");
+    // Embeddings need the vss extension, so they run on the cached read-write connection;
+    // every other query is a read and runs on a hardened, read-only connection with no external
+    // file access. (Embeddings and sql are mutually exclusive.)
+    let df = if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
+        log::debug!("querying embeddings: {embedding_opts:?}");
+        with_df_db_manager(&db_path, |manager| {
+            manager.with_conn_mut(|conn| {
                 repositories::workspaces::data_frames::embeddings::query_with_conn(
                     conn,
                     workspace,
                     &embedding_opts,
-                )?
-            } else if let Some(sql) = &opts.sql {
+                )
+            })
+        })?
+    } else {
+        with_hardened_query_conn(&db_path, |conn| {
+            if let Some(sql) = &opts.sql {
                 log::debug!("querying sql: {sql:?}");
-                sql::query_df(conn, sql.clone(), None)?
+                sql::query_df(conn, sql.clone(), None)
             } else {
                 let mut select = Select::new().select("*").from(TABLE_NAME);
                 // Deterministic page order: DuckDB UPDATEs physically relocate
@@ -144,21 +150,19 @@ pub fn query(
                 if opts.sort_by.is_none() {
                     select = select.order_by(OXEN_ROW_ID_COL);
                 }
-                df_db::select(conn, &select, Some(opts))?
-            };
+                df_db::select(conn, &select, Some(opts))
+            }
+        })?
+    };
 
-            // `_oxen_row_id` is an ordering key, not part of the data frame's
-            // schema — keep it out of results. (`_oxen_id` stays: clients
-            // address rows by it.)
-            let df = if df.column(OXEN_ROW_ID_COL).is_ok() {
-                df.drop(OXEN_ROW_ID_COL)?
-            } else {
-                df
-            };
-
-            Ok(df)
-        })
-    })
+    // `_oxen_row_id` is an ordering key, not part of the data frame's
+    // schema — keep it out of results. (`_oxen_id` stays: clients
+    // address rows by it.)
+    if df.column(OXEN_ROW_ID_COL).is_ok() {
+        Ok(df.drop(OXEN_ROW_ID_COL)?)
+    } else {
+        Ok(df)
+    }
 }
 
 pub fn export(
@@ -166,36 +170,48 @@ pub fn export(
     path: &Path,
     opts: &DFOpts,
     temp_file: &Path,
-) -> Result<(), DataFrameError> {
+) -> Result<(), OxenError> {
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     log::debug!("export() got db_path: {db_path:?}");
 
-    with_df_db_manager(&db_path, |manager| {
-        manager.with_conn(|conn| {
-            let sql = if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
-                let exclude_cols = true;
-                repositories::workspaces::data_frames::embeddings::similarity_query_with_conn(
-                    conn,
-                    workspace,
-                    &embedding_opts,
-                    exclude_cols,
-                )?
-            } else if let Some(sql) = opts.sql.clone() {
-                add_exclude_to_sql(&sql)?
-            } else {
+    // Embeddings (vss extension) and the default full export use DuckDB's COPY
+    // writer on the read-write connection. Caller-supplied SQL runs on the hardened
+    // read-only connection and is serialized in Rust, never reaching the COPY path.
+    if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
+        with_df_db_manager(&db_path, |manager| {
+            manager.with_conn(|conn| {
+                let sql =
+                    embeddings::similarity_query_with_conn(conn, workspace, &embedding_opts, true)?;
+                sql::export_df(conn, sql, Some(opts), temp_file)?;
+                Ok(())
+            })
+        })?;
+    } else if let Some(sql) = opts.sql.clone() {
+        let sql = add_exclude_to_sql(&sql)?;
+        log::debug!("exporting data frame with sql: {sql:?}");
+        // Cap the export at MAX_QUERYABLE_ROWS rows; larger results are refused, not truncated.
+        let capped = with_hardened_query_conn(&db_path, |conn| {
+            df_db::select_raw_capped(conn, &sql, MAX_QUERYABLE_ROWS)
+        })?;
+        let Some(mut df) = capped else {
+            return Err(DataFrameError::ExportResultTooLarge(MAX_QUERYABLE_ROWS).into());
+        };
+        write_df(&mut df, temp_file)?;
+    } else {
+        with_df_db_manager(&db_path, |manager| {
+            manager.with_conn(|conn| {
                 // Ordered for the same reason as query(): an exported file must
                 // carry the stable row order, not DuckDB's physical order.
-                let sql = format!("SELECT * FROM {TABLE_NAME} ORDER BY {OXEN_ROW_ID_COL}");
-                add_exclude_to_sql(&sql)?
-            };
+                let sql = add_exclude_to_sql(&format!(
+                    "SELECT * FROM {TABLE_NAME} ORDER BY {OXEN_ROW_ID_COL}"
+                ))?;
+                sql::export_df(conn, sql, Some(opts), temp_file)?;
+                Ok(())
+            })
+        })?;
+    }
 
-            log::debug!("exporting data frame with sql: {sql:?}");
-
-            sql::export_df(conn, sql, Some(opts), temp_file)?;
-
-            Ok(())
-        })
-    })
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1845,6 +1861,53 @@ mod tests {
         Path::new("annotations")
             .join("train")
             .join("bounding_box.csv")
+    }
+
+    #[tokio::test]
+    async fn test_export_with_sql_cannot_read_host_files() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let path = list_typed_add_row_test_paths();
+            workspaces::data_frames::index(&repo, &workspace, &path).await?;
+
+            // A host file the export must not be able to read.
+            let secret = repo.path.join("secret.csv");
+            std::fs::write(&secret, "col\nvalue\n")?;
+
+            // Caller SQL that reads a host file runs on the hardened connection, so
+            // it is blocked and writes no output.
+            let out_bad = repo.path.join("bad_export.csv");
+            let mut malicious = DFOpts::empty();
+            malicious.sql = Some(format!(
+                "SELECT * FROM read_csv('{}')",
+                secret.to_string_lossy()
+            ));
+            let err = export(&workspace, &path, &malicious, &out_bad)
+                .expect_err("export must not read host files through caller SQL");
+            assert!(
+                format!("{err}").contains("disabled by configuration"),
+                "expected an external-access error, got: {err}"
+            );
+            assert!(
+                !out_bad.exists(),
+                "a blocked export must write no output file"
+            );
+
+            // A normal caller-SQL export still writes its output.
+            let out_ok = repo.path.join("ok_export.csv");
+            let mut normal = DFOpts::empty();
+            normal.sql = Some(format!("SELECT * FROM {TABLE_NAME}"));
+            export(&workspace, &path, &normal, &out_ok)?;
+            assert!(out_ok.exists(), "a normal export must write an output file");
+
+            Ok(())
+        })
+        .await
     }
 
     #[tokio::test]

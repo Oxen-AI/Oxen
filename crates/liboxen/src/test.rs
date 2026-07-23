@@ -9,6 +9,7 @@ use crate::constants;
 use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::core;
 use crate::core::db::merkle_node::MerkleNodeBackend;
+use crate::core::df::duckdb_setup;
 use crate::core::versions::MinOxenVersion;
 use crate::error::OxenError;
 use crate::model::Schema;
@@ -97,6 +98,12 @@ pub fn init_test_env() {
                 // Store the guard globally so it outlives this block.
                 if let Ok(mut slot) = WORKER_GUARD.lock() {
                     *slot = Some(guard);
+                }
+
+                // Preinstall DuckDB extensions once, before any parallel DuckDB use, so
+                // concurrent tests don't race on first-use autoload.
+                if let Err(e) = duckdb_setup::preload_extensions() {
+                    log::warn!("Failed to preload DuckDB extensions for tests: {e}");
                 }
 
                 *logging_setup = true;

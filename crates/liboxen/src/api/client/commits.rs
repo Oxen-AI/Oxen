@@ -889,6 +889,7 @@ mod tests {
     use crate::repositories;
     use crate::test;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_remote_commits_all() -> Result<(), OxenError> {
         test::run_training_data_repo_test_fully_committed_async(|local_repo| async move {
@@ -921,6 +922,7 @@ mod tests {
     }
 
     /* Commented out because it's expensive to find the initial commit id
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_commit_history_for_path() -> Result<(), OxenError> {
         test::run_training_data_repo_test_fully_committed_async(|local_repo| async move {
@@ -982,6 +984,7 @@ mod tests {
     */
 
     /* Commented out because it's expensive to find the initial commit id
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_commit_history_for_dir() -> Result<(), OxenError> {
         test::run_training_data_repo_test_fully_committed_async(|local_repo| async move {
@@ -1051,6 +1054,7 @@ mod tests {
     }
      */
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_remote_commits_base_head() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
@@ -1082,6 +1086,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_missing_hashes_filters_via_merkle_tree() -> Result<(), OxenError> {
         // The server filters requested commit hashes by checking which merkle-tree

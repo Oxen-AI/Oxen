@@ -216,6 +216,7 @@ mod tests {
     use liboxen::api;
     use liboxen::error::OxenError;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_workspace_status_by_name() -> Result<(), OxenError> {
         liboxen::test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {

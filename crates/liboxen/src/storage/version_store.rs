@@ -203,7 +203,9 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// Initialize the storage backend
     async fn init(&self) -> Result<(), OxenError>;
 
-    /// Store a version file from an async reader
+    /// Store a version file from an async reader.
+    ///
+    /// The streamed bytes must hash to `hash`; on mismatch the call rejects and stores nothing.
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
@@ -216,14 +218,19 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         size: u64,
     ) -> Result<(), OxenError>;
 
-    /// Store a version file from bytes
+    /// Store a version file from bytes.
+    ///
+    /// The `data` must hash to `hash`; on mismatch the call rejects and stores nothing.
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
     /// * `data` - The raw bytes to store
     async fn store_version(&self, hash: &str, data: Bytes) -> Result<(), OxenError>;
 
-    /// Store a chunk of a version file
+    /// Store a chunk of a version file.
+    ///
+    /// `data` is a byte range of a larger file, not content addressed by its own hash, so unlike
+    /// the whole-file store methods this one cannot verify its bytes against `hash`.
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
@@ -236,7 +243,11 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         data: Bytes,
     ) -> Result<(), OxenError>;
 
-    /// Store a derived file (resized image, video thumbnail, etc.) corresponding to a file version
+    /// Store a derived file (resized image, video thumbnail, etc.) corresponding to a file version.
+    ///
+    /// The derived bytes are generated artifacts keyed by `orig_hash` + `derived_filename`, not
+    /// content addressed by their own hash, so unlike the whole-file store methods this one cannot
+    /// verify its bytes.
     ///
     /// # Arguments
     /// * `orig_hash` - The content hash of the parent version
@@ -273,6 +284,9 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     async fn list_version_chunks(&self, hash: &str) -> Result<Vec<u64>, OxenError>;
 
     /// Combine all the chunks for a version file into a single file, then delete the chunks.
+    ///
+    /// The reassembled file must hash to `hash`; on mismatch the call rejects, commits no combined
+    /// file, and leaves the chunks in place.
     ///
     /// # Arguments
     /// * `hash` - The content hash that identifies this version
@@ -572,5 +586,79 @@ mod tests {
         let store = create_version_store(&repo_dir, &s3_config(), Some(&opts))
             .expect("S3 store should construct when server opts are present");
         assert_eq!(store.storage_kind(), StorageKind::S3);
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod verify_suite {
+    //! Backend-agnostic assertions that a `VersionStore` verifies its content-addressed writes.
+    //! Each backend runs this against a live store so the invariant -- every content-addressed
+    //! store method rejects bytes that don't hash to their key and commits no version object --
+    //! holds for any current or future backend.
+    use super::*;
+    use crate::util::hasher;
+    use std::io::Cursor;
+
+    const DATA: &[u8] = b"the quick brown fox jumps over the lazy dog";
+    /// A validly formatted 32-hex-digit hash that is not the hash of `DATA`.
+    const WRONG_HASH: &str = "deadbeefdeadbeefdeadbeefdeadbeef";
+
+    fn assert_mismatch(result: Result<(), OxenError>, method: &str) {
+        match result {
+            Ok(()) => panic!("{method} accepted content that does not hash to its key"),
+            Err(e) => assert!(
+                e.to_string().to_lowercase().contains("mismatch"),
+                "{method} must reject with a hash mismatch, got: {e}"
+            ),
+        }
+    }
+
+    /// Assert every content-addressed store method rejects mismatched bytes and leaves no version
+    /// object at the key. The exempt methods (`store_version_chunk`, `store_version_derived`) are
+    /// not addressed by their own bytes and so are not exercised here.
+    pub(crate) async fn assert_rejects_mismatched_content(store: &dyn VersionStore) {
+        assert_ne!(
+            hasher::hash_buffer(DATA),
+            WRONG_HASH,
+            "test fixture is broken: WRONG_HASH must not be the hash of DATA"
+        );
+
+        assert_mismatch(
+            store
+                .store_version(WRONG_HASH, Bytes::from_static(DATA))
+                .await,
+            "store_version",
+        );
+        assert!(
+            !store.version_exists(WRONG_HASH).await.unwrap(),
+            "store_version committed a version object on mismatch"
+        );
+
+        let reader = Box::new(Cursor::new(DATA.to_vec()));
+        assert_mismatch(
+            store
+                .store_version_from_reader(WRONG_HASH, reader, DATA.len() as u64)
+                .await,
+            "store_version_from_reader",
+        );
+        assert!(
+            !store.version_exists(WRONG_HASH).await.unwrap(),
+            "store_version_from_reader committed a version object on mismatch"
+        );
+
+        // Stage one chunk (exempt from verification), then combine under a key the reassembled
+        // bytes don't hash to.
+        store
+            .store_version_chunk(WRONG_HASH, 0, Bytes::from_static(DATA))
+            .await
+            .unwrap();
+        assert_mismatch(
+            store.combine_version_chunks(WRONG_HASH).await,
+            "combine_version_chunks",
+        );
+        assert!(
+            !store.version_exists(WRONG_HASH).await.unwrap(),
+            "combine_version_chunks committed a version object on mismatch"
+        );
     }
 }

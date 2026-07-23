@@ -1,6 +1,8 @@
 use actix_web::{HttpRequest, HttpResponse, web};
 use liboxen::{
     command::migrate::{self, Direction, try_apply_migration},
+    core::repo_locks,
+    error::OxenError,
     migrations,
     view::{ListRepositoryResponse, StatusMessage},
 };
@@ -81,7 +83,19 @@ pub async fn run(req: HttpRequest, body: web::Bytes) -> Result<HttpResponse, Oxe
 
     let repo = get_repo(app_data, &namespace, &repo_name)?;
 
-    try_apply_migration(migration, direction, run_optional, repo)?;
+    // Run the migration with the repo to itself: the exclusive lock blocks new writers and drains
+    // in-flight ones before `up`/`down` runs, and serializes two concurrent migration POSTs for the
+    // same repo. Returns HTTP 429 if in-flight writes don't drain in time. The synchronous transcode
+    // runs on the blocking pool so it doesn't starve other requests on the actix worker.
+    let migration_repo = repo.clone();
+    repo_locks::with_repo_exclusive(&repo, async move {
+        tokio::task::spawn_blocking(move || {
+            try_apply_migration(migration, direction, run_optional, migration_repo)
+        })
+        .await
+        .map_err(OxenError::from)?
+    })
+    .await?;
 
     log::info!(
         "Ran migration {migration_name} {direction} on {namespace}/{repo_name}",
@@ -102,6 +116,7 @@ mod tests {
     use actix_web::{App, http, web};
     use liboxen::core::workspaces::workspace_name_index;
     use liboxen::error::OxenError;
+    use std::time::Duration;
 
     #[actix_web::test]
     async fn test_run_up_on_single_repo() -> Result<(), OxenError> {
@@ -136,6 +151,60 @@ mod tests {
         assert_eq!(resp.status(), http::StatusCode::OK);
 
         // Index should exist after migration.
+        assert!(workspace_name_index::index_exists(&repo));
+
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
+
+    /// The migration runs under the repo's exclusive lock: while a write reservation is
+    /// outstanding it waits for that write to drain before running, rather than racing it. Guards
+    /// the `with_repo_exclusive` wiring — the happy-path test above passes with or without the
+    /// wrap, so this is what would fail if the lock were dropped.
+    #[actix_web::test]
+    async fn test_run_waits_for_in_flight_writes_to_drain() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Repo";
+
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let workspaces_dir = liboxen::model::Workspace::workspaces_dir(&repo);
+        std::fs::create_dir_all(&workspaces_dir)?;
+
+        // Reserve a write on the same lock gate the handler targets (gates are keyed by repo path,
+        // so resolve the repo exactly as `get_repo` does), giving the exclusive acquire something
+        // to drain.
+        let handler_repo = liboxen::repositories::get_by_namespace_and_name(
+            &sync_dir, namespace, repo_name, None,
+        )?
+        .expect("repo should exist");
+        let guard = repo_locks::acquire_write(&handler_repo)?;
+
+        let req = test::repo_request_with_param(
+            &sync_dir,
+            "/",
+            namespace,
+            repo_name,
+            "migration_name",
+            "add_workspace_name_index",
+        );
+        let migration = run(req, web::Bytes::new());
+        tokio::pin!(migration);
+
+        // The migration must not complete while the write is in flight.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(150), &mut migration)
+                .await
+                .is_err(),
+            "migration ran while a write was in flight — exclusive lock not wired"
+        );
+
+        // Draining the write lets the migration proceed.
+        drop(guard);
+        let resp = migration
+            .await
+            .expect("run handler should succeed after drain");
+        assert_eq!(resp.status(), http::StatusCode::OK);
         assert!(workspace_name_index::index_exists(&repo));
 
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;

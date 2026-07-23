@@ -53,6 +53,7 @@ mod tests {
 
     use crate::{repositories, test};
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_restore_file() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|mut _local_repo, remote_repo| async move {
@@ -101,6 +102,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_restore_file_with_full_path() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|mut _local_repo, remote_repo| async move {
@@ -149,6 +151,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_restore_subdirectory_file() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(
@@ -211,6 +214,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_restore_dir() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|mut _local_repo, remote_repo| async move {

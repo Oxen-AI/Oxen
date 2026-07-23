@@ -4450,7 +4450,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "liboxen"
-version = "0.52.1"
+version = "0.52.3"
 dependencies = [
  "approx",
  "arrow",
@@ -4516,10 +4516,8 @@ dependencies = [
  "pathdiff",
  "polars",
  "qsv-sniffer",
- "r2d2",
  "rand 0.8.5",
  "rayon",
- "redis",
  "regex",
  "reqwest 0.13.2",
  "rmp-serde",
@@ -5362,7 +5360,7 @@ checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
 name = "oxen-cli"
-version = "0.52.1"
+version = "0.52.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5388,7 +5386,7 @@ dependencies = [
 
 [[package]]
 name = "oxen-py"
-version = "0.52.1"
+version = "0.52.3"
 dependencies = [
  "bindgen 0.71.1",
  "cc",
@@ -5408,7 +5406,7 @@ dependencies = [
 
 [[package]]
 name = "oxen-server"
-version = "0.52.1"
+version = "0.52.3"
 dependencies = [
  "actix-http",
  "actix-multipart",
@@ -6709,17 +6707,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
-name = "r2d2"
-version = "0.8.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51de85fb3fb6524929c8a2eb85e6b6d363de4e8c48f9e2c2eac4944abc181c93"
-dependencies = [
- "log",
- "parking_lot",
- "scheduled-thread-pool",
-]
-
-[[package]]
 name = "radium"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6915,25 +6902,6 @@ checksum = "76009fbe0614077fc1a2ce255e3a1881a2e3a3527097d5dc6d8212c585e7e38b"
 dependencies = [
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "redis"
-version = "0.27.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09d8f99a4090c89cc489a94833c901ead69bfbf3877b4867d5482e321ee875bc"
-dependencies = [
- "arc-swap",
- "combine",
- "itertools 0.13.0",
- "itoa",
- "num-bigint",
- "percent-encoding",
- "r2d2",
- "ryu",
- "sha1_smol",
- "socket2 0.5.10",
- "url",
 ]
 
 [[package]]
@@ -7569,15 +7537,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "scheduled-thread-pool"
-version = "0.2.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3cbc66816425a074528352f5789333ecff06ca41b36b0b0efdfbb29edc391a19"
-dependencies = [
- "parking_lot",
-]
-
-[[package]]
 name = "schemars"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7824,12 +7783,6 @@ dependencies = [
  "cpufeatures",
  "digest 0.11.2",
 ]
-
-[[package]]
-name = "sha1_smol"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
 
 [[package]]
 name = "sha2"

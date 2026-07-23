@@ -21,7 +21,7 @@ use liboxen::view::tree::nodes::{
 };
 
 use crate::errors::OxenHttpError;
-use crate::helpers::get_repo;
+use crate::helpers::{get_repo, stream_with_heartbeat};
 use crate::params::TreeDepthQuery;
 use crate::params::parse_resource;
 use crate::params::{app_data, path_param};
@@ -189,11 +189,15 @@ pub async fn create_nodes(
     // Unpacking decompresses the archive and writes every node to the store. That is blocking CPU
     // and disk work, and it takes longer the bigger the tree is. Run it on the blocking pool so a
     // large tree never stalls the async workers that serve every other request this server handles.
-    tokio::task::spawn_blocking(move || repositories::tree::unpack_nodes(&repository, &bytes[..]))
+    // The connection is silent for the whole unpack, so stream heartbeats to hold idle timers off.
+    Ok(stream_with_heartbeat(async move {
+        tokio::task::spawn_blocking(move || {
+            repositories::tree::unpack_nodes(&repository, &bytes[..])
+        })
         .await
         .map_err(|e| OxenError::basic_str(format!("create_nodes unpack task panicked: {e}")))??;
-
-    Ok(HttpResponse::Ok().json(StatusMessage::resource_found()))
+        Ok(StatusMessage::resource_found())
+    }))
 }
 
 #[tracing::instrument(skip_all)]

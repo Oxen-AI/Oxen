@@ -80,6 +80,5 @@ ENV RUST_MIN_STACK=50000000
 # Set the log level to info for the server
 ENV RUST_LOG=info
 ENV SYNC_DIR=/var/oxen/data
-ENV REDIS_URL=redis://localhost:6379
 EXPOSE 3001
 CMD ["oxen-server", "start", "-p", "3001"]

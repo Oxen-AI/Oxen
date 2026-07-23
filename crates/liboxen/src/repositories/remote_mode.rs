@@ -36,6 +36,7 @@ mod tests {
     use crate::test;
     use crate::util;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_clone_only_downloads_tree() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
@@ -92,6 +93,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_list_tabular_files() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
@@ -164,6 +166,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_merkle_two_files_same_hash() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|local_repo, remote_repo| async move {

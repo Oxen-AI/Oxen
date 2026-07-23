@@ -1709,6 +1709,14 @@ pub fn validate_and_normalize_path(path: impl AsRef<Path>) -> Result<PathBuf, Ox
     Ok(normalized)
 }
 
+/// The canonical path a workspace file stages at, given the request `directory` and the file's
+/// path relative to it: join, then [`validate_and_normalize_path`] (collapse `.`, reject `..` and
+/// absolute paths). The workspace `files` server handler stages here and echoes it back; the upload
+/// client reconciles against it, so both sides must derive the staged path through this helper.
+pub fn workspace_staged_path(directory: &str, relative: &Path) -> Result<PathBuf, OxenError> {
+    validate_and_normalize_path(Path::new(directory).join(relative))
+}
+
 /// Unpack an async-tar archive to a destination directory without calling `canonicalize`. This is
 /// needed because `archive.unpack()` and `entry.unpack_in()` internally call
 /// `std::fs::canonicalize`, which fails on filesystems that don't support it (e.g. Windows imdisk

@@ -55,6 +55,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_command_push_one_commit() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async {
@@ -109,6 +110,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_command_push_inbetween_two_commits() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async {
@@ -171,6 +173,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_command_push_after_two_commits() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async {
@@ -227,6 +230,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_latest_commit_is_computed_properly() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async {
@@ -339,6 +343,7 @@ mod tests {
     }
 
     // This broke when you tried to add the "." directory to add everything, after already committing the train directory.
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_command_push_after_two_commits_adding_dot() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async {
@@ -397,6 +402,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_push_branch_with_with_no_new_commits() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|repo, remote_repo| async move {
@@ -420,6 +426,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_cannot_push_two_separate_empty_roots() -> Result<(), OxenError> {
         test::run_no_commit_remote_repo_test(|remote_repo| async move {
@@ -487,6 +494,7 @@ mod tests {
     // 2) Create repo B with data
     // 3) Push Repo A
     // 4) Push repo B to repo A and fail
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_cannot_push_two_separate_repos() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|mut repo_1| async move {
@@ -532,6 +540,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_push_many_commits_default_branch() -> Result<(), OxenError> {
         test::run_many_local_commits_empty_sync_remote_test(|local_repo, remote_repo| async move {
@@ -555,6 +564,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_push_many_commits_new_branch() -> Result<(), OxenError> {
         test::run_many_local_commits_empty_sync_remote_test(|local_repo, remote_repo| async move {
@@ -612,6 +622,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_cannot_push_while_another_user_is_pushing() -> Result<(), OxenError> {
         test::run_no_commit_remote_repo_test(|remote_repo| async move {
@@ -677,6 +688,7 @@ mod tests {
     // 2) Clone repo B with data
     // 3) Push Repo A
     // 4) Push repo B to repo A and fail
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_tree_cannot_push_two_separate_cloned_repos() -> Result<(), OxenError> {
         // Push the first repo with data
@@ -759,6 +771,7 @@ mod tests {
     // * User A makes a commit and pushes
     // * User B makes a different commit — normal push fails
     // * User B force pushes — succeeds and remote matches user B's history
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_force_push_when_remote_is_ahead() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_, remote_repo| async move {
@@ -833,6 +846,7 @@ mod tests {
     // * User B makes commit modifying `README.md` pushes and fails
     // * User B pulls user A's changes and there is a conflict
     // * User B fixes the conflict and pushes and succeeds
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_tree_cannot_push_when_remote_repo_is_ahead_same_file() -> Result<(), OxenError> {
         // Push the Remote Repo
@@ -922,6 +936,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_tree_cannot_push_tree_conflict_deleted_file() -> Result<(), OxenError> {
         // Push the Remote Repo
@@ -977,6 +992,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_push_move_entire_directory() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
@@ -1039,6 +1055,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_push_only_one_modified_file() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
@@ -1076,6 +1093,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_push_root_subtree_depth_1() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
@@ -1123,6 +1141,7 @@ A: Oxen.ai is a great tool for this! It can handle any size dataset, and is opti
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_push_annotations_test_subtree() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
@@ -1179,6 +1198,7 @@ A: Checkout Oxen.ai
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_push_partial_clone_nlp_classification() -> Result<(), OxenError> {
         // Push the Remote Repo
@@ -1330,6 +1350,7 @@ A: Checkout Oxen.ai
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_push_file_with_exact_avg_chunk_size() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
@@ -1407,6 +1428,7 @@ A: Checkout Oxen.ai
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_merge_conflict_push_failure() -> Result<(), OxenError> {
         // Test that after a merge conflict, pushing again should fail
@@ -1484,6 +1506,7 @@ A: Checkout Oxen.ai
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_create_nodes_before_starting_push() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
@@ -1539,6 +1562,7 @@ A: Checkout Oxen.ai
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_push_large_file_and_clone_verify() -> Result<(), OxenError> {
         // Push a file just over the streamed-transfer threshold so the chunked path is
@@ -1604,6 +1628,7 @@ A: Checkout Oxen.ai
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_push_large_file_in_subdir_and_clone_verify() -> Result<(), OxenError> {
         // Test pushing a >10MB file inside a subdirectory, then cloning.
@@ -1684,6 +1709,7 @@ A: Checkout Oxen.ai
     // `oxen push --revalidate` must re-push a blob the remote is simply MISSING, not only one that
     // is corrupt-but-present. `versions::clean` reports zero corrupted for an absent blob, so the
     // repair used to no-op on the common case.
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_revalidate_repushes_a_missing_blob() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async {
@@ -1742,6 +1768,7 @@ A: Checkout Oxen.ai
 
     // `--missing-files` from a clone missing some of the files the remote needs must fail fast with
     // CannotPushShallowClone and upload nothing — not partially upload and then error mid-stream.
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_missing_files_fails_fast_on_shallow_clone() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async {

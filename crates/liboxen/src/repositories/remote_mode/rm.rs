@@ -18,6 +18,7 @@ mod tests {
     use crate::model::NewCommitBody;
     use crate::model::StagedEntryStatus;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_rm_synced_file() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
@@ -76,6 +77,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_rm_unsynced_file() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
@@ -127,6 +129,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_rm_unsynced_file_with_full_path() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
@@ -179,6 +182,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_rm_dir_that_is_not_committed_should_throw_error()
     -> Result<(), OxenError> {
@@ -217,6 +221,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_rm_staged_file() -> Result<(), OxenError> {
         test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
@@ -291,6 +296,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_rm_one_file_in_dir() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
@@ -397,6 +403,7 @@ mod tests {
 
     // TODO: 'status.print()' has weird behavior when staging subdirs for removal
     //       Resolve this at some point
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_rm_dir_with_asterisk() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
@@ -478,6 +485,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_rm_dir_with_glob_path() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {

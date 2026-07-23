@@ -1,4 +1,4 @@
-use crate::core::db::data_frames::df_db::with_df_db_manager;
+use crate::core::db::data_frames::df_db::with_hardened_query_conn;
 use crate::core::df::{sql, tabular};
 use crate::core::staged::get_staged_db_manager;
 use crate::error::OxenError;
@@ -155,9 +155,7 @@ async fn handle_sql_querying(
 
     if let (Some(sql), Some(workspace)) = (opts.sql.clone(), workspace) {
         let db_path = repositories::workspaces::data_frames::duckdb_path(&workspace, path);
-        let df = with_df_db_manager(&db_path, |manager| {
-            manager.with_conn_mut(|conn| sql::query_df(conn, sql, None))
-        })?;
+        let df = with_hardened_query_conn(&db_path, |conn| sql::query_df(conn, sql, None))?;
         log::debug!("handle_sql_querying got df {df:?}");
         let paginated_df = tabular::collect_with_opts(df.clone().lazy(), opts.clone()).await?;
 

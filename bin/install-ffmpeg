@@ -2,12 +2,12 @@
 #
 # install-ffmpeg
 #
-# Install a pinned FFmpeg 8 (LGPL shared build from BtbN/FFmpeg-Builds) under a prefix and register
-# its libraries with ldconfig. Shared by bin/install-prereqs, the production-build CI workflow, and
-# the Dockerfiles, which all provision FFmpeg from this one place. Pins live in tool-versions.env.
+# Install a pinned FFmpeg 8 (LGPL shared build) under a prefix and register its libraries with
+# ldconfig. Shared by bin/install-prereqs, the production-build CI workflow, and the Dockerfiles,
+# which all provision FFmpeg from this one place. Pins live in tool-versions.env.
 #
-# BtbN prunes old autobuild releases over time; refresh the pin in tool-versions.env periodically,
-# or mirror the asset to storage we control.
+# The tarballs are served from Oxen-AI/oxen-ffmpeg-downloads, a mirror we control, so a pinned
+# release stays available — the upstream BtbN/FFmpeg-Builds autobuilds get pruned within weeks.
 #
 # Usage: install-ffmpeg [PREFIX]            (PREFIX defaults to /opt/ffmpeg)
 #   TOOL_VERSIONS_FILE   path to tool-versions.env (default: alongside this script's repo root)
@@ -33,14 +33,14 @@ as_root() {
 }
 
 stamp="$PREFIX/.oxen-ffmpeg-version"
-want="${FFMPEG_VERSION}+${FFMPEG_BTBN_TAG}"
+want="${FFMPEG_VERSION}"
 if [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$want" ]; then
     echo "FFmpeg ${FFMPEG_VERSION} already installed at $PREFIX"
     exit 0
 fi
 
-tarball="ffmpeg-n${FFMPEG_VERSION}${FFMPEG_BUILD_SUFFIX:-}-${ff_arch}-lgpl-shared-${FFMPEG_BRANCH}.tar.xz"
-url="https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_BTBN_TAG}/${tarball}"
+tarball="ffmpeg-${FFMPEG_VERSION}-${ff_arch}-lgpl-shared.tar.xz"
+url="https://github.com/Oxen-AI/oxen-ffmpeg-downloads/releases/download/ffmpeg-${FFMPEG_VERSION}/${tarball}"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 

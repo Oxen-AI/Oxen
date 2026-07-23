@@ -88,6 +88,7 @@ mod tests {
     use crate::test;
     use crate::util;
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_prune_dry_run() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut local_repo| async move {
@@ -122,6 +123,7 @@ mod tests {
         .await
     }
 
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_prune_removes_dangling_branch() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut local_repo| async move {

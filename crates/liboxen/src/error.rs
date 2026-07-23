@@ -274,6 +274,10 @@ pub enum OxenError {
     #[error("Unsupported storage kind: {0}")]
     UnsupportedStorageKind(String),
 
+    /// A caller supplied a Merkle node backend that isn't recognized.
+    #[error("Unsupported Merkle node backend: {0}. Expected 'filesystem' or 'lmdb'.")]
+    UnsupportedMerkleNodeBackend(String),
+
     /// An S3-backed repo was requested but the server has no S3 opts configured (the
     /// `s3_bucket` is unset in the server's TOML). On the repo-create path this normally surfaces
     /// as a 400 from `StoragePolicy::resolve()` before construction; this variant catches the
@@ -489,14 +493,6 @@ pub enum OxenError {
     #[error("Image processing error: {0}")]
     ImageError(#[from] image::ImageError),
 
-    /// Wraps any error that we get from Redis client use.
-    #[error("Redis error: {0}")]
-    RedisError(#[from] redis::RedisError),
-
-    /// Wraps any error that we get from using r2d2 (the connection pool).
-    #[error("Connection pool error: {0}")]
-    R2D2Error(#[from] r2d2::Error),
-
     /// Wraps any error that we get from using jwalk (directory traversal).
     #[error("Directory traversal error: {0}")]
     JwalkError(#[from] jwalk::Error),
@@ -652,6 +648,11 @@ pub enum OxenError {
     // liboxen API.
     #[error("{0}")]
     InternalError(StringError),
+
+    /// A whole-repo exclusive lock (migration / maintenance) is held, so a write was refused.
+    /// oxen-server maps this to HTTP 429 with `Retry-After`; the client should retry shortly.
+    #[error("{0}")]
+    LockTimeout(StringError),
 }
 
 /// Multi-line render for [`OxenError::DownloadBatchExhausted`]. Lists the file path first
@@ -731,6 +732,9 @@ impl OxenError {
                 "Verify the remote URL is correct. Check your remotes with `oxen remote -v`."
             }
             BranchNotFound(_) => "List available branches with `oxen branch --all`.",
+            LockTimeout(_) => {
+                "A maintenance operation holds the repository's exclusive lock. Wait a few seconds and retry."
+            }
             RevisionNotFound(_) => {
                 "Check available branches with `oxen branch --all` or commits with `oxen log`."
             }
@@ -775,8 +779,7 @@ impl OxenError {
             IO(io_err) if io_err.kind() == PermissionDenied => {
                 "Check file permissions and try again."
             }
-            DB(_) | ArrowError(_) | BinCodeError(_) | RedisError(_) | R2D2Error(_)
-            | RmpDecodeError(_) => {
+            DB(_) | ArrowError(_) | BinCodeError(_) | RmpDecodeError(_) => {
                 "This is an internal error. Run with RUST_LOG=debug for more details."
             }
             WorkspaceStagedDbCorrupted { .. } => {
