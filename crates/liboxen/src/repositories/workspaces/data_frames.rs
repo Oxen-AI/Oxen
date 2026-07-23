@@ -134,20 +134,26 @@ pub fn query(
                 )?
             } else if let Some(sql) = &opts.sql {
                 log::debug!("querying sql: {sql:?}");
-                return sql::query_df(conn, sql.clone(), None);
+                sql::query_df(conn, sql.clone(), None)?
             } else {
                 let mut select = Select::new().select("*").from(TABLE_NAME);
                 // Deterministic page order: DuckDB UPDATEs physically relocate
                 // rows, so without an ORDER BY an edited row jumps to another
-                // page and the edit looks lost. Tables indexed before the
-                // row-id column existed keep the old (unordered) behavior
-                // until they are re-indexed.
-                if opts.sort_by.is_none()
-                    && df_db::table_has_column(conn, TABLE_NAME, OXEN_ROW_ID_COL)?
-                {
+                // page and the edit looks lost. (When the caller sorts,
+                // prepare_sql appends that ORDER BY instead.)
+                if opts.sort_by.is_none() {
                     select = select.order_by(OXEN_ROW_ID_COL);
                 }
                 df_db::select(conn, &select, Some(opts))?
+            };
+
+            // `_oxen_row_id` is an ordering key, not part of the data frame's
+            // schema — keep it out of results. (`_oxen_id` stays: clients
+            // address rows by it.)
+            let df = if df.column(OXEN_ROW_ID_COL).is_ok() {
+                df.drop(OXEN_ROW_ID_COL)?
+            } else {
+                df
             };
 
             Ok(df)
@@ -177,7 +183,9 @@ pub fn export(
             } else if let Some(sql) = opts.sql.clone() {
                 add_exclude_to_sql(&sql)?
             } else {
-                let sql = format!("SELECT * FROM {TABLE_NAME}");
+                // Ordered for the same reason as query(): an exported file must
+                // carry the stable row order, not DuckDB's physical order.
+                let sql = format!("SELECT * FROM {TABLE_NAME} ORDER BY {OXEN_ROW_ID_COL}");
                 add_exclude_to_sql(&sql)?
             };
 
@@ -494,11 +502,11 @@ mod tests {
         .await
     }
 
-    /// Indexing adds exactly one hidden column (`_oxen_id`) — the legacy
-    /// tracking columns (`_oxen_diff_status`, `_oxen_row_id`,
+    /// Indexing adds exactly the hidden system columns (`_oxen_id`,
+    /// `_oxen_row_id`) — the legacy tracking columns (`_oxen_diff_status`,
     /// `_oxen_diff_hash`) are no longer created.
     #[tokio::test]
-    async fn test_index_adds_only_oxen_id_column() -> Result<(), OxenError> {
+    async fn test_index_adds_only_oxen_system_columns() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
@@ -522,8 +530,8 @@ mod tests {
             })?;
 
             assert!(columns.contains(&OXEN_ID_COL.to_string()));
+            assert!(columns.contains(&OXEN_ROW_ID_COL.to_string()));
             assert!(!columns.contains(&crate::constants::DIFF_STATUS_COL.to_string()));
-            assert!(!columns.iter().any(|c| c == "_oxen_row_id"));
             assert!(!columns.iter().any(|c| c == "_oxen_diff_hash"));
 
             Ok(())
@@ -994,6 +1002,76 @@ mod tests {
         .await
     }
 
+    /// The default (no-sql, no-sort) read path must return rows in a stable
+    /// order across edits: a DuckDB UPDATE physically relocates the row, and
+    /// without the `_oxen_row_id` ORDER BY the edited row jumps pages. The
+    /// ordering column itself must not leak into results.
+    #[tokio::test]
+    async fn test_query_keeps_row_order_after_modify() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch_name = "test-row-order";
+            let branch = repositories::branches::create_checkout(&repo, branch_name)?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            let read_ids = |df: &polars::frame::DataFrame| -> Result<Vec<String>, OxenError> {
+                let col = df.column(OXEN_ID_COL)?;
+                (0..df.height())
+                    .map(|i| {
+                        Ok(col
+                            .get(i)?
+                            .get_str()
+                            .expect("_oxen_id is a string column")
+                            .to_string())
+                    })
+                    .collect()
+            };
+
+            let opts = DFOpts::empty();
+            let df_before = workspaces::data_frames::query(&workspace, &file_path, &opts)?;
+            let ids_before = read_ids(&df_before)?;
+
+            // Edit the first row; DuckDB physically relocates it.
+            let json_data = json!({ "height": 999 });
+            workspaces::data_frames::rows::update(
+                &repo,
+                &workspace,
+                &file_path,
+                &ids_before[0],
+                &json_data,
+            )?;
+
+            let df_after = workspaces::data_frames::query(&workspace, &file_path, &opts)?;
+            assert_eq!(
+                read_ids(&df_after)?,
+                ids_before,
+                "row order must be stable across an edit"
+            );
+            let height = df_after.column("height")?.get(0)?;
+            assert_eq!(
+                height.to_string(),
+                "999",
+                "the edit applied to the first row"
+            );
+            assert!(
+                df_after.column(OXEN_ROW_ID_COL).is_err(),
+                "the internal ordering column must not appear in results"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_delete_added_single_row() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -1173,11 +1251,11 @@ mod tests {
         .await
     }
 
-    /// A user data frame with a column named like a legacy tracking column
-    /// (`_oxen_diff_status`) is editable: updates to that column apply rather
-    /// than being silently stripped as a reserved key.
+    /// `_oxen_diff_status` is no longer a reserved name (the legacy tracking
+    /// columns are fully unsupported), so a user data frame with a column of
+    /// that name is an ordinary column: updates to it apply.
     #[tokio::test]
-    async fn test_update_user_owned_legacy_named_column_applies() -> Result<(), OxenError> {
+    async fn test_update_user_column_with_former_legacy_name_applies() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
@@ -1205,25 +1283,24 @@ mod tests {
                 .to_string()
                 .replace('"', "");
 
-            // Update the user's own _oxen_diff_status column.
             let json_data = json!({ "_oxen_diff_status": "changed" });
             workspaces::data_frames::rows::update(&repo, &workspace, file_path, &id, &json_data)?;
 
             let row = workspaces::data_frames::rows::get_by_id(&workspace, file_path, &id)?;
             let val = row.column("_oxen_diff_status")?.get(0)?;
-            assert_eq!(val.get_str(), Some("changed"));
+            assert_eq!(val.get_str(), Some("changed"), "the update applies");
 
             Ok(())
         })
         .await
     }
 
-    /// Row-update payloads that still carry the legacy tracking keys
-    /// (_oxen_diff_status etc.) — as older clients send — are accepted, with
-    /// the legacy keys stripped like they always were.
+    /// The current reserved keys (`_oxen_id`, `_oxen_row_id`) are stripped
+    /// from row-update payloads; the legacy tracking keys are no longer
+    /// tolerated — a payload naming a column the table doesn't have is
+    /// rejected like any other schema mismatch.
     #[tokio::test]
-    async fn test_update_row_payload_with_legacy_tracking_keys_is_accepted() -> Result<(), OxenError>
-    {
+    async fn test_update_row_payload_reserved_and_unknown_keys() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
@@ -1244,11 +1321,10 @@ mod tests {
             let id = staged_df.column(OXEN_ID_COL)?.get(0)?.to_string();
             let id = id.replace('"', "");
 
-            // A pre-upgrade client round-trips the tracking columns it fetched.
+            // Reserved system keys are stripped; the rest of the update applies.
             let json_data = json!({
                 "label": "doggo",
-                "_oxen_diff_status": "unchanged",
-                "_oxen_diff_hash": null,
+                "_oxen_id": "someone-elses-id",
                 "_oxen_row_id": 1
             });
             let updated = workspaces::data_frames::rows::update(
@@ -1256,6 +1332,17 @@ mod tests {
             )?;
             let label = updated.column("label")?.get(0)?;
             assert_eq!(label.get_str(), Some("doggo"));
+
+            // A legacy tracking key names a column this table doesn't have:
+            // rejected as a schema mismatch rather than silently stripped.
+            let json_data = json!({
+                "label": "doggo",
+                "_oxen_diff_status": "unchanged"
+            });
+            let result = workspaces::data_frames::rows::update(
+                &repo, &workspace, &file_path, &id, &json_data,
+            );
+            assert!(result.is_err(), "unknown columns must be rejected");
 
             Ok(())
         })
@@ -1580,7 +1667,10 @@ mod tests {
     fn test_add_exclude_to_simple_select() -> Result<(), OxenError> {
         let sql = "SELECT * FROM table";
         let result = add_exclude_to_sql(sql)?;
-        assert_eq!(result, "SELECT * EXCLUDE (\"_oxen_id\") FROM table");
+        assert_eq!(
+            result,
+            "SELECT * EXCLUDE (\"_oxen_id\", \"_oxen_row_id\") FROM table"
+        );
         Ok(())
     }
 
@@ -1590,7 +1680,7 @@ mod tests {
         let result = add_exclude_to_sql(sql)?;
         assert_eq!(
             result,
-            "SELECT col1, col2, col3 EXCLUDE (\"_oxen_id\") FROM table WHERE col1 = 'value'"
+            "SELECT col1, col2, col3 EXCLUDE (\"_oxen_id\", \"_oxen_row_id\") FROM table WHERE col1 = 'value'"
         );
         Ok(())
     }
@@ -1599,7 +1689,10 @@ mod tests {
     fn test_add_exclude_case_insensitive() -> Result<(), OxenError> {
         let sql = "select * from table";
         let result = add_exclude_to_sql(sql)?;
-        assert_eq!(result, "SELECT * EXCLUDE (\"_oxen_id\") from table");
+        assert_eq!(
+            result,
+            "SELECT * EXCLUDE (\"_oxen_id\", \"_oxen_row_id\") from table"
+        );
         Ok(())
     }
 
@@ -1616,6 +1709,95 @@ mod tests {
         let result = add_exclude_to_sql(sql)?;
         assert_eq!(result, "SELECT label, COUNT(*) FROM table GROUP BY label");
         Ok(())
+    }
+
+    /// Column names with spaces must survive the whole column lifecycle —
+    /// the ALTER TABLE builders quote identifiers, so a name like "my col"
+    /// can be added, renamed, and deleted.
+    #[tokio::test]
+    async fn test_column_lifecycle_with_space_in_name() -> Result<(), OxenError> {
+        use crate::view::data_frames::columns::{ColumnToDelete, ColumnToUpdate, NewColumn};
+
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-spaced-col")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            let new_column = NewColumn {
+                name: "my col".to_string(),
+                data_type: "str".to_string(),
+            };
+            let df =
+                workspaces::data_frames::columns::add(&repo, &workspace, &file_path, &new_column)?;
+            assert!(df.column("my col").is_ok());
+
+            let rename = ColumnToUpdate {
+                name: "my col".to_string(),
+                new_name: Some("my col 2".to_string()),
+                new_data_type: None,
+            };
+            let df =
+                workspaces::data_frames::columns::update(&repo, &workspace, &file_path, &rename)
+                    .await?;
+            assert!(df.column("my col 2").is_ok());
+            assert!(df.column("my col").is_err());
+
+            // The renamed column must be usable through the row paths too:
+            // append a row with a value in it, then edit that value.
+            let json_data = json!({ "file": "spaced.jpg", "my col 2": "hello" });
+            let added =
+                workspaces::data_frames::rows::add(&repo, &workspace, &file_path, &json_data)?;
+            let row_id = added
+                .column(OXEN_ID_COL)?
+                .get(0)?
+                .to_string()
+                .trim_matches('"')
+                .to_string();
+            let json_data = json!({ "my col 2": "world" });
+            let updated = workspaces::data_frames::rows::update(
+                &repo, &workspace, &file_path, &row_id, &json_data,
+            )?;
+            assert_eq!(updated.column("my col 2")?.get(0)?.get_str(), Some("world"));
+
+            let delete = ColumnToDelete {
+                name: "my col 2".to_string(),
+            };
+            let df =
+                workspaces::data_frames::columns::delete(&repo, &workspace, &file_path, &delete)?;
+            assert!(df.column("my col 2").is_err());
+
+            // An embedded double quote is the hardest identifier case: every
+            // SQL builder must escape it, not just wrap it.
+            let quoted_name = "we\"ird col";
+            let new_column = NewColumn {
+                name: quoted_name.to_string(),
+                data_type: "str".to_string(),
+            };
+            let df =
+                workspaces::data_frames::columns::add(&repo, &workspace, &file_path, &new_column)?;
+            assert!(df.column(quoted_name).is_ok());
+            let json_data = json!({ "file": "quoted.jpg", quoted_name: "hi" });
+            let added =
+                workspaces::data_frames::rows::add(&repo, &workspace, &file_path, &json_data)?;
+            assert_eq!(added.column(quoted_name)?.get(0)?.get_str(), Some("hi"));
+            let delete = ColumnToDelete {
+                name: quoted_name.to_string(),
+            };
+            let df =
+                workspaces::data_frames::columns::delete(&repo, &workspace, &file_path, &delete)?;
+            assert!(df.column(quoted_name).is_err());
+
+            Ok(())
+        })
+        .await
     }
 
     /// Adds `column_name` of `data_type` (e.g. "list[i64]") to a workspace-indexed dataframe,

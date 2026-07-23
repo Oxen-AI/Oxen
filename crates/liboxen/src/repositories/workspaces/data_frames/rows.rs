@@ -7,7 +7,7 @@ use polars::prelude::PlSmallStr;
 
 use crate::{core, repositories};
 
-use crate::constants::{OXEN_ID_COL, TABLE_NAME};
+use crate::constants::{OXEN_ID_COL, OXEN_ROW_ID_COL, TABLE_NAME};
 
 use crate::core::db::data_frames::df_db::{self, with_df_db_manager};
 use crate::model::LocalRepository;
@@ -71,7 +71,13 @@ pub fn get_by_id(
         })
     })?;
     log::debug!("get_row_by_id() got data: {data:?}");
-    Ok(data)
+    // `_oxen_row_id` is an ordering key, not part of the data frame's schema —
+    // keep it out of row results. (`_oxen_id` stays: clients address rows by it.)
+    if data.column(OXEN_ROW_ID_COL).is_ok() {
+        Ok(data.drop(OXEN_ROW_ID_COL)?)
+    } else {
+        Ok(data)
+    }
 }
 
 pub fn get_row_id(row_df: &DataFrame) -> Result<Option<String>, OxenError> {

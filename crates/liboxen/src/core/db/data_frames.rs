@@ -18,6 +18,11 @@ pub enum DataFrameError {
     #[error("Column name already exists: {0}")]
     ColumnNameAlreadyExists(String),
 
+    /// A data frame's own schema carries a column name reserved for Oxen's
+    /// internal use (see [`crate::constants::OXEN_COLS`]), so it cannot be indexed.
+    #[error("Column name is reserved for Oxen's internal use: {0}")]
+    ReservedColumnName(String),
+
     #[error("Failed to create df db directory: {0}")]
     FailCreateDfDbDir(std::io::Error),
 

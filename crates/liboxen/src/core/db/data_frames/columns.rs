@@ -65,7 +65,9 @@ pub fn polar_insert_column(
     let data_type = DataType::from_string(&new_column.data_type).to_sql();
     let sql = format!(
         "ALTER TABLE {} ADD COLUMN {} {}",
-        table_name, new_column.name, data_type
+        table_name,
+        df_db::quote_ident(&new_column.name),
+        data_type
     );
     conn.execute(&sql, [])?;
 
@@ -83,7 +85,8 @@ pub fn polar_delete_column(
     // Corrected to DROP COLUMN instead of ADD COLUMN
     let sql = format!(
         "ALTER TABLE {} DROP COLUMN {}",
-        table_name, column_to_delete.name
+        table_name,
+        df_db::quote_ident(&column_to_delete.name)
     );
     conn.execute(&sql, [])?;
 
@@ -106,7 +109,9 @@ pub fn polar_update_column(
 
             let update_type_sql = format!(
                 "ALTER TABLE {} ALTER COLUMN {} TYPE {}",
-                table_name, column_to_update.name, data_type
+                table_name,
+                df_db::quote_ident(&column_to_update.name),
+                data_type
             );
             sql_commands.push(update_type_sql);
         }
@@ -114,7 +119,9 @@ pub fn polar_update_column(
         if let Some(ref new_name) = column_to_update.new_name {
             let rename_sql = format!(
                 "ALTER TABLE {} RENAME COLUMN {} TO {}",
-                table_name, column_to_update.name, new_name
+                table_name,
+                df_db::quote_ident(&column_to_update.name),
+                df_db::quote_ident(new_name)
             );
             sql_commands.push(rename_sql);
         }

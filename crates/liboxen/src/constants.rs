@@ -69,13 +69,10 @@ pub const STATS_DIR: &str = "stats";
 pub const STAGED_DIR: &str = "staged";
 /// Name of the table in the duckdb db used for remote staging
 pub const TABLE_NAME: &str = "df";
-/// Oxen's internal columns in duckdb remote staging tables
+/// Oxen's internal columns in duckdb remote staging tables. These names are
+/// reserved: a data frame whose own schema contains one of them cannot be
+/// indexed, and row payloads carrying them have those keys stripped.
 pub const OXEN_COLS: [&str; 2] = [OXEN_ID_COL, OXEN_ROW_ID_COL];
-/// Columns written by older versions' change tracking. Clients in the field
-/// still round-trip these keys in row-update payloads, so the edit paths
-/// strip them like they always did. (`_oxen_row_id` was also a legacy
-/// tracking column, but is now a live system column — see [`OXEN_ROW_ID_COL`].)
-pub const LEGACY_OXEN_COLS: [&str; 2] = [DIFF_STATUS_COL, "_oxen_diff_hash"];
 /// Marker table written by the indexer alongside [`TABLE_NAME`]. Its presence
 /// is the provenance signal that the staged table was produced by the current
 /// indexer — a db without it (written by an older version, which tracked
