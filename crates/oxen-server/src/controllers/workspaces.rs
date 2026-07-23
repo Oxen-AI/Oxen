@@ -340,7 +340,13 @@ pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpErro
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
-    let mergeable = repositories::workspaces::mergeability(&workspace, &branch_name)?;
+    // The mergeability check does synchronous Merkle-store reads, so run it on the blocking pool
+    // rather than stalling an async worker for the duration.
+    let mergeable = tokio::task::spawn_blocking(move || {
+        repositories::workspaces::mergeability(&workspace, &branch_name)
+    })
+    .await
+    .map_err(|e| OxenError::internal_error(format!("mergeability task panicked: {e}")))??;
 
     let response = MergeableResponse {
         status: StatusMessage::resource_found(),
