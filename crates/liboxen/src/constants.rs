@@ -69,12 +69,10 @@ pub const STATS_DIR: &str = "stats";
 pub const STAGED_DIR: &str = "staged";
 /// Name of the table in the duckdb db used for remote staging
 pub const TABLE_NAME: &str = "df";
-/// Oxen's internal columns in duckdb remote staging tables
-pub const OXEN_COLS: [&str; 1] = [OXEN_ID_COL];
-/// Columns written by older versions' change tracking. Clients in the field
-/// still round-trip these keys in row-update payloads, so the edit paths
-/// strip them like they always did.
-pub const LEGACY_OXEN_COLS: [&str; 3] = [DIFF_STATUS_COL, "_oxen_row_id", "_oxen_diff_hash"];
+/// Oxen's internal columns in duckdb remote staging tables. These names are
+/// reserved: a data frame whose own schema contains one of them cannot be
+/// indexed, and row payloads carrying them have those keys stripped.
+pub const OXEN_COLS: [&str; 2] = [OXEN_ID_COL, OXEN_ROW_ID_COL];
 /// Marker table written by the indexer alongside [`TABLE_NAME`]. Its presence
 /// is the provenance signal that the staged table was produced by the current
 /// indexer — a db without it (written by an older version, which tracked
@@ -82,14 +80,22 @@ pub const LEGACY_OXEN_COLS: [&str; 3] = [DIFF_STATUS_COL, "_oxen_row_id", "_oxen
 /// rebuilt. A table, unlike a column, can never collide with user data.
 pub const INDEX_META_TABLE: &str = "_oxen_index_meta";
 /// Oxen's internal columns to exclude from dfs
-pub const EXCLUDE_OXEN_COLS: [&str; 4] = [
+pub const EXCLUDE_OXEN_COLS: [&str; 5] = [
     OXEN_ID_COL,
+    OXEN_ROW_ID_COL,
     EVAL_STATUS_COL,
     EVAL_ERROR_COL,
     EVAL_DURATION_COL,
 ];
 /// Oxen's internal id column in duckdb remote staging tables
 pub const OXEN_ID_COL: &str = "_oxen_id";
+/// Insertion-order index column in duckdb remote staging tables. DuckDB
+/// UPDATEs physically relocate rows, so an unordered SELECT reshuffles pages
+/// after any edit; reads order by this column to keep row order stable.
+pub const OXEN_ROW_ID_COL: &str = "_oxen_row_id";
+/// Sequence that assigns [`OXEN_ROW_ID_COL`] to newly inserted rows, so
+/// appended rows land at the end in a stable order.
+pub const OXEN_ROW_ID_SEQ: &str = "_oxen_row_id_seq";
 /// Name of the folder of the cache dir in which dfs are indexed as duckdbs
 pub const DUCKDB_CACHE_DIR: &str = "duckdb";
 /// Default name for duckdb table used for indexing dataframes

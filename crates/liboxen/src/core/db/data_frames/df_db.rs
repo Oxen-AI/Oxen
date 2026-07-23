@@ -2,7 +2,8 @@
 //!
 
 use crate::constants::{
-    DEFAULT_PAGE_SIZE, DUCKDB_DF_TABLE_NAME, INDEX_META_TABLE, OXEN_COLS, OXEN_ID_COL, TABLE_NAME,
+    DEFAULT_PAGE_SIZE, DUCKDB_DF_TABLE_NAME, INDEX_META_TABLE, OXEN_COLS, OXEN_ID_COL,
+    OXEN_ROW_ID_COL, OXEN_ROW_ID_SEQ, TABLE_NAME,
 };
 
 use crate::core::db::data_frames::{DataFrameError, rows};
@@ -415,6 +416,13 @@ pub fn table_is_fully_indexed(
         .all(|col| schema.fields.iter().any(|field| field.name == *col)))
 }
 
+/// Double-quote a SQL identifier (table/column name) for DuckDB, escaping any
+/// embedded double quotes, so user-supplied names with spaces or punctuation
+/// parse as a single identifier rather than altering the statement.
+pub fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
 /// Create a table from a set of oxen fields with data types.
 fn p_create_table_if_not_exists(
     conn: &duckdb::Connection,
@@ -569,7 +577,7 @@ pub fn prepare_sql(
 
     if opts.sort_by.is_some() {
         let sort_by: String = opts.sort_by.clone().unwrap_or_default();
-        sql.push_str(&format!(" ORDER BY \"{sort_by}\""));
+        sql.push_str(&format!(" ORDER BY {}", quote_ident(&sort_by)));
     }
 
     let pagination_clause = if let Some(page) = opts.page {
@@ -594,10 +602,10 @@ fn add_special_columns(conn: &duckdb::Connection, sql: &str) -> Result<String, D
         let mut ast = Parser::parse_sql(&DIALECT, sql)?;
 
         if let Some(Statement::Query(query)) = ast.get_mut(0) {
-            // Remove the existing LIMIT clause
-            query.limit = None;
-
-            // Add a new LIMIT clause
+            // The probe only needs the result's column names, so cap it at one
+            // row and drop any ORDER BY — a sort would scan the whole table
+            // just to answer a schema question.
+            query.order_by = None;
             query.limit = Some(SqlExpr::Value(SqlValue::Number("1".into(), false)));
         }
         ast
@@ -641,45 +649,37 @@ fn add_special_columns(conn: &duckdb::Connection, sql: &str) -> Result<String, D
         .iter()
         .all(|name| original_field_names.contains(name));
 
-    if is_subset {
-        let special_columns: Vec<&str> = OXEN_COLS
-            .iter()
-            .filter(|col| !result_field_names.contains(col))
-            .copied()
-            .collect();
+    // Only `_oxen_id` is injected: clients address rows by it, so every
+    // projection must carry it. The other internal columns (`_oxen_row_id`)
+    // are implementation details that stay out of results.
+    if is_subset && !result_field_names.contains(&OXEN_ID_COL) {
+        let ast = {
+            let mut ast = Parser::parse_sql(&DIALECT, sql)?;
 
-        if !special_columns.is_empty() {
-            let ast = {
-                let mut ast = Parser::parse_sql(&DIALECT, sql)?;
-
-                if let Some(Statement::Query(query)) = ast.get_mut(0)
-                    && let ast::SetExpr::Select(select) = &mut *query.body
-                {
-                    // Don't inject special columns into DISTINCT queries —
-                    // adding per-row unique cols like _oxen_id defeats deduplication.
-                    if select.distinct.is_some() {
-                        return Ok(sql.to_string());
-                    }
-
-                    // Add new columns to the SELECT clause
-                    for special_column in special_columns {
-                        select
-                            .projection
-                            .push(SelectItem::UnnamedExpr(SqlExpr::Identifier(
-                                special_column.into(),
-                            )));
-                    }
+            if let Some(Statement::Query(query)) = ast.get_mut(0)
+                && let ast::SetExpr::Select(select) = &mut *query.body
+            {
+                // Don't inject special columns into DISTINCT queries —
+                // adding per-row unique cols like _oxen_id defeats deduplication.
+                if select.distinct.is_some() {
+                    return Ok(sql.to_string());
                 }
-                ast
-            };
 
-            // Convert the AST back to a SQL string
-            return Ok(ast
-                .iter()
-                .map(|stmt| stmt.to_string())
-                .collect::<Vec<_>>()
-                .join(";"));
-        }
+                select
+                    .projection
+                    .push(SelectItem::UnnamedExpr(SqlExpr::Identifier(
+                        OXEN_ID_COL.into(),
+                    )));
+            }
+            ast
+        };
+
+        // Convert the AST back to a SQL string
+        return Ok(ast
+            .iter()
+            .map(|stmt| stmt.to_string())
+            .collect::<Vec<_>>()
+            .join(";"));
     }
 
     Ok(sql.to_string())
@@ -761,7 +761,7 @@ pub fn modify_row_with_polars_df(
         .iter()
         .map(|name| {
             let placeholder = rows::placeholder_for_column(&column_sql_types, name);
-            format!("\"{name}\" = {placeholder}")
+            format!("{} = {}", quote_ident(name), placeholder)
         })
         .collect::<Vec<String>>()
         .join(", ");
@@ -835,8 +835,8 @@ pub fn modify_rows_with_polars_df(
                 all_params.push(Box::new(tabular::value_to_tosql(value)));
             }
             set_clauses.push(format!(
-                "\"{}\" = CASE {} END",
-                col_name,
+                "{} = CASE {} END",
+                quote_ident(col_name),
                 case_clauses.join(" ")
             ));
         }
@@ -918,40 +918,50 @@ pub fn index_file_with_id(
     log::debug!("df_db:index_file() at path {path:?} into path {conn:?}");
     let path_str = path.to_string_lossy().to_string();
 
-    match extension {
-        "csv" => {
-            let query = format!(
-                "CREATE TABLE {} AS SELECT *, CAST(uuid() AS VARCHAR) AS {} FROM read_csv('{}', AUTO_DETECT=TRUE, header=True);",
-                DUCKDB_DF_TABLE_NAME,
-                OXEN_ID_COL,
-                path.to_string_lossy()
-            );
-            conn.execute(&query, [])?;
+    let read_clause = match extension {
+        "csv" | "tsv" => format!("read_csv('{path_str}', AUTO_DETECT=TRUE, header=True)"),
+        "parquet" => format!("read_parquet('{path_str}')"),
+        "jsonl" | "json" | "ndjson" => format!("read_json('{path_str}')"),
+        _ => {
+            return Err(DataFrameError::InvalidFileType);
         }
-        "tsv" => {
-            let query = format!(
-                "CREATE TABLE {} AS SELECT *, CAST(uuid() AS VARCHAR) AS {} FROM read_csv('{}', AUTO_DETECT=TRUE, header=True);",
-                DUCKDB_DF_TABLE_NAME,
-                OXEN_ID_COL,
-                path.to_string_lossy()
-            );
-            conn.execute(&query, [])?;
-        }
-        "parquet" => {
-            let query = format!(
-                "CREATE TABLE {} AS SELECT *, CAST(uuid() AS VARCHAR) AS {} FROM read_parquet('{}');",
-                DUCKDB_DF_TABLE_NAME,
-                OXEN_ID_COL,
-                path.to_string_lossy()
-            );
-            conn.execute(&query, [])?;
-        }
-        "jsonl" | "json" | "ndjson" => {
-            let query = format!(
-                "CREATE TABLE {DUCKDB_DF_TABLE_NAME} AS SELECT *, CAST(uuid() AS VARCHAR) AS {OXEN_ID_COL} FROM read_json('{path_str}');"
-            );
-            conn.execute(&query, [])?;
+    };
 
+    // The system column names are reserved. DuckDB silently renames duplicate
+    // CTAS columns rather than erroring, so a file carrying one of them would
+    // otherwise index with the system column under a mangled name — reject it
+    // up front instead. Case-insensitive to match DuckDB's identifier
+    // resolution: `_OXEN_ID` collides with `_oxen_id` just the same.
+    let describe_sql = format!("DESCRIBE SELECT * FROM {read_clause}");
+    let file_cols: Vec<String> = {
+        let mut stmt = conn.prepare(&describe_sql)?;
+        stmt.query_map([], |row| row.get(0))?
+            .collect::<Result<_, _>>()?
+    };
+    if let Some(reserved) = file_cols.into_iter().find(|col| {
+        OXEN_COLS
+            .iter()
+            .any(|reserved| col.eq_ignore_ascii_case(reserved))
+    }) {
+        return Err(DataFrameError::ReservedColumnName(reserved));
+    }
+
+    // Both system columns are assigned in the CTAS itself: `_oxen_id` tags each
+    // row with a stable id, and `_oxen_row_id` persists the file's row order —
+    // DuckDB UPDATEs physically relocate rows, so an unordered SELECT reshuffles
+    // pages after any edit, and reads order by this column instead (see
+    // repositories::workspaces::data_frames::query). `row_number() OVER ()` is
+    // DuckDB's documented way to capture the incoming row order.
+    let query = format!(
+        "CREATE TABLE {DUCKDB_DF_TABLE_NAME} AS SELECT *, \
+         CAST(uuid() AS VARCHAR) AS {OXEN_ID_COL}, \
+         row_number() OVER () AS {OXEN_ROW_ID_COL} \
+         FROM {read_clause};"
+    );
+    conn.execute(&query, [])?;
+
+    match extension {
+        "jsonl" | "json" | "ndjson" => {
             // Convert STRUCT columns to JSON to avoid binding issues
             let alter_query = format!(
                 "SELECT column_name FROM information_schema.columns WHERE table_name = '{DUCKDB_DF_TABLE_NAME}' AND data_type LIKE 'STRUCT%'"
@@ -964,8 +974,10 @@ pub fn index_file_with_id(
             };
 
             for col in struct_cols {
-                let alter =
-                    format!("ALTER TABLE {DUCKDB_DF_TABLE_NAME} ALTER COLUMN \"{col}\" TYPE JSON");
+                let alter = format!(
+                    "ALTER TABLE {DUCKDB_DF_TABLE_NAME} ALTER COLUMN {} TYPE JSON",
+                    quote_ident(&col)
+                );
                 conn.execute(&alter, [])?;
             }
 
@@ -990,16 +1002,15 @@ pub fn index_file_with_id(
             };
 
             for col in json_list_cols {
+                let ident = quote_ident(&col);
                 let alter = format!(
-                    "ALTER TABLE {DUCKDB_DF_TABLE_NAME} ALTER COLUMN \"{col}\" TYPE VARCHAR[] \
-                     USING list_transform(\"{col}\", lambda x: json_extract_string(x, '$'))"
+                    "ALTER TABLE {DUCKDB_DF_TABLE_NAME} ALTER COLUMN {ident} TYPE VARCHAR[] \
+                     USING list_transform({ident}, lambda x: json_extract_string(x, '$'))"
                 );
                 conn.execute(&alter, [])?;
             }
         }
-        _ => {
-            return Err(DataFrameError::InvalidFileType);
-        }
+        _ => {}
     }
 
     let add_default_query = format!(
@@ -1007,6 +1018,21 @@ pub fn index_file_with_id(
     );
 
     conn.execute(&add_default_query, [])?;
+
+    // Appended rows draw their `_oxen_row_id` from this sequence so they land
+    // after the file's rows in a stable order. CREATE OR REPLACE because DuckDB
+    // sequences are catalog objects that survive DROP TABLE — a re-index of the
+    // same db must reset the counter, not fail on the leftover sequence.
+    let next_row_id: i64 = conn.query_row(
+        &format!("SELECT count(*) + 1 FROM {DUCKDB_DF_TABLE_NAME}"),
+        [],
+        |row| row.get(0),
+    )?;
+    let seq_query = format!(
+        "CREATE OR REPLACE SEQUENCE \"{OXEN_ROW_ID_SEQ}\" START WITH {next_row_id}; \
+         ALTER TABLE {DUCKDB_DF_TABLE_NAME} ALTER COLUMN {OXEN_ROW_ID_COL} SET DEFAULT nextval('{OXEN_ROW_ID_SEQ}');"
+    );
+    conn.execute_batch(&seq_query)?;
 
     // Written last: its presence certifies the table above was fully built by
     // the current indexer (see table_is_fully_indexed).
@@ -1686,6 +1712,216 @@ mod tests {
                 })
                 .collect();
             assert_eq!(files, vec!["a-updated", "b-updated"]);
+            Ok(())
+        })
+    }
+
+    /// Read the `name` column of an ordered page through the same path the
+    /// workspace query uses: `SELECT * ORDER BY _oxen_row_id` via
+    /// `prepare_sql`'s pagination.
+    fn read_names_ordered(conn: &duckdb::Connection) -> Result<Vec<String>, OxenError> {
+        let sql = format!("SELECT * FROM {TABLE_NAME} ORDER BY {OXEN_ROW_ID_COL}");
+        let mut opts = DFOpts::empty();
+        opts.page = Some(1);
+        opts.page_size = Some(100);
+        let df = select_str(conn, &sql, Some(&opts))?;
+        let names = (0..df.height())
+            .map(|i| {
+                df.column("name")
+                    .expect("name column present")
+                    .get(i)
+                    .expect("row present")
+                    .to_string()
+                    .trim_matches('\"')
+                    .to_string()
+            })
+            .collect();
+        Ok(names)
+    }
+
+    /// Indexing must persist the file's row order in `_oxen_row_id` (1-based,
+    /// file order) so paginated reads have a stable sort key.
+    #[test]
+    fn test_index_file_with_id_assigns_row_order() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|data_dir| {
+            let jsonl_path = data_dir.join("data.jsonl");
+            std::fs::write(
+                &jsonl_path,
+                "{\"name\":\"a\"}\n{\"name\":\"b\"}\n{\"name\":\"c\"}\n",
+            )
+            .map_err(|e| OxenError::basic_str(format!("write fixture: {e}")))?;
+
+            let conn = get_connection(&data_dir.join("data.db"))?;
+            index_file_with_id(&jsonl_path, &conn, "jsonl")?;
+
+            let mut stmt = conn.prepare(&format!(
+                "SELECT name, {OXEN_ROW_ID_COL} FROM {TABLE_NAME} ORDER BY {OXEN_ROW_ID_COL}"
+            ))?;
+            let rows: Vec<(String, i64)> = stmt
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<Result<_, _>>()?;
+            assert_eq!(
+                rows,
+                vec![
+                    ("a".to_string(), 1),
+                    ("b".to_string(), 2),
+                    ("c".to_string(), 3)
+                ],
+                "row ids should be 1-based in file order"
+            );
+            Ok(())
+        })
+    }
+
+    /// The regression this column exists for: a DuckDB UPDATE physically
+    /// relocates the row, so an unordered read reshuffles pages and the edit
+    /// looks lost. Ordering by `_oxen_row_id` must keep the edited row in
+    /// place.
+    #[test]
+    fn test_row_order_survives_modify_row() -> Result<(), OxenError> {
+        use crate::core::db::data_frames::rows;
+        use crate::core::df::tabular;
+
+        test::run_empty_dir_test(|data_dir| {
+            let jsonl_path = data_dir.join("data.jsonl");
+            std::fs::write(
+                &jsonl_path,
+                "{\"name\":\"a\"}\n{\"name\":\"b\"}\n{\"name\":\"c\"}\n",
+            )
+            .map_err(|e| OxenError::basic_str(format!("write fixture: {e}")))?;
+
+            let conn = get_connection(&data_dir.join("data.db"))?;
+            index_file_with_id(&jsonl_path, &conn, "jsonl")?;
+
+            let row_id: String = conn.query_row(
+                &format!("SELECT {OXEN_ID_COL} FROM {TABLE_NAME} WHERE name = 'a'"),
+                [],
+                |row| row.get(0),
+            )?;
+            let mut update_df = tabular::parse_json_to_df(&serde_json::json!({
+                "name": "a-edited"
+            }))?;
+            rows::modify_row(&conn, &mut update_df, &row_id)?;
+
+            assert_eq!(
+                read_names_ordered(&conn)?,
+                vec!["a-edited", "b", "c"],
+                "the edited row must stay first in the ordered read"
+            );
+            Ok(())
+        })
+    }
+
+    /// Appended rows draw their `_oxen_row_id` from the sequence, so they
+    /// land at the end of the ordered read instead of at an arbitrary spot.
+    #[test]
+    fn test_appended_row_lands_last() -> Result<(), OxenError> {
+        use crate::core::db::data_frames::rows;
+        use crate::core::df::tabular;
+
+        test::run_empty_dir_test(|data_dir| {
+            let jsonl_path = data_dir.join("data.jsonl");
+            std::fs::write(&jsonl_path, "{\"name\":\"a\"}\n{\"name\":\"b\"}\n")
+                .map_err(|e| OxenError::basic_str(format!("write fixture: {e}")))?;
+
+            let conn = get_connection(&data_dir.join("data.db"))?;
+            index_file_with_id(&jsonl_path, &conn, "jsonl")?;
+
+            let row_df = tabular::parse_json_to_df(&serde_json::json!({
+                "name": "c"
+            }))?;
+            rows::append_row(&conn, &row_df)?;
+            let row_df_2 = tabular::parse_json_to_df(&serde_json::json!({
+                "name": "d"
+            }))?;
+            rows::append_row(&conn, &row_df_2)?;
+
+            let ids: Vec<i64> = {
+                let mut stmt = conn.prepare(&format!(
+                    "SELECT {OXEN_ROW_ID_COL} FROM {TABLE_NAME} ORDER BY {OXEN_ROW_ID_COL}"
+                ))?;
+                stmt.query_map([], |row| row.get(0))?
+                    .collect::<Result<_, _>>()?
+            };
+            assert_eq!(ids, vec![1, 2, 3, 4], "appended rows get the next ids");
+            assert_eq!(read_names_ordered(&conn)?, vec!["a", "b", "c", "d"]);
+            Ok(())
+        })
+    }
+
+    /// `_oxen_row_id` (like `_oxen_id`) is a reserved column name: a file
+    /// whose own schema carries it must fail to index rather than give one
+    /// column name two meanings.
+    #[test]
+    fn test_index_reserved_row_id_column_errors() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|data_dir| {
+            let jsonl_path = data_dir.join("data.jsonl");
+            std::fs::write(
+                &jsonl_path,
+                "{\"name\":\"a\",\"_oxen_row_id\":42}\n{\"name\":\"b\",\"_oxen_row_id\":7}\n",
+            )
+            .map_err(|e| OxenError::basic_str(format!("write fixture: {e}")))?;
+
+            let conn = get_connection(&data_dir.join("data.db"))?;
+            assert!(
+                index_file_with_id(&jsonl_path, &conn, "jsonl").is_err(),
+                "a file with a reserved column name must not index"
+            );
+
+            // DuckDB resolves identifiers case-insensitively, so a case
+            // variant collides just the same and must also be rejected.
+            let upper_path = data_dir.join("upper.jsonl");
+            std::fs::write(&upper_path, "{\"name\":\"a\",\"_OXEN_ROW_ID\":42}\n")
+                .map_err(|e| OxenError::basic_str(format!("write fixture: {e}")))?;
+            let conn = get_connection(&data_dir.join("upper.db"))?;
+            assert!(
+                index_file_with_id(&upper_path, &conn, "jsonl").is_err(),
+                "a case variant of a reserved column name must not index"
+            );
+            Ok(())
+        })
+    }
+
+    /// Re-indexing into the same db (restore, or the server's is_indexed
+    /// toggle) drops the table but not the sequence, which is a catalog
+    /// object. The rebuild must replace the leftover sequence and reset its
+    /// counter rather than fail on it.
+    #[test]
+    fn test_reindex_resets_row_id_sequence() -> Result<(), OxenError> {
+        use crate::core::db::data_frames::rows;
+        use crate::core::df::tabular;
+
+        test::run_empty_dir_test(|data_dir| {
+            let jsonl_path = data_dir.join("data.jsonl");
+            std::fs::write(&jsonl_path, "{\"name\":\"a\"}\n{\"name\":\"b\"}\n")
+                .map_err(|e| OxenError::basic_str(format!("write fixture: {e}")))?;
+
+            let conn = get_connection(&data_dir.join("data.db"))?;
+            index_file_with_id(&jsonl_path, &conn, "jsonl")?;
+
+            // Advance the sequence past the file's rows, then rebuild the
+            // table the way unindex → index does.
+            let row_df = tabular::parse_json_to_df(&serde_json::json!({
+                "name": "c"
+            }))?;
+            rows::append_row(&conn, &row_df)?;
+            drop_table(&conn, TABLE_NAME)?;
+            index_file_with_id(&jsonl_path, &conn, "jsonl")?;
+
+            // The rebuilt table starts over: file rows get 1..n and an append
+            // continues right after them, not after the old counter.
+            let row_df = tabular::parse_json_to_df(&serde_json::json!({
+                "name": "c"
+            }))?;
+            rows::append_row(&conn, &row_df)?;
+            let ids: Vec<i64> = {
+                let mut stmt = conn.prepare(&format!(
+                    "SELECT {OXEN_ROW_ID_COL} FROM {TABLE_NAME} ORDER BY {OXEN_ROW_ID_COL}"
+                ))?;
+                stmt.query_map([], |row| row.get(0))?
+                    .collect::<Result<_, _>>()?
+            };
+            assert_eq!(ids, vec![1, 2, 3], "the sequence must reset on re-index");
             Ok(())
         })
     }

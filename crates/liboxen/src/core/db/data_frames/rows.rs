@@ -5,8 +5,7 @@ use duckdb::arrow::array::RecordBatch;
 use polars::frame::DataFrame;
 // use sql_query_builder as sql;
 
-use crate::constants::{LEGACY_OXEN_COLS, OXEN_COLS, OXEN_ID_COL};
-use crate::model::data_frame::schema::Schema;
+use crate::constants::{OXEN_COLS, OXEN_ID_COL, OXEN_ROW_ID_COL};
 
 use crate::constants::TABLE_NAME;
 use crate::core::db::data_frames::DataFrameError;
@@ -20,7 +19,13 @@ pub fn append_row(conn: &duckdb::Connection, df: &DataFrame) -> Result<DataFrame
     let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
     let df_schema = df.schema();
 
-    let df_names: Vec<String> = df_schema.iter_names().map(|s| s.to_string()).collect();
+    // The hub round-trips the reserved oxen column names in row payloads;
+    // strip them so the insert only carries user data.
+    let df_names: Vec<String> = df_schema
+        .iter_names()
+        .map(|s| s.to_string())
+        .filter(|col| !is_reserved_col(col))
+        .collect();
     if !table_schema.has_field_names(&df_names) {
         return Err(DataFrameError::IncompatibleSchemas {
             table_schema,
@@ -30,23 +35,32 @@ pub fn append_row(conn: &duckdb::Connection, df: &DataFrame) -> Result<DataFrame
 
     // Handle completely null {} create objects coming over from the hub:
     // insert a row of all defaults rather than building an empty INSERT.
-    if df.height() == 0 || df.width() == 0 {
+    if df.height() == 0 || df_names.is_empty() {
         let sql = format!("INSERT INTO {TABLE_NAME} DEFAULT VALUES RETURNING *");
         let result_set: Vec<RecordBatch> = conn.prepare(&sql)?.query_arrow([])?.collect();
-        return df_db::record_batches_to_polars_df(result_set);
+        return without_row_id_col(df_db::record_batches_to_polars_df(result_set)?);
     }
 
-    insert_polars_df(conn, TABLE_NAME, df)
+    let df = df.select(&df_names)?;
+    without_row_id_col(insert_polars_df(conn, TABLE_NAME, &df)?)
 }
 
-/// Whether a column in an update payload should be dropped rather than applied.
-/// The hub sends the oxen-internal columns (and, from older clients, the legacy
-/// tracking columns) in row payloads; those must not be written — UNLESS the
-/// data frame genuinely has a column of that name, in which case it is user
-/// data and the update applies.
-fn drop_from_update_payload(table_schema: &Schema, col: &str) -> bool {
-    let is_reserved = OXEN_COLS.contains(&col) || LEGACY_OXEN_COLS.contains(&col);
-    is_reserved && !table_schema.has_column(col)
+/// Whether a column name is reserved for Oxen's internal use. Row payloads
+/// carrying these keys have them stripped rather than written; user columns
+/// with these names are not supported.
+fn is_reserved_col(col: &str) -> bool {
+    OXEN_COLS.contains(&col)
+}
+
+/// Remove the internal ordering column from a row df handed back to callers —
+/// `_oxen_row_id` is an ordering key, not part of the data frame's schema.
+/// (`_oxen_id` stays: clients address rows by it.)
+fn without_row_id_col(df: DataFrame) -> Result<DataFrame, DataFrameError> {
+    if df.column(OXEN_ROW_ID_COL).is_ok() {
+        Ok(df.drop(OXEN_ROW_ID_COL)?)
+    } else {
+        Ok(df)
+    }
 }
 
 pub fn modify_row(
@@ -60,17 +74,13 @@ pub fn modify_row(
 
     let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
 
-    // Exclude the OXEN_COLS the hub sends over (never modifiable), and any
-    // legacy tracking columns the hub still round-trips — but only when they
-    // aren't real columns in this table. A user data frame can legitimately
-    // have a column named e.g. `_oxen_diff_status`, and updates to it must
-    // apply, so a legacy name present in the schema is treated as user data.
+    // Exclude the OXEN_COLS the hub sends over — never modifiable.
     let schema = df.schema();
     let df_col_names: Vec<String> = schema.iter_names().map(|s| s.to_string()).collect();
     let df_cols: Vec<String> = df_col_names
         .clone()
         .into_iter()
-        .filter(|col| !drop_from_update_payload(&table_schema, col))
+        .filter(|col| !is_reserved_col(col))
         .collect();
     let df = df.select(&df_cols)?;
     if !table_schema.has_field_names(&df_cols) {
@@ -81,11 +91,25 @@ pub fn modify_row(
         });
     }
 
+    // A payload that carried only reserved keys strips down to an empty
+    // update: treat it as a no-op and return the current row.
+    if df_cols.is_empty() {
+        let row = df_db::select_raw_with_params(
+            conn,
+            &format!("SELECT * FROM {TABLE_NAME} WHERE \"{OXEN_ID_COL}\" = ?"),
+            [uuid],
+        )?;
+        if row.height() == 0 {
+            return Err(DataFrameError::MissingDataFrame(uuid.to_string()));
+        }
+        return without_row_id_col(row);
+    }
+
     let result = df_db::modify_row_with_polars_df(conn, TABLE_NAME, uuid, &df)?;
     if result.height() == 0 {
         return Err(DataFrameError::MissingDataFrame(uuid.to_string()));
     }
-    Ok(result)
+    without_row_id_col(result)
 }
 
 pub fn modify_rows(
@@ -109,7 +133,7 @@ pub fn modify_rows(
         let df_cols: Vec<String> = df_col_names
             .clone()
             .into_iter()
-            .filter(|col| !drop_from_update_payload(&table_schema, col))
+            .filter(|col| !is_reserved_col(col))
             .collect();
         let df = df.select(&df_cols)?;
         if !table_schema.has_field_names(&df_cols) {
@@ -159,7 +183,7 @@ pub fn modify_rows(
         });
     }
 
-    Ok(result)
+    without_row_id_col(result)
 }
 
 pub fn delete_row(conn: &duckdb::Connection, uuid: &str) -> Result<DataFrame, DataFrameError> {
@@ -179,7 +203,7 @@ pub fn delete_row(conn: &duckdb::Connection, uuid: &str) -> Result<DataFrame, Da
         [uuid],
     )?;
 
-    Ok(row_to_delete)
+    without_row_id_col(row_to_delete)
 }
 
 /// Insert a row from a polars dataframe into a duckdb table.
@@ -192,7 +216,7 @@ pub fn insert_polars_df(
     let field_names: Vec<&str> = schema.iter_names().map(|s| s.as_str()).collect();
     let column_names: Vec<String> = field_names
         .iter()
-        .map(|name| format!("\"{name}\""))
+        .map(|name| df_db::quote_ident(name))
         .collect();
 
     let column_sql_types = column_sql_types_by_name(conn, table_name)?;

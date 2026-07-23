@@ -45,7 +45,9 @@ impl Field {
 
     pub fn to_sql(&self) -> String {
         let dtype = DataType::from_string(&self.dtype).to_sql();
-        format!("{} {}", self.name, dtype)
+        // Quote the name (escaping embedded quotes) so names with spaces or
+        // punctuation parse as one identifier.
+        format!("\"{}\" {}", self.name.replace('"', "\"\""), dtype)
     }
 
     pub fn to_polars(&self) -> polars::prelude::Field {

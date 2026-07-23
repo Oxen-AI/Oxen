@@ -1,6 +1,6 @@
 use duckdb::Connection;
 
-use crate::constants::{EXCLUDE_OXEN_COLS, TABLE_NAME};
+use crate::constants::{EXCLUDE_OXEN_COLS, OXEN_ROW_ID_COL, TABLE_NAME};
 use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::df_db;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
@@ -201,6 +201,16 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
                 match build {
                     Ok(()) => {
                         conn.execute_batch("COMMIT")?;
+                        // Fold the WAL into the db file right away. The
+                        // indexing DDL includes function defaults (uuid(),
+                        // nextval()) whose WAL entries the bundled DuckDB
+                        // cannot replay after an unclean shutdown; once
+                        // checkpointed they are out of the WAL entirely.
+                        // Best-effort: a concurrent transaction can block a
+                        // checkpoint, and the next clean open checkpoints too.
+                        if let Err(e) = conn.execute_batch("CHECKPOINT") {
+                            log::warn!("index: CHECKPOINT after build failed for {db_path:?}: {e}");
+                        }
                         Ok(())
                     }
                     Err(e) => {
@@ -375,7 +385,10 @@ pub fn extract_file_node_to_working_dir(
     with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             let projection = build_export_projection(conn, TABLE_NAME)?;
-            let sql = format!("SELECT {projection} FROM '{TABLE_NAME}'");
+            // Ordered so the committed file keeps the stable row order —
+            // DuckDB UPDATEs physically relocate rows, so an unordered COPY
+            // would reshuffle the file after any edit.
+            let sql = format!("SELECT {projection} FROM '{TABLE_NAME}' ORDER BY {OXEN_ROW_ID_COL}");
             let query = wrap_sql_for_export(&sql, &export_path);
             log::debug!("extracting file node to working dir query: {query:?}");
             conn.execute(&query, [])?;
@@ -493,7 +506,7 @@ fn build_export_projection(conn: &Connection, table_name: &str) -> Result<String
             if data_type == "JSON" || data_type == "JSON[]" {
                 json_tolerant_export_expr(&name)
             } else {
-                format!("\"{name}\"")
+                df_db::quote_ident(&name)
             }
         })
         .collect();
@@ -507,9 +520,10 @@ fn build_export_projection(conn: &Connection, table_name: &str) -> Result<String
 /// and only genuinely-corrupt values are rewritten into a valid JSON string (the
 /// `ELSE` branch). See [`build_export_projection`] for why corrupt values exist.
 fn json_tolerant_export_expr(name: &str) -> String {
+    let ident = df_db::quote_ident(name);
     format!(
-        "CASE WHEN \"{name}\" IS NULL OR json_valid(CAST(\"{name}\" AS VARCHAR)) \
-         THEN \"{name}\" ELSE to_json(CAST(\"{name}\" AS VARCHAR)) END AS \"{name}\""
+        "CASE WHEN {ident} IS NULL OR json_valid(CAST({ident} AS VARCHAR)) \
+         THEN {ident} ELSE to_json(CAST({ident} AS VARCHAR)) END AS {ident}"
     )
 }
 

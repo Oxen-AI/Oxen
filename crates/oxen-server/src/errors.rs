@@ -512,6 +512,20 @@ impl error::ResponseError for OxenHttpError {
                             });
                             HttpResponse::BadRequest().json(error_json)
                         }
+                        DataFrameError::ReservedColumnName(column_name) => {
+                            log::error!("Reserved column name: {column_name}");
+                            let error_json = json!({
+                                "error": {
+                                    "type": "column_error",
+                                    "title": "Column Name Is Reserved",
+                                    "detail":
+                                        format!("Column name '{}' is reserved for Oxen's internal use", column_name)
+                                },
+                                "status": STATUS_ERROR,
+                                "status_message": MSG_BAD_REQUEST,
+                            });
+                            HttpResponse::BadRequest().json(error_json)
+                        }
                         DataFrameError::SqlParse(e) => {
                             log::error!("SQL parse error: {e}");
                             let error_json = json!({
