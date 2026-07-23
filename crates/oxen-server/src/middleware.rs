@@ -1,6 +1,7 @@
 use actix_web::{
-    Error, HttpMessage,
+    Error, HttpMessage, HttpRequest,
     dev::{Service, ServiceRequest, ServiceResponse, Transform, forward_ready},
+    http::header,
 };
 use futures_util::future::LocalBoxFuture;
 use liboxen::request_context::REQUEST_ID;
@@ -19,6 +20,17 @@ pub fn extract_or_generate_request_id(headers: &actix_web::http::header::HeaderM
 
 pub fn generate_request_id() -> String {
     uuid::Uuid::new_v4().to_string()
+}
+
+/// The request id assigned by [`RequestIdMiddleware`], stored in the request's extensions.
+struct RequestId(String);
+
+/// Returns the request id [`RequestIdMiddleware`] stored on the request, or `"-"` if none.
+pub fn request_id(req: &HttpRequest) -> String {
+    req.extensions()
+        .get::<RequestId>()
+        .map(|id| id.0.clone())
+        .unwrap_or_else(|| "-".to_string())
 }
 
 /// Middleware factory for request ID injection
@@ -62,7 +74,7 @@ where
         let request_id = extract_or_generate_request_id(req.headers());
 
         // Store in request extensions for later retrieval if needed
-        req.extensions_mut().insert(request_id.clone());
+        req.extensions_mut().insert(RequestId(request_id.clone()));
 
         let fut = self.service.call(req);
 
@@ -83,6 +95,75 @@ where
             },
         ))
     }
+}
+
+/// Logs each request at INFO on entry: remote addr, request line, Referer, User-Agent, request id.
+pub struct RequestStartLogMiddleware;
+
+impl<S, B> Transform<S, ServiceRequest> for RequestStartLogMiddleware
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+    S::Future: 'static,
+    B: 'static,
+{
+    type Response = ServiceResponse<B>;
+    type Error = Error;
+    type InitError = ();
+    type Transform = RequestStartLogMiddlewareService<S>;
+    type Future = Ready<Result<Self::Transform, Self::InitError>>;
+
+    fn new_transform(&self, service: S) -> Self::Future {
+        ready(Ok(RequestStartLogMiddlewareService { service }))
+    }
+}
+
+pub struct RequestStartLogMiddlewareService<S> {
+    service: S,
+}
+
+impl<S, B> Service<ServiceRequest> for RequestStartLogMiddlewareService<S>
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+    S::Future: 'static,
+    B: 'static,
+{
+    type Response = ServiceResponse<B>;
+    type Error = Error;
+    type Future = S::Future;
+
+    forward_ready!(service);
+
+    fn call(&self, req: ServiceRequest) -> Self::Future {
+        let request_id = request_id(req.request());
+        // Mirror the access log's start-known fields (%a "%r" "%{Referer}i" "%{User-Agent}i").
+        let remote_addr = req.connection_info().peer_addr().unwrap_or("-").to_string();
+        let request_line = if req.query_string().is_empty() {
+            format!("{} {} {:?}", req.method(), req.path(), req.version())
+        } else {
+            format!(
+                "{} {}?{} {:?}",
+                req.method(),
+                req.path(),
+                req.query_string(),
+                req.version()
+            )
+        };
+        let referer = request_header_or_dash(&req, header::REFERER);
+        let user_agent = request_header_or_dash(&req, header::USER_AGENT);
+        log::info!(
+            "start {remote_addr} \"{request_line}\" \"{referer}\" \"{user_agent}\" req={request_id}"
+        );
+
+        self.service.call(req)
+    }
+}
+
+/// Renders a request header the way the access log does: its UTF-8-lossy value, or "-" if absent.
+fn request_header_or_dash(req: &ServiceRequest, name: header::HeaderName) -> String {
+    req.headers()
+        .get(name)
+        .map(|val| String::from_utf8_lossy(val.as_bytes()).into_owned())
+        .unwrap_or_else(|| "-".to_string())
 }
 
 /// Middleware that records HTTP request count and duration for every route.
@@ -248,5 +329,24 @@ mod tests {
 
         // Should be valid UUID format
         assert_eq!(id.len(), 36); // UUID length with hyphens
+    }
+
+    #[actix_web::test]
+    async fn test_request_start_log_middleware_passes_through() {
+        use actix_web::{App, HttpResponse, http::header, test, web};
+
+        let app = test::init_service(App::new().wrap(RequestStartLogMiddleware).route(
+            "/x",
+            web::get().to(|| async { HttpResponse::Ok().finish() }),
+        ))
+        .await;
+
+        let req = test::TestRequest::get()
+            .uri("/x?page=1")
+            .insert_header((header::USER_AGENT, "oxen-test-agent"))
+            .insert_header((header::REFERER, "http://example.test/prev"))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
     }
 }
