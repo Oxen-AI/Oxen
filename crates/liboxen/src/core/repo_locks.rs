@@ -102,6 +102,8 @@ fn lock_timeout() -> OxenError {
 
 /// A held write reservation on a repo. An exclusive acquire on the same repo waits for every
 /// outstanding guard to drop. Acquire it at a write entry point and hold it for the whole write.
+#[must_use = "the write reservation is released the moment this guard drops; bind it \
+              (e.g. `let _write = acquire_write(repo)?;`) so it lives for the whole write"]
 pub struct RepoWriteGuard {
     gate: Arc<RepoGate>,
 }

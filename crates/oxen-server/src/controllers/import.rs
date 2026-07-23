@@ -10,6 +10,7 @@ use crate::errors::OxenHttpError;
 use crate::helpers::{create_user_from_options, get_repo};
 use crate::params::{app_data, parse_resource, path_param, query_param};
 
+use liboxen::core::repo_locks;
 use liboxen::core::v_latest::workspaces::files::decompress_zip;
 use liboxen::error::OxenError;
 use liboxen::model::NewCommitBody;
@@ -103,6 +104,7 @@ pub async fn import(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, namespace, &repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
     let resource = parse_resource(&req, &repo)?;
 
     // Resource must specify branch for committing the workspace
@@ -238,6 +240,7 @@ pub async fn upload_zip(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, &namespace, &repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
 
     // If there's no head commit, handle initial upload
     if repositories::commits::head_commit_maybe(&repo)?.is_none() {

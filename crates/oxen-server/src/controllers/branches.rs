@@ -6,6 +6,7 @@ use crate::params::{PageNumQuery, app_data, path_param};
 
 use actix_web::{HttpRequest, HttpResponse, web};
 
+use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::util::{self, paginate};
@@ -148,6 +149,10 @@ pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
 
     let repo = get_repo(app_data, namespace, repo_name)?;
 
+    // Hold the repo write guard for the whole write so a maintenance op (migration/prune) drains
+    // against it; returns 429 while an exclusive op holds the repo.
+    let _write = repo_locks::acquire_write(&repo)?;
+
     log::debug!("Create branch: {body}");
 
     // Try to deserialize the body into a BranchNewFromBranchName
@@ -246,6 +251,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     let name = path_param(&req, "repo_name")?.to_string();
     let branch_name = path_param(&req, "branch_name")?.to_string();
     let repository = get_repo(app_data, namespace, name)?;
+    let _write = repo_locks::acquire_write(&repository)?;
 
     let branch = repositories::branches::get_by_name(&repository, &branch_name)?;
 
@@ -289,6 +295,7 @@ pub async fn update(
     let name = path_param(&req, "repo_name")?.to_string();
     let branch_name = path_param(&req, "branch_name")?.to_string();
     let repository = get_repo(app_data, namespace, name)?;
+    let _write = repo_locks::acquire_write(&repository)?;
 
     let data: Result<BranchUpdate, serde_json::Error> = serde_json::from_str(&body);
     let data = data.map_err(|err| OxenHttpError::BadRequest(format!("{err:?}").into()))?;
@@ -338,6 +345,7 @@ pub async fn maybe_create_merge(
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(app_data, namespace, name)?;
+    let _write = repo_locks::acquire_write(&repository)?;
     let branch_name = path_param(&req, "branch_name")?.to_string();
     let branch = repositories::branches::get_by_name(&repository, &branch_name)?;
 

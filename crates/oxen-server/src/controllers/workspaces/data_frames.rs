@@ -9,6 +9,7 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use liboxen::constants::{self, TABLE_NAME};
 use liboxen::core::db::data_frames::df_db::with_df_db_manager;
 use liboxen::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
+use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
 use liboxen::model::{ParsedResource, Schema, Workspace};
 use liboxen::opts::DFOpts;
@@ -239,6 +240,9 @@ pub async fn get_schema(req: HttpRequest) -> Result<HttpResponse, OxenHttpError>
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
+    // This GET auto-indexes on a cache miss (tech-debt ENG-1375); guard the whole handler so a
+    // stop-the-world op (migration/prune/fsck) blocks it.
+    let _write = repo_locks::acquire_write(&repo)?;
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
@@ -541,6 +545,7 @@ pub async fn put(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHtt
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
     let file_path = PathBuf::from(path_param(&req, "path")?);
 
     log::debug!("workspace {workspace_id} data frame put {file_path:?}");
@@ -570,6 +575,7 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
     let file_path = PathBuf::from(path_param(&req, "path")?);
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
@@ -587,6 +593,7 @@ pub async fn rename(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
     let path = PathBuf::from(path_param(&req, "path")?);
     // Attempt to parse the body
     let body: RenameRequest = serde_json::from_str(&body)?; // Use the Json wrapper to get the inner value

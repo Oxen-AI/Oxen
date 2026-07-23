@@ -3,6 +3,7 @@ use crate::helpers::get_repo;
 use crate::params::{NameParam, app_data, path_param};
 
 use liboxen::constants::INITIAL_COMMIT_MSG;
+use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
 use liboxen::model::{NewCommitBody, User};
 use liboxen::repositories;
@@ -52,6 +53,7 @@ pub async fn get_or_create(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
 
     let data: Result<NewWorkspace, serde_json::Error> = serde_json::from_str(&body);
     let data = match data {
@@ -294,6 +296,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
 
     let repo = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
@@ -384,6 +387,7 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(app_data, &namespace, &repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
     let branch_name = path_param(&req, "branch")?.to_string();
 
     log::debug!(

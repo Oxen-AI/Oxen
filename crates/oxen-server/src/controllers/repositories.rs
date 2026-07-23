@@ -8,6 +8,7 @@ use futures_util::stream::StreamExt;
 use liboxen::api::requests::RepoNew;
 // Import StreamExt for the next() method
 use liboxen::constants::DEFAULT_BRANCH_NAME;
+use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
 use liboxen::model::file::{FileContents, FileNew};
 use liboxen::model::parsed_resource::ParsedResourceView;
@@ -234,6 +235,7 @@ pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
     let name = path_param(&req, "repo_name")?.to_string();
 
     let repository = get_repo(app_data, &namespace, &name)?;
+    let _write = repo_locks::acquire_write(&repository)?;
     repositories::size::update_size(&repository)?;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
@@ -260,6 +262,9 @@ pub async fn get_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     let name = path_param(&req, "repo_name")?.to_string();
 
     let repository = get_repo(app_data, &namespace, &name)?;
+    // `size::get_size` writes the size cache on a miss (a GET that mutates — tech-debt ENG-1374);
+    // guard the whole handler so a stop-the-world op (migration/prune/fsck) blocks it.
+    let _write = repo_locks::acquire_write(&repository)?;
     let size = repositories::size::get_size(&repository)?;
     Ok(HttpResponse::Ok().json(size))
 }
