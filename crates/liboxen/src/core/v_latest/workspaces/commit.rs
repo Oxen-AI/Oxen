@@ -9,6 +9,7 @@ use crate::constants::STAGED_DIR;
 use crate::core;
 use crate::core::refs::with_ref_manager;
 use crate::core::staged::remove_from_cache;
+use crate::core::v_latest::index::CommitMerkleTree as CommitMerkleTreeLatest;
 use crate::core::v_latest::workspaces;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::file_node::FileNodeOpts;
@@ -238,19 +239,21 @@ fn list_conflicts(
             log::debug!("checking if workspace is behind: {path:?} -> {entry}");
             let file_path = entry.node.maybe_path()?;
             log::debug!("checking if branch tree has file: {file_path:?}");
-            let Some(branch_node) = repositories::tree::get_node_by_path(
+            let Some(branch_node) = CommitMerkleTreeLatest::read_from_path(
                 &workspace.base_repo,
                 &branch_commit,
                 &file_path,
+                false,
             )?
             else {
                 log::debug!("branch node not found: {file_path:?}");
                 continue;
             };
-            let Some(workspace_node) = repositories::tree::get_node_by_path(
+            let Some(workspace_node) = CommitMerkleTreeLatest::read_from_path(
                 &workspace.base_repo,
                 workspace_commit,
                 &file_path,
+                false,
             )?
             else {
                 log::debug!("workspace node not found: {file_path:?}");
