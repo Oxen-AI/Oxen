@@ -234,23 +234,26 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_modified_files_status_with_search_paths() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            // Modify a deep file
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Commit a deep file and a shallow file.
+            let train_dir = repo.path.join("annotations").join("train");
+            util::fs::create_dir_all(&train_dir)?;
             let one_shot_relative_path = Path::new("annotations/train/one_shot.csv");
             let one_shot_path = repo.path.join(one_shot_relative_path);
-            test::modify_txt_file(&one_shot_path, "new one shot coming in hot")?;
+            util::fs::write_to_path(&one_shot_path, "one shot")?;
+            let labels_path = repo.path.join("labels.txt");
+            util::fs::write_to_path(&labels_path, "labels")?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "add files")?;
 
-            // Modify a shallow file
-            let labels_path = repo.path.join(Path::new("labels.txt"));
+            test::modify_txt_file(&one_shot_path, "new one shot coming in hot")?;
             test::modify_txt_file(&labels_path, "new labels coming in hot")?;
 
-            let opts =
-                StagedDataOpts::from_paths(&[repo.path.join(Path::new("annotations/train"))]);
+            // Search path scoped to the deep directory.
+            let opts = StagedDataOpts::from_paths(&[train_dir]);
 
             let repo_status = repositories::status::status_from_opts(&repo, &opts).await?;
-            repo_status.print();
 
-            // Make sure that we only see the modified files
             assert_eq!(repo_status.staged_dirs.len(), 0);
             assert_eq!(repo_status.staged_files.len(), 0);
             assert_eq!(repo_status.untracked_files.len(), 0);
@@ -271,24 +274,26 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_modified_files_status_with_file_search_paths() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            // Modify a deep file
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Commit a deep file and a shallow file.
+            let train_dir = repo.path.join("annotations").join("train");
+            util::fs::create_dir_all(&train_dir)?;
             let one_shot_relative_path = Path::new("annotations/train/one_shot.csv");
             let one_shot_path = repo.path.join(one_shot_relative_path);
-            test::modify_txt_file(&one_shot_path, "new one shot coming in hot")?;
+            util::fs::write_to_path(&one_shot_path, "one shot")?;
+            let labels_path = repo.path.join("labels.txt");
+            util::fs::write_to_path(&labels_path, "labels")?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "add files")?;
 
-            // Modify a shallow file
-            let labels_path = repo.path.join(Path::new("labels.txt"));
+            test::modify_txt_file(&one_shot_path, "new one shot coming in hot")?;
             test::modify_txt_file(&labels_path, "new labels coming in hot")?;
 
-            let opts = StagedDataOpts::from_paths(&[repo
-                .path
-                .join(Path::new("annotations/train/one_shot.csv"))]);
+            // Search path scoped to the deep file itself.
+            let opts = StagedDataOpts::from_paths(std::slice::from_ref(&one_shot_path));
 
             let repo_status = repositories::status::status_from_opts(&repo, &opts).await?;
-            repo_status.print();
 
-            // Make sure that we only see the modified files
             assert_eq!(repo_status.staged_dirs.len(), 0);
             assert_eq!(repo_status.staged_files.len(), 0);
             assert_eq!(repo_status.untracked_files.len(), 0);
@@ -309,32 +314,34 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_ignore_directory_with_modified_files() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            // Modify a deep file
-            let one_shot_relative_path = Path::new("annotations/train/one_shot.csv");
-            let one_shot_path = repo.path.join(one_shot_relative_path);
-            test::modify_txt_file(&one_shot_path, "new one shot coming in hot")?;
-
-            // Modify a shallow file
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Commit a deep file (under annotations/) and a shallow file.
+            let train_dir = repo.path.join("annotations").join("train");
+            util::fs::create_dir_all(&train_dir)?;
+            let one_shot_path = train_dir.join("one_shot.csv");
+            util::fs::write_to_path(&one_shot_path, "one shot")?;
             let labels_relative_path = Path::new("labels.txt");
             let labels_path = repo.path.join(labels_relative_path);
+            util::fs::write_to_path(&labels_path, "labels")?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "add files")?;
+
+            test::modify_txt_file(&one_shot_path, "new one shot coming in hot")?;
             test::modify_txt_file(&labels_path, "new labels coming in hot")?;
 
+            // Ignore the annotations/ directory — only the shallow file should show.
             let opts = StagedDataOpts {
-                ignore: Some(HashSet::from([repo.path.join(Path::new("annotations"))])),
+                ignore: Some(HashSet::from([repo.path.join("annotations")])),
                 ..Default::default()
             };
 
             let repo_status = repositories::status::status_from_opts(&repo, &opts).await?;
-            repo_status.print();
 
-            // Make sure that we only see the modified files
             assert_eq!(repo_status.staged_dirs.len(), 0);
             assert_eq!(repo_status.staged_files.len(), 0);
             assert_eq!(repo_status.untracked_files.len(), 0);
             assert_eq!(repo_status.untracked_dirs.len(), 0);
 
-            // We should only see the modified file in the annotations/train/ directory
             assert_eq!(repo_status.modified_files.len(), 1);
             assert!(
                 repo_status
@@ -349,29 +356,33 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_added_files_status_with_search_paths() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            // Add a deep file
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Commit two deep files.
+            let train_dir = repo.path.join("annotations").join("train");
+            util::fs::create_dir_all(&train_dir)?;
             let one_shot_relative_path = Path::new("annotations/train/one_shot.csv");
             let one_shot_path = repo.path.join(one_shot_relative_path);
-            test::modify_txt_file(&one_shot_path, "new one shot coming in hot")?;
-
-            repositories::add(&repo, &one_shot_path).await?;
-
-            // Modify a deep file
             let two_shot_relative_path = Path::new("annotations/train/two_shot.csv");
             let two_shot_path = repo.path.join(two_shot_relative_path);
+            util::fs::write_to_path(&one_shot_path, "one shot")?;
+            util::fs::write_to_path(&two_shot_path, "two shot")?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "add train files")?;
+
+            // Stage a modification to one deep file
+            test::modify_txt_file(&one_shot_path, "new one shot coming in hot")?;
+            repositories::add(&repo, &one_shot_path).await?;
+
+            // Modify another deep file without staging
             test::modify_txt_file(&two_shot_path, "new two shot coming in hot")?;
 
-            // Write an untracked file
-            let untracked_relative_path = Path::new("untracked.txt");
-            let untracked_path = repo.path.join(untracked_relative_path);
-            test::modify_txt_file(&untracked_path, "I'm sneaking in there untracked")?;
+            // Write an untracked file at the repo root (outside the search path)
+            let untracked_path = repo.path.join("untracked.txt");
+            util::fs::write_to_path(&untracked_path, "I'm sneaking in there untracked")?;
 
-            let opts =
-                StagedDataOpts::from_paths(&[repo.path.join(Path::new("annotations/train"))]);
+            let opts = StagedDataOpts::from_paths(&[train_dir]);
 
             let repo_status = repositories::status::status_from_opts(&repo, &opts).await?;
-            repo_status.print();
 
             // Make sure that we only see the modified files
             assert_eq!(repo_status.staged_dirs.len(), 1);
@@ -416,18 +427,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_commit_nothing_staged_but_file_modified() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            let commits = repositories::commits::list(&repo)?;
-            let initial_len = commits.len();
-
+        test::run_empty_local_repo_test_async(|repo| async move {
             let labels_path = repo.path.join("labels.txt");
-            util::fs::write_to_path(labels_path, "changing this guy, but not committing")?;
+            util::fs::write_to_path(&labels_path, "original")?;
+            repositories::add(&repo, &labels_path).await?;
+            repositories::commit(&repo, "add labels")?;
+
+            let initial_len = repositories::commits::list(&repo)?.len();
+
+            // Modify a committed file without staging it.
+            util::fs::write_to_path(&labels_path, "changing this guy, but not committing")?;
 
             let result = repositories::commit(&repo, "Should not work");
             assert!(result.is_err());
-            let commits = repositories::commits::list(&repo)?;
             // We should not have added any commits
-            assert_eq!(commits.len(), initial_len);
+            assert_eq!(repositories::commits::list(&repo)?.len(), initial_len);
             Ok(())
         })
         .await
@@ -493,50 +507,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_status_rm_regular_file() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            // Move the file to a new name
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Commit a single file, then delete it from disk.
             let og_basename = PathBuf::from("README.md");
             let og_file = repo.path.join(&og_basename);
-            util::fs::remove_file(og_file)?;
+            util::fs::write_to_path(&og_file, "hello")?;
+            repositories::add(&repo, &og_file).await?;
+            repositories::commit(&repo, "add README")?;
+
+            util::fs::remove_file(&og_file)?;
 
             let status = repositories::status(&repo).await?;
-            status.print();
-
             assert_eq!(status.removed_files.len(), 1);
 
             let opts = RmOpts::from_path(&og_basename);
             repositories::rm(&repo, &opts).await?;
             let status = repositories::status(&repo).await?;
-            status.print();
-
-            assert_eq!(status.staged_files.len(), 1);
-            assert_eq!(
-                status.staged_files[&og_basename].status,
-                StagedEntryStatus::Removed
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_status_rm_directory_file() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            // Move the file to a new name
-            let og_basename = PathBuf::from("README.md");
-            let og_file = repo.path.join(&og_basename);
-            util::fs::remove_file(og_file)?;
-
-            let status = repositories::status(&repo).await?;
-            status.print();
-
-            assert_eq!(status.removed_files.len(), 1);
-
-            let opts = RmOpts::from_path(&og_basename);
-            repositories::rm(&repo, &opts).await?;
-            let status = repositories::status(&repo).await?;
-            status.print();
 
             assert_eq!(status.staged_files.len(), 1);
             assert_eq!(
@@ -551,10 +537,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_status_move_regular_file() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            // Move `README.md` to `README2.md`
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Commit a single file, then move `README.md` to `README2.md`
             let og_basename = PathBuf::from("README.md");
             let og_file = repo.path.join(&og_basename);
+            util::fs::write_to_path(&og_file, "readme")?;
+            repositories::add(&repo, &og_file).await?;
+            repositories::commit(&repo, "add README")?;
+
             let new_basename = PathBuf::from("README2.md");
             let new_file = repo.path.join(new_basename);
 
@@ -595,10 +585,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_status_move_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            // Move train/ to to new_train/train2
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Commit a directory of 7 files so the move-pair counts below line up.
             let og_basename = PathBuf::from("train");
             let og_dir = repo.path.join(og_basename);
+            util::fs::create_dir_all(&og_dir)?;
+            test::populate_dir_with_txt_files(&og_dir, "img", 7)?;
+            repositories::add(&repo, &og_dir).await?;
+            repositories::commit(&repo, "add train dir")?;
+
+            // Move train/ to new_train/train2
             let new_basename = PathBuf::from("new_train").join("train2");
             let new_dir = repo.path.join(new_basename);
 
@@ -667,21 +663,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_status_remove_file_top_level() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            // Get head commit
-            // List all entries in that commit
+        test::run_empty_local_repo_test_async(|repo| async move {
             let repo_path = &repo.path;
             let file_to_rm = repo_path.join("labels.txt");
+            util::fs::write_to_path(&file_to_rm, "labels")?;
+            repositories::add(&repo, &file_to_rm).await?;
+            repositories::commit(&repo, "add labels")?;
 
-            let status = repositories::status(&repo).await?;
-            status.print();
-
-            // Remove a committed file
+            // Remove the only committed file
             util::fs::remove_file(&file_to_rm)?;
 
-            // List removed
             let status = repositories::status(&repo).await?;
-            status.print();
             let files = status.removed_files;
 
             // There is one removed file, and nothing else
@@ -703,25 +695,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_status_remove_file_in_subdirectory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let repo_path = &repo.path;
-            let one_shot_file = repo_path
-                .join("annotations")
-                .join("train")
-                .join("one_shot.csv");
+            let train_dir = repo_path.join("annotations").join("train");
+            util::fs::create_dir_all(&train_dir)?;
+            let one_shot_file = train_dir.join("one_shot.csv");
+            util::fs::write_to_path(&one_shot_file, "a,b\n1,2\n")?;
+            util::fs::write_to_path(train_dir.join("two_shot.csv"), "a,b\n3,4\n")?;
+            repositories::add(&repo, &train_dir).await?;
+            repositories::commit(&repo, "add train dir")?;
 
-            // Remove a committed file
+            // Remove a committed file (leaving a sibling so the dir stays tracked)
             util::fs::remove_file(&one_shot_file)?;
 
-            // List removed
             let status = repositories::status(&repo).await?;
-            status.print();
             let files = status.removed_files;
-
-            // There is one removed file
             assert_eq!(files.len(), 1);
 
-            // And it is
             let relative_path = util::fs::path_relative_to_dir(&one_shot_file, repo_path)?;
             assert!(files.contains(&relative_path));
 
@@ -736,18 +726,20 @@ mod tests {
     // silently dropped.
     #[tokio::test]
     async fn test_status_remove_file_with_explicit_file_path() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let repo_path = &repo.path;
-            let target_file = repo_path
-                .join("annotations")
-                .join("train")
-                .join("one_shot.csv");
+            let train_dir = repo_path.join("annotations").join("train");
+            util::fs::create_dir_all(&train_dir)?;
+            let target_file = train_dir.join("one_shot.csv");
+            util::fs::write_to_path(&target_file, "a,b\n1,2\n")?;
+            util::fs::write_to_path(train_dir.join("two_shot.csv"), "a,b\n3,4\n")?;
+            repositories::add(&repo, &train_dir).await?;
+            repositories::commit(&repo, "add train dir")?;
 
             util::fs::remove_file(&target_file)?;
 
             let opts = StagedDataOpts::from_paths(std::slice::from_ref(&target_file));
             let status = repositories::status::status_from_opts(&repo, &opts).await?;
-            status.print();
 
             let relative_path = util::fs::path_relative_to_dir(&target_file, repo_path)?;
             assert_eq!(status.removed_files.len(), 1);
@@ -760,25 +752,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_status_modify_file_in_subdirectory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let repo_path = &repo.path;
-            let one_shot_file = repo_path
-                .join("annotations")
-                .join("train")
-                .join("one_shot.csv");
+            let train_dir = repo_path.join("annotations").join("train");
+            util::fs::create_dir_all(&train_dir)?;
+            let one_shot_file = train_dir.join("one_shot.csv");
+            util::fs::write_to_path(&one_shot_file, "a,b\n1,2\n")?;
+            repositories::add(&repo, &train_dir).await?;
+            repositories::commit(&repo, "add train dir")?;
 
             // Modify the committed file
             let one_shot_file = test::modify_txt_file(one_shot_file, "new content coming in hot")?;
 
-            // List modified
             let status = repositories::status(&repo).await?;
-            status.print();
             let files = status.modified_files;
-
-            // There is one modified file
             assert_eq!(files.len(), 1);
 
-            // And it is
             let relative_path = util::fs::path_relative_to_dir(one_shot_file, repo_path)?;
             assert!(files.contains(&relative_path));
 
