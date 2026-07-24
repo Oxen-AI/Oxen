@@ -10,6 +10,8 @@ use liboxen::model::metadata::metadata_image::ImgResize;
 
 use liboxen::util;
 
+mod crash_diagnostics;
+
 pub mod app_data;
 pub mod auth;
 pub mod config;
@@ -382,6 +384,8 @@ enum ServerCommand {
 
 #[actix_web::main]
 async fn main() {
+    crash_diagnostics::install().expect("failed to install crash diagnostics");
+
     // fail-fast if we cannot initialize logging
     let _tracing_guard = util::telemetry::init_tracing("oxen-server", LevelFilter::WARN)
         .expect("Failed to initialize tracing & logging for oxen-server.");

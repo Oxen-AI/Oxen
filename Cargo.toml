@@ -97,6 +97,7 @@ itertools = "0.13.0"
 jsonwebtoken = "9.3.0"
 jwalk = "0.8.1"
 lazy_static = "1.4.0"
+libc = "0.2"
 libduckdb-sys = { version = "=1.10504.0" }
 # liboxen's `version` is kept in lockstep with `[workspace.package].version` by `bin/bump-version`.
 # `path` is used for local builds; `version` is used by `cargo publish` so oxen-cli and oxen-server
@@ -141,6 +142,7 @@ serde_json = "1.0.106"
 serde_with = "3.13.0"
 serial_test = "3.2.0"
 sha2 = "0.10.8"
+signal-hook = "0.3"
 simdutf8 = "0.1.4"
 sql_query_builder = { version = "2.1.0", features = ["postgresql"] }
 sqlparser = { version = "0.53.0", features = ["visitor"] }
