@@ -3,6 +3,7 @@ use crate::helpers::get_repo;
 use crate::params::{NameParam, app_data, path_param};
 
 use liboxen::constants::INITIAL_COMMIT_MSG;
+use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
 use liboxen::model::{NewCommitBody, User};
 use liboxen::repositories;
@@ -267,7 +268,10 @@ pub async fn clear(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
-    repositories::workspaces::clear(&repo)?;
+    // Clearing all workspaces is a destructive write; hold the whole-repo exclusive lock so no
+    // write lands mid-clear.
+    repo_locks::with_repo_exclusive(&repo, async { repositories::workspaces::clear(&repo) })
+        .await?;
     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
 }
 
