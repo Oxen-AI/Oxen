@@ -1,4 +1,5 @@
 use crate::api;
+use crate::core::db::merkle_node::MerkleNodeBackend;
 use crate::storage::StorageKind;
 use crate::view::RepositoryView;
 use crate::view::repository::RepositoryCreationView;
@@ -15,6 +16,9 @@ pub struct RemoteRepository {
     pub is_empty: bool,
     /// The server's version-store backend for this repo (local filesystem or S3).
     pub storage_kind: StorageKind,
+    /// The repo's Merkle node backend (filesystem / lmdb), read-only observability. `None` from a
+    /// server that predates the field.
+    pub merkle_node_backend: Option<MerkleNodeBackend>,
 }
 
 impl RemoteRepository {
@@ -26,6 +30,7 @@ impl RemoteRepository {
             min_version: repository.min_version.clone(),
             is_empty: repository.is_empty,
             storage_kind: repository.storage_kind,
+            merkle_node_backend: repository.merkle_node_backend,
         }
     }
 
@@ -40,6 +45,7 @@ impl RemoteRepository {
             min_version: repository.min_version.clone(),
             is_empty: true,
             storage_kind: repository.storage_kind,
+            merkle_node_backend: repository.merkle_node_backend,
         }
     }
 
