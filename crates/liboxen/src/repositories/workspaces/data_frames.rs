@@ -395,15 +395,16 @@ pub async fn set_media_render_metadata_if_applicable(
 }
 
 pub fn duckdb_path(workspace: &Workspace, path: &Path) -> PathBuf {
+    duckdb_path_in_dir(&workspace.dir(), path)
+}
+
+/// Path of the DuckDB index for the data frame at `path` within the workspace directory
+/// `workspace_dir`.
+pub(crate) fn duckdb_path_in_dir(workspace_dir: &Path, path: &Path) -> PathBuf {
     let path = util::fs::linux_path(path);
-    log::debug!(
-        "duckdb_path path: {:?} workspace: {:?}",
-        path,
-        workspace.dir()
-    );
+    log::debug!("duckdb_path path: {path:?} workspace dir: {workspace_dir:?}");
     let path_hash = util::hasher::hash_str(path.to_string_lossy());
-    workspace
-        .dir()
+    workspace_dir
         .join(OXEN_HIDDEN_DIR)
         .join(MODS_DIR)
         .join("duckdb")
@@ -473,6 +474,7 @@ mod tests {
     use crate::repositories;
     use crate::repositories::workspaces;
     use crate::test;
+    use crate::util::fs::AtomicFile;
 
     #[tokio::test]
     async fn test_add_row() -> Result<(), OxenError> {
@@ -2038,6 +2040,93 @@ mod tests {
             let inner = series.list()?.get_as_series(0).unwrap();
             let values: Vec<f64> = inner.f64()?.into_iter().map(|v| v.unwrap()).collect();
             assert_eq!(values, vec![0.1, 0.2, 0.3]);
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_queryable_lookup_skips_editable_and_unloadable_workspaces()
+    -> Result<(), OxenError> {
+        // Skip duckdb if on windows
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+
+            // An editable workspace's indexed table holds staged edits, not a queryable index.
+            let editable = workspaces::create(&repo, &commit, "editable-df", true)?;
+            workspaces::data_frames::index(&repo, &editable, &file_path).await?;
+            assert!(!is_queryable_data_frame_indexed(
+                &repo, &file_path, &commit
+            )?);
+
+            let queryable = workspaces::create(&repo, &commit, "queryable-df", false)?;
+            workspaces::data_frames::index(&repo, &queryable, &file_path).await?;
+            assert!(is_queryable_data_frame_indexed(&repo, &file_path, &commit)?);
+            let found = get_queryable_data_frame_workspace(&repo, &file_path, &commit)?;
+            assert_eq!(found.id, queryable.id);
+
+            // Point a sibling workspace at a commit the merkle tree doesn't hold, so nothing can
+            // load it. The lookup still answers from the workspace holding the index — where the
+            // pre-change lookup, which loaded every workspace up front, failed the whole request.
+            repoint_workspace(&editable, &"f".repeat(32))?;
+
+            assert!(is_queryable_data_frame_indexed(&repo, &file_path, &commit)?);
+            let found = get_queryable_data_frame_workspace(&repo, &file_path, &commit)?;
+            assert_eq!(found.id, queryable.id);
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Rewrites a workspace's config to be non-editable and pinned to `commit_id`, which
+    /// create-time validation would otherwise reject.
+    fn repoint_workspace(workspace: &Workspace, commit_id: &str) -> Result<(), OxenError> {
+        let mut config = workspaces::read_config(&workspace.dir())?
+            .expect("a just-created workspace has a config");
+        config.is_editable = false;
+        config.workspace_commit_id = commit_id.to_string();
+        let toml_string = toml::to_string(&config).expect("workspace config serializes to TOML");
+        AtomicFile::new(workspace.config_path()).write(toml_string.as_bytes())?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_queryable_lookup_walks_past_workspaces_it_cannot_load() -> Result<(), OxenError> {
+        // Skip duckdb if on windows
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+
+            // Nothing here is queryable, so the lookup cannot return early and has to walk past
+            // every workspace: one pinned to a commit the merkle tree doesn't hold, one whose
+            // pinned id isn't a hash at all. Both must be skipped, not raised.
+            let dangling = workspaces::create(&repo, &commit, "dangling-df", true)?;
+            let unparseable = workspaces::create(&repo, &commit, "unparseable-df", true)?;
+            repoint_workspace(&dangling, &"f".repeat(32))?;
+            repoint_workspace(&unparseable, "not-a-hash")?;
+
+            assert!(!is_queryable_data_frame_indexed(
+                &repo, &file_path, &commit
+            )?);
+            assert!(matches!(
+                get_queryable_data_frame_workspace(&repo, &file_path, &commit),
+                Err(OxenError::QueryableWorkspaceNotFound)
+            ));
+
             Ok(())
         })
         .await
