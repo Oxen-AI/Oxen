@@ -1,5 +1,6 @@
-//! Log backtraces on panic and fatal signals so CloudWatch captures the site of
-//! abrupt exits (SIGBUS, SIGABRT) that otherwise leave no application log.
+//! On panic, log a backtrace; on fatal signals (SIGBUS, SIGABRT), log which
+//! signal arrived so CloudWatch captures abrupt exits that otherwise leave no
+//! application log.
 
 use std::backtrace::Backtrace;
 use std::io::{self, Write};
@@ -51,9 +52,12 @@ fn install_fatal_signal_handler() -> Result<(), String> {
                 SIGABRT => "SIGABRT",
                 _ => "SIGNAL",
             };
-            log_backtrace(&format!(
+            // A backtrace here would capture this listener thread, not the faulting thread.
+            let mut stderr = io::stderr().lock();
+            let _ = writeln!(
+                stderr,
                 "oxen-server received fatal signal {name} ({signal})"
-            ));
+            );
 
             unsafe {
                 libc::signal(signal, libc::SIG_DFL);
