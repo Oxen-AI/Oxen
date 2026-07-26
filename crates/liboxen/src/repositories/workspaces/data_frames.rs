@@ -1477,6 +1477,68 @@ mod tests {
         .await
     }
 
+    /// A row edit must not discard metadata staged in the workspace. Row writes
+    /// re-stage the file node from the *committed* tree, where workspace
+    /// metadata does not exist — so without carrying it over, saving a column
+    /// order or a render func and then editing any row silently loses it.
+    #[tokio::test]
+    async fn test_row_edit_keeps_staged_metadata() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-row-keeps-meta")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            let settings = json!({"_oxen": {"view": {"columns": ["label", "file"]}}});
+            workspaces::data_frames::schemas::add_schema_metadata(
+                &repo, &workspace, &file_path, &settings,
+            )?;
+            workspaces::data_frames::columns::add_column_metadata(
+                &repo,
+                &workspace,
+                file_path.clone(),
+                "file".to_string(),
+                &json!({"_oxen": {"render": {"func": "image"}}}),
+            )?;
+
+            // Any row write goes through track_modified_data_frame, which is
+            // where the metadata used to be dropped.
+            let row = json!({"file": "images/x.jpg", "label": "cat"});
+            workspaces::data_frames::rows::add(&repo, &workspace, &file_path, &row)?;
+
+            let staged =
+                repositories::data_frames::schemas::get_staged_schema_with_staged_db_manager(
+                    &workspace.workspace_repo,
+                    &file_path,
+                )?
+                .expect("a staged schema still exists after the row write");
+            assert_eq!(
+                staged.metadata,
+                Some(settings),
+                "schema metadata must survive a row write"
+            );
+            let file_field = staged
+                .fields
+                .iter()
+                .find(|f| f.name == "file")
+                .expect("the file column still exists");
+            assert_eq!(
+                file_field.metadata,
+                Some(json!({"_oxen": {"render": {"func": "image"}}})),
+                "column metadata must survive a row write"
+            );
+            Ok(())
+        })
+        .await
+    }
+
     /// The read path must surface a staged schema-metadata write. A response's
     /// schema is rebuilt from the workspace's DuckDB table and seeded from the
     /// committed schema, so the staged value only reaches a client because

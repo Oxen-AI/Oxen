@@ -23,10 +23,11 @@ use crate::core::v_latest::add::{
 use crate::error::OxenError;
 use crate::model::file::TempFilePathNew;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
+use crate::model::merkle_tree::node::FileNode;
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::user::User;
 use crate::model::workspace::Workspace;
-use crate::model::{Branch, Commit, StagedEntryStatus};
+use crate::model::{Branch, Commit, MerkleHash, StagedEntryStatus};
 use crate::model::{LocalRepository, NewCommitBody};
 use crate::repositories;
 use crate::util;
@@ -1058,6 +1059,38 @@ async fn p_rm(
     Ok(err_files)
 }
 
+/// Copy metadata already staged for `path` onto `file_node`, rehashing to match.
+///
+/// Workspace metadata edits live only on the staged node; the committed node
+/// knows nothing of them. Any path that re-stages from the commit tree has to
+/// carry them across or they are lost.
+fn carry_over_staged_metadata(
+    workspace_repo: &LocalRepository,
+    path: &Path,
+    file_node: &mut FileNode,
+) -> Result<(), OxenError> {
+    let staged_db_manager = get_staged_db_manager(workspace_repo)?;
+    let Some(staged_node) = staged_db_manager.read_from_staged_db(path)? else {
+        return Ok(());
+    };
+    let Ok(staged_file) = staged_node.node.file() else {
+        return Ok(());
+    };
+    let Some(metadata) = staged_file.metadata() else {
+        return Ok(());
+    };
+
+    file_node.set_metadata(Some(metadata));
+    // Mirror add_column_metadata: the metadata is part of the node's identity,
+    // so both hashes have to be recomputed for it to survive a read.
+    let metadata_hash = util::hasher::get_metadata_hash(&file_node.metadata())?;
+    let combined_hash =
+        util::hasher::get_combined_hash(Some(metadata_hash), file_node.hash().to_u128())?;
+    file_node.set_metadata_hash(Some(MerkleHash::new(metadata_hash)));
+    file_node.set_combined_hash(&MerkleHash::new(combined_hash));
+    Ok(())
+}
+
 fn p_modify_file(
     base_repo: &LocalRepository,
     workspace_repo: &LocalRepository,
@@ -1072,6 +1105,11 @@ fn p_modify_file(
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
     if let Some(mut file_node) = maybe_file_node {
         file_node.set_name(path.to_str().unwrap());
+        // This re-stages the *committed* node, so any metadata applied in the
+        // workspace — schema settings, per-column render funcs — would be
+        // dropped by a plain row edit. Carry the staged node's metadata over so
+        // editing a row doesn't silently discard it.
+        carry_over_staged_metadata(workspace_repo, path, &mut file_node)?;
         log::debug!("p_modify_file file_node: {file_node}");
         add_file_node_to_staged_db(
             workspace_repo,
