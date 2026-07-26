@@ -195,7 +195,45 @@ jobs:
           # pyo3/maturin deps that only the wheel build pulls in.
           if ($env:DEPTREE_EXACT_HIT -eq "1") { Write-Host "DEPTREE exact hit, cache is current"; exit 0 }
           refreshenv
-          $rel = "${{ github.workspace }}\target\release".Substring(3) -replace '\\','/'
+          # We only get here on a fallback restore: the previous tree was
+          # restored to warm the build, so it carries every past build's stale
+          # rlibs, and saving it as-is grows the cache on every dependency
+          # change. Prune deps/ and .fingerprint/ down to the current graph. A
+          # no-op json build lists every live unit's output files, whose names
+          # carry cargo's per-crate metadata hash; drop any entry whose hashes
+          # are all absent from that set. build/ is left intact, so a pruned
+          # crate re-links its rlib from its preserved objects rather than
+          # recompiling C/C++, and a bad prune only costs a relink, never a
+          # duckdb rebuild. Empty keep-set means the resolve failed, so skip.
+          $keep = @{}
+          cargo build --workspace --exclude oxen-py --release --message-format=json 2>$null |
+            ForEach-Object {
+              $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }
+              if ($m -and $m.reason -eq 'compiler-artifact') {
+                foreach ($f in $m.filenames) {
+                  if ([IO.Path]::GetFileName($f) -match '-([0-9a-f]{16})\.') { $keep[$Matches[1]] = $true }
+                }
+              }
+            }
+          $relPath = "${{ github.workspace }}\target\release"
+          if ($keep.Count -eq 0) {
+            Write-Host "DEPTREE prune skipped: no current-graph hashes resolved"
+          } else {
+            $pruned = 0
+            foreach ($sub in @('deps', '.fingerprint')) {
+              $dir = Join-Path $relPath $sub
+              if (-not (Test-Path $dir)) { continue }
+              foreach ($item in Get-ChildItem -LiteralPath $dir) {
+                $hashes = [regex]::Matches($item.Name, '-([0-9a-f]{16})') | ForEach-Object { $_.Groups[1].Value }
+                if ($hashes.Count -gt 0 -and -not ($hashes | Where-Object { $keep.ContainsKey($_) })) {
+                  Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction SilentlyContinue
+                  $pruned++
+                }
+              }
+            }
+            Write-Host "DEPTREE pruned $pruned stale entries (kept $($keep.Count) live hashes)"
+          }
+          $rel = "$relPath".Substring(3) -replace '\\','/'
           $list = @("$rel/.fingerprint", "$rel/deps", "$rel/build", "Users/Administrator/.cargo/registry/src", "Users/Administrator/.cargo/registry/cache")
           $list | Set-Content C:\deptree-list.txt
           # cmd (not PowerShell) runs the pipe so the bytes pass through raw; a
