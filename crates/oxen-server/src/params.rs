@@ -140,6 +140,8 @@ pub fn parse_resource(
 }
 
 /// Split the base..head string into base and head strings
+// TODO: Incorporate the logic from parse_base_head_three_dot, update all call
+// sites, and remove the duplicate function.
 pub fn parse_base_head(base_head: impl AsRef<str>) -> Result<(String, String), OxenError> {
     let mut split = base_head.as_ref().split("..");
     if let (Some(base), Some(head)) = (split.next(), split.next()) {
@@ -147,6 +149,26 @@ pub fn parse_base_head(base_head: impl AsRef<str>) -> Result<(String, String), O
     } else {
         Err(OxenError::basic_str(
             "Could not parse commits. Format should be base..head",
+        ))
+    }
+}
+
+/// Split a `base..head` or `base...head` string into base, head, and whether it
+/// used three-dot syntax. Three dots select the merge base of base and head
+/// (git's `base...head`); two dots compare the two revisions directly.
+pub fn parse_base_head_three_dot(base_head: &str) -> Result<(String, String, bool), OxenError> {
+    // Check for the three-dot separator first, since it contains the two-dot one.
+    let (separator, three_dot) = if base_head.contains("...") {
+        ("...", true)
+    } else {
+        ("..", false)
+    };
+    let mut split = base_head.splitn(2, separator);
+    if let (Some(base), Some(head)) = (split.next(), split.next()) {
+        Ok((base.to_string(), head.to_string(), three_dot))
+    } else {
+        Err(OxenError::basic_str(
+            "Could not parse commits. Format should be base..head or base...head",
         ))
     }
 }
@@ -318,5 +340,29 @@ mod tests {
         // bumps it; test mode keeps the suite green.
         let req = request_with_user_agent("Oxen/0.60.0 (linux; tokio)");
         assert!(!client_must_use_multipart_staging(&req, true));
+    }
+
+    #[test]
+    fn test_parse_base_head_three_dot_two_dots() {
+        let (base, head, three_dot) = parse_base_head_three_dot("main..feature").unwrap();
+        assert_eq!(base, "main");
+        assert_eq!(head, "feature");
+        assert!(!three_dot);
+    }
+
+    #[test]
+    fn test_parse_base_head_three_dot_three_dots() {
+        let (base, head, three_dot) = parse_base_head_three_dot("main...feature").unwrap();
+        assert_eq!(base, "main");
+        assert_eq!(head, "feature");
+        assert!(three_dot);
+    }
+
+    #[test]
+    fn test_parse_base_head_three_dot_does_not_leak_dot_into_head() {
+        // The three-dot separator must be matched before the two-dot one, or the
+        // extra dot bleeds into head as ".feature".
+        let (_, head, _) = parse_base_head_three_dot("main...feature").unwrap();
+        assert_eq!(head, "feature");
     }
 }
