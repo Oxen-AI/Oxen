@@ -163,13 +163,20 @@ async fn handle_sql_querying(
         log::debug!("handle_sql_querying got df {df:?}");
         let paginated_df = tabular::collect_with_opts(df.clone().lazy(), opts.clone()).await?;
 
-        let source_schema = if let Some(schema) =
-            repositories::data_frames::schemas::get_by_path(repo, &workspace.commit, path)?
-        {
-            schema
-        } else {
-            Schema::from_polars(paginated_df.schema())
-        };
+        // Reading the stored schema is a sync repo/tree read; keep it off the worker too.
+        let schema_repo = repo.clone();
+        let schema_commit = workspace.commit.clone();
+        let schema_path = path.to_path_buf();
+        let stored_schema = tokio::task::spawn_blocking(move || {
+            repositories::data_frames::schemas::get_by_path(
+                &schema_repo,
+                &schema_commit,
+                &schema_path,
+            )
+        })
+        .await??;
+        let source_schema =
+            stored_schema.unwrap_or_else(|| Schema::from_polars(paginated_df.schema()));
 
         let mut slice_schema = Schema::from_polars(df.schema());
         slice_schema.update_metadata_from_schema(&source_schema);
