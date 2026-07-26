@@ -36,24 +36,6 @@ use crate::params::{
     path_param, resolve_base_head,
 };
 
-/// The base a diff should range from. With `three_dot`, diff from the merge base
-/// (git `base...head`) so commits that landed on the base branch after the fork
-/// don't read as part of head's changes. Falls back to the given base when the
-/// two commits share no common ancestor.
-fn diff_base(
-    repository: &LocalRepository,
-    base: Commit,
-    head: &Commit,
-    three_dot: bool,
-) -> Result<Commit, OxenError> {
-    if !three_dot {
-        return Ok(base);
-    }
-    let merge_base =
-        repositories::merge::lowest_common_ancestor_from_commits(repository, &base, head)?;
-    Ok(merge_base.unwrap_or(base))
-}
-
 /// List commits between two revisions
 #[utoipa::path(
     get,
@@ -155,7 +137,18 @@ pub async fn entries(
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
-    let base_commit = diff_base(&repository, base_commit, &head_commit, three_dot)?;
+    // Three dots (base...head) diff from the merge base, so commits that landed
+    // on the base branch after the fork don't read as part of head's changes.
+    let base_commit = if three_dot {
+        repositories::merge::lowest_common_ancestor_from_commits(
+            &repository,
+            &base_commit,
+            &head_commit,
+        )?
+        .unwrap_or(base_commit)
+    } else {
+        base_commit
+    };
 
     let entries_diff = repositories::diffs::list_diff_entries(
         &repository,
@@ -232,7 +225,18 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
-    let base_commit = diff_base(&repository, base_commit, &head_commit, three_dot)?;
+    // Three dots (base...head) diff from the merge base, so commits that landed
+    // on the base branch after the fork don't read as part of head's changes.
+    let base_commit = if three_dot {
+        repositories::merge::lowest_common_ancestor_from_commits(
+            &repository,
+            &base_commit,
+            &head_commit,
+        )?
+        .unwrap_or(base_commit)
+    } else {
+        base_commit
+    };
 
     let dir_diffs =
         repositories::diffs::list_changed_dirs(&repository, &base_commit, &head_commit).await?;
@@ -290,7 +294,18 @@ pub async fn dir_entries(
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
-    let base_commit = diff_base(&repository, base_commit, &head_commit, three_dot)?;
+    // Three dots (base...head) diff from the merge base, so commits that landed
+    // on the base branch after the fork don't read as part of head's changes.
+    let base_commit = if three_dot {
+        repositories::merge::lowest_common_ancestor_from_commits(
+            &repository,
+            &base_commit,
+            &head_commit,
+        )?
+        .unwrap_or(base_commit)
+    } else {
+        base_commit
+    };
     let dir = PathBuf::from(dir);
 
     let entries_diff = repositories::diffs::list_diff_entries(
