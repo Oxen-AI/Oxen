@@ -118,6 +118,12 @@ impl Schema {
         self.fields.iter().find(|f| f.name == name)
     }
 
+    /// Recompute the hash from the current fields; call after changing field
+    /// names, dtypes, or metadata.
+    pub fn recompute_hash(&mut self) {
+        self.hash = Schema::hash_fields(&self.fields);
+    }
+
     fn hash_fields(fields: &Vec<Field>) -> String {
         let mut hash_buffers: Vec<String> = vec![];
         for f in fields {

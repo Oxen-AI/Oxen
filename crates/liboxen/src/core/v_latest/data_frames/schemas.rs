@@ -125,10 +125,9 @@ pub fn get_staged_schema_with_staged_db_manager(
     let path = util::fs::path_relative_to_dir(path, &repo.path)?;
     let staged_db_manager = get_staged_db_manager(repo)?;
     match staged_db_manager.read_from_staged_db(&path) {
-        Ok(Some(value)) => {
-            let schema = db_val_to_schema(&value)?;
-            Ok(Some(schema))
-        }
+        // A staged node without tabular metadata (e.g. a binary replacement
+        // upload) carries no staged schema.
+        Ok(Some(value)) => Ok(db_val_to_schema(&value).ok()),
         _ => {
             log::debug!("could not get staged schema");
             Ok(None)

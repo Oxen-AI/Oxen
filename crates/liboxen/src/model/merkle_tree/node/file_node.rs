@@ -7,6 +7,7 @@ use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{
     EntryDataType, MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType, TMerkleTreeNode,
 };
+use crate::util;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -183,6 +184,19 @@ impl FileNode {
 
     pub fn set_metadata(&mut self, metadata: Option<GenericMetadata>) {
         self.mut_node().set_metadata(metadata);
+    }
+
+    /// Recompute the metadata and combined hashes from the current metadata.
+    /// The metadata is part of the node's identity, so call this after any
+    /// metadata change or the edit is invisible to reads.
+    pub fn recompute_metadata_hashes(&mut self) -> Result<(), OxenError> {
+        let metadata_hash = util::hasher::get_metadata_hash(&self.metadata())?;
+        // UFCS: on `&mut self`, plain `self.hash()` resolves to `std::hash::Hash`.
+        let content_hash = FileNode::hash(self).to_u128();
+        let combined_hash = util::hasher::get_combined_hash(Some(metadata_hash), content_hash)?;
+        self.set_metadata_hash(Some(MerkleHash::new(metadata_hash)));
+        self.set_combined_hash(&MerkleHash::new(combined_hash));
+        Ok(())
     }
 
     pub fn mime_type(&self) -> &str {

@@ -17,17 +17,15 @@ use zip::ZipArchive;
 use crate::core;
 use crate::core::staged::staged_db_manager::get_staged_db_manager;
 use crate::core::v_latest::add::{
-    add_file_node_to_staged_db, get_file_node, process_add_file_with_staged_db_manager,
-    stage_file_with_hash,
+    get_file_node, process_add_file_with_staged_db_manager, stage_file_with_hash,
 };
 use crate::error::OxenError;
 use crate::model::file::TempFilePathNew;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
-use crate::model::merkle_tree::node::FileNode;
-use crate::model::merkle_tree::node::MerkleTreeNode;
+use crate::model::merkle_tree::node::{MerkleTreeNode, StagedMerkleTreeNode};
 use crate::model::user::User;
 use crate::model::workspace::Workspace;
-use crate::model::{Branch, Commit, MerkleHash, StagedEntryStatus};
+use crate::model::{Branch, Commit, StagedEntryStatus};
 use crate::model::{LocalRepository, NewCommitBody};
 use crate::repositories;
 use crate::util;
@@ -975,13 +973,18 @@ async fn p_add_file(
     }
 
     // See if this is a new file or a modified file
-    let file_status = core::v_latest::add::determine_file_status(
+    let mut file_status = core::v_latest::add::determine_file_status(
         base_repo,
         &maybe_dir_node,
         &file_name,
         &full_path,
     )
     .await?;
+    if let Some(metadata) =
+        core::v_latest::add::staged_file_metadata(workspace_repo, &relative_path)?
+    {
+        file_status.previous_metadata = Some(metadata);
+    }
 
     // Store the file in the version store using the hash as the key
     let hash_str = file_status.hash.to_string();
@@ -1059,38 +1062,6 @@ async fn p_rm(
     Ok(err_files)
 }
 
-/// Copy metadata already staged for `path` onto `file_node`, rehashing to match.
-///
-/// Workspace metadata edits live only on the staged node; the committed node
-/// knows nothing of them. Any path that re-stages from the commit tree has to
-/// carry them across or they are lost.
-fn carry_over_staged_metadata(
-    workspace_repo: &LocalRepository,
-    path: &Path,
-    file_node: &mut FileNode,
-) -> Result<(), OxenError> {
-    let staged_db_manager = get_staged_db_manager(workspace_repo)?;
-    let Some(staged_node) = staged_db_manager.read_from_staged_db(path)? else {
-        return Ok(());
-    };
-    let Ok(staged_file) = staged_node.node.file() else {
-        return Ok(());
-    };
-    let Some(metadata) = staged_file.metadata() else {
-        return Ok(());
-    };
-
-    file_node.set_metadata(Some(metadata));
-    // The metadata is part of the node's identity, so both hashes must be
-    // recomputed for it to survive a read.
-    let metadata_hash = util::hasher::get_metadata_hash(&file_node.metadata())?;
-    let combined_hash =
-        util::hasher::get_combined_hash(Some(metadata_hash), file_node.hash().to_u128())?;
-    file_node.set_metadata_hash(Some(MerkleHash::new(metadata_hash)));
-    file_node.set_combined_hash(&MerkleHash::new(combined_hash));
-    Ok(())
-}
-
 fn p_modify_file(
     base_repo: &LocalRepository,
     workspace_repo: &LocalRepository,
@@ -1101,23 +1072,33 @@ fn p_modify_file(
     if let Some(head_commit) = maybe_head_commit {
         maybe_file_node = repositories::tree::get_file_by_path(base_repo, head_commit, path)?;
     }
+    let Some(mut file_node) = maybe_file_node else {
+        return Err(OxenError::basic_str("file not found in head commit"));
+    };
+    file_node.set_name(path.to_str().unwrap());
+    log::debug!("p_modify_file file_node: {file_node}");
+
+    let staged_db_manager = get_staged_db_manager(workspace_repo)?;
+    staged_db_manager.modify_staged_node(path, |staged| {
+        // The committed node knows nothing of workspace metadata edits. When
+        // the staged node holds the same content with different metadata,
+        // carry that metadata over so re-staging doesn't discard it.
+        if let Some(staged) = staged
+            && let Ok(staged_file) = staged.node.file()
+            && staged_file.hash() == file_node.hash()
+            && let Some(metadata) = staged_file.metadata()
+        {
+            file_node.set_metadata(Some(metadata));
+            file_node.recompute_metadata_hashes()?;
+        }
+        Ok(StagedMerkleTreeNode {
+            status: StagedEntryStatus::Modified,
+            node: MerkleTreeNode::from_file(file_node),
+        })
+    })?;
 
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
-    if let Some(mut file_node) = maybe_file_node {
-        file_node.set_name(path.to_str().unwrap());
-        // Re-staging the committed node would drop metadata staged in the workspace.
-        carry_over_staged_metadata(workspace_repo, path, &mut file_node)?;
-        log::debug!("p_modify_file file_node: {file_node}");
-        add_file_node_to_staged_db(
-            workspace_repo,
-            path,
-            StagedEntryStatus::Modified,
-            &file_node,
-            &seen_dirs,
-        )
-    } else {
-        Err(OxenError::basic_str("file not found in head commit"))
-    }
+    staged_db_manager.add_parent_directories(path, &seen_dirs)
 }
 
 fn has_dir_node(

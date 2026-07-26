@@ -164,8 +164,19 @@ pub async fn get(
             Schema::from_polars(df.schema())
         };
 
-        let df_views =
+        let mut df_views =
             JsonDataFrameViews::from_df_and_opts_unpaginated(df, df_schema, count, &opts).await;
+
+        // Metadata can be staged before the frame is ever indexed; surface it.
+        let staged_schema =
+            repositories::data_frames::schemas::get_staged_schema_with_staged_db_manager(
+                &workspace.workspace_repo,
+                &file_path,
+            )?;
+        repositories::workspaces::data_frames::columns::update_column_schemas(
+            staged_schema,
+            &mut df_views,
+        );
 
         let response = WorkspaceJsonDataFrameViewResponse {
             status: StatusMessage::resource_found(),
@@ -218,7 +229,7 @@ pub async fn get(
     repositories::workspaces::data_frames::columns::update_column_schemas(
         new_schema,
         &mut df_views,
-    )?;
+    );
 
     let response = WorkspaceJsonDataFrameViewResponse {
         status: StatusMessage::resource_found(),
@@ -245,17 +256,27 @@ pub async fn get_schema(req: HttpRequest) -> Result<HttpResponse, OxenHttpError>
     };
     let file_path = PathBuf::from(path_param(&req, "path")?);
 
-    let is_indexed = repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)?;
+    // Never index on a read: rebuilding the staged table would discard any
+    // staged row edits (e.g. behind a stale index marker). Serve the committed
+    // schema until something else indexes the frame.
+    let mut schema = if repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)? {
+        let db_path = repositories::workspaces::data_frames::duckdb_path(&workspace, &file_path);
+        with_df_db_manager(&db_path, |manager| {
+            manager.with_conn(|conn| schema_without_oxen_cols(conn, TABLE_NAME))
+        })?
+    } else {
+        repositories::data_frames::schemas::get_by_path(&repo, &workspace.commit, &file_path)?
+            .ok_or(OxenHttpError::NotFound)?
+    };
 
-    if !is_indexed {
-        repositories::workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+    if let Some(staged_schema) =
+        repositories::data_frames::schemas::get_staged_schema_with_staged_db_manager(
+            &workspace.workspace_repo,
+            &file_path,
+        )?
+    {
+        schema.update_metadata_from_schema(&staged_schema);
     }
-
-    let db_path = repositories::workspaces::data_frames::duckdb_path(&workspace, &file_path);
-
-    let schema = with_df_db_manager(&db_path, |manager| {
-        manager.with_conn(|conn| schema_without_oxen_cols(conn, TABLE_NAME))
-    })?;
 
     Ok(HttpResponse::Ok().json(schema))
 }
@@ -310,12 +331,6 @@ pub async fn put_schema_metadata(
     let Some(metadata) = parsed_json.get("metadata") else {
         return Err(OxenHttpError::BasicError("metadata is required".into()));
     };
-
-    // The metadata is staged onto the workspace's file node, so the data frame
-    // must be indexed first.
-    if !repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)? {
-        repositories::workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
-    }
 
     repositories::workspaces::data_frames::schemas::add_schema_metadata(
         &repo, &workspace, &file_path, metadata,
@@ -682,10 +697,152 @@ mod tests {
     use crate::controllers;
     use crate::test;
     use actix_web::{App, web};
+    use liboxen::core::db::data_frames::df_db::with_df_db_manager;
     use liboxen::error::OxenError;
+    use liboxen::model::Schema;
     use liboxen::repositories;
     use liboxen::util;
     use liboxen::view::json_data_frame_view::WorkspaceJsonDataFrameViewResponse;
+    use serde_json::json;
+
+    #[actix_web::test]
+    async fn test_schema_metadata_put_get_round_trip() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Schema-Metadata-Round-Trip";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let csv_dir = repo.path.join("data");
+        util::fs::create_dir_all(&csv_dir)?;
+        let csv_path = csv_dir.join("test.csv");
+        util::fs::write_to_path(&csv_path, "col_a,col_b\n1,2\n3,4\n")?;
+        repositories::add(&repo, &csv_path).await?;
+        let commit = repositories::commit(&repo, "Add CSV")?;
+
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        let workspace = repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
+        let file_path = std::path::Path::new("data/test.csv");
+
+        let uri = format!(
+            "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/schema/{}",
+            file_path.display()
+        );
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/schema/{path:.*}",
+                    web::put().to(controllers::workspaces::data_frames::put_schema_metadata),
+                )
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/schema/{path:.*}",
+                    web::get().to(controllers::workspaces::data_frames::get_schema),
+                ),
+        )
+        .await;
+
+        let metadata = json!({"task": "classification"});
+        let req = actix_web::test::TestRequest::put()
+            .uri(&uri)
+            .set_json(json!({"metadata": metadata}))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        assert!(
+            !repositories::workspaces::data_frames::duckdb_path(&workspace, file_path).exists(),
+            "writing schema metadata should not index an unindexed data frame"
+        );
+
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let schema: Schema = serde_json::from_slice(&bytes)?;
+        assert_eq!(schema.metadata, Some(metadata));
+
+        drop(workspace);
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_schema_metadata_put_does_not_rebuild_stale_table() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Schema-Metadata-Stale-Table";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let csv_dir = repo.path.join("data");
+        util::fs::create_dir_all(&csv_dir)?;
+        let csv_path = csv_dir.join("test.csv");
+        util::fs::write_to_path(&csv_path, "col_a,col_b\n1,2\n3,4\n")?;
+        repositories::add(&repo, &csv_path).await?;
+        let commit = repositories::commit(&repo, "Add CSV")?;
+
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        let workspace = repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
+        let file_path = std::path::Path::new("data/test.csv");
+        repositories::workspaces::data_frames::index(&repo, &workspace, file_path).await?;
+        repositories::workspaces::data_frames::rows::add(
+            &repo,
+            &workspace,
+            file_path,
+            &json!({"col_a": 5, "col_b": 6}),
+        )?;
+        assert_eq!(
+            repositories::workspaces::data_frames::count(&workspace, file_path)?,
+            3
+        );
+
+        let db_path = repositories::workspaces::data_frames::duckdb_path(&workspace, file_path);
+        with_df_db_manager(&db_path, |manager| {
+            manager.with_conn(|conn| {
+                conn.execute(
+                    &format!("DROP TABLE \"{}\"", liboxen::constants::INDEX_META_TABLE),
+                    [],
+                )?;
+                Ok(())
+            })
+        })?;
+        assert!(!repositories::workspaces::data_frames::is_indexed(
+            &workspace, file_path
+        )?);
+
+        let uri = format!(
+            "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/schema/{}",
+            file_path.display()
+        );
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/schema/{path:.*}",
+                    web::put().to(controllers::workspaces::data_frames::put_schema_metadata),
+                ),
+        )
+        .await;
+        let req = actix_web::test::TestRequest::put()
+            .uri(&uri)
+            .set_json(json!({"metadata": {"task": "classification"}}))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        assert_eq!(
+            repositories::workspaces::data_frames::count(&workspace, file_path)?,
+            3,
+            "writing metadata must not discard rows from a stale staged table"
+        );
+        assert!(!repositories::workspaces::data_frames::is_indexed(
+            &workspace, file_path
+        )?);
+
+        drop(workspace);
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
 
     /// CSV committed, workspace created, dataframe indexed.
     /// Expected: 200 with `text/csv` body containing the data.

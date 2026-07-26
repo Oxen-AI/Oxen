@@ -212,6 +212,35 @@ impl StagedDBManager {
         Ok(())
     }
 
+    /// Atomically read, transform, and write the staged node at `path` under a
+    /// single write lock, so a concurrent writer cannot slip in between the
+    /// read and the write and have its update silently overwritten. The
+    /// closure receives the current staged node, if any, and returns the node
+    /// to store. Returns the stored node.
+    pub fn modify_staged_node<F>(
+        &self,
+        path: impl AsRef<Path>,
+        modify: F,
+    ) -> Result<StagedMerkleTreeNode, OxenError>
+    where
+        F: FnOnce(Option<StagedMerkleTreeNode>) -> Result<StagedMerkleTreeNode, OxenError>,
+    {
+        let key = normalize_key(&path);
+        let db_w = self.staged_db.write();
+        let current = db_w
+            .get(key.as_bytes())?
+            .map(|data| rmp_serde::from_slice(&data))
+            .transpose()
+            .map_err(|e| OxenError::basic_str(format!("Failed to deserialize staged data: {e}")))?;
+        let updated = modify(current)?;
+        let mut buf = Vec::new();
+        updated
+            .serialize(&mut Serializer::new(&mut buf))
+            .map_err(|e| OxenError::basic_str(e.to_string()))?;
+        db_w.put(key.as_bytes(), buf)?;
+        Ok(updated)
+    }
+
     /// upsert multiple staged nodes to the staged db
     pub fn upsert_staged_nodes(
         &self,
@@ -277,6 +306,19 @@ impl StagedDBManager {
         let db_w = self.staged_db.write();
         db_w.put(directory_path_str, &buf)?;
 
+        Ok(())
+    }
+
+    /// Stage `Added` directory markers for every ancestor of `path` up to the
+    /// repository root.
+    pub fn add_parent_directories(
+        &self,
+        path: impl AsRef<Path>,
+        seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
+    ) -> Result<(), OxenError> {
+        for dir in path.as_ref().ancestors().skip(1) {
+            self.add_directory(dir, seen_dirs)?;
+        }
         Ok(())
     }
 

@@ -1575,6 +1575,51 @@ mod tests {
         .await
     }
 
+    #[tokio::test]
+    async fn test_add_schema_metadata_preserves_existing_staged_status() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch =
+                repositories::branches::create_checkout(&repo, "test-schema-staged-status")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            let file_node = repositories::tree::get_file_by_path(&repo, &commit, &file_path)?
+                .expect("the committed data frame should exist");
+            let staged_db_manager =
+                crate::core::staged::get_staged_db_manager(&workspace.workspace_repo)?;
+
+            for status in [
+                crate::model::StagedEntryStatus::Added,
+                crate::model::StagedEntryStatus::Removed,
+            ] {
+                staged_db_manager.upsert_file_node(&file_path, status.clone(), &file_node)?;
+
+                workspaces::data_frames::schemas::add_schema_metadata(
+                    &repo,
+                    &workspace,
+                    &file_path,
+                    &json!({"status": format!("{status:?}")}),
+                )?;
+
+                let staged = staged_db_manager
+                    .read_from_staged_db(&file_path)?
+                    .expect("the metadata edit should remain staged");
+                assert_eq!(
+                    staged.status, status,
+                    "a metadata edit must not change the existing staged status"
+                );
+            }
+            Ok(())
+        })
+        .await
+    }
+
     /// Schema-level and per-column metadata are independent: a file-level
     /// write must not clobber a column's metadata.
     #[tokio::test]
