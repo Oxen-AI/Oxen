@@ -113,7 +113,11 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
 #[openapi(
     tags(
         (name = "Namespaces", description = "Namespace management endpoints"),
-        (name = "Repositories", description = "Repository management endpoints.")
+        (name = "Repositories", description = "Repository management endpoints."),
+        (
+            name = "Workspace Data Frames",
+            description = "Editing a data frame inside a workspace, including its schema and column metadata."
+        )
     ),
     paths(
         // Health
@@ -146,6 +150,9 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
         crate::controllers::workspaces::files::add,
         crate::controllers::workspaces::files::add_version_files,
         crate::controllers::workspaces::files::rm_files,
+        // Workspace Data Frames
+        crate::controllers::workspaces::data_frames::put_schema_metadata,
+        crate::controllers::workspaces::data_frames::columns::add_column_metadata,
         // Branches
         crate::controllers::branches::index,
         crate::controllers::branches::show,

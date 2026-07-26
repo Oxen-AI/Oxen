@@ -267,6 +267,33 @@ pub async fn get_schema(req: HttpRequest) -> Result<HttpResponse, OxenHttpError>
 ///
 /// Body: `{ "metadata": { ... } }`, which replaces any existing schema
 /// metadata wholesale.
+#[utoipa::path(
+    put,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/schema/{path}",
+    description = "Set the metadata on a data frame's schema itself, the HTTP equivalent of `oxen schemas add <path> -m '{...}'`. Staged into the workspace, so no commit is required. Replaces any existing schema metadata wholesale.",
+    tag = "Workspace Data Frames",
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "ID or name of the workspace", example = "b3f27f05-0955-4076-805f-39575853b27b"),
+        ("path" = String, Path, description = "Path to the data frame within the repository", example = "annotations/train.csv"),
+    ),
+    request_body(
+        content = String,
+        description = "The metadata to store on the schema, under a `metadata` key. The `_oxen` key is reserved for metadata oxen itself interprets.",
+        example = json!({
+            "metadata": {
+                "task": "bounding_box",
+                "description": "Extracting bounding boxes from images"
+            }
+        })
+    ),
+    responses(
+        (status = 200, description = "Schema metadata updated", body = StatusMessage),
+        (status = 400, description = "Missing or invalid `metadata` in the request body"),
+        (status = 404, description = "Repository, workspace, or data frame not found")
+    )
+)]
 pub async fn put_schema_metadata(
     req: HttpRequest,
     body: String,
