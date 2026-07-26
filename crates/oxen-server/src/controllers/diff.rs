@@ -145,7 +145,7 @@ pub async fn entries(
             &base_commit,
             &head_commit,
         )?
-        .unwrap_or(base_commit)
+        .ok_or_else(|| OxenError::basic_str("No merge base between the requested revisions"))?
     } else {
         base_commit
     };
@@ -233,7 +233,7 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
             &base_commit,
             &head_commit,
         )?
-        .unwrap_or(base_commit)
+        .ok_or_else(|| OxenError::basic_str("No merge base between the requested revisions"))?
     } else {
         base_commit
     };
@@ -302,7 +302,7 @@ pub async fn dir_entries(
             &base_commit,
             &head_commit,
         )?
-        .unwrap_or(base_commit)
+        .ok_or_else(|| OxenError::basic_str("No merge base between the requested revisions"))?
     } else {
         base_commit
     };
