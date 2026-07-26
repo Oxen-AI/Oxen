@@ -1477,10 +1477,9 @@ mod tests {
         .await
     }
 
-    /// A row edit must not discard metadata staged in the workspace. Row writes
-    /// re-stage the file node from the *committed* tree, where workspace
-    /// metadata does not exist — so without carrying it over, saving a column
-    /// order or a render func and then editing any row silently loses it.
+    /// A row edit re-stages the file node from the *committed* tree, which
+    /// knows nothing of workspace metadata edits — schema settings and column
+    /// render funcs staged beforehand must survive the write.
     #[tokio::test]
     async fn test_row_edit_keeps_staged_metadata() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
@@ -1508,8 +1507,6 @@ mod tests {
                 &json!({"_oxen": {"render": {"func": "image"}}}),
             )?;
 
-            // Any row write goes through track_modified_data_frame, which is
-            // where the metadata used to be dropped.
             let row = json!({"file": "images/x.jpg", "label": "cat"});
             workspaces::data_frames::rows::add(&repo, &workspace, &file_path, &row)?;
 
@@ -1539,13 +1536,11 @@ mod tests {
         .await
     }
 
-    /// The read path must surface a staged schema-metadata write. A response's
-    /// schema is rebuilt from the workspace's DuckDB table and seeded from the
-    /// committed schema, so the staged value only reaches a client because
-    /// update_column_schemas carries it across — without that, a setting is
-    /// written successfully and then read back as though it never happened.
+    /// A schema-metadata write must be readable back through the staged
+    /// schema, which is where the read path picks it up when building a
+    /// response.
     #[tokio::test]
-    async fn test_staged_schema_metadata_reaches_the_view() -> Result<(), OxenError> {
+    async fn test_add_schema_metadata_is_staged() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
@@ -1568,22 +1563,20 @@ mod tests {
                 repositories::data_frames::schemas::get_staged_schema_with_staged_db_manager(
                     &workspace.workspace_repo,
                     &file_path,
-                )?;
-            let staged = staged.expect("a staged schema exists after the write");
+                )?
+                .expect("a staged schema exists after the write");
             assert_eq!(
                 staged.metadata,
                 Some(settings),
-                "the staged schema must carry the metadata the read path reads from"
+                "schema metadata should be staged"
             );
             Ok(())
         })
         .await
     }
 
-    /// add_schema_metadata writes onto the schema itself rather than a column,
-    /// and leaves per-column metadata (e.g. render funcs) untouched — the two
-    /// levels are independent, and a client saving file-level settings must not
-    /// clobber a column's.
+    /// Schema-level and per-column metadata are independent: a file-level
+    /// write must not clobber a column's metadata.
     #[tokio::test]
     async fn test_add_schema_metadata_preserves_column_metadata() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {

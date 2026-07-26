@@ -62,13 +62,9 @@ pub fn update_column_schemas(
     df_views: &mut JsonDataFrameViews,
 ) -> Result<(), OxenError> {
     if let Some(schema) = new_schema {
-        // Carry the staged schema's own metadata, not just its columns'. A
-        // workspace write stages schema-level metadata onto the file node, but
-        // the response's schema is rebuilt from the DuckDB table and seeded
-        // from the *committed* schema — so without this a schema metadata edit
-        // is invisible to every read that follows it. Only overwrite when the
-        // staged schema actually carries metadata, leaving the committed value
-        // in place otherwise.
+        // The response schema is seeded from the *committed* schema, so carry
+        // any schema-level metadata staged in the workspace across; when none
+        // is staged, keep the committed value.
         if schema.metadata.is_some() {
             df_views.source.schema.metadata = schema.metadata.clone();
             df_views.view.schema.metadata = schema.metadata.clone();

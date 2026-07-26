@@ -6,6 +6,7 @@ use crate::core::db::data_frames::df_db;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
 use crate::core::staged::get_staged_db_manager;
+use crate::core::v_latest::add::add_file_node_and_parent_dir;
 use crate::core::v_latest::workspaces::files::{add, track_modified_data_frame};
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
@@ -13,8 +14,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use crate::model::data_frame::schema::Field;
-use crate::model::merkle_tree::node::StagedMerkleTreeNode;
-use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode, MerkleTreeNode};
+use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode};
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{
     Commit, EntryDataType, LocalRepository, MerkleHash, Schema, StagedEntryStatus, Workspace,
@@ -27,14 +27,9 @@ pub mod columns;
 pub mod rows;
 pub mod schemas;
 
-/// Stage a metadata edit against a data frame's file node.
-///
-/// Everything about staging such an edit — resolving the file node from the
-/// staged db or the commit tree, staging its parent directories, reconciling
-/// the schema with the workspace's DuckDB table, rehashing and upserting — is
-/// identical whether the edit targets one column or the schema itself. Only the
-/// mutation differs, so callers supply that and nothing else is duplicated
-/// between them.
+/// Stage an edit to a data frame's tabular schema, applying `mutate` to the
+/// schema on its staged file node. Returns the updated schema keyed by the
+/// file's repo-relative path.
 pub(crate) fn stage_schema_metadata_update<F>(
     repo: &LocalRepository,
     workspace: &Workspace,
@@ -44,107 +39,48 @@ pub(crate) fn stage_schema_metadata_update<F>(
 where
     F: FnOnce(&mut Schema) -> Result<(), OxenError>,
 {
+    let path = util::fs::path_relative_to_dir(file_path.as_ref(), &workspace.workspace_repo.path)?;
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
-    {
-        let path = file_path.as_ref();
-        let path = util::fs::path_relative_to_dir(path, &workspace.workspace_repo.path)?;
 
-        let staged_merkle_tree_node = staged_db_manager.read_from_staged_db(&path)?;
-        let mut staged_nodes: HashMap<PathBuf, StagedMerkleTreeNode> = HashMap::new();
+    let mut file_node = match staged_db_manager.read_from_staged_db(&path)? {
+        Some(staged_node) => staged_node.node.file()?,
+        None => repositories::tree::get_file_by_path(repo, &workspace.commit, &path)?
+            .ok_or_else(|| OxenError::path_does_not_exist(&path))?,
+    };
 
-        let mut file_node = if let Some(staged_merkle_tree_node) = staged_merkle_tree_node {
-            staged_merkle_tree_node.node.file()?
-        } else {
-            // Get the FileNode from the CommitMerkleTree
-            let commit = workspace.commit.clone();
-            let node = repositories::tree::get_node_by_path(repo, &commit, &path)?
-                .ok_or_else(|| OxenError::basic_str("Node does not exist at the specified path"))?;
-            let mut parent_id = node.parent_id;
-            let mut dir_path = path.clone();
+    sync_workspace_columns_into_metadata(workspace, &path, file_node.get_mut_metadata())?;
 
-            // Add parent nodes to staged nodes
-            while let Some(current_parent_id) = parent_id {
-                if current_parent_id == MerkleHash::new(0) {
-                    break;
-                }
-                let mut parent_node = MerkleTreeNode::from_hash(repo, &current_parent_id)?;
-                parent_id = parent_node.parent_id;
-                let EMerkleTreeNode::Directory(mut dir_node) = parent_node.node.clone() else {
-                    continue;
-                };
+    let Some(GenericMetadata::MetadataTabular(m)) = file_node.get_mut_metadata() else {
+        return Err(OxenError::path_does_not_exist(path));
+    };
+    mutate(&mut m.tabular.schema)?;
+    let updated_schema = m.tabular.schema.clone();
 
-                // if parent() returns None, we've reached the root
-                let Some(parent_dir) = dir_path.parent() else {
-                    break;
-                };
-                dir_path = parent_dir.to_path_buf();
-                dir_node.set_name(dir_path.to_string_lossy());
-                parent_node.node = EMerkleTreeNode::Directory(dir_node);
-                let staged_parent_node = StagedMerkleTreeNode {
-                    status: StagedEntryStatus::Modified,
-                    node: parent_node,
-                };
-                staged_nodes.insert(dir_path.clone(), staged_parent_node);
-            }
+    // The metadata is part of the node's identity, so both hashes must be
+    // recomputed for the edit to survive a read.
+    let metadata_hash = util::hasher::get_metadata_hash(&file_node.metadata())?;
+    let combined_hash =
+        util::hasher::get_combined_hash(Some(metadata_hash), file_node.hash().to_u128())?;
+    file_node.set_name(path.to_string_lossy().as_ref());
+    file_node.set_metadata_hash(Some(MerkleHash::new(metadata_hash)));
+    file_node.set_combined_hash(&MerkleHash::new(combined_hash));
 
-            let Some(file_node) = repositories::tree::get_file_by_path(repo, &commit, &path)?
-            else {
-                return Err(OxenError::path_does_not_exist(&path));
-            };
-            file_node
-        };
+    let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
+    add_file_node_and_parent_dir(
+        &file_node,
+        StagedEntryStatus::Modified,
+        &path,
+        &staged_db_manager,
+        &seen_dirs,
+    )?;
 
-        // Sync the workspace columns into the metadata before staging anything,
-        // so a failure here leaves no partially-staged parent nodes behind.
-        sync_workspace_columns_into_metadata(workspace, &path, file_node.get_mut_metadata())?;
-
-        // Stage parent nodes
-        staged_db_manager.upsert_staged_nodes(&staged_nodes)?;
-
-        // Apply the caller's edit to the staged schema.
-        let mut results = HashMap::new();
-        match file_node.get_mut_metadata() {
-            Some(GenericMetadata::MetadataTabular(m)) => {
-                mutate(&mut m.tabular.schema)?;
-                results.insert(path.clone(), m.tabular.schema.clone());
-            }
-            _ => {
-                return Err(OxenError::path_does_not_exist(path));
-            }
-        }
-
-        // Stage the file node with the updated metadata
-        let mut staged_entry = StagedMerkleTreeNode {
-            status: StagedEntryStatus::Modified,
-            node: MerkleTreeNode::from_file(file_node.clone()),
-        };
-
-        let oxen_metadata = &file_node.metadata();
-        let oxen_metadata_hash = util::hasher::get_metadata_hash(oxen_metadata)?;
-        let combined_hash =
-            util::hasher::get_combined_hash(Some(oxen_metadata_hash), file_node.hash().to_u128())?;
-
-        let mut file_node = staged_entry.node.file()?;
-
-        file_node.set_name(path.to_string_lossy().as_ref());
-        file_node.set_combined_hash(&MerkleHash::new(combined_hash));
-        file_node.set_metadata_hash(Some(MerkleHash::new(oxen_metadata_hash)));
-
-        staged_entry.node = MerkleTreeNode::from_file(file_node);
-
-        staged_db_manager.upsert_staged_node(&path, &staged_entry, None)?;
-
-        Ok(results)
-    }
+    Ok(HashMap::from([(path, updated_schema)]))
 }
 
-/// Reconcile the file node's tabular metadata schema with the workspace's
-/// staged DuckDB table, so metadata reflects the edited state (columns a
-/// workspace edit added/removed/retyped) that the committed schema does not
-/// know yet. The staged table is authoritative: fields are rebuilt in its
-/// order with its dtypes, dropping columns no longer present and adding new
-/// ones, while any per-column metadata already attached is carried over by
-/// matching name. A data frame that isn't indexed is left untouched.
+/// Reconcile the file node's tabular schema with the workspace's staged
+/// DuckDB table, which is authoritative for columns a workspace edit
+/// added, removed, or retyped. Per-column metadata is carried over by name;
+/// a data frame that isn't indexed is left untouched.
 fn sync_workspace_columns_into_metadata(
     workspace: &Workspace,
     path: &Path,
@@ -160,10 +96,9 @@ fn sync_workspace_columns_into_metadata(
         // Never indexed: nothing to sync.
         return Ok(());
     }
-    // Only reconcile when the staged table actually exists. A db file without
-    // it yields an empty schema, and rebuilding against that would wipe the
-    // committed metadata — so treat "no table" as a no-op, and let any real
-    // DB error propagate.
+    // A db file without the staged table yields an empty schema, and rebuilding
+    // against that would wipe the committed metadata — treat "no table" as a
+    // no-op, and let any real DB error propagate.
     let table_schema = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
             if !df_db::table_exists(conn, TABLE_NAME)? {

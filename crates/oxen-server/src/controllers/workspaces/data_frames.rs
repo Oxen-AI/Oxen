@@ -260,13 +260,9 @@ pub async fn get_schema(req: HttpRequest) -> Result<HttpResponse, OxenHttpError>
     Ok(HttpResponse::Ok().json(schema))
 }
 
-/// Set the metadata on the data frame's schema itself — the file-level
-/// counterpart to the per-column metadata endpoint, and the HTTP equivalent of
-/// `oxen schemas add <path> -m '{...}'`. Staged into the workspace, so a client
-/// can persist schema-level settings without a commit.
-///
-/// Body: `{ "metadata": { ... } }`, which replaces any existing schema
-/// metadata wholesale.
+/// Set the metadata on a data frame's schema itself — the file-level
+/// counterpart to the per-column metadata endpoint. Staged into the
+/// workspace, so no commit is required.
 #[utoipa::path(
     put,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/schema/{path}",
@@ -315,10 +311,9 @@ pub async fn put_schema_metadata(
         return Err(OxenHttpError::BasicError("metadata is required".into()));
     };
 
-    // The staged schema is what carries metadata, so the data frame has to be
-    // indexed into the workspace before there is anything to write it onto.
-    let is_indexed = repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)?;
-    if !is_indexed {
+    // The metadata is staged onto the workspace's file node, so the data frame
+    // must be indexed first.
+    if !repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)? {
         repositories::workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
     }
 

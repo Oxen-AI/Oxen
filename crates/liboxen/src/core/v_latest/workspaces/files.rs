@@ -1081,8 +1081,8 @@ fn carry_over_staged_metadata(
     };
 
     file_node.set_metadata(Some(metadata));
-    // Mirror add_column_metadata: the metadata is part of the node's identity,
-    // so both hashes have to be recomputed for it to survive a read.
+    // The metadata is part of the node's identity, so both hashes must be
+    // recomputed for it to survive a read.
     let metadata_hash = util::hasher::get_metadata_hash(&file_node.metadata())?;
     let combined_hash =
         util::hasher::get_combined_hash(Some(metadata_hash), file_node.hash().to_u128())?;
@@ -1105,10 +1105,7 @@ fn p_modify_file(
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
     if let Some(mut file_node) = maybe_file_node {
         file_node.set_name(path.to_str().unwrap());
-        // This re-stages the *committed* node, so any metadata applied in the
-        // workspace — schema settings, per-column render funcs — would be
-        // dropped by a plain row edit. Carry the staged node's metadata over so
-        // editing a row doesn't silently discard it.
+        // Re-staging the committed node would drop metadata staged in the workspace.
         carry_over_staged_metadata(workspace_repo, path, &mut file_node)?;
         log::debug!("p_modify_file file_node: {file_node}");
         add_file_node_to_staged_db(

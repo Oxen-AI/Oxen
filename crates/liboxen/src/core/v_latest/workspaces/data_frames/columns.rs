@@ -95,18 +95,14 @@ pub fn add_column_metadata(
     column: impl AsRef<str>,
     metadata: &serde_json::Value,
 ) -> Result<HashMap<PathBuf, Schema>, OxenError> {
-    let column = column.as_ref().to_string();
+    let column = column.as_ref();
     super::stage_schema_metadata_update(repo, workspace, file_path, |schema| {
-        let mut column_found = false;
-        for f in schema.fields.iter_mut() {
-            if f.name == column {
-                f.metadata = Some(metadata.to_owned());
-                column_found = true;
-            }
-        }
-        if !column_found {
-            Err(DataFrameError::ColumnNameNotFound(column.clone()))?;
-        }
+        let field = schema
+            .fields
+            .iter_mut()
+            .find(|f| f.name == column)
+            .ok_or_else(|| DataFrameError::ColumnNameNotFound(column.to_string()))?;
+        field.metadata = Some(metadata.to_owned());
         Ok(())
     })
 }

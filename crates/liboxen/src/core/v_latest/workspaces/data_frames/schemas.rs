@@ -79,12 +79,8 @@ pub fn update_schema(
 }
 
 /// Set the metadata on the data frame's schema itself, as opposed to on one of
-/// its columns. This is the file-level half of `oxen schemas add -m '{...}'`,
-/// staged into a workspace rather than the repo, so a client can persist
-/// user-driven schema settings without a commit.
-///
-/// The value replaces any existing schema metadata wholesale; callers that want
-/// to keep neighbouring keys should read the current metadata and merge.
+/// its columns — the workspace-staged equivalent of `oxen schemas add -m '{...}'`.
+/// The value replaces any existing schema metadata wholesale.
 pub fn add_schema_metadata(
     repo: &LocalRepository,
     workspace: &Workspace,
