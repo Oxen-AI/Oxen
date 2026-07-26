@@ -1477,6 +1477,61 @@ mod tests {
         .await
     }
 
+    /// add_schema_metadata writes onto the schema itself rather than a column,
+    /// and leaves per-column metadata (e.g. render funcs) untouched — the two
+    /// levels are independent, and a client saving file-level settings must not
+    /// clobber a column's.
+    #[tokio::test]
+    async fn test_add_schema_metadata_preserves_column_metadata() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-schema-metadata")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            workspaces::data_frames::columns::add_column_metadata(
+                &repo,
+                &workspace,
+                file_path.clone(),
+                "file".to_string(),
+                &json!({"_oxen": {"render": {"func": "image"}}}),
+            )?;
+
+            let results = workspaces::data_frames::schemas::add_schema_metadata(
+                &repo,
+                &workspace,
+                &file_path,
+                &json!({"_oxen": {"view": {"columns": ["file", "label"]}}}),
+            )?;
+
+            let schema = results.values().next().expect("a schema was returned");
+            assert_eq!(
+                schema.metadata,
+                Some(json!({"_oxen": {"view": {"columns": ["file", "label"]}}})),
+                "schema metadata should be written"
+            );
+            let file_field = schema
+                .fields
+                .iter()
+                .find(|f| f.name == "file")
+                .expect("the file column still exists");
+            assert_eq!(
+                file_field.metadata,
+                Some(json!({"_oxen": {"render": {"func": "image"}}})),
+                "column metadata should survive a schema-level write"
+            );
+            Ok(())
+        })
+        .await
+    }
+
     /// A metadata-only workspace edit (add_column_metadata, no row changes)
     /// must survive commit: the no-op-export skip compares against the BASE
     /// commit's file node, so the metadata change — which the staged node

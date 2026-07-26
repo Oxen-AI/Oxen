@@ -260,6 +260,48 @@ pub async fn get_schema(req: HttpRequest) -> Result<HttpResponse, OxenHttpError>
     Ok(HttpResponse::Ok().json(schema))
 }
 
+/// Set the metadata on the data frame's schema itself — the file-level
+/// counterpart to the per-column metadata endpoint, and the HTTP equivalent of
+/// `oxen schemas add <path> -m '{...}'`. Staged into the workspace, so a client
+/// can persist schema-level settings without a commit.
+///
+/// Body: `{ "metadata": { ... } }`, which replaces any existing schema
+/// metadata wholesale.
+pub async fn put_schema_metadata(
+    req: HttpRequest,
+    body: String,
+) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
+    let repo = get_repo(app_data, namespace, repo_name)?;
+    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+        return Ok(HttpResponse::NotFound()
+            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+    };
+    let file_path = PathBuf::from(path_param(&req, "path")?);
+
+    let parsed_json: serde_json::Value = serde_json::from_str(&body)?;
+    let Some(metadata) = parsed_json.get("metadata") else {
+        return Err(OxenHttpError::BasicError("metadata is required".into()));
+    };
+
+    // The staged schema is what carries metadata, so the data frame has to be
+    // indexed into the workspace before there is anything to write it onto.
+    let is_indexed = repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)?;
+    if !is_indexed {
+        repositories::workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+    }
+
+    repositories::workspaces::data_frames::schemas::add_schema_metadata(
+        &repo, &workspace, &file_path, metadata,
+    )?;
+
+    Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
+}
+
 fn determine_extension<'a>(opts: &'a DFOpts, file_path: &'a Path) -> &'a str {
     match &opts.output {
         // If the user specified a format, we'll export to that format

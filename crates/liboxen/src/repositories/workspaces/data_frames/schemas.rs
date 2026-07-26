@@ -15,4 +15,5 @@ pub fn get_by_path(workspace: &Workspace, path: impl AsRef<Path>) -> Result<Sche
     Ok(df_schema)
 }
 
+pub use crate::core::v_latest::workspaces::data_frames::schemas::add_schema_metadata;
 pub use crate::core::v_latest::workspaces::data_frames::schemas::update_schema;

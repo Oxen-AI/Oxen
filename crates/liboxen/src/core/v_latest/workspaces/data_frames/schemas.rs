@@ -1,7 +1,9 @@
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use crate::core::staged::get_staged_db_manager;
 use crate::error::OxenError;
+use crate::model::LocalRepository;
 use crate::model::Schema;
 use crate::model::StagedEntryStatus;
 use crate::model::Workspace;
@@ -74,4 +76,23 @@ pub fn update_schema(
     staged_db_manager.upsert_file_node(path, StagedEntryStatus::Modified, &file_node)?;
 
     Ok(())
+}
+
+/// Set the metadata on the data frame's schema itself, as opposed to on one of
+/// its columns. This is the file-level half of `oxen schemas add -m '{...}'`,
+/// staged into a workspace rather than the repo, so a client can persist
+/// user-driven schema settings without a commit.
+///
+/// The value replaces any existing schema metadata wholesale; callers that want
+/// to keep neighbouring keys should read the current metadata and merge.
+pub fn add_schema_metadata(
+    repo: &LocalRepository,
+    workspace: &Workspace,
+    file_path: impl AsRef<Path>,
+    metadata: &serde_json::Value,
+) -> Result<HashMap<PathBuf, Schema>, OxenError> {
+    super::stage_schema_metadata_update(repo, workspace, file_path, |schema| {
+        schema.metadata = Some(metadata.to_owned());
+        Ok(())
+    })
 }
