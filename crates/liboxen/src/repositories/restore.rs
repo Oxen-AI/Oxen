@@ -305,41 +305,38 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_directory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            let history = repositories::commits::list(&repo)?;
-            let last_commit = history.first().unwrap();
-
+        test::run_empty_local_repo_test_async(|repo| async move {
             let annotations_dir = Path::new("annotations");
 
-            // Remove one file
-            let bbox_file = annotations_dir.join("train").join("bounding_box.csv");
-            let bbox_path = repo.path.join(bbox_file);
+            // Commit a directory with two files: one to remove, one to modify.
+            let train_dir = repo.path.join(annotations_dir).join("train");
+            util::fs::create_dir_all(&train_dir)?;
+            let bbox_path = train_dir.join("bounding_box.csv");
+            util::fs::write_to_path(&bbox_path, "file,label\ntrain/dog_1.jpg,dog\n")?;
+            let readme_path = repo.path.join(annotations_dir).join("README.md");
+            util::fs::write_to_path(&readme_path, "# Annotations\n")?;
+
+            repositories::add(&repo, repo.path.join(annotations_dir)).await?;
+            let commit = repositories::commit(&repo, "add annotations dir")?;
 
             let og_bbox_contents = util::fs::read_from_path(&bbox_path)?;
-
-            util::fs::remove_file(&bbox_path)?;
-
-            // Modify another file
-            let readme_file = annotations_dir.join("README.md");
-            let readme_path = repo.path.join(readme_file);
             let og_readme_contents = util::fs::read_from_path(&readme_path)?;
 
+            // Remove one file, modify the other.
+            util::fs::remove_file(&bbox_path)?;
             let readme_path = test::append_line_txt_file(readme_path, "Adding s'more")?;
 
             // Restore the directory
             repositories::restore::restore(
                 &repo,
-                RestoreOpts::from_path_ref(annotations_dir, last_commit.id.clone()),
+                RestoreOpts::from_path_ref(annotations_dir, commit.id),
             )
             .await?;
 
             // Make sure the removed file is restored
-            let restored_contents = util::fs::read_from_path(&bbox_path)?;
-            assert_eq!(og_bbox_contents, restored_contents);
-
+            assert_eq!(og_bbox_contents, util::fs::read_from_path(&bbox_path)?);
             // Make sure the modified file is restored
-            let restored_contents = util::fs::read_from_path(readme_path)?;
-            assert_eq!(og_readme_contents, restored_contents);
+            assert_eq!(og_readme_contents, util::fs::read_from_path(readme_path)?);
 
             Ok(())
         })
@@ -416,7 +413,7 @@ mod tests {
     async fn test_restore_directory_preserves_untracked_files() -> Result<(), OxenError> {
         // `oxen restore <dir>` must not delete untracked files that happen to live
         // inside the restored directory. It only overwrites tracked files.
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let history = repositories::commits::list(&repo)?;
             let last_commit = history.first().unwrap();
 
@@ -453,7 +450,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_removed_tabular_data() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let history = repositories::commits::list(&repo)?;
             let last_commit = history.first().unwrap();
 
@@ -482,7 +479,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_modified_tabular_data() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let history = repositories::commits::list(&repo)?;
             let last_commit = history.first().unwrap();
 
@@ -515,25 +512,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_modified_text_data() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            let history = repositories::commits::list(&repo)?;
-            let last_commit = history.first().unwrap();
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let file = Path::new("annotations.txt");
+            let path = repo.path.join(file);
+            util::fs::write_to_path(&path, "line 0\nline 1\nline 2\n")?;
+            repositories::add(&repo, &path).await?;
+            let commit = repositories::commit(&repo, "add annotations.txt")?;
 
-            let bbox_file = Path::new("annotations")
-                .join("train")
-                .join("annotations.txt");
-            let bbox_path = repo.path.join(&bbox_file);
-
-            let og_contents = util::fs::read_from_path(&bbox_path)?;
+            let og_contents = util::fs::read_from_path(&path)?;
             let new_contents = format!("{og_contents}\nnew 0");
-            util::fs::write_to_path(&bbox_path, new_contents)?;
+            util::fs::write_to_path(&path, new_contents)?;
 
-            repositories::restore::restore(
-                &repo,
-                RestoreOpts::from_path_ref(bbox_file, last_commit.id.clone()),
-            )
-            .await?;
-            let restored_contents = util::fs::read_from_path(&bbox_path)?;
+            repositories::restore::restore(&repo, RestoreOpts::from_path_ref(file, commit.id))
+                .await?;
+            let restored_contents = util::fs::read_from_path(&path)?;
             assert_eq!(og_contents, restored_contents);
 
             let status = repositories::status(&repo).await?;
@@ -552,14 +544,15 @@ mod tests {
         // tolerance). We can observe that the fast path fired by setting up the state it
         // checks for (matching size + matching mtime) with deliberately different content
         // on disk, then asserting the content isn't rewritten.
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            let filename = Path::new("annotations")
-                .join("train")
-                .join("annotations.txt");
-            let path = repo.path.join(&filename);
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let filename = Path::new("annotations.txt");
+            let path = repo.path.join(filename);
+            util::fs::write_to_path(&path, "line 0\nline 1\nline 2\n")?;
+            repositories::add(&repo, &path).await?;
+            repositories::commit(&repo, "add annotations.txt")?;
 
             // Step 1: normal restore, capture the expected mtime.
-            repositories::restore::restore(&repo, RestoreOpts::from_path(&filename)).await?;
+            repositories::restore::restore(&repo, RestoreOpts::from_path(filename)).await?;
             let meta = std::fs::metadata(&path)?;
             let expected_mtime = meta.modified()?;
             let size = meta.len();
@@ -572,7 +565,7 @@ mod tests {
             filetime::set_file_mtime(&path, filetime::FileTime::from_system_time(expected_mtime))?;
 
             // Step 4: restore again — fast path should skip the copy.
-            repositories::restore::restore(&repo, RestoreOpts::from_path(&filename)).await?;
+            repositories::restore::restore(&repo, RestoreOpts::from_path(filename)).await?;
 
             // Step 5: garbage should still be there.
             let after = std::fs::read(&path).expect("read back after fast-path restore");
@@ -591,11 +584,12 @@ mod tests {
     {
         // Complement to the fast-path test above: if mtime doesn't match, restore should
         // fall through to the full copy and fix the content even when size happens to match.
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            let filename = Path::new("annotations")
-                .join("train")
-                .join("annotations.txt");
-            let path = repo.path.join(&filename);
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let filename = Path::new("annotations.txt");
+            let path = repo.path.join(filename);
+            util::fs::write_to_path(&path, "line 0\nline 1\nline 2\n")?;
+            repositories::add(&repo, &path).await?;
+            repositories::commit(&repo, "add annotations.txt")?;
 
             let og_contents = util::fs::read_from_path(&path)?;
             let og_meta = std::fs::metadata(&path)?;
@@ -618,7 +612,7 @@ mod tests {
                 filetime::FileTime::from_system_time(outside_tolerance),
             )?;
 
-            repositories::restore::restore(&repo, RestoreOpts::from_path(&filename)).await?;
+            repositories::restore::restore(&repo, RestoreOpts::from_path(filename)).await?;
 
             let after = util::fs::read_from_path(&path)?;
             assert_eq!(
@@ -661,13 +655,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_data_frame_with_duplicates() -> Result<(), OxenError> {
-        // THIS ONE FAILS BECAUSE OF THE REPOSITOROIES::COMMIT, IT DOESN'T GET TO RESTORE
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            let ann_file = Path::new("nlp")
-                .join("classification")
-                .join("annotations")
-                .join("train.tsv");
-            let ann_path = repo.path.join(&ann_file);
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let ann_file = Path::new("annotations.csv");
+            let ann_path = repo.path.join(ann_file);
+            // Include duplicate rows so restore round-trips a data frame with dupes.
+            util::fs::write_to_path(&ann_path, "name,a,b,c\nfoo,1,2,3\nfoo,1,2,3\nbar,4,5,6\n")?;
+
             let new_line = "new_data,123,456,789";
             append_line_txt_file(&ann_path, new_line)?;
             let orig_df = tabular::read_df(&ann_path, DFOpts::empty()).await?;
@@ -699,7 +692,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_bounding_box_data_frame() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let ann_file = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
@@ -900,8 +893,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_wildcard_prefix_staged() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            // Repo has 7 images in train/
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Commit 7 files in train/ — 3 cats, 4 dogs.
+            let train_dir = repo.path.join("train");
+            util::fs::create_dir_all(&train_dir)?;
+            for i in 1..=3 {
+                util::fs::write_to_path(
+                    train_dir.join(format!("cat_{i}.jpg")),
+                    format!("cat {i}"),
+                )?;
+            }
+            for i in 1..=4 {
+                util::fs::write_to_path(
+                    train_dir.join(format!("dog_{i}.jpg")),
+                    format!("dog {i}"),
+                )?;
+            }
+            repositories::add(&repo, &train_dir).await?;
+            repositories::commit(&repo, "add train images")?;
+
             let rm_opts = RmOpts {
                 path: PathBuf::from("train/*"),
                 ..Default::default()
@@ -935,35 +945,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_restore_staged_schemas_with_wildcard() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Two CSVs with distinct schemas to copy into a new dir.
+            let src_dir = repo.path.join("annotations").join("train");
+            util::fs::create_dir_all(&src_dir)?;
+            let bbox_path = src_dir.join("bounding_box.csv");
+            util::fs::write_to_path(
+                &bbox_path,
+                "file,label,min_x,min_y,width,height\ntrain/dog_1.jpg,dog,101.5,32.0,385,330\n",
+            )?;
+            let one_shot_path = src_dir.join("one_shot.csv");
+            util::fs::write_to_path(&one_shot_path, "file,label\ntrain/dog_1.jpg,dog\n")?;
+
             // Make a new dir in the repo - new_annotations
             let new_annotations_dir = repo.path.join("new_annotations");
-            // Copy over bounding_box.csv and one_shot.csv to new_annotations
-            let bbox_path = repo
-                .path
-                .join("annotations")
-                .join("train")
-                .join("bounding_box.csv");
-            let one_shot_path = repo
-                .path
-                .join("annotations")
-                .join("train")
-                .join("one_shot.csv");
-
-            // Copy bbox and one_shot to new_annotations
             util::fs::create_dir_all(&new_annotations_dir)?;
-            util::fs::copy(bbox_path, new_annotations_dir.join("bounding_box.csv"))?;
-            util::fs::copy(one_shot_path, new_annotations_dir.join("one_shot.csv"))?;
-
-            // Get file names for these copied files
-            new_annotations_dir
-                .join("bounding_box.csv")
-                .file_name()
-                .unwrap();
-            new_annotations_dir
-                .join("one_shot.csv")
-                .file_name()
-                .unwrap();
+            util::fs::copy(&bbox_path, new_annotations_dir.join("bounding_box.csv"))?;
+            util::fs::copy(&one_shot_path, new_annotations_dir.join("one_shot.csv"))?;
 
             // Add both files
             repositories::add(&repo, &new_annotations_dir).await?;
