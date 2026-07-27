@@ -103,7 +103,11 @@ jobs:
           # install would be masked by the next command and only surface later
           # as a confusing build error. Check each critical command. choco
           # returns 3010 to mean "installed, reboot pending", which is success.
-          choco install -y cmake llvm uv rustup.install nasm
+          $uvVersion = (Select-String -Path tool-versions.env -Pattern '^UV_VERSION=(.+)$').Matches.Groups[1].Value
+          if (-not $uvVersion) { throw "UV_VERSION missing from tool-versions.env" }
+          choco install -y cmake llvm rustup.install nasm
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) { exit $LASTEXITCODE }
+          choco install -y uv --version $uvVersion
           if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) { exit $LASTEXITCODE }
           if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
             choco install -y awscli

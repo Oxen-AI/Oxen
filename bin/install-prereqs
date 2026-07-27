@@ -213,11 +213,22 @@ install_cargo_tool cargo-sort     cargo-sort     "$CARGO_SORT_VERSION" "--locked
 
 info "Checking uv..."
 
+NEED_UV=false
 if command_exists uv; then
-    ok "uv already installed"
+    INSTALLED_UV_VERSION="$(uv --version | awk '{print $2}')"
+    if [ "$INSTALLED_UV_VERSION" = "$UV_VERSION" ]; then
+        ok "uv already installed at $UV_VERSION"
+    else
+        warn "uv version mismatch: installed=$INSTALLED_UV_VERSION, want=$UV_VERSION"
+        NEED_UV=true
+    fi
 else
-    info "Installing uv..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh
+    NEED_UV=true
+fi
+
+if $NEED_UV; then
+    info "Installing uv $UV_VERSION..."
+    curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh
     INSTALLED_UV=true
     # Make uv available for the rest of this script
     UV_BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
