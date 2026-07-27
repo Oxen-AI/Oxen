@@ -16,7 +16,7 @@ use xxhash_rust::xxh3::{Xxh3, xxh3_128};
 use crate::constants;
 use crate::error::OxenError;
 use crate::model::MerkleHash;
-use crate::util::hasher::HashingReader;
+use crate::util::hasher::{HashingReader, HashingWriter};
 
 /// Infix used in `AtomicTempFile` scratch file names: `<target_basename>.oxentmp.<random>`. Private
 /// to keep all knowledge of the pattern in this module — when fsck (or any other sweeper) needs to
@@ -163,9 +163,9 @@ impl AtomicTempFile {
 /// leaves either the prior contents at `target` (if any) or the new contents, never a torn file.
 ///
 /// Build with [`new`][Self::new] and chain `with_*` options; finish with a terminal method —
-/// [`write`][Self::write] for in-memory bytes, [`stream`][Self::stream] for sync `Read`,
-/// [`stream_async`][Self::stream_async] for `AsyncRead`, or [`copy_from`][Self::copy_from] for a
-/// source file.
+/// [`write`][Self::write] for in-memory bytes, [`write_with`][Self::write_with] for an encoder that
+/// owns its writer, [`stream`][Self::stream] for sync `Read`, [`stream_async`][Self::stream_async]
+/// for `AsyncRead`, or [`copy_from`][Self::copy_from] for a source file.
 ///
 /// - `with_hash(h)`: the terminal method hashes the published bytes and refuses to publish if the
 ///   XXH3-128 digest doesn't match — `target` is unchanged on mismatch and
@@ -180,7 +180,7 @@ impl AtomicTempFile {
 /// `std::fs` and run inside a `tokio::task::spawn_blocking` provided by the calling operation.
 /// [`stream_async`][Self::stream_async] is the only `async` terminal, and uses the Channel
 /// hand-off pattern to bridge an async reader to a sync writer.
-#[must_use = "AtomicFile does nothing until a terminal method (write/stream/stream_from_paths/stream_async/copy_from) is called"]
+#[must_use = "AtomicFile does nothing until a terminal method (write/write_with/stream/stream_from_paths/stream_async/copy_from) is called"]
 #[derive(Debug, Clone)]
 pub struct AtomicFile {
     target: PathBuf,
@@ -228,6 +228,48 @@ impl AtomicFile {
         }
         let mut tmp = AtomicTempFile::create(&self.target)?;
         tmp.as_writer().write_all(contents)?;
+        if let Some(mtime) = self.mtime {
+            tmp.set_mtime(mtime)?;
+        }
+        tmp.commit()
+    }
+
+    /// Publish whatever `fill` writes to the target path. The fit for third-party encoders that
+    /// take ownership of a `Write` and so can't be driven through [`stream`][Self::stream] —
+    /// Polars' `ParquetWriter` / `CsvWriter` / `IpcWriter` / `JsonWriter`, `tar`, `zip`.
+    ///
+    /// `fill` must write the complete payload; an `Err` from it propagates and leaves the target
+    /// untouched.
+    pub fn write_with<F>(self, fill: F) -> Result<(), OxenError>
+    where
+        F: FnOnce(&mut dyn Write) -> Result<(), OxenError>,
+    {
+        let mut tmp = AtomicTempFile::create(&self.target)?;
+        let actual_hash = {
+            let mut buf_writer =
+                std::io::BufWriter::with_capacity(constants::STREAMING_BUF_SIZE, tmp.as_writer());
+            let actual = if self.expected_hash.is_some() {
+                let mut hashing = HashingWriter::new(&mut buf_writer);
+                fill(&mut hashing)?;
+                Some(MerkleHash::new(hashing.digest128()))
+            } else {
+                fill(&mut buf_writer)?;
+                None
+            };
+            // `std::io::BufWriter::Drop` attempts to flush but silently swallows errors. Flush
+            // explicitly so any IO error propagates before the hash check / mtime stamp / rename.
+            buf_writer.flush()?;
+            actual
+        };
+        if let (Some(expected), Some(actual)) = (self.expected_hash, actual_hash)
+            && actual != expected
+        {
+            return Err(OxenError::HashMismatch {
+                path: self.target,
+                expected,
+                actual,
+            });
+        }
         if let Some(mtime) = self.mtime {
             tmp.set_mtime(mtime)?;
         }
@@ -649,6 +691,166 @@ mod tests {
             Ok(())
         })
         .await
+    }
+
+    #[test]
+    fn test_atomic_write_with_round_trip() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let target = dir.join("blob.bin");
+            // 200 KB exceeds the buffered-writer path in one go, ruling out a "small enough to
+            // land in a single write" accident.
+            let payload: Vec<u8> = (0..50_000u32).flat_map(u32::to_le_bytes).collect();
+
+            AtomicFile::new(&target).write_with(|w| {
+                w.write_all(&payload)?;
+                Ok(())
+            })?;
+
+            assert_eq!(std::fs::read(&target)?, payload);
+            let names: Vec<_> = std::fs::read_dir(dir)?
+                .filter_map(|e| e.ok().map(|e| e.file_name()))
+                .collect();
+            assert_eq!(names.len(), 1, "unexpected leftover files: {names:?}");
+            Ok(())
+        })
+    }
+
+    /// Nothing is visible at the target until the closure returns and the publish commits. This is
+    /// the guarantee that keeps a concurrent reader's mapping of the previous contents valid.
+    #[test]
+    fn test_atomic_write_with_hides_output_until_commit() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let target = dir.join("blob.bin");
+            std::fs::write(&target, b"previous contents")?;
+
+            AtomicFile::new(&target).write_with(|w| {
+                w.write_all(b"new contents")?;
+                assert_eq!(
+                    std::fs::read(&target)?,
+                    b"previous contents",
+                    "target must still hold the prior contents mid-write"
+                );
+                let scratch: Vec<_> = std::fs::read_dir(dir)?
+                    .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().to_string()))
+                    .filter(|name| name.contains(ATOMIC_TEMP_INFIX))
+                    .collect();
+                assert_eq!(
+                    scratch.len(),
+                    1,
+                    "expected one scratch sibling: {scratch:?}"
+                );
+                Ok(())
+            })?;
+
+            assert_eq!(std::fs::read(&target)?, b"new contents");
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_atomic_write_with_verified_commits_on_match() -> Result<(), OxenError> {
+        use xxhash_rust::xxh3::xxh3_128;
+
+        test::run_empty_dir_test(|dir| {
+            let target = dir.join("blob.bin");
+            let payload: Vec<u8> = (0..50_000u32).flat_map(u32::to_le_bytes).collect();
+            let expected = MerkleHash::new(xxh3_128(&payload));
+
+            AtomicFile::new(&target)
+                .with_hash(expected)
+                .write_with(|w| {
+                    // Several writes, so the digest has to accumulate across calls.
+                    for chunk in payload.chunks(9_973) {
+                        w.write_all(chunk)?;
+                    }
+                    Ok(())
+                })?;
+
+            assert_eq!(std::fs::read(&target)?, payload);
+            let names: Vec<_> = std::fs::read_dir(dir)?
+                .filter_map(|e| e.ok().map(|e| e.file_name()))
+                .collect();
+            assert_eq!(names.len(), 1, "unexpected leftover files: {names:?}");
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_atomic_write_with_verified_aborts_on_mismatch() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let target = dir.join("blob.bin");
+            let bogus_expected = MerkleHash::new(0xdead_beef_dead_beef_dead_beef_dead_beefu128);
+
+            let result = AtomicFile::new(&target)
+                .with_hash(bogus_expected)
+                .write_with(|w| {
+                    w.write_all(b"payload the caller mispredicted")?;
+                    Ok(())
+                });
+
+            match result {
+                Err(OxenError::HashMismatch {
+                    path,
+                    expected,
+                    actual,
+                }) => {
+                    assert_eq!(path, target);
+                    assert_eq!(expected, bogus_expected);
+                    assert_ne!(actual, bogus_expected);
+                }
+                other => panic!("expected HashMismatch, got {other:?}"),
+            }
+
+            assert!(!target.exists(), "target must not be published on mismatch");
+            let names: Vec<_> = std::fs::read_dir(dir)?
+                .filter_map(|e| e.ok().map(|e| e.file_name()))
+                .collect();
+            assert!(names.is_empty(), "directory should be empty: {names:?}");
+            Ok(())
+        })
+    }
+
+    /// An encoder that fails partway leaves the target untouched and no scratch behind.
+    #[test]
+    fn test_atomic_write_with_cleans_up_on_closure_error() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let target = dir.join("blob.bin");
+
+            let result = AtomicFile::new(&target).write_with(|w| {
+                w.write_all(b"partial")?;
+                Err(OxenError::internal_error("synthetic encoder failure"))
+            });
+            assert!(result.is_err(), "the closure's error should propagate");
+
+            assert!(
+                !target.exists(),
+                "target must not appear when the closure fails"
+            );
+            let leftover: Vec<_> = std::fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
+            assert!(
+                leftover.is_empty(),
+                "directory should be empty after a failed write, got {} entries",
+                leftover.len()
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_atomic_write_with_mtime_round_trip() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let target = dir.join("blob.bin");
+            let mtime = fixed_mtime();
+
+            AtomicFile::new(&target).with_mtime(mtime).write_with(|w| {
+                w.write_all(b"stamped")?;
+                Ok(())
+            })?;
+
+            assert_eq!(std::fs::read(&target)?, b"stamped");
+            assert_eq!(std::fs::metadata(&target)?.modified()?, mtime);
+            Ok(())
+        })
     }
 
     #[tokio::test]

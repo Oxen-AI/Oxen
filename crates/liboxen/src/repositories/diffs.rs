@@ -27,6 +27,7 @@ use crate::model::{
     Commit, CommitEntry, DataFrameDiff, DiffEntry, EntryDataType, LocalRepository, Schema,
 };
 use crate::storage::version_store::VersionStore;
+use crate::util::fs::AtomicFile;
 use crate::view::Pagination;
 use crate::{constants, repositories, util};
 
@@ -1245,7 +1246,7 @@ fn write_diff_dupes(
 
     let dupes_path = compare_dir.join(DUPES_PATH);
 
-    std::fs::write(dupes_path, serde_json::to_string(&dupes)?)?;
+    AtomicFile::new(dupes_path).write(serde_json::to_string(&dupes)?.as_bytes())?;
 
     Ok(())
 }
@@ -1403,12 +1404,12 @@ fn write_diff_commit_ids(
 
     if let Some(commit_entry) = left_entry {
         let left_id = &commit_entry.commit_id;
-        std::fs::write(left_path, left_id)?;
+        AtomicFile::new(left_path).write(left_id.as_bytes())?;
     }
 
     if let Some(commit_entry) = right_entry {
         let right_id = &commit_entry.commit_id;
-        std::fs::write(right_path, right_id)?;
+        AtomicFile::new(right_path).write(right_id.as_bytes())?;
     }
 
     Ok(())
