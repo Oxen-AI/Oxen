@@ -3,6 +3,7 @@ use crate::helpers::get_repo;
 use crate::params::{NameParam, app_data, path_param};
 
 use liboxen::constants::INITIAL_COMMIT_MSG;
+use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
 use liboxen::model::{NewCommitBody, User};
 use liboxen::repositories;
@@ -52,12 +53,13 @@ pub async fn get_or_create(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
 
     let data: Result<NewWorkspace, serde_json::Error> = serde_json::from_str(&body);
     let data = match data {
         Ok(data) => data,
         Err(err) => {
-            log::error!("Unable to parse body. Err: {err}\n{body}");
+            log::warn!("Unable to parse body. Err: {err}\n{body}");
             return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
         }
     };
@@ -267,7 +269,15 @@ pub async fn clear(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
-    repositories::workspaces::clear(&repo)?;
+    // Clearing all workspaces is a destructive write; hold the whole-repo exclusive lock so no
+    // write lands mid-clear. The sweep is synchronous IO, so it runs off the actix worker thread.
+    let clear_repo = repo.clone();
+    repo_locks::with_repo_exclusive(&repo, async move {
+        tokio::task::spawn_blocking(move || repositories::workspaces::clear(&clear_repo))
+            .await
+            .map_err(OxenError::from)?
+    })
+    .await?;
     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
 }
 
@@ -294,6 +304,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
 
     let repo = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
@@ -390,6 +401,7 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(app_data, &namespace, &repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
     let branch_name = path_param(&req, "branch")?.to_string();
 
     log::debug!(
@@ -401,7 +413,7 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let data = match data {
         Ok(data) => data,
         Err(err) => {
-            log::error!("unable to parse commit data. Err: {err}\n{body}");
+            log::warn!("unable to parse commit data. Err: {err}\n{body}");
             return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
         }
     };

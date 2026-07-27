@@ -2,6 +2,7 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use bytesize::ByteSize;
 use futures_util::stream::{self, StreamExt as _};
 use liboxen::core::node_sync_status;
+use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
 use liboxen::model::Commit;
 use liboxen::model::LocalRepository;
@@ -154,6 +155,7 @@ pub async fn mark_nodes_as_synced(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repository)?;
 
     let mut bytes = web::BytesMut::new();
     while let Some(item) = body.next().await {
@@ -184,6 +186,9 @@ pub async fn create_nodes(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(app_data, namespace, repo_name)?;
+    // Acquire before streaming so a contended write is rejected with 429 up front; the guard is
+    // moved into the work future below to stay held across the deferred unpack.
+    let write_guard = repo_locks::acquire_write(&repository)?;
 
     // Spool the uploaded node tarball to a temp file instead of buffering the whole compressed
     // archive in memory. The archive carries every dir/vnode/commit node for the pushed commits,
@@ -234,6 +239,8 @@ pub async fn create_nodes(
     // reading the spooled file incrementally. The connection is silent for the whole unpack, so
     // stream heartbeats to hold idle timers off.
     Ok(stream_with_heartbeat(async move {
+        // Hold the write guard across the deferred unpack (the handler has already returned).
+        let _write = write_guard;
         tokio::task::spawn_blocking(move || {
             let file = std::fs::File::open(&temp_path)?;
             let reader = std::io::BufReader::with_capacity(TREE_UNPACK_SPOOL_BUFFER_SIZE, file);

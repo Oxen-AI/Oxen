@@ -67,16 +67,11 @@ pub fn get_by_dir(
 ) -> Result<Option<Workspace>, OxenError> {
     let workspace_dir = workspace_dir.as_ref();
     let workspace_id = workspace_dir.file_name().unwrap().to_str().unwrap();
-    let config_path = Workspace::config_path_from_dir(workspace_dir);
 
-    if !config_path.exists() {
+    let Some(config) = read_config(workspace_dir)? else {
         log::debug!("workspace::get workspace not found: {workspace_dir:?}");
         return Ok(None);
-    }
-
-    let config_contents = util::fs::read_from_path(&config_path)?;
-    let config: WorkspaceConfig = toml::from_str(&config_contents)
-        .map_err(|e| OxenError::basic_str(format!("Failed to parse workspace config: {e}")))?;
+    };
 
     let Some(commit) = repositories::commits::get_by_id(repo, &config.workspace_commit_id)? else {
         return Err(OxenError::basic_str(format!(
@@ -101,6 +96,21 @@ pub fn get_by_dir(
         commit,
         is_editable: config.is_editable,
     }))
+}
+
+/// Config of the workspace whose directory is `workspace_dir`, or `None` when that directory holds
+/// no workspace config. Much cheaper than [`get_by_dir`], which also resolves the pinned commit and
+/// builds two `LocalRepository` values — prefer this when only the config's own fields are needed.
+pub(crate) fn read_config(workspace_dir: &Path) -> Result<Option<WorkspaceConfig>, OxenError> {
+    let config_path = Workspace::config_path_from_dir(workspace_dir);
+    if !config_path.exists() {
+        return Ok(None);
+    }
+
+    let config_contents = util::fs::read_from_path(&config_path)?;
+    let config = toml::from_str(&config_contents)
+        .map_err(|e| OxenError::basic_str(format!("Failed to parse workspace config: {e}")))?;
+    Ok(Some(config))
 }
 
 pub fn get_by_name(
@@ -456,30 +466,33 @@ fn check_existing_workspace_name(
     Ok(())
 }
 
+/// Directory of every workspace in the repository, without loading any workspace state. Pair with
+/// [`read_config`] to filter on config fields before paying for a full [`get_by_dir`] load.
+pub(crate) fn list_dirs(repo: &LocalRepository) -> Result<Vec<PathBuf>, OxenError> {
+    let workspaces_dir = Workspace::workspaces_dir(repo);
+    if !workspaces_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    util::fs::list_dirs_in_dir(&workspaces_dir)
+        .map_err(|e| OxenError::basic_str(format!("Error listing workspace directories: {e}")))
+}
+
 /// Returns a lazy iterator over all workspaces in the repository.
 /// Each workspace is loaded from the filesystem on demand.
 fn iter_workspaces(
     repo: &LocalRepository,
 ) -> Result<impl Iterator<Item = Result<Option<Workspace>, OxenError>> + '_, OxenError> {
-    let workspaces_dir = Workspace::workspaces_dir(repo);
-    log::debug!("workspace::iter_workspaces got workspaces_dir: {workspaces_dir:?}");
-
-    let workspace_hashes = if workspaces_dir.exists() {
-        util::fs::list_dirs_in_dir(&workspaces_dir).map_err(|e| {
-            OxenError::basic_str(format!("Error listing workspace directories: {e}"))
-        })?
-    } else {
-        Vec::new()
-    };
+    let workspace_dirs = list_dirs(repo)?;
 
     log::debug!(
         "workspace::iter_workspaces got {} workspaces",
-        workspace_hashes.len()
+        workspace_dirs.len()
     );
 
-    Ok(workspace_hashes
+    Ok(workspace_dirs
         .into_iter()
-        .map(move |workspace_hash| get_by_dir(repo, &workspace_hash)))
+        .map(move |workspace_dir| get_by_dir(repo, &workspace_dir)))
 }
 
 pub fn list(repo: &LocalRepository) -> Result<Vec<Workspace>, OxenError> {

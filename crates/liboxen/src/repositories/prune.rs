@@ -1,6 +1,5 @@
 //! Prune orphaned nodes and version files from the repository
 
-use crate::core::repo_locks;
 use crate::core::v_latest::prune::{
     PruneStats, prune as prune_impl, prune_remote as prune_remote_impl,
 };
@@ -19,15 +18,7 @@ use crate::model::{LocalRepository, RemoteRepository};
 /// # Returns
 /// Statistics about the prune operation
 pub async fn prune(repo: &LocalRepository, dry_run: bool) -> Result<PruneStats, OxenError> {
-    let work = prune_impl(repo, dry_run);
-    if dry_run {
-        // Dry run only reports what would be removed; no exclusive lock needed.
-        work.await
-    } else {
-        // The sweep deletes nodes and version files; hold the whole-repo exclusive lock so no
-        // write lands mid-prune.
-        repo_locks::with_repo_exclusive(repo, work).await
-    }
+    prune_impl(repo, dry_run).await
 }
 
 /// Prune orphaned nodes and version files from a remote repository

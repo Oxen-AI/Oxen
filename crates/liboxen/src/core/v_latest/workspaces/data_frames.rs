@@ -6,6 +6,10 @@ use crate::core::db::data_frames::df_db;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::staged::get_staged_db_manager;
 use crate::core::v_latest::workspaces::files::{add, track_modified_data_frame};
+use crate::repositories::workspaces::data_frames::duckdb_path_in_dir;
+use crate::repositories::workspaces::{
+    list_dirs as list_workspace_dirs, read_config as read_workspace_config,
+};
 use parking_lot::Mutex;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -43,14 +47,57 @@ pub fn is_queryable_data_frame_indexed_from_file_node(
     file_node: &FileNode,
     path: &Path,
 ) -> Result<bool, OxenError> {
-    match get_queryable_data_frame_workspace_from_file_node(repo, file_node.last_commit_id(), path)
-    {
-        Ok(_workspace) => Ok(true),
-        Err(e) => match e {
-            OxenError::QueryableWorkspaceNotFound => Ok(false),
-            _ => Err(e),
-        },
+    let dir = find_queryable_workspace_dir(repo, file_node.last_commit_id(), path)?;
+    Ok(dir.is_some())
+}
+
+/// Directory of the non-editable workspace holding a fully-indexed queryable table for `path` at
+/// `commit_id`, or `None` when no workspace holds one. Costs one config read per workspace in the
+/// repo, and loads no workspace.
+fn find_queryable_workspace_dir(
+    repo: &LocalRepository,
+    commit_id: &MerkleHash,
+    path: &Path,
+) -> Result<Option<PathBuf>, OxenError> {
+    log::debug!("Looking for workspace with commit id {commit_id:?}");
+
+    for workspace_dir in list_workspace_dirs(repo)? {
+        let Some(config) = read_workspace_config(&workspace_dir)? else {
+            // A workspace dir with no config is one being created or torn down.
+            log::debug!("No workspace config in {workspace_dir:?}, skipping");
+            continue;
+        };
+        // Matching on parsed hashes, not strings: an unparseable id names no commit at all.
+        let Ok(workspace_commit_id) = config.workspace_commit_id.parse::<MerkleHash>() else {
+            log::warn!(
+                "Workspace {workspace_dir:?} is pinned to an unreadable commit id {:?}, skipping",
+                config.workspace_commit_id
+            );
+            continue;
+        };
+        if config.is_editable || workspace_commit_id != *commit_id {
+            continue;
+        }
+
+        let db_path = duckdb_path_in_dir(&workspace_dir, path);
+        if !db_path.exists() {
+            continue;
+        }
+
+        // Only treat this as the queryable workspace if its DuckDB table is
+        // fully indexed (all OXEN_COLS present). A missing file, or a partial
+        // table left by an interrupted index, is treated as not indexed so the
+        // caller rebuilds rather than serving a table the read path can't bind.
+        match with_df_db_manager(&db_path, |manager| {
+            manager.with_conn(|conn| Ok(df_db::table_is_fully_indexed(conn, TABLE_NAME)?))
+        }) {
+            Ok(true) => return Ok(Some(workspace_dir)),
+            Ok(false) => {}
+            Err(e) => log::warn!("Failed to check index completeness for {db_path:?}: {e}"),
+        }
     }
+
+    Ok(None)
 }
 
 pub fn get_queryable_data_frame_workspace_from_file_node(
@@ -58,42 +105,12 @@ pub fn get_queryable_data_frame_workspace_from_file_node(
     commit_id: &MerkleHash,
     path: &Path,
 ) -> Result<Workspace, OxenError> {
-    let workspaces = repositories::workspaces::list(repo)?;
-    log::debug!("Looking for workspace with commit id {commit_id:?}");
+    let Some(workspace_dir) = find_queryable_workspace_dir(repo, commit_id, path)? else {
+        return Err(OxenError::QueryableWorkspaceNotFound);
+    };
 
-    for workspace in workspaces {
-        // log::debug!("is workspace editable: {:?}", workspace.is_editable);
-        // log::debug!("workspace commit id: {:?}", workspace.commit.id);
-        // Ensure the workspace is not editable and matches the commit ID of the resource
-        if !workspace.is_editable && workspace.commit.id == commit_id.to_string() {
-            // Construct the path to the DuckDB resource within the workspace
-            let workspace_file_db_path =
-                repositories::workspaces::data_frames::duckdb_path(&workspace, path);
-
-            // Only treat this as the queryable workspace if its DuckDB table is
-            // fully indexed (all OXEN_COLS present). A missing file, or a partial
-            // table left by an interrupted index, is treated as not indexed so the
-            // caller rebuilds rather than serving a table the read path can't bind.
-            if workspace_file_db_path.exists() {
-                let fully_indexed = match with_df_db_manager(&workspace_file_db_path, |manager| {
-                    manager.with_conn(|conn| Ok(df_db::table_is_fully_indexed(conn, TABLE_NAME)?))
-                }) {
-                    Ok(fully_indexed) => fully_indexed,
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to check index completeness for {workspace_file_db_path:?}: {e}"
-                        );
-                        false
-                    }
-                };
-                if fully_indexed {
-                    return Ok(workspace);
-                }
-            }
-        }
-    }
-
-    Err(OxenError::QueryableWorkspaceNotFound)
+    repositories::workspaces::get_by_dir(repo, &workspace_dir)?
+        .ok_or(OxenError::QueryableWorkspaceNotFound)
 }
 
 pub fn get_queryable_data_frame_workspace(

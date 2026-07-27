@@ -9,6 +9,7 @@ use crate::constants::STAGED_DIR;
 use crate::core;
 use crate::core::refs::with_ref_manager;
 use crate::core::staged::remove_from_cache;
+use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_latest::workspaces;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::file_node::FileNodeOpts;
@@ -225,8 +226,14 @@ fn list_conflicts(
     }
 
     // A staged file conflicts when it also changed on the target branch since the workspace's base
-    // commit. Resolve each staged file by a targeted path lookup in both commits rather than
-    // materializing either whole Merkle tree, so peak memory stays flat regardless of repo size.
+    // commit. Look each staged file up in both commits with a strict, non-recursive `read_file`: it
+    // reports a genuinely absent path as `None` but propagates read failures rather than masking
+    // them as a skipped check. Loading each commit's dir hashes once and reading only the staged
+    // files keeps peak memory flat — neither whole Merkle tree is materialized.
+    let branch_dir_hashes = CommitMerkleTree::dir_hashes(&workspace.base_repo, &branch_commit)?;
+    let workspace_dir_hashes =
+        CommitMerkleTree::dir_hashes(&workspace.base_repo, workspace_commit)?;
+
     let mut conflicts = vec![];
     for (path, entries) in dir_entries {
         for entry in entries {
@@ -238,18 +245,15 @@ fn list_conflicts(
             log::debug!("checking if workspace is behind: {path:?} -> {entry}");
             let file_path = entry.node.maybe_path()?;
             log::debug!("checking if branch tree has file: {file_path:?}");
-            let Some(branch_node) = repositories::tree::get_node_by_path(
-                &workspace.base_repo,
-                &branch_commit,
-                &file_path,
-            )?
+            let Some(branch_node) =
+                CommitMerkleTree::read_file(&workspace.base_repo, &branch_dir_hashes, &file_path)?
             else {
                 log::debug!("branch node not found: {file_path:?}");
                 continue;
             };
-            let Some(workspace_node) = repositories::tree::get_node_by_path(
+            let Some(workspace_node) = CommitMerkleTree::read_file(
                 &workspace.base_repo,
-                workspace_commit,
+                &workspace_dir_hashes,
                 &file_path,
             )?
             else {

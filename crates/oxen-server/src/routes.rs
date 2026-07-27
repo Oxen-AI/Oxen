@@ -15,8 +15,6 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         // Get/Delete Repository
         .service(
             web::resource("/{namespace}/{repo_name}")
-                // we give the resource a name here so it can be used with HttpRequest.url_for
-                .name("repo_root")
                 .route(web::get().to(controllers::repositories::show))
                 .route(web::delete().to(controllers::repositories::delete)),
         )
