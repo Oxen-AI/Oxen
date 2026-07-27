@@ -269,7 +269,15 @@ pub async fn clear(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
-    repositories::workspaces::clear(&repo)?;
+    // Clearing all workspaces is a destructive write; hold the whole-repo exclusive lock so no
+    // write lands mid-clear. The sweep is synchronous IO, so it runs off the actix worker thread.
+    let clear_repo = repo.clone();
+    repo_locks::with_repo_exclusive(&repo, async move {
+        tokio::task::spawn_blocking(move || repositories::workspaces::clear(&clear_repo))
+            .await
+            .map_err(OxenError::from)?
+    })
+    .await?;
     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
 }
 
