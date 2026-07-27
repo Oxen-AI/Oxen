@@ -16,7 +16,7 @@ use xxhash_rust::xxh3::{Xxh3, xxh3_128};
 use crate::constants;
 use crate::error::OxenError;
 use crate::model::MerkleHash;
-use crate::util::hasher::HashingReader;
+use crate::util::hasher::{HashingReader, HashingWriter};
 
 /// Infix used in `AtomicTempFile` scratch file names: `<target_basename>.oxentmp.<random>`. Private
 /// to keep all knowledge of the pattern in this module — when fsck (or any other sweeper) needs to
@@ -163,9 +163,9 @@ impl AtomicTempFile {
 /// leaves either the prior contents at `target` (if any) or the new contents, never a torn file.
 ///
 /// Build with [`new`][Self::new] and chain `with_*` options; finish with a terminal method —
-/// [`write`][Self::write] for in-memory bytes, [`stream`][Self::stream] for sync `Read`,
-/// [`stream_async`][Self::stream_async] for `AsyncRead`, or [`copy_from`][Self::copy_from] for a
-/// source file.
+/// [`write`][Self::write] for in-memory bytes, [`write_with`][Self::write_with] for an encoder that
+/// owns its writer, [`stream`][Self::stream] for sync `Read`, [`stream_async`][Self::stream_async]
+/// for `AsyncRead`, or [`copy_from`][Self::copy_from] for a source file.
 ///
 /// - `with_hash(h)`: the terminal method hashes the published bytes and refuses to publish if the
 ///   XXH3-128 digest doesn't match — `target` is unchanged on mismatch and
@@ -180,7 +180,7 @@ impl AtomicTempFile {
 /// `std::fs` and run inside a `tokio::task::spawn_blocking` provided by the calling operation.
 /// [`stream_async`][Self::stream_async] is the only `async` terminal, and uses the Channel
 /// hand-off pattern to bridge an async reader to a sync writer.
-#[must_use = "AtomicFile does nothing until a terminal method (write/stream/stream_from_paths/stream_async/copy_from) is called"]
+#[must_use = "AtomicFile does nothing until a terminal method (write/write_with/stream/stream_from_paths/stream_async/copy_from) is called"]
 #[derive(Debug, Clone)]
 pub struct AtomicFile {
     target: PathBuf,
@@ -228,6 +228,48 @@ impl AtomicFile {
         }
         let mut tmp = AtomicTempFile::create(&self.target)?;
         tmp.as_writer().write_all(contents)?;
+        if let Some(mtime) = self.mtime {
+            tmp.set_mtime(mtime)?;
+        }
+        tmp.commit()
+    }
+
+    /// Publish whatever `fill` writes to the target path. The fit for third-party encoders that
+    /// take ownership of a `Write` and so can't be driven through [`stream`][Self::stream] —
+    /// Polars' `ParquetWriter` / `CsvWriter` / `IpcWriter` / `JsonWriter`, `tar`, `zip`.
+    ///
+    /// `fill` must write the complete payload; an `Err` from it propagates and leaves the target
+    /// untouched.
+    pub fn write_with<F>(self, fill: F) -> Result<(), OxenError>
+    where
+        F: FnOnce(&mut dyn Write) -> Result<(), OxenError>,
+    {
+        let mut tmp = AtomicTempFile::create(&self.target)?;
+        let actual_hash = {
+            let mut buf_writer =
+                std::io::BufWriter::with_capacity(constants::STREAMING_BUF_SIZE, tmp.as_writer());
+            let actual = if self.expected_hash.is_some() {
+                let mut hashing = HashingWriter::new(&mut buf_writer);
+                fill(&mut hashing)?;
+                Some(MerkleHash::new(hashing.digest128()))
+            } else {
+                fill(&mut buf_writer)?;
+                None
+            };
+            // `std::io::BufWriter::Drop` attempts to flush but silently swallows errors. Flush
+            // explicitly so any IO error propagates before the hash check / mtime stamp / rename.
+            buf_writer.flush()?;
+            actual
+        };
+        if let (Some(expected), Some(actual)) = (self.expected_hash, actual_hash)
+            && actual != expected
+        {
+            return Err(OxenError::HashMismatch {
+                path: self.target,
+                expected,
+                actual,
+            });
+        }
         if let Some(mtime) = self.mtime {
             tmp.set_mtime(mtime)?;
         }

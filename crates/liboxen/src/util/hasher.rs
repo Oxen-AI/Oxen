@@ -208,6 +208,41 @@ impl<R: Read + ?Sized> Read for HashingReader<'_, R> {
     }
 }
 
+/// Wraps a `std::io::Write` and feeds every byte successfully written into an `Xxh3` hasher;
+/// `digest128()` returns the running XXH3-128. The write-side counterpart to [`HashingReader`],
+/// for payloads produced by an encoder that owns the writer and so offers no reader to wrap.
+pub struct HashingWriter<'a, W: ?Sized> {
+    inner: &'a mut W,
+    hasher: Xxh3,
+}
+
+impl<'a, W: Write + ?Sized> HashingWriter<'a, W> {
+    pub fn new(inner: &'a mut W) -> Self {
+        Self {
+            inner,
+            hasher: Xxh3::new(),
+        }
+    }
+
+    pub fn digest128(&self) -> u128 {
+        self.hasher.digest128()
+    }
+}
+
+impl<W: Write + ?Sized> Write for HashingWriter<'_, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        if n > 0 {
+            self.hasher.update(&buf[..n]);
+        }
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 #[cfg(test)]
 mod hashing_reader_tests {
     use super::*;
