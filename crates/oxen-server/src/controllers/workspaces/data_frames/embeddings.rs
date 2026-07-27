@@ -97,7 +97,7 @@ pub async fn neighbors(req: HttpRequest, body: String) -> Result<HttpResponse, O
     let Some(mut df_schema) =
         repositories::data_frames::schemas::get_by_path(&repo, &workspace.commit, file_path)?
     else {
-        log::error!("Failed to get schema for data frame {file_path:?}");
+        log::warn!("Failed to get schema for data frame {file_path:?}");
         return Err(OxenHttpError::NotFound);
     };
 

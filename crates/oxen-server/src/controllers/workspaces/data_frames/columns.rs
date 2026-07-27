@@ -129,7 +129,7 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     ) {
         Ok(df) => df,
         Err(e) => {
-            log::error!("Error deleting column: {e:?}");
+            log::warn!("Error deleting column: {e:?}");
             return Err(OxenHttpError::BasicError(StringError::from(e.to_string())));
         }
     };

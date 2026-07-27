@@ -220,7 +220,7 @@ pub async fn from_directory(
     let data = match data {
         Ok(data) => data,
         Err(err) => {
-            log::error!("Unable to parse body. Err: {err}\n{body}");
+            log::warn!("Unable to parse body. Err: {err}\n{body}");
             return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
         }
     };

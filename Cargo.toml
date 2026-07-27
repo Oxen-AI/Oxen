@@ -142,6 +142,7 @@ sentry = { version = "0.34", default-features = false, features = [
     "panic",
     "reqwest",
     "rustls",
+    "tracing",
 ] }
 sentry-actix = "0.34"
 serde = { version = "1.0.188", features = ["derive"] }

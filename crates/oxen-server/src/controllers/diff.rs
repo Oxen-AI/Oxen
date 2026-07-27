@@ -416,7 +416,7 @@ pub async fn create_df_diff(
     let data = match data {
         Ok(data) => data,
         Err(err) => {
-            log::error!("unable to parse tabular comparison data. Err: {err}\n{body}");
+            log::warn!("unable to parse tabular comparison data. Err: {err}\n{body}");
             return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
         }
     };
@@ -523,7 +523,7 @@ pub async fn update_df_diff(
     let data = match data {
         Ok(data) => data,
         Err(err) => {
-            log::error!("unable to parse tabular comparison data. Err: {err}\n{body}");
+            log::warn!("unable to parse tabular comparison data. Err: {err}\n{body}");
             return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
         }
     };
@@ -849,7 +849,7 @@ pub async fn get_derived_df(
             Ok(HttpResponse::Ok().json(response))
         }
         Err(OxenError::SQLParseError(sql)) => {
-            log::error!("Error parsing SQL: {sql}");
+            log::warn!("Error parsing SQL: {sql}");
             Err(OxenHttpError::SQLParseError(sql))
         }
         Err(e) => {
