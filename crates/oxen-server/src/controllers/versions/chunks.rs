@@ -8,6 +8,7 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use futures_util::stream::StreamExt as _;
 use liboxen::constants::stream_segment_size;
 use liboxen::core;
+use liboxen::core::repo_locks;
 use liboxen::repositories;
 use liboxen::view::StatusMessage;
 use liboxen::view::versions::CompleteVersionUploadRequest;
@@ -32,6 +33,7 @@ pub async fn upload(
     let offset = query.offset.unwrap_or(0);
 
     let repo = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
 
     log::debug!(
         "/upload version {} chunk offset{} to repo: {:?}",
@@ -62,6 +64,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let version_id = path_param(&req, "version_id")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
 
     log::debug!("/complete version chunk upload to repo: {:?}", repo.path);
 

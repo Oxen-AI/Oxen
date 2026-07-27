@@ -4,6 +4,7 @@ use crate::params::{app_data, client_must_use_multipart_staging, path_param};
 
 use liboxen::constants::stream_segment_size;
 use liboxen::core;
+use liboxen::core::repo_locks;
 use liboxen::core::staged::get_staged_db_manager;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
@@ -80,6 +81,9 @@ pub async fn get(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
+    // This GET writes a resized/thumbnail derived blob on a cache miss (tech-debt ENG-1373); guard
+    // the whole handler so a stop-the-world op (migration/prune/fsck) blocks it.
+    let _write = repo_locks::acquire_write(&repo)?;
     let version_store = repo.version_store();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -203,6 +207,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(app_data, namespace, &repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
     let directory = path_param(&req, "path")?.to_string();
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -304,6 +309,7 @@ pub async fn add_version_files(
     let directory = path_param(&req, "directory")?.to_string();
 
     let repo = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
@@ -361,6 +367,7 @@ pub async fn rm_files(
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
@@ -443,6 +450,7 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
     let path = PathBuf::from(path_param(&req, "path")?);
 
     // Parse request body
