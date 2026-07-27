@@ -221,7 +221,7 @@ jobs:
         run: |
           Get-Content tool-versions.env |
             Where-Object { $_ -match '^[A-Z0-9_]+=' } |
-            ForEach-Object { $_ >> $env:GITHUB_ENV }
+            ForEach-Object { Add-Content -Path $env:GITHUB_ENV -Value $_ -Encoding utf8 }
 
       - name: Install uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
