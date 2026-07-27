@@ -1516,6 +1516,105 @@ mod tests {
         .await
     }
 
+    /// Recovering a stale `.jsonl` frame exercises the JSON export/import path a
+    /// csv frame does not: the export wraps the JSON column and writes it through
+    /// `COPY ... (FORMAT JSON)`, and the re-index runs the STRUCT/JSON handling in
+    /// `index_file_with_id`. The staged append survives, the JSON column
+    /// round-trips, and a row tombstoned as 'removed' stays deleted.
+    #[tokio::test]
+    async fn test_commit_stale_staged_table_recovers_jsonl_json_column() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Object values make read_json (and the workspace index) type
+            // `error_details` as a JSON column.
+            let path = Path::new("media.jsonl");
+            let full_path = repo.path.join(path);
+            std::fs::write(
+                &full_path,
+                "{\"id\":1,\"error_details\":{\"code\":402,\"msg\":\"x\"}}\n\
+                 {\"id\":2,\"error_details\":{\"code\":200,\"msg\":\"ok\"}}\n",
+            )?;
+            repositories::add(&repo, &full_path).await?;
+            let commit = repositories::commit(&repo, "add media jsonl")?;
+
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            workspaces::data_frames::index(&repo, &workspace, path).await?;
+
+            // Stage an append whose JSON column holds a valid object.
+            let json_data = json!({"id": 3, "error_details": {"code": 500, "msg": "err"}});
+            workspaces::data_frames::rows::add(&repo, &workspace, path, &json_data)?;
+
+            // Downgrade to a table left by an older version of oxen: legacy
+            // tracking columns, one committed row tombstoned as 'removed', no
+            // `_oxen_row_id` ordering column, and no index marker.
+            let db_path = workspaces::data_frames::duckdb_path(&workspace, path);
+            super::with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| {
+                    conn.execute_batch(&format!(
+                        "ALTER TABLE \"{t}\" ADD COLUMN \"{status}\" VARCHAR DEFAULT 'unchanged'; \
+                         ALTER TABLE \"{t}\" ADD COLUMN \"_oxen_diff_hash\" VARCHAR DEFAULT '0'; \
+                         UPDATE \"{t}\" SET \"{status}\" = 'added' WHERE \"id\" = 3; \
+                         UPDATE \"{t}\" SET \"{status}\" = 'removed' WHERE \"id\" = 1; \
+                         ALTER TABLE \"{t}\" DROP COLUMN \"{row_id}\"; \
+                         DROP TABLE \"{marker}\";",
+                        t = crate::constants::TABLE_NAME,
+                        status = crate::constants::DIFF_STATUS_COL,
+                        row_id = OXEN_ROW_ID_COL,
+                        marker = crate::constants::INDEX_META_TABLE,
+                    ))?;
+                    Ok(())
+                })
+            })?;
+
+            assert!(!workspaces::data_frames::is_indexed(&workspace, path)?);
+            assert_eq!(workspaces::data_frames::count(&workspace, path)?, 3);
+
+            // Commit succeeds — the stale jsonl table is recovered from its own
+            // rows, JSON column and all.
+            let new_commit = NewCommitBody {
+                author: "author".to_string(),
+                email: "email".to_string(),
+                message: "Committing recovered stale jsonl df".to_string(),
+            };
+            let committed =
+                workspaces::commit(&workspace, &new_commit, DEFAULT_BRANCH_NAME).await?;
+
+            // 2 committed - 1 removed + 1 appended = 2 rows, and the JSON column
+            // round-tripped through the recovery.
+            let entry = repositories::entries::get_commit_entry(&repo, &committed, path)?
+                .expect("committed entry should exist");
+            let version_store = repo.version_store();
+            let df = df::tabular::read_version_df(
+                &version_store,
+                &entry.hash,
+                "jsonl",
+                &DFOpts::empty(),
+            )
+            .await?;
+            assert_eq!(df.height(), 2, "recovered jsonl row count: {df}");
+            assert!(
+                df.column("error_details").is_ok(),
+                "JSON column must survive recovery: {df}"
+            );
+
+            let rendered = format!("{df}");
+            assert!(
+                rendered.contains("500"),
+                "staged append must survive recovery: {rendered}"
+            );
+            assert!(
+                !rendered.contains("402"),
+                "tombstoned row must stay deleted: {rendered}"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
     /// add_column_metadata reconciles the staged metadata schema with the
     /// workspace table: a column deleted by a workspace edit is dropped from
     /// the schema (not left as a phantom), and the reconciled schema matches

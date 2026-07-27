@@ -345,8 +345,13 @@ pub async fn reindex_preserving_rows(workspace: &Workspace, path: &Path) -> Resu
                     String::new()
                 };
 
-                let select =
-                    format!("SELECT {projection} FROM '{TABLE_NAME}' {where_clause} {order_by}");
+                // Quote the table name as an identifier so it binds as a table
+                // reference rather than relying on DuckDB's string-literal
+                // replacement-scan fallback.
+                let select = format!(
+                    "SELECT {projection} FROM {} {where_clause} {order_by}",
+                    df_db::quote_ident(TABLE_NAME)
+                );
                 let copy = wrap_sql_for_export(&select, &recover_path);
                 conn.execute(&copy, [])?;
 
