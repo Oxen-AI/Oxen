@@ -299,10 +299,40 @@ async fn export_tabular_data_frames(
                         node_path = dir_path.join(node_path);
                     }
 
-                    // Only recompute the metadata if the file is tabular and indexed (editable df and eval)
-                    if *file_node.data_type() == EntryDataType::Tabular
-                        && repositories::workspaces::data_frames::is_indexed(workspace, &node_path)?
+                    // Recompute the metadata for tabular data frames that carry
+                    // a staged DuckDB index (editable df and eval).
+                    let is_tabular = *file_node.data_type() == EntryDataType::Tabular;
+                    let mut should_export = is_tabular
+                        && repositories::workspaces::data_frames::is_indexed(
+                            workspace, &node_path,
+                        )?;
+
+                    // A staged table that exists but fails the indexed gate was
+                    // written by an older version of oxen (or left by an
+                    // interrupted index). Rather than committing the base file
+                    // and silently dropping the staged edits, recover the table
+                    // from its own rows — preserving the staged edits and
+                    // honoring the old tombstone deletes — then export it like
+                    // any indexed table. reindex_preserving_rows only errors
+                    // (WorkspaceStaleStagedIndex) when there is no user data to
+                    // recover.
+                    if is_tabular
+                        && !should_export
+                        && repositories::workspaces::data_frames::has_staged_table(
+                            workspace, &node_path,
+                        )?
                     {
+                        log::warn!(
+                            "workspace commit recovering stale staged data frame {node_path:?} before export"
+                        );
+                        repositories::workspaces::data_frames::reindex_preserving_rows(
+                            workspace, &node_path,
+                        )
+                        .await?;
+                        should_export = true;
+                    }
+
+                    if should_export {
                         log::debug!(
                             "Exporting tabular data frame: {:?} -> {:?}",
                             node_path,
@@ -360,28 +390,6 @@ async fn export_tabular_data_frames(
                             .or_default()
                             .push(new_staged_merkle_tree_node);
                     } else {
-                        // A staged table that exists but fails the indexed
-                        // gate was written by an older version and may hold
-                        // edits this code cannot export. The staged entry is
-                        // the BASE file node, so committing it would silently
-                        // discard those edits — fail instead so the user can
-                        // re-index (dropping the stale edits explicitly) or
-                        // unstage.
-                        if *file_node.data_type() == EntryDataType::Tabular
-                            && repositories::workspaces::data_frames::has_staged_table(
-                                workspace, &node_path,
-                            )?
-                        {
-                            return Err(OxenError::WorkspaceStaleStagedIndex(
-                                format!(
-                                    "Cannot commit workspace: the staged data frame {node_path:?} \
-                                     was indexed by an older version of oxen. Re-index the data \
-                                     frame (discarding its staged edits) or unstage it, then \
-                                     commit again."
-                                )
-                                .into(),
-                            ));
-                        }
                         new_dir_entries
                             .entry(dir_path.to_path_buf())
                             .or_default()

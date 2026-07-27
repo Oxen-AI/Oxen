@@ -74,6 +74,13 @@ pub async fn index(
     core::v_latest::workspaces::data_frames::index(workspace, path.as_ref()).await
 }
 
+/// Rebuild a staged data frame left by an older version of oxen from its own
+/// rows, preserving the staged edits rather than discarding them. See
+/// [`core::v_latest::workspaces::data_frames::reindex_preserving_rows`].
+pub async fn reindex_preserving_rows(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
+    core::v_latest::workspaces::data_frames::reindex_preserving_rows(workspace, path).await
+}
+
 pub use crate::core::v_latest::workspaces::data_frames::rename;
 
 pub fn unindex(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), DataFrameError> {
@@ -1367,17 +1374,19 @@ mod tests {
         .await
     }
 
-    /// Committing a workspace whose staged table was left by an older version
-    /// (no index marker) must fail loudly — the alternative is committing the
-    /// base file and silently discarding the staged edits.
+    /// Committing a workspace whose staged table was left by an older version of
+    /// oxen (legacy tracking columns, tombstoned deletes, no index marker) must
+    /// recover the staged rows rather than error or drop them: the staged append
+    /// survives the commit and a row the old flow tombstoned as 'removed' stays
+    /// deleted.
     #[tokio::test]
-    async fn test_commit_stale_staged_table_errors_instead_of_dropping_edits()
-    -> Result<(), OxenError> {
+    async fn test_commit_stale_staged_table_recovers_and_preserves_edits() -> Result<(), OxenError>
+    {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
         test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
-            let branch_name = "test-stale-commit";
+            let branch_name = "test-stale-recover";
             let branch = repositories::branches::create_checkout(&repo, branch_name)?;
             let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
             let workspace_id = UserConfig::identifier()?;
@@ -1387,16 +1396,106 @@ mod tests {
                 .join("bounding_box.csv");
             workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
 
-            // Stage an edit, then simulate a table written by an older
-            // version by removing the index marker.
+            // Stage an append — the kind of per-generation row a client appends
+            // to a persistent workspace data frame.
             let json_data = json!({
                 "file": "stale.jpg", "label": "dog",
                 "min_x": 1, "min_y": 2, "width": 3, "height": 4
             });
             workspaces::data_frames::rows::add(&repo, &workspace, &file_path, &json_data)?;
+
+            // Downgrade the DuckDB table to what an older version of oxen left
+            // behind: legacy tracking columns, one committed row tombstoned as
+            // 'removed', no `_oxen_row_id` ordering column, and no index marker.
             let db_path = workspaces::data_frames::duckdb_path(&workspace, &file_path);
             super::with_df_db_manager(&db_path, |manager| {
                 manager.with_conn(|conn| {
+                    conn.execute_batch(&format!(
+                        "ALTER TABLE \"{t}\" ADD COLUMN \"{status}\" VARCHAR DEFAULT 'unchanged'; \
+                         ALTER TABLE \"{t}\" ADD COLUMN \"_oxen_diff_hash\" VARCHAR DEFAULT '0'; \
+                         UPDATE \"{t}\" SET \"{status}\" = 'added' WHERE \"file\" = 'stale.jpg'; \
+                         UPDATE \"{t}\" SET \"{status}\" = 'removed' WHERE \"file\" = 'train/cat_2.jpg'; \
+                         ALTER TABLE \"{t}\" DROP COLUMN \"{row_id}\"; \
+                         DROP TABLE \"{marker}\";",
+                        t = crate::constants::TABLE_NAME,
+                        status = crate::constants::DIFF_STATUS_COL,
+                        row_id = OXEN_ROW_ID_COL,
+                        marker = crate::constants::INDEX_META_TABLE,
+                    ))?;
+                    Ok(())
+                })
+            })?;
+
+            // The table now reads as not indexed, but the staged rows are still
+            // physically present in DuckDB (6 committed + 1 appended = 7).
+            assert!(!workspaces::data_frames::is_indexed(&workspace, &file_path)?);
+            assert_eq!(workspaces::data_frames::count(&workspace, &file_path)?, 7);
+
+            // Commit succeeds — the stale table is recovered from its own rows.
+            let new_commit = NewCommitBody {
+                author: "author".to_string(),
+                email: "email".to_string(),
+                message: "Committing recovered stale staged df".to_string(),
+            };
+            let committed = workspaces::commit(&workspace, &new_commit, branch_name).await?;
+
+            // The committed file keeps the appended row and drops the tombstoned
+            // one: 6 committed - 1 removed + 1 appended = 6 rows.
+            let entry = repositories::entries::get_commit_entry(&repo, &committed, &file_path)?
+                .expect("committed entry should exist");
+            let version_store = repo.version_store();
+            let df =
+                df::tabular::read_version_df(&version_store, &entry.hash, "csv", &DFOpts::empty())
+                    .await?;
+            assert_eq!(df.height(), 6, "recovered commit row count: {df}");
+
+            let rendered = format!("{df}");
+            assert!(
+                rendered.contains("stale.jpg"),
+                "staged append must survive recovery: {rendered}"
+            );
+            assert!(
+                !rendered.contains("cat_2"),
+                "tombstoned row must stay deleted: {rendered}"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Recovery preserves the deliberate strictness for the one case where there
+    /// is genuinely nothing to recover: a stale table holding only internal
+    /// columns fails loudly (WorkspaceStaleStagedIndex) rather than committing an
+    /// empty data frame.
+    #[tokio::test]
+    async fn test_reindex_preserving_rows_errors_when_no_user_columns() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-no-user-cols")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            // Strip the table down to internal columns only — no user data left.
+            let db_path = workspaces::data_frames::duckdb_path(&workspace, &file_path);
+            super::with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| {
+                    for col in ["file", "label", "min_x", "min_y", "width", "height"] {
+                        conn.execute(
+                            &format!(
+                                "ALTER TABLE \"{}\" DROP COLUMN \"{col}\"",
+                                crate::constants::TABLE_NAME
+                            ),
+                            [],
+                        )?;
+                    }
                     conn.execute(
                         &format!("DROP TABLE \"{}\"", crate::constants::INDEX_META_TABLE),
                         [],
@@ -1405,23 +1504,12 @@ mod tests {
                 })
             })?;
 
-            let new_commit = NewCommitBody {
-                author: "author".to_string(),
-                email: "email".to_string(),
-                message: "Committing stale staged df".to_string(),
-            };
-            let result = workspaces::commit(&workspace, &new_commit, branch_name).await;
-            // Must be the typed stale-index error (maps to 409, not a retryable
-            // 500), since the user has to re-index or unstage first.
+            let result =
+                workspaces::data_frames::reindex_preserving_rows(&workspace, &file_path).await;
             assert!(
                 matches!(result, Err(OxenError::WorkspaceStaleStagedIndex(_))),
-                "commit of a stale staged data frame must fail with WorkspaceStaleStagedIndex, got {result:?}"
+                "recovery with no user columns must fail with WorkspaceStaleStagedIndex, got {result:?}"
             );
-
-            // The base version is still intact and readable.
-            let file_node = repositories::tree::get_file_by_path(&repo, &commit, &file_path)?
-                .expect("base file node should still exist");
-            assert!(file_node.metadata().is_some());
 
             Ok(())
         })

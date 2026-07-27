@@ -1,6 +1,9 @@
 use duckdb::Connection;
 
-use crate::constants::{EXCLUDE_OXEN_COLS, OXEN_ROW_ID_COL, TABLE_NAME};
+use crate::constants::{
+    DIFF_STATUS_COL, EVAL_DURATION_COL, EVAL_ERROR_COL, EVAL_STATUS_COL, EXCLUDE_OXEN_COLS,
+    OXEN_ID_COL, OXEN_ROW_ID_COL, TABLE_NAME,
+};
 use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::df_db;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
@@ -242,6 +245,152 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     .await??;
 
     log::debug!("core::v_latest::index::workspaces::data_frames::index({path:?}) finished!");
+
+    Ok(())
+}
+
+/// Every column name Oxen has used internally in a staged DuckDB table across
+/// format versions. When recovering a table left by an older version, a column
+/// matching one of these is Oxen-internal and is dropped (never treated as user
+/// data) while rebuilding. This is a superset of [`EXCLUDE_OXEN_COLS`], which
+/// lists only the columns the current indexer emits: `_oxen_diff_status` and
+/// `_oxen_diff_hash` are legacy tracking columns the current format no longer
+/// writes. Matching is exact — a not-fully-indexed table was written by an
+/// indexer that reserved all of these names, so a column named like one of them
+/// is never user data in this context.
+const LEGACY_AND_CURRENT_INTERNAL_COLS: [&str; 7] = [
+    OXEN_ID_COL,
+    OXEN_ROW_ID_COL,
+    DIFF_STATUS_COL,
+    // Legacy per-row change hash, dropped along with the other tracking columns;
+    // it no longer has a named constant, so it appears here as a literal.
+    "_oxen_diff_hash",
+    EVAL_STATUS_COL,
+    EVAL_ERROR_COL,
+    EVAL_DURATION_COL,
+];
+
+/// Rebuild a staged DuckDB table left by an older version of oxen (or an
+/// interrupted index) from its OWN current rows, preserving the staged edits —
+/// unlike [`index`], which rebuilds from the committed base version file and so
+/// discards anything staged but not yet committed.
+///
+/// Older versions tracked edits with extra internal columns and soft-deleted
+/// rows by tombstoning them (`_oxen_diff_status = 'removed'`) instead of removing
+/// them. This drops every historical internal column and omits tombstoned rows,
+/// so the rebuilt table holds exactly the data the staged edits intended —
+/// appended and modified rows kept, deleted rows gone — re-keyed in the current
+/// index format (fresh `_oxen_id`/`_oxen_row_id` and the index marker).
+///
+/// Call only for a table that exists but fails
+/// [`is_indexed`](crate::repositories::workspaces::data_frames::is_indexed);
+/// afterward it passes that gate and exports/commits like any freshly indexed
+/// table. Returns [`OxenError::WorkspaceStaleStagedIndex`] when the table has no
+/// user columns to recover.
+pub async fn reindex_preserving_rows(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
+    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
+    let extension = util::fs::extension_from_path(path);
+
+    let Some(parent) = db_path.parent().map(Path::to_path_buf) else {
+        return Err(OxenError::basic_str(format!(
+            "Failed to get parent directory for {db_path:?}"
+        )));
+    };
+
+    // Export to a sibling temp file, then re-index it through the current
+    // indexer. The intermediate carries the data frame's own extension so the
+    // rebuilt table matches what committing and then re-indexing would produce.
+    let recover_path = parent.join(format!(".oxen-recover.{}.{extension}", std::process::id()));
+    if !is_valid_export_extension(&recover_path) {
+        return Err(OxenError::WorkspaceStaleStagedIndex(
+            format!("Cannot recover staged data frame {path:?}: unsupported format {extension:?}.")
+                .into(),
+        ));
+    }
+
+    let recovered = tokio::task::spawn_blocking(move || -> Result<bool, OxenError> {
+        let outcome = with_df_db_manager(&db_path, |manager| {
+            manager.with_conn(|conn| -> Result<bool, DataFrameError> {
+                let schema = df_db::get_schema(conn, TABLE_NAME)?;
+                let has_col = |name: &str| schema.fields.iter().any(|f| f.name == name);
+                let has_user_col = schema
+                    .fields
+                    .iter()
+                    .any(|f| !LEGACY_AND_CURRENT_INTERNAL_COLS.contains(&f.name.as_str()));
+                if !has_user_col {
+                    // Nothing but internal columns — no user data to preserve.
+                    return Ok(false);
+                }
+
+                let projection = build_export_projection_excluding(
+                    conn,
+                    TABLE_NAME,
+                    &LEGACY_AND_CURRENT_INTERNAL_COLS,
+                )?;
+
+                // Keep row order: prefer the persisted ordering column, falling
+                // back to DuckDB's physical rowid (insertion order) for older
+                // tables that predate it.
+                let order_by = if has_col(OXEN_ROW_ID_COL) {
+                    format!("ORDER BY {OXEN_ROW_ID_COL}")
+                } else {
+                    "ORDER BY rowid".to_string()
+                };
+
+                // Honor the old soft-delete semantics: a row tombstoned as
+                // 'removed' is a pending deletion and must not be resurrected.
+                let where_clause = if has_col(DIFF_STATUS_COL) {
+                    format!("WHERE \"{DIFF_STATUS_COL}\" IS DISTINCT FROM 'removed'")
+                } else {
+                    String::new()
+                };
+
+                let select =
+                    format!("SELECT {projection} FROM '{TABLE_NAME}' {where_clause} {order_by}");
+                let copy = wrap_sql_for_export(&select, &recover_path);
+                conn.execute(&copy, [])?;
+
+                // Rebuild inside a transaction: drop the stale table, then index
+                // the exported rows in the current format. On failure roll back
+                // so the original stale table is left intact.
+                conn.execute_batch("BEGIN TRANSACTION")?;
+                let build = (|| -> Result<(), DataFrameError> {
+                    df_db::drop_table(conn, TABLE_NAME)?;
+                    df_db::index_file_with_id(&recover_path, conn, &extension)?;
+                    Ok(())
+                })();
+                match build {
+                    Ok(()) => {
+                        conn.execute_batch("COMMIT")?;
+                        if let Err(e) = conn.execute_batch("CHECKPOINT") {
+                            log::warn!(
+                                "reindex_preserving_rows: CHECKPOINT failed for {db_path:?}: {e}"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        let _ = conn.execute_batch("ROLLBACK");
+                        return Err(e);
+                    }
+                }
+                Ok(true)
+            })
+        });
+        // Clean up the intermediate export regardless of the rebuild's result.
+        let _ = std::fs::remove_file(&recover_path);
+        Ok(outcome?)
+    })
+    .await??;
+
+    if !recovered {
+        return Err(OxenError::WorkspaceStaleStagedIndex(
+            format!(
+                "Cannot recover staged data frame {path:?}: the staged table has no user \
+                 columns. Re-index the data frame or unstage it, then commit again."
+            )
+            .into(),
+        ));
+    }
 
     Ok(())
 }
@@ -502,6 +651,20 @@ pub fn wrap_sql_for_export(sql: &str, path: &Path) -> String {
 /// Columns are emitted in `ordinal_position` order so the exported schema matches
 /// the table.
 fn build_export_projection(conn: &Connection, table_name: &str) -> Result<String, duckdb::Error> {
+    build_export_projection_excluding(conn, table_name, &EXCLUDE_OXEN_COLS)
+}
+
+/// As [`build_export_projection`], but omits exactly the columns in `exclude`
+/// rather than the current [`EXCLUDE_OXEN_COLS`]. Recovering a table left by an
+/// older version passes the full historical internal-column set
+/// ([`LEGACY_AND_CURRENT_INTERNAL_COLS`]) so legacy tracking columns
+/// (`_oxen_diff_status`, `_oxen_diff_hash`) don't leak into the export as user
+/// data.
+fn build_export_projection_excluding(
+    conn: &Connection,
+    table_name: &str,
+    exclude: &[&str],
+) -> Result<String, duckdb::Error> {
     let cols_query = format!(
         "SELECT column_name, data_type FROM information_schema.columns \
          WHERE table_name = '{table_name}' ORDER BY ordinal_position"
@@ -518,7 +681,7 @@ fn build_export_projection(conn: &Connection, table_name: &str) -> Result<String
 
     let projection: Vec<String> = cols
         .into_iter()
-        .filter(|(name, _)| !EXCLUDE_OXEN_COLS.contains(&name.as_str()))
+        .filter(|(name, _)| !exclude.contains(&name.as_str()))
         .map(|(name, data_type)| {
             if data_type == "JSON" || data_type == "JSON[]" {
                 json_tolerant_export_expr(&name)
