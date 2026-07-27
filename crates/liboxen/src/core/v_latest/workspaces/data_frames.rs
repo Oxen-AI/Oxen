@@ -1,8 +1,8 @@
 use duckdb::Connection;
 
 use crate::constants::{
-    DIFF_STATUS_COL, EVAL_DURATION_COL, EVAL_ERROR_COL, EVAL_STATUS_COL, EXCLUDE_OXEN_COLS,
-    OXEN_ID_COL, OXEN_ROW_ID_COL, TABLE_NAME,
+    EVAL_DURATION_COL, EVAL_ERROR_COL, EVAL_STATUS_COL, EXCLUDE_OXEN_COLS, OXEN_ID_COL,
+    OXEN_ROW_ID_COL, TABLE_NAME,
 };
 use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::df_db;
@@ -249,25 +249,42 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     Ok(())
 }
 
-/// Every column name Oxen has used internally in a staged DuckDB table across
-/// format versions. When recovering a table left by an older version, a column
-/// matching one of these is Oxen-internal and is dropped (never treated as user
-/// data) while rebuilding. This is a superset of [`EXCLUDE_OXEN_COLS`], which
-/// lists only the columns the current indexer emits: `_oxen_diff_status` and
-/// `_oxen_diff_hash` are legacy tracking columns the current format no longer
-/// writes. Matching is exact — a not-fully-indexed table was written by an
-/// indexer that reserved all of these names, so a column named like one of them
-/// is never user data in this context.
+/// Legacy per-row tracking columns older versions of oxen wrote into the staged
+/// table and the current staged format dropped. Frozen here as literals rather
+/// than references to the diff-feature's live constants: they name columns that
+/// exist only in tables already written to disk, so their spelling must not
+/// change even if a same-named live constant is later renamed or removed —
+/// `_oxen_diff_hash` already lost its constant entirely.
+const LEGACY_DIFF_STATUS_COL: &str = "_oxen_diff_status";
+const LEGACY_DIFF_HASH_COL: &str = "_oxen_diff_hash";
+
+/// Every column name Oxen has written internally to a staged DuckDB table, past
+/// or present. When recovering a table left by an older version (or an
+/// interrupted current index), a column matching one of these is Oxen-internal
+/// and is dropped — never treated as user data — while rebuilding. Superset of
+/// [`EXCLUDE_OXEN_COLS`], which lists only what the current indexer emits.
+///
+/// Columns the current format still writes reference their live constants, so
+/// this list follows whatever today's indexer emits. Columns only older versions
+/// wrote are frozen literals ([`LEGACY_DIFF_STATUS_COL`]/[`LEGACY_DIFF_HASH_COL`]):
+/// they must keep their exact on-disk spelling regardless of what any current
+/// constant is later renamed to. Treat the list as append-only — add names,
+/// never repurpose one.
+///
+/// Matching is exact — a not-fully-indexed table was written by an indexer that
+/// reserved all of these names, so a column named like one of them is never user
+/// data in this context.
 const LEGACY_AND_CURRENT_INTERNAL_COLS: [&str; 7] = [
+    // Current staged-table columns (see index_file_with_id).
     OXEN_ID_COL,
     OXEN_ROW_ID_COL,
-    DIFF_STATUS_COL,
-    // Legacy per-row change hash, dropped along with the other tracking columns;
-    // it no longer has a named constant, so it appears here as a literal.
-    "_oxen_diff_hash",
+    // Auxiliary columns the eval flow may add.
     EVAL_STATUS_COL,
     EVAL_ERROR_COL,
     EVAL_DURATION_COL,
+    // Present only in tables older versions wrote.
+    LEGACY_DIFF_STATUS_COL,
+    LEGACY_DIFF_HASH_COL,
 ];
 
 /// Rebuild a staged DuckDB table left by an older version of oxen (or an
@@ -339,8 +356,8 @@ pub async fn reindex_preserving_rows(workspace: &Workspace, path: &Path) -> Resu
 
                 // Honor the old soft-delete semantics: a row tombstoned as
                 // 'removed' is a pending deletion and must not be resurrected.
-                let where_clause = if has_col(DIFF_STATUS_COL) {
-                    format!("WHERE \"{DIFF_STATUS_COL}\" IS DISTINCT FROM 'removed'")
+                let where_clause = if has_col(LEGACY_DIFF_STATUS_COL) {
+                    format!("WHERE \"{LEGACY_DIFF_STATUS_COL}\" IS DISTINCT FROM 'removed'")
                 } else {
                     String::new()
                 };
