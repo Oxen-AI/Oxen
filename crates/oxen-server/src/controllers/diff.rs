@@ -32,8 +32,8 @@ use liboxen::{constants, repositories, util};
 
 use crate::helpers::get_repo;
 use crate::params::{
-    DFOptsQuery, PageNumQuery, app_data, df_opts_query, parse_base_head, parse_base_head_three_dot,
-    path_param, resolve_base_head,
+    DFOptsQuery, PageNumQuery, app_data, df_opts_query, parse_base_head, path_param,
+    resolve_base_head,
 };
 
 /// List commits between two revisions
@@ -71,7 +71,7 @@ pub async fn commits(
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
 
     // Parse the base and head from the base..head string
-    let (base, head) = parse_base_head(&base_head)?;
+    let (base, head, _) = parse_base_head(&base_head)?;
     let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head)?;
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
@@ -132,7 +132,7 @@ pub async fn entries(
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
 
     // Parse the base and head from the base..head or base...head string
-    let (base, head, three_dot) = parse_base_head_three_dot(&base_head)?;
+    let (base, head, three_dot) = parse_base_head(&base_head)?;
     let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head)?;
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
@@ -220,7 +220,7 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     let repository = get_repo(app_data, namespace, name)?;
 
     // Parse the base and head from the base..head or base...head string
-    let (base, head, three_dot) = parse_base_head_three_dot(&base_head)?;
+    let (base, head, three_dot) = parse_base_head(&base_head)?;
     let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head)?;
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
@@ -289,7 +289,7 @@ pub async fn dir_entries(
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
 
     // Parse the base and head from the base..head or base...head string
-    let (base, head, three_dot) = parse_base_head_three_dot(&base_head)?;
+    let (base, head, three_dot) = parse_base_head(&base_head)?;
     let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head)?;
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
@@ -672,7 +672,7 @@ pub async fn get_df_diff(
 
     let data: TabularCompareBody = serde_json::from_str(&body)?;
 
-    let (left, right) = parse_base_head(&base_head)?;
+    let (left, right, _) = parse_base_head(&base_head)?;
     let (left_commit, right_commit) = resolve_base_head(&repository, &left, &right)?;
 
     let left_commit = left_commit.ok_or_else(|| OxenError::RevisionNotFound(left.into()))?;

@@ -49,7 +49,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     let repository = get_repo(app_data, namespace, name)?;
 
     // Parse the base and head from the base..head string
-    let (base, head) = parse_base_head(&base_head)?;
+    let (base, head, _) = parse_base_head(&base_head)?;
     let (base_commit, head_commit) = resolve_base_head_branches(&repository, &base, &head)?;
     let base = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
     let head = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
@@ -126,7 +126,7 @@ pub async fn merge(
     let _write = repo_locks::acquire_write(&repo)?;
 
     // Parse the base and head from the base..head string
-    let (base, head) = parse_base_head(&base_head)?;
+    let (base, head, _) = parse_base_head(&base_head)?;
     let (maybe_base_branch, maybe_head_branch) = resolve_base_head_branches(&repo, &base, &head)?;
     let Some(base_branch) = maybe_base_branch else {
         return Err(OxenError::RevisionNotFound(base.into()).into());
