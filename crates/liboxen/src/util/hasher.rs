@@ -268,3 +268,83 @@ mod hashing_reader_tests {
         assert_eq!(hashing.digest128(), xxh3_128(b""));
     }
 }
+
+#[cfg(test)]
+mod hashing_writer_tests {
+    use super::*;
+
+    #[test]
+    fn sync_writer_matches_one_shot() -> Result<(), OxenError> {
+        let payload = b"the quick brown fox jumps over the lazy dog";
+        let mut sink = Vec::new();
+        let digest = {
+            let mut hashing = HashingWriter::new(&mut sink);
+            hashing.write_all(payload)?;
+            hashing.flush()?;
+            hashing.digest128()
+        };
+        assert_eq!(digest, xxh3_128(payload));
+        assert_eq!(sink, payload);
+        Ok(())
+    }
+
+    /// Bytes arriving across many `write` calls hash the same as the concatenation in one shot —
+    /// the property every streaming caller relies on.
+    #[test]
+    fn sync_writer_accumulates_across_writes() -> Result<(), OxenError> {
+        let chunks: [&[u8]; 3] = [b"hello ", b"brave ", b"world"];
+        let expected = chunks.concat();
+        let mut sink = Vec::new();
+        let digest = {
+            let mut hashing = HashingWriter::new(&mut sink);
+            for chunk in chunks {
+                hashing.write_all(chunk)?;
+            }
+            hashing.digest128()
+        };
+        assert_eq!(digest, xxh3_128(&expected));
+        assert_eq!(sink, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn sync_writer_empty_input() -> Result<(), OxenError> {
+        let mut sink = Vec::new();
+        let digest = HashingWriter::new(&mut sink).digest128();
+        assert_eq!(digest, xxh3_128(b""));
+        assert!(sink.is_empty());
+        Ok(())
+    }
+
+    /// A short write hashes only the bytes the inner writer accepted; hashing the whole buffer
+    /// would digest bytes that never reached the file.
+    #[test]
+    fn sync_writer_hashes_only_accepted_bytes() -> Result<(), OxenError> {
+        struct ShortWriter {
+            written: Vec<u8>,
+        }
+        impl Write for ShortWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                let n = buf.len().min(4);
+                self.written.extend_from_slice(&buf[..n]);
+                Ok(n)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut inner = ShortWriter {
+            written: Vec::new(),
+        };
+        let digest = {
+            let mut hashing = HashingWriter::new(&mut inner);
+            let accepted = hashing.write(b"0123456789")?;
+            assert_eq!(accepted, 4, "inner writer should accept only 4 bytes");
+            hashing.digest128()
+        };
+        assert_eq!(inner.written, b"0123");
+        assert_eq!(digest, xxh3_128(b"0123"));
+        Ok(())
+    }
+}
