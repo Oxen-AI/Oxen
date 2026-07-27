@@ -55,7 +55,7 @@ jobs:
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
       - name: Load tool versions
-        run: cat tool-versions.env >> "$GITHUB_ENV"
+        run: grep -E '^[A-Z0-9_]+=' tool-versions.env >> "$GITHUB_ENV"
 
       - name: Install uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
