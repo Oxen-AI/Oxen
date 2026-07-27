@@ -108,7 +108,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          choco install -y cmake llvm uv rustup.install
+          $uvVersion = (Select-String -Path tool-versions.env -Pattern '^UV_VERSION=(.+)$').Matches.Groups[1].Value
+          if (-not $uvVersion) { throw "UV_VERSION missing from tool-versions.env" }
+          choco install -y cmake llvm rustup.install
+          choco install -y uv --version $uvVersion
           # Install vcpkg for FFmpeg development libraries
           git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
           cd C:\vcpkg
