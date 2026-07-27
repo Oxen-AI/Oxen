@@ -70,31 +70,6 @@ pub struct ListMissingFilesQuery {
     pub head: String,
 }
 
-/// List commits
-#[utoipa::path(
-    get,
-    path = "/api/repos/{namespace}/{repo_name}/commits",
-    tag = "Commits",
-    description = "List all commits in the repository's history.",
-    params(
-        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
-        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-    ),
-    responses(
-        (status = 200, description = "List of commits", body = ListCommitResponse),
-        (status = 404, description = "Repository not found")
-    )
-)]
-pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(app_data, namespace, repo_name)?;
-
-    let commits = repositories::commits::list(&repo).unwrap_or_default();
-    Ok(HttpResponse::Ok().json(ListCommitResponse::success(commits)))
-}
-
 /// List commit history
 #[utoipa::path(
     get,
@@ -665,7 +640,7 @@ fn compress_commit(repository: &LocalRepository, commit: &Commit) -> Result<Vec<
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits",
-    description = "Upload a commit to a branch on the server. This creates an empty commit. To create a commit with children, use the upload_tree endpoint.",
+    description = "Upload a commit to a branch on the server. This creates an empty commit. Its merkle tree nodes are uploaded separately through the tree nodes endpoint.",
     tag = "Commits",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
@@ -1087,65 +1062,6 @@ pub async fn complete(req: HttpRequest) -> Result<HttpResponse, Error> {
     }
 }
 
-/// Upload commit tree
-#[utoipa::path(
-    post,
-    path = "/api/repos/{namespace}/{repo_name}/commits/{commit_id}/upload_tree",
-    tag = "Commits",
-    description = "Upload a commit's merkle tree data as a compressed tarball.",
-    params(
-        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
-        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-        ("commit_id" = String, Path, description = "Client head commit ID", example = "84c76a5b2e9a2637f9091991475c404d"),
-    ),
-    request_body(
-        content_type = "application/octet-stream",
-        description = "Compressed tree data (tar.gz)",
-        content = Vec<u8>
-    ),
-    responses(
-        (status = 200, description = "Tree uploaded successfully", body = CommitResponse),
-    )
-)]
-pub async fn upload_tree(
-    req: HttpRequest,
-    mut body: web::Payload,
-) -> Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let name = path_param(&req, "repo_name")?.to_string();
-    let client_head_id = path_param(&req, "commit_id")?.to_string();
-    let repo = get_repo(app_data, namespace, name)?;
-    // Get head commit on sever repo
-    let server_head_commit = repositories::commits::head_commit(&repo)?;
-
-    // Unpack in tmp/tree/commit_id
-    let tmp_dir = util::fs::oxen_hidden_dir(&repo.path).join("tmp");
-
-    let mut bytes = web::BytesMut::new();
-    while let Some(item) = body.next().await {
-        bytes.extend_from_slice(&item.map_err(|_| OxenHttpError::FailedToReadRequestPayload)?);
-    }
-
-    let total_size: u64 = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
-    log::debug!(
-        "Got compressed data for tree {} -> {}",
-        client_head_id,
-        ByteSize::b(total_size)
-    );
-
-    log::debug!("Decompressing {} bytes to {:?}", bytes.len(), tmp_dir);
-
-    // let mut archive = Archive::new(GzDecoder::new(&bytes[..]));
-
-    unpack_tree_tarball(&tmp_dir, &bytes).await?;
-
-    Ok(HttpResponse::Ok().json(CommitResponse {
-        status: StatusMessage::resource_found(),
-        commit: server_head_commit.to_owned(),
-    }))
-}
-
 /// Get root commit
 #[utoipa::path(
     get,
@@ -1172,53 +1088,6 @@ pub async fn root_commit(req: HttpRequest) -> Result<HttpResponse, OxenHttpError
         status: StatusMessage::resource_found(),
         commit: root,
     }))
-}
-
-async fn unpack_tree_tarball(tmp_dir: &Path, data: &[u8]) -> Result<(), OxenError> {
-    let reader = Cursor::new(data);
-    let buf_reader = BufReader::new(reader);
-    let decoder = GzipDecoder::new(buf_reader);
-    let mut archive = Archive::new(decoder);
-
-    let mut entries = match archive.entries() {
-        Ok(entries) => entries,
-        Err(e) => {
-            log::error!("Could not unpack tree database from archive...");
-            log::error!("Err: {e:?}");
-            return Err(OxenError::basic_str("Failed to get archive entries"));
-        }
-    };
-
-    while let Some(entry) = entries.next().await {
-        if let Ok(mut file) = entry {
-            let path = file.path().unwrap();
-            log::debug!("unpack_tree_tarball path {path:?}");
-            let stripped_path = if path.starts_with(HISTORY_DIR) {
-                match path.strip_prefix(HISTORY_DIR) {
-                    Ok(stripped) => stripped,
-                    Err(err) => {
-                        log::error!("Could not strip prefix from path {err:?}");
-                        return Err(OxenError::basic_str("Failed to strip path prefix"));
-                    }
-                }
-            } else {
-                &path
-            };
-
-            let mut new_path = PathBuf::from(tmp_dir);
-            new_path.push(stripped_path);
-
-            if let Some(parent) = new_path.parent() {
-                util::fs::create_dir_all(parent).expect("Could not create parent dir");
-            }
-            log::debug!("unpack_tree_tarball new_path {path:?}");
-            file.unpack(&new_path).await.unwrap();
-        } else {
-            log::error!("Could not unpack file in archive...");
-        }
-    }
-
-    Ok(())
 }
 
 async fn unpack_entry_tarball_async(

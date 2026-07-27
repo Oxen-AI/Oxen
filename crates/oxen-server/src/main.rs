@@ -155,7 +155,6 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
         crate::controllers::branches::maybe_create_merge,
         crate::controllers::branches::list_entry_versions,
         // Commits
-        crate::controllers::commits::index,
         crate::controllers::commits::history,
         crate::controllers::commits::list_all,
         crate::controllers::commits::list_missing,
@@ -168,7 +167,6 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
         crate::controllers::commits::download_commit_entries_db,
         crate::controllers::commits::create,
         crate::controllers::commits::upload_chunk,
-        crate::controllers::commits::upload_tree,
         crate::controllers::commits::root_commit,
         crate::controllers::commits::upload,
         crate::controllers::commits::complete,

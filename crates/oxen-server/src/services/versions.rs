@@ -41,11 +41,6 @@ pub fn versions() -> Scope {
             web::get().to(controllers::versions::download),
         )
         .route(
-            //TODO: The versions chunk download endpoint is not functional now. Needs the same changes mentioned above.
-            "/{version_id}/chunks/download",
-            web::get().to(controllers::versions::chunks::download),
-        )
-        .route(
             "/{version_id}/create",
             web::post().to(controllers::versions::chunks::create),
         )
