@@ -231,7 +231,7 @@ pub async fn list_missing(
 
     let data: Result<MerkleHashes, serde_json::Error> = serde_json::from_str(&body);
     let Ok(merkle_hashes) = data else {
-        log::error!("list_missing invalid JSON: {body:?}");
+        log::warn!("list_missing invalid JSON: {body:?}");
         return Ok(HttpResponse::BadRequest().json(StatusMessage::error("Invalid JSON")));
     };
 
@@ -678,7 +678,7 @@ pub async fn create(
     let new_commit: Commit = match serde_json::from_str(&body) {
         Ok(commit) => commit,
         Err(_) => {
-            log::error!("commits create got invalid commit data {body}");
+            log::warn!("commits create got invalid commit data {body}");
             return Err(OxenHttpError::BadRequest("Invalid commit data".into()));
         }
     };
@@ -1045,7 +1045,7 @@ pub async fn complete(req: HttpRequest) -> Result<HttpResponse, Error> {
                     Ok(HttpResponse::Ok().json(response))
                 }
                 Ok(None) => {
-                    log::error!("Could not find commit [{commit_id}]");
+                    log::warn!("Could not find commit [{commit_id}]");
                     Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()))
                 }
                 Err(err) => {

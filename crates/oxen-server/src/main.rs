@@ -9,6 +9,7 @@ use liboxen::model::merkle_tree::merkle_tree_node_cache;
 use liboxen::model::metadata::metadata_image::ImgResize;
 
 use liboxen::util;
+use liboxen::util::telemetry;
 
 mod crash_diagnostics;
 
@@ -72,6 +73,7 @@ use liboxen::view::{
     ParseResourceResponse, RepositoryResponse, RepositoryView, RootCommitResponse, StatusMessage,
 };
 
+use sentry::integrations::tracing as sentry_tracing;
 use tracing::level_filters::LevelFilter;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
@@ -398,17 +400,46 @@ fn init_sentry(dsn: Option<String>) -> Option<sentry::ClientInitGuard> {
     Some(sentry::init((dsn, options)))
 }
 
+/// The tracing layer that forwards events to Sentry, or `None` when Sentry is disabled, in which
+/// case no event-processing cost is paid at all.
+///
+/// Keeps `sentry-tracing`'s default event mapping: an `error!` becomes an issue, `warn!` and `info!`
+/// become breadcrumbs giving whatever issue follows some context, and `debug!` and below are
+/// dropped. The level a failure is logged at is therefore what decides whether it alerts — see the
+/// level convention on `OxenHttpError::error_response`. Spans are filtered out entirely: with
+/// performance tracing disabled every span would build a Sentry transaction that is never sampled.
+fn sentry_tracing_layer(enabled: bool) -> Option<telemetry::BoxedLayer> {
+    if !enabled {
+        return None;
+    }
+    Some(Box::new(sentry_tracing::layer().span_filter(|_| false)))
+}
+
 #[actix_web::main]
 async fn main() {
     crash_diagnostics::install().expect("failed to install crash diagnostics");
 
-    // fail-fast if we cannot initialize logging
-    let _tracing_guard = util::telemetry::init_tracing("oxen-server", LevelFilter::WARN)
-        .expect("Failed to initialize tracing & logging for oxen-server.");
     // Capture panics when a Sentry DSN is configured; held for the whole process so the client
-    // flushes on exit. Must stay after `crash_diagnostics::install` — Sentry's panic hook chains
-    // onto whichever hook is already installed.
-    let _sentry_guard = init_sentry(env::var("SENTRY_DSN").ok());
+    // flushes on exit. Sits after `crash_diagnostics::install`, whose panic hook Sentry's chains
+    // onto, and before tracing init, which needs to know whether to compose the Sentry layer.
+    let dsn = env::var("SENTRY_DSN").ok();
+    let dsn_configured = dsn.as_ref().is_some_and(|dsn| !dsn.is_empty());
+    let _sentry_guard = init_sentry(dsn);
+    // `sentry::init` returns a guard even for a DSN it could not parse, so ask the client itself.
+    let sentry_enabled = _sentry_guard
+        .as_ref()
+        .is_some_and(|guard| guard.is_enabled());
+    // fail-fast if we cannot initialize logging
+    let _tracing_guard = telemetry::init_tracing_with_layer(
+        "oxen-server",
+        LevelFilter::WARN,
+        sentry_tracing_layer(sentry_enabled),
+    )
+    .expect("Failed to initialize tracing & logging for oxen-server.");
+    // Logged here rather than next to `init_sentry` because no subscriber exists yet at that point.
+    if dsn_configured && !sentry_enabled {
+        log::error!("SENTRY_DSN is set but Sentry is disabled; no errors will be reported");
+    }
     // We want to show the error's display(), not the debug() representation.
     // actix_web::main() will show the error's debug() representation.
     if let Err(e) = server().await {
@@ -806,5 +837,11 @@ mod tests {
     fn init_sentry_is_disabled_without_dsn() {
         assert!(init_sentry(None).is_none());
         assert!(init_sentry(Some(String::new())).is_none());
+    }
+
+    #[test]
+    fn sentry_tracing_layer_is_absent_without_sentry() {
+        assert!(sentry_tracing_layer(false).is_none());
+        assert!(sentry_tracing_layer(true).is_some());
     }
 }

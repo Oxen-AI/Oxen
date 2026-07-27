@@ -190,7 +190,7 @@ pub async fn get(
     let Some(mut df_schema) =
         repositories::data_frames::schemas::get_by_path(&repo, &workspace.commit, &file_path)?
     else {
-        log::error!("Failed to get schema for data frame {file_path:?}");
+        log::warn!("Failed to get schema for data frame {file_path:?}");
         return Err(OxenHttpError::NotFound);
     };
 
@@ -304,7 +304,7 @@ pub async fn download(
     };
     let file_path = PathBuf::from(path_param(&req, "path")?);
     let Some(filename) = file_path.file_name().and_then(|n| n.to_str()) else {
-        log::error!(
+        log::warn!(
             "Unable to get filename from request param path: {}",
             file_path.display()
         );
@@ -343,7 +343,7 @@ pub async fn download(
         Ok(_) => (),
         Err(e) => {
             let error_str = format!("{e:?}");
-            log::error!("Error exporting data frame {file_path:?}: {error_str}");
+            log::warn!("Error exporting data frame {file_path:?}: {error_str}");
             let response = StatusMessageDescription::bad_request(error_str);
             return Ok(HttpResponse::BadRequest().json(response));
         }
@@ -433,7 +433,7 @@ pub async fn download_streaming(
     };
     let file_path = PathBuf::from(path_param(&req, "path")?);
     let Some(filename) = file_path.file_name().and_then(|n| n.to_str()) else {
-        log::error!(
+        log::warn!(
             "Unable to get filename from request param path: {}",
             file_path.display()
         );
@@ -469,7 +469,7 @@ pub async fn download_streaming(
     match repositories::workspaces::data_frames::export(&workspace, &file_path, &opts, &temp_file) {
         Ok(_) => (),
         Err(e) => {
-            log::error!("Error exporting data frame {file_path:?}: {e:?}");
+            log::warn!("Error exporting data frame {file_path:?}: {e:?}");
             let error_str = format!("{e:?}");
             let response = StatusMessageDescription::bad_request(error_str);
             return Ok(HttpResponse::BadRequest().json(response));

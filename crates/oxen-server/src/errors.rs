@@ -105,6 +105,11 @@ impl error::ResponseError for OxenHttpError {
     //
     //         Do not add a `status_code()` method definition here :)
 
+    /// Log level tracks who caused the failure: `error!` for a server-side defect, `warn!` for a
+    /// request the client got wrong, `debug!` only when there is no identifying detail worth
+    /// recording. `error!` is what reaches Sentry as an issue and `debug!` is filtered out in
+    /// production, so a 4xx arm at `error!` turns ordinary client traffic into alerts, and a
+    /// named-resource miss at `debug!` leaves nothing to debug from.
     fn error_response(&self) -> HttpResponse {
         log::debug!("OxenHttpError: {self:?}");
         match self {
@@ -356,7 +361,7 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::NotFound().json(error_json)
                     }
                     OxenError::WorkspaceNotFound(workspace) => {
-                        log::error!("Workspace not found: {workspace}");
+                        log::warn!("Workspace not found: {workspace}");
                         let error_json = json!({
                             "error": {
                                 "type": MSG_RESOURCE_NOT_FOUND,
@@ -392,7 +397,7 @@ impl error::ResponseError for OxenHttpError {
                         )))
                     }
                     OxenError::CommitEntryNotFound(msg) => {
-                        log::error!("{msg}");
+                        log::warn!("{msg}");
                         let error_json = json!({
                             "error": {
                                 "type": MSG_RESOURCE_NOT_FOUND,
@@ -405,7 +410,7 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::NotFound().json(error_json)
                     }
                     OxenError::UpstreamMergeConflict(desc) => {
-                        log::error!("Upstream merge conflict: {desc}");
+                        log::warn!("Upstream merge conflict: {desc}");
                         let error_json = json!({
                             "error": {
                                 "type": MSG_CONFLICT,
@@ -433,13 +438,13 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::Conflict().json(error_json)
                     }
                     OxenError::InvalidSchema(schema) => {
-                        log::error!("Invalid schema: {schema}");
+                        log::warn!("Invalid schema: {schema}");
                         HttpResponse::BadRequest().json(StatusMessageDescription::bad_request(
                             format!("Schema is invalid: '{schema}'"),
                         ))
                     }
                     OxenError::IncompatibleSchemas(schema) => {
-                        log::error!("Incompatible schemas: {schema}");
+                        log::warn!("Incompatible schemas: {schema}");
 
                         let schema_vals = &schema
                             .fields
@@ -498,7 +503,7 @@ impl error::ResponseError for OxenHttpError {
                         DataFrameError::Polars(error) => handle_polars(error),
                         DataFrameError::SerdeJson(_) => handle_serde(),
                         DataFrameError::ColumnNameAlreadyExists(column_name) => {
-                            log::error!("Column Name Already Exists: {column_name}");
+                            log::warn!("Column Name Already Exists: {column_name}");
                             let error_json = json!({
                                 "error": {
                                     "type": "column_error",
@@ -513,7 +518,7 @@ impl error::ResponseError for OxenHttpError {
                             HttpResponse::BadRequest().json(error_json)
                         }
                         DataFrameError::ReservedColumnName(column_name) => {
-                            log::error!("Reserved column name: {column_name}");
+                            log::warn!("Reserved column name: {column_name}");
                             let error_json = json!({
                                 "error": {
                                     "type": "column_error",
@@ -527,7 +532,7 @@ impl error::ResponseError for OxenHttpError {
                             HttpResponse::BadRequest().json(error_json)
                         }
                         DataFrameError::SqlParse(e) => {
-                            log::error!("SQL parse error: {e}");
+                            log::warn!("SQL parse error: {e}");
                             let error_json = json!({
                                 "error": {
                                     "type": "sql_parse_error",
@@ -540,7 +545,7 @@ impl error::ResponseError for OxenHttpError {
                             HttpResponse::BadRequest().json(error_json)
                         }
                         DataFrameError::ColumnNameNotFound(column_name) => {
-                            log::error!("Column Name Not Found: {column_name}");
+                            log::warn!("Column Name Not Found: {column_name}");
                             let error_json = json!({
                                 "error": {
                                     "type": "column_error",
@@ -555,7 +560,7 @@ impl error::ResponseError for OxenHttpError {
                             HttpResponse::BadRequest().json(error_json)
                         }
                         e @ DataFrameError::NoRowsFound => {
-                            log::error!("No rows found: {e}");
+                            log::debug!("No rows found: {e}");
                             let error_json = json!({
                                 "error": {
                                     "type": "no_rows_found",
@@ -582,6 +587,8 @@ impl error::ResponseError for OxenHttpError {
                         }
                     },
                     thumbnail_error @ OxenError::ThumbnailingNotEnabled => {
+                        // Both release images build with `liboxen/ffmpeg`, so reaching this arm means
+                        // a build lost the feature and every video-thumbnail request 500s.
                         log::error!("Thumbnailing not enabled: {thumbnail_error}");
                         let error_json = json!({
                             "error": {
@@ -673,7 +680,7 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::NotFound().json(error_json)
                     }
                     OxenError::WorkspaceBehind(workspace) => {
-                        log::error!("Workspace behind: {workspace}");
+                        log::warn!("Workspace behind: {workspace}");
                         let error_json = json!({
                             "error": {
                                 "type": MSG_CONFLICT,
@@ -772,7 +779,7 @@ impl error::ResponseError for OxenHttpError {
 
 /// Convert a [`duckdb::Error`] into a HTTP bad request error.
 fn handle_duckdb(error: &impl std::error::Error) -> HttpResponse {
-    log::error!("DuckDB error: {error}");
+    log::warn!("DuckDB error: {error}");
     let error_json = json!({
         "error": {
             "type": "query_error",

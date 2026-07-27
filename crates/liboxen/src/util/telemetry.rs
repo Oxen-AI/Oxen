@@ -29,6 +29,11 @@ pub enum TelemetryError {
     InvalidEndpoint(String),
 }
 
+/// A caller-supplied tracing layer composed into the registry by
+/// [`init_tracing_with_layer`]. Keeps this crate free of any dependency on the destination the
+/// layer reports to.
+pub type BoxedLayer = Box<dyn Layer<Registry> + Send + Sync>;
+
 /// Holds all tracing-related guards. Drop flushes writers and shuts down
 /// the OpenTelemetry pipeline (when enabled). The caller **must** keep this
 /// alive for the application lifetime.
@@ -136,6 +141,18 @@ mod atexit_flush {
 /// **must** hold the guard in a named binding for the lifetime of the
 /// application — dropping it flushes the non-blocking writer.
 pub fn init_tracing(app_name: &str, default: LevelFilter) -> Result<TracingGuard, TelemetryError> {
+    init_tracing_with_layer(app_name, default, None)
+}
+
+/// [`init_tracing`] with an additional caller-supplied layer composed into the registry.
+///
+/// `extra` receives every event that passes the `RUST_LOG` filter, including those emitted through
+/// the `log` macros via the `tracing-log` bridge.
+pub fn init_tracing_with_layer(
+    app_name: &str,
+    default: LevelFilter,
+    extra: Option<BoxedLayer>,
+) -> Result<TracingGuard, TelemetryError> {
     let log_level = log_env_filter(default);
 
     // FmtSpan configuration for stderr
@@ -177,8 +194,10 @@ pub fn init_tracing(app_name: &str, default: LevelFilter) -> Result<TracingGuard
         (None, None)
     };
 
-    // Base registry with all non-OTel layers
+    // Base registry with all non-OTel layers. `extra` goes innermost so its subscriber type is
+    // `Registry`, which is what `BoxedLayer` names.
     let registry = tracing_subscriber::registry()
+        .with(extra)
         .with(m_json_layer)
         .with(stderr_layer)
         .with(log_level);
@@ -292,7 +311,10 @@ fn create_log_dir(oxen_log_dir: &str) -> Result<PathBuf, TelemetryError> {
 }
 
 /// Configure ND-JSON file logging with daily log rotation in the given log directory.
-fn json_file_logging(app_name: &str, log_dir: &Path) -> (impl Layer<Registry>, WorkerGuard) {
+fn json_file_logging<S>(app_name: &str, log_dir: &Path) -> (impl Layer<S>, WorkerGuard)
+where
+    S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+{
     let file_appender = tracing_appender::rolling::daily(log_dir, app_name);
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 

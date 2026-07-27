@@ -59,7 +59,7 @@ pub async fn get_or_create(
     let data = match data {
         Ok(data) => data,
         Err(err) => {
-            log::error!("Unable to parse body. Err: {err}\n{body}");
+            log::warn!("Unable to parse body. Err: {err}\n{body}");
             return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
         }
     };
@@ -413,7 +413,7 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let data = match data {
         Ok(data) => data,
         Err(err) => {
-            log::error!("unable to parse commit data. Err: {err}\n{body}");
+            log::warn!("unable to parse commit data. Err: {err}\n{body}");
             return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
         }
     };
