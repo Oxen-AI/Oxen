@@ -35,229 +35,230 @@ pub async fn list_diff_entries(
             let repo = &repo;
             let base_commit = &base_commit;
             let head_commit = &head_commit;
+
+            let base_tree =
+                CommitMerkleTree::read_from_path_maybe(repo, base_commit, &base_path, true)?;
+            let head_tree =
+                CommitMerkleTree::read_from_path_maybe(repo, head_commit, &head_path, true)?;
+
+            let mut base_files: HashSet<FileNodeWithDir> = HashSet::new();
+            let mut head_files: HashSet<FileNodeWithDir> = HashSet::new();
+            let mut base_dirs: HashSet<DirNodeWithPath> = HashSet::new();
+            let mut head_dirs: HashSet<DirNodeWithPath> = HashSet::new();
+
+            match (base_tree, head_tree) {
+                (Some(base_tree), Some(head_tree)) => {
+                    //we found some nodes
+
+                    match (base_tree.node.node_type(), head_tree.node.node_type()) {
+                        (MerkleTreeNodeType::File, MerkleTreeNodeType::File) => {
+                            base_files.insert(FileNodeWithDir {
+                                file_node: base_tree.file()?,
+                                dir: base_path
+                                    .parent()
+                                    .unwrap_or(&PathBuf::from(""))
+                                    .to_path_buf(),
+                            });
+                            head_files.insert(FileNodeWithDir {
+                                file_node: head_tree.file()?,
+                                dir: head_path
+                                    .parent()
+                                    .unwrap_or(&PathBuf::from(""))
+                                    .to_path_buf(),
+                            });
+                        }
+                        (MerkleTreeNodeType::Dir, MerkleTreeNodeType::Dir) => {
+                            let (files, dirs) =
+                                repositories::tree::list_files_and_dirs(&base_tree)?;
+
+                            base_files.extend(files);
+                            base_dirs.extend(dirs);
+
+                            let (files, dirs) =
+                                repositories::tree::list_files_and_dirs(&head_tree)?;
+
+                            head_files.extend(files);
+                            head_dirs.extend(dirs);
+                        }
+                        _ => {
+                            return Err(OxenError::basic_str(format!(
+                                "Failed to get base tree for commit: {base_commit}"
+                            )));
+                        }
+                    }
+                }
+
+                (Some(base_tree), None) => match base_tree.node.node_type() {
+                    MerkleTreeNodeType::File => {
+                        base_files.insert(FileNodeWithDir {
+                            file_node: base_tree.file()?,
+                            dir: base_path
+                                .parent()
+                                .unwrap_or(&PathBuf::from(""))
+                                .to_path_buf(),
+                        });
+                    }
+                    MerkleTreeNodeType::Dir => {
+                        let (files, dirs) = repositories::tree::list_files_and_dirs(&base_tree)?;
+
+                        base_files.extend(files);
+                        base_dirs.extend(dirs);
+                    }
+                    _ => {
+                        return Err(OxenError::basic_str(format!(
+                            "Failed to get base tree for commit: {base_commit}"
+                        )));
+                    }
+                },
+
+                (None, Some(head_tree)) => match head_tree.node.node_type() {
+                    MerkleTreeNodeType::File => {
+                        head_files.insert(FileNodeWithDir {
+                            file_node: head_tree.file()?,
+                            dir: head_path
+                                .parent()
+                                .unwrap_or(&PathBuf::from(""))
+                                .to_path_buf(),
+                        });
+                    }
+                    MerkleTreeNodeType::Dir => {
+                        let (files, dirs) = repositories::tree::list_files_and_dirs(&head_tree)?;
+
+                        head_files.extend(files);
+                        head_dirs.extend(dirs);
+                    }
+                    _ => {
+                        return Err(OxenError::basic_str(format!(
+                            "Failed to get head tree for commit: {head_commit}"
+                        )));
+                    }
+                },
+
+                (None, None) => {
+                    log::debug!("no trees found");
+                }
+            };
+
             log::debug!(
-                "list_diff_entries base_dir: '{base_path:?}', head_dir: '{head_path:?}' base_commit: '{base_commit}', head_commit: '{head_commit}'"
+                "list_diff_entries dir: '{:?}' collected {} head_dirs",
+                base_path,
+                head_dirs.len()
+            );
+            log::debug!(
+                "list_diff_entries dir: '{:?}' collected {} base_files",
+                base_path,
+                base_files.len()
+            );
+            log::debug!(
+                "list_diff_entries dir: '{:?}' collected {} base_dirs",
+                base_path,
+                base_dirs.len()
             );
 
-            let base_tree = CommitMerkleTree::read_from_path_maybe(repo, base_commit, &base_path, true)?;
-    let head_tree = CommitMerkleTree::read_from_path_maybe(repo, head_commit, &head_path, true)?;
+            let mut dir_entries: Vec<DiffEntry> = vec![];
+            collect_added_directories(
+                repo,
+                &base_dirs,
+                base_commit,
+                &head_dirs,
+                head_commit,
+                &mut dir_entries,
+                &base_path,
+            )?;
+            log::debug!(
+                "list_diff_entries dir: '{:?}' collected {} added_dirs dir_entries",
+                base_path,
+                dir_entries.len()
+            );
+            collect_removed_directories(
+                repo,
+                &base_dirs,
+                base_commit,
+                &head_dirs,
+                head_commit,
+                &mut dir_entries,
+                &base_path,
+            )?;
+            log::debug!(
+                "list_diff_entries dir: '{:?}' collected {} removed_dirs dir_entries",
+                base_path,
+                dir_entries.len()
+            );
+            collect_modified_directories(
+                repo,
+                &base_dirs,
+                base_commit,
+                &head_dirs,
+                head_commit,
+                &mut dir_entries,
+                &base_path,
+                &base_files,
+                &head_files,
+            )?;
+            dir_entries.sort_by(|a, b| a.filename.cmp(&b.filename));
+            log::debug!(
+                "list_diff_entries dir: '{:?}' collected {} modified_dirs dir_entries",
+                base_path,
+                dir_entries.len()
+            );
 
-    let mut base_files: HashSet<FileNodeWithDir> = HashSet::new();
-    let mut head_files: HashSet<FileNodeWithDir> = HashSet::new();
-    let mut base_dirs: HashSet<DirNodeWithPath> = HashSet::new();
-    let mut head_dirs: HashSet<DirNodeWithPath> = HashSet::new();
+            // the DiffEntry takes a little bit of time to compute, so want to just find the commit entries
+            // then filter them down to the ones we need
+            let mut added_commit_entries: Vec<DiffFileNode> = vec![];
+            collect_added_entries(
+                &base_files,
+                &head_files,
+                &mut added_commit_entries,
+                &base_path,
+            )?;
+            log::debug!(
+                "list_diff_entries dir: '{:?}' collected {} collect_added_entries",
+                base_path,
+                added_commit_entries.len()
+            );
 
-    match (base_tree, head_tree) {
-        (Some(base_tree), Some(head_tree)) => {
-            //we found some nodes
+            let mut removed_commit_entries: Vec<DiffFileNode> = vec![];
+            collect_removed_entries(
+                &base_files,
+                &head_files,
+                &mut removed_commit_entries,
+                &base_path,
+            )?;
+            log::debug!(
+                "list_diff_entries dir: '{:?}' collected {} collect_removed_entries",
+                base_path,
+                removed_commit_entries.len()
+            );
 
-            match (base_tree.node.node_type(), head_tree.node.node_type()) {
-                (MerkleTreeNodeType::File, MerkleTreeNodeType::File) => {
-                    base_files.insert(FileNodeWithDir {
-                        file_node: base_tree.file()?,
-                        dir: base_path
-                            .parent()
-                            .unwrap_or(&PathBuf::from(""))
-                            .to_path_buf(),
-                    });
-                    head_files.insert(FileNodeWithDir {
-                        file_node: head_tree.file()?,
-                        dir: head_path
-                            .parent()
-                            .unwrap_or(&PathBuf::from(""))
-                            .to_path_buf(),
-                    });
-                }
-                (MerkleTreeNodeType::Dir, MerkleTreeNodeType::Dir) => {
-                    let (files, dirs) = repositories::tree::list_files_and_dirs(&base_tree)?;
+            let mut modified_commit_entries: Vec<DiffFileNode> = vec![];
+            collect_modified_entries(
+                &base_files,
+                &head_files,
+                &mut modified_commit_entries,
+                &base_path,
+            )?;
+            log::debug!(
+                "list_diff_entries dir: '{:?}' collected {} collect_modified_entries",
+                base_path,
+                modified_commit_entries.len()
+            );
+            let counts = AddRemoveModifyCounts {
+                added: added_commit_entries.len(),
+                removed: removed_commit_entries.len(),
+                modified: modified_commit_entries.len(),
+            };
+            let mut combined: Vec<_> = added_commit_entries
+                .into_iter()
+                .chain(removed_commit_entries)
+                .chain(modified_commit_entries)
+                .collect();
+            combined.sort_by(|a, b| a.path.cmp(&b.path));
 
-                    base_files.extend(files);
-                    base_dirs.extend(dirs);
-
-                    let (files, dirs) = repositories::tree::list_files_and_dirs(&head_tree)?;
-
-                    head_files.extend(files);
-                    head_dirs.extend(dirs);
-                }
-                _ => {
-                    return Err(OxenError::basic_str(format!(
-                        "Failed to get base tree for commit: {base_commit}"
-                    )));
-                }
-            }
-        }
-
-        (Some(base_tree), None) => match base_tree.node.node_type() {
-            MerkleTreeNodeType::File => {
-                base_files.insert(FileNodeWithDir {
-                    file_node: base_tree.file()?,
-                    dir: base_path
-                        .parent()
-                        .unwrap_or(&PathBuf::from(""))
-                        .to_path_buf(),
-                });
-            }
-            MerkleTreeNodeType::Dir => {
-                let (files, dirs) = repositories::tree::list_files_and_dirs(&base_tree)?;
-
-                base_files.extend(files);
-                base_dirs.extend(dirs);
-            }
-            _ => {
-                return Err(OxenError::basic_str(format!(
-                    "Failed to get base tree for commit: {base_commit}"
-                )));
-            }
-        },
-
-        (None, Some(head_tree)) => match head_tree.node.node_type() {
-            MerkleTreeNodeType::File => {
-                head_files.insert(FileNodeWithDir {
-                    file_node: head_tree.file()?,
-                    dir: head_path
-                        .parent()
-                        .unwrap_or(&PathBuf::from(""))
-                        .to_path_buf(),
-                });
-            }
-            MerkleTreeNodeType::Dir => {
-                let (files, dirs) = repositories::tree::list_files_and_dirs(&head_tree)?;
-
-                head_files.extend(files);
-                head_dirs.extend(dirs);
-            }
-            _ => {
-                return Err(OxenError::basic_str(format!(
-                    "Failed to get head tree for commit: {head_commit}"
-                )));
-            }
-        },
-
-        (None, None) => {
-            log::debug!("no trees found");
-        }
-    };
-
-    log::debug!(
-        "list_diff_entries dir: '{:?}' collected {} head_dirs",
-        base_path,
-        head_dirs.len()
-    );
-    log::debug!(
-        "list_diff_entries dir: '{:?}' collected {} base_files",
-        base_path,
-        base_files.len()
-    );
-    log::debug!(
-        "list_diff_entries dir: '{:?}' collected {} base_dirs",
-        base_path,
-        base_dirs.len()
-    );
-
-    let mut dir_entries: Vec<DiffEntry> = vec![];
-    collect_added_directories(
-        repo,
-        &base_dirs,
-        base_commit,
-        &head_dirs,
-        head_commit,
-        &mut dir_entries,
-        &base_path,
-    )?;
-    log::debug!(
-        "list_diff_entries dir: '{:?}' collected {} added_dirs dir_entries",
-        base_path,
-        dir_entries.len()
-    );
-    collect_removed_directories(
-        repo,
-        &base_dirs,
-        base_commit,
-        &head_dirs,
-        head_commit,
-        &mut dir_entries,
-        &base_path,
-    )?;
-    log::debug!(
-        "list_diff_entries dir: '{:?}' collected {} removed_dirs dir_entries",
-        base_path,
-        dir_entries.len()
-    );
-    collect_modified_directories(
-        repo,
-        &base_dirs,
-        base_commit,
-        &head_dirs,
-        head_commit,
-        &mut dir_entries,
-        &base_path,
-        &base_files,
-        &head_files,
-    )?;
-    dir_entries.sort_by(|a, b| a.filename.cmp(&b.filename));
-    log::debug!(
-        "list_diff_entries dir: '{:?}' collected {} modified_dirs dir_entries",
-        base_path,
-        dir_entries.len()
-    );
-
-    // the DiffEntry takes a little bit of time to compute, so want to just find the commit entries
-    // then filter them down to the ones we need
-    let mut added_commit_entries: Vec<DiffFileNode> = vec![];
-    collect_added_entries(
-        &base_files,
-        &head_files,
-        &mut added_commit_entries,
-        &base_path,
-    )?;
-    log::debug!(
-        "list_diff_entries dir: '{:?}' collected {} collect_added_entries",
-        base_path,
-        added_commit_entries.len()
-    );
-
-    let mut removed_commit_entries: Vec<DiffFileNode> = vec![];
-    collect_removed_entries(
-        &base_files,
-        &head_files,
-        &mut removed_commit_entries,
-        &base_path,
-    )?;
-    log::debug!(
-        "list_diff_entries dir: '{:?}' collected {} collect_removed_entries",
-        base_path,
-        removed_commit_entries.len()
-    );
-
-    let mut modified_commit_entries: Vec<DiffFileNode> = vec![];
-    collect_modified_entries(
-        &base_files,
-        &head_files,
-        &mut modified_commit_entries,
-        &base_path,
-    )?;
-    log::debug!(
-        "list_diff_entries dir: '{:?}' collected {} collect_modified_entries",
-        base_path,
-        modified_commit_entries.len()
-    );
-    let counts = AddRemoveModifyCounts {
-        added: added_commit_entries.len(),
-        removed: removed_commit_entries.len(),
-        modified: modified_commit_entries.len(),
-    };
-    let mut combined: Vec<_> = added_commit_entries
-        .into_iter()
-        .chain(removed_commit_entries)
-        .chain(modified_commit_entries)
-        .collect();
-    combined.sort_by(|a, b| a.path.cmp(&b.path));
-
-    log::debug!(
-        "list_diff_entries dir: '{:?}' got {} combined files",
-        base_path,
-        combined.len()
-    );
+            log::debug!(
+                "list_diff_entries dir: '{:?}' got {} combined files",
+                base_path,
+                combined.len()
+            );
 
             let (files, pagination) = util::paginate::paginate_files_assuming_dirs(
                 &combined,
