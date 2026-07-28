@@ -37,6 +37,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # `repositories` alone would still mint a token carrying every permission
+      # the app holds, including write access to the target's contents. This
+      # only needs to start a workflow there, so it asks for nothing else.
       - name: Generate GitHub App token
         uses: actions/create-github-app-token@v3
         id: generate-token
@@ -44,6 +47,7 @@ jobs:
           app-id: ${{ vars.OXBOT_APP_ID }}
           private-key: ${{ secrets.OXBOT_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
+          permission-actions: write
           repositories: ${{ vars.DEPLOY_REPOSITORY_NAME }}
 
       # The build uploaded the server image as an artifact of this run, so the
