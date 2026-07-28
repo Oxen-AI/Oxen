@@ -1042,6 +1042,8 @@ fn write_all_tar<W: Write>(
 /// - Entries whose path contains a `..` component return [`MerkleDbError::PathTraversal`].
 /// - A node whose `node`/`children` blobs are not adjacent (interleaved with another node's
 ///   blobs, or cut off by EOF) returns [`MerkleDbError::IncompleteNode`].
+/// - A truncated or corrupt archive returns [`MerkleDbError::CannotReadMerkle`] when the cut lands
+///   at an entry boundary, or [`MerkleDbError::Io`] when it lands inside a blob.
 fn extract_tar_under<R: Read>(
     reader: R,
     oxen_hidden: &Path,
@@ -1077,11 +1079,8 @@ fn extract_tar_under<R: Read>(
     let tree_nodes_prefix = Path::new(TREE_DIR).join(NODES_DIR);
 
     for entry in entries {
-        let Ok(mut file) = entry else {
-            log::error!("Could not unpack file in merkle tar archive");
-            // TODO: raise this error to the caller instead!?
-            continue;
-        };
+        // A truncated or corrupt stream surfaces as an `Err` here, at the entry boundary.
+        let mut file = entry.map_err(MerkleDbError::CannotReadMerkle)?;
         let path = file.path()?.into_owned();
         // Path-traversal guard: refuse any entry whose path resolves above its container.
         if path.components().any(|c| matches!(c, Component::ParentDir)) {
@@ -2763,6 +2762,52 @@ mod tests {
                     "hash {h} not readable in repo unpacked via unpack"
                 );
             }
+            Ok(())
+        })
+        .await
+    }
+
+    /// An archive cut at an entry boundary fails instead of reporting a successful partial
+    /// install. The cut is placed after the last complete entry, where the tar iterator — not the
+    /// blob read — is what surfaces the error.
+    #[tokio::test]
+    async fn test_unpack_truncated_at_entry_boundary_errors() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
+            let head = repositories::commits::head_commit(&repo)?;
+            let hashes = HashSet::from_iter([head.hash().expect("no commit for head")]);
+            let packed = super::compress_nodes(&repo, &hashes)?;
+
+            let mut tar_bytes = Vec::new();
+            GzDecoder::new(&packed[..]).read_to_end(&mut tar_bytes)?;
+
+            // A finished tar ends with two zero blocks. Drop them so the iterator keeps going past
+            // the last real entry, then leave it a partial header to choke on.
+            let end_marker = tar_bytes.len() - 1024;
+            assert!(
+                tar_bytes[end_marker..].iter().all(|b| *b == 0),
+                "expected 1024 trailing zero bytes; archive layout changed and this test no longer \
+                 cuts where it intends to"
+            );
+            tar_bytes.truncate(end_marker);
+            tar_bytes.extend_from_slice(&[0xAB; 100]);
+
+            let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+            encoder.write_all(&tar_bytes)?;
+            let truncated = encoder.finish()?;
+
+            let tmp = tempfile::TempDir::new()?;
+            let target = test::init_fs_merkle_backend(tmp.path())?;
+            let result = unpack(
+                &target,
+                &mut &truncated[..],
+                UnpackOptions::SkipExisting,
+                NodeReport::Collect,
+            );
+
+            assert!(
+                result.is_err(),
+                "truncated archive reported success: {result:?}"
+            );
             Ok(())
         })
         .await
