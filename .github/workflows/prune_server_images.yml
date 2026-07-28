@@ -9,13 +9,22 @@ on:
 
   workflow_dispatch:
 
-permissions:
-  packages: write
+# A scheduled run and a dispatched one would otherwise enumerate and delete the
+# same versions concurrently, which fails on whichever loses the race.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 jobs:
   prune:
     name: Prune old images
     runs-on: ubuntu-latest
+    # Deleting a package version is a write to the package. Scoped to this job
+    # rather than the workflow so a later job cannot inherit the ability to
+    # delete images without asking for it.
+    permissions:
+      contents: none
+      packages: write
 
     steps:
       - name: Delete all but the newest images

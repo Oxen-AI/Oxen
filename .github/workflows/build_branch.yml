@@ -41,10 +41,10 @@ env:
   # Lowercase: registry paths are case-sensitive and the owner name is not.
   REGISTRY_IMAGE: ghcr.io/oxen-ai/oxen-server
 
+# Each job below states what it needs; a job's own block replaces this one rather
+# than adding to it, so nothing inherits a write it has no use for.
 permissions:
-  id-token: write
-  contents: write
-  packages: write
+  contents: read
 
 defaults:
   run:
@@ -54,6 +54,9 @@ jobs:
   start-self-hosted-runner:
     name: Start self-hosted EC2 runner
     runs-on: ubuntu-latest
+    # Assumes an AWS role by OIDC. Checks nothing out.
+    permissions:
+      id-token: write
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
       ec2-instance-id: ${{ steps.start-ec2-runner.outputs.ec2-instance-id }}
@@ -84,6 +87,10 @@ jobs:
   release_docker:
     needs: start-self-hosted-runner
     runs-on: ${{ needs.start-self-hosted-runner.outputs.label }}
+    # Reads the source it builds, and publishes the image it produces.
+    permissions:
+      contents: read
+      packages: write
     outputs:
       image: ${{ steps.push.outputs.image }}
 
@@ -149,7 +156,18 @@ jobs:
           docker tag oxen/oxen-server "$tag"
           docker image push "$tag"
 
-          image=$(docker image inspect "$tag" --format '{{ index .RepoDigests 0 }}')
+          # Selected by repository rather than by position: the daemon records a
+          # digest per repository the image has been pushed to, and which one
+          # comes first is not something to depend on.
+          image=$(docker image inspect "$tag" \
+            --format '{{ range .RepoDigests }}{{ println . }}{{ end }}' \
+            | grep -F -- "$REGISTRY_IMAGE@" | head -1 || true)
+
+          if [[ -z "$image" ]]; then
+            echo "::error::the push recorded no digest for $REGISTRY_IMAGE"
+            exit 1
+          fi
+
           echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "Published $image" >> "$GITHUB_STEP_SUMMARY"
 
@@ -160,6 +178,9 @@ jobs:
       - release_docker
     runs-on: ubuntu-latest
     if: ${{ always() }}
+    # Assumes an AWS role by OIDC. Checks nothing out.
+    permissions:
+      id-token: write
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6

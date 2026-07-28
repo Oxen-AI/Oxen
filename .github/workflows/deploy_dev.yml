@@ -26,8 +26,10 @@ permissions:
 jobs:
   build:
     name: Build oxen-server
+    # Caps what the called workflow's jobs can ask for, so it is the union of
+    # what they need and nothing wider.
     permissions:
-      contents: write
+      contents: read
       id-token: write
       packages: write
     uses: ./.github/workflows/build_branch.yml
