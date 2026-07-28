@@ -495,28 +495,55 @@ pub async fn multipart_batch_upload_with_retry(
     client: &reqwest::Client,
 ) -> Result<(), OxenError> {
     let mut files_to_retry: Vec<ErrorFileInfo> = vec![];
-    let mut first_try = true;
-    let mut retry_count: usize = 0;
+    let mut attempt: usize = 0;
     let max_retries = max_retries();
+    // Held so an exhausted retry budget reports the transport failure that actually stopped us,
+    // rather than an empty per-file list.
+    let mut transport_err: Option<OxenError> = None;
 
-    while (first_try || !files_to_retry.is_empty()) && retry_count < max_retries {
-        first_try = false;
-        retry_count += 1;
+    while attempt < max_retries {
+        attempt += 1;
 
-        files_to_retry =
-            multipart_batch_upload(local_repo, remote_repo, chunk, client, files_to_retry).await?;
+        match multipart_batch_upload(
+            local_repo,
+            remote_repo,
+            chunk,
+            client,
+            files_to_retry.clone(),
+        )
+        .await
+        {
+            Ok(err_files) => {
+                transport_err = None;
+                files_to_retry = err_files;
+                if files_to_retry.is_empty() {
+                    return Ok(());
+                }
+            }
+            // The batch never reached the server, or its response was lost. Re-post the same set:
+            // version files are content-addressed, so the server treats a repeat as a no-op. Without
+            // this the whole push dies on one dropped connection, and a push fans out to many
+            // concurrent batches, so a small per-connection failure rate fails most pushes.
+            Err(err) if !err.is_fatal_for_retry() => {
+                log::warn!(
+                    "versions batch upload attempt {attempt} of {max_retries} failed: {err}"
+                );
+                transport_err = Some(err);
+            }
+            Err(err) => return Err(err),
+        }
 
-        if !files_to_retry.is_empty() {
-            let wait_time = exponential_backoff(BASE_WAIT_TIME, retry_count, MAX_WAIT_TIME);
+        if attempt < max_retries {
+            let wait_time = exponential_backoff(BASE_WAIT_TIME, attempt, MAX_WAIT_TIME);
             sleep(Duration::from_millis(wait_time as u64)).await;
         }
     }
-    if files_to_retry.is_empty() {
-        Ok(())
-    } else {
-        Err(OxenError::basic_str(format!(
+
+    match transport_err {
+        Some(err) => Err(err),
+        None => Err(OxenError::basic_str(format!(
             "Failed to upload files: {files_to_retry:#?}"
-        )))
+        ))),
     }
 }
 
