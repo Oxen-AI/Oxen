@@ -1,6 +1,22 @@
 name: 🐳 Build branch for docker
 
 on:
+  workflow_call:
+    inputs:
+      branch:
+        description: "Branch to build. Also accepts commit sha and tag name."
+        required: true
+        type: string
+      ARCHITECTURE:
+        description: "The architecture to build for. Either amd64 (for x86_64) or arm64."
+        required: false
+        default: "arm64"
+        type: string
+    secrets:
+      GH_PERSONAL_ACCESS_TOKEN:
+        description: "GitHub personal access token"
+        required: true
+
   workflow_dispatch:
     inputs:
       branch:
@@ -68,7 +84,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
-          ref: ${{ github.event.inputs.branch }}
+          ref: ${{ inputs.branch }}
 
       - name: Set release version
         run: |

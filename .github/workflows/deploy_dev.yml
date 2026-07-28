@@ -1,0 +1,60 @@
+name: 🚀 Deploy dev
+
+run-name: Deploy ${{ github.sha }} to dev
+
+on:
+  push:
+    branches:
+      - main
+
+# Coalesce a burst of merges onto the newest commit rather than deploying every
+# one of them: while a build runs GitHub holds at most one run pending per group
+# and cancels any earlier pending run. Deliberately not cancel-in-progress — a
+# build already under way is the work a pending run would otherwise repeat.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build oxen-server
+    permissions:
+      contents: write
+      id-token: write
+    uses: ./.github/workflows/build_branch.yml
+    with:
+      branch: ${{ github.sha }}
+      ARCHITECTURE: arm64
+    secrets:
+      GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+
+  deploy:
+    name: Dispatch deploy
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Generate GitHub App token
+        uses: actions/create-github-app-token@v3
+        id: generate-token
+        with:
+          app-id: ${{ vars.OXBOT_APP_ID }}
+          private-key: ${{ secrets.OXBOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ vars.DEPLOY_REPOSITORY_NAME }}
+
+      # The build uploaded the server image as an artifact of this run, so the
+      # deployment fetches it by run ID instead of rebuilding.
+      - name: Dispatch the dev deploy
+        env:
+          DEPLOY_REPOSITORY: ${{ github.repository_owner }}/${{ vars.DEPLOY_REPOSITORY_NAME }}
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          gh workflow run deploy_dev_oxen_server.yml \
+            --repo "$DEPLOY_REPOSITORY" \
+            --field run_id="$GITHUB_RUN_ID" \
+            --field sha="$SHA"
