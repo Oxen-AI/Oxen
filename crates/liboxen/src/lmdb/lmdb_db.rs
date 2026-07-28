@@ -99,6 +99,22 @@ impl LmdbDb {
         let inner = self.db.iter(txn).map_err(LmdbLayerError::Read)?;
         Ok(LmdbDbIter { inner })
     }
+
+    /// Iterate every key, borrowing each one out of the txn and leaving the value bytes undecoded.
+    /// Same full-scan, ordering-carries-no-meaning caveat as [`iter`][Self::iter]. Prefer this over
+    /// `iter` when the values are discarded. The borrowed keys cannot outlive the txn: copy any key
+    /// that has to be kept.
+    pub(crate) fn iter_keys<'txn>(
+        &self,
+        txn: &'txn RoTxn<'_, WithoutTls>,
+    ) -> Result<LmdbDbKeysIter<'txn>, LmdbLayerError> {
+        let inner = self
+            .db
+            .remap_data_type::<DecodeIgnore>()
+            .iter(txn)
+            .map_err(LmdbLayerError::Read)?;
+        Ok(LmdbDbKeysIter { inner })
+    }
 }
 
 /// Open or create a single named sub-database in `lmdb_env`, running the heed-required write txn.
@@ -125,6 +141,21 @@ impl Iterator for LmdbDbIter<'_> {
             item.map(|(key, value)| (Bytes::copy_from_slice(key), Bytes::copy_from_slice(value)))
                 .map_err(LmdbLayerError::Read),
         )
+    }
+}
+
+/// Full-scan iterator over a [`LmdbDb`]'s keys, yielding each key borrowed from the txn's mapped
+/// pages. Nothing is allocated per key, and the values are never decoded.
+pub(crate) struct LmdbDbKeysIter<'txn> {
+    inner: RoIter<'txn, HeedBytes, DecodeIgnore>,
+}
+
+impl<'txn> Iterator for LmdbDbKeysIter<'txn> {
+    type Item = Result<&'txn [u8], LmdbLayerError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self.inner.next()?;
+        Some(item.map(|(key, ())| key).map_err(LmdbLayerError::Read))
     }
 }
 
@@ -226,6 +257,44 @@ mod tests {
                 (Bytes::from_static(b"c"), Bytes::from_static(b"3")),
             ]
         );
+    }
+
+    #[test]
+    fn iter_keys_yields_every_key_without_the_values() {
+        let (_dir, lmdb_env) = test_lmdb_env();
+        let db =
+            with_write_txn(&lmdb_env, |txn| LmdbDb::open(&lmdb_env, txn, "kv")).expect("open db");
+        with_write_txn(&lmdb_env, |txn| {
+            db.put(txn, b"c", b"3")?;
+            db.put(txn, b"a", b"1")?;
+            db.put(txn, b"b", b"2")
+        })
+        .expect("put");
+
+        // The keys borrow from the txn, so anything kept past the closure is copied here.
+        let keys: Vec<Bytes> = with_read_txn(&lmdb_env, |txn| {
+            db.iter_keys(txn)?
+                .map(|item| item.map(Bytes::copy_from_slice))
+                .collect::<Result<_, _>>()
+        })
+        .expect("iterate keys");
+        assert_eq!(
+            keys,
+            vec![
+                Bytes::from_static(b"a"),
+                Bytes::from_static(b"b"),
+                Bytes::from_static(b"c"),
+            ]
+        );
+
+        // Same keys, same order as the pair-yielding iterator.
+        let paired: Vec<Bytes> = with_read_txn(&lmdb_env, |txn| {
+            db.iter(txn)?
+                .map(|item| item.map(|(key, _)| key))
+                .collect::<Result<_, _>>()
+        })
+        .expect("iterate pairs");
+        assert_eq!(keys, paired);
     }
 
     #[test]
