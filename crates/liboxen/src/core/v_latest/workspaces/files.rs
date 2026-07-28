@@ -1079,7 +1079,9 @@ fn p_modify_file(
     log::debug!("p_modify_file file_node: {file_node}");
 
     let staged_db_manager = get_staged_db_manager(workspace_repo)?;
+    let mut was_staged = false;
     staged_db_manager.modify_staged_node(path, |staged| {
+        was_staged = staged.is_some();
         // The committed node knows nothing of workspace metadata edits. When
         // the staged node holds the same content with different metadata,
         // carry that metadata over so re-staging doesn't discard it.
@@ -1097,8 +1099,13 @@ fn p_modify_file(
         })
     })?;
 
-    let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
-    staged_db_manager.add_parent_directories(path, &seen_dirs)
+    // An already-staged node has its parents marked; re-marking them would
+    // clobber e.g. a directory staged for removal.
+    if !was_staged {
+        let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
+        staged_db_manager.add_parent_directories(path, &seen_dirs)?;
+    }
+    Ok(())
 }
 
 fn has_dir_node(

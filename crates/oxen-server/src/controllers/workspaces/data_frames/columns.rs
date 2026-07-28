@@ -288,8 +288,8 @@ pub async fn update(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     ),
     responses(
         (status = 200, description = "Column metadata updated", body = StatusMessage),
-        (status = 400, description = "Missing `column_name` in the request body"),
-        (status = 404, description = "Repository, workspace, data frame, or column not found")
+        (status = 400, description = "Invalid request body, missing `column_name`, or the column does not exist in the schema"),
+        (status = 404, description = "Repository, workspace, or data frame not found")
     )
 )]
 pub async fn add_column_metadata(

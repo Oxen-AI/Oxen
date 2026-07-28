@@ -188,12 +188,20 @@ impl FileNode {
 
     /// Recompute the metadata and combined hashes from the current metadata.
     /// The metadata is part of the node's identity, so call this after any
-    /// metadata change or the edit is invisible to reads.
+    /// metadata change or the edit is invisible to reads. Without metadata the
+    /// metadata hash clears and the combined hash is the content hash, matching
+    /// the add path's convention.
     pub fn recompute_metadata_hashes(&mut self) -> Result<(), OxenError> {
-        let metadata_hash = util::hasher::get_metadata_hash(&self.metadata())?;
         // UFCS: on `&mut self`, plain `self.hash()` resolves to `std::hash::Hash`.
-        let content_hash = FileNode::hash(self).to_u128();
-        let combined_hash = util::hasher::get_combined_hash(Some(metadata_hash), content_hash)?;
+        let content_hash = *FileNode::hash(self);
+        if self.metadata().is_none() {
+            self.set_metadata_hash(None);
+            self.set_combined_hash(&content_hash);
+            return Ok(());
+        }
+        let metadata_hash = util::hasher::get_metadata_hash(&self.metadata())?;
+        let combined_hash =
+            util::hasher::get_combined_hash(Some(metadata_hash), content_hash.to_u128())?;
         self.set_metadata_hash(Some(MerkleHash::new(metadata_hash)));
         self.set_combined_hash(&MerkleHash::new(combined_hash));
         Ok(())
