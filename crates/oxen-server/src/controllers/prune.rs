@@ -2,8 +2,9 @@ use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::{app_data, path_param};
 use actix_web::{HttpRequest, HttpResponse, web};
+use liboxen::core::repo_locks;
 use liboxen::repositories;
-use liboxen::view::http::{STATUS_ERROR, STATUS_SUCCESS};
+use liboxen::view::http::STATUS_SUCCESS;
 use liboxen::view::oxen_response::ErrorResponse;
 use serde::{Deserialize, Serialize};
 
@@ -50,51 +51,36 @@ pub async fn prune(
 
     log::info!("Prune requested for {namespace}/{repo_name} (dry_run: {dry_run})");
 
-    // Run the prune operation
-    match repositories::prune::prune(&repository, dry_run).await {
-        Ok(stats) => {
-            let status_message = if dry_run {
-                "Prune dry-run completed successfully. No files were deleted.".to_string()
-            } else {
-                "Prune completed successfully.".to_string()
-            };
+    // Prune deletes nodes and version files; hold the whole-repo exclusive lock so no write lands
+    // mid-prune. A dry run only reports what would be removed, so it needs no lock.
+    let stats = if dry_run {
+        repositories::prune::prune(&repository, true).await?
+    } else {
+        repo_locks::with_repo_exclusive(&repository, repositories::prune::prune(&repository, false))
+            .await?
+    };
 
-            let response = PruneResponse {
-                status: STATUS_SUCCESS.to_string(),
-                status_message,
-                status_description: None,
-                error: None,
-                stats: PruneStatsResponse {
-                    nodes_scanned: stats.nodes_scanned,
-                    nodes_kept: stats.nodes_kept,
-                    nodes_removed: stats.nodes_removed,
-                    versions_scanned: stats.versions_scanned,
-                    versions_kept: stats.versions_kept,
-                    versions_removed: stats.versions_removed,
-                    bytes_freed: stats.bytes_freed,
-                },
-            };
+    let status_message = if dry_run {
+        "Prune dry-run completed successfully. No files were deleted.".to_string()
+    } else {
+        "Prune completed successfully.".to_string()
+    };
 
-            Ok(HttpResponse::Ok().json(response))
-        }
-        Err(err) => {
-            log::error!("Prune failed: {err}");
-            let response = PruneResponse {
-                status: STATUS_ERROR.to_string(),
-                status_message: format!("Prune failed: {err}"),
-                status_description: None,
-                error: None,
-                stats: PruneStatsResponse {
-                    nodes_scanned: 0,
-                    nodes_kept: 0,
-                    nodes_removed: 0,
-                    versions_scanned: 0,
-                    versions_kept: 0,
-                    versions_removed: 0,
-                    bytes_freed: 0,
-                },
-            };
-            Ok(HttpResponse::InternalServerError().json(response))
-        }
-    }
+    let response = PruneResponse {
+        status: STATUS_SUCCESS.to_string(),
+        status_message,
+        status_description: None,
+        error: None,
+        stats: PruneStatsResponse {
+            nodes_scanned: stats.nodes_scanned,
+            nodes_kept: stats.nodes_kept,
+            nodes_removed: stats.nodes_removed,
+            versions_scanned: stats.versions_scanned,
+            versions_kept: stats.versions_kept,
+            versions_removed: stats.versions_removed,
+            bytes_freed: stats.bytes_freed,
+        },
+    };
+
+    Ok(HttpResponse::Ok().json(response))
 }

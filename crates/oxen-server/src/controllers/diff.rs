@@ -5,6 +5,7 @@ use crate::errors::OxenHttpError;
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use liboxen::core::df::tabular;
+use liboxen::core::repo_locks;
 use liboxen::core::v_latest::diff::get_dir_diff_entry_with_summary;
 use liboxen::error::OxenError;
 use liboxen::model::data_frame::DataFrameSchemaSize;
@@ -411,12 +412,13 @@ pub async fn create_df_diff(
     let name = path_param(&req, "repo_name")?.to_string();
 
     let repository = get_repo(app_data, namespace, name)?;
+    let _write = repo_locks::acquire_write(&repository)?;
 
     let data: Result<TabularCompareBody, serde_json::Error> = serde_json::from_str(&body);
     let data = match data {
         Ok(data) => data,
         Err(err) => {
-            log::error!("unable to parse tabular comparison data. Err: {err}\n{body}");
+            log::warn!("unable to parse tabular comparison data. Err: {err}\n{body}");
             return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
         }
     };
@@ -518,12 +520,13 @@ pub async fn update_df_diff(
     let name = path_param(&req, "repo_name")?.to_string();
     let compare_id = path_param(&req, "compare_id")?.to_string();
     let repository = get_repo(app_data, namespace, name)?;
+    let _write = repo_locks::acquire_write(&repository)?;
 
     let data: Result<TabularCompareBody, serde_json::Error> = serde_json::from_str(&body);
     let data = match data {
         Ok(data) => data,
         Err(err) => {
-            log::error!("unable to parse tabular comparison data. Err: {err}\n{body}");
+            log::warn!("unable to parse tabular comparison data. Err: {err}\n{body}");
             return Ok(HttpResponse::BadRequest().json(StatusMessage::error(err.to_string())));
         }
     };
@@ -708,6 +711,7 @@ pub async fn delete_df_diff(req: HttpRequest) -> Result<HttpResponse, OxenHttpEr
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let compare_id = path_param(&req, "compare_id")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
 
     repositories::diffs::delete_df_diff(&repo, &compare_id)?;
 
@@ -849,7 +853,7 @@ pub async fn get_derived_df(
             Ok(HttpResponse::Ok().json(response))
         }
         Err(OxenError::SQLParseError(sql)) => {
-            log::error!("Error parsing SQL: {sql}");
+            log::warn!("Error parsing SQL: {sql}");
             Err(OxenHttpError::SQLParseError(sql))
         }
         Err(e) => {

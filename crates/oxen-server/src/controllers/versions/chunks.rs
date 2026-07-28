@@ -6,8 +6,8 @@ use crate::params::{app_data, path_param};
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use futures_util::stream::StreamExt as _;
-use liboxen::constants::stream_segment_size;
 use liboxen::core;
+use liboxen::core::repo_locks;
 use liboxen::repositories;
 use liboxen::view::StatusMessage;
 use liboxen::view::versions::CompleteVersionUploadRequest;
@@ -32,6 +32,7 @@ pub async fn upload(
     let offset = query.offset.unwrap_or(0);
 
     let repo = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
 
     log::debug!(
         "/upload version {} chunk offset{} to repo: {:?}",
@@ -62,6 +63,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let version_id = path_param(&req, "version_id")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
 
     log::debug!("/complete version chunk upload to repo: {:?}", repo.path);
 
@@ -126,42 +128,6 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
     }
 
     Ok(HttpResponse::BadRequest().json(StatusMessage::error("Invalid request body")))
-}
-
-// TODO: Add content-type and oxen-revision-id in the response header
-// Currently, this endpoint is not used anywhere.
-pub async fn download(
-    req: HttpRequest,
-    query: web::Query<ChunkQuery>,
-) -> Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let repo_name = path_param(&req, "repo_name")?.to_string();
-    let version_id = path_param(&req, "version_id")?.to_string();
-    let repo = get_repo(app_data, namespace, repo_name)?;
-
-    let offset = query.offset.unwrap_or(0);
-    let size = query.size.unwrap_or_else(stream_segment_size);
-
-    log::debug!(
-        "download_chunk for repo: {:?}, file_hash: {}, offset: {}, size: {}",
-        repo.path,
-        version_id,
-        offset,
-        size
-    );
-
-    let version_store = repo.version_store();
-
-    let chunk_data = version_store
-        .get_version_chunk(&version_id, offset, size)
-        .await?;
-    Ok(HttpResponse::Ok()
-        .insert_header((
-            actix_web::http::header::CONTENT_LENGTH,
-            chunk_data.len().to_string(),
-        ))
-        .body(chunk_data))
 }
 
 pub async fn create(_req: HttpRequest, _body: String) -> Result<HttpResponse, OxenHttpError> {

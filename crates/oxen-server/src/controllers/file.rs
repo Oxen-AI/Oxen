@@ -8,6 +8,7 @@ use actix_multipart::{Field, MultipartError};
 use actix_web::{HttpRequest, HttpResponse, web};
 use futures_util::TryStreamExt as _;
 use futures_util::future::LocalBoxFuture;
+use liboxen::core::repo_locks;
 use liboxen::core::staged::get_staged_db_manager;
 use liboxen::error::OxenError;
 use liboxen::model::Commit;
@@ -138,6 +139,9 @@ pub async fn get(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, &namespace, &repo_name)?;
+    // This GET writes a resized/thumbnail derived blob on a cache miss (tech-debt ENG-1373); guard
+    // the whole handler so a stop-the-world op (migration/prune/fsck) blocks it.
+    let _write = repo_locks::acquire_write(&repo)?;
     let version_store = repo.version_store();
     let resource = parse_resource(&req, &repo)?;
     let workspace = resource.workspace.as_ref();
@@ -265,6 +269,7 @@ pub async fn put(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, &namespace, &repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
 
     // If there's no head commit, handle initial upload
     if repositories::commits::head_commit_maybe(&repo)?.is_none() {
@@ -377,6 +382,7 @@ pub async fn delete(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, &namespace, &repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
 
     // Parse the resource (branch/commit/path)
     let resource = parse_resource(&req, &repo)?;
@@ -468,6 +474,7 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, &namespace, &repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
 
     // Parse the resource (branch/commit/path)
     let resource = parse_resource(&req, &repo)?;

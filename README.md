@@ -184,10 +184,10 @@ brew install cmake
 
 The [Python interface](./oxen-python/README.md) uses [`liboxen`](./crates/liboxen/) bindings provided by PyO3.
 
-The `oxen-python` codebase requires installing [`uv`](https://docs.astral.sh/uv/getting-started/installation/):
+The `oxen-python` codebase requires installing [`uv`](https://docs.astral.sh/uv/getting-started/installation/). Use the version pinned in `tool-versions.env`:
 
 ```bash
-curl --LsSf https://astral.sh/uv/install.sh | sh
+source ./tool-versions.env && curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh
 ```
 
 If you use [`mise`](https://mise.jdx.dev/) to manage your Python installs, you may run into an error where the oxen-py crate can't find the Python dynamic library to link with, e.g., `dyld[31558]: Library not loaded: @rpath/libpython3.13.dylib`

@@ -4,6 +4,7 @@ use crate::params::{app_data, parse_base_head, path_param, resolve_base_head_bra
 
 use actix_web::{HttpRequest, HttpResponse};
 
+use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
 use liboxen::model::User;
 use liboxen::repositories;
@@ -122,6 +123,7 @@ pub async fn merge(
 
     // Get the repository or return error
     let repo = get_repo(app_data, namespace, name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
 
     // Parse the base and head from the base..head string
     let (base, head) = parse_base_head(&base_head)?;

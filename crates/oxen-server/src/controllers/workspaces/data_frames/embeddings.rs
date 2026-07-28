@@ -5,6 +5,7 @@ use crate::helpers::get_repo;
 use crate::params::{app_data, path_param};
 
 use actix_web::{HttpRequest, HttpResponse, web::Bytes};
+use liboxen::core::repo_locks;
 use liboxen::model::Schema;
 use liboxen::opts::{DFOpts, PaginateOpts};
 use liboxen::repositories;
@@ -97,7 +98,7 @@ pub async fn neighbors(req: HttpRequest, body: String) -> Result<HttpResponse, O
     let Some(mut df_schema) =
         repositories::data_frames::schemas::get_by_path(&repo, &workspace.commit, file_path)?
     else {
-        log::error!("Failed to get schema for data frame {file_path:?}");
+        log::warn!("Failed to get schema for data frame {file_path:?}");
         return Err(OxenHttpError::NotFound);
     };
 
@@ -149,6 +150,7 @@ pub async fn post(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, OxenHt
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
 
     let repo = get_repo(app_data, namespace, repo_name)?;
+    let _write = repo_locks::acquire_write(&repo)?;
     let file_path = Path::new(path_param(&req, "path")?);
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {

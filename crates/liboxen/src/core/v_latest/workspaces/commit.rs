@@ -9,6 +9,7 @@ use crate::constants::STAGED_DIR;
 use crate::core;
 use crate::core::refs::with_ref_manager;
 use crate::core::staged::remove_from_cache;
+use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_latest::workspaces;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::file_node::FileNodeOpts;
@@ -225,8 +226,14 @@ fn list_conflicts(
     }
 
     // A staged file conflicts when it also changed on the target branch since the workspace's base
-    // commit. Resolve each staged file by a targeted path lookup in both commits rather than
-    // materializing either whole Merkle tree, so peak memory stays flat regardless of repo size.
+    // commit. Look each staged file up in both commits with a strict, non-recursive `read_file`: it
+    // reports a genuinely absent path as `None` but propagates read failures rather than masking
+    // them as a skipped check. Loading each commit's dir hashes once and reading only the staged
+    // files keeps peak memory flat — neither whole Merkle tree is materialized.
+    let branch_dir_hashes = CommitMerkleTree::dir_hashes(&workspace.base_repo, &branch_commit)?;
+    let workspace_dir_hashes =
+        CommitMerkleTree::dir_hashes(&workspace.base_repo, workspace_commit)?;
+
     let mut conflicts = vec![];
     for (path, entries) in dir_entries {
         for entry in entries {
@@ -238,18 +245,15 @@ fn list_conflicts(
             log::debug!("checking if workspace is behind: {path:?} -> {entry}");
             let file_path = entry.node.maybe_path()?;
             log::debug!("checking if branch tree has file: {file_path:?}");
-            let Some(branch_node) = repositories::tree::get_node_by_path(
-                &workspace.base_repo,
-                &branch_commit,
-                &file_path,
-            )?
+            let Some(branch_node) =
+                CommitMerkleTree::read_file(&workspace.base_repo, &branch_dir_hashes, &file_path)?
             else {
                 log::debug!("branch node not found: {file_path:?}");
                 continue;
             };
-            let Some(workspace_node) = repositories::tree::get_node_by_path(
+            let Some(workspace_node) = CommitMerkleTree::read_file(
                 &workspace.base_repo,
-                workspace_commit,
+                &workspace_dir_hashes,
                 &file_path,
             )?
             else {
@@ -295,10 +299,40 @@ async fn export_tabular_data_frames(
                         node_path = dir_path.join(node_path);
                     }
 
-                    // Only recompute the metadata if the file is tabular and indexed (editable df and eval)
-                    if *file_node.data_type() == EntryDataType::Tabular
-                        && repositories::workspaces::data_frames::is_indexed(workspace, &node_path)?
+                    // Recompute the metadata for tabular data frames that carry
+                    // a staged DuckDB index (editable df and eval).
+                    let is_tabular = *file_node.data_type() == EntryDataType::Tabular;
+                    let mut should_export = is_tabular
+                        && repositories::workspaces::data_frames::is_indexed(
+                            workspace, &node_path,
+                        )?;
+
+                    // A staged table that exists but fails the indexed gate was
+                    // written by an older version of oxen (or left by an
+                    // interrupted index). Rather than committing the base file
+                    // and silently dropping the staged edits, recover the table
+                    // from its own rows — preserving the staged edits and
+                    // honoring the old tombstone deletes — then export it like
+                    // any indexed table. reindex_preserving_rows only errors
+                    // (WorkspaceStaleStagedIndex) when there is no user data to
+                    // recover.
+                    if is_tabular
+                        && !should_export
+                        && repositories::workspaces::data_frames::has_staged_table(
+                            workspace, &node_path,
+                        )?
                     {
+                        log::warn!(
+                            "workspace commit recovering stale staged data frame {node_path:?} before export"
+                        );
+                        repositories::workspaces::data_frames::reindex_preserving_rows(
+                            workspace, &node_path,
+                        )
+                        .await?;
+                        should_export = true;
+                    }
+
+                    if should_export {
                         log::debug!(
                             "Exporting tabular data frame: {:?} -> {:?}",
                             node_path,
@@ -356,28 +390,6 @@ async fn export_tabular_data_frames(
                             .or_default()
                             .push(new_staged_merkle_tree_node);
                     } else {
-                        // A staged table that exists but fails the indexed
-                        // gate was written by an older version and may hold
-                        // edits this code cannot export. The staged entry is
-                        // the BASE file node, so committing it would silently
-                        // discard those edits — fail instead so the user can
-                        // re-index (dropping the stale edits explicitly) or
-                        // unstage.
-                        if *file_node.data_type() == EntryDataType::Tabular
-                            && repositories::workspaces::data_frames::has_staged_table(
-                                workspace, &node_path,
-                            )?
-                        {
-                            return Err(OxenError::WorkspaceStaleStagedIndex(
-                                format!(
-                                    "Cannot commit workspace: the staged data frame {node_path:?} \
-                                     was indexed by an older version of oxen. Re-index the data \
-                                     frame (discarding its staged edits) or unstage it, then \
-                                     commit again."
-                                )
-                                .into(),
-                            ));
-                        }
                         new_dir_entries
                             .entry(dir_path.to_path_buf())
                             .or_default()

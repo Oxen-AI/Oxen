@@ -22,6 +22,7 @@ use crate::opts::{CountLinesOpts, DFOpts, PaginateOpts};
 use crate::repositories;
 use crate::storage::{VersionLocation, VersionStore};
 use crate::util::fs;
+use crate::util::fs::AtomicFile;
 use crate::util::hasher;
 use std::sync::Arc;
 
@@ -1499,23 +1500,25 @@ pub fn write_df_json<P: AsRef<Path>>(df: &mut DataFrame, output: P) -> Result<()
     let output = output.as_ref();
     log::debug!("Writing file {output:?}");
     log::debug!("{df:?}");
-    let f = std::fs::File::create(output).unwrap();
-    JsonWriter::new(f)
-        .with_json_format(JsonFormat::Json)
-        .finish(df)
-        .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
-    Ok(())
+    AtomicFile::new(output).write_with(|w| {
+        JsonWriter::new(w)
+            .with_json_format(JsonFormat::Json)
+            .finish(df)
+            .map_err(|e| OxenError::internal_error(format!("{e:?}")))?;
+        Ok(())
+    })
 }
 
 pub fn write_df_jsonl<P: AsRef<Path>>(df: &mut DataFrame, output: P) -> Result<(), OxenError> {
     let output = output.as_ref();
     log::debug!("Writing file {output:?}");
-    let f = std::fs::File::create(output).unwrap();
-    JsonWriter::new(f)
-        .with_json_format(JsonFormat::JsonLines)
-        .finish(df)
-        .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
-    Ok(())
+    AtomicFile::new(output).write_with(|w| {
+        JsonWriter::new(w)
+            .with_json_format(JsonFormat::JsonLines)
+            .finish(df)
+            .map_err(|e| OxenError::internal_error(format!("{e:?}")))?;
+        Ok(())
+    })
 }
 
 pub fn write_df_csv<P: AsRef<Path>>(
@@ -1525,40 +1528,36 @@ pub fn write_df_csv<P: AsRef<Path>>(
 ) -> Result<(), OxenError> {
     let output = output.as_ref();
     log::debug!("Writing file {output:?}");
-    let f = std::fs::File::create(output).unwrap();
-    CsvWriter::new(f)
-        .include_header(true)
-        .with_separator(delimiter)
-        .finish(df)
-        .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
-    Ok(())
+    AtomicFile::new(output).write_with(|w| {
+        CsvWriter::new(w)
+            .include_header(true)
+            .with_separator(delimiter)
+            .finish(df)
+            .map_err(|e| OxenError::internal_error(format!("{e:?}")))?;
+        Ok(())
+    })
 }
 
 pub fn write_df_parquet<P: AsRef<Path>>(df: &mut DataFrame, output: P) -> Result<(), OxenError> {
     let output = output.as_ref();
     log::debug!("Writing file {output:?}");
-    match std::fs::File::create(output) {
-        Ok(f) => {
-            ParquetWriter::new(f)
-                .finish(df)
-                .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
-            Ok(())
-        }
-        Err(err) => {
-            let error_str = format!("Could not create file {err:?}");
-            Err(OxenError::basic_str(error_str))
-        }
-    }
+    AtomicFile::new(output).write_with(|w| {
+        ParquetWriter::new(w)
+            .finish(df)
+            .map_err(|e| OxenError::internal_error(format!("{e:?}")))?;
+        Ok(())
+    })
 }
 
 pub fn write_df_arrow<P: AsRef<Path>>(df: &mut DataFrame, output: P) -> Result<(), OxenError> {
     let output = output.as_ref();
     log::debug!("Writing file {output:?}");
-    let f = std::fs::File::create(output).unwrap();
-    IpcWriter::new(f)
-        .finish(df)
-        .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
-    Ok(())
+    AtomicFile::new(output).write_with(|w| {
+        IpcWriter::new(w)
+            .finish(df)
+            .map_err(|e| OxenError::internal_error(format!("{e:?}")))?;
+        Ok(())
+    })
 }
 
 pub fn write_df(df: &mut DataFrame, path: impl AsRef<Path>) -> Result<(), OxenError> {
@@ -2374,5 +2373,41 @@ mod tests {
         assert_eq!(df.height(), base_height * 2);
         assert_eq!(df.width(), base_df.width());
         Ok(())
+    }
+
+    /// Overwriting a data frame publishes a fresh inode instead of truncating the existing one.
+    /// Readers hold these files memory-mapped (`scan_parquet`, `IpcReader`), and a mapping whose
+    /// inode is truncated underneath it faults with SIGBUS on the next page touch — so every
+    /// `write_df_*` has to rename over its target rather than reopen it with `O_TRUNC`.
+    #[cfg(unix)]
+    #[test]
+    fn test_write_df_publishes_a_new_inode() -> Result<(), OxenError> {
+        use std::os::unix::fs::MetadataExt;
+
+        test::run_empty_dir_test(|dir| {
+            let mut df =
+                df!("a" => [1i64, 2, 3], "b" => ["x", "y", "z"]).expect("df! should build a frame");
+
+            for extension in ["parquet", "arrow", "csv", "tsv", "jsonl", "ndjson", "json"] {
+                let path = dir.join(format!("cache.{extension}"));
+                tabular::write_df(&mut df, &path)?;
+                let first = std::fs::metadata(&path)?.ino();
+
+                tabular::write_df(&mut df, &path)?;
+                let second = std::fs::metadata(&path)?.ino();
+
+                assert_ne!(
+                    first, second,
+                    "overwriting cache.{extension} reused the inode instead of renaming over it",
+                );
+
+                let strays: Vec<_> = std::fs::read_dir(dir)?
+                    .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().to_string()))
+                    .filter(|name| name.contains(".oxentmp."))
+                    .collect();
+                assert!(strays.is_empty(), "leftover scratch files: {strays:?}");
+            }
+            Ok(())
+        })
     }
 }

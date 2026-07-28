@@ -1,12 +1,19 @@
 use duckdb::Connection;
 
-use crate::constants::{EXCLUDE_OXEN_COLS, OXEN_ROW_ID_COL, TABLE_NAME};
+use crate::constants::{
+    EVAL_DURATION_COL, EVAL_ERROR_COL, EVAL_STATUS_COL, EXCLUDE_OXEN_COLS, OXEN_ID_COL,
+    OXEN_ROW_ID_COL, TABLE_NAME,
+};
 use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::df_db;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
 use crate::core::staged::get_staged_db_manager;
 use crate::core::v_latest::workspaces::files::{add, track_modified_data_frame};
+use crate::repositories::workspaces::data_frames::duckdb_path_in_dir;
+use crate::repositories::workspaces::{
+    list_dirs as list_workspace_dirs, read_config as read_workspace_config,
+};
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -142,14 +149,57 @@ pub fn is_queryable_data_frame_indexed_from_file_node(
     file_node: &FileNode,
     path: &Path,
 ) -> Result<bool, OxenError> {
-    match get_queryable_data_frame_workspace_from_file_node(repo, file_node.last_commit_id(), path)
-    {
-        Ok(_workspace) => Ok(true),
-        Err(e) => match e {
-            OxenError::QueryableWorkspaceNotFound => Ok(false),
-            _ => Err(e),
-        },
+    let dir = find_queryable_workspace_dir(repo, file_node.last_commit_id(), path)?;
+    Ok(dir.is_some())
+}
+
+/// Directory of the non-editable workspace holding a fully-indexed queryable table for `path` at
+/// `commit_id`, or `None` when no workspace holds one. Costs one config read per workspace in the
+/// repo, and loads no workspace.
+fn find_queryable_workspace_dir(
+    repo: &LocalRepository,
+    commit_id: &MerkleHash,
+    path: &Path,
+) -> Result<Option<PathBuf>, OxenError> {
+    log::debug!("Looking for workspace with commit id {commit_id:?}");
+
+    for workspace_dir in list_workspace_dirs(repo)? {
+        let Some(config) = read_workspace_config(&workspace_dir)? else {
+            // A workspace dir with no config is one being created or torn down.
+            log::debug!("No workspace config in {workspace_dir:?}, skipping");
+            continue;
+        };
+        // Matching on parsed hashes, not strings: an unparseable id names no commit at all.
+        let Ok(workspace_commit_id) = config.workspace_commit_id.parse::<MerkleHash>() else {
+            log::warn!(
+                "Workspace {workspace_dir:?} is pinned to an unreadable commit id {:?}, skipping",
+                config.workspace_commit_id
+            );
+            continue;
+        };
+        if config.is_editable || workspace_commit_id != *commit_id {
+            continue;
+        }
+
+        let db_path = duckdb_path_in_dir(&workspace_dir, path);
+        if !db_path.exists() {
+            continue;
+        }
+
+        // Only treat this as the queryable workspace if its DuckDB table is
+        // fully indexed (all OXEN_COLS present). A missing file, or a partial
+        // table left by an interrupted index, is treated as not indexed so the
+        // caller rebuilds rather than serving a table the read path can't bind.
+        match with_df_db_manager(&db_path, |manager| {
+            manager.with_conn(|conn| Ok(df_db::table_is_fully_indexed(conn, TABLE_NAME)?))
+        }) {
+            Ok(true) => return Ok(Some(workspace_dir)),
+            Ok(false) => {}
+            Err(e) => log::warn!("Failed to check index completeness for {db_path:?}: {e}"),
+        }
     }
+
+    Ok(None)
 }
 
 pub fn get_queryable_data_frame_workspace_from_file_node(
@@ -157,42 +207,12 @@ pub fn get_queryable_data_frame_workspace_from_file_node(
     commit_id: &MerkleHash,
     path: &Path,
 ) -> Result<Workspace, OxenError> {
-    let workspaces = repositories::workspaces::list(repo)?;
-    log::debug!("Looking for workspace with commit id {commit_id:?}");
+    let Some(workspace_dir) = find_queryable_workspace_dir(repo, commit_id, path)? else {
+        return Err(OxenError::QueryableWorkspaceNotFound);
+    };
 
-    for workspace in workspaces {
-        // log::debug!("is workspace editable: {:?}", workspace.is_editable);
-        // log::debug!("workspace commit id: {:?}", workspace.commit.id);
-        // Ensure the workspace is not editable and matches the commit ID of the resource
-        if !workspace.is_editable && workspace.commit.id == commit_id.to_string() {
-            // Construct the path to the DuckDB resource within the workspace
-            let workspace_file_db_path =
-                repositories::workspaces::data_frames::duckdb_path(&workspace, path);
-
-            // Only treat this as the queryable workspace if its DuckDB table is
-            // fully indexed (all OXEN_COLS present). A missing file, or a partial
-            // table left by an interrupted index, is treated as not indexed so the
-            // caller rebuilds rather than serving a table the read path can't bind.
-            if workspace_file_db_path.exists() {
-                let fully_indexed = match with_df_db_manager(&workspace_file_db_path, |manager| {
-                    manager.with_conn(|conn| Ok(df_db::table_is_fully_indexed(conn, TABLE_NAME)?))
-                }) {
-                    Ok(fully_indexed) => fully_indexed,
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to check index completeness for {workspace_file_db_path:?}: {e}"
-                        );
-                        false
-                    }
-                };
-                if fully_indexed {
-                    return Ok(workspace);
-                }
-            }
-        }
-    }
-
-    Err(OxenError::QueryableWorkspaceNotFound)
+    repositories::workspaces::get_by_dir(repo, &workspace_dir)?
+        .ok_or(OxenError::QueryableWorkspaceNotFound)
 }
 
 pub fn get_queryable_data_frame_workspace(
@@ -324,6 +344,174 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     .await??;
 
     log::debug!("core::v_latest::index::workspaces::data_frames::index({path:?}) finished!");
+
+    Ok(())
+}
+
+/// Legacy per-row tracking columns older versions of oxen wrote into the staged
+/// table and the current staged format dropped. Frozen here as literals rather
+/// than references to the diff-feature's live constants: they name columns that
+/// exist only in tables already written to disk, so their spelling must not
+/// change even if a same-named live constant is later renamed or removed —
+/// `_oxen_diff_hash` already lost its constant entirely.
+const LEGACY_DIFF_STATUS_COL: &str = "_oxen_diff_status";
+const LEGACY_DIFF_HASH_COL: &str = "_oxen_diff_hash";
+
+/// Every column name Oxen has written internally to a staged DuckDB table, past
+/// or present. When recovering a table left by an older version (or an
+/// interrupted current index), a column matching one of these is Oxen-internal
+/// and is dropped — never treated as user data — while rebuilding. Superset of
+/// [`EXCLUDE_OXEN_COLS`], which lists only what the current indexer emits.
+///
+/// Columns the current format still writes reference their live constants, so
+/// this list follows whatever today's indexer emits. Columns only older versions
+/// wrote are frozen literals ([`LEGACY_DIFF_STATUS_COL`]/[`LEGACY_DIFF_HASH_COL`]):
+/// they must keep their exact on-disk spelling regardless of what any current
+/// constant is later renamed to. Treat the list as append-only — add names,
+/// never repurpose one.
+///
+/// Matching is exact — a not-fully-indexed table was written by an indexer that
+/// reserved all of these names, so a column named like one of them is never user
+/// data in this context.
+const LEGACY_AND_CURRENT_INTERNAL_COLS: [&str; 7] = [
+    // Current staged-table columns (see index_file_with_id).
+    OXEN_ID_COL,
+    OXEN_ROW_ID_COL,
+    // Auxiliary columns the eval flow may add.
+    EVAL_STATUS_COL,
+    EVAL_ERROR_COL,
+    EVAL_DURATION_COL,
+    // Present only in tables older versions wrote.
+    LEGACY_DIFF_STATUS_COL,
+    LEGACY_DIFF_HASH_COL,
+];
+
+/// Rebuild a staged DuckDB table left by an older version of oxen (or an
+/// interrupted index) from its OWN current rows, preserving the staged edits —
+/// unlike [`index`], which rebuilds from the committed base version file and so
+/// discards anything staged but not yet committed.
+///
+/// Older versions tracked edits with extra internal columns and soft-deleted
+/// rows by tombstoning them (`_oxen_diff_status = 'removed'`) instead of removing
+/// them. This drops every historical internal column and omits tombstoned rows,
+/// so the rebuilt table holds exactly the data the staged edits intended —
+/// appended and modified rows kept, deleted rows gone — re-keyed in the current
+/// index format (fresh `_oxen_id`/`_oxen_row_id` and the index marker).
+///
+/// Call only for a table that exists but fails
+/// [`is_indexed`](crate::repositories::workspaces::data_frames::is_indexed);
+/// afterward it passes that gate and exports/commits like any freshly indexed
+/// table. Returns [`OxenError::WorkspaceStaleStagedIndex`] when the table has no
+/// user columns to recover.
+pub async fn reindex_preserving_rows(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
+    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
+    let extension = util::fs::extension_from_path(path);
+
+    let Some(parent) = db_path.parent().map(Path::to_path_buf) else {
+        return Err(OxenError::basic_str(format!(
+            "Failed to get parent directory for {db_path:?}"
+        )));
+    };
+
+    // Export to a sibling temp file, then re-index it through the current
+    // indexer. The intermediate carries the data frame's own extension so the
+    // rebuilt table matches what committing and then re-indexing would produce.
+    let recover_path = parent.join(format!(".oxen-recover.{}.{extension}", std::process::id()));
+    if !is_valid_export_extension(&recover_path) {
+        return Err(OxenError::WorkspaceStaleStagedIndex(
+            format!("Cannot recover staged data frame {path:?}: unsupported format {extension:?}.")
+                .into(),
+        ));
+    }
+
+    let recovered = tokio::task::spawn_blocking(move || -> Result<bool, OxenError> {
+        let outcome = with_df_db_manager(&db_path, |manager| {
+            manager.with_conn(|conn| -> Result<bool, DataFrameError> {
+                let schema = df_db::get_schema(conn, TABLE_NAME)?;
+                let has_col = |name: &str| schema.fields.iter().any(|f| f.name == name);
+                let has_user_col = schema
+                    .fields
+                    .iter()
+                    .any(|f| !LEGACY_AND_CURRENT_INTERNAL_COLS.contains(&f.name.as_str()));
+                if !has_user_col {
+                    // Nothing but internal columns — no user data to preserve.
+                    return Ok(false);
+                }
+
+                let projection = build_export_projection_excluding(
+                    conn,
+                    TABLE_NAME,
+                    &LEGACY_AND_CURRENT_INTERNAL_COLS,
+                )?;
+
+                // Keep row order: prefer the persisted ordering column, falling
+                // back to DuckDB's physical rowid (insertion order) for older
+                // tables that predate it.
+                let order_by = if has_col(OXEN_ROW_ID_COL) {
+                    format!("ORDER BY {OXEN_ROW_ID_COL}")
+                } else {
+                    "ORDER BY rowid".to_string()
+                };
+
+                // Honor the old soft-delete semantics: a row tombstoned as
+                // 'removed' is a pending deletion and must not be resurrected.
+                let where_clause = if has_col(LEGACY_DIFF_STATUS_COL) {
+                    format!("WHERE \"{LEGACY_DIFF_STATUS_COL}\" IS DISTINCT FROM 'removed'")
+                } else {
+                    String::new()
+                };
+
+                // Quote the table name as an identifier so it binds as a table
+                // reference rather than relying on DuckDB's string-literal
+                // replacement-scan fallback.
+                let select = format!(
+                    "SELECT {projection} FROM {} {where_clause} {order_by}",
+                    df_db::quote_ident(TABLE_NAME)
+                );
+                let copy = wrap_sql_for_export(&select, &recover_path);
+                conn.execute(&copy, [])?;
+
+                // Rebuild inside a transaction: drop the stale table, then index
+                // the exported rows in the current format. On failure roll back
+                // so the original stale table is left intact.
+                conn.execute_batch("BEGIN TRANSACTION")?;
+                let build = (|| -> Result<(), DataFrameError> {
+                    df_db::drop_table(conn, TABLE_NAME)?;
+                    df_db::index_file_with_id(&recover_path, conn, &extension)?;
+                    Ok(())
+                })();
+                match build {
+                    Ok(()) => {
+                        conn.execute_batch("COMMIT")?;
+                        if let Err(e) = conn.execute_batch("CHECKPOINT") {
+                            log::warn!(
+                                "reindex_preserving_rows: CHECKPOINT failed for {db_path:?}: {e}"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        let _ = conn.execute_batch("ROLLBACK");
+                        return Err(e);
+                    }
+                }
+                Ok(true)
+            })
+        });
+        // Clean up the intermediate export regardless of the rebuild's result.
+        let _ = std::fs::remove_file(&recover_path);
+        Ok(outcome?)
+    })
+    .await??;
+
+    if !recovered {
+        return Err(OxenError::WorkspaceStaleStagedIndex(
+            format!(
+                "Cannot recover staged data frame {path:?}: the staged table has no user \
+                 columns. Re-index the data frame or unstage it, then commit again."
+            )
+            .into(),
+        ));
+    }
 
     Ok(())
 }
@@ -584,6 +772,20 @@ pub fn wrap_sql_for_export(sql: &str, path: &Path) -> String {
 /// Columns are emitted in `ordinal_position` order so the exported schema matches
 /// the table.
 fn build_export_projection(conn: &Connection, table_name: &str) -> Result<String, duckdb::Error> {
+    build_export_projection_excluding(conn, table_name, &EXCLUDE_OXEN_COLS)
+}
+
+/// As [`build_export_projection`], but omits exactly the columns in `exclude`
+/// rather than the current [`EXCLUDE_OXEN_COLS`]. Recovering a table left by an
+/// older version passes the full historical internal-column set
+/// ([`LEGACY_AND_CURRENT_INTERNAL_COLS`]) so legacy tracking columns
+/// (`_oxen_diff_status`, `_oxen_diff_hash`) don't leak into the export as user
+/// data.
+fn build_export_projection_excluding(
+    conn: &Connection,
+    table_name: &str,
+    exclude: &[&str],
+) -> Result<String, duckdb::Error> {
     let cols_query = format!(
         "SELECT column_name, data_type FROM information_schema.columns \
          WHERE table_name = '{table_name}' ORDER BY ordinal_position"
@@ -600,7 +802,7 @@ fn build_export_projection(conn: &Connection, table_name: &str) -> Result<String
 
     let projection: Vec<String> = cols
         .into_iter()
-        .filter(|(name, _)| !EXCLUDE_OXEN_COLS.contains(&name.as_str()))
+        .filter(|(name, _)| !exclude.contains(&name.as_str()))
         .map(|(name, data_type)| {
             if data_type == "JSON" || data_type == "JSON[]" {
                 json_tolerant_export_expr(&name)
