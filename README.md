@@ -31,7 +31,7 @@
 
 Oxen is a lightning fast data version control system for large datasets. We aim to make versioning data as easy as versioning code.
 
-The interface mirrors git, but shines in many areas that git or git-lfs fall short. Oxen is built from the ground up for any data type, and is optimized to handle repositories with millions of files and scales to terrabytes of data.
+The interface mirrors git, but shines in many areas that git or git-lfs fall short. Oxen is built from the ground up for any data type, and is optimized to handle repositories with millions of files and scales to terabytes of data.
 
 ```bash
 oxen init
@@ -69,7 +69,7 @@ Oxen is built around ergonomics, ease of use, and it is easy to learn. If you kn
 * 🧠 Easy to learn (same commands as git)
 * 💪 Handles large files (images, videos, audio, text, parquet, json, model weights, csv, etc)
 * 🗄️ Index lots of files (millions of images? no problem)
-* 📊 Native tabular data handling (index and query csv, parquet, csv, jsonl files)
+* 📊 Native tabular data handling (index and query csv, parquet, jsonl files)
 * 📈 Tracks changes over time (never worry about losing the state of your data)
 * 🤝 Collaborate with your team (sync to an oxen-server)
 * 🌎 [Workspaces](https://docs.oxen.ai/examples/data/workspaces) to interact with the data on the centralized server
@@ -110,8 +110,6 @@ pip install oxenai
 ### ⬇️ Clone Dataset
 
 Clone your first Oxen repository from the [OxenHub](https://oxen.ai/explore).
-
-<CodeGroup>
 
 ```bash
 oxen clone https://hub.oxen.ai/ox/CatDogBBox
@@ -290,7 +288,7 @@ See [FmtSpan Events](crates/oxen-server/README.md#fmtspan-events) for details.
 
 ## Why build Oxen?
 
-Oxen was build by a team of machine learning engineers, who have spent countless hours in their careers managing datasets. We have used many different tools, but none of them were as easy to use and as ergonomic as we would like.
+Oxen was built by a team of machine learning engineers, who have spent countless hours in their careers managing datasets. We have used many different tools, but none of them were as easy to use and as ergonomic as we would like.
 
 If you have ever tried [git lfs](https://git-lfs.com/) to version large datasets and became frustrated, we feel your pain. Solutions like git-lfs are too slow when it comes to the scale of data we need for machine learning.
 
@@ -303,6 +301,10 @@ We built Oxen to be the tool we wish we had.
 ## Why the name Oxen?
 
 "Oxen" 🐂 comes from the fact that the tooling will plow, maintain, and version your data like a good farmer tends to their fields 🌾. Let Oxen take care of the grunt work of your infrastructure so you can focus on the higher-level problems that matter to your product.
+
+## License
+
+Oxen is licensed under the [Apache License 2.0](./LICENSE).
 
 <!---------------------------------------------------------------------------->
 

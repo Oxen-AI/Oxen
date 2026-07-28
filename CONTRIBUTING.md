@@ -66,6 +66,74 @@ A lot of this is a judgment call on our end. If you are unsure whether your cont
 2. **Check open issues** to avoid duplicating work in progress.
 3. **Keep the PR small and focused.** Target 500 lines of changes or less. If the work is naturally larger, propose a split in the issue before starting.
 
+## Development Setup
+
+### Prerequisites
+
+#### Automatic Install
+
+Use [`bin/install-prereqs`](./bin/install-prereqs) to automatically install the required development tools and toolchains for Rust and Python:
+
+```bash
+bin/install-prereqs
+```
+
+It supports macOS and Debian-based Linux distributions. If you have a different OS or distribution, or the install script errors, follow the manual steps below.
+
+#### Manual Installation
+
+Oxen is written in Rust 🦀. Install the toolchain with [`rustup`](https://www.rust-lang.org/tools/install):
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Once you have Rust, install these developer tools:
+- [`bacon`](https://crates.io/crates/bacon): run the server with reload-on-changes
+- [`cargo-machete`](https://github.com/bnjbvr/cargo-machete): identify and remove unused dependencies
+- [`cargo-llvm-cov`](https://crates.io/crates/cargo-llvm-cov): calculate test code coverage
+- [`cargo-sort`](https://crates.io/crates/cargo-sort): ensure `Cargo.toml` files are organized
+
+```bash
+cargo install bacon cargo-machete cargo-llvm-cov cargo-sort
+```
+
+Make sure [`cmake`](https://cmake.org/download/) is installed (`brew install cmake` on macOS).
+
+The [Python interface](./oxen-python/README.md) uses [`liboxen`](./crates/liboxen/) bindings via PyO3, and requires [`uv`](https://docs.astral.sh/uv/getting-started/installation/):
+
+```bash
+curl --LsSf https://astral.sh/uv/install.sh | sh
+```
+
+If you use [`mise`](https://mise.jdx.dev/) to manage Python installs, you may hit an error where the `oxen-py` crate can't find the Python dynamic library (e.g. `dyld[31558]: Library not loaded: @rpath/libpython3.13.dylib`). Fix it by adding this to `~/.config/mise/config.toml`:
+
+```toml
+[env]
+DYLD_LIBRARY_PATH = "{{ exec(command='mise where python') }}/lib"
+```
+
+Per-codebase build instructions live in [`crates/liboxen/README.md`](./crates/liboxen/README.md#-build--run) and [`oxen-python/README.md`](./oxen-python/README.md#build).
+
+### Pre-Commit Hooks
+
+We use [pre-commit-hooks](https://pre-commit.com/) to check for commit consistency.
+
+```bash
+uv tool install pre-commit
+pre-commit install
+```
+
+### Production Release Build
+
+For deployment, build with the `production` feature flag and `--release`:
+
+```bash
+cargo build --workspace --release --features production
+```
+
+This enables OpenTelemetry tracing (`otel`), FFmpeg thumbnails (`ffmpeg`), and performance logging (`perf-logging`) — see [`crates/oxen-server/README.md`](./crates/oxen-server/README.md) for runtime configuration of each. Without `--features production`, the default build excludes these to keep local dev builds smaller.
+
 ## Development Guidelines
 
 See [`.claude/CLAUDE.md`](.claude/CLAUDE.md) and the [CI workflows](.github/workflows) for project layout, build and test commands, and coding conventions (error handling, module organization, async I/O rules, etc.). In short:
