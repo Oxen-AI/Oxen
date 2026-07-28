@@ -1,0 +1,26 @@
+name: 🧹 Prune oxen-server images
+
+# The container registry expires nothing on its own, and a build is published for
+# every merge to main, so without this the package grows without bound. The
+# number kept sets how far back a deployment can be rolled to without rebuilding.
+on:
+  schedule:
+    - cron: "0 5 * * 0"
+
+  workflow_dispatch:
+
+permissions:
+  packages: write
+
+jobs:
+  prune:
+    name: Prune old images
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Delete all but the newest images
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: oxen-server
+          package-type: container
+          min-versions-to-keep: 20

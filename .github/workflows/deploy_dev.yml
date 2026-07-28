@@ -29,6 +29,7 @@ jobs:
     permissions:
       contents: write
       id-token: write
+      packages: write
     uses: ./.github/workflows/build_branch.yml
     with:
       branch: ${{ github.sha }}
@@ -55,17 +56,19 @@ jobs:
           permission-actions: write
           repositories: ${{ vars.DEPLOY_REPOSITORY_NAME }}
 
-      # The build uploaded the server image as an artifact of this run, so the
-      # deployment fetches it by run ID instead of rebuilding.
+      # The build published the image, so the deployment is handed the digest and
+      # pulls it. A digest names exactly one image, which a tag in a registry
+      # that allows overwriting them does not.
       - name: Dispatch the dev deploy
         env:
           DEPLOY_REPOSITORY: ${{ github.repository_owner }}/${{ vars.DEPLOY_REPOSITORY_NAME }}
           GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+          IMAGE: ${{ needs.build.outputs.image }}
           SHA: ${{ github.sha }}
         run: |
           gh workflow run deploy_dev_oxen_server.yml \
             --repo "$DEPLOY_REPOSITORY" \
-            --field run_id="$GITHUB_RUN_ID" \
+            --field image="$IMAGE" \
             --field sha="$SHA"
 
   # The build runs as a called workflow, so reporting its failures from inside it

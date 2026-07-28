@@ -16,6 +16,10 @@ on:
       GH_PERSONAL_ACCESS_TOKEN:
         description: "GitHub personal access token"
         required: true
+    outputs:
+      image:
+        description: "Digest-pinned reference to the image this built"
+        value: ${{ jobs.release_docker.outputs.image }}
 
   workflow_dispatch:
     inputs:
@@ -34,11 +38,13 @@ on:
 env:
   AWS_REGION: us-west-1
   AWS_ROLE: ${{ vars.EC2_GITHUB_RUNNER_ROLE }}
-  REGISTRY_IMAGE: oxen/oxen-server
+  # Lowercase: registry paths are case-sensitive and the owner name is not.
+  REGISTRY_IMAGE: ghcr.io/oxen-ai/oxen-server
 
 permissions:
   id-token: write
   contents: write
+  packages: write
 
 defaults:
   run:
@@ -78,6 +84,8 @@ jobs:
   release_docker:
     needs: start-self-hosted-runner
     runs-on: ${{ needs.start-self-hosted-runner.outputs.label }}
+    outputs:
+      image: ${{ steps.push.outputs.image }}
 
     steps:
       - name: Checkout
@@ -118,6 +126,32 @@ jobs:
           name: oxen-server-docker-${{ inputs.ARCHITECTURE }}-${{ env.RELEASE_VERSION }}.tar
           path: oxen-server-docker-${{ inputs.ARCHITECTURE }}-${{ env.RELEASE_VERSION }}.tar
           retention-days: 1
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Published so a deployment can consume the image by digest rather than by
+      # unpacking a workflow artifact, which expires and can only be fetched
+      # through the Actions API. The tag is for browsing; the digest this outputs
+      # is what identifies the image, and it is the only thing a caller should
+      # deploy from.
+      - name: Push image to GitHub Container Registry
+        id: push
+        env:
+          COMMIT: ${{ steps.metadata.outputs.COMMIT }}
+        run: |
+          tag="$REGISTRY_IMAGE:sha-${COMMIT:0:12}"
+
+          docker tag oxen/oxen-server "$tag"
+          docker image push "$tag"
+
+          image=$(docker image inspect "$tag" --format '{{ index .RepoDigests 0 }}')
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "Published $image" >> "$GITHUB_STEP_SUMMARY"
 
   stop-self-hosted-runner:
     name: Stop self-hosted EC2 runner
