@@ -342,7 +342,7 @@ mod tests {
             util::fs::write(&new_file, "I am a new file")?;
             repositories::add(&repo, new_file).await?;
             repositories::commit(&repo, "Added a new file")?;
-            let og_branches = local_branches::list(&repo).await?;
+            let og_branch_count = local_branches::count(&repo).await?;
             let og_branch = local_branches::current_branch(&repo)?.unwrap();
 
             let branch_name = "my-branch";
@@ -364,14 +364,11 @@ mod tests {
                 local_branches::delete(&repo, branch_name).is_err(),
                 "a branch ahead of the current one cannot be deleted"
             );
-            assert_eq!(
-                local_branches::list(&repo).await?.len(),
-                og_branches.len() + 1
-            );
+            assert_eq!(local_branches::count(&repo).await?, og_branch_count + 1);
             local_branches::force_delete(&repo, branch_name)?;
             assert_eq!(
-                local_branches::list(&repo).await?.len(),
-                og_branches.len(),
+                local_branches::count(&repo).await?,
+                og_branch_count,
                 "a force delete removes a branch ahead of the current one"
             );
 

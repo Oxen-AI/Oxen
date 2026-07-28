@@ -153,14 +153,11 @@ mod tests {
                     &new_repo_dir.join("new_repo"),
                 )
                 .await?;
-                let branches = repositories::branches::list(&cloned_repo).await?;
-
-                assert_eq!(1, branches.len());
+                assert_eq!(1, repositories::branches::count(&cloned_repo).await?);
 
                 repositories::fetch_all(&cloned_repo, &FetchOpts::new()).await?;
 
-                let branches = repositories::branches::list(&cloned_repo).await?;
-                assert_eq!(3, branches.len());
+                assert_eq!(3, repositories::branches::count(&cloned_repo).await?);
 
                 let current_branch = repositories::branches::current_branch(&cloned_repo)?.unwrap();
                 assert_eq!(current_branch.name, DEFAULT_BRANCH_NAME);

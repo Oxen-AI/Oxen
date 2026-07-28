@@ -135,7 +135,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     }
 
     // A repo with no branches is empty; derive it from the same scan rather than a second read.
-    let branch_count = repositories::branches::list(&repository).await?.len();
+    let branch_count = repositories::branches::count(&repository).await?;
 
     // Return the repository view
     Ok(HttpResponse::Ok().json(RepositoryDataTypesResponse {

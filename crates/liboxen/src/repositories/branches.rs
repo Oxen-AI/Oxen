@@ -14,10 +14,20 @@ use crate::repositories;
 use crate::tasks;
 use crate::{core, util};
 
-/// List all the local branches within a repo
+/// List all the local branches within a repo.
+///
+/// To learn only how many branches there are, call [`count`] instead, which does not build a
+/// [`Branch`] for each one.
 pub async fn list(repo: &LocalRepository) -> Result<Vec<Branch>, OxenError> {
     let repo = repo.clone();
     tasks::spawn_blocking(move || with_ref_manager(&repo, |manager| manager.list_branches()))
+        .await?
+}
+
+/// Number of local branches in a repo, without materializing them.
+pub async fn count(repo: &LocalRepository) -> Result<usize, OxenError> {
+    let repo = repo.clone();
+    tasks::spawn_blocking(move || with_ref_manager(&repo, |manager| manager.count_branches()))
         .await?
 }
 
@@ -508,8 +518,8 @@ mod tests {
             assert_eq!(branch.commit_id, commit_1.id);
             assert_eq!(branch.name, "new-branch");
 
-            // Get the original branches
-            let og_branches = repositories::branches::list(&repo).await?;
+            // Get the original branch count
+            let og_branch_count = repositories::branches::count(&repo).await?;
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             let branch_name = "my-branch";
@@ -521,9 +531,8 @@ mod tests {
             // Now we can delete
             repositories::branches::delete(&repo, branch_name)?;
 
-            // Should be same num as og_branches
-            let leftover_branches = repositories::branches::list(&repo).await?;
-            assert_eq!(og_branches.len(), leftover_branches.len());
+            // Should be same num as og_branch_count
+            assert_eq!(repositories::branches::count(&repo).await?, og_branch_count);
 
             let file_path = repo.path.join("file.txt");
             util::fs::write_to_path(&file_path, "second")?;
@@ -770,6 +779,32 @@ mod tests {
             );
 
             crate::api::client::repositories::delete(&remote_repo).await?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// `count` is the cheap path for "how many branches"; it must agree with `list().len()` at
+    /// every size, including the empty-repo case where there are no refs to iterate.
+    #[tokio::test]
+    async fn test_count_matches_list_len() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            // One commit means one branch exists to be counted.
+            assert_eq!(
+                repositories::branches::count(&repo).await?,
+                repositories::branches::list(&repo).await?.len()
+            );
+
+            for name in ["alpha", "beta", "gamma"] {
+                repositories::branches::create_from_head(&repo, name)?;
+                assert_eq!(
+                    repositories::branches::count(&repo).await?,
+                    repositories::branches::list(&repo).await?.len(),
+                    "count diverged from list after creating {name}"
+                );
+            }
+
+            assert_eq!(repositories::branches::count(&repo).await?, 4);
             Ok(())
         })
         .await

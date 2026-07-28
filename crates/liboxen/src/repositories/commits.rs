@@ -1410,7 +1410,7 @@ A: Oxen.ai
         test::run_empty_data_repo_test_no_commits_async(|repo| async move {
             // Verify repo is empty (no commits)
             assert!(head_commit_maybe(&repo)?.is_none());
-            assert!(repositories::branches::list(&repo).await?.is_empty());
+            assert_eq!(repositories::branches::count(&repo).await?, 0);
 
             // Create initial commit
             let user = crate::model::User {
