@@ -73,10 +73,10 @@ jobs:
 
     env:
       CARGO_INCREMENTAL: "0"
-      # FFmpeg is slow to build from source on a bare runner, so the binary
-      # cache restores it in seconds. The vcpkg checkout is pinned below so its
-      # ABI hash stays stable and the cache hits across releases.
-      VCPKG_BINARY_SOURCES: clear;x-aws,s3://oxen-release-build-cache/vcpkg/,readwrite
+      DEPTREE_BUCKET: oxen-release-build-cache
+      # Generation prefix. Bump it when the archive's layout or the prune's rules change: the
+      # fallback restore only ever lists trees under the current prefix, so a bump starts clean.
+      DEPTREE_PREFIX: deptree/v4
 
     steps:
       - name: Checkout
@@ -90,7 +90,7 @@ jobs:
       - name: Exclude build paths from Windows Defender
         run: |
           try {
-            Set-MpPreference -ExclusionPath @("C:\Windows\System32\actions-runner", "C:\Users\Administrator\.cargo", "C:\Users\Administrator\.rustup", "C:\vcpkg", "C:\ProgramData\chocolatey", "$env:TEMP")
+            Set-MpPreference -ExclusionPath @("C:\Windows\System32\actions-runner", "C:\Users\Administrator\.cargo", "C:\Users\Administrator\.rustup", "C:\ProgramData\chocolatey", "$env:TEMP")
             Set-MpPreference -ExclusionProcess @("rustc.exe", "cargo.exe", "cl.exe", "link.exe", "cmake.exe", "python.exe", "git.exe")
             Write-Host "Defender exclusions applied"
           } catch {
@@ -117,16 +117,6 @@ jobs:
           }
           aws --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          # Pin vcpkg so the FFmpeg binary-cache ABI hash stays stable across
-          # runs. An unpinned HEAD rotates the key and the cache never hits.
-          git clone --depth 1 --branch 2026.06.24 https://github.com/microsoft/vcpkg.git C:\vcpkg
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cd C:\vcpkg
-          .\bootstrap-vcpkg.bat
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          .\vcpkg.exe install ffmpeg:x64-windows
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
       - name: Restore dependency build tree
         run: |
@@ -137,37 +127,52 @@ jobs:
           # the previous run's compiled dependencies (and the registry, mtimes
           # intact) so cargo marks them Fresh and only workspace crates rebuild.
           # The key hashes the third-party lockfile entries plus toolchain, so a
-          # workspace version bump alone keeps the same key.
+          # workspace version bump alone keeps the same key. DEPTREE_PREFIX carries the generation.
           $depText = ((Get-Content Cargo.lock -Raw) -split '\[\[package\]\]' | Where-Object { $_ -match 'source = ' }) -join ''
           $rv = (cmd /c "rustc -V 2>nul") -join ''
-          $sha = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes("$rv|$depText|v4"))).Replace("-","").Substring(0,32)
+          $sha = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes("$rv|$depText"))).Replace("-","").Substring(0,32)
           echo "DEPTREE_KEY=$sha" >> $env:GITHUB_ENV
-          cmd /c "aws s3 cp s3://oxen-release-build-cache/deptree/$sha.tar C:\deptree.tar 2>nul"
-          if (Test-Path C:\deptree.tar) {
-            tar -xf C:\deptree.tar -C C:\
+          # Listing lines are "<date> <time> <bytes> <key>.tar", so a plain sort is oldest-first.
+          $names = aws s3 ls "s3://${env:DEPTREE_BUCKET}/${env:DEPTREE_PREFIX}/" | Where-Object { $_ -match '\.tar$' } | Sort-Object | ForEach-Object { (-split $_)[3] }
+          $exactHit = $names -contains "$sha.tar"
+          # On a miss a third-party dependency changed, so the most recent tree is restored instead:
+          # cargo reuses the unchanged deps and rebuilds only what the bump touched, and the save
+          # step writes a fresh tree under this key.
+          $pick = if ($exactHit) { "$sha.tar" } else { $names | Select-Object -Last 1 }
+          if (-not $pick) {
+            Write-Host "DEPTREE restore miss ($sha), no tree to fall back to"
+            exit 0
+          }
+          # cmd (not PowerShell) runs the pipe so the bytes pass through raw, and reports only tar's
+          # exit; tar exits 0 on an empty stream, so aws flags its own failure with a marker.
+          Remove-Item C:\deptree-dl-failed -ErrorAction SilentlyContinue
+          cmd /c "(aws s3 cp s3://${env:DEPTREE_BUCKET}/${env:DEPTREE_PREFIX}/$pick - || echo fail>C:\deptree-dl-failed) | tar -C C:\ -xf -"
+          if ($LASTEXITCODE -ne 0 -or (Test-Path C:\deptree-dl-failed)) {
+            # Every restored root goes, not just target: cargo trusts an artifact whose fingerprint
+            # arrived intact, and a crate whose .cargo-ok arrived without its sources. The registry
+            # unpacks last, so a truncated stream lands there.
+            Write-Host "DEPTREE restore of $pick failed, discarding the partial tree"
+            Remove-Item -Recurse -Force "${{ github.workspace }}\target", "C:\Users\Administrator\.cargo\registry" -ErrorAction SilentlyContinue
+            exit 0
+          }
+          if ($exactHit) {
             echo "DEPTREE_EXACT_HIT=1" >> $env:GITHUB_ENV
             Write-Host "DEPTREE restore hit ($sha)"
           } else {
-            # A third-party dependency changed, so the exact key is gone. Restore
-            # the most recent tree anyway, so cargo reuses the unchanged deps and
-            # rebuilds only what the bump touched. The save step then writes a
-            # fresh tree under the new key so the next release hits exactly.
-            $latest = (aws s3 ls "s3://oxen-release-build-cache/deptree/" | Where-Object { $_ -match '\.tar$' } | Sort-Object | Select-Object -Last 1) -replace '.*\s',''
-            if ($latest) { cmd /c "aws s3 cp s3://oxen-release-build-cache/deptree/$latest C:\deptree.tar 2>nul" }
-            if (Test-Path C:\deptree.tar) {
-              tar -xf C:\deptree.tar -C C:\
-              Write-Host "DEPTREE restore miss ($sha), fell back to $latest"
-            } else {
-              Write-Host "DEPTREE restore miss ($sha), no tree to fall back to"
-            }
+            Write-Host "DEPTREE restore miss ($sha), fell back to $pick"
           }
+          Write-Host "Free space after restore: $([math]::Round((Get-PSDrive C).Free / 1GB, 1)) GiB"
           exit 0
 
       - name: Build oxen binaries
         run: |
           refreshenv
-          # oxen-server is not supported on Windows; build the CLI only.
-          cargo build --workspace --exclude oxen-py --exclude oxen-server --release
+          # Stamps the start of this run's compilation; the save step keeps every artifact newer
+          # than it, including whatever the wheel build compiles.
+          New-Item C:\deptree-build-start -ItemType File -Force | Out-Null
+          # oxen-server is not supported on Windows; build the CLI only. The JSON stream names every
+          # live unit's artifacts, fresh ones included, for the save step's prune.
+          cargo build --workspace --exclude oxen-py --exclude oxen-server --release --message-format=json-render-diagnostics | Set-Content C:\deptree-live.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build Python wheels
@@ -178,46 +183,79 @@ jobs:
 
           cd ${{ github.workspace }}\oxen-python
 
+          $uvPython = "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-{0}.*\python.exe"
           $versions = "${{ inputs.PYTHON_VERSIONS }}" -split ' '
           foreach ($version in $versions) {
-              uvx maturin build --release --interpreter "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-$version.*\python.exe"
+              uvx maturin build --release --interpreter ($uvPython -f $version)
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
-      - name: Save dependency build tree
-        # Only cache a tree from a fully successful build. A failed build can
-        # leave the tree incomplete, and saving it under the exact key would make
-        # later runs restore that partial tree and rebuild every time.
+          # Only a fallback restore re-archives the tree, so only it needs the wheel graph named.
+          if ($env:DEPTREE_EXACT_HIT -eq "1") { exit 0 }
+          # Names the wheel build's units for the prune, fresh ones included, since maturin reports
+          # no artifact list of its own. Mirrors the invocation maturin wraps: pyproject.toml's
+          # manifest and features, plus the interpreter env whose change pyo3's build script
+          # treats as a rebuild trigger. PYO3_ENVIRONMENT_SIGNATURE is maturin's own
+          # "<implementation>-<major>.<minor>-<pointer-width>bit"; matching it keeps this a no-op
+          # rather than a full relink of the cdylib under fat LTO.
+          $last = $versions[-1]
+          $interpreter = (Resolve-Path ($uvPython -f $last) -ErrorAction SilentlyContinue | Select-Object -First 1).Path
+          if ($interpreter) {
+            $env:PYO3_PYTHON = $interpreter
+            $env:PYO3_ENVIRONMENT_SIGNATURE = "cpython-$last-64bit"
+          }
+          cargo build --release --manifest-path ${{ github.workspace }}\crates\oxen-py\Cargo.toml --features pyo3/extension-module --message-format=json-render-diagnostics | Add-Content C:\deptree-live.json
+          # Best-effort: without this list the wheel's units are pruned and recompile next release.
+          if ($LASTEXITCODE -ne 0) { Write-Host "::warning::DEPTREE could not enumerate the wheel graph" }
+          exit 0
+
+      - name: Prune dead build artifacts
+        # Runs before the artifacts are zipped, so the freed space is available to them, and
+        # separately from the save so that one failing cannot take the other down with it.
         if: success()
-        # Caching is best-effort: a save failure must not fail a release whose
-        # binaries and wheels already built.
         continue-on-error: true
         run: |
-          # Skip only on an exact-key hit. A fallback restore still has to write
-          # the tree under the current key so the next release hits exactly.
-          # Saved after both builds so the tree covers the binaries' deps and the
-          # pyo3/maturin deps that only the wheel build pulls in.
+          # Only a fallback restore re-archives the tree, so only it needs pruning.
           if ($env:DEPTREE_EXACT_HIT -eq "1") { Write-Host "DEPTREE exact hit, cache is current"; exit 0 }
           refreshenv
-          $rel = "${{ github.workspace }}\target\release".Substring(3) -replace '\\','/'
-          $list = @("$rel/.fingerprint", "$rel/deps", "$rel/build", "Users/Administrator/.cargo/registry/src", "Users/Administrator/.cargo/registry/cache")
-          $list | Set-Content C:\deptree-list.txt
-          # cmd (not PowerShell) runs the pipe so the bytes pass through raw; a
-          # PowerShell pipe re-encodes the stream and corrupts the tar. Streaming
-          # to S3 keeps the multi-GiB archive off the runner's disk. A cmd pipe
-          # reports only aws's exit, so tar flags its own failure via a marker.
-          Remove-Item C:\deptree-tar-failed -ErrorAction SilentlyContinue
-          cmd /c "(tar -cf - -C C:\ -T C:\deptree-list.txt || echo fail>C:\deptree-tar-failed) | aws s3 cp - s3://oxen-release-build-cache/deptree/%DEPTREE_KEY%.tar"
-          $awsExit = $LASTEXITCODE
-          # aws finishes the upload even when tar dies mid-stream, so delete the
-          # object on any failure; restore treats an exact-key object as a
-          # permanent hit and would otherwise serve the truncated tree forever.
-          if ($awsExit -ne 0 -or (Test-Path C:\deptree-tar-failed)) {
-            Write-Host "DEPTREE save failed"
-            cmd /c "aws s3 rm s3://oxen-release-build-cache/deptree/%DEPTREE_KEY%.tar"
-            if ($awsExit -ne 0) { exit $awsExit } else { exit 1 }
+          # An artifact is live if this build still references it or this run compiled it; the rest
+          # are orphans earlier releases left behind. Over-pruning only costs a recompile.
+          $target = "${{ github.workspace }}\target\release"
+          $unitHash = [regex]::new('-([0-9a-f]{16})(?![0-9a-f])', 'Compiled')
+          $live = [System.Collections.Generic.HashSet[string]]::new()
+          foreach ($line in Get-Content C:\deptree-live.json -ErrorAction SilentlyContinue) {
+            try { $msg = ConvertFrom-Json $line } catch { continue }
+            # filenames covers compiled units and build-script executables; out_dir covers each
+            # build script's output directory, which is named by a hash of its own and reported
+            # even when fresh.
+            foreach ($p in @($msg.filenames) + @($msg.out_dir)) {
+              if (-not $p) { continue }
+              foreach ($m in $unitHash.Matches($p)) { $live.Add($m.Groups[1].Value) | Out-Null }
+            }
           }
-          Write-Host "DEPTREE saved ($env:DEPTREE_KEY)"
+          # Only deps is pruned; .fingerprint and build/ entries stay.
+          $deps = @(Get-ChildItem "$target\deps" -File -ErrorAction SilentlyContinue)
+          $before = [math]::Round(($deps | Measure-Object -Sum Length).Sum / 1GB, 2)
+          if ($live.Count -eq 0) {
+            Write-Host "::warning::DEPTREE has no live artifact list, archiving $before GiB unpruned"
+          } else {
+            $stamp = (Get-Item C:\deptree-build-start).LastWriteTime
+            $dead = foreach ($f in $deps) {
+              if ($f.LastWriteTime -ge $stamp) { continue }
+              # Names carrying no unit hash are not generational. The workspace's own bin and cdylib
+              # intermediates are reported under their unhashed final output, so they read as dead
+              # and get dropped; a version bump recompiles those crates every release anyway.
+              $hashes = $unitHash.Matches($f.Name)
+              if ($hashes.Count -eq 0) { continue }
+              $isLive = $false
+              foreach ($m in $hashes) { if ($live.Contains($m.Groups[1].Value)) { $isLive = $true; break } }
+              if (-not $isLive) { $f }
+            }
+            $dead | Remove-Item -Force -ErrorAction SilentlyContinue
+            # Measured after the fact, since a locked file fails to delete silently.
+            $after = [math]::Round((Get-ChildItem "$target\deps" -File -ErrorAction SilentlyContinue | Measure-Object -Sum Length).Sum / 1GB, 2)
+            Write-Host "DEPTREE pruned $($dead.Count) dead artifacts; deps $before -> $after GiB"
+          }
 
       - name: Create zip with oxen binary
         run: |
@@ -237,6 +275,44 @@ jobs:
           name: oxen-windows-release-${{ inputs.ARCHITECTURE }}.zip
           path: ${{ github.workspace }}\release\oxen-windows-${{ inputs.ARCHITECTURE }}-release.zip
           retention-days: 1
+
+      - name: Save dependency build tree
+        # Only cache a tree from a fully successful build. A failed build can
+        # leave the tree incomplete, and saving it under the exact key would make
+        # later runs restore that partial tree and rebuild every time.
+        if: success()
+        # Caching is best-effort: a save failure must not fail a release whose
+        # binaries and wheels already built.
+        continue-on-error: true
+        run: |
+          # Skip only on an exact-key hit. A fallback restore still has to write
+          # the tree under the current key so the next release hits exactly.
+          if ($env:DEPTREE_EXACT_HIT -eq "1") { exit 0 }
+          refreshenv
+          $target = "${{ github.workspace }}\target\release"
+          $rel = $target.Substring(3) -replace '\\','/'
+          $list = @("$rel/.fingerprint", "$rel/deps", "$rel/build", "Users/Administrator/.cargo/registry/src", "Users/Administrator/.cargo/registry/cache")
+          $list | Set-Content C:\deptree-list.txt
+          # cmd (not PowerShell) runs the pipe so the bytes pass through raw; a
+          # PowerShell pipe re-encodes the stream and corrupts the tar. Streaming
+          # to S3 keeps the multi-GiB archive off the runner's disk. A cmd pipe
+          # reports only aws's exit, so tar flags its own failure via a marker.
+          Remove-Item C:\deptree-tar-failed -ErrorAction SilentlyContinue
+          cmd /c "(tar -cf - -C C:\ -T C:\deptree-list.txt || echo fail>C:\deptree-tar-failed) | aws s3 cp - s3://%DEPTREE_BUCKET%/%DEPTREE_PREFIX%/%DEPTREE_KEY%.tar"
+          $awsExit = $LASTEXITCODE
+          # aws finishes the upload even when tar dies mid-stream, so delete the
+          # object on any failure; restore treats an exact-key object as a
+          # permanent hit and would otherwise serve the truncated tree forever.
+          if ($awsExit -ne 0 -or (Test-Path C:\deptree-tar-failed)) {
+            Write-Host "DEPTREE save failed"
+            cmd /c "aws s3 rm s3://%DEPTREE_BUCKET%/%DEPTREE_PREFIX%/%DEPTREE_KEY%.tar"
+            if ($awsExit -ne 0) { exit $awsExit } else { exit 1 }
+          }
+          $bytes = (cmd /c "aws s3api head-object --bucket %DEPTREE_BUCKET% --key %DEPTREE_PREFIX%/%DEPTREE_KEY%.tar --query ContentLength --output text 2>nul") -join ''
+          $size = if ($bytes -match '^\d+$') { "$([math]::Round([int64]$bytes / 1GB, 1)) GiB" } else { "size unknown" }
+          Write-Host "DEPTREE saved ($env:DEPTREE_KEY, $size)"
+          # head-object is the last native command, so its exit must not redden a successful save.
+          exit 0
 
   stop-self-hosted-runner:
     name: Stop self-hosted EC2 runner
