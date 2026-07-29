@@ -3,7 +3,7 @@
 //!
 
 mod atomic_file;
-pub use atomic_file::AtomicFile;
+pub use atomic_file::{AtomicFile, is_atomic_scratch_name};
 
 use async_std::pin::Pin;
 use bytes::Bytes;

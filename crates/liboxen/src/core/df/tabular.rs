@@ -1504,8 +1504,7 @@ pub fn write_df_json<P: AsRef<Path>>(df: &mut DataFrame, output: P) -> Result<()
         JsonWriter::new(w)
             .with_json_format(JsonFormat::Json)
             .finish(df)
-            .map_err(|e| OxenError::internal_error(format!("{e:?}")))?;
-        Ok(())
+            .map_err(|e| OxenError::internal_error(format!("{e:?}")))
     })
 }
 
@@ -1516,8 +1515,7 @@ pub fn write_df_jsonl<P: AsRef<Path>>(df: &mut DataFrame, output: P) -> Result<(
         JsonWriter::new(w)
             .with_json_format(JsonFormat::JsonLines)
             .finish(df)
-            .map_err(|e| OxenError::internal_error(format!("{e:?}")))?;
-        Ok(())
+            .map_err(|e| OxenError::internal_error(format!("{e:?}")))
     })
 }
 
@@ -1533,8 +1531,7 @@ pub fn write_df_csv<P: AsRef<Path>>(
             .include_header(true)
             .with_separator(delimiter)
             .finish(df)
-            .map_err(|e| OxenError::internal_error(format!("{e:?}")))?;
-        Ok(())
+            .map_err(|e| OxenError::internal_error(format!("{e:?}")))
     })
 }
 
@@ -1544,8 +1541,8 @@ pub fn write_df_parquet<P: AsRef<Path>>(df: &mut DataFrame, output: P) -> Result
     AtomicFile::new(output).write_with(|w| {
         ParquetWriter::new(w)
             .finish(df)
-            .map_err(|e| OxenError::internal_error(format!("{e:?}")))?;
-        Ok(())
+            .map(|_bytes_written| ())
+            .map_err(|e| OxenError::internal_error(format!("{e:?}")))
     })
 }
 
@@ -1555,8 +1552,7 @@ pub fn write_df_arrow<P: AsRef<Path>>(df: &mut DataFrame, output: P) -> Result<(
     AtomicFile::new(output).write_with(|w| {
         IpcWriter::new(w)
             .finish(df)
-            .map_err(|e| OxenError::internal_error(format!("{e:?}")))?;
-        Ok(())
+            .map_err(|e| OxenError::internal_error(format!("{e:?}")))
     })
 }
 
@@ -2400,13 +2396,13 @@ mod tests {
                     first, second,
                     "overwriting cache.{extension} reused the inode instead of renaming over it",
                 );
-
-                let strays: Vec<_> = std::fs::read_dir(dir)?
-                    .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().to_string()))
-                    .filter(|name| name.contains(".oxentmp."))
-                    .collect();
-                assert!(strays.is_empty(), "leftover scratch files: {strays:?}");
             }
+
+            let strays: Vec<_> = std::fs::read_dir(dir)?
+                .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().to_string()))
+                .filter(|name| fs::is_atomic_scratch_name(name))
+                .collect();
+            assert!(strays.is_empty(), "leftover scratch files: {strays:?}");
             Ok(())
         })
     }

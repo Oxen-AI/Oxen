@@ -24,6 +24,12 @@ use crate::util::hasher::{HashingReader, HashingWriter};
 /// rather than re-export this constant.
 const ATOMIC_TEMP_INFIX: &str = ".oxentmp.";
 
+/// Whether `file_name` is an `AtomicFile` scratch file rather than a published one. The matcher the
+/// `ATOMIC_TEMP_INFIX` note calls for, so callers outside this module never re-spell the pattern.
+pub fn is_atomic_scratch_name(file_name: &str) -> bool {
+    file_name.contains(ATOMIC_TEMP_INFIX)
+}
+
 /// A temp file opened in `target`'s parent directory, ready to be written into and then atomically
 /// renamed over `target` via `commit`.
 ///
@@ -234,12 +240,38 @@ impl AtomicFile {
         tmp.commit()
     }
 
-    /// Publish whatever `fill` writes to the target path. The fit for third-party encoders that
-    /// take ownership of a `Write` and so can't be driven through [`stream`][Self::stream] —
-    /// Polars' `ParquetWriter` / `CsvWriter` / `IpcWriter` / `JsonWriter`, `tar`, `zip`.
-    ///
-    /// `fill` must write the complete payload; an `Err` from it propagates and leaves the target
-    /// untouched.
+    /// Hash-check when a digest was set, stamp the mtime, and rename the scratch over the target.
+    /// `actual_hash` must be `Some` whenever [`with_hash`][Self::with_hash] was set.
+    fn publish(
+        self,
+        mut tmp: AtomicTempFile,
+        actual_hash: Option<MerkleHash>,
+    ) -> Result<(), OxenError> {
+        match (self.expected_hash, actual_hash) {
+            (Some(expected), Some(actual)) if actual != expected => {
+                return Err(OxenError::HashMismatch {
+                    path: self.target,
+                    expected,
+                    actual,
+                });
+            }
+            (Some(_), None) => {
+                return Err(OxenError::internal_error(format!(
+                    "AtomicFile::publish: {:?} expected a verified digest but none was computed; \
+                     refusing to publish unverified bytes",
+                    self.target
+                )));
+            }
+            _ => {}
+        }
+        if let Some(mtime) = self.mtime {
+            tmp.set_mtime(mtime)?;
+        }
+        tmp.commit()
+    }
+
+    /// Publish whatever `fill` writes to the target path. The fit for encoders that take ownership
+    /// of a `Write` — Polars' `ParquetWriter` / `CsvWriter` / `IpcWriter` / `JsonWriter`.
     pub fn write_with<F>(self, fill: F) -> Result<(), OxenError>
     where
         F: FnOnce(&mut dyn Write) -> Result<(), OxenError>,
@@ -261,19 +293,7 @@ impl AtomicFile {
             buf_writer.flush()?;
             actual
         };
-        if let (Some(expected), Some(actual)) = (self.expected_hash, actual_hash)
-            && actual != expected
-        {
-            return Err(OxenError::HashMismatch {
-                path: self.target,
-                expected,
-                actual,
-            });
-        }
-        if let Some(mtime) = self.mtime {
-            tmp.set_mtime(mtime)?;
-        }
-        tmp.commit()
+        self.publish(tmp, actual_hash)
     }
 
     /// Publish everything yielded by sync `reader` to the target path. Driven by `std::io` so
@@ -299,19 +319,7 @@ impl AtomicFile {
             buf_writer.flush()?;
             actual
         };
-        if let (Some(expected), Some(actual)) = (self.expected_hash, actual_hash)
-            && actual != expected
-        {
-            return Err(OxenError::HashMismatch {
-                path: self.target,
-                expected,
-                actual,
-            });
-        }
-        if let Some(mtime) = self.mtime {
-            tmp.set_mtime(mtime)?;
-        }
-        tmp.commit()
+        self.publish(tmp, actual_hash)
     }
 
     /// Publish the in-order concatenation of `paths` to the target path, opening one source file
@@ -343,19 +351,7 @@ impl AtomicFile {
             }
         }
         let hash_result = hasher.map(|h| MerkleHash::new(h.digest128()));
-        if let (Some(expected), Some(actual)) = (self.expected_hash, hash_result)
-            && actual != expected
-        {
-            return Err(OxenError::HashMismatch {
-                path: self.target,
-                expected,
-                actual,
-            });
-        }
-        if let Some(mtime) = self.mtime {
-            tmp.set_mtime(mtime)?;
-        }
-        tmp.commit()
+        self.publish(tmp, hash_result)
     }
 
     /// Publish everything yielded by async `reader` to the target path.
@@ -693,12 +689,43 @@ mod tests {
         .await
     }
 
+    /// A terminal that set `with_hash` but reports no computed digest fails instead of publishing.
+    /// Verification was asked for, so skipping it silently would hand back unverified bytes.
+    #[test]
+    fn test_atomic_publish_rejects_a_missing_digest() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let target = dir.join("blob.bin");
+            let expected = MerkleHash::new(0xdead_beef_dead_beef_dead_beef_dead_beefu128);
+
+            let mut tmp = AtomicTempFile::create(&target)?;
+            std::io::Write::write_all(tmp.as_writer(), b"unverified bytes")?;
+
+            let result = AtomicFile::new(&target)
+                .with_hash(expected)
+                .publish(tmp, None);
+
+            assert!(
+                matches!(result, Err(OxenError::InternalError(_))),
+                "expected an InternalError, got {result:?}"
+            );
+            assert!(
+                !target.exists(),
+                "nothing may be published without verification"
+            );
+            let leftover: Vec<_> = std::fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
+            assert!(
+                leftover.is_empty(),
+                "scratch left behind: {} entries",
+                leftover.len()
+            );
+            Ok(())
+        })
+    }
+
     #[test]
     fn test_atomic_write_with_round_trip() -> Result<(), OxenError> {
         test::run_empty_dir_test(|dir| {
             let target = dir.join("blob.bin");
-            // 200 KB exceeds the buffered-writer path in one go, ruling out a "small enough to
-            // land in a single write" accident.
             let payload: Vec<u8> = (0..50_000u32).flat_map(u32::to_le_bytes).collect();
 
             AtomicFile::new(&target).write_with(|w| {
