@@ -200,6 +200,11 @@ jobs:
 
           cd ${{ github.workspace }}\oxen-python
 
+          # The glob reaches maturin literally, never expanded: it resolves to nothing, so maturin
+          # builds the abi3 wheel from bundled sysconfig (the v0.52.4 and v0.52.6 logs show the abi3
+          # binding line and no interpreter line). Keep the flag even though it selects nothing --
+          # with no interpreter given, maturin falls back to PYO3_PYTHON or whatever python is on
+          # PATH, which is a less predictable input than a glob it ignores.
           foreach ($version in $versions) {
               uvx maturin build --release --interpreter "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-$version.*\python.exe"
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -294,7 +299,16 @@ jobs:
         run: |
           # Skip only on an exact-key hit. A fallback restore still has to write
           # the tree under the current key so the next release hits exactly.
-          if ($env:DEPTREE_EXACT_HIT -eq "1") { exit 0 }
+          if ($env:DEPTREE_EXACT_HIT -eq "1") {
+            # A hit re-archives nothing, so the object's age would keep growing while the tree is
+            # still in active use, and an expiry rule would eventually delete it out from under a
+            # working cache. Copying the key onto itself restarts that clock; a same-key copy needs
+            # --metadata-directive REPLACE to be accepted.
+            cmd /c "aws s3 cp s3://%DEPTREE_BUCKET%/%DEPTREE_PREFIX%/%DEPTREE_KEY%.tar s3://%DEPTREE_BUCKET%/%DEPTREE_PREFIX%/%DEPTREE_KEY%.tar --metadata-directive REPLACE --storage-class INTELLIGENT_TIERING"
+            if ($LASTEXITCODE -ne 0) { Write-Host "::warning::DEPTREE could not refresh the cached tree's age" }
+            else { Write-Host "DEPTREE exact hit, refreshed the tree's age" }
+            exit 0
+          }
           refreshenv
           $target = "${{ github.workspace }}\target\release"
           $rel = $target.Substring(3) -replace '\\','/'
