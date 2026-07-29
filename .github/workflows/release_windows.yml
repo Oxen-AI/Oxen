@@ -193,12 +193,13 @@ jobs:
           PYTHON_VERSIONS: ${{ inputs.PYTHON_VERSIONS }}
         run: |
           refreshenv
-          uv python install $env:PYTHON_VERSIONS
+          # Splatted, so each version is its own argument; the variable holds them space-separated.
+          $versions = $env:PYTHON_VERSIONS -split ' '
+          uv python install @versions
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           cd ${{ github.workspace }}\oxen-python
 
-          $versions = $env:PYTHON_VERSIONS -split ' '
           foreach ($version in $versions) {
               uvx maturin build --release --interpreter "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-$version.*\python.exe"
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
