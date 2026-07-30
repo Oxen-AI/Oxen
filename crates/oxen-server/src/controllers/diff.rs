@@ -215,7 +215,7 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
 
     let dir_diffs =
-        repositories::diffs::list_changed_dirs(&repository, &base_commit, &head_commit)?;
+        repositories::diffs::list_changed_dirs(&repository, &base_commit, &head_commit).await?;
     log::debug!("dir_diffs: {dir_diffs:?}");
 
     let dir_diff_tree = group_dir_diffs_by_dir(dir_diffs);
