@@ -164,7 +164,8 @@ pub async fn entries(
         &base_commit,
         &head_commit,
         summary,
-    )?;
+    )
+    .await?;
 
     let compare = CompareEntries {
         base_commit,
@@ -295,7 +296,8 @@ pub async fn dir_entries(
     log::debug!("summary: {summary:?}");
 
     let self_entry =
-        get_dir_diff_entry_with_summary(&repository, dir, &base_commit, &head_commit, summary)?;
+        get_dir_diff_entry_with_summary(&repository, dir, &base_commit, &head_commit, summary)
+            .await?;
 
     let compare = CompareEntries {
         base_commit,
