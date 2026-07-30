@@ -5,7 +5,7 @@ use crate::params::{app_data, parse_resource, path_param};
 
 use liboxen::constants;
 use liboxen::core::repo_locks;
-use liboxen::error::PathBufError;
+use liboxen::error::{OxenError, PathBufError};
 use liboxen::model::{DataFrameSize, NewCommitBody};
 use liboxen::opts::df_opts::DFOptsView;
 use liboxen::repositories;
@@ -86,7 +86,7 @@ pub async fn get(
         repositories::data_frames::get_slice(&repo, &resource.clone(), &resource.path, &opts)
             .await?;
 
-    let mut df = data_frame_slice.slice;
+    let df = data_frame_slice.slice;
     let view_height = if opts.has_filter_transform() {
         data_frame_slice.total_entries
     } else {
@@ -96,17 +96,24 @@ pub async fn get(
     let total_pages = (view_height as f64 / page_opts.page_size as f64).ceil() as usize;
 
     let opts_view = DFOptsView::from_df_opts(&opts);
+    let size = DataFrameSize {
+        height: df.height(),
+        width: df.width(),
+    };
+    let data = tokio::task::spawn_blocking(move || {
+        let mut df = df;
+        JsonDataFrameView::json_from_df(&mut df)
+    })
+    .await
+    .map_err(OxenError::from)?;
     let response = JsonDataFrameViewResponse {
         status: StatusMessage::resource_found(),
         data_frame: JsonDataFrameViews {
             source: data_frame_slice.schemas.source,
             view: JsonDataFrameView {
                 schema: data_frame_slice.schemas.slice.schema,
-                size: DataFrameSize {
-                    height: df.height(),
-                    width: df.width(),
-                },
-                data: JsonDataFrameView::json_from_df(&mut df),
+                size,
+                data,
                 pagination: Pagination {
                     page_number: page_opts.page_num,
                     page_size: page_opts.page_size,
