@@ -84,6 +84,8 @@ jobs:
       # Read as an environment variable by the zip steps rather than expanded into their source, so
       # its contents can never be parsed as PowerShell.
       ARCHITECTURE: ${{ inputs.ARCHITECTURE }}
+      # Override Cargo.toml's LTO setting to save on build time in Windows
+      CARGO_PROFILE_RELEASE_LTO: thin
       DEPTREE_BUCKET: oxen-release-build-cache
       # Generation prefix. Bump it when the archive's layout or the prune's rules change: the
       # fallback restore only ever lists trees under the current prefix, so a bump starts clean.

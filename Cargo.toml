@@ -195,6 +195,7 @@ debug-assertions = false
 
 [profile.release]
 codegen-units = 1
+# Windows release overrides this to "thin" through CARGO_PROFILE_RELEASE_LTO to save on build time
 lto = true
 opt-level = "s"
 strip = true
