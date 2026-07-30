@@ -3,7 +3,7 @@
 //!
 
 mod atomic_file;
-pub use atomic_file::{AtomicFile, is_atomic_scratch_name};
+pub use atomic_file::AtomicFile;
 
 use async_std::pin::Pin;
 use bytes::Bytes;
@@ -199,20 +199,6 @@ pub fn write_to_path(path: impl AsRef<Path>, value: impl AsRef<str>) -> Result<(
 
     match File::create(path) {
         Ok(mut file) => match file.write(value.as_bytes()) {
-            Ok(_) => Ok(()),
-            Err(err) => Err(OxenError::basic_str(format!(
-                "Could not write file {path:?}\n{err}"
-            ))),
-        },
-        Err(err) => Err(OxenError::basic_str(format!(
-            "Could not create file to write {path:?}\n{err}"
-        ))),
-    }
-}
-
-pub fn write_data(path: &Path, data: &[u8]) -> Result<(), OxenError> {
-    match File::create(path) {
-        Ok(mut file) => match file.write(data) {
             Ok(_) => Ok(()),
             Err(err) => Err(OxenError::basic_str(format!(
                 "Could not write file {path:?}\n{err}"
@@ -587,7 +573,8 @@ pub fn remove_dir_all(src: impl AsRef<Path>) -> Result<(), OxenError> {
     }
 }
 
-/// Wrapper around the std::fs::write command to tell us which file it failed on
+/// Non-atomic write, for fixture setup only. Production code publishes through [`AtomicFile`].
+#[cfg(any(test, feature = "test-utils"))]
 pub fn write(src: impl AsRef<Path>, data: impl AsRef<[u8]>) -> Result<(), OxenError> {
     let src = src.as_ref();
     match std::fs::write(src, data) {
@@ -620,18 +607,6 @@ pub fn metadata(path: impl AsRef<Path>) -> Result<std::fs::Metadata, OxenError> 
         Err(err) => {
             log::debug!("metadata {path:?} {err}");
             Err(OxenError::file_metadata_error(path, err))
-        }
-    }
-}
-
-/// Wrapper around std::fs::File::create to give us a better error on failure
-pub fn file_create(path: impl AsRef<Path>) -> Result<std::fs::File, OxenError> {
-    let path = path.as_ref();
-    match std::fs::File::create(path) {
-        Ok(file) => Ok(file),
-        Err(err) => {
-            log::error!("file_create {path:?} {err}");
-            Err(OxenError::file_create_error(path, err))
         }
     }
 }

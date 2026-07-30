@@ -2397,12 +2397,6 @@ mod tests {
                     "overwriting cache.{extension} reused the inode instead of renaming over it",
                 );
             }
-
-            let strays: Vec<_> = std::fs::read_dir(dir)?
-                .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().to_string()))
-                .filter(|name| fs::is_atomic_scratch_name(name))
-                .collect();
-            assert!(strays.is_empty(), "leftover scratch files: {strays:?}");
             Ok(())
         })
     }

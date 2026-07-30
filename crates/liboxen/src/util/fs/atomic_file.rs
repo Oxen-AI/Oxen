@@ -24,12 +24,6 @@ use crate::util::hasher::{HashingReader, HashingWriter};
 /// rather than re-export this constant.
 const ATOMIC_TEMP_INFIX: &str = ".oxentmp.";
 
-/// Whether `file_name` is an `AtomicFile` scratch file rather than a published one. The matcher the
-/// `ATOMIC_TEMP_INFIX` note calls for, so callers outside this module never re-spell the pattern.
-pub fn is_atomic_scratch_name(file_name: &str) -> bool {
-    file_name.contains(ATOMIC_TEMP_INFIX)
-}
-
 /// A temp file opened in `target`'s parent directory, ready to be written into and then atomically
 /// renamed over `target` via `commit`.
 ///
@@ -271,7 +265,9 @@ impl AtomicFile {
     }
 
     /// Publish whatever `fill` writes to the target path. The fit for encoders that take ownership
-    /// of a `Write` — Polars' `ParquetWriter` / `CsvWriter` / `IpcWriter` / `JsonWriter`.
+    /// of a `Write` — Polars' `ParquetWriter` / `CsvWriter` / `IpcWriter` / `JsonWriter`. `fill`
+    /// must write the complete payload: a short write returning `Ok` publishes a truncated file.
+    /// Pair with [`with_hash`][Self::with_hash] to turn that into a refused publish.
     pub fn write_with<F>(self, fill: F) -> Result<(), OxenError>
     where
         F: FnOnce(&mut dyn Write) -> Result<(), OxenError>,

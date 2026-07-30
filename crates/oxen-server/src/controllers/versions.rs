@@ -683,6 +683,7 @@ mod tests {
     use liboxen::error::OxenError;
     use liboxen::repositories;
     use liboxen::util;
+    use liboxen::util::fs::AtomicFile;
     use liboxen::view::ErrorFilesResponse;
     use mime;
     use std::io::Write;
@@ -760,7 +761,7 @@ mod tests {
             0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99,
             0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
         ];
-        util::fs::write_data(&image_file, &png_bytes)?;
+        AtomicFile::new(&image_file).write(&png_bytes)?;
         repositories::add(&repo, &image_file).await?;
         repositories::commit(&repo, "First commit")?;
 
