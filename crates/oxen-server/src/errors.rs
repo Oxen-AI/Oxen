@@ -482,6 +482,21 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::BadRequest().json(error_json)
                     }
+                    OxenError::UnsupportedRepoVersion(version) => {
+                        log::warn!("Unsupported repo on-disk version: {version}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "unsupported_repo_version",
+                                "title":
+                                    "Unsupported Repository Version",
+                                "detail":
+                                    format!("This repository is stored in the Oxen v{version} on-disk format, which this server can no longer read. Migrate it up to the current format with an older Oxen release."),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
                     OxenError::ImportFileError(desc) => {
                         let error_json = json!({
                             "error": {
@@ -810,4 +825,22 @@ fn handle_polars(error: &impl std::error::Error) -> HttpResponse {
 /// Convert a [`serde_json::Error`] into a HTTP bad request error.
 fn handle_serde() -> HttpResponse {
     HttpResponse::BadRequest().json(StatusMessage::bad_request())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::ResponseError;
+    use actix_web::http::StatusCode;
+
+    #[test]
+    fn test_unsupported_repo_version_is_a_client_error() {
+        // A 5xx here reads as transient to clients, which retry it with backoff. The repo's
+        // on-disk format never changes on its own, so the status has to be terminal.
+        let error = OxenHttpError::from(OxenError::UnsupportedRepoVersion("0.19.0".into()));
+        let status = error.error_response().status();
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(!status.is_server_error());
+    }
 }
