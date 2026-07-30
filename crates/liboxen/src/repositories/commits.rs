@@ -270,6 +270,7 @@ pub use crate::core::v_latest::commits::count_from;
 mod tests {
     use crate::test;
     use std::path::Path;
+    use std::sync::Barrier;
 
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
@@ -1724,11 +1725,16 @@ A: Oxen.ai
         // count_from. Every caller has to get an answer instead of one of them failing on the
         // commit-count cache's RocksDB lock.
         test::run_one_commit_local_repo_test_async(|repo| async move {
+            const CALLERS: usize = 8;
+            // Every caller enters count_from at the same moment.
+            let barrier = Barrier::new(CALLERS);
             let results = std::thread::scope(|scope| {
-                let threads: Vec<_> = (0..8)
+                let threads: Vec<_> = (0..CALLERS)
                     .map(|_| {
-                        scope
-                            .spawn(|| repositories::commits::count_from(&repo, DEFAULT_BRANCH_NAME))
+                        scope.spawn(|| {
+                            barrier.wait();
+                            repositories::commits::count_from(&repo, DEFAULT_BRANCH_NAME)
+                        })
                     })
                     .collect();
                 threads
