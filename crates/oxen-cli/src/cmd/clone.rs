@@ -1,9 +1,11 @@
 use async_trait::async_trait;
 use clap::{Arg, Command, arg};
 use std::path::{Component, Path, PathBuf};
+use std::str::FromStr;
 
 use liboxen::api;
 use liboxen::constants::DEFAULT_BRANCH_NAME;
+use liboxen::core::db::merkle_node::MerkleNodeBackend;
 use liboxen::error::OxenError;
 use liboxen::opts::CloneOpts;
 use liboxen::opts::FetchOpts;
@@ -38,6 +40,13 @@ impl RunCmd for CloneCmd {
                 Arg::new("depth")
                     .long("depth")
                     .help("Used in combination with --filter. The depth at which to clone a subtree. If not provided, the entire subtree will be cloned.")
+                    .action(clap::ArgAction::Set),
+            )
+            .arg(
+                Arg::new("merkle-backend")
+                    .long("merkle-backend")
+                    .help("Which engine backs the local repo's Merkle node store (default: match the remote)")
+                    .value_parser(["filesystem", "lmdb"])
                     .action(clap::ArgAction::Set),
             )
             .arg(
@@ -86,6 +95,10 @@ impl RunCmd for CloneCmd {
             .get_one::<String>("depth")
             .map(|s| s.parse::<i32>().map_err(OxenError::ParseIntError))
             .transpose()?;
+        let merkle_node_backend = args
+            .get_one::<String>("merkle-backend")
+            .map(|s| MerkleNodeBackend::from_str(s))
+            .transpose()?;
         let is_vfs = args.get_flag("vfs");
         let is_remote = args.get_flag("remote");
 
@@ -129,6 +142,7 @@ impl RunCmd for CloneCmd {
             },
             is_vfs,
             is_remote,
+            merkle_node_backend,
         };
 
         let (scheme, host) = api::client::get_scheme_and_host_from_url(&opts.url)?;

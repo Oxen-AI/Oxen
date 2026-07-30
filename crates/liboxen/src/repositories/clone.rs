@@ -43,11 +43,8 @@ async fn _clone(
     fetch_opts: FetchOpts,
 ) -> Result<LocalRepository, OxenError> {
     let opts = CloneOpts {
-        url: url.as_ref().to_string(),
-        dst: dst.as_ref().to_owned(),
         fetch_opts,
-        is_vfs: false,
-        is_remote: false,
+        ..CloneOpts::new(url, dst)
     };
     clone(&opts).await
 }
