@@ -2,8 +2,10 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str;
+use std::sync::{Arc, LazyLock, Weak};
 
 use glob::Pattern;
+use parking_lot::Mutex;
 use rocksdb::{DBWithThreadMode, MultiThreaded, SingleThreaded};
 use time::OffsetDateTime;
 
@@ -753,13 +755,32 @@ fn list_recursive_with_depth(
     Ok(())
 }
 
+/// Open `commit_count` DB handles, keyed by DB path. Concurrent callers share one handle, which
+/// RocksDB requires — it takes an exclusive lock per path. Entries are `Weak`, so the DB closes
+/// when the last caller drops it and no repo directory stays pinned open between requests.
+static COMMIT_COUNT_DBS: LazyLock<Mutex<HashMap<PathBuf, Weak<DBWithThreadMode<MultiThreaded>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Return the shared commit-count cache DB for `repo`, opening it on first access.
 fn open_commit_count_db(
     repo: &LocalRepository,
-) -> Result<DBWithThreadMode<MultiThreaded>, OxenError> {
+) -> Result<Arc<DBWithThreadMode<MultiThreaded>>, OxenError> {
     let db_path = util::fs::oxen_hidden_dir(&repo.path).join(COMMIT_COUNT_DIR);
+
+    let mut handles = COMMIT_COUNT_DBS.lock();
+    if let Some(db) = handles.get(&db_path).and_then(Weak::upgrade) {
+        return Ok(db);
+    }
+
     util::fs::create_dir_all(&db_path)?;
-    let opts = crate::core::db::key_val::opts::default();
-    Ok(DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?)
+    let db = Arc::new(DBWithThreadMode::open(
+        &opts::default(),
+        dunce::simplified(&db_path),
+    )?);
+    handles.insert(db_path, Arc::downgrade(&db));
+    // Drop tombstones left by handles whose last caller has already finished.
+    handles.retain(|_, weak| weak.strong_count() > 0);
+    Ok(db)
 }
 
 fn get_cached_count(
@@ -1238,6 +1259,35 @@ mod tests {
                 &paginated_commits[1].id, expected_second,
                 "Second result should be C7, got {}",
                 paginated_commits[1].message
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_open_commit_count_db_shares_one_handle() -> Result<(), OxenError> {
+        // RocksDB holds an exclusive lock per DB path, so a second open taken while the first is
+        // still live fails outright. Overlapping callers have to be handed the same handle.
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let first = open_commit_count_db(&repo)?;
+            let second = open_commit_count_db(&repo)?;
+
+            assert!(
+                Arc::ptr_eq(&first, &second),
+                "overlapping callers should share one commit_count handle"
+            );
+
+            // After the last caller drops it the cached entry is dangling, so the next open has
+            // to build a fresh handle rather than hand back the dead one.
+            drop(first);
+            drop(second);
+            let reopened = open_commit_count_db(&repo)?;
+            assert_eq!(
+                Arc::strong_count(&reopened),
+                1,
+                "a reopen after full release should yield a fresh handle"
             );
 
             Ok(())

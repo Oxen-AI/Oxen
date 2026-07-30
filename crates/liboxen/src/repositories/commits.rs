@@ -271,6 +271,7 @@ mod tests {
     use crate::test;
     use std::path::Path;
 
+    use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
     use crate::model::EntryDataType;
     use crate::model::MerkleHash;
@@ -1711,6 +1712,35 @@ A: Oxen.ai
                 "count_from ({merge_count}) should match list_from ({})",
                 all_commits.len()
             );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_count_from_serves_simultaneous_callers() -> Result<(), OxenError> {
+        // Two commit-history requests for one repo can be in flight at once, and both reach
+        // count_from. Every caller has to get an answer instead of one of them failing on the
+        // commit-count cache's RocksDB lock.
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let results = std::thread::scope(|scope| {
+                let threads: Vec<_> = (0..8)
+                    .map(|_| {
+                        scope
+                            .spawn(|| repositories::commits::count_from(&repo, DEFAULT_BRANCH_NAME))
+                    })
+                    .collect();
+                threads
+                    .into_iter()
+                    .map(|thread| thread.join().expect("counting thread panicked"))
+                    .collect::<Vec<_>>()
+            });
+
+            for result in results {
+                let (count, _) = result?;
+                assert_eq!(count, 1, "the one-commit repo should always count 1");
+            }
 
             Ok(())
         })
