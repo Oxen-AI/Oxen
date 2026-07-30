@@ -3,6 +3,8 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str;
 use std::sync::{Arc, LazyLock, Weak};
+use std::thread::sleep;
+use std::time::Duration;
 
 use glob::Pattern;
 use parking_lot::Mutex;
@@ -758,29 +760,65 @@ fn list_recursive_with_depth(
 /// Open `commit_count` DB handles, keyed by DB path. Concurrent callers share one handle, which
 /// RocksDB requires — it takes an exclusive lock per path. Entries are `Weak`, so the DB closes
 /// when the last caller drops it and no repo directory stays pinned open between requests.
+/// A brief LOCK collision is still possible when an open races the tail of a concurrent close
+/// (RocksDB releases the OS lock in its `Drop`, after `strong_count` already hit zero); see
+/// [`open_commit_count_db`] for the bounded retry that waits it out.
 static COMMIT_COUNT_DBS: LazyLock<Mutex<HashMap<PathBuf, Weak<DBWithThreadMode<MultiThreaded>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// How long `open_commit_count_db` waits out a concurrent close before surfacing a LOCK error.
+const OPEN_RETRIES: u32 = 100;
+const OPEN_RETRY_INTERVAL: Duration = Duration::from_millis(2);
+
 /// Return the shared commit-count cache DB for `repo`, opening it on first access.
+/// Retries briefly on a LOCK-collision race with a concurrent close (see static docs).
 fn open_commit_count_db(
     repo: &LocalRepository,
 ) -> Result<Arc<DBWithThreadMode<MultiThreaded>>, OxenError> {
     let db_path = util::fs::oxen_hidden_dir(&repo.path).join(COMMIT_COUNT_DIR);
 
-    let mut handles = COMMIT_COUNT_DBS.lock();
-    if let Some(db) = handles.get(&db_path).and_then(Weak::upgrade) {
+    if let Some(db) = lookup_live_commit_count_db(&db_path) {
         return Ok(db);
     }
 
     util::fs::create_dir_all(&db_path)?;
-    let db = Arc::new(DBWithThreadMode::open(
-        &opts::default(),
-        dunce::simplified(&db_path),
-    )?);
-    handles.insert(db_path, Arc::downgrade(&db));
-    // Drop tombstones left by handles whose last caller has already finished.
-    handles.retain(|_, weak| weak.strong_count() > 0);
-    Ok(db)
+    let mut attempts = 0;
+    loop {
+        let mut handles = COMMIT_COUNT_DBS.lock();
+        if let Some(db) = handles.get(&db_path).and_then(Weak::upgrade) {
+            return Ok(db);
+        }
+        match DBWithThreadMode::open(&opts::default(), dunce::simplified(&db_path)) {
+            Ok(db) => {
+                let db = Arc::new(db);
+                handles.insert(db_path, Arc::downgrade(&db));
+                handles.retain(|_, weak| weak.strong_count() > 0);
+                return Ok(db);
+            }
+            Err(err) if is_lock_collision(&err) => {
+                drop(handles);
+                attempts += 1;
+                if attempts >= OPEN_RETRIES {
+                    return Err(OxenError::from(err));
+                }
+                sleep(OPEN_RETRY_INTERVAL);
+            }
+            Err(err) => return Err(OxenError::from(err)),
+        }
+    }
+}
+
+fn lookup_live_commit_count_db(db_path: &Path) -> Option<Arc<DBWithThreadMode<MultiThreaded>>> {
+    let handles = COMMIT_COUNT_DBS.lock();
+    handles.get(db_path)?.upgrade()
+}
+
+/// True if `err` is a RocksDB LOCK-file collision — i.e. another opener still holds the
+/// per-directory LOCK. Message match rather than a distinct `ErrorKind` because RocksDB
+/// surfaces this as a plain `IOError` across platforms.
+fn is_lock_collision(err: &rocksdb::Error) -> bool {
+    let msg = err.to_string();
+    msg.contains("LOCK") || msg.contains("lock file")
 }
 
 fn get_cached_count(
@@ -1290,6 +1328,44 @@ mod tests {
                 "a reopen after full release should yield a fresh handle"
             );
 
+            Ok(())
+        })
+        .await
+    }
+
+    /// Holder drops the last Arc at the same barrier where reopeners call open. RocksDB can
+    /// still hold the path LOCK during Drop after strong_count hits zero; open must retry.
+    #[tokio::test]
+    async fn test_open_commit_count_db_retries_drop_race() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            for round in 0..500 {
+                std::thread::scope(|scope| {
+                    let barrier = std::sync::Arc::new(std::sync::Barrier::new(9));
+                    let repo_ref = &repo;
+                    scope.spawn({
+                        let barrier_h = std::sync::Arc::clone(&barrier);
+                        move || {
+                            let db = open_commit_count_db(repo_ref).expect("holder");
+                            barrier_h.wait();
+                            drop(db);
+                        }
+                    });
+                    let handles: Vec<_> = (0..8)
+                        .map(|_| {
+                            let barrier_r = std::sync::Arc::clone(&barrier);
+                            scope.spawn(move || {
+                                barrier_r.wait();
+                                open_commit_count_db(repo_ref)
+                            })
+                        })
+                        .collect();
+                    for h in handles {
+                        h.join().expect("join").unwrap_or_else(|e| {
+                            panic!("drop/reopen race round {round}: {e}");
+                        });
+                    }
+                });
+            }
             Ok(())
         })
         .await
