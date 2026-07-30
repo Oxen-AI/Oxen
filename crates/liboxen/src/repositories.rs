@@ -82,7 +82,14 @@ pub fn get_by_namespace_and_name(
     }
 
     LocalRepository::from_dir_with_server_opts(&repo_dir, server_s3_opts)
-        .inspect_err(|err| log::error!("Error getting repo from dir: {err:?}"))
+        .inspect_err(|err| match err {
+            // An unsupported on-disk format is a permanent property of the repo, not a server
+            // defect. See docs/deprecations.md.
+            OxenError::UnsupportedRepoVersion(version) => {
+                log::warn!("Unsupported repo on-disk version {version} at {repo_dir:?}")
+            }
+            _ => log::error!("Error getting repo from dir {repo_dir:?}: {err:?}"),
+        })
         .map(Some)
 }
 
