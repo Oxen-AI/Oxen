@@ -1,0 +1,107 @@
+name: 🚀 Deploy dev
+
+run-name: Deploy ${{ github.sha }} to dev
+
+on:
+  push:
+    branches:
+      - main
+
+  # Recovery path. A failure here leaves dev on the previous commit until the
+  # next merge, however long that is, and the cause is usually transient — a
+  # runner that would not register, capacity that was not there.
+  workflow_dispatch:
+
+# Coalesce a burst of merges onto the newest commit rather than deploying every
+# one of them: while a build runs GitHub holds at most one run pending per group
+# and cancels any earlier pending run. Deliberately not cancel-in-progress — a
+# build already under way is the work a pending run would otherwise repeat.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build oxen-server
+    # Caps what the called workflow's jobs can ask for, so it is the union of
+    # what they need and nothing wider.
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/build_branch.yml
+    with:
+      branch: ${{ github.sha }}
+      ARCHITECTURE: arm64
+    secrets:
+      GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+
+  deploy:
+    name: Dispatch deploy
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      # `repositories` alone would still mint a token carrying every permission
+      # the app holds, including write access to the target's contents. This
+      # only needs to start a workflow there, so it asks for nothing else.
+      - name: Generate GitHub App token
+        uses: actions/create-github-app-token@v3
+        id: generate-token
+        with:
+          app-id: ${{ vars.OXBOT_APP_ID }}
+          private-key: ${{ secrets.OXBOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-actions: write
+          repositories: ${{ vars.DEPLOY_REPOSITORY_NAME }}
+
+      # The build published the image, so the deployment is handed the digest and
+      # pulls it. A digest names exactly one image, which a tag in a registry
+      # that allows overwriting them does not.
+      - name: Dispatch the dev deploy
+        env:
+          DEPLOY_REPOSITORY: ${{ github.repository_owner }}/${{ vars.DEPLOY_REPOSITORY_NAME }}
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+          IMAGE: ${{ needs.build.outputs.image }}
+          SHA: ${{ github.sha }}
+        run: |
+          gh workflow run deploy_dev_oxen_server.yml \
+            --repo "$DEPLOY_REPOSITORY" \
+            --field image="$IMAGE" \
+            --field sha="$SHA"
+
+  # The build runs as a called workflow, so reporting its failures from inside it
+  # would change the manual build path too. Reporting from here covers either
+  # half, including a build that never reaches the dispatch. A run cancelled to
+  # coalesce onto a newer commit is not a failure and stays quiet.
+  report-failure:
+    name: Report failure
+    needs:
+      - build
+      - deploy
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send failure to Slack channel
+        uses: slackapi/slack-github-action@v3.0.3
+        with:
+          # eng-alerts Slack channel
+          webhook: ${{ secrets.ENG_ALERTS_SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "Status :: failure :: Deploy oxen-server ${{ github.sha }} to dev",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "Status :: failure :: Deploy oxen-server ${{ github.sha }} to dev\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
+                  }
+                }
+              ]
+            }
