@@ -11,22 +11,9 @@ use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::util;
 use liboxen::util::telemetry;
 
-mod crash_diagnostics;
-
-pub mod app_data;
-pub mod auth;
-pub mod config;
-pub mod controllers;
-pub mod errors;
-pub mod helpers;
-pub mod middleware;
-pub mod params;
-pub mod routes;
-pub mod services;
-#[cfg(test)]
-pub(crate) mod test;
-
-pub(crate) mod metrics;
+// Imported as modules rather than as items: the `crate::`-rooted paths below — notably the utoipa
+// `paths(...)` list — resolve through this crate's root.
+use oxen_server::{app_data, auth, config, controllers, crash_diagnostics, metrics, routes};
 
 extern crate liboxen;
 extern crate log;
@@ -37,7 +24,9 @@ use actix_web::{App, HttpServer, web};
 use actix_web_httpauth::middleware::HttpAuthentication;
 use thiserror::Error;
 
-use middleware::{MetricsMiddleware, RequestIdMiddleware, RequestStartLogMiddleware, request_id};
+use oxen_server::middleware::{
+    MetricsMiddleware, RequestIdMiddleware, RequestStartLogMiddleware, request_id,
+};
 use tracing_actix_web::TracingLogger;
 
 // Note: These 'view' imports are all for the auto-generated docs with utoipa

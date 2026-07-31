@@ -1,6 +1,7 @@
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::{app_data, path_param};
+use crate::tasks;
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use liboxen::error::OxenError;
@@ -61,7 +62,7 @@ pub async fn rebuild_dir_hashes(
     // The rebuild is synchronous CPU + IO heavy work; run it off the actix worker thread so we
     // don't starve concurrent requests. `JoinError` converts into `OxenError` via `#[from]`;
     // `OxenError` then converts into `OxenHttpError`.
-    let stats = tokio::task::spawn_blocking(move || rebuild_dir_hash_db(&repo, &commit))
+    let stats = tasks::spawn_blocking(move || rebuild_dir_hash_db(&repo, &commit))
         .await
         .map_err(OxenError::from)??;
 

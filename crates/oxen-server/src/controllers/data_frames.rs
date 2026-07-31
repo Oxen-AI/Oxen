@@ -2,6 +2,7 @@ use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::df_opts_query::{self, DFOptsQuery};
 use crate::params::{app_data, parse_resource, path_param};
+use crate::tasks;
 
 use liboxen::constants;
 use liboxen::core::repo_locks;
@@ -100,7 +101,7 @@ pub async fn get(
         height: df.height(),
         width: df.width(),
     };
-    let data = tokio::task::spawn_blocking(move || {
+    let data = tasks::spawn_blocking(move || {
         let mut df = df;
         JsonDataFrameView::json_from_df(&mut df)
     })
