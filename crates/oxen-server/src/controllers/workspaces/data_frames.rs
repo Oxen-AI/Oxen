@@ -251,8 +251,8 @@ pub async fn get_schema(req: HttpRequest) -> Result<HttpResponse, OxenHttpError>
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
-    // This GET auto-indexes on a cache miss (tech-debt ENG-1375); guard the whole handler so a
-    // stop-the-world op (migration/prune/fsck) blocks it.
+    // Serving a schema opens the workspace's staged RocksDB read-write, creating it when absent, so
+    // this GET counts as a write against a stop-the-world op (workspace clear / migration / prune).
     let _write = repo_locks::acquire_write(&repo)?;
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
         return Ok(HttpResponse::NotFound()
