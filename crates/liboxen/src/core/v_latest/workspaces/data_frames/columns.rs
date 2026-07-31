@@ -68,16 +68,9 @@ pub async fn update(
         .clone()
         .unwrap_or(column_to_update.name.clone());
 
-    let og_schema = repositories::data_frames::schemas::get_by_path(
-        &workspace.base_repo,
-        &workspace.commit,
-        file_path,
-    )?;
-
     repositories::workspaces::data_frames::schemas::update_schema(
         workspace,
         file_path,
-        &og_schema.ok_or_else(|| OxenError::basic_str("Original schema not found"))?,
         &column_to_update.name,
         &column_after_name,
     )?;

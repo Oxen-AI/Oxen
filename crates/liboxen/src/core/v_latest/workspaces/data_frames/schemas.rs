@@ -6,73 +6,54 @@ use crate::model::LocalRepository;
 use crate::model::Schema;
 use crate::model::StagedEntryStatus;
 use crate::model::Workspace;
-use crate::model::merkle_tree::node::FileNode;
-use crate::model::metadata::MetadataTabular;
+use crate::model::merkle_tree::node::{MerkleTreeNode, StagedMerkleTreeNode};
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::repositories;
 
-/// Updates the staged schema by changing the column name from `before_column` to `after_column`
-/// and updating the metadata from the original schema.
+/// Rename `before_column` to `after_column` on the data frame's staged schema, carrying that
+/// column's metadata across the rename. The staged schema takes priority over the committed one,
+/// since it holds metadata changed earlier in the same editing session.
 pub fn update_schema(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
-    og_schema: &Schema,
+    path: &Path,
     before_column: &str,
     after_column: &str,
 ) -> Result<(), OxenError> {
-    let staged_schema =
-        crate::core::v_latest::data_frames::schemas::get_staged_schema_with_staged_db_manager(
-            &workspace.workspace_repo,
-            &path,
-        )?;
-    let ref_schema = if let Some(schema) = staged_schema {
-        schema
-    } else {
-        og_schema.clone()
-    };
-
-    // Here we give priority to the staged schema, as it can contained metadata that was changed during the
-    // df editing process.
-    let mut schema = ref_schema.clone();
-    if let Some(ref_schema) = ref_schema.fields.iter().find(|f| f.name == before_column) {
-        for field in &mut schema.fields {
-            if field.name == before_column {
-                field.name = after_column.to_string();
-                field.metadata = ref_schema.metadata.clone();
-                break;
-            }
-        }
-    }
+    // Read the committed node before taking the staged-db write lock.
+    let committed_node =
+        repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?;
 
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
-    let data = staged_db_manager.read_from_staged_db(&path)?;
-
-    let mut file_node: FileNode;
-
-    if let Some(data) = data {
-        file_node = data.node.file()?;
-    } else {
-        file_node = repositories::tree::get_file_by_path(
-            &workspace.base_repo,
-            &workspace.commit,
-            path.as_ref(),
-        )?
-        .ok_or_else(|| OxenError::basic_str("File not found"))?;
-    }
-
-    if let Some(GenericMetadata::MetadataTabular(tabular_metadata)) = &file_node.metadata() {
-        file_node.set_metadata(Some(GenericMetadata::MetadataTabular(
-            MetadataTabular::new(
-                tabular_metadata.tabular.width,
-                tabular_metadata.tabular.height,
-                schema,
+    staged_db_manager.modify_staged_node_and_parents(path, |staged| {
+        let (mut file_node, status) = match staged {
+            Some(staged) => (staged.node.file()?, staged.status),
+            None => (
+                committed_node.ok_or_else(|| OxenError::path_does_not_exist(path))?,
+                StagedEntryStatus::Modified,
             ),
-        )));
-    } else {
-        return Err(OxenError::basic_str("Expected tabular metadata"));
-    }
+        };
 
-    staged_db_manager.upsert_file_node(path, StagedEntryStatus::Modified, &file_node)?;
+        let Some(GenericMetadata::MetadataTabular(m)) = file_node.get_mut_metadata() else {
+            return Err(OxenError::NotADataFrame(path.into()));
+        };
+        // Renaming the field in place carries its metadata to the new name.
+        if let Some(field) = m
+            .tabular
+            .schema
+            .fields
+            .iter_mut()
+            .find(|f| f.name == before_column)
+        {
+            field.name = after_column.to_string();
+        }
+        m.tabular.schema.recompute_hash();
+        file_node.recompute_metadata_hashes()?;
+
+        Ok(StagedMerkleTreeNode {
+            status,
+            node: MerkleTreeNode::from_file(file_node),
+        })
+    })?;
 
     Ok(())
 }
