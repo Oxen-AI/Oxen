@@ -19,8 +19,6 @@ pub use crate::core::v_latest::data_frames::schemas::get_staged;
 /// Get staged schema for workspace
 pub use crate::core::v_latest::data_frames::schemas::get_staged_schema_with_staged_db_manager;
 
-pub use crate::core::v_latest::data_frames::schemas::restore_schema;
-
 /// List all the staged schemas
 pub use crate::core::v_latest::data_frames::schemas::list_staged;
 

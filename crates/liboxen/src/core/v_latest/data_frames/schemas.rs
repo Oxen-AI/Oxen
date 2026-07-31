@@ -24,7 +24,6 @@ use crate::model::StagedEntryStatus;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::merkle_tree::node::StagedMerkleTreeNode;
-use crate::model::metadata::MetadataTabular;
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{Commit, LocalRepository, Schema};
 use crate::repositories;
@@ -130,56 +129,6 @@ pub fn get_staged_schema_with_staged_db_manager(
             Ok(None)
         }
     }
-}
-
-/// Restores the staged schema in workspace df to its original state by comparing the original schema
-/// and the column differences. It updates the column name and metadata in the staged schema
-/// to match the original schema.
-pub fn restore_schema(
-    repo: &LocalRepository,
-    path: impl AsRef<Path>,
-    og_schema: &Schema,
-    before_column: &str,
-    after_column: &str,
-) -> Result<(), OxenError> {
-    let path = util::fs::path_relative_to_dir(&path, &repo.path)?;
-    let staged_db_manager = get_staged_db_manager(repo)?;
-    let value = staged_db_manager.read_from_staged_db(&path)?;
-    let Some((mut staged_schema, val)) =
-        value.and_then(|value| db_val_to_schema(&value).map(|schema| (schema, value)))
-    else {
-        log::debug!("could not get staged schema");
-        return Ok(());
-    };
-
-    for field in &mut staged_schema.fields {
-        if field.name == after_column {
-            field.name = before_column.to_string();
-
-            for og_field in &og_schema.fields {
-                if og_field.name == before_column {
-                    field.metadata = og_field.metadata.clone();
-                }
-            }
-            break;
-        }
-    }
-
-    let mut file_node = val.node.file()?;
-    if let Some(GenericMetadata::MetadataTabular(tabular_metadata)) = &file_node.metadata() {
-        file_node.set_metadata(Some(GenericMetadata::MetadataTabular(
-            MetadataTabular::new(
-                tabular_metadata.tabular.width,
-                tabular_metadata.tabular.height,
-                staged_schema,
-            ),
-        )));
-    } else {
-        return Err(OxenError::basic_str("Expected tabular metadata"));
-    }
-
-    staged_db_manager.upsert_file_node(&path, StagedEntryStatus::Modified, &file_node)?;
-    Ok(())
 }
 
 /// List all the staged schemas
