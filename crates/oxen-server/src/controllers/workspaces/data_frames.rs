@@ -811,6 +811,12 @@ mod tests {
             .to_request();
         let resp = actix_web::test::call_service(&app, req).await;
         assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes)?;
+        assert_eq!(
+            body["error"]["type"], "not_a_data_frame",
+            "the response must name the cause, not just fail: {body}"
+        );
 
         drop(workspace);
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
