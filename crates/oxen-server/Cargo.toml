@@ -77,6 +77,9 @@ signal-hook = { workspace = true }
 actix-multipart-test = { workspace = true }
 liboxen = { workspace = true, features = ["test-utils"] }
 mockito = { workspace = true }
+# "test" swaps in a capturing transport, so the `tasks` tests can assert what reaches Sentry. Kept a
+# dev-dependency feature so the resolver leaves it out of the shipped binary.
+sentry = { workspace = true, features = ["test"] }
 
 [lints]
 workspace = true
