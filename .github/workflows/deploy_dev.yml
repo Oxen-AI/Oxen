@@ -68,8 +68,13 @@ jobs:
           IMAGE: ${{ needs.build.outputs.image }}
           SHA: ${{ github.sha }}
         run: |
+          # --ref is named rather than left to default. Without it the dispatch
+          # first resolves the target's default branch, and that lookup reads the
+          # target's contents — which this token is deliberately not scoped for,
+          # so the dispatch fails before it is attempted.
           gh workflow run deploy_dev_oxen_server.yml \
             --repo "$DEPLOY_REPOSITORY" \
+            --ref main \
             --field image="$IMAGE" \
             --field sha="$SHA"
 
