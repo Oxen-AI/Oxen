@@ -103,7 +103,7 @@ Make sure [`cmake`](https://cmake.org/download/) is installed (`brew install cma
 The [Python interface](./oxen-python/README.md) uses [`liboxen`](./crates/liboxen/) bindings via PyO3, and requires [`uv`](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```bash
-curl --LsSf https://astral.sh/uv/install.sh | sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 If you use [`mise`](https://mise.jdx.dev/) to manage Python installs, you may hit an error where the `oxen-py` crate can't find the Python dynamic library (e.g. `dyld[31558]: Library not loaded: @rpath/libpython3.13.dylib`). Fix it by adding this to `~/.config/mise/config.toml`:
