@@ -78,6 +78,32 @@ pub(crate) fn node_db_path(repo_path: &Path, hash: &MerkleHash) -> PathBuf {
         .join(dir_prefix)
 }
 
+/// Prefix every current node payload starts with: `rmp_serde` encodes the one-field wrapper
+/// struct as a 1-element array holding an externally-tagged enum, so the variant name lands in
+/// the bytes. Payloads written before v0.25.0 are the bare data struct and carry no tag.
+/// `FileChunk` is the exception — it has no enum wrapper at all, so the tag says nothing about it.
+const CURRENT_NODE_PAYLOAD_TAG: &[u8] = b"\x91\x81\xa7V0_25_0";
+
+/// Classify a failure to decode a node payload. A payload carrying no variant tag was written
+/// before the node types gained their enum envelope, which is a property of the repository rather
+/// than a damaged node; telling the two apart keeps a retired format from looking like corruption.
+///
+/// Every conversion from a decode error into a [`MerkleDbError`] goes through here — the `#[from]`
+/// on [`MerkleDbError::Decode`] will silently classify a retired-format node as corruption if a
+/// new decode site reaches for `?` instead.
+fn classify_decode_failure(
+    dtype: MerkleTreeNodeType,
+    hash: MerkleHash,
+    data: &[u8],
+    err: rmp_serde::decode::Error,
+) -> MerkleDbError {
+    if dtype != MerkleTreeNodeType::FileChunk && !data.starts_with(CURRENT_NODE_PAYLOAD_TAG) {
+        MerkleDbError::PreV025Node { dtype, hash }
+    } else {
+        MerkleDbError::Decode(err)
+    }
+}
+
 /// Errors that the Merkle node database can encounter when reading and writing nodes.
 #[derive(Debug, thiserror::Error)]
 pub enum MerkleDbError {
@@ -101,6 +127,11 @@ pub enum MerkleDbError {
     Encode(#[from] rmp_serde::encode::Error),
     #[error("Cannot decode a Merkle node: {0}")]
     Decode(#[from] rmp_serde::decode::Error),
+    #[error("Merkle node {hash} ({dtype:?}) predates Oxen v0.25.0 and cannot be read")]
+    PreV025Node {
+        dtype: MerkleTreeNodeType,
+        hash: MerkleHash,
+    },
     #[error("{0}")]
     TypeMismatch(#[from] InvalidMerkleTreeNodeType),
     #[error("Failed to create directory: {0}")]
@@ -289,15 +320,17 @@ impl MerkleNodeDB {
     }
 
     pub fn node(&self) -> Result<EMerkleTreeNode, MerkleDbError> {
-        let node = Self::to_node(self.dtype, &self.data())?;
+        let node = Self::to_node(self.dtype, self.node_id, &self.data())?;
         Ok(node)
     }
 
     fn to_node(
         dtype: MerkleTreeNodeType,
+        hash: MerkleHash,
         data: &[u8],
-    ) -> Result<EMerkleTreeNode, rmp_serde::decode::Error> {
+    ) -> Result<EMerkleTreeNode, MerkleDbError> {
         EMerkleTreeNode::from_type_and_bytes(dtype, data)
+            .map_err(|err| classify_decode_failure(dtype, hash, data, err))
     }
 
     pub(crate) fn open_read_only(
@@ -444,13 +477,15 @@ impl MerkleNodeDB {
 
     pub(crate) fn map(&mut self) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, MerkleDbError> {
         // log::debug!("Loading merkle node db map");
+        let node_id = self.node_id;
         let Some(lookup) = self.lookup.as_ref() else {
             return Err(MerkleDbError::ReadBeforeOpen);
         };
 
         // Parse the node parent id
         let data_type = MerkleTreeNodeType::from_u8(lookup.data_type)?;
-        let parent_id = MerkleTreeNode::deserialize_id(&lookup.data, data_type)?;
+        let parent_id = MerkleTreeNode::deserialize_id(&lookup.data, data_type)
+            .map_err(|err| classify_decode_failure(data_type, node_id, &lookup.data, err))?;
 
         let children_bytes = self.store.read_children(&self.node_id)?;
         // log::debug!("Loading merkle node db map got {} bytes", children_bytes.len());
@@ -471,7 +506,7 @@ impl MerkleNodeDB {
             let node = MerkleTreeNode {
                 parent_id: Some(parent_id),
                 hash: MerkleHash::new(*hash),
-                node: Self::to_node(dtype, &data)?,
+                node: Self::to_node(dtype, MerkleHash::new(*hash), &data)?,
                 children: Vec::new(),
             };
             // log::debug!("Loaded node {:?}", node);
@@ -508,5 +543,70 @@ impl Drop for MerkleNodeDB {
             "MerkleNodeDB for node {} dropped without close(); buffered node discarded unwritten",
             self.node_id
         );
+    }
+}
+
+#[cfg(test)]
+mod to_node_tests {
+    use super::*;
+    use crate::model::merkle_tree::node::VNode;
+
+    fn hash() -> MerkleHash {
+        MerkleHash::new(42)
+    }
+
+    #[test]
+    fn untagged_payload_reports_the_retired_format() {
+        // The pre-0.25 shape: the bare data struct, with no enum envelope around it.
+        // Built positionally rather than from a struct so the test pins the bytes, not a type
+        // that could drift alongside the code under test.
+        let mut legacy = vec![0x92, 0xc4, 0x10];
+        legacy.extend_from_slice(&hash().to_le_bytes());
+        legacy.extend_from_slice(b"\xa5VNode");
+
+        let err = MerkleNodeDB::to_node(MerkleTreeNodeType::VNode, hash(), &legacy)
+            .expect_err("an untagged payload must not decode");
+
+        assert!(
+            matches!(err, MerkleDbError::PreV025Node { .. }),
+            "expected PreV025Node, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn damaged_current_payload_still_reports_a_decode_error() {
+        // Carries the variant tag, so it is a current-format node that is simply broken.
+        // Misreporting this as a retired format would send the reader chasing the wrong problem.
+        let mut damaged = CURRENT_NODE_PAYLOAD_TAG.to_vec();
+        damaged.extend_from_slice(&[0xc1]); // never a valid msgpack byte
+
+        let err = MerkleNodeDB::to_node(MerkleTreeNodeType::VNode, hash(), &damaged)
+            .expect_err("a damaged payload must not decode");
+
+        assert!(
+            matches!(err, MerkleDbError::Decode(_)),
+            "expected Decode, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn file_chunk_is_never_reported_as_the_retired_format() {
+        // FileChunk has no enum wrapper by design, so its payloads never carry the tag. Judging
+        // it by the tag would label every damaged chunk a retired-format node.
+        let err = MerkleNodeDB::to_node(MerkleTreeNodeType::FileChunk, hash(), &[0xc1])
+            .expect_err("a damaged payload must not decode");
+
+        assert!(
+            matches!(err, MerkleDbError::Decode(_)),
+            "expected Decode, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn current_payload_still_decodes() {
+        let bytes = rmp_serde::to_vec(&VNode::default()).expect("VNode should serialize");
+
+        MerkleNodeDB::to_node(MerkleTreeNodeType::VNode, hash(), &bytes)
+            .expect("a current-format payload must decode");
     }
 }
