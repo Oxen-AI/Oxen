@@ -12,8 +12,7 @@ use crate::model::{LocalRepository, Schema, Workspace};
 use crate::repositories;
 use crate::view::data_frames::columns::{ColumnToDelete, ColumnToUpdate, NewColumn};
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub fn add(
     workspace: &Workspace,
@@ -94,7 +93,7 @@ pub fn add_column_metadata(
     file_path: &Path,
     column: &str,
     metadata: &serde_json::Value,
-) -> Result<HashMap<PathBuf, Schema>, OxenError> {
+) -> Result<Schema, OxenError> {
     super::stage_schema_metadata_update(repo, workspace, file_path, |schema| {
         let field = schema
             .fields

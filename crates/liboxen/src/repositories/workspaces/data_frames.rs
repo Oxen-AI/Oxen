@@ -1646,7 +1646,7 @@ mod tests {
             )?;
 
             // Attaching metadata to a still-present column reconciles the schema.
-            let results = workspaces::data_frames::columns::add_column_metadata(
+            let schema = workspaces::data_frames::columns::add_column_metadata(
                 &repo,
                 &workspace,
                 file_path.clone(),
@@ -1654,7 +1654,6 @@ mod tests {
                 &json!({"root": "images"}),
             )?;
 
-            let schema = results.values().next().expect("a schema was returned");
             let names: Vec<&str> = schema.fields.iter().map(|f| f.name.as_str()).collect();
             assert!(
                 !names.contains(&"label"),
@@ -1834,14 +1833,13 @@ mod tests {
                 &json!({"_oxen": {"render": {"func": "image"}}}),
             )?;
 
-            let results = workspaces::data_frames::schemas::add_schema_metadata(
+            let schema = workspaces::data_frames::schemas::add_schema_metadata(
                 &repo,
                 &workspace,
                 &file_path,
                 &json!({"_oxen": {"view": {"columns": ["file", "label"]}}}),
             )?;
 
-            let schema = results.values().next().expect("a schema was returned");
             assert_eq!(
                 schema.metadata,
                 Some(json!({"_oxen": {"view": {"columns": ["file", "label"]}}})),

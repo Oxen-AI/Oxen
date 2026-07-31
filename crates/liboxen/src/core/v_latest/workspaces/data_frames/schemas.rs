@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::core::staged::get_staged_db_manager;
 use crate::error::OxenError;
@@ -86,7 +85,7 @@ pub fn add_schema_metadata(
     workspace: &Workspace,
     file_path: &Path,
     metadata: &serde_json::Value,
-) -> Result<HashMap<PathBuf, Schema>, OxenError> {
+) -> Result<Schema, OxenError> {
     super::stage_schema_metadata_update(repo, workspace, file_path, |schema| {
         schema.metadata = Some(metadata.to_owned());
         Ok(())

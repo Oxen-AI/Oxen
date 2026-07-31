@@ -6,7 +6,6 @@ use crate::view::JsonDataFrameViews;
 use crate::view::data_frames::columns::{ColumnToDelete, ColumnToUpdate, NewColumn};
 
 use polars::frame::DataFrame;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub fn add(
@@ -51,7 +50,7 @@ pub fn add_column_metadata(
     file_path: PathBuf,
     column: String,
     metadata: &serde_json::Value,
-) -> Result<HashMap<PathBuf, Schema>, OxenError> {
+) -> Result<Schema, OxenError> {
     core::v_latest::workspaces::data_frames::columns::add_column_metadata(
         repo, workspace, &file_path, &column, metadata,
     )

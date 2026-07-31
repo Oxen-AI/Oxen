@@ -15,7 +15,7 @@ use crate::repositories::workspaces::{
     list_dirs as list_workspace_dirs, read_config as read_workspace_config,
 };
 use parking_lot::Mutex;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -36,14 +36,13 @@ pub mod rows;
 pub mod schemas;
 
 /// Stage an edit to a data frame's tabular schema, applying `mutate` to the
-/// schema on its staged file node. Returns the updated schema keyed by the
-/// file's repo-relative path.
+/// schema on its staged file node. Returns the updated schema.
 pub(crate) fn stage_schema_metadata_update<F>(
     repo: &LocalRepository,
     workspace: &Workspace,
     file_path: &Path,
     mutate: F,
-) -> Result<HashMap<PathBuf, Schema>, OxenError>
+) -> Result<Schema, OxenError>
 where
     F: FnOnce(&mut Schema) -> Result<(), OxenError>,
 {
@@ -109,7 +108,7 @@ where
             format!("Staged node for {path:?} lost its tabular metadata").into(),
         ));
     };
-    Ok(HashMap::from([(path, m.tabular.schema)]))
+    Ok(m.tabular.schema)
 }
 
 /// Schema of the workspace's staged DuckDB table, or `None` if the data frame
