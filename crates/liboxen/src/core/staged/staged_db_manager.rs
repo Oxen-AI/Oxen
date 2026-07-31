@@ -217,7 +217,10 @@ impl StagedDBManager {
     /// read and the write and have its update silently overwritten. The
     /// closure receives the current staged node, if any, and returns the node
     /// to store. Returns the stored node.
-    pub fn modify_staged_node<F>(
+    ///
+    /// This applies no staging policy. Callers acting on a user edit want
+    /// [`Self::edit_staged_node`] instead.
+    fn modify_staged_node<F>(
         &self,
         path: &Path,
         modify: F,
@@ -241,10 +244,15 @@ impl StagedDBManager {
         Ok(updated)
     }
 
-    /// [`Self::modify_staged_node`], additionally staging `Added` markers for `path`'s parent
-    /// directories when nothing was staged at `path` yet. A path that was already staged keeps
-    /// whatever markers it has, so a directory staged for removal is left staged for removal.
-    pub fn modify_staged_node_and_parents<F>(
+    /// Apply a user edit to the staged node at `path`, atomically as
+    /// [`Self::modify_staged_node`] does, under two staging rules:
+    ///
+    /// - A path staged for removal is refused with [`OxenError::PathStagedForRemoval`]. Removal is
+    ///   terminal until the path is unstaged, so an edit must not silently undo it.
+    /// - The status already staged at `path` is preserved by the caller's closure; when nothing was
+    ///   staged there yet, `Added` markers are staged for the parent directories. A path that was
+    ///   already staged keeps whatever markers it has.
+    pub fn edit_staged_node<F>(
         &self,
         path: &Path,
         modify: F,
@@ -254,6 +262,11 @@ impl StagedDBManager {
     {
         let mut was_staged = false;
         let updated = self.modify_staged_node(path, |staged| {
+            if let Some(staged) = &staged
+                && staged.status == StagedEntryStatus::Removed
+            {
+                return Err(OxenError::PathStagedForRemoval(path.into()));
+            }
             was_staged = staged.is_some();
             modify(staged)
         })?;

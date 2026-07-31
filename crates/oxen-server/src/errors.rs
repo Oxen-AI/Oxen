@@ -360,6 +360,19 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::NotFound().json(error_json)
                     }
+                    OxenError::PathStagedForRemoval(path) => {
+                        log::debug!("Edit refused, path staged for removal: {path}");
+                        let error_json = json!({
+                            "error": {
+                                "type": MSG_CONFLICT,
+                                "title": "Path is staged for removal",
+                                "detail": format!("Unstage the removal of '{path}' before editing it"),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_CONFLICT,
+                        });
+                        HttpResponse::Conflict().json(error_json)
+                    }
                     OxenError::NotADataFrame(path) => {
                         log::debug!("Not a tabular data frame: {path}");
                         let error_json = json!({

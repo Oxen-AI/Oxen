@@ -51,7 +51,7 @@ where
     let table_schema = staged_table_schema(workspace, &path)?;
 
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
-    let staged = staged_db_manager.modify_staged_node_and_parents(&path, |staged| {
+    let staged = staged_db_manager.edit_staged_node(&path, |staged| {
         let (mut file_node, status) = match staged {
             Some(staged) => (staged.node.file()?, staged.status),
             None => (

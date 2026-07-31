@@ -312,7 +312,8 @@ pub async fn get_schema(req: HttpRequest) -> Result<HttpResponse, OxenHttpError>
     responses(
         (status = 200, description = "Schema metadata updated", body = StatusMessage),
         (status = 400, description = "Missing or invalid `metadata` in the request body, or the path is not a tabular data frame"),
-        (status = 404, description = "Repository, workspace, or data frame not found")
+        (status = 404, description = "Repository, workspace, or data frame not found"),
+        (status = 409, description = "The data frame is staged for removal in this workspace")
     )
 )]
 pub async fn put_schema_metadata(

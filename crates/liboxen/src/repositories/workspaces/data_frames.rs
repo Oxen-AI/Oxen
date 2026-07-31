@@ -1812,8 +1812,11 @@ mod tests {
         .await
     }
 
+    /// A metadata edit keeps whatever status is already staged, so it can't turn a newly added
+    /// file into a modified one, and it can't turn a removal into a modification.
     #[tokio::test]
-    async fn test_add_schema_metadata_preserves_existing_staged_status() -> Result<(), OxenError> {
+    async fn test_add_schema_metadata_preserves_added_and_refuses_removed() -> Result<(), OxenError>
+    {
         if std::env::consts::OS == "windows" {
             return Ok(());
         }
@@ -1831,27 +1834,49 @@ mod tests {
             let staged_db_manager =
                 crate::core::staged::get_staged_db_manager(&workspace.workspace_repo)?;
 
-            for status in [
+            staged_db_manager.upsert_file_node(
+                &file_path,
                 crate::model::StagedEntryStatus::Added,
+                &file_node,
+            )?;
+            workspaces::data_frames::schemas::add_schema_metadata(
+                &repo,
+                &workspace,
+                &file_path,
+                &json!({"edited": "while added"}),
+            )?;
+            let staged = staged_db_manager
+                .read_from_staged_db(&file_path)?
+                .expect("the metadata edit should remain staged");
+            assert_eq!(
+                staged.status,
+                crate::model::StagedEntryStatus::Added,
+                "a metadata edit must not change the existing staged status"
+            );
+
+            staged_db_manager.upsert_file_node(
+                &file_path,
                 crate::model::StagedEntryStatus::Removed,
-            ] {
-                staged_db_manager.upsert_file_node(&file_path, status.clone(), &file_node)?;
-
-                workspaces::data_frames::schemas::add_schema_metadata(
-                    &repo,
-                    &workspace,
-                    &file_path,
-                    &json!({"status": format!("{status:?}")}),
-                )?;
-
-                let staged = staged_db_manager
-                    .read_from_staged_db(&file_path)?
-                    .expect("the metadata edit should remain staged");
-                assert_eq!(
-                    staged.status, status,
-                    "a metadata edit must not change the existing staged status"
-                );
-            }
+                &file_node,
+            )?;
+            let result = workspaces::data_frames::schemas::add_schema_metadata(
+                &repo,
+                &workspace,
+                &file_path,
+                &json!({"edited": "while removed"}),
+            );
+            assert!(
+                matches!(result, Err(OxenError::PathStagedForRemoval(_))),
+                "editing a path staged for removal must be refused, got {result:?}"
+            );
+            let staged = staged_db_manager
+                .read_from_staged_db(&file_path)?
+                .expect("the removal should still be staged");
+            assert_eq!(
+                staged.status,
+                crate::model::StagedEntryStatus::Removed,
+                "a refused edit must leave the removal staged"
+            );
             Ok(())
         })
         .await

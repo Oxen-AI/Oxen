@@ -174,6 +174,11 @@ pub enum OxenError {
     #[error("A workspace with the name '{0}' already exists")]
     WorkspaceAlreadyExists(String),
 
+    /// An edit targeted a path the workspace has staged for removal. Removal is terminal until
+    /// the path is unstaged, so the edit is refused rather than silently undoing the removal.
+    #[error("Path is staged for removal: {0}")]
+    PathStagedForRemoval(PathBufError),
+
     /// The workspace's staged database is in an inconsistent state — the directory
     /// exists but the underlying store cannot be read. Distinct from the clean-empty
     /// case, which yields an empty `StagedData` rather than an error.
@@ -748,6 +753,9 @@ impl OxenError {
             | CommitEntryNotFound(_) => "Check the path and current branch with `oxen status`.",
             NotADataFrame(_) => {
                 "Schema operations need a tabular file (csv, tsv, jsonl, parquet, arrow)."
+            }
+            PathStagedForRemoval(_) => {
+                "Unstage the removal with `oxen workspace rm --staged <path>`, then retry the edit."
             }
             MergeInProgressMismatch { .. } => {
                 "Run `oxen merge --abort` to abandon the in-progress merge, or retry the original target."

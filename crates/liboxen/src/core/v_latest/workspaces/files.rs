@@ -1098,7 +1098,7 @@ fn p_modify_file(
     log::debug!("p_modify_file file_node: {file_node}");
 
     let staged_db_manager = get_staged_db_manager(workspace_repo)?;
-    staged_db_manager.modify_staged_node_and_parents(path, |staged| {
+    staged_db_manager.edit_staged_node(path, |staged| {
         // The committed node knows nothing of workspace metadata edits. When
         // the staged node holds the same content with different metadata,
         // carry that metadata over so re-staging doesn't discard it.
