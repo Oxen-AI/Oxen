@@ -311,7 +311,7 @@ pub async fn get_schema(req: HttpRequest) -> Result<HttpResponse, OxenHttpError>
     ),
     responses(
         (status = 200, description = "Schema metadata updated", body = StatusMessage),
-        (status = 400, description = "Missing or invalid `metadata` in the request body"),
+        (status = 400, description = "Missing or invalid `metadata` in the request body, or the path is not a tabular data frame"),
         (status = 404, description = "Repository, workspace, or data frame not found")
     )
 )]
@@ -768,6 +768,48 @@ mod tests {
         let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
         let schema: Schema = serde_json::from_slice(&bytes)?;
         assert_eq!(schema.metadata, Some(metadata));
+
+        drop(workspace);
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
+
+    /// A non-tabular path is a client mistake, not a server fault: it has to
+    /// come back 4xx so callers can distinguish it from a real failure.
+    #[actix_web::test]
+    async fn test_schema_metadata_put_on_non_tabular_path_is_a_client_error()
+    -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Schema-Metadata-Non-Tabular";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let readme_path = repo.path.join("README.md");
+        util::fs::write_to_path(&readme_path, "# Not a data frame\n")?;
+        repositories::add(&repo, &readme_path).await?;
+        let commit = repositories::commit(&repo, "Add README")?;
+
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        let workspace = repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/schema/{path:.*}",
+                    web::put().to(controllers::workspaces::data_frames::put_schema_metadata),
+                ),
+        )
+        .await;
+        let req = actix_web::test::TestRequest::put()
+            .uri(&format!(
+                "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/schema/README.md"
+            ))
+            .set_json(json!({"metadata": {"task": "classification"}}))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
 
         drop(workspace);
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;

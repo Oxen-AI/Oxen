@@ -65,9 +65,7 @@ where
         };
 
         let Some(GenericMetadata::MetadataTabular(m)) = file_node.get_mut_metadata() else {
-            return Err(OxenError::basic_str(format!(
-                "Data frame at {path:?} does not have tabular metadata"
-            )));
+            return Err(OxenError::NotADataFrame(path.clone().into()));
         };
         // The staged table is authoritative for columns a workspace edit
         // added, removed, or retyped; rebuild the fields from it, carrying
@@ -107,9 +105,9 @@ where
     }
 
     let Some(GenericMetadata::MetadataTabular(m)) = staged.node.file()?.metadata() else {
-        return Err(OxenError::basic_str(format!(
-            "Data frame at {path:?} does not have tabular metadata"
-        )));
+        return Err(OxenError::InternalError(
+            format!("Staged node for {path:?} lost its tabular metadata").into(),
+        ));
     };
     Ok(HashMap::from([(path, m.tabular.schema)]))
 }

@@ -360,6 +360,19 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::NotFound().json(error_json)
                     }
+                    OxenError::NotADataFrame(path) => {
+                        log::debug!("Not a tabular data frame: {path}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "not_a_data_frame",
+                                "title": "Not a tabular data frame",
+                                "detail": format!("Schema operations need a tabular file: '{path}'")
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
                     OxenError::WorkspaceNotFound(workspace) => {
                         log::warn!("Workspace not found: {workspace}");
                         let error_json = json!({

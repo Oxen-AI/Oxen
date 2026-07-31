@@ -346,6 +346,10 @@ pub enum OxenError {
     #[error("{0}")]
     UnsupportedOperation(StringError),
 
+    /// The path exists but is not a tabular data frame, so it has no schema to operate on.
+    #[error("Not a tabular data frame: {0}")]
+    NotADataFrame(PathBufError),
+
     //
     // Metadata
     //
@@ -742,6 +746,9 @@ impl OxenError {
             | ResourceNotFound(_)
             | ParsedResourceNotFound(_)
             | CommitEntryNotFound(_) => "Check the path and current branch with `oxen status`.",
+            NotADataFrame(_) => {
+                "Schema operations need a tabular file (csv, tsv, jsonl, parquet, arrow)."
+            }
             MergeInProgressMismatch { .. } => {
                 "Run `oxen merge --abort` to abandon the in-progress merge, or retry the original target."
             }

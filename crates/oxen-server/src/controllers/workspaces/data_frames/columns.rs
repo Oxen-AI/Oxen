@@ -288,7 +288,7 @@ pub async fn update(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     ),
     responses(
         (status = 200, description = "Column metadata updated", body = StatusMessage),
-        (status = 400, description = "Invalid request body, missing `column_name`, or the column does not exist in the schema"),
+        (status = 400, description = "Invalid request body, missing `column_name`, the path is not a tabular data frame, or the column does not exist in the schema"),
         (status = 404, description = "Repository, workspace, or data frame not found")
     )
 )]
