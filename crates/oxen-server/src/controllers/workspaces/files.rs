@@ -1,6 +1,7 @@
 use crate::errors::OxenHttpError;
 use crate::helpers::{file_stream_response, get_repo};
 use crate::params::{app_data, client_must_use_multipart_staging, path_param};
+use crate::tasks;
 
 use liboxen::constants::stream_segment_size;
 use liboxen::core;
@@ -533,7 +534,7 @@ pub async fn save_parts(
             let upload_filename_copy = upload_filename.clone();
 
             let (upload_filehash, data_to_store) =
-                match actix_web::web::block(move || -> Result<(String, Vec<u8>), OxenError> {
+                match tasks::spawn_blocking(move || -> Result<(String, Vec<u8>), OxenError> {
                     let data = if is_gzipped {
                         log::debug!(
                             "Decompressing gzipped data for file: {upload_filename_copy:?}"
