@@ -59,7 +59,20 @@ ENV PKG_CONFIG_PATH="/opt/ffmpeg/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
 WORKDIR /usr/src/oxen-server
 COPY . .
-RUN cargo build --workspace --exclude oxen-py --release --features liboxen/ffmpeg
+
+# Default to what `[profile.release]` in Cargo.toml already sets, so a build that
+# overrides neither compiles exactly what a release build compiles. Cargo reads
+# both as profile overrides — the same mechanism the Windows release build uses to
+# select thin LTO.
+ARG CARGO_PROFILE_RELEASE_LTO=true
+ARG CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
+ENV CARGO_PROFILE_RELEASE_LTO=${CARGO_PROFILE_RELEASE_LTO} \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=${CARGO_PROFILE_RELEASE_CODEGEN_UNITS}
+
+# `--timings` writes target/cargo-timings/cargo-timing.html, a per-unit timeline of
+# where the wall clock goes — including the LTO and link passes at the end, which
+# no layer cache can remove.
+RUN cargo build --workspace --exclude oxen-py --release --features liboxen/ffmpeg --timings
 
 # Minimal image to run the binary (without Rust toolchain)
 FROM debian:bookworm-slim AS runtime
