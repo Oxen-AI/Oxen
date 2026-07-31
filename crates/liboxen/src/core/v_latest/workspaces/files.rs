@@ -56,11 +56,9 @@ pub async fn rm(
     filepath: impl AsRef<Path>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let filepath = filepath.as_ref();
-    let workspace_repo = &workspace.workspace_repo;
-    let base_repo = &workspace.base_repo;
 
     // Stage the file using the repositories::rm method
-    let err_files = p_rm(base_repo, workspace_repo, &workspace.commit, filepath).await?;
+    let err_files = p_rm(workspace, filepath).await?;
 
     // Return the Err files
     Ok(err_files)
@@ -1014,13 +1012,11 @@ async fn p_add_file(
     )
 }
 
-async fn p_rm(
-    base_repo: &LocalRepository,
-    workspace_repo: &LocalRepository,
-    commit: &Commit,
-    path: &Path,
-) -> Result<Vec<ErrorFileInfo>, OxenError> {
+async fn p_rm(workspace: &Workspace, path: &Path) -> Result<Vec<ErrorFileInfo>, OxenError> {
     log::debug!("p_rm: deleting file {path:?}");
+    let base_repo = &workspace.base_repo;
+    let workspace_repo = &workspace.workspace_repo;
+    let commit = &workspace.commit;
     let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
 
     let parent_path = path.parent().unwrap_or(Path::new(""));
@@ -1038,6 +1034,7 @@ async fn p_rm(
             &file_node,
             &seen_dirs,
         )?);
+        unindex_if_staged_table(workspace, &relative_path)?;
     } else if has_dir_node(&maybe_dir_node, &file_name)? {
         if let Some(dir_node) = repositories::tree::get_dir_with_children_recursive(
             base_repo,
@@ -1051,6 +1048,14 @@ async fn p_rm(
                 &relative_path,
                 &seen_dirs,
             )?;
+            // remove_dir_with_db_manager stages every file under the dir for removal, so each of
+            // them needs its index dropped too.
+            let parent_path = relative_path.parent().unwrap_or(Path::new(""));
+            for (child_path, node) in dir_node.list_files_and_dirs()? {
+                if let EMerkleTreeNode::File(_) = &node.node {
+                    unindex_if_staged_table(workspace, &parent_path.join(child_path))?;
+                }
+            }
         };
     } else {
         // If the path has neither a file node or dir node in the tree, it cannot be staged for removal
@@ -1063,6 +1068,17 @@ async fn p_rm(
     }
 
     Ok(err_files)
+}
+
+/// Drop the staged DuckDB table of the data frame at `path`, if it has one. A path staged for
+/// removal must not keep an editable index: a later row or column edit would re-stage the file as
+/// `Modified`, which would undo the removal.
+fn unindex_if_staged_table(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
+    if repositories::workspaces::data_frames::has_staged_table(workspace, path)? {
+        log::debug!("p_rm: dropping staged data frame index for {path:?}");
+        repositories::workspaces::data_frames::unindex(workspace, path)?;
+    }
+    Ok(())
 }
 
 fn p_modify_file(

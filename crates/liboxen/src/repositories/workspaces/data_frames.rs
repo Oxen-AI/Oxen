@@ -1763,6 +1763,55 @@ mod tests {
         .await
     }
 
+    /// Staging a data frame for removal drops its DuckDB index. If the index survived, then the
+    /// frame stayed editable and the next row edit re-staged it as `Modified`, so the removal
+    /// silently never happened.
+    #[tokio::test]
+    async fn test_rm_unindexes_so_a_later_edit_cannot_undo_the_removal() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-rm-unindexes")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+            assert!(workspaces::data_frames::is_indexed(&workspace, &file_path)?);
+
+            let err_files = repositories::workspaces::files::rm(&workspace, &file_path).await?;
+            assert!(err_files.is_empty(), "rm reported errors: {err_files:?}");
+            assert!(
+                !workspaces::data_frames::is_indexed(&workspace, &file_path)?,
+                "a data frame staged for removal must not keep an editable index"
+            );
+
+            // The edit that used to resurrect the file now has no index to edit.
+            let row = json!({"file": "images/x.jpg", "label": "cat"});
+            assert!(
+                workspaces::data_frames::rows::add(&repo, &workspace, &file_path, &row).is_err(),
+                "editing rows of a removed data frame must not succeed"
+            );
+
+            let body = NewCommitBody {
+                author: "author".to_string(),
+                email: "email".to_string(),
+                message: "Remove the data frame".to_string(),
+            };
+            let new_commit = workspaces::commit(&workspace, &body, &branch.name).await?;
+            assert!(
+                repositories::tree::get_file_by_path(&repo, &new_commit, &file_path)?.is_none(),
+                "the removal must survive to the commit"
+            );
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_add_schema_metadata_preserves_existing_staged_status() -> Result<(), OxenError> {
         if std::env::consts::OS == "windows" {
