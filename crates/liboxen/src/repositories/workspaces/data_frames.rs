@@ -1763,6 +1763,96 @@ mod tests {
         .await
     }
 
+    /// Unstaging a data frame discards its staged row edits, not just the staging marker. While
+    /// the DuckDB index survived an unstage, the next edit re-staged the file and the discarded
+    /// rows came back with it.
+    #[tokio::test]
+    async fn test_unstage_discards_staged_row_edits() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-unstage-discards")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+            let committed_rows = workspaces::data_frames::count(&workspace, &file_path)?;
+
+            workspaces::data_frames::rows::add(
+                &repo,
+                &workspace,
+                &file_path,
+                &json!({"file": "images/discarded.jpg", "label": "cat"}),
+            )?;
+            assert_eq!(
+                workspaces::data_frames::count(&workspace, &file_path)?,
+                committed_rows + 1
+            );
+
+            repositories::workspaces::files::unstage(&workspace, &file_path)?;
+            {
+                let staged_db_manager =
+                    crate::core::staged::get_staged_db_manager(&workspace.workspace_repo)?;
+                assert!(
+                    staged_db_manager.read_from_staged_db(&file_path)?.is_none(),
+                    "unstage should drop the staged entry"
+                );
+            }
+            assert!(
+                !workspaces::data_frames::is_indexed(&workspace, &file_path)?,
+                "unstage should drop the index holding the discarded edits"
+            );
+
+            // Re-indexing rebuilds from the committed file, so the discarded row is really gone.
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+            assert_eq!(
+                workspaces::data_frames::count(&workspace, &file_path)?,
+                committed_rows,
+                "the discarded row must not survive into a fresh index"
+            );
+
+            workspaces::data_frames::rows::add(
+                &repo,
+                &workspace,
+                &file_path,
+                &json!({"file": "images/kept.jpg", "label": "dog"}),
+            )?;
+            let body = NewCommitBody {
+                author: "author".to_string(),
+                email: "email".to_string(),
+                message: "Keep only the second row".to_string(),
+            };
+            let new_commit = workspaces::commit(&workspace, &body, &branch.name).await?;
+            let resource = crate::model::ParsedResource {
+                path: file_path.clone(),
+                version: PathBuf::from(new_commit.id.to_string()),
+                resource: file_path.clone(),
+                workspace: None,
+                commit: Some(new_commit.clone()),
+                branch: None,
+            };
+            let df = repositories::data_frames::get_slice(
+                &repo,
+                &resource,
+                &file_path,
+                &crate::opts::DFOpts::empty(),
+            )
+            .await?;
+            assert_eq!(
+                df.total_entries,
+                committed_rows + 1,
+                "only the row added after the unstage should be committed"
+            );
+            Ok(())
+        })
+        .await
+    }
+
     /// Staging a data frame for removal drops its DuckDB index. If the index survived, then the
     /// frame stayed editable and the next row edit re-staged it as `Modified`, so the removal
     /// silently never happened.

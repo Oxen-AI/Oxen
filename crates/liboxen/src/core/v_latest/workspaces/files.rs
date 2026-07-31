@@ -292,9 +292,14 @@ pub async fn remove_files_from_staged_db(
     Ok(err_files)
 }
 
+/// Discard the workspace's staged changes for `path`, including the staged edits held in a data
+/// frame's DuckDB index. Editing the path again re-indexes it from the committed file.
 pub fn unstage(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), OxenError> {
     let workspace_repo = &workspace.workspace_repo;
     let path = util::fs::path_relative_to_dir(path.as_ref(), &workspace_repo.path)?;
+    // Drop the index first: a failure here leaves the path staged and indexed, which is coherent,
+    // where dropping the entry first would leave the discarded edits waiting to be re-staged.
+    unindex_if_staged_table(workspace, &path)?;
     get_staged_db_manager(workspace_repo)?.delete_entry(&path)
 }
 
