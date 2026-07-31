@@ -47,83 +47,33 @@ fn inherited_hub() -> Arc<Hub> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use actix_web::body::to_bytes;
     use actix_web::test::{TestRequest, call_service, init_service};
     use actix_web::{App, HttpResponse, web};
+    use liboxen::error::OxenError;
     use sentry::protocol::Event;
-    use sentry::test::{TestTransport, with_captured_events};
-    use sentry::{ClientOptions, Level, capture_message, configure_scope};
-    use tokio::runtime::Builder;
+    use sentry::test::TestTransport;
+    use sentry::{ClientOptions, Level, capture_message};
 
-    /// The route name `sentry-actix` puts on the scope of every request hub, which is what a task
-    /// spawned through this module has to end up reporting under.
+    use crate::helpers::stream_with_heartbeat;
+
+    /// The route actix matches, the URI that matches it, and the transaction name `sentry-actix`
+    /// derives from the two — what a task spawned anywhere under this request must report against.
+    const ROUTE_PATTERN: &str = "/api/repos/{namespace}/{repo_name}";
+    const REQUEST_URI: &str = "/api/repos/ox/Cat-Dog-Classifier";
     const ROUTE: &str = "GET /api/repos/{namespace}/{repo_name}";
 
-    /// Captures the events `f` reports, with `ROUTE` on the scope. `f` runs on a current-thread
-    /// runtime so the hub `with_captured_events` installs on this thread is the one a task inherits.
-    fn events_from_async<F>(f: F) -> Vec<Event<'static>>
+    /// Drives one GET through the same Sentry middleware configuration as `main` and returns the
+    /// events `handler`'s tasks reported. The response body is read to the end, so work deferred
+    /// behind a streaming body has run by the time the events are collected.
+    ///
+    /// The middleware derives each request hub from the one built here, so the capturing client is
+    /// never bound to a hub the rest of the test binary shares.
+    async fn events_from_request<F, Fut>(handler: F) -> Vec<Event<'static>>
     where
-        F: Future<Output = ()>,
+        F: Fn() -> Fut + Clone + 'static,
+        Fut: Future<Output = HttpResponse> + 'static,
     {
-        with_captured_events(|| {
-            configure_scope(|scope| scope.set_transaction(Some(ROUTE)));
-            Builder::new_current_thread()
-                .build()
-                .expect("failed to build a current-thread runtime")
-                .block_on(f);
-        })
-    }
-
-    #[test]
-    fn spawn_blocking_reports_against_the_callers_request() {
-        let events = events_from_async(async {
-            spawn_blocking(|| capture_message("from the blocking pool", Level::Error))
-                .await
-                .expect("the blocking task should not have panicked");
-        });
-
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].transaction.as_deref(), Some(ROUTE));
-    }
-
-    #[test]
-    fn inherit_hub_reports_against_the_callers_request() {
-        let events = events_from_async(async {
-            let task = inherit_hub(async { capture_message("from a task", Level::Error) });
-            tokio::spawn(task)
-                .await
-                .expect("the spawned task should not have panicked");
-        });
-
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].transaction.as_deref(), Some(ROUTE));
-    }
-
-    /// The bare spawn this module exists to replace: the pool thread resolves its own hub, which
-    /// carries no route — the baseline the two assertions above are measured against.
-    #[test]
-    fn a_bare_spawn_loses_the_callers_request() {
-        let events = events_from_async(async {
-            tokio::task::spawn_blocking(|| capture_message("from the blocking pool", Level::Error))
-                .await
-                .expect("the blocking task should not have panicked");
-        });
-
-        assert!(events.iter().all(|event| event.transaction.is_none()));
-    }
-
-    /// The whole chain the server relies on: a real request through the same Sentry middleware
-    /// configuration as `main`, reporting from a task the handler spawned.
-    #[actix_web::test]
-    async fn a_handler_task_reports_under_the_route_actix_matched() {
-        async fn handler() -> HttpResponse {
-            spawn_blocking(|| capture_message("from the blocking pool", Level::Error))
-                .await
-                .expect("the blocking task should not have panicked");
-            HttpResponse::Ok().finish()
-        }
-
-        // The middleware derives each request hub from the one given here, so the test client is
-        // reachable without binding it to any hub the rest of the test binary shares.
         let transport = TestTransport::new();
         let options = ClientOptions {
             dsn: Some(
@@ -141,7 +91,7 @@ mod tests {
 
         let app = init_service(
             App::new()
-                .route("/api/repos/{namespace}/{repo_name}", web::get().to(handler))
+                .route(ROUTE_PATTERN, web::get().to(handler))
                 .wrap(
                     sentry_actix::Sentry::builder()
                         .capture_server_errors(false)
@@ -150,12 +100,27 @@ mod tests {
                 ),
         )
         .await;
-        let request = TestRequest::get()
-            .uri("/api/repos/ox/Cat-Dog-Classifier")
-            .to_request();
-        assert!(call_service(&app, request).await.status().is_success());
+        let response = call_service(&app, TestRequest::get().uri(REQUEST_URI).to_request()).await;
+        assert!(response.status().is_success());
+        to_bytes(response.into_body())
+            .await
+            .expect("the response body should read to the end");
 
-        let events = transport.fetch_and_clear_events();
+        transport.fetch_and_clear_events()
+    }
+
+    /// How the nine converted `spawn_blocking` call sites spawn: the handler awaits the task before
+    /// it responds.
+    #[actix_web::test]
+    async fn a_task_the_handler_awaits_reports_under_the_route() {
+        let events = events_from_request(|| async {
+            spawn_blocking(|| capture_message("from the blocking pool", Level::Error))
+                .await
+                .expect("the blocking task should not have panicked");
+            HttpResponse::Ok().finish()
+        })
+        .await;
+
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].transaction.as_deref(), Some(ROUTE));
         let url = events[0]
@@ -163,9 +128,42 @@ mod tests {
             .as_ref()
             .and_then(|request| request.url.as_ref())
             .map(ToString::to_string);
-        assert_eq!(
-            url.as_deref(),
-            Some("http://localhost:8080/api/repos/ox/Cat-Dog-Classifier")
-        );
+        let expected_url = format!("http://localhost:8080{REQUEST_URI}");
+        assert_eq!(url.as_deref(), Some(expected_url.as_str()));
+    }
+
+    /// How `create_nodes` spawns, and the hardest case: the handler returns at once and the work
+    /// runs while the response body streams, after the middleware's own hub binding is gone. Nests
+    /// `inherit_hub` (applied by `stream_with_heartbeat`) into `spawn_blocking`, so it also covers
+    /// a hub inherited through two levels.
+    #[actix_web::test]
+    async fn a_task_deferred_behind_a_streaming_body_reports_under_the_route() {
+        let events = events_from_request(|| async {
+            stream_with_heartbeat(async {
+                spawn_blocking(|| capture_message("from the streamed body", Level::Error))
+                    .await
+                    .expect("the blocking task should not have panicked");
+                Ok::<_, OxenError>(())
+            })
+        })
+        .await;
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].transaction.as_deref(), Some(ROUTE));
+    }
+
+    /// The bare spawn this module exists to replace: the pool thread resolves its own hub, which
+    /// carries no route — the baseline the two assertions above are measured against.
+    #[actix_web::test]
+    async fn a_bare_spawn_loses_the_route() {
+        let events = events_from_request(|| async {
+            tokio::task::spawn_blocking(|| capture_message("from the blocking pool", Level::Error))
+                .await
+                .expect("the blocking task should not have panicked");
+            HttpResponse::Ok().finish()
+        })
+        .await;
+
+        assert!(events.iter().all(|event| event.transaction.is_none()));
     }
 }
