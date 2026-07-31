@@ -107,8 +107,7 @@ pub fn get_staged(
     match db.get(bytes) {
         Ok(Some(value)) => {
             let val: StagedMerkleTreeNode = rmp_serde::from_slice(&value)?;
-            let schema = db_val_to_schema(&val)?;
-            Ok(Some(schema))
+            Ok(db_val_to_schema(&val))
         }
         _ => {
             log::debug!("could not get staged schema");
@@ -125,9 +124,7 @@ pub fn get_staged_schema_with_staged_db_manager(
     let path = util::fs::path_relative_to_dir(path, &repo.path)?;
     let staged_db_manager = get_staged_db_manager(repo)?;
     match staged_db_manager.read_from_staged_db(&path) {
-        // A staged node without tabular metadata (e.g. a binary replacement
-        // upload) carries no staged schema.
-        Ok(Some(value)) => Ok(db_val_to_schema(&value).ok()),
+        Ok(Some(value)) => Ok(db_val_to_schema(&value)),
         _ => {
             log::debug!("could not get staged schema");
             Ok(None)
@@ -148,15 +145,11 @@ pub fn restore_schema(
     let path = util::fs::path_relative_to_dir(&path, &repo.path)?;
     let staged_db_manager = get_staged_db_manager(repo)?;
     let value = staged_db_manager.read_from_staged_db(&path)?;
-    let (mut staged_schema, val) = match value {
-        Some(value) => {
-            let schema = db_val_to_schema(&value)?;
-            (schema, value)
-        }
-        _ => {
-            log::debug!("could not get staged schema");
-            return Ok(());
-        }
+    let Some((mut staged_schema, val)) =
+        value.and_then(|value| db_val_to_schema(&value).map(|schema| (schema, value)))
+    else {
+        log::debug!("could not get staged schema");
+        return Ok(());
     };
 
     for field in &mut staged_schema.fields {
@@ -201,8 +194,10 @@ pub fn list_staged(repo: &LocalRepository) -> Result<HashMap<PathBuf, Schema>, O
                 let key = str::from_utf8(&key)?;
                 // try deserialize
                 let val: StagedMerkleTreeNode = rmp_serde::from_slice(&value)?;
-                let schema = db_val_to_schema(&val)?;
-                results.insert(PathBuf::from(key), schema);
+                // The staged db also holds directories and non-tabular files; they have no schema.
+                if let Some(schema) = db_val_to_schema(&val) {
+                    results.insert(PathBuf::from(key), schema);
+                }
             }
             _ => {
                 return Err(OxenError::basic_str(
@@ -215,20 +210,17 @@ pub fn list_staged(repo: &LocalRepository) -> Result<HashMap<PathBuf, Schema>, O
     Ok(results)
 }
 
-fn db_val_to_schema(val: &StagedMerkleTreeNode) -> Result<Schema, OxenError> {
-    match &val.node.node {
-        EMerkleTreeNode::File(file_node) => match &file_node.metadata() {
-            Some(GenericMetadata::MetadataTabular(m)) => Ok(m.tabular.schema.to_owned()),
-            _ => {
-                log::error!("File node metadata must be tabular.");
-                Err(OxenError::basic_str("File node metadata must be tabular."))
-            }
-        },
-        _ => {
-            log::error!("Merkle tree node type must be file.");
-            Err(OxenError::basic_str("Merkle tree node type must be file."))
-        }
-    }
+/// Schema on a staged node, or `None` when the node carries none. The staged db
+/// holds directories and non-tabular files alongside data frames, and neither
+/// carries a schema.
+fn db_val_to_schema(val: &StagedMerkleTreeNode) -> Option<Schema> {
+    let EMerkleTreeNode::File(file_node) = &val.node.node else {
+        return None;
+    };
+    let Some(GenericMetadata::MetadataTabular(m)) = file_node.metadata() else {
+        return None;
+    };
+    Some(m.tabular.schema)
 }
 
 /// Remove a schema override from the staging area, TODO: Currently undefined behavior for non-staged schemas
