@@ -1024,7 +1024,7 @@ pub async fn stage_file_with_hash(
         }
     };
 
-    if let Some(metadata) = staged_file_metadata(workspace_repo, &relative_path)? {
+    if let Some(metadata) = staged_file_metadata(staged_db_manager, &relative_path)? {
         file_status.previous_metadata = Some(metadata);
     }
 
@@ -1059,17 +1059,16 @@ pub fn add_file_node_and_parent_dir(
 /// live only on the staged node; paths that re-stage a file must graft from it
 /// rather than the committed node or the edits are lost.
 pub fn staged_file_metadata(
-    repo: &LocalRepository,
+    staged_db_manager: &StagedDBManager,
     path: &Path,
 ) -> Result<Option<GenericMetadata>, OxenError> {
-    let staged_db_manager = get_staged_db_manager(repo)?;
     let Some(staged) = staged_db_manager.read_from_staged_db(path)? else {
         return Ok(None);
     };
-    let Ok(file) = staged.node.file() else {
+    let EMerkleTreeNode::File(mut file_node) = staged.node.node else {
         return Ok(None);
     };
-    Ok(file.metadata())
+    Ok(file_node.get_mut_metadata().take())
 }
 
 pub fn generate_file_node(
@@ -1163,26 +1162,10 @@ pub fn maybe_construct_generic_metadata_for_tabular(
     {
         // Combine the two by using previous_oxen_metadata as the source of truth for metadata,
         // but keeping df_metadata's fields
-
-        if previous_oxen_metadata.tabular.schema.metadata.is_some() {
-            df_metadata
-                .tabular
-                .schema
-                .metadata
-                .clone_from(&previous_oxen_metadata.tabular.schema.metadata);
-        }
-        for field in &mut df_metadata.tabular.schema.fields {
-            if let Some(oxen_field) = previous_oxen_metadata
-                .tabular
-                .schema
-                .fields
-                .iter()
-                .find(|oxen_field| oxen_field.name == field.name)
-            {
-                field.metadata = oxen_field.metadata.clone();
-            }
-        }
-        df_metadata.tabular.schema.recompute_hash();
+        df_metadata
+            .tabular
+            .schema
+            .update_metadata_from_schema(&previous_oxen_metadata.tabular.schema);
         return Some(GenericMetadata::MetadataTabular(df_metadata));
     }
     df_metadata

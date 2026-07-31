@@ -19,7 +19,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use crate::model::data_frame::schema::Field;
 use crate::model::merkle_tree::node::{
     EMerkleTreeNode, FileNode, MerkleTreeNode, StagedMerkleTreeNode,
 };
@@ -52,9 +51,7 @@ where
     let table_schema = staged_table_schema(workspace, &path)?;
 
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
-    let mut was_staged = false;
-    let staged = staged_db_manager.modify_staged_node(&path, |staged| {
-        was_staged = staged.is_some();
+    let staged = staged_db_manager.modify_staged_node_and_parents(&path, |staged| {
         let (mut file_node, status) = match staged {
             Some(staged) => (staged.node.file()?, staged.status),
             None => (
@@ -67,23 +64,10 @@ where
             return Err(OxenError::NotADataFrame(path.clone().into()));
         };
         // The staged table is authoritative for columns a workspace edit
-        // added, removed, or retyped; rebuild the fields from it, carrying
-        // per-column metadata over by name.
-        if let Some(table_schema) = table_schema {
-            let old_fields = std::mem::take(&mut m.tabular.schema.fields);
-            m.tabular.schema.fields = table_schema
-                .fields
-                .into_iter()
-                .map(|table_field| {
-                    let carried = old_fields.iter().find(|f| f.name == table_field.name);
-                    Field {
-                        name: table_field.name,
-                        dtype: table_field.dtype,
-                        metadata: carried.and_then(|f| f.metadata.clone()),
-                        changes: None,
-                    }
-                })
-                .collect();
+        // added, removed, or retyped, and carries the metadata over by name.
+        if let Some(mut table_schema) = table_schema {
+            table_schema.update_metadata_from_schema(&m.tabular.schema);
+            m.tabular.schema = table_schema;
         }
         mutate(&mut m.tabular.schema)?;
         m.tabular.schema.recompute_hash();
@@ -95,13 +79,6 @@ where
             node: MerkleTreeNode::from_file(file_node),
         })
     })?;
-
-    // An already-staged node has its parents marked; re-marking them would
-    // clobber e.g. a directory staged for removal.
-    if !was_staged {
-        let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
-        staged_db_manager.add_parent_directories(&path, &seen_dirs)?;
-    }
 
     let Some(GenericMetadata::MetadataTabular(m)) = staged.node.file()?.metadata() else {
         return Err(OxenError::InternalError(
@@ -619,15 +596,8 @@ pub async fn rename(
     staged_db_manager.delete_entry(path)?;
 
     // Add parent directories for the new path
-    if let Some(parents) = new_path.parent() {
-        let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
-        for dir in parents.ancestors() {
-            staged_db_manager.add_directory(dir, &seen_dirs)?;
-            if dir == Path::new("") {
-                break;
-            }
-        }
-    }
+    let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
+    staged_db_manager.add_parent_directories(new_path, &seen_dirs)?;
 
     let relative_path = util::fs::path_relative_to_dir(new_path, &workspace_repo.path)?;
     Ok(relative_path)

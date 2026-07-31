@@ -241,6 +241,28 @@ impl StagedDBManager {
         Ok(updated)
     }
 
+    /// [`Self::modify_staged_node`], additionally staging `Added` markers for `path`'s parent
+    /// directories when nothing was staged at `path` yet. A path that was already staged keeps
+    /// whatever markers it has, so a directory staged for removal is left staged for removal.
+    pub fn modify_staged_node_and_parents<F>(
+        &self,
+        path: &Path,
+        modify: F,
+    ) -> Result<StagedMerkleTreeNode, OxenError>
+    where
+        F: FnOnce(Option<StagedMerkleTreeNode>) -> Result<StagedMerkleTreeNode, OxenError>,
+    {
+        let mut was_staged = false;
+        let updated = self.modify_staged_node(path, |staged| {
+            was_staged = staged.is_some();
+            modify(staged)
+        })?;
+        if !was_staged {
+            self.add_parent_directories(path, &Arc::new(Mutex::new(HashSet::new())))?;
+        }
+        Ok(updated)
+    }
+
     /// upsert multiple staged nodes to the staged db
     pub fn upsert_staged_nodes(
         &self,

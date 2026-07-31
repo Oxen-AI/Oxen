@@ -980,11 +980,6 @@ async fn p_add_file(
         &full_path,
     )
     .await?;
-    if let Some(metadata) =
-        core::v_latest::add::staged_file_metadata(workspace_repo, &relative_path)?
-    {
-        file_status.previous_metadata = Some(metadata);
-    }
 
     // Store the file in the version store using the hash as the key
     let hash_str = file_status.hash.to_string();
@@ -1000,6 +995,14 @@ async fn p_add_file(
         .collect();
 
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
+
+    // One handle for the read and the write below, so the staged db isn't reopened per file.
+    let staged_db_manager = get_staged_db_manager(workspace_repo)?;
+    if let Some(metadata) =
+        core::v_latest::add::staged_file_metadata(&staged_db_manager, &relative_path)?
+    {
+        file_status.previous_metadata = Some(metadata);
+    }
 
     process_add_file_with_staged_db_manager(
         workspace_repo,
@@ -1079,9 +1082,7 @@ fn p_modify_file(
     log::debug!("p_modify_file file_node: {file_node}");
 
     let staged_db_manager = get_staged_db_manager(workspace_repo)?;
-    let mut was_staged = false;
-    staged_db_manager.modify_staged_node(path, |staged| {
-        was_staged = staged.is_some();
+    staged_db_manager.modify_staged_node_and_parents(path, |staged| {
         // The committed node knows nothing of workspace metadata edits. When
         // the staged node holds the same content with different metadata,
         // carry that metadata over so re-staging doesn't discard it.
@@ -1098,13 +1099,6 @@ fn p_modify_file(
             node: MerkleTreeNode::from_file(file_node),
         })
     })?;
-
-    // An already-staged node has its parents marked; re-marking them would
-    // clobber e.g. a directory staged for removal.
-    if !was_staged {
-        let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
-        staged_db_manager.add_parent_directories(path, &seen_dirs)?;
-    }
     Ok(())
 }
 
@@ -1197,28 +1191,14 @@ pub fn mv(
         staged_db_manager.upsert_file_node(path, StagedEntryStatus::Removed, &removed_file_node)?;
 
         // Add parent directories for the removed path
-        if let Some(parents) = path.parent() {
-            for dir in parents.ancestors() {
-                staged_db_manager.add_directory(dir, &seen_dirs)?;
-                if dir == Path::new("") {
-                    break;
-                }
-            }
-        }
+        staged_db_manager.add_parent_directories(path, &seen_dirs)?;
     } else {
         // Just delete the staged entry if file wasn't in base repo
         staged_db_manager.delete_entry(path)?;
     }
 
     // Add parent directories for the new path
-    if let Some(parents) = new_path.parent() {
-        for dir in parents.ancestors() {
-            staged_db_manager.add_directory(dir, &seen_dirs)?;
-            if dir == Path::new("") {
-                break;
-            }
-        }
-    }
+    staged_db_manager.add_parent_directories(new_path, &seen_dirs)?;
 
     Ok(())
 }
