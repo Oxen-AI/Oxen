@@ -12,7 +12,8 @@ use crate::repositories;
 
 /// Rename `before_column` to `after_column` on the data frame's staged schema, carrying that
 /// column's metadata across the rename. The staged schema takes priority over the committed one,
-/// since it holds metadata changed earlier in the same editing session.
+/// since it holds metadata changed earlier in the same editing session. A column the staged schema
+/// does not list carries no metadata to move, so it is left alone.
 pub fn update_schema(
     workspace: &Workspace,
     path: &Path,
@@ -36,7 +37,10 @@ pub fn update_schema(
         let Some(GenericMetadata::MetadataTabular(m)) = file_node.get_mut_metadata() else {
             return Err(OxenError::NotADataFrame(path.into()));
         };
-        // Renaming the field in place carries its metadata to the new name.
+        // Renaming the field in place carries its metadata to the new name. A column added by a
+        // workspace edit is absent here, since the staged schema tracks the committed columns
+        // until a metadata write reconciles it against the staged table, and the commit re-derives
+        // fields from the exported frame either way.
         if let Some(field) = m
             .tabular
             .schema
