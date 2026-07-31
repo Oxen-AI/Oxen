@@ -1051,7 +1051,7 @@ pub fn add_file_node_and_parent_dir(
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<(), OxenError> {
     staged_db_manager.upsert_file_node(&relative_path, status, file_node)?;
-    staged_db_manager.add_parent_directories(&relative_path, seen_dirs)?;
+    staged_db_manager.add_parent_directories(relative_path.as_ref(), seen_dirs)?;
     Ok(())
 }
 

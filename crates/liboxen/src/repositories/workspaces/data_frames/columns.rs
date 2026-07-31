@@ -53,7 +53,7 @@ pub fn add_column_metadata(
     metadata: &serde_json::Value,
 ) -> Result<HashMap<PathBuf, Schema>, OxenError> {
     core::v_latest::workspaces::data_frames::columns::add_column_metadata(
-        repo, workspace, file_path, column, metadata,
+        repo, workspace, &file_path, &column, metadata,
     )
 }
 

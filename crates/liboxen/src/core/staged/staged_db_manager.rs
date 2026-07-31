@@ -219,13 +219,13 @@ impl StagedDBManager {
     /// to store. Returns the stored node.
     pub fn modify_staged_node<F>(
         &self,
-        path: impl AsRef<Path>,
+        path: &Path,
         modify: F,
     ) -> Result<StagedMerkleTreeNode, OxenError>
     where
         F: FnOnce(Option<StagedMerkleTreeNode>) -> Result<StagedMerkleTreeNode, OxenError>,
     {
-        let key = normalize_key(&path);
+        let key = normalize_key(path);
         let db_w = self.staged_db.write();
         let current = db_w
             .get(key.as_bytes())?
@@ -313,10 +313,10 @@ impl StagedDBManager {
     /// repository root.
     pub fn add_parent_directories(
         &self,
-        path: impl AsRef<Path>,
+        path: &Path,
         seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
     ) -> Result<(), OxenError> {
-        for dir in path.as_ref().ancestors().skip(1) {
+        for dir in path.ancestors().skip(1) {
             self.add_directory(dir, seen_dirs)?;
         }
         Ok(())

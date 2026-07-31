@@ -41,13 +41,13 @@ pub mod schemas;
 pub(crate) fn stage_schema_metadata_update<F>(
     repo: &LocalRepository,
     workspace: &Workspace,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
     mutate: F,
 ) -> Result<HashMap<PathBuf, Schema>, OxenError>
 where
     F: FnOnce(&mut Schema) -> Result<(), OxenError>,
 {
-    let path = util::fs::path_relative_to_dir(file_path.as_ref(), &workspace.workspace_repo.path)?;
+    let path = util::fs::path_relative_to_dir(file_path, &workspace.workspace_repo.path)?;
     // Read everything the edit needs before taking the staged-db write lock.
     let committed_node = repositories::tree::get_file_by_path(repo, &workspace.commit, &path)?;
     let table_schema = staged_table_schema(workspace, &path)?;

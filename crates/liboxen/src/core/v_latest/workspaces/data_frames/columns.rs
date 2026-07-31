@@ -91,11 +91,10 @@ pub async fn update(
 pub fn add_column_metadata(
     repo: &LocalRepository,
     workspace: &Workspace,
-    file_path: impl AsRef<Path>,
-    column: impl AsRef<str>,
+    file_path: &Path,
+    column: &str,
     metadata: &serde_json::Value,
 ) -> Result<HashMap<PathBuf, Schema>, OxenError> {
-    let column = column.as_ref();
     super::stage_schema_metadata_update(repo, workspace, file_path, |schema| {
         let field = schema
             .fields

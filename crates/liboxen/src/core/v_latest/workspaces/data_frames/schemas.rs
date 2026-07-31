@@ -84,7 +84,7 @@ pub fn update_schema(
 pub fn add_schema_metadata(
     repo: &LocalRepository,
     workspace: &Workspace,
-    file_path: impl AsRef<Path>,
+    file_path: &Path,
     metadata: &serde_json::Value,
 ) -> Result<HashMap<PathBuf, Schema>, OxenError> {
     super::stage_schema_metadata_update(repo, workspace, file_path, |schema| {
