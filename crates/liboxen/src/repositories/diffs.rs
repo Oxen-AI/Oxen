@@ -1238,13 +1238,7 @@ fn write_diff_dupes(
     compare_id: &str,
     dupes: &TabularDiffDupes,
 ) -> Result<(), OxenError> {
-    let compare_dir = get_diff_dir(repo, compare_id);
-
-    if !compare_dir.exists() {
-        util::fs::create_dir_all(&compare_dir)?;
-    }
-
-    let dupes_path = compare_dir.join(DUPES_PATH);
+    let dupes_path = get_diff_dir(repo, compare_id).join(DUPES_PATH);
 
     AtomicFile::new(dupes_path).write(serde_json::to_string(&dupes)?.as_bytes())?;
 
@@ -1394,10 +1388,6 @@ fn write_diff_commit_ids(
     right_entry: &Option<CommitEntry>,
 ) -> Result<(), OxenError> {
     let compare_dir = get_diff_dir(repo, compare_id);
-
-    if !compare_dir.exists() {
-        util::fs::create_dir_all(&compare_dir)?;
-    }
 
     let left_path = compare_dir.join(LEFT_COMPARE_COMMIT);
     let right_path = compare_dir.join(RIGHT_COMPARE_COMMIT);

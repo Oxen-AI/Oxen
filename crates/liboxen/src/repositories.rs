@@ -15,6 +15,7 @@ use crate::model::file::FileContents;
 use crate::model::merkle_tree;
 use crate::storage::S3Opts;
 use crate::util;
+use crate::util::fs::AtomicFile;
 use jwalk::WalkDir;
 use regex::Regex;
 use std::path::Path;
@@ -285,18 +286,11 @@ pub async fn create(
             // write the data to the path
             // if the path does not exist within the repo, make it
             let full_path = repo_dir.join(path);
-            let parent_dir = full_path.parent().unwrap();
-            if !parent_dir.exists() {
-                util::fs::create_dir_all(parent_dir)?;
-            }
-            match contents {
-                FileContents::Text(text) => {
-                    util::fs::write(&full_path, text.as_bytes())?;
-                }
-                FileContents::Binary(bytes) => {
-                    util::fs::write(&full_path, bytes)?;
-                }
-            }
+            let bytes = match contents {
+                FileContents::Text(text) => text.as_bytes(),
+                FileContents::Binary(bytes) => bytes.as_slice(),
+            };
+            AtomicFile::new(&full_path).write(bytes)?;
             add(&local_repo, &full_path).await?;
         }
 

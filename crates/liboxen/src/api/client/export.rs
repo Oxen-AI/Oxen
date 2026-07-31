@@ -1,5 +1,4 @@
 use std::path::Path;
-use tokio::fs::File;
 use tokio_stream::StreamExt;
 use tokio_util::io::StreamReader;
 
@@ -7,6 +6,7 @@ use crate::api;
 use crate::api::client;
 use crate::error::OxenError;
 use crate::model::RemoteRepository;
+use crate::util::fs::{AtomicFile, metadata};
 
 pub async fn download_dir_as_zip(
     remote_repo: &RemoteRepository,
@@ -41,16 +41,13 @@ pub async fn download_dir_as_zip(
         let mut reader =
             StreamReader::new(stream.map(|result| result.map_err(std::io::Error::other)));
 
-        let mut file = File::create(local_path).await?;
-        let size = match tokio::io::copy(&mut reader, &mut file).await {
-            Ok(s) => s,
-            Err(e) => {
-                let _ = tokio::fs::remove_file(local_path).await;
-                return Err(OxenError::basic_str(format!(
-                    "Failed to download ZIP to {local_path:?}: {e}"
-                )));
-            }
-        };
+        AtomicFile::new(local_path)
+            .stream_async(&mut reader)
+            .await
+            .map_err(|e| {
+                OxenError::basic_str(format!("Failed to download ZIP to {local_path:?}: {e}"))
+            })?;
+        let size = metadata(local_path)?.len();
 
         log::debug!("Successfully downloaded {size} bytes to: {local_path:?}");
 
@@ -86,7 +83,7 @@ mod tests {
             let zip_local_path = output_dir.join("annotations.zip");
 
             // Download the zip file
-            let _size = api::client::export::download_dir_as_zip(
+            let size = api::client::export::download_dir_as_zip(
                 &remote_repo,
                 DEFAULT_BRANCH_NAME,
                 remote_dir,
@@ -97,6 +94,12 @@ mod tests {
             assert!(
                 zip_local_path.exists(),
                 "Downloaded zip file does not exist."
+            );
+            assert_ne!(size, 0, "Reported download size should be non-zero.");
+            assert_eq!(
+                size,
+                std::fs::metadata(&zip_local_path)?.len(),
+                "Reported download size should match the published file."
             );
 
             let readme_path = PathBuf::from("README.md");

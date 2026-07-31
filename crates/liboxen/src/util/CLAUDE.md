@@ -25,4 +25,4 @@ Terminal methods are `.write(bytes)` (in-memory) / `.write_with(|w| ...)` (an en
 
 `AtomicFile` is `#[must_use]` — forgetting a terminal method is a compile-time warning, not a silent no-op. The full contract (including atime behavior, cancel-safety, and the verify-before-publish guarantee) lives on the struct rustdoc. Read it before adding a new caller.
 
-The non-atomic `util::fs::write_to_path` is `#[cfg(any(test, feature = "test-utils"))]`-gated for fixture setup only; production code cannot reach it.
+The non-atomic writers `util::fs::write` and `util::fs::write_to_path` are `#[cfg(any(test, feature = "test-utils"))]`-gated for fixture setup only; production code cannot reach them.
