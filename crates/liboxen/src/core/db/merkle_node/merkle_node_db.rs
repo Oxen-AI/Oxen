@@ -46,6 +46,7 @@ For example, data for a vnode of hash 1234 with two children:
     {dir data node}
 */
 
+use std::cell::Cell;
 use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
@@ -84,6 +85,49 @@ pub(crate) fn node_db_path(repo_path: &Path, hash: &MerkleHash) -> PathBuf {
 /// `FileChunk` is the exception — it has no enum wrapper at all, so the tag says nothing about it.
 const CURRENT_NODE_PAYLOAD_TAG: &[u8] = b"\x91\x81\xa7V0_25_0";
 
+/// The envelope alone, without committing to which variant it names. Distinguishes "written
+/// before the envelope existed" from "wrapped, but naming a variant this build does not know" —
+/// a payload tagged by some future variant also fails the [`CURRENT_NODE_PAYLOAD_TAG`] check, and
+/// calling that one *older* than v0.25.0 would be exactly backwards.
+const NODE_ENVELOPE_PREFIX: &[u8] = b"\x91\x81";
+
+thread_local! {
+    /// Set only for the duration of a [`RetiredFormatLogGuard`]. Thread-local rather than global
+    /// so one caller's bulk scan cannot silence the warning for concurrent request handlers.
+    static RETIRED_FORMAT_LOGGING_SUPPRESSED: Cell<bool> = const { Cell::new(false) };
+}
+
+fn retired_format_logging_suppressed() -> bool {
+    RETIRED_FORMAT_LOGGING_SUPPRESSED.with(|suppressed| suppressed.get())
+}
+
+/// Restores whatever suppression state was in force when this guard was taken, so a guard nested
+/// inside another does not un-suppress the outer scope on the way out.
+#[must_use = "suppression lasts only as long as the guard is held"]
+pub(crate) struct RetiredFormatLogGuard {
+    restore_to: bool,
+}
+
+impl Drop for RetiredFormatLogGuard {
+    fn drop(&mut self) {
+        RETIRED_FORMAT_LOGGING_SUPPRESSED.with(|suppressed| suppressed.set(self.restore_to));
+    }
+}
+
+/// Silence the per-node retired-format warning on this thread until the guard drops.
+///
+/// For a caller that reads one repository, the warning is the whole point: it surfaces the
+/// condition even on paths that discard the error. For one that deliberately decodes every node
+/// in a fleet, it is duplication of that caller's own output at a scale — tens of thousands of
+/// lines — that buries the result it was meant to explain.
+///
+/// Only covers the calling thread, so a scan that grows a worker pool has to take the guard on
+/// each worker.
+pub(crate) fn suppress_retired_format_logging() -> RetiredFormatLogGuard {
+    let restore_to = RETIRED_FORMAT_LOGGING_SUPPRESSED.with(|suppressed| suppressed.replace(true));
+    RetiredFormatLogGuard { restore_to }
+}
+
 /// Classify a failure to decode a node payload. A payload carrying no variant tag was written
 /// before the node types gained their enum envelope, which is a property of the repository rather
 /// than a damaged node; telling the two apart keeps a retired format from looking like corruption.
@@ -97,7 +141,16 @@ fn classify_decode_failure(
     data: &[u8],
     err: rmp_serde::decode::Error,
 ) -> MerkleDbError {
-    if dtype != MerkleTreeNodeType::FileChunk && !data.starts_with(CURRENT_NODE_PAYLOAD_TAG) {
+    if dtype != MerkleTreeNodeType::FileChunk
+        && !data.starts_with(CURRENT_NODE_PAYLOAD_TAG)
+        && !data.starts_with(NODE_ENVELOPE_PREFIX)
+    {
+        // Logged where the condition is detected rather than where it surfaces: callers that
+        // discard the error still leave a trace, and a repository read from a warm node cache
+        // reports the first time it actually reaches disk.
+        if !retired_format_logging_suppressed() {
+            log::warn!("Merkle node {hash} ({dtype:?}) predates Oxen v0.25.0 and cannot be read");
+        }
         MerkleDbError::PreV025Node { dtype, hash }
     } else {
         MerkleDbError::Decode(err)
@@ -549,10 +602,39 @@ impl Drop for MerkleNodeDB {
 #[cfg(test)]
 mod to_node_tests {
     use super::*;
-    use crate::model::merkle_tree::node::VNode;
+    use crate::model::merkle_tree::node::{CommitNode, DirNode, FileChunkNode, VNode};
 
     fn hash() -> MerkleHash {
         MerkleHash::new(42)
+    }
+
+    // `CURRENT_NODE_PAYLOAD_TAG` is ten bytes of hand-written assumption about what `rmp_serde`
+    // emits: a one-field wrapper struct, an externally-tagged enum, a seven-character variant
+    // name. Nothing else checks it. If any of those shifts — a field added to a *wrapper* struct
+    // turns 0x91 into 0x92 — the tag silently stops matching and every damaged node starts being
+    // reported as a retired format, with no test failing. Compare it against real writer output.
+    #[test]
+    fn the_tag_matches_what_the_writer_emits() {
+        let wrapped = [
+            ("vnode", rmp_serde::to_vec(&VNode::default())),
+            ("dir", rmp_serde::to_vec(&DirNode::default())),
+            ("commit", rmp_serde::to_vec(&CommitNode::default())),
+        ];
+        for (label, bytes) in wrapped {
+            let bytes = bytes.expect("node should serialize");
+            assert!(
+                bytes.starts_with(CURRENT_NODE_PAYLOAD_TAG),
+                "{label} no longer starts with the tag the classifier matches: {bytes:02x?}"
+            );
+        }
+
+        // The exception the classifier special-cases: FileChunk has no enum wrapper, so its
+        // payloads never carry the tag. If it ever gains one, that special case goes stale.
+        let chunk = rmp_serde::to_vec(&FileChunkNode::default()).expect("chunk should serialize");
+        assert!(
+            !chunk.starts_with(CURRENT_NODE_PAYLOAD_TAG),
+            "FileChunk gained an envelope; the dtype special case is now wrong"
+        );
     }
 
     #[test]
@@ -586,6 +668,43 @@ mod to_node_tests {
         assert!(
             matches!(err, MerkleDbError::Decode(_)),
             "expected Decode, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn the_log_guard_restores_the_warning_when_it_drops() {
+        // A leaked suppression would silence the condition for everything that runs afterwards on
+        // this thread, which is worse than the noise it exists to prevent.
+        assert!(!retired_format_logging_suppressed());
+        {
+            let _quiet = suppress_retired_format_logging();
+            assert!(retired_format_logging_suppressed());
+            {
+                let _nested = suppress_retired_format_logging();
+                assert!(retired_format_logging_suppressed());
+            }
+            assert!(
+                retired_format_logging_suppressed(),
+                "an inner guard dropping must not un-suppress the scope still holding one"
+            );
+        }
+        assert!(!retired_format_logging_suppressed());
+    }
+
+    #[test]
+    fn a_variant_this_build_does_not_know_is_not_called_old() {
+        // Name tagging exists so a node keeps its bytes across variant changes, which means a
+        // payload written by a *newer* build also fails the V0_25_0 check. Reporting that as
+        // predating v0.25.0 would point the reader in precisely the wrong direction.
+        let mut future = b"\x91\x81\xa7V0_99_0".to_vec();
+        future.extend_from_slice(&[0xc1]);
+
+        let err = MerkleNodeDB::to_node(MerkleTreeNodeType::VNode, hash(), &future)
+            .expect_err("a variant this build has no arm for must not decode");
+
+        assert!(
+            matches!(err, MerkleDbError::Decode(_)),
+            "expected Decode for an unknown-but-tagged payload, got {err:?}"
         );
     }
 

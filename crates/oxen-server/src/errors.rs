@@ -502,7 +502,8 @@ impl error::ResponseError for OxenHttpError {
                     // declared min_version, which can disagree with the bytes actually on disk.
                     // This arm is reached when a node itself turns out to predate the format.
                     OxenError::MerkleDbError(MerkleDbError::PreV025Node { dtype, hash }) => {
-                        log::warn!("Pre-v0.25.0 merkle node {hash} ({dtype:?})");
+                        // Already logged where the node was classified, which also covers the
+                        // read paths that never reach an HTTP response.
                         let error_json = json!({
                             "error": {
                                 "type": "pre_v0_25_node_format",
