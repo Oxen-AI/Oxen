@@ -101,12 +101,16 @@ fn retired_format_logging_suppressed() -> bool {
     RETIRED_FORMAT_LOGGING_SUPPRESSED.with(|suppressed| suppressed.get())
 }
 
-/// Restores the per-node retired-format warning when dropped.
-pub(crate) struct RetiredFormatLogGuard;
+/// Restores whatever suppression state was in force when this guard was taken, so a guard nested
+/// inside another does not un-suppress the outer scope on the way out.
+#[must_use = "suppression lasts only as long as the guard is held"]
+pub(crate) struct RetiredFormatLogGuard {
+    restore_to: bool,
+}
 
 impl Drop for RetiredFormatLogGuard {
     fn drop(&mut self) {
-        RETIRED_FORMAT_LOGGING_SUPPRESSED.with(|suppressed| suppressed.set(false));
+        RETIRED_FORMAT_LOGGING_SUPPRESSED.with(|suppressed| suppressed.set(self.restore_to));
     }
 }
 
@@ -120,8 +124,8 @@ impl Drop for RetiredFormatLogGuard {
 /// Only covers the calling thread, so a scan that grows a worker pool has to take the guard on
 /// each worker.
 pub(crate) fn suppress_retired_format_logging() -> RetiredFormatLogGuard {
-    RETIRED_FORMAT_LOGGING_SUPPRESSED.with(|suppressed| suppressed.set(true));
-    RetiredFormatLogGuard
+    let restore_to = RETIRED_FORMAT_LOGGING_SUPPRESSED.with(|suppressed| suppressed.replace(true));
+    RetiredFormatLogGuard { restore_to }
 }
 
 /// Classify a failure to decode a node payload. A payload carrying no variant tag was written
@@ -675,6 +679,14 @@ mod to_node_tests {
         {
             let _quiet = suppress_retired_format_logging();
             assert!(retired_format_logging_suppressed());
+            {
+                let _nested = suppress_retired_format_logging();
+                assert!(retired_format_logging_suppressed());
+            }
+            assert!(
+                retired_format_logging_suppressed(),
+                "an inner guard dropping must not un-suppress the scope still holding one"
+            );
         }
         assert!(!retired_format_logging_suppressed());
     }
