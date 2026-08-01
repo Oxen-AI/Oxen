@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use std::str;
 use std::sync::{Arc, LazyLock, Weak};
 use std::thread::sleep;
-use std::time::Duration;
 
 use parking_lot::{Mutex, RwLock};
 use rocksdb::{DB, IteratorMode};
@@ -33,10 +32,6 @@ use crate::util::fs::AtomicFile;
 // already hit zero); see [`with_ref_manager`] for the bounded-retry that waits it out.
 static DB_INSTANCES: LazyLock<Mutex<HashMap<PathBuf, Weak<RwLock<DB>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// How long `with_ref_manager` waits out a concurrent close before surfacing a LOCK error.
-const OPEN_RETRIES: u32 = 100;
-const OPEN_RETRY_INTERVAL: Duration = Duration::from_millis(2);
 
 /// Removes this repository's tombstone entry from the registry. Live entries (someone still
 /// holds the `Arc`) are unaffected; the DB closes when the last strong reference drops.
@@ -108,13 +103,13 @@ fn open_refs_db(refs_dir: &Path) -> Result<Arc<RwLock<DB>>, OxenError> {
                 instances.retain(|_, weak| weak.strong_count() > 0);
                 return Ok(arc_db);
             }
-            Err(err) if is_lock_collision(&err) => {
+            Err(err) if db::is_lock_collision(&err) => {
                 drop(instances);
                 attempts += 1;
-                if attempts >= OPEN_RETRIES {
+                if attempts >= db::OPEN_RETRIES {
                     return Err(refs_db_open_failed(refs_dir, err));
                 }
-                sleep(OPEN_RETRY_INTERVAL);
+                sleep(db::OPEN_RETRY_INTERVAL);
             }
             Err(err) => return Err(refs_db_open_failed(refs_dir, err)),
         }
@@ -124,16 +119,6 @@ fn open_refs_db(refs_dir: &Path) -> Result<Arc<RwLock<DB>>, OxenError> {
 fn lookup_live(refs_dir: &Path) -> Option<Arc<RwLock<DB>>> {
     let instances = DB_INSTANCES.lock();
     instances.get(refs_dir)?.upgrade()
-}
-
-/// True if `err` is a RocksDB LOCK-file collision — i.e. another opener still holds the
-/// per-directory LOCK. The check is by error-message match rather than a distinct
-/// `ErrorKind` because RocksDB surfaces this as a plain `IOError` across platforms
-/// (Unix "While lock file: …/LOCK: Resource temporarily unavailable",
-/// Windows "Failed to create lock file: …\\LOCK: The process cannot access the file…").
-fn is_lock_collision(err: &rocksdb::Error) -> bool {
-    let msg = err.to_string();
-    msg.contains("LOCK") || msg.contains("lock file")
 }
 
 fn refs_db_open_failed(refs_dir: &Path, source: rocksdb::Error) -> OxenError {
