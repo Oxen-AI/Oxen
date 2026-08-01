@@ -91,9 +91,10 @@ pub fn scan_node_format(repo: &LocalRepository) -> Result<NodeFormatReport, Oxen
         // when the scan reaches those children by their own hashes.
         match MerkleNodeDB::open_read_only(store.clone(), &hash) {
             Ok(db) => {
-                if is_pre_v025_payload(db.dtype, &db.data()) {
+                let payload = db.data();
+                if is_pre_v025_payload(db.dtype, &payload) {
                     *report.pre_v025.entry(db.dtype).or_default() += 1;
-                } else if let Err(err) = db.node() {
+                } else if let Err(err) = EMerkleTreeNode::from_type_and_bytes(db.dtype, &payload) {
                     log::warn!("Node {hash} in {:?} did not decode: {err}", repo.path);
                     report.undecodable += 1;
                 }
