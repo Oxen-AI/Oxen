@@ -15,7 +15,7 @@ pub trait TDirNode {
     fn name(&self) -> &str;
     fn set_name(&mut self, name: &str);
     fn num_files(&self) -> u64; // This us just the number of files
-    fn num_entries(&self) -> u64; // This is the number of files and directories and vnodes
+    fn num_entries(&self) -> u64; // Number of files and sub directories in the directory
     fn set_num_entries(&mut self, num_entries: u64);
     fn num_bytes(&self) -> u64;
     fn last_commit_id(&self) -> &MerkleHash;
@@ -134,7 +134,7 @@ impl DirNode {
         self.data_type_counts().values().sum()
     }
 
-    /// Number of files and directories and vnodes
+    /// Number of files and sub directories in the directory
     pub fn num_entries(&self) -> u64 {
         self.node().num_entries()
     }

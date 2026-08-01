@@ -1005,6 +1005,9 @@ fn compute_dir_node(
     hasher.update(path.to_str().unwrap().as_bytes());
 
     let mut num_bytes = 0;
+    // Counted from the entries this directory actually ends up holding, rather than carried
+    // forward from the previous commit and adjusted. The vnodes below already hold the complete
+    // post-commit child set, with removals applied.
     let mut num_entries = 0;
     let mut data_type_counts: HashMap<String, u64> = HashMap::new();
     let mut data_type_sizes: HashMap<String, u64> = HashMap::new();
@@ -1019,7 +1022,6 @@ fn compute_dir_node(
             repositories::tree::get_dir_without_children(repo, head_commit, &path, Some(dir_hashes))
     {
         let old_dir_node = old_dir_node.dir().unwrap();
-        num_entries = old_dir_node.num_entries();
         num_bytes = old_dir_node.num_bytes();
         data_type_counts = old_dir_node.data_type_counts().clone();
         data_type_sizes = old_dir_node.data_type_sizes().clone();
@@ -1063,12 +1065,13 @@ fn compute_dir_node(
                         hasher.update(file_node.name().as_bytes());
                         hasher.update(&file_node.combined_hash().to_le_bytes());
 
+                        if path == *child {
+                            num_entries += 1;
+                        }
+
                         match entry.status {
                             StagedEntryStatus::Added => {
                                 num_bytes += file_node.num_bytes();
-                                if path == *child {
-                                    num_entries += 1;
-                                }
                                 *data_type_counts
                                     .entry(file_node.data_type().to_string())
                                     .or_insert(0) += 1;
@@ -1114,13 +1117,10 @@ fn compute_dir_node(
         for entry in removed_entries.iter() {
             match &entry.node.node {
                 EMerkleTreeNode::Directory(_) => {
-                    // Do nothing
+                    // Removed entries are already absent from the vnodes num_entries counts
                 }
                 EMerkleTreeNode::File(file_node) => {
                     if entry.status == StagedEntryStatus::Removed {
-                        if path == *child {
-                            num_entries -= 1;
-                        }
                         num_bytes = num_bytes.saturating_sub(file_node.num_bytes());
                         if let Some(count) =
                             data_type_counts.get_mut(&file_node.data_type().to_string())
