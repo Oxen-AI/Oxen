@@ -192,6 +192,16 @@ pub fn parse_two_dot(base_head: &str) -> Result<(String, String), OxenHttpError>
     Ok((base, head))
 }
 
+/// Split an optional `base..head` range. A bare revision yields no head. Three-dot syntax is
+/// rejected, as in [`parse_two_dot`].
+pub fn maybe_parse_two_dot(base_head: &str) -> Result<(String, Option<String>), OxenHttpError> {
+    if !base_head.contains("..") {
+        return Ok((base_head.to_string(), None));
+    }
+    let (base, head) = parse_two_dot(base_head)?;
+    Ok((base, Some(head)))
+}
+
 pub fn resolve_base_head_branches(
     repo: &LocalRepository,
     base: &str,

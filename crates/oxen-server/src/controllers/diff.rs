@@ -904,16 +904,17 @@ pub async fn get_derived_df(
 fn parse_base_head_resource(
     repo: &LocalRepository,
     base_head: &str,
-) -> Result<(Commit, Commit, PathBuf), OxenError> {
+) -> Result<(Commit, Commit, PathBuf), OxenHttpError> {
     log::debug!("Parsing base_head_resource: {base_head}");
 
-    let mut split = base_head.split("..");
-    let base = split
-        .next()
-        .ok_or_else(|| OxenError::resource_not_found(base_head))?;
-    let head = split
-        .next()
-        .ok_or_else(|| OxenError::resource_not_found(base_head))?;
+    // A three-dot range reaching here is refused rather than read as two dots; an unparseable
+    // one stays a missing resource, since head carries the resource path as well as the revision.
+    let (base, head) = parse_two_dot(base_head).map_err(|err| match err {
+        OxenHttpError::BadRequest(_) => err,
+        _ => OxenError::resource_not_found(base_head).into(),
+    })?;
+    let base = base.as_str();
+    let head = head.as_str();
 
     let base_commit = repositories::revisions::get(repo, base)?
         .ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
