@@ -3465,15 +3465,13 @@ mod tests {
         data_type_sizes: std::collections::HashMap<String, u64>,
     }
 
-    // A repo written before v0.25.0 must report *why* it cannot be read, not surface a raw
-    // msgpack error as a server fault. Reading such a node reaches the decode through
-    // `MerkleNodeDB::map`, which is a different call site than `MerkleNodeDB::node` — an earlier
-    // attempt at this classified only the latter and left the failure looking like corruption.
+    // A repository whose directory nodes predate v0.25.0 has to stay readable. The read reaches
+    // the decode through `MerkleNodeDB::map`, a different call site than `MerkleNodeDB::node`, and
+    // an earlier change here covered only the latter — so exercise the whole tree walk rather than
+    // the decoder alone.
     #[tokio::test]
-    async fn test_pre_v0_25_dir_node_is_reported_as_a_retired_format() -> Result<(), OxenError> {
+    async fn test_pre_v0_25_dir_node_is_still_readable() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|repo| async move {
-            // Resolve HEAD before corrupting anything: reading the commit also walks into the
-            // dir node, so afterwards even this lookup fails.
             let commit_hash: MerkleHash = repositories::commits::head_commit(&repo)?.id.parse()?;
 
             let nodes_dir = util::fs::oxen_hidden_dir(&repo.path)
@@ -3521,19 +3519,20 @@ mod tests {
             }
             assert!(rewrote, "fixture repo should contain a dir node to rewrite");
 
-            let err = repositories::tree::get_node_by_id_with_children(&repo, &commit_hash)
-                .expect_err("a pre-0.25 dir node must not read as though it were current");
+            let node = repositories::tree::get_node_by_id_with_children(&repo, &commit_hash)?
+                .expect("the commit should still resolve with a pre-0.25 dir node in the tree");
 
+            // The listing has to come back whole, not merely without an error: the fallback
+            // supplies a zero entry count, and a walk that silently returned nothing would look
+            // just as successful from the outside.
+            let dirs = node
+                .children
+                .iter()
+                .filter(|child| matches!(child.node, EMerkleTreeNode::Directory(_)))
+                .count();
             assert!(
-                matches!(
-                    err,
-                    OxenError::MerkleDbError(
-                        crate::core::db::merkle_node::merkle_node_db::MerkleDbError::PreV025Node {
-                            ..
-                        }
-                    )
-                ),
-                "expected PreV025Node, got {err:?}"
+                dirs > 0,
+                "the rewritten dir node should still appear among the commit's children"
             );
 
             Ok(())

@@ -29,7 +29,7 @@ use crate::core::db::dir_hashes::dir_hashes_db::{
 };
 use crate::core::db::key_val::str_val_db;
 use crate::core::db::merkle_node::merkle_node_db::{
-    MerkleDbError, MerkleNodeDB, suppress_retired_format_logging,
+    MerkleNodeDB, is_pre_v025_payload, suppress_retired_format_logging,
 };
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode, MerkleTreeNodeType};
@@ -69,8 +69,10 @@ impl NodeFormatReport {
 /// Read-only, and reads every node in the store, so cost scales with tree size. Works on either
 /// merkle-node backend, since it goes through the store rather than the on-disk file layout.
 ///
-/// This asks the same decoder the server uses, so its answer cannot drift from what a read
-/// actually does — which is the point of having it rather than matching bytes externally.
+/// Shares its definition of "pre-v0.25.0" with the read path rather than restating it, so the
+/// count cannot drift from what the server considers old. Note this is a question about the bytes,
+/// not about whether they decode: both formats read successfully, so a successful decode says
+/// nothing either way.
 pub fn scan_node_format(repo: &LocalRepository) -> Result<NodeFormatReport, OxenError> {
     // The report below names every node this would log, so leaving the warning on buries the
     // result under one line per affected node — order 10^5 across a fleet.
@@ -85,16 +87,19 @@ pub fn scan_node_format(repo: &LocalRepository) -> Result<NodeFormatReport, Oxen
     };
 
     for hash in hashes {
-        // Decoding this node's own payload is what classifies it; a node whose *children* are
-        // legacy is counted when the scan reaches those children by their own hashes.
-        let decoded = MerkleNodeDB::open_read_only(store.clone(), &hash).and_then(|db| db.node());
-        match decoded {
-            Ok(_) => {}
-            Err(MerkleDbError::PreV025Node { dtype, .. }) => {
-                *report.pre_v025.entry(dtype).or_default() += 1;
+        // Each node is judged on its own payload; a node whose *children* are legacy is counted
+        // when the scan reaches those children by their own hashes.
+        match MerkleNodeDB::open_read_only(store.clone(), &hash) {
+            Ok(db) => {
+                if is_pre_v025_payload(db.dtype, &db.data()) {
+                    *report.pre_v025.entry(db.dtype).or_default() += 1;
+                } else if let Err(err) = db.node() {
+                    log::warn!("Node {hash} in {:?} did not decode: {err}", repo.path);
+                    report.undecodable += 1;
+                }
             }
             Err(err) => {
-                log::warn!("Node {hash} in {:?} did not decode: {err}", repo.path);
+                log::warn!("Node {hash} in {:?} could not be opened: {err}", repo.path);
                 report.undecodable += 1;
             }
         }

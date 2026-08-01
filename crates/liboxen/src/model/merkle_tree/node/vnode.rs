@@ -7,6 +7,7 @@ use std::fmt;
 
 use crate::core::v_latest::model::merkle_tree::node::vnode::VNodeData as VNodeImplV0_25_0;
 use crate::error::OxenError;
+use crate::model::merkle_tree::node::legacy_pre_025::VNodeDataPre025;
 use crate::model::{MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType, TMerkleTreeNode};
 
 pub trait TVNode {
@@ -44,7 +45,20 @@ impl VNode {
 
     #[inline(always)]
     pub fn deserialize(data: &[u8]) -> Result<VNode, rmp_serde::decode::Error> {
-        rmp_serde::from_slice(data)
+        match rmp_serde::from_slice(data) {
+            Ok(vnode) => Ok(vnode),
+            Err(primary_error) => {
+                // Payloads written before v0.25.0 are the bare data struct with no envelope.
+                match rmp_serde::from_slice::<VNodeDataPre025>(data) {
+                    Ok(legacy) => Ok(Self {
+                        node: EVNode::V0_25_0(legacy.into()),
+                    }),
+                    // Report why the current shape failed, not why the older one did — the
+                    // second attempt is a fallback, so its error describes the wrong thing.
+                    Err(_) => Err(primary_error),
+                }
+            }
+        }
     }
 
     pub fn get_opts(&self) -> VNodeOpts {

@@ -128,6 +128,21 @@ pub(crate) fn suppress_retired_format_logging() -> RetiredFormatLogGuard {
     RetiredFormatLogGuard { restore_to }
 }
 
+/// Whether this payload was written before the node types gained their enum envelope.
+///
+/// The single definition of "pre-v0.25.0 on disk". Both formats decode, so a read's success says
+/// nothing about which one it was — this is what tells them apart, for the classifier below and
+/// for anything counting the population still awaiting migration.
+///
+/// `FileChunk` never had an envelope, so the tag says nothing about it. A payload carrying an
+/// envelope that names some variant this build does not know is not *older* than v0.25.0, so it
+/// is excluded too.
+pub(crate) fn is_pre_v025_payload(dtype: MerkleTreeNodeType, data: &[u8]) -> bool {
+    dtype != MerkleTreeNodeType::FileChunk
+        && !data.starts_with(CURRENT_NODE_PAYLOAD_TAG)
+        && !data.starts_with(NODE_ENVELOPE_PREFIX)
+}
+
 /// Classify a failure to decode a node payload. A payload carrying no variant tag was written
 /// before the node types gained their enum envelope, which is a property of the repository rather
 /// than a damaged node; telling the two apart keeps a retired format from looking like corruption.
@@ -141,10 +156,7 @@ fn classify_decode_failure(
     data: &[u8],
     err: rmp_serde::decode::Error,
 ) -> MerkleDbError {
-    if dtype != MerkleTreeNodeType::FileChunk
-        && !data.starts_with(CURRENT_NODE_PAYLOAD_TAG)
-        && !data.starts_with(NODE_ENVELOPE_PREFIX)
-    {
+    if is_pre_v025_payload(dtype, data) {
         // Logged where the condition is detected rather than where it surfaces: callers that
         // discard the error still leave a trace, and a repository read from a warm node cache
         // reports the first time it actually reaches disk.
@@ -604,8 +616,10 @@ mod to_node_tests {
     use super::*;
     use crate::model::merkle_tree::node::{CommitNode, DirNode, FileChunkNode, VNode};
 
+    const HASH_VALUE: u128 = 42;
+
     fn hash() -> MerkleHash {
-        MerkleHash::new(42)
+        MerkleHash::new(HASH_VALUE)
     }
 
     // `CURRENT_NODE_PAYLOAD_TAG` is ten bytes of hand-written assumption about what `rmp_serde`
@@ -638,16 +652,37 @@ mod to_node_tests {
     }
 
     #[test]
-    fn untagged_payload_reports_the_retired_format() {
+    fn a_pre_v025_payload_reads_through_the_legacy_fallback() {
         // The pre-0.25 shape: the bare data struct, with no enum envelope around it.
         // Built positionally rather than from a struct so the test pins the bytes, not a type
         // that could drift alongside the code under test.
+        // A hash inside the msgpack payload is a `u128` encoded big-endian, which is the opposite
+        // of the container header around it — that one writes hashes with `to_le_bytes`.
         let mut legacy = vec![0x92, 0xc4, 0x10];
-        legacy.extend_from_slice(&hash().to_le_bytes());
+        legacy.extend_from_slice(&HASH_VALUE.to_be_bytes());
         legacy.extend_from_slice(b"\xa5VNode");
 
-        let err = MerkleNodeDB::to_node(MerkleTreeNodeType::VNode, hash(), &legacy)
-            .expect_err("an untagged payload must not decode");
+        let node = MerkleNodeDB::to_node(MerkleTreeNodeType::VNode, hash(), &legacy)
+            .expect("a pre-0.25 payload must read");
+
+        let EMerkleTreeNode::VNode(vnode) = node else {
+            panic!("expected a vnode, got {node:?}");
+        };
+        assert_eq!(*vnode.hash(), hash());
+        // The old shape carries no entry count and a listing does not need one — it counts what
+        // it returns. Deriving the real value belongs to the migration that rewrites these nodes.
+        assert_eq!(vnode.num_entries(), 0);
+    }
+
+    #[test]
+    fn untagged_bytes_of_no_known_shape_report_the_retired_format() {
+        // No envelope, and not readable as the pre-0.25 struct either. The classifier still has
+        // something useful to say about these: they predate the format and cannot be recovered,
+        // which is a different problem from a damaged current-format node.
+        let untagged = vec![0x92, 0xc1, 0xc1];
+
+        let err = MerkleNodeDB::to_node(MerkleTreeNodeType::VNode, hash(), &untagged)
+            .expect_err("bytes of no known shape must not decode");
 
         assert!(
             matches!(err, MerkleDbError::PreV025Node { .. }),
