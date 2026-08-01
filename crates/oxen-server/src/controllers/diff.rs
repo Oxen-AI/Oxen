@@ -389,8 +389,19 @@ pub async fn file(
     log::debug!("base_commit: {base_commit:?}");
     log::debug!("head_commit: {head_commit:?}");
     log::debug!("resource: {resource:?}");
-    let base_entry = repositories::entries::get_file(&repository, &base_commit, &resource)?;
-    let head_entry = repositories::entries::get_file(&repository, &head_commit, &resource)?;
+    let (base_entry, head_entry) = {
+        let repository = repository.clone();
+        let base_commit = base_commit.clone();
+        let head_commit = head_commit.clone();
+        let resource = resource.clone();
+        tokio::task::spawn_blocking(move || {
+            let base_entry = repositories::entries::get_file(&repository, &base_commit, &resource)?;
+            let head_entry = repositories::entries::get_file(&repository, &head_commit, &resource)?;
+            Ok::<_, OxenError>((base_entry, head_entry))
+        })
+        .await
+        .map_err(OxenError::from)??
+    };
 
     let mut opts = DFOpts::empty();
     opts = df_opts_query::parse_opts(&query, &mut opts);

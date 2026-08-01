@@ -131,8 +131,18 @@ impl TabularDiffView {
                 } else {
                     let cols = column_names.iter().map(col).collect::<Vec<Expr>>();
 
-                    let common_base_df = base_df.clone().lazy().select(&cols).collect().unwrap();
-                    let common_head_df = head_df.clone().lazy().select(&cols).collect().unwrap();
+                    // Selecting the common columns and collecting both frames is sync polars CPU.
+                    let (common_base_df, common_head_df) = {
+                        let base_df = base_df.clone();
+                        let head_df = head_df.clone();
+                        tokio::task::spawn_blocking(move || {
+                            let common_base_df = base_df.lazy().select(&cols).collect().unwrap();
+                            let common_head_df = head_df.lazy().select(&cols).collect().unwrap();
+                            (common_base_df, common_head_df)
+                        })
+                        .await
+                        .unwrap()
+                    };
 
                     log::debug!("common_base_df: {common_base_df:?}");
                     log::debug!("common_head_df: {common_head_df:?}");
