@@ -1,5 +1,6 @@
 use super::User;
 
+use bytes::Bytes;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
@@ -10,6 +11,16 @@ use utoipa::ToSchema;
 pub enum FileContents {
     Text(String),
     Binary(Vec<u8>),
+}
+
+impl FileContents {
+    /// The contents as bytes, reusing the existing allocation rather than copying.
+    pub fn into_bytes(self) -> Bytes {
+        match self {
+            FileContents::Text(text) => Bytes::from(text.into_bytes()),
+            FileContents::Binary(bytes) => Bytes::from(bytes),
+        }
+    }
 }
 
 impl Serialize for FileContents {

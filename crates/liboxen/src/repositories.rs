@@ -11,15 +11,16 @@ use crate::core::refs::with_ref_manager;
 use crate::error::OxenError;
 use crate::model::Commit;
 use crate::model::LocalRepository;
-use crate::model::file::FileContents;
 use crate::model::merkle_tree;
 use crate::storage::S3Opts;
 use crate::util;
 use crate::util::fs::AtomicFile;
+use bytes::Bytes;
 use jwalk::WalkDir;
 use regex::Regex;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use tokio::task::spawn_blocking;
 
 pub mod add;
 pub mod branches;
@@ -213,7 +214,7 @@ fn is_valid_repo_name(name: &str) -> bool {
 
 pub async fn create(
     root_dir: &Path,
-    new_repo: RepoNew,
+    mut new_repo: RepoNew,
     server_s3_opts: Option<&S3Opts>,
 ) -> Result<LocalRepository, OxenError> {
     // Validate repo name
@@ -276,26 +277,30 @@ pub async fn create(
     })?;
 
     // If the user supplied files, add and commit them
-    if let Some(files) = &new_repo.files {
-        let user = &files[0].user;
-        // Add the files
+    if let Some(files) = new_repo.files.take() {
+        let user = files[0].user.clone();
         log::debug!("repositories::create files: {:?}", files.len());
-        for file in files {
-            let path = &file.path;
-            let contents = &file.contents;
-            // write the data to the path
-            // if the path does not exist within the repo, make it
-            let full_path = repo_dir.join(path);
-            let bytes = match contents {
-                FileContents::Text(text) => text.as_bytes(),
-                FileContents::Binary(bytes) => bytes.as_slice(),
-            };
-            AtomicFile::new(&full_path).write(bytes)?;
-            add(&local_repo, &full_path).await?;
+        let payloads: Vec<(PathBuf, Bytes)> = files
+            .into_iter()
+            .map(|file| (repo_dir.join(file.path), file.contents.into_bytes()))
+            .collect();
+        let paths: Vec<PathBuf> = payloads.iter().map(|(path, _)| path.clone()).collect();
+
+        // Every publish fsyncs, so the whole materialization runs in one offload.
+        spawn_blocking(move || {
+            for (path, bytes) in &payloads {
+                AtomicFile::new(path).write(bytes)?;
+            }
+            Ok::<(), OxenError>(())
+        })
+        .await??;
+
+        for path in &paths {
+            add(&local_repo, path).await?;
         }
 
         let commit =
-            core::v_latest::commits::commit_with_user(&local_repo, "Initial commit", user)?;
+            core::v_latest::commits::commit_with_user(&local_repo, "Initial commit", &user)?;
         branches::create(&local_repo, constants::DEFAULT_BRANCH_NAME, &commit.id)?;
     }
 

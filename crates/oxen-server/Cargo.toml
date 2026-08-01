@@ -31,6 +31,7 @@ actix-web-httpauth = { workspace = true }
 astral-tokio-tar = { workspace = true }
 async-compression = { workspace = true }
 async_zip = { workspace = true }
+bytes = { workspace = true }
 bytesize = { workspace = true }
 clap = { workspace = true }
 derive_more = { workspace = true }

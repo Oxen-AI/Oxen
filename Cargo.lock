@@ -5673,6 +5673,7 @@ dependencies = [
  "astral-tokio-tar",
  "async-compression",
  "async_zip",
+ "bytes",
  "bytesize",
  "clap",
  "derive_more 1.0.0",

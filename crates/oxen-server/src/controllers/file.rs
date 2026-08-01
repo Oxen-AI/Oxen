@@ -6,6 +6,7 @@ use actix_multipart::form::text::Text;
 use actix_multipart::form::{FieldReader, Limits, MultipartForm};
 use actix_multipart::{Field, MultipartError};
 use actix_web::{HttpRequest, HttpResponse, web};
+use bytes::Bytes;
 use futures_util::TryStreamExt as _;
 use futures_util::future::LocalBoxFuture;
 use liboxen::core::repo_locks;
@@ -25,6 +26,7 @@ use liboxen::view::{CommitResponse, StatusMessage};
 use serde::Deserialize;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use tokio::task::spawn_blocking;
 use utoipa::ToSchema;
 
 #[derive(MultipartForm, ToSchema)]
@@ -333,7 +335,7 @@ pub async fn put(
         ensure_no_file_ancestors_in_tree(&repo, &commit, &file.path, &resource.path)?;
     }
 
-    process_and_add_files(&repo, Some(&workspace), &files).await?;
+    process_and_add_files(&repo, Some(&workspace), files).await?;
 
     // Commit workspace
     let commit_body = NewCommitBody {
@@ -572,12 +574,12 @@ async fn handle_initial_put_empty_repo(
     // If the user supplied files, add and commit them
     let mut commit: Option<Commit> = None;
 
-    process_and_add_files(repo, None, &files).await?;
+    let has_files = !files.is_empty();
+    process_and_add_files(repo, None, files).await?;
 
-    if !files.is_empty() {
-        let user_ref = &files[0].user; // Use the user from the first file, since it's the same for all
+    if has_files {
         let commit_message = message.unwrap_or_else(|| "Initial commit".to_string());
-        commit = Some(commits::commit_with_user(repo, &commit_message, user_ref)?);
+        commit = Some(commits::commit_with_user(repo, &commit_message, &user)?);
         branches::create(repo, &branch_name, &commit.as_ref().unwrap().id)?;
     }
 
@@ -747,31 +749,36 @@ fn ensure_no_file_ancestors_in_tree(
 async fn process_and_add_files(
     repo: &liboxen::model::LocalRepository,
     workspace: Option<&liboxen::repositories::workspaces::TemporaryWorkspace>,
-    files: &[FileNew],
+    files: Vec<FileNew>,
 ) -> Result<(), OxenError> {
-    if !files.is_empty() {
-        log::debug!("repositories::create files: {:?}", files.len());
-        for file in files {
-            let path = &file.path;
-            let contents = &file.contents;
+    if files.is_empty() {
+        return Ok(());
+    }
+    log::debug!("repositories::create files: {:?}", files.len());
+    let root = match workspace {
+        Some(ws) => ws.dir(),
+        None => repo.path.clone(),
+    };
+    let payloads: Vec<(PathBuf, Bytes)> = files
+        .into_iter()
+        .map(|file| (root.join(file.path), file.contents.into_bytes()))
+        .collect();
+    let paths: Vec<PathBuf> = payloads.iter().map(|(path, _)| path.clone()).collect();
 
-            let filepath = if let Some(ws) = workspace {
-                ws.dir().join(path)
-            } else {
-                repo.path.join(path)
-            };
+    // Every publish fsyncs, so the whole materialization runs in one offload.
+    spawn_blocking(move || {
+        for (path, bytes) in &payloads {
+            AtomicFile::new(path).write(bytes)?;
+        }
+        Ok::<(), OxenError>(())
+    })
+    .await??;
 
-            let bytes = match contents {
-                FileContents::Text(text) => text.as_bytes(),
-                FileContents::Binary(bytes) => bytes.as_slice(),
-            };
-            AtomicFile::new(&filepath).write(bytes)?;
-
-            if let Some(ws) = workspace {
-                repositories::workspaces::files::add(ws, &filepath).await?;
-            } else {
-                repositories::add(repo, &filepath).await?;
-            }
+    for filepath in &paths {
+        if let Some(ws) = workspace {
+            repositories::workspaces::files::add(ws, filepath).await?;
+        } else {
+            repositories::add(repo, filepath).await?;
         }
     }
     Ok(())
