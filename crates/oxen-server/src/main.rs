@@ -637,16 +637,31 @@ fn scan_node_format(
         }
     };
 
-    // Four outcomes, deliberately counted apart: they have different remedies. Pre-0.25 repos get
+    // Outcomes are counted apart because they have different remedies: pre-0.25 repos get
     // migrated, damaged and unscannable ones need a person, and unopenable ones are the
-    // `min_version` population a config sweep already finds.
-    let (mut scanned, mut affected, mut damaged, mut unopenable, mut unscannable) =
-        (0usize, 0usize, 0usize, 0usize, 0usize);
+    // `min_version` population a config sweep already finds. `unlistable` counts namespaces
+    // rather than repos — it is the one that says the totals below are incomplete.
+    let (mut scanned, mut affected, mut damaged, mut unopenable, mut unscannable, mut unlistable) =
+        (0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
     let mut totals: BTreeMap<String, usize> = BTreeMap::new();
 
     'outer: for namespace_dir in namespaces {
-        let Ok(entries) = std::fs::read_dir(&namespace_dir) else {
-            continue;
+        // A namespace that cannot be listed hides an unknown number of repositories, so skipping
+        // it quietly would understate every total below with nothing to say so. Reported and
+        // counted rather than fatal: unlike the explicit-namespace case, which is a caller
+        // mistake with nothing left to do, one bad namespace should not cost the whole run.
+        let entries = match std::fs::read_dir(&namespace_dir) {
+            Ok(entries) => entries,
+            Err(err) => {
+                unlistable += 1;
+                let label = namespace_dir
+                    .strip_prefix(sync_dir)
+                    .unwrap_or(&namespace_dir)
+                    .display();
+                // KEEP as println! -- do not log!
+                println!("{label}\tcannot list namespace: {err}");
+                continue;
+            }
         };
         let mut repo_dirs: Vec<PathBuf> = entries
             .filter_map(|entry| entry.ok().map(|e| e.path()))
@@ -723,7 +738,8 @@ fn scan_node_format(
     // KEEP as println! -- do not log!
     println!(
         "\nscanned={scanned} pre_v0_25_repos={affected} damaged_repos={damaged} \
-         could_not_open={unopenable} could_not_scan={unscannable}"
+         could_not_open={unopenable} could_not_scan={unscannable} \
+         could_not_list_namespaces={unlistable}"
     );
     if !totals.is_empty() {
         let breakdown: Vec<String> = totals
