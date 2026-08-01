@@ -179,6 +179,19 @@ pub fn parse_base_head(base_head: &str) -> Result<(String, String, bool), OxenEr
     }
 }
 
+/// Split a `base..head` string into base and head, rejecting `base...head`. For callers that
+/// compare the two revisions directly and have no merge-base behavior to offer, so that a three-dot
+/// request is answered rather than silently treated as two-dot.
+pub fn parse_two_dot(base_head: &str) -> Result<(String, String), OxenHttpError> {
+    let (base, head, three_dot) = parse_base_head(base_head)?;
+    if three_dot {
+        return Err(OxenHttpError::BadRequest(
+            format!("Three-dot syntax is not supported here, use {base}..{head}").into(),
+        ));
+    }
+    Ok((base, head))
+}
+
 pub fn resolve_base_head_branches(
     repo: &LocalRepository,
     base: &str,
@@ -362,6 +375,24 @@ mod tests {
         assert_eq!(base, "main");
         assert_eq!(head, "feature");
         assert!(three_dot);
+    }
+
+    #[test]
+    fn test_parse_two_dot_accepts_two_dots() {
+        let (base, head) = parse_two_dot("main..feature").unwrap();
+        assert_eq!(base, "main");
+        assert_eq!(head, "feature");
+    }
+
+    #[test]
+    fn test_parse_two_dot_rejects_three_dots() {
+        // Endpoints that compare the revisions directly have no merge-base behavior to offer, so
+        // a three-dot request has to be answered rather than quietly downgraded.
+        let err = parse_two_dot("main...feature").unwrap_err();
+        assert!(
+            matches!(err, OxenHttpError::BadRequest(_)),
+            "expected a bad request, got {err:?}"
+        );
     }
 
     #[test]
