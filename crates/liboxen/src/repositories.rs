@@ -276,9 +276,9 @@ pub async fn create(
         Ok(())
     })?;
 
-    // If the user supplied files, add and commit them
-    if let Some(files) = new_repo.files.take() {
-        let user = files[0].user.clone();
+    // If the user supplied files, add and commit them. An empty list means none were supplied.
+    let files = new_repo.files.take().unwrap_or_default();
+    if let Some(user) = files.first().map(|file| file.user.clone()) {
         log::debug!("repositories::create files: {:?}", files.len());
         let payloads: Vec<(PathBuf, Bytes)> = files
             .into_iter()
@@ -422,6 +422,27 @@ mod tests {
 
             // Test that we can successful load a repository from that dir
             let _repo = LocalRepository::from_dir(&repo_path)?;
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_local_repository_api_create_with_an_empty_files_list() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let namespace: &str = "test-namespace";
+            let name: &str = "test-repo-name";
+
+            // A client can send `"files": []`, which must behave like sending no files at all.
+            let repo_new = RepoNew::from_files(namespace, name, vec![], None);
+            let repo = repositories::create(&sync_dir, repo_new, None).await?;
+
+            assert!(repo.path.exists());
+            assert!(
+                repositories::commits::list(&repo)?.is_empty(),
+                "an empty files list should not produce a commit"
+            );
 
             Ok(())
         })
