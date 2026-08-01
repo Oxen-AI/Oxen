@@ -3479,7 +3479,7 @@ mod tests {
                 .join(constants::NODES_DIR);
 
             // Rewrite the first dir node we find into the pre-0.25 shape, in place.
-            let mut rewrote = false;
+            let mut rewritten_hash: Option<MerkleHash> = None;
             for prefix in util::fs::list_dirs_in_dir(&nodes_dir)? {
                 for node_dir in util::fs::list_dirs_in_dir(&prefix)? {
                     let node_file = node_dir.join("node");
@@ -3510,30 +3510,43 @@ mod tests {
                     rewritten.extend_from_slice(&legacy);
                     rewritten.extend_from_slice(&blob[21 + data_len..]);
                     std::fs::write(&node_file, rewritten)?;
-                    rewrote = true;
+                    rewritten_hash = Some(*dir.hash());
                     break;
                 }
-                if rewrote {
+                if rewritten_hash.is_some() {
                     break;
                 }
             }
-            assert!(rewrote, "fixture repo should contain a dir node to rewrite");
+            let rewritten_hash =
+                rewritten_hash.expect("fixture repo should contain a dir node to rewrite");
 
             let node = repositories::tree::get_node_by_id_with_children(&repo, &commit_hash)?
                 .expect("the commit should still resolve with a pre-0.25 dir node in the tree");
 
-            // The listing has to come back whole, not merely without an error: the fallback
-            // supplies a zero entry count, and a walk that silently returned nothing would look
-            // just as successful from the outside.
-            let dirs = node
-                .children
-                .iter()
-                .filter(|child| matches!(child.node, EMerkleTreeNode::Directory(_)))
-                .count();
+            // The walk has to come back whole, not merely without an error — one that silently
+            // returned nothing would look just as successful from the outside. Reaching the
+            // directory's children is what opens the rewritten blob, which is why this walk
+            // failed outright before the fallback existed.
             assert!(
-                dirs > 0,
+                node.children.iter().any(|child| matches!(&child.node,
+                        EMerkleTreeNode::Directory(dir) if *dir.hash() == rewritten_hash)),
                 "the rewritten dir node should still appear among the commit's children"
             );
+
+            // Read by its own hash to reach the rewritten blob itself. The copy carried in the
+            // commit's `children` is still current-format and keeps the original count, so
+            // asserting on the child above would check the wrong bytes.
+            let recovered = repositories::tree::get_node_by_id(&repo, &rewritten_hash)?
+                .expect("the rewritten dir node should be readable by its own hash");
+            let EMerkleTreeNode::Directory(recovered) = &recovered.node else {
+                panic!("expected a directory, got {:?}", recovered.node);
+            };
+
+            // The pre-0.25 shape carries no entry count, so the conversion supplies zero. Pinned
+            // deliberately: the migration that rewrites these nodes has to replace it with a
+            // derived value, and this is what tells whoever does that they have changed a
+            // contract rather than an implementation detail.
+            assert_eq!(recovered.num_entries(), 0);
 
             Ok(())
         })
