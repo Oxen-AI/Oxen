@@ -882,6 +882,7 @@ impl OxenError {
             OxenError::ReachableObjectsMissing { .. } => true,
             OxenError::DirHashIndexMissing { .. } => true,
             OxenError::VersionStoreDataMissing { .. } => true,
+            OxenError::VersionStoreBlobMissing { .. } => true,
             OxenError::UnknownRemoteResponseStatus(_) => true,
             _ => false,
         }
@@ -1382,6 +1383,25 @@ mod tests {
             hashes: vec!["abc".to_string()],
         };
         assert!(err.is_fatal_for_retry());
+    }
+
+    #[test]
+    fn is_fatal_for_retry_short_circuits_on_missing_version_store_data() {
+        // A hash the store has no data for reads the same on every attempt, so backing off
+        // only delays the recovery guidance. Both spellings of the condition are fatal.
+        assert!(
+            OxenError::VersionStoreBlobMissing {
+                hash: "abc".to_string(),
+            }
+            .is_fatal_for_retry()
+        );
+        assert!(
+            OxenError::VersionStoreDataMissing {
+                hash: "abc".to_string(),
+                target_path: PathBuf::from("a.txt").into(),
+            }
+            .is_fatal_for_retry()
+        );
     }
 
     #[test]
