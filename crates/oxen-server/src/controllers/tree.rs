@@ -27,7 +27,7 @@ use crate::errors::OxenHttpError;
 use crate::helpers::{get_repo, stream_with_heartbeat};
 use crate::params::TreeDepthQuery;
 use crate::params::parse_resource;
-use crate::params::{app_data, path_param};
+use crate::params::{app_data, maybe_parse_two_dot, path_param};
 use crate::tasks;
 
 /// Duplex buffer between the blocking packer and the response body for the full-tree download.
@@ -364,7 +364,7 @@ pub async fn download_tree_nodes(
         query.depth
     );
 
-    let (base_commit_id, maybe_head_commit_id) = maybe_parse_base_head(base_head_str)?;
+    let (base_commit_id, maybe_head_commit_id) = maybe_parse_two_dot(&base_head_str)?;
     let base_commit = repositories::commits::get_by_id(&repository, &base_commit_id)?
         .ok_or_else(|| OxenError::RevisionNotFound(base_commit_id.into()))?;
 
@@ -472,24 +472,6 @@ fn node_to_json(node: MerkleTreeNode) -> actix_web::Result<HttpResponse, OxenHtt
 
 /// Parses a base..head string into a base and head string
 /// If the base..head string does not contain a .., then it returns the base as the base and head as None
-fn maybe_parse_base_head(
-    base_head: impl AsRef<str>,
-) -> Result<(String, Option<String>), OxenError> {
-    let base_head_str = base_head.as_ref();
-    if base_head_str.contains("..") {
-        let mut split = base_head_str.split("..");
-        if let (Some(base), Some(head)) = (split.next(), split.next()) {
-            Ok((base.to_string(), Some(head.to_string())))
-        } else {
-            Err(OxenError::basic_str(
-                "Could not parse commits. Format should be base..head",
-            ))
-        }
-    } else {
-        Ok((base_head_str.to_string(), None))
-    }
-}
-
 fn get_subtree_paths(subtrees: &Option<String>) -> Result<Option<Vec<PathBuf>>, OxenError> {
     if let Some(subtrees) = subtrees {
         Ok(Some(subtrees.split(',').map(PathBuf::from).collect()))

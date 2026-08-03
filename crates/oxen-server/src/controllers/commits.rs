@@ -27,7 +27,7 @@ use crate::errors::OxenHttpError;
 use crate::helpers::{get_repo, get_repo_async};
 use crate::params::PageNumQuery;
 use crate::params::parse_resource_async;
-use crate::params::{app_data, path_param};
+use crate::params::{app_data, maybe_parse_two_dot, path_param};
 
 use actix_web::{Error, HttpRequest, HttpResponse, web};
 use async_compression::tokio::bufread::GzipDecoder;
@@ -504,21 +504,16 @@ pub async fn download_dir_hashes_db(
 
     // Let user pass in base..head to download a range of commits
     // or we just get all the commits from the base commit to the first commit
-    let commits = if base_head.contains("..") {
-        let split = base_head.split("..").collect::<Vec<&str>>();
-        if split.len() != 2 {
-            return Err(OxenHttpError::BadRequest("Invalid base_head".into()));
-        }
-        let base_commit_id = split[0];
-        let head_commit_id = split[1];
-        let base_commit = repositories::revisions::get(&repository, base_commit_id)?
-            .ok_or_else(|| OxenError::RevisionNotFound(base_commit_id.into()))?;
-        let head_commit = repositories::revisions::get(&repository, head_commit_id)?
-            .ok_or_else(|| OxenError::RevisionNotFound(head_commit_id.into()))?;
+    let commits = match maybe_parse_two_dot(&base_head)? {
+        (base_commit_id, Some(head_commit_id)) => {
+            let base_commit = repositories::revisions::get(&repository, &base_commit_id)?
+                .ok_or_else(|| OxenError::RevisionNotFound(base_commit_id.into()))?;
+            let head_commit = repositories::revisions::get(&repository, &head_commit_id)?
+                .ok_or_else(|| OxenError::RevisionNotFound(head_commit_id.into()))?;
 
-        repositories::commits::list_between(&repository, &base_commit, &head_commit)?
-    } else {
-        repositories::commits::list_from(&repository, &base_head)?
+            repositories::commits::list_between(&repository, &base_commit, &head_commit)?
+        }
+        (revision, None) => repositories::commits::list_from(&repository, &revision)?,
     };
     let buffer = compress_commits(&repository, &commits)?;
 
