@@ -70,6 +70,7 @@ where
             m.tabular.schema = table_schema;
         }
         mutate(&mut m.tabular.schema)?;
+        m.tabular.width = m.tabular.schema.fields.len();
         m.tabular.schema.recompute_hash();
 
         file_node.set_name(path.to_string_lossy().as_ref());

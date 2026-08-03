@@ -474,9 +474,11 @@ mod tests {
     use crate::config::UserConfig;
     use crate::constants::{DEFAULT_BRANCH_NAME, OXEN_ID_COL};
     use crate::core::df;
+    use crate::core::staged::get_staged_db_manager;
     use crate::error::OxenError;
     use crate::model::NewCommitBody;
     use crate::model::diff::DiffResult;
+    use crate::model::metadata::generic_metadata::GenericMetadata;
     use crate::opts::DFOpts;
     use crate::repositories;
     use crate::repositories::workspaces;
@@ -1660,6 +1662,16 @@ mod tests {
                 "deleted column should be gone: {names:?}"
             );
             assert!(names.contains(&"file"));
+
+            // The staged node's column count has to track the reconciled field list, since
+            // that is what the diff summary and the data frame size report.
+            let staged = get_staged_db_manager(&workspace.workspace_repo)?
+                .read_from_staged_db(&file_path)?
+                .expect("data frame should be staged");
+            let Some(GenericMetadata::MetadataTabular(m)) = staged.node.file()?.metadata() else {
+                panic!("staged node should carry tabular metadata");
+            };
+            assert_eq!(m.tabular.width, m.tabular.schema.fields.len());
             Ok(())
         })
         .await
