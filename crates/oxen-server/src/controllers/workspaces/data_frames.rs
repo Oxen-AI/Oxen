@@ -14,6 +14,7 @@ use liboxen::error::OxenError;
 use liboxen::model::{ParsedResource, Schema, Workspace};
 use liboxen::opts::DFOpts;
 use liboxen::repositories;
+use liboxen::repositories::data_frames::schemas::get_staged_schema_with_staged_db_manager;
 use liboxen::util::paginate;
 use liboxen::view::data_frames::DataFramePayload;
 use liboxen::view::entries::ResourceVersion;
@@ -263,24 +264,28 @@ pub async fn get_schema(req: HttpRequest) -> Result<HttpResponse, OxenHttpError>
     // Never index on a read: rebuilding the staged table would discard any
     // staged row edits (e.g. behind a stale index marker). Serve the committed
     // schema until something else indexes the frame.
-    let mut schema = if repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)? {
+    let schema = if repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)? {
         let db_path = repositories::workspaces::data_frames::duckdb_path(&workspace, &file_path);
-        with_df_db_manager(&db_path, |manager| {
+        let mut schema = with_df_db_manager(&db_path, |manager| {
             manager.with_conn(|conn| schema_without_oxen_cols(conn, TABLE_NAME))
-        })?
+        })?;
+        // The staged table carries the workspace's columns but none of its metadata.
+        if let Some(staged_schema) =
+            get_staged_schema_with_staged_db_manager(&workspace.workspace_repo, &file_path)?
+        {
+            schema.update_metadata_from_schema(&staged_schema);
+        }
+        schema
+    } else if let Some(staged_schema) =
+        get_staged_schema_with_staged_db_manager(&workspace.workspace_repo, &file_path)?
+    {
+        // A data frame the workspace added is absent from the commit, so its staged node holds
+        // the only copy of the schema, metadata included.
+        staged_schema
     } else {
         repositories::data_frames::schemas::get_by_path(&repo, &workspace.commit, &file_path)?
             .ok_or(OxenHttpError::NotFound)?
     };
-
-    if let Some(staged_schema) =
-        repositories::data_frames::schemas::get_staged_schema_with_staged_db_manager(
-            &workspace.workspace_repo,
-            &file_path,
-        )?
-    {
-        schema.update_metadata_from_schema(&staged_schema);
-    }
 
     Ok(HttpResponse::Ok().json(schema))
 }
@@ -769,6 +774,79 @@ mod tests {
         let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
         let schema: Schema = serde_json::from_slice(&bytes)?;
         assert_eq!(schema.metadata, Some(metadata));
+
+        drop(workspace);
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
+
+    /// A data frame the workspace added is editable before it is committed, so
+    /// its schema has to be readable there too — the PUT and the GET have to
+    /// agree on which paths exist.
+    #[actix_web::test]
+    async fn test_schema_metadata_round_trips_on_a_workspace_only_data_frame()
+    -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Schema-Metadata-Workspace-Only";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        // The workspace needs a base commit, but the CSV is deliberately not in it.
+        let readme_path = repo.path.join("README.md");
+        util::fs::write_to_path(&readme_path, "# Base commit\n")?;
+        repositories::add(&repo, &readme_path).await?;
+        let commit = repositories::commit(&repo, "Add README")?;
+
+        let workspace_id = uuid::Uuid::new_v4().to_string();
+        let workspace = repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
+        let file_path = std::path::Path::new("data/uncommitted.csv");
+
+        let workspace_csv = workspace.workspace_repo.path.join(file_path);
+        util::fs::create_dir_all(workspace_csv.parent().unwrap())?;
+        util::fs::write_to_path(&workspace_csv, "col_a,col_b\n1,2\n")?;
+        repositories::workspaces::files::add(&workspace, &workspace_csv).await?;
+
+        let uri = format!(
+            "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/schema/{}",
+            file_path.display()
+        );
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/schema/{path:.*}",
+                    web::put().to(controllers::workspaces::data_frames::put_schema_metadata),
+                )
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/schema/{path:.*}",
+                    web::get().to(controllers::workspaces::data_frames::get_schema),
+                ),
+        )
+        .await;
+
+        let metadata = json!({"task": "classification"});
+        let req = actix_web::test::TestRequest::put()
+            .uri(&uri)
+            .set_json(json!({"metadata": metadata}))
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let schema: Schema = serde_json::from_slice(&bytes)?;
+        assert_eq!(schema.metadata, Some(metadata));
+        let names: Vec<&str> = schema.fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["col_a", "col_b"]);
+
+        // The staged node's schema is served as stored, so its hash has to already agree with
+        // its fields.
+        let mut recomputed = schema.clone();
+        recomputed.recompute_hash();
+        assert_eq!(schema.hash, recomputed.hash);
 
         drop(workspace);
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
