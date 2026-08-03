@@ -5,10 +5,10 @@ on:
     tags:
       - v*
 
-permissions:
-  id-token: write
-  contents: write
-  pull-requests: write
+# No token by default: every job below grants itself only what it uses, and a job added without a
+# permissions block gets nothing rather than silently inheriting write access. A called workflow can
+# only reduce what its calling job grants, so these are also the ceilings for the reusable workflows.
+permissions: {}
 
 env:
   AWS_ROLE: arn:aws:iam::213020545630:role/github-runner-role
@@ -25,6 +25,7 @@ jobs:
   set_env:
     name: Set env
     runs-on: ubuntu-latest
+    permissions: {}
     outputs:
       release_version: ${{ steps.set-env.outputs.release_version }}
       aws_role: ${{ steps.set-env.outputs.aws_role }}
@@ -43,6 +44,9 @@ jobs:
   release_docker_arm64:
     name: Docker arm64
     needs: set_env
+    permissions:
+      id-token: write
+      contents: read
     uses: ./.github/workflows/release_docker.yml
     with:
       ARCHITECTURE: arm64
@@ -55,6 +59,9 @@ jobs:
   release_docker_x86_64:
     name: Docker x86_64
     needs: set_env
+    permissions:
+      id-token: write
+      contents: read
     uses: ./.github/workflows/release_docker.yml
     with:
       ARCHITECTURE: amd64
@@ -67,6 +74,9 @@ jobs:
   release_linux_arm64:
     name: Linux arm64
     needs: set_env
+    permissions:
+      id-token: write
+      contents: read
     uses: ./.github/workflows/release_linux.yml
     with:
       ARCHITECTURE: arm64
@@ -80,6 +90,9 @@ jobs:
   release_linux_x86_64:
     name: Linux x86_64
     needs: set_env
+    permissions:
+      id-token: write
+      contents: read
     uses: ./.github/workflows/release_linux.yml
     with:
       ARCHITECTURE: x86_64
@@ -93,6 +106,9 @@ jobs:
   release_macos_arm64_x86_64:
     name: MacOS arm64 and x86_64
     needs: set_env
+    permissions:
+      id-token: write
+      contents: read
     uses: ./.github/workflows/release_macos.yml
     with:
       PYTHON_VERSIONS: ${{ needs.set_env.outputs.python_versions }}
@@ -102,6 +118,9 @@ jobs:
   release_windows_x86_64:
     name: Windows x86_64
     needs: set_env
+    permissions:
+      id-token: write
+      contents: read
     uses: ./.github/workflows/release_windows.yml
     with:
       ARCHITECTURE: x86_64
@@ -114,6 +133,9 @@ jobs:
   create_draft_release:
     name: Create draft release
     runs-on: ubuntu-latest
+    # ncipollo/release-action creates the draft and uploads its assets.
+    permissions:
+      contents: write
     needs:
       - set_env
       - release_docker_arm64

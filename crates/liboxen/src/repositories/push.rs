@@ -49,6 +49,7 @@ mod tests {
     use crate::repositories;
     use crate::test;
     use crate::util;
+    use crate::util::fs::AtomicFile;
     use crate::view::entries::EMetadataEntry;
     use futures::future;
     use std::collections::HashSet;
@@ -1364,7 +1365,7 @@ A: Checkout Oxen.ai
             let file_data: Vec<u8> = vec![42; segment_size as usize];
 
             // Write the data to the file
-            util::fs::write_data(&file_path, &file_data)?;
+            AtomicFile::new(&file_path).write(&file_data)?;
 
             // Verify the file size equals the segment size exactly.
             let metadata = util::fs::metadata(&file_path)?;
@@ -1571,7 +1572,7 @@ A: Checkout Oxen.ai
             let file_size = (stream_segment_size() + 1024 * 1024) as usize;
             let file_path = local_repo.path.join("large_file.bin");
             let file_data: Vec<u8> = vec![42; file_size];
-            util::fs::write_data(&file_path, &file_data)?;
+            AtomicFile::new(&file_path).write(&file_data)?;
 
             repositories::add(&local_repo, &file_path).await?;
             let commit = repositories::commit(&local_repo, "Add large file")?;
@@ -1642,7 +1643,7 @@ A: Checkout Oxen.ai
             let file_size = (stream_segment_size() + 1024 * 1024) as usize;
             let file_path = sub_dir.join("weights.bin");
             let file_data: Vec<u8> = (0..file_size).map(|i| (i % 256) as u8).collect();
-            util::fs::write_data(&file_path, &file_data)?;
+            AtomicFile::new(&file_path).write(&file_data)?;
 
             // Add and commit
             repositories::add(&local_repo, &local_repo.path).await?;

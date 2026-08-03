@@ -221,6 +221,18 @@ The server uses actix-web 4 with `#[actix_web::main]`, which expands to a curren
 - The blocking pool is still shared across all workers — `spawn_blocking` works the same way as it does anywhere else.
 - Handler futures do not have to be `Send` today (current-thread workers), but **write new code as if they did**. Any future move to a multi-threaded runtime (notably a migration to axum) will require it, and the sync-core / async-edge policy already eliminates the biggest hazard (`!Send` DB handles never crossing `.await` because they live inside `spawn_blocking`).
 - The escape hatch is a real code smell here: holding a blocking-pool worker on a network call can starve other requests' sync work. Use the **Sandwich** or **Channel hand-off** pattern instead.
+- **Spawn through `crate::tasks`, not through tokio or actix directly.** `sentry-actix` binds the per-request Sentry hub as a thread-local around each *poll of the request future*. A closure handed straight to `tokio::task::spawn_blocking` runs somewhere that binding never reached, so a panic inside it reports with no route and no request — a bare stack trace that says something crashed but not what was being served. `tasks::spawn_blocking` wraps a blocking closure; `tasks::inherit_hub` wraps a future before it goes to `tokio::spawn` or `JoinSet::spawn`. Tasks nest safely: an inner `tasks::spawn_blocking` inherits through an outer `tasks::inherit_hub`.
+
+  This applies to `oxen-server` only. liboxen keeps calling tokio directly — it also backs the CLI and the Python bindings, so it must not depend on `sentry`. A panic in a liboxen `spawn_blocking` still reaches Sentry with a route, via the `JoinError` surfacing through the request's error path.
+
+### Recognizing when a spawn needs the request's context
+
+Ask whether the response is still in flight when the task runs:
+
+- **The handler awaits it, or it produces the response body** → spawn through `crate::tasks`. For a response body, bind at *construction* time, in the handler: the middleware's binding is already gone by the time a body is polled, so binding from inside the task gets nothing. `helpers::stream_with_heartbeat` binds its work for every caller, so callers of it need no extra step.
+- **The task outlives the response** — a background repo delete, a temp-file cleanup at stream EOF, a process-lifetime loop — → keep tokio's own spawn. There is no live request to name, and stamping the task with an already-answered one is more misleading than reporting it with none.
+
+When auditing for missed sites, note that **three call shapes reach the blocking pool and only two of them contain the string `spawn_blocking`**. `actix_web::web::block` is the third; grep for it separately.
 
 ## Anti-patterns
 
@@ -231,6 +243,7 @@ These are common shapes to avoid, with the reason in each case:
 - **`FuturesUnordered` of `spawn_blocking` over a large batch of CPU work.** Spawns far more blocking-pool threads than cores, no work-stealing, high scheduler overhead. Use one `spawn_blocking` over a `rayon::par_iter` instead.
 - **`Handle::block_on` inside `spawn_blocking` as a habit.** Ties up a blocking-pool worker on network latency. Allowed as a one-off; refactor toward the Sandwich or Channel hand-off pattern when it shows up repeatedly.
 - **Relying on `BufWriter`'s `Drop` to flush.** It does not. Always `flush().await?` explicitly before any downstream operation that depends on the bytes being written.
+- **`actix_web::web::block` in an `oxen-server` handler.** It is `spawn_blocking` wearing a different name, so it loses the request's Sentry hub exactly like a bare spawn does — while being invisible to a search for `spawn_blocking`. It also maps the `JoinError` to a unit `BlockingError`, discarding the panic message along with the request context. Use `crate::tasks::spawn_blocking`, whose `JoinError` carries the panic payload.
 
 ## What this policy is not
 

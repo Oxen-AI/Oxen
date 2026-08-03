@@ -12,6 +12,7 @@ use crate::{
     errors::OxenHttpError,
     helpers::get_repo,
     params::{app_data, path_param},
+    tasks,
 };
 
 pub async fn list_unmigrated(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
@@ -89,7 +90,7 @@ pub async fn run(req: HttpRequest, body: web::Bytes) -> Result<HttpResponse, Oxe
     // runs on the blocking pool so it doesn't starve other requests on the actix worker.
     let migration_repo = repo.clone();
     repo_locks::with_repo_exclusive(&repo, async move {
-        tokio::task::spawn_blocking(move || {
+        tasks::spawn_blocking(move || {
             try_apply_migration(migration, direction, run_optional, migration_repo)
         })
         .await

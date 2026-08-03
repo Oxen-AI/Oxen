@@ -1,6 +1,26 @@
 name: 🐳 Build branch for docker
 
 on:
+  workflow_call:
+    inputs:
+      branch:
+        description: "Branch to build. Also accepts commit sha and tag name."
+        required: true
+        type: string
+      ARCHITECTURE:
+        description: "The architecture to build for. Either amd64 (for x86_64) or arm64."
+        required: false
+        default: "arm64"
+        type: string
+    secrets:
+      GH_PERSONAL_ACCESS_TOKEN:
+        description: "GitHub personal access token"
+        required: true
+    outputs:
+      image:
+        description: "Digest-pinned reference to the image this built"
+        value: ${{ jobs.release_docker.outputs.image }}
+
   workflow_dispatch:
     inputs:
       branch:
@@ -18,11 +38,13 @@ on:
 env:
   AWS_REGION: us-west-1
   AWS_ROLE: ${{ vars.EC2_GITHUB_RUNNER_ROLE }}
-  REGISTRY_IMAGE: oxen/oxen-server
+  # Lowercase: registry paths are case-sensitive and the owner name is not.
+  REGISTRY_IMAGE: ghcr.io/oxen-ai/oxen-server
 
+# Each job below states what it needs; a job's own block replaces this one rather
+# than adding to it, so nothing inherits a write it has no use for.
 permissions:
-  id-token: write
-  contents: write
+  contents: read
 
 defaults:
   run:
@@ -32,6 +54,9 @@ jobs:
   start-self-hosted-runner:
     name: Start self-hosted EC2 runner
     runs-on: ubuntu-latest
+    # Assumes an AWS role by OIDC. Checks nothing out.
+    permissions:
+      id-token: write
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
       ec2-instance-id: ${{ steps.start-ec2-runner.outputs.ec2-instance-id }}
@@ -62,13 +87,19 @@ jobs:
   release_docker:
     needs: start-self-hosted-runner
     runs-on: ${{ needs.start-self-hosted-runner.outputs.label }}
+    # Reads the source it builds, and publishes the image it produces.
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.push.outputs.image }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           persist-credentials: false
-          ref: ${{ github.event.inputs.branch }}
+          ref: ${{ inputs.branch }}
 
       - name: Set release version
         run: |
@@ -103,6 +134,43 @@ jobs:
           path: oxen-server-docker-${{ inputs.ARCHITECTURE }}-${{ env.RELEASE_VERSION }}.tar
           retention-days: 1
 
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Published so a deployment can consume the image by digest rather than by
+      # unpacking a workflow artifact, which expires and can only be fetched
+      # through the Actions API. The tag is for browsing; the digest this outputs
+      # is what identifies the image, and it is the only thing a caller should
+      # deploy from.
+      - name: Push image to GitHub Container Registry
+        id: push
+        env:
+          COMMIT: ${{ steps.metadata.outputs.COMMIT }}
+        run: |
+          tag="$REGISTRY_IMAGE:sha-${COMMIT:0:12}"
+
+          docker tag oxen/oxen-server "$tag"
+          docker image push "$tag"
+
+          # Selected by repository rather than by position: the daemon records a
+          # digest per repository the image has been pushed to, and which one
+          # comes first is not something to depend on.
+          image=$(docker image inspect "$tag" \
+            --format '{{ range .RepoDigests }}{{ println . }}{{ end }}' \
+            | grep -F -- "$REGISTRY_IMAGE@" | head -1 || true)
+
+          if [[ -z "$image" ]]; then
+            echo "::error::the push recorded no digest for $REGISTRY_IMAGE"
+            exit 1
+          fi
+
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "Published $image" >> "$GITHUB_STEP_SUMMARY"
+
   stop-self-hosted-runner:
     name: Stop self-hosted EC2 runner
     needs:
@@ -110,6 +178,9 @@ jobs:
       - release_docker
     runs-on: ubuntu-latest
     if: ${{ always() }}
+    # Assumes an AWS role by OIDC. Checks nothing out.
+    permissions:
+      id-token: write
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6

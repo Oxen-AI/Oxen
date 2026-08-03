@@ -3,11 +3,12 @@ use crate::api::client;
 use crate::error::OxenError;
 use crate::opts::DFOpts;
 use crate::util;
+use crate::util::fs::AtomicFile;
 use crate::view::entries::PaginatedMetadataEntriesResponse;
 use crate::view::json_data_frame_view::WorkspaceJsonDataFrameViewResponse;
 use futures_util::StreamExt;
-use std::io::Write;
 use std::path::Path;
+use tokio_util::io::StreamReader;
 
 use crate::model::RemoteRepository;
 use crate::view::StatusMessage;
@@ -82,18 +83,13 @@ pub async fn download(
         )));
     }
 
-    // Create the output file
-    log::debug!("Download creating output file {output_path:?}");
-    let mut file = util::fs::file_create(output_path)?;
-
-    // Stream the response body to the file
-    let mut stream = res.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        file.write_all(&chunk)?;
-    }
-
-    Ok(())
+    // Stream the response body to the output path
+    log::debug!("Download writing output file {output_path:?}");
+    let mut reader = StreamReader::new(
+        res.bytes_stream()
+            .map(|chunk| chunk.map_err(std::io::Error::other)),
+    );
+    AtomicFile::new(output_path).stream_async(&mut reader).await
 }
 
 pub async fn is_indexed(

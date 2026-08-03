@@ -1925,9 +1925,11 @@ fn insert_entry(entries: &mut HashMap<String, DirEntry>, hash: MerkleHash, node:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants;
     use crate::core::db::merkle_node::merkle_node_db::node_db_path;
     use crate::error::OxenError;
     use crate::model::Commit;
+    use crate::model::merkle_tree::node::DirNode;
     use crate::opts::RmOpts;
     use crate::repositories;
     use crate::test;
@@ -3441,6 +3443,97 @@ mod tests {
                 repositories::tree::get_file_by_path_async(&repo, &commit, "")
                     .await?
                     .is_none()
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// The pre-0.25 shape of a dir node: the same data with no enum envelope and no
+    /// `num_entries`. Serialized positionally, matching how `rmp_serde::to_vec` writes structs.
+    #[derive(serde::Serialize)]
+    struct LegacyDirNodeData {
+        node_type: MerkleTreeNodeType,
+        name: String,
+        hash: MerkleHash,
+        num_bytes: u64,
+        last_commit_id: MerkleHash,
+        last_modified_seconds: i64,
+        last_modified_nanoseconds: u32,
+        data_type_counts: std::collections::HashMap<String, u64>,
+        data_type_sizes: std::collections::HashMap<String, u64>,
+    }
+
+    // A repo written before v0.25.0 must report *why* it cannot be read, not surface a raw
+    // msgpack error as a server fault. Reading such a node reaches the decode through
+    // `MerkleNodeDB::map`, which is a different call site than `MerkleNodeDB::node` — an earlier
+    // attempt at this classified only the latter and left the failure looking like corruption.
+    #[tokio::test]
+    async fn test_pre_v0_25_dir_node_is_reported_as_a_retired_format() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            // Resolve HEAD before corrupting anything: reading the commit also walks into the
+            // dir node, so afterwards even this lookup fails.
+            let commit_hash: MerkleHash = repositories::commits::head_commit(&repo)?.id.parse()?;
+
+            let nodes_dir = util::fs::oxen_hidden_dir(&repo.path)
+                .join(constants::TREE_DIR)
+                .join(constants::NODES_DIR);
+
+            // Rewrite the first dir node we find into the pre-0.25 shape, in place.
+            let mut rewrote = false;
+            for prefix in util::fs::list_dirs_in_dir(&nodes_dir)? {
+                for node_dir in util::fs::list_dirs_in_dir(&prefix)? {
+                    let node_file = node_dir.join("node");
+                    let blob = std::fs::read(&node_file)?;
+                    // [dtype u8][parent_id u128 LE][data_len u32 LE][payload][child entries...]
+                    if blob.first() != Some(&MerkleTreeNodeType::Dir.to_u8()) {
+                        continue;
+                    }
+                    let data_len =
+                        u32::from_le_bytes(blob[17..21].try_into().expect("4 bytes")) as usize;
+                    let dir = DirNode::deserialize(&blob[21..21 + data_len])
+                        .expect("fixture dir node should decode before rewriting");
+                    let legacy = rmp_serde::to_vec(&LegacyDirNodeData {
+                        node_type: *dir.node_type(),
+                        name: dir.name().to_string(),
+                        hash: *dir.hash(),
+                        num_bytes: dir.num_bytes(),
+                        last_commit_id: *dir.last_commit_id(),
+                        last_modified_seconds: dir.last_modified_seconds(),
+                        last_modified_nanoseconds: dir.last_modified_nanoseconds(),
+                        data_type_counts: dir.data_type_counts().clone(),
+                        data_type_sizes: dir.data_type_sizes().clone(),
+                    })
+                    .expect("legacy dir node should serialize");
+
+                    let mut rewritten = blob[..17].to_vec();
+                    rewritten.extend_from_slice(&(legacy.len() as u32).to_le_bytes());
+                    rewritten.extend_from_slice(&legacy);
+                    rewritten.extend_from_slice(&blob[21 + data_len..]);
+                    std::fs::write(&node_file, rewritten)?;
+                    rewrote = true;
+                    break;
+                }
+                if rewrote {
+                    break;
+                }
+            }
+            assert!(rewrote, "fixture repo should contain a dir node to rewrite");
+
+            let err = repositories::tree::get_node_by_id_with_children(&repo, &commit_hash)
+                .expect_err("a pre-0.25 dir node must not read as though it were current");
+
+            assert!(
+                matches!(
+                    err,
+                    OxenError::MerkleDbError(
+                        crate::core::db::merkle_node::merkle_node_db::MerkleDbError::PreV025Node {
+                            ..
+                        }
+                    )
+                ),
+                "expected PreV025Node, got {err:?}"
             );
 
             Ok(())

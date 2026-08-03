@@ -20,6 +20,7 @@
 
 use rocksdb::{DBWithThreadMode, SingleThreaded};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::core::db;
@@ -27,11 +28,80 @@ use crate::core::db::dir_hashes::dir_hashes_db::{
     dir_hash_db_path_from_commit_id, with_exclusive_access,
 };
 use crate::core::db::key_val::str_val_db;
+use crate::core::db::merkle_node::merkle_node_db::{
+    MerkleDbError, MerkleNodeDB, suppress_retired_format_logging,
+};
 use crate::error::OxenError;
-use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
+use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode, MerkleTreeNodeType};
 use crate::model::{Commit, LocalRepository, MerkleHash};
 use crate::repositories;
 use crate::util;
+
+/// What a [`scan_node_format`] pass found in one repository.
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct NodeFormatReport {
+    /// Every node the store holds, whatever its format.
+    pub total_nodes: usize,
+    /// Nodes written before the v0.25.0 on-disk format, counted per node type. Absent types
+    /// simply have no such nodes.
+    pub pre_v025: HashMap<MerkleTreeNodeType, usize>,
+    /// Nodes that failed to decode for some other reason. Counted rather than returned so one
+    /// damaged node doesn't abort a fleet-wide scan; a non-zero value wants looking at by hand.
+    pub undecodable: usize,
+}
+
+impl NodeFormatReport {
+    /// Nodes predating v0.25.0, across every node type.
+    pub fn pre_v025_total(&self) -> usize {
+        self.pre_v025.values().sum()
+    }
+
+    /// Whether this repository holds any pre-v0.25.0 nodes. Deliberately narrower than "holds
+    /// anything unreadable": [`Self::undecodable`] nodes are damage, a separate condition with a
+    /// separate remedy, and conflating the two overstates the population awaiting migration.
+    pub fn is_affected(&self) -> bool {
+        self.pre_v025_total() > 0
+    }
+}
+
+/// Count a repository's Merkle nodes that predate the v0.25.0 on-disk format, by node type.
+///
+/// Read-only, and reads every node in the store, so cost scales with tree size. Works on either
+/// merkle-node backend, since it goes through the store rather than the on-disk file layout.
+///
+/// This asks the same decoder the server uses, so its answer cannot drift from what a read
+/// actually does — which is the point of having it rather than matching bytes externally.
+pub fn scan_node_format(repo: &LocalRepository) -> Result<NodeFormatReport, OxenError> {
+    // The report below names every node this would log, so leaving the warning on buries the
+    // result under one line per affected node — order 10^5 across a fleet.
+    let _quiet = suppress_retired_format_logging();
+
+    let store = repo.merkle_node_store();
+    let hashes = store.list_hashes()?;
+
+    let mut report = NodeFormatReport {
+        total_nodes: hashes.len(),
+        ..Default::default()
+    };
+
+    for hash in hashes {
+        // Decoding this node's own payload is what classifies it; a node whose *children* are
+        // legacy is counted when the scan reaches those children by their own hashes.
+        let decoded = MerkleNodeDB::open_read_only(store.clone(), &hash).and_then(|db| db.node());
+        match decoded {
+            Ok(_) => {}
+            Err(MerkleDbError::PreV025Node { dtype, .. }) => {
+                *report.pre_v025.entry(dtype).or_default() += 1;
+            }
+            Err(err) => {
+                log::warn!("Node {hash} in {:?} did not decode: {err}", repo.path);
+                report.undecodable += 1;
+            }
+        }
+    }
+
+    Ok(report)
+}
 
 /// Result of rebuilding a commit's `dir_hash_db`.
 #[derive(Debug, Clone, Serialize)]
@@ -317,6 +387,84 @@ mod tests {
             assert!(
                 repaired.is_some(),
                 "expected dir_with_children to find {child_rel:?} after rebuild"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// The pre-0.25 shape of a vnode: the same data with no enum envelope and no `num_entries`.
+    #[derive(serde::Serialize)]
+    struct LegacyVNodeData {
+        hash: MerkleHash,
+        node_type: MerkleTreeNodeType,
+    }
+
+    #[tokio::test]
+    async fn test_scan_node_format_finds_planted_pre_v0_25_node() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let clean = scan_node_format(&repo)?;
+            assert!(
+                !clean.is_affected(),
+                "a freshly written repo holds no pre-0.25 nodes, got {clean:?}"
+            );
+            assert!(clean.total_nodes > 0, "fixture repo should have nodes");
+            assert_eq!(clean.undecodable, 0);
+
+            // Rewrite one vnode into the pre-0.25 shape, in place.
+            let nodes_dir = util::fs::oxen_hidden_dir(&repo.path)
+                .join(crate::constants::TREE_DIR)
+                .join(crate::constants::NODES_DIR);
+            let mut planted = false;
+            for prefix in util::fs::list_dirs_in_dir(&nodes_dir)? {
+                for node_dir in util::fs::list_dirs_in_dir(&prefix)? {
+                    let node_file = node_dir.join("node");
+                    let blob = std::fs::read(&node_file)?;
+                    // [dtype u8][parent_id u128 LE][data_len u32 LE][payload][child entries...]
+                    if blob.first() != Some(&MerkleTreeNodeType::VNode.to_u8()) {
+                        continue;
+                    }
+                    let data_len =
+                        u32::from_le_bytes(blob[17..21].try_into().expect("4 bytes")) as usize;
+                    let vnode = crate::model::merkle_tree::node::VNode::deserialize(
+                        &blob[21..21 + data_len],
+                    )
+                    .expect("fixture vnode should decode before rewriting");
+                    let legacy = rmp_serde::to_vec(&LegacyVNodeData {
+                        hash: *vnode.hash(),
+                        node_type: MerkleTreeNodeType::VNode,
+                    })
+                    .expect("legacy vnode should serialize");
+
+                    let mut rewritten = blob[..17].to_vec();
+                    rewritten.extend_from_slice(&(legacy.len() as u32).to_le_bytes());
+                    rewritten.extend_from_slice(&legacy);
+                    rewritten.extend_from_slice(&blob[21 + data_len..]);
+                    std::fs::write(&node_file, rewritten)?;
+                    planted = true;
+                    break;
+                }
+                if planted {
+                    break;
+                }
+            }
+            assert!(planted, "fixture repo should contain a vnode to rewrite");
+
+            let scanned = scan_node_format(&repo)?;
+            assert_eq!(
+                scanned.pre_v025.get(&MerkleTreeNodeType::VNode).copied(),
+                Some(1),
+                "the planted vnode should be counted against its own type, got {scanned:?}"
+            );
+            assert_eq!(scanned.pre_v025_total(), 1);
+            assert_eq!(
+                scanned.total_nodes, clean.total_nodes,
+                "node count is stable"
+            );
+            assert_eq!(
+                scanned.undecodable, 0,
+                "a retired format is not the same as an undecodable node"
             );
 
             Ok(())

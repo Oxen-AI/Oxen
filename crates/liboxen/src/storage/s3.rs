@@ -5,9 +5,11 @@ use aws_sdk_s3::operation::head_object::HeadObjectError;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier};
 use aws_sdk_s3::{Client, config::Region, primitives::ByteStream};
 use bytes::Bytes;
-use futures::StreamExt;
+use futures::stream;
+use futures::{StreamExt, TryStreamExt};
 use log;
 use std::path::Path;
+use std::pin::pin;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::io::AsyncReadExt;
@@ -24,6 +26,9 @@ use xxhash_rust::xxh3::Xxh3;
 
 /// AWS recommends uploading to S3 in a single PUT if filesize is <= 100 MB.
 const DEFAULT_ONESHOT_SIZE: u64 = 100 * 1024 * 1024;
+
+/// The most keys S3 accepts in one DeleteObjects request.
+const DELETE_OBJECTS_MAX_KEYS: usize = 1000;
 
 /// Server-supplied S3 configuration carried separately from per-repo `StorageConfig`. The bucket
 /// and region are server-wide settings (the server can rotate them without rewriting every repo's
@@ -148,71 +153,119 @@ impl S3VersionStore {
         format!("{}/chunks/", self.version_dir(hash))
     }
 
-    /// List all S3 object keys under a given prefix, following continuation tokens.
-    async fn list_objects_with_prefix(&self, prefix: &str) -> Result<Vec<String>, OxenError> {
+    /// Stream the key of every object under `prefix`, one per item, in key order. Keys arrive page
+    /// by page, so a caller over a large prefix (a whole repo's version objects) bounds its own
+    /// memory instead of holding the entire key set at once.
+    async fn stream_objects_with_prefix(
+        &self,
+        prefix: &str,
+    ) -> Result<impl Stream<Item = Result<String, OxenError>> + Send, OxenError> {
         let client = self.client().await?;
-        let mut keys = Vec::new();
-        let mut continuation_token: Option<String> = None;
+        let bucket = self.bucket.clone();
+        let prefix = prefix.to_string();
 
-        loop {
-            let mut req = client.list_objects_v2().bucket(&self.bucket).prefix(prefix);
-            if let Some(token) = &continuation_token {
-                req = req.continuation_token(token);
-            }
-
-            let resp = req.send().await?;
-
-            if let Some(contents) = resp.contents {
-                for obj in contents {
-                    if let Some(key) = obj.key {
-                        keys.push(key);
-                    }
-                }
-            }
-
-            if resp.is_truncated.unwrap_or(false) {
-                continuation_token = resp.next_continuation_token;
-            } else {
-                break;
-            }
+        enum Page {
+            Start,
+            After(String),
+            Done,
         }
 
-        Ok(keys)
+        Ok(stream::try_unfold(Page::Start, move |state| {
+            let client = client.clone();
+            let bucket = bucket.clone();
+            let prefix = prefix.clone();
+            async move {
+                let start_after = match state {
+                    Page::Done => return Ok(None),
+                    Page::Start => None,
+                    Page::After(key) => Some(key),
+                };
+
+                let mut req = client.list_objects_v2().bucket(&bucket).prefix(&prefix);
+                if let Some(key) = start_after {
+                    req = req.start_after(key);
+                }
+                let resp = req.send().await?;
+
+                let keys: Vec<String> = resp
+                    .contents
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|obj| {
+                        obj.key.ok_or_else(|| {
+                            OxenError::internal_error(format!(
+                                "list_objects_v2 returned an object with no key under {prefix}"
+                            ))
+                        })
+                    })
+                    .collect::<Result<_, _>>()?;
+                // Page with `start_after` rather than continuation tokens: the in-memory test
+                // server honors the former and never issues the latter. A truncated page with no
+                // key leaves nowhere to resume from, so it errors instead of silently ending a
+                // partial listing.
+                let next = match (resp.is_truncated.unwrap_or(false), keys.last()) {
+                    (true, Some(last)) => Page::After(last.clone()),
+                    (true, None) => {
+                        return Err(OxenError::internal_error(format!(
+                            "list_objects_v2 reported more objects under {prefix} but returned none"
+                        )));
+                    }
+                    (false, _) => Page::Done,
+                };
+
+                Ok::<_, OxenError>(Some((stream::iter(keys).map(Ok::<_, OxenError>), next)))
+            }
+        })
+        .try_flatten())
     }
 
-    /// Delete a set of S3 objects, batching into groups of 1000 (the S3 DeleteObjects limit).
-    async fn delete_objects(&self, keys: Vec<String>) -> Result<(), OxenError> {
-        let client = self.client().await?;
+    /// Delete every object under `prefix`, one DeleteObjects request per batch of keys as they
+    /// stream in, so the full key set is never held in memory at once.
+    async fn delete_objects_with_prefix(&self, prefix: &str) -> Result<(), OxenError> {
+        const MAX_CONCURRENT_DELETES: usize = 16;
 
-        for batch in keys.chunks(1000) {
-            let objects: Vec<ObjectIdentifier> = batch
+        self.stream_objects_with_prefix(prefix)
+            .await?
+            .try_chunks(DELETE_OBJECTS_MAX_KEYS)
+            .map_err(|e| e.1)
+            .try_for_each_concurrent(MAX_CONCURRENT_DELETES, |batch| {
+                self.delete_object_batch(batch)
+            })
+            .await
+    }
+
+    /// Delete `keys` with a single DeleteObjects request. S3 accepts at most
+    /// `DELETE_OBJECTS_MAX_KEYS` keys per request.
+    async fn delete_object_batch(&self, keys: Vec<String>) -> Result<(), OxenError> {
+        let objects: Vec<ObjectIdentifier> = keys
+            .into_iter()
+            .map(|k| ObjectIdentifier::builder().key(k).build())
+            .collect::<Result<_, _>>()?;
+
+        let delete = Delete::builder().set_objects(Some(objects)).build()?;
+
+        let resp = self
+            .client()
+            .await?
+            .delete_objects()
+            .bucket(&self.bucket)
+            .delete(delete)
+            .send()
+            .await?;
+
+        if let Some(errors) = resp.errors
+            && !errors.is_empty()
+        {
+            let key_failures = errors
                 .iter()
-                .map(|k| ObjectIdentifier::builder().key(k).build())
-                .collect::<Result<_, _>>()?;
-
-            let delete = Delete::builder().set_objects(Some(objects)).build()?;
-
-            let resp = client
-                .delete_objects()
-                .bucket(&self.bucket)
-                .delete(delete)
-                .send()
-                .await?;
-
-            if let Some(errors) = resp.errors
-                && !errors.is_empty()
-            {
-                let key_failures = errors
-                    .iter()
-                    .map(|e| {
-                        (
-                            e.key.as_deref().unwrap_or("?").into(),
-                            e.message.as_deref().unwrap_or("?").into(),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                return Err(OxenError::DeleteFailure(key_failures));
-            }
+                .map(|e| {
+                    (
+                        e.key.as_deref().unwrap_or("?").into(),
+                        e.message.as_deref().unwrap_or("?").into(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            return Err(OxenError::DeleteFailure(key_failures));
         }
 
         Ok(())
@@ -702,10 +755,10 @@ impl VersionStore for S3VersionStore {
 
     async fn list_version_chunks(&self, hash: &str) -> Result<Vec<u64>, OxenError> {
         let prefix = self.chunks_prefix(hash);
-        let keys = self.list_objects_with_prefix(&prefix).await?;
-
-        let mut offsets = Vec::with_capacity(keys.len());
-        for key in &keys {
+        // One hash's chunk count is bounded, so collecting the offsets to sort them is fine.
+        let mut keys = pin!(self.stream_objects_with_prefix(&prefix).await?);
+        let mut offsets = Vec::new();
+        while let Some(key) = keys.try_next().await? {
             if let Some(offset_str) = key.strip_prefix(&prefix)
                 && let Ok(offset) = offset_str.parse::<u64>()
             {
@@ -745,8 +798,7 @@ impl VersionStore for S3VersionStore {
 
     async fn delete_version(&self, hash: &str) -> Result<(), OxenError> {
         let prefix = format!("{}/", self.version_dir(hash));
-        let keys = self.list_objects_with_prefix(&prefix).await?;
-        self.delete_objects(keys).await
+        self.delete_objects_with_prefix(&prefix).await
     }
 
     async fn destroy(&self) -> Result<(), OxenError> {
@@ -759,10 +811,8 @@ impl VersionStore for S3VersionStore {
         }
         // The trailing slash keeps the listing from matching sibling repos whose prefix
         // starts with this one (e.g. `ns/repo` vs `ns/repo2`).
-        let keys = self
-            .list_objects_with_prefix(&format!("{}/", self.prefix))
-            .await?;
-        self.delete_objects(keys).await
+        self.delete_objects_with_prefix(&format!("{}/", self.prefix))
+            .await
     }
 
     async fn list_versions(&self) -> Result<Vec<String>, OxenError> {
@@ -941,12 +991,8 @@ impl VersionStore for S3VersionStore {
             .await?;
 
         // 5. Delete chunk objects
-        let chunk_keys = self
-            .list_objects_with_prefix(&self.chunks_prefix(hash))
+        self.delete_objects_with_prefix(&self.chunks_prefix(hash))
             .await?;
-        if !chunk_keys.is_empty() {
-            self.delete_objects(chunk_keys).await?;
-        }
 
         Ok(())
     }
@@ -1109,6 +1155,17 @@ mod tests {
         );
 
         (store, tmp, server_handle)
+    }
+
+    /// Every object key under `prefix`, in the order the lister produced them.
+    async fn list_keys(store: &S3VersionStore, prefix: &str) -> Vec<String> {
+        store
+            .stream_objects_with_prefix(prefix)
+            .await
+            .expect("lister should start")
+            .try_collect()
+            .await
+            .expect("lister should page to the end")
     }
 
     fn build_test_client(addr: SocketAddr) -> Client {
@@ -1449,11 +1506,51 @@ mod tests {
         assert!(!store.version_exists(hash).await.unwrap());
 
         let prefix = format!("{}/", store.version_dir(hash));
-        let remaining = store.list_objects_with_prefix(&prefix).await.unwrap();
+        let remaining = list_keys(&store, &prefix).await;
         assert!(
             remaining.is_empty(),
             "expected no objects, found: {:?}",
             remaining
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stream_and_delete_objects_with_prefix_paginate() {
+        let (store, _tmp, _server) = setup().await;
+        let client = store.client().await.unwrap();
+
+        // Seed more than one page of keys (list_objects_v2 returns <= 1000 per response) and more
+        // than one delete batch, so both the lister's paging and the batched delete cross their
+        // 1000-key boundary.
+        let count: usize = DELETE_OBJECTS_MAX_KEYS + 1;
+        let prefix = format!("{}/paginate", store.prefix);
+        let puts = (0..count).map(|i| {
+            let client = client.clone();
+            let bucket = store.bucket.clone();
+            let key = format!("{prefix}/{i:05}");
+            async move {
+                client
+                    .put_object()
+                    .bucket(bucket)
+                    .key(key)
+                    .body(ByteStream::from_static(b"x"))
+                    .send()
+                    .await
+                    .unwrap();
+            }
+        });
+        stream::iter(puts).for_each_concurrent(32, |put| put).await;
+
+        let listed = list_keys(&store, &prefix).await;
+        assert_eq!(listed.len(), count, "lister must page across every key");
+
+        store.delete_objects_with_prefix(&prefix).await.unwrap();
+
+        let remaining = list_keys(&store, &prefix).await;
+        assert!(
+            remaining.is_empty(),
+            "batched delete must remove every key, {} remain",
+            remaining.len()
         );
     }
 
@@ -1646,10 +1743,7 @@ mod tests {
         assert_eq!(&body[..], combined);
 
         // Verify chunk objects were deleted
-        let chunk_keys = store
-            .list_objects_with_prefix(&store.chunks_prefix(&hash))
-            .await
-            .expect("list chunks");
+        let chunk_keys = list_keys(&store, &store.chunks_prefix(&hash)).await;
         assert!(
             chunk_keys.is_empty(),
             "chunks should be deleted after combine, found: {chunk_keys:?}"

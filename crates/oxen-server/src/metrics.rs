@@ -6,7 +6,7 @@ use metrics_exporter_prometheus::{BuildError, PrometheusBuilder};
 ///
 /// Use `init_metrics_prometheus` to create an instance.
 #[cfg(feature = "metrics")]
-pub(crate) struct MetricsGuard {
+pub struct MetricsGuard {
     handle: tokio::task::JoinHandle<Result<(), String>>,
 }
 
@@ -20,7 +20,7 @@ impl Drop for MetricsGuard {
 
 /// An empty struct used as a placeholder when the `metrics` feature is disabled.
 #[cfg(not(feature = "metrics"))]
-pub(crate) struct MetricsGuard {}
+pub struct MetricsGuard {}
 
 /// Install the Prometheus metrics exporter, listening on the given port.
 ///
@@ -35,7 +35,7 @@ pub(crate) struct MetricsGuard {}
 /// Returns an error if the port is already in use or if the Prometheus recorder
 /// or exporter cannot be initialized.
 #[cfg(feature = "metrics")]
-pub(crate) fn init_metrics_prometheus(port: u16) -> Result<MetricsGuard, BuildError> {
+pub fn init_metrics_prometheus(port: u16) -> Result<MetricsGuard, BuildError> {
     // Verify the port is free before committing to the recorder and spawning
     // the background task. The listener is dropped immediately so the exporter
     // can bind to the same port.

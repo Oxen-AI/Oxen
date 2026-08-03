@@ -39,7 +39,7 @@ struct StoragePolicyRaw {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum StoragePolicyError {
+pub enum StoragePolicyError {
     /// `StoragePolicy` rejected an admin config with an empty `[storage] backends` list.
     #[error("Storage policy: at least one backend must be configured under [storage] backends")]
     NoBackends,

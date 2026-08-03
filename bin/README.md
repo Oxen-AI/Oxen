@@ -52,7 +52,7 @@ Bumps the project version across the Rust workspace and Python package in one st
 
 ### `patch_dev_version`
 
-Patches `oxen-python`'s `pyproject.toml` and `Cargo.toml` with a PEP 440 dev version (e.g. `0.44.1.dev3`). Used by `publish_test_pypi` and CI workflows to stamp pre-release builds without permanently changing the checked-in version.
+Patches `oxen-python`'s `pyproject.toml` and `Cargo.toml` with a PEP 440 dev version (e.g. `0.44.1.dev3`). Used by `publish_test_pypi` for local dev builds, to stamp pre-release builds without permanently changing the checked-in version.
 
 - Converts the PEP 440 version to a semver pre-release for `Cargo.toml` automatically.
 

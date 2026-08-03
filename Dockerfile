@@ -65,7 +65,7 @@ RUN cargo build --workspace --exclude oxen-py --release --features liboxen/ffmpe
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openssl \
+    && apt-get install -y --no-install-recommends openssl curl ca-certificates \
     && rm -rfv /var/lib/apt/lists/*
 
 # FFmpeg 8 shared libraries for the `ffmpeg` video-thumbnail feature (see builder stage).

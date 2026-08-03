@@ -2,8 +2,12 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str;
+use std::sync::{Arc, LazyLock, Weak};
+use std::thread::sleep;
+use std::time::Duration;
 
 use glob::Pattern;
+use parking_lot::Mutex;
 use rocksdb::{DBWithThreadMode, MultiThreaded, SingleThreaded};
 use time::OffsetDateTime;
 
@@ -753,13 +757,68 @@ fn list_recursive_with_depth(
     Ok(())
 }
 
+/// Open `commit_count` DB handles, keyed by DB path. Concurrent callers share one handle, which
+/// RocksDB requires — it takes an exclusive lock per path. Entries are `Weak`, so the DB closes
+/// when the last caller drops it and no repo directory stays pinned open between requests.
+/// A brief LOCK collision is still possible when an open races the tail of a concurrent close
+/// (RocksDB releases the OS lock in its `Drop`, after `strong_count` already hit zero); see
+/// [`open_commit_count_db`] for the bounded retry that waits it out.
+static COMMIT_COUNT_DBS: LazyLock<Mutex<HashMap<PathBuf, Weak<DBWithThreadMode<MultiThreaded>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// How long `open_commit_count_db` waits out a concurrent close before surfacing a LOCK error.
+const OPEN_RETRIES: u32 = 100;
+const OPEN_RETRY_INTERVAL: Duration = Duration::from_millis(2);
+
+/// Return the shared commit-count cache DB for `repo`, opening it on first access.
+/// Retries briefly on a LOCK-collision race with a concurrent close (see static docs).
 fn open_commit_count_db(
     repo: &LocalRepository,
-) -> Result<DBWithThreadMode<MultiThreaded>, OxenError> {
+) -> Result<Arc<DBWithThreadMode<MultiThreaded>>, OxenError> {
     let db_path = util::fs::oxen_hidden_dir(&repo.path).join(COMMIT_COUNT_DIR);
+
+    if let Some(db) = lookup_live_commit_count_db(&db_path) {
+        return Ok(db);
+    }
+
     util::fs::create_dir_all(&db_path)?;
-    let opts = crate::core::db::key_val::opts::default();
-    Ok(DBWithThreadMode::open(&opts, dunce::simplified(&db_path))?)
+    let mut attempts = 0;
+    loop {
+        let mut handles = COMMIT_COUNT_DBS.lock();
+        if let Some(db) = handles.get(&db_path).and_then(Weak::upgrade) {
+            return Ok(db);
+        }
+        match DBWithThreadMode::open(&opts::default(), dunce::simplified(&db_path)) {
+            Ok(db) => {
+                let db = Arc::new(db);
+                handles.insert(db_path, Arc::downgrade(&db));
+                handles.retain(|_, weak| weak.strong_count() > 0);
+                return Ok(db);
+            }
+            Err(err) if is_lock_collision(&err) => {
+                drop(handles);
+                attempts += 1;
+                if attempts >= OPEN_RETRIES {
+                    return Err(OxenError::from(err));
+                }
+                sleep(OPEN_RETRY_INTERVAL);
+            }
+            Err(err) => return Err(OxenError::from(err)),
+        }
+    }
+}
+
+fn lookup_live_commit_count_db(db_path: &Path) -> Option<Arc<DBWithThreadMode<MultiThreaded>>> {
+    let handles = COMMIT_COUNT_DBS.lock();
+    handles.get(db_path)?.upgrade()
+}
+
+/// True if `err` is a RocksDB LOCK-file collision — i.e. another opener still holds the
+/// per-directory LOCK. Message match rather than a distinct `ErrorKind` because RocksDB
+/// surfaces this as a plain `IOError` across platforms.
+fn is_lock_collision(err: &rocksdb::Error) -> bool {
+    let msg = err.to_string();
+    msg.contains("LOCK") || msg.contains("lock file")
 }
 
 fn get_cached_count(
@@ -1239,6 +1298,85 @@ mod tests {
                 "Second result should be C7, got {}",
                 paginated_commits[1].message
             );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_open_commit_count_db_shares_one_handle() -> Result<(), OxenError> {
+        // RocksDB holds an exclusive lock per DB path, so a second open taken while the first is
+        // still live fails outright. Overlapping callers have to be handed the same handle.
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let first = open_commit_count_db(&repo)?;
+            let second = open_commit_count_db(&repo)?;
+
+            assert!(
+                Arc::ptr_eq(&first, &second),
+                "overlapping callers should share one commit_count handle"
+            );
+
+            // After the last caller drops it the cached entry is dangling, so the next open has
+            // to build a fresh handle rather than hand back the dead one.
+            drop(first);
+            drop(second);
+            let reopened = open_commit_count_db(&repo)?;
+            assert_eq!(
+                Arc::strong_count(&reopened),
+                1,
+                "a reopen after full release should yield a fresh handle"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// A LOCK collision is waited out rather than surfaced: the open retries while another
+    /// handle holds the path LOCK, and goes through once that handle is released.
+    #[tokio::test]
+    async fn test_open_commit_count_db_retries_lock_collision() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let db_path = util::fs::oxen_hidden_dir(&repo.path).join(COMMIT_COUNT_DIR);
+            util::fs::create_dir_all(&db_path)?;
+
+            // Held outside COMMIT_COUNT_DBS so the cache cannot hand this handle back and every
+            // open below has to survive a real LOCK collision.
+            let blocker: DBWithThreadMode<MultiThreaded> =
+                DBWithThreadMode::open(&opts::default(), dunce::simplified(&db_path))?;
+            let collision = DBWithThreadMode::<MultiThreaded>::open(
+                &opts::default(),
+                dunce::simplified(&db_path),
+            )
+            .expect_err("a second open of a locked path must fail");
+            assert!(
+                is_lock_collision(&collision),
+                "expected a LOCK collision, got: {collision}"
+            );
+
+            // The LOCK is never released here, so the open exhausts its retries. Spending the
+            // whole retry window proves it waited instead of surfacing the first collision.
+            let start = std::time::Instant::now();
+            let err = open_commit_count_db(&repo).expect_err("open under a held LOCK must fail");
+            let elapsed = start.elapsed();
+            assert!(
+                elapsed >= OPEN_RETRY_INTERVAL * (OPEN_RETRIES - 1),
+                "open gave up after {elapsed:?}, before exhausting its retries"
+            );
+            let msg = err.to_string();
+            assert!(
+                msg.contains("LOCK") || msg.contains("lock file"),
+                "expected a LOCK error, got: {msg}"
+            );
+
+            // Releasing the LOCK part way through the retry window lets the open through.
+            let releaser = std::thread::spawn(move || {
+                sleep(OPEN_RETRY_INTERVAL * 10);
+                drop(blocker);
+            });
+            open_commit_count_db(&repo)?;
+            releaser.join().expect("join releaser");
 
             Ok(())
         })
