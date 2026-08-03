@@ -191,7 +191,6 @@ mod tests {
             assert_eq!(workspace.id, workspace_id);
 
             let full_path = local_repo.path.join(file_path);
-            util::fs::file_create(&full_path)?;
             util::fs::write(&full_path, b"test content")?;
 
             let _result = api::client::workspaces::files::upload_single_file(

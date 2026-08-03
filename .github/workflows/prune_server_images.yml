@@ -1,0 +1,35 @@
+name: 🧹 Prune oxen-server images
+
+# The container registry expires nothing on its own, and a build is published for
+# every merge to main, so without this the package grows without bound. The
+# number kept sets how far back a deployment can be rolled to without rebuilding.
+on:
+  schedule:
+    - cron: "0 5 * * 0"
+
+  workflow_dispatch:
+
+# A scheduled run and a dispatched one would otherwise enumerate and delete the
+# same versions concurrently, which fails on whichever loses the race.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    name: Prune old images
+    runs-on: ubuntu-latest
+    # Deleting a package version is a write to the package. Scoped to this job
+    # rather than the workflow so a later job cannot inherit the ability to
+    # delete images without asking for it.
+    permissions:
+      contents: none
+      packages: write
+
+    steps:
+      - name: Delete all but the newest images
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: oxen-server
+          package-type: container
+          min-versions-to-keep: 20

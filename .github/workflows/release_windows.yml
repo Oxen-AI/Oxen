@@ -33,6 +33,10 @@ jobs:
   start-self-hosted-runner:
     name: Start self-hosted EC2 runner
     runs-on: ubuntu-latest
+    # id-token is for the AWS OIDC assume-role; runner registration uses a PAT, not the job token.
+    permissions:
+      id-token: write
+      contents: read
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
       ec2-instance-id: ${{ steps.start-ec2-runner.outputs.ec2-instance-id }}
@@ -67,12 +71,21 @@ jobs:
     name: Build Oxen CLI and Python wheels
     needs: start-self-hosted-runner
     runs-on: ${{ needs.start-self-hosted-runner.outputs.label }}
+    # Checkout is the only step here that uses the token, and it reads. S3 access comes from the
+    # runner's instance profile, so this job needs no AWS OIDC.
+    permissions:
+      contents: read
     defaults:
       run:
         shell: powershell
 
     env:
       CARGO_INCREMENTAL: "0"
+      # Read as an environment variable by the zip steps rather than expanded into their source, so
+      # its contents can never be parsed as PowerShell.
+      ARCHITECTURE: ${{ inputs.ARCHITECTURE }}
+      # Override Cargo.toml's LTO setting to save on build time in Windows
+      CARGO_PROFILE_RELEASE_LTO: thin
       DEPTREE_BUCKET: oxen-release-build-cache
       # Generation prefix. Bump it when the archive's layout or the prune's rules change: the
       # fallback restore only ever lists trees under the current prefix, so a bump starts clean.
@@ -176,34 +189,35 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build Python wheels
+        # Reaches the script as an environment variable rather than an expression expanded into the
+        # source, so its contents can never be parsed as PowerShell.
+        env:
+          PYTHON_VERSIONS: ${{ inputs.PYTHON_VERSIONS }}
         run: |
           refreshenv
-          uv python install ${{ inputs.PYTHON_VERSIONS }}
+          # Splatted, so each version is its own argument; the variable holds them space-separated.
+          $versions = $env:PYTHON_VERSIONS -split ' '
+          uv python install @versions
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           cd ${{ github.workspace }}\oxen-python
 
-          $uvPython = "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-{0}.*\python.exe"
-          $versions = "${{ inputs.PYTHON_VERSIONS }}" -split ' '
+          # The glob reaches maturin literally, never expanded: it resolves to nothing, so maturin
+          # builds the abi3 wheel from bundled sysconfig (the v0.52.4 and v0.52.6 logs show the abi3
+          # binding line and no interpreter line). Keep the flag even though it selects nothing --
+          # with no interpreter given, maturin falls back to PYO3_PYTHON or whatever python is on
+          # PATH, which is a less predictable input than a glob it ignores.
           foreach ($version in $versions) {
-              uvx maturin build --release --interpreter ($uvPython -f $version)
+              uvx maturin build --release --interpreter "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-$version.*\python.exe"
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
           # Only a fallback restore re-archives the tree, so only it needs the wheel graph named.
           if ($env:DEPTREE_EXACT_HIT -eq "1") { exit 0 }
           # Names the wheel build's units for the prune, fresh ones included, since maturin reports
-          # no artifact list of its own. Mirrors the invocation maturin wraps: pyproject.toml's
-          # manifest and features, plus the interpreter env whose change pyo3's build script
-          # treats as a rebuild trigger. PYO3_ENVIRONMENT_SIGNATURE is maturin's own
-          # "<implementation>-<major>.<minor>-<pointer-width>bit"; matching it keeps this a no-op
-          # rather than a full relink of the cdylib under fat LTO.
-          $last = $versions[-1]
-          $interpreter = (Resolve-Path ($uvPython -f $last) -ErrorAction SilentlyContinue | Select-Object -First 1).Path
-          if ($interpreter) {
-            $env:PYO3_PYTHON = $interpreter
-            $env:PYO3_ENVIRONMENT_SIGNATURE = "cpython-$last-64bit"
-          }
+          # no artifact list of its own. Mirrors the invocation maturin wraps, taking the manifest
+          # and features from oxen-python/pyproject.toml, so every unit is already fresh and nothing
+          # recompiles here; v0.52.6 measured it at 0.76s.
           cargo build --release --manifest-path ${{ github.workspace }}\crates\oxen-py\Cargo.toml --features pyo3/extension-module --message-format=json-render-diagnostics | Add-Content C:\deptree-live.json
           # Best-effort: without this list the wheel's units are pruned and recompile next release.
           if ($LASTEXITCODE -ne 0) { Write-Host "::warning::DEPTREE could not enumerate the wheel graph" }
@@ -259,15 +273,15 @@ jobs:
 
       - name: Create zip with oxen binary
         run: |
-          Compress-Archive -Path "${{ github.workspace }}\target\release\oxen.exe" -DestinationPath "${{ github.workspace }}\release\oxen-windows-${{ inputs.ARCHITECTURE }}.exe.zip"
+          Compress-Archive -Path "${{ github.workspace }}\target\release\oxen.exe" -DestinationPath "${{ github.workspace }}\release\oxen-windows-${env:ARCHITECTURE}.exe.zip"
 
       - name: Create zip with Python wheels
         run: |
-          Compress-Archive -Path ${{ github.workspace }}\target\wheels\* -DestinationPath ${{ github.workspace }}\release\oxen-wheels-windows-${{ inputs.ARCHITECTURE }}.zip
+          Compress-Archive -Path ${{ github.workspace }}\target\wheels\* -DestinationPath "${{ github.workspace }}\release\oxen-wheels-windows-${env:ARCHITECTURE}.zip"
 
       - name: Create zip with all artifacts
         run: |
-          Compress-Archive -Path "${{ github.workspace }}\release\*" -DestinationPath "${{ github.workspace }}\release\oxen-windows-${{ inputs.ARCHITECTURE }}-release.zip"
+          Compress-Archive -Path "${{ github.workspace }}\release\*" -DestinationPath "${{ github.workspace }}\release\oxen-windows-${env:ARCHITECTURE}-release.zip"
 
       - name: Upload all artifacts
         uses: actions/upload-artifact@v7
@@ -287,7 +301,16 @@ jobs:
         run: |
           # Skip only on an exact-key hit. A fallback restore still has to write
           # the tree under the current key so the next release hits exactly.
-          if ($env:DEPTREE_EXACT_HIT -eq "1") { exit 0 }
+          if ($env:DEPTREE_EXACT_HIT -eq "1") {
+            # A hit re-archives nothing, so the object's age would keep growing while the tree is
+            # still in active use, and an expiry rule would eventually delete it out from under a
+            # working cache. Copying the key onto itself restarts that clock; a same-key copy needs
+            # --metadata-directive REPLACE to be accepted.
+            cmd /c "aws s3 cp s3://%DEPTREE_BUCKET%/%DEPTREE_PREFIX%/%DEPTREE_KEY%.tar s3://%DEPTREE_BUCKET%/%DEPTREE_PREFIX%/%DEPTREE_KEY%.tar --metadata-directive REPLACE --storage-class INTELLIGENT_TIERING"
+            if ($LASTEXITCODE -ne 0) { Write-Host "::warning::DEPTREE could not refresh the cached tree's age" }
+            else { Write-Host "DEPTREE exact hit, refreshed the tree's age" }
+            exit 0
+          }
           refreshenv
           $target = "${{ github.workspace }}\target\release"
           $rel = $target.Substring(3) -replace '\\','/'
@@ -321,6 +344,10 @@ jobs:
       - release_windows
     runs-on: ubuntu-latest
     if: ${{ always() }}
+    # id-token is for the AWS OIDC assume-role; runner deregistration uses a PAT, not the job token.
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6

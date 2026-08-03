@@ -20,6 +20,7 @@ use liboxen::model::metadata::metadata_video::VideoThumbnail;
 use liboxen::repositories::commits;
 use liboxen::repositories::{self, branches};
 use liboxen::util;
+use liboxen::util::fs::AtomicFile;
 use liboxen::view::{CommitResponse, StatusMessage};
 use serde::Deserialize;
 use std::path::{Component, Path, PathBuf};
@@ -760,20 +761,11 @@ async fn process_and_add_files(
                 repo.path.join(path)
             };
 
-            if let Some(parent) = filepath.parent()
-                && !parent.exists()
-            {
-                util::fs::create_dir_all(parent)?;
-            }
-
-            match contents {
-                FileContents::Text(text) => {
-                    util::fs::write(&filepath, text.as_bytes())?;
-                }
-                FileContents::Binary(bytes) => {
-                    util::fs::write(&filepath, bytes)?;
-                }
-            }
+            let bytes = match contents {
+                FileContents::Text(text) => text.as_bytes(),
+                FileContents::Binary(bytes) => bytes.as_slice(),
+            };
+            AtomicFile::new(&filepath).write(bytes)?;
 
             if let Some(ws) = workspace {
                 repositories::workspaces::files::add(ws, &filepath).await?;

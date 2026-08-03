@@ -1078,14 +1078,21 @@ pub async fn compute_new_rows(
     head_df: &DataFrame,
     schema: &Schema,
 ) -> Result<DataFrameDiff, OxenError> {
-    // Compute row indices
-    let (added_indices, removed_indices) = compute_new_row_indices(base_df, head_df)?;
+    // Row hashing and the set-diff are sync CPU over both full frames; run them off the worker.
+    let (added_indices, removed_indices) = {
+        let base_df = base_df.clone();
+        let head_df = head_df.clone();
+        tokio::task::spawn_blocking(move || compute_new_row_indices(&base_df, &head_df)).await??
+    };
 
     // Take added from the current df
     let added_rows = if !added_indices.is_empty() {
         let opts = DFOpts::from_schema_columns(schema);
         let head_df = tabular::transform(head_df.clone(), opts).await?;
-        Some(tabular::take(head_df.lazy(), added_indices)?)
+        let taken =
+            tokio::task::spawn_blocking(move || tabular::take(head_df.lazy(), added_indices))
+                .await??;
+        Some(taken)
     } else {
         None
     };
@@ -1095,7 +1102,10 @@ pub async fn compute_new_rows(
     let removed_rows = if !removed_indices.is_empty() {
         let opts = DFOpts::from_schema_columns(schema);
         let base_df = tabular::transform(base_df.clone(), opts).await?;
-        Some(tabular::take(base_df.lazy(), removed_indices)?)
+        let taken =
+            tokio::task::spawn_blocking(move || tabular::take(base_df.lazy(), removed_indices))
+                .await??;
+        Some(taken)
     } else {
         None
     };
@@ -1122,14 +1132,21 @@ pub async fn compute_new_rows_proj(
     base_schema: &Schema,
     head_schema: &Schema,
 ) -> Result<DataFrameDiff, OxenError> {
-    // Compute row indices
-    let (added_indices, removed_indices) = compute_new_row_indices(base_df, head_df)?;
+    // Row hashing and the set-diff are sync CPU over both full frames; run them off the worker.
+    let (added_indices, removed_indices) = {
+        let base_df = base_df.clone();
+        let head_df = head_df.clone();
+        tokio::task::spawn_blocking(move || compute_new_row_indices(&base_df, &head_df)).await??
+    };
 
     // Take added from the current df
     let added_rows = if !added_indices.is_empty() {
         let opts = DFOpts::from_schema_columns(head_schema);
         let proj_head_df = tabular::transform(proj_head_df.clone(), opts).await?;
-        Some(tabular::take(proj_head_df.lazy(), added_indices)?)
+        let taken =
+            tokio::task::spawn_blocking(move || tabular::take(proj_head_df.lazy(), added_indices))
+                .await??;
+        Some(taken)
     } else {
         None
     };
@@ -1139,7 +1156,11 @@ pub async fn compute_new_rows_proj(
     let removed_rows = if !removed_indices.is_empty() {
         let opts = DFOpts::from_schema_columns(base_schema);
         let proj_base_df = tabular::transform(proj_base_df.clone(), opts).await?;
-        Some(tabular::take(proj_base_df.lazy(), removed_indices)?)
+        let taken = tokio::task::spawn_blocking(move || {
+            tabular::take(proj_base_df.lazy(), removed_indices)
+        })
+        .await??;
+        Some(taken)
     } else {
         None
     };
@@ -1238,13 +1259,7 @@ fn write_diff_dupes(
     compare_id: &str,
     dupes: &TabularDiffDupes,
 ) -> Result<(), OxenError> {
-    let compare_dir = get_diff_dir(repo, compare_id);
-
-    if !compare_dir.exists() {
-        util::fs::create_dir_all(&compare_dir)?;
-    }
-
-    let dupes_path = compare_dir.join(DUPES_PATH);
+    let dupes_path = get_diff_dir(repo, compare_id).join(DUPES_PATH);
 
     AtomicFile::new(dupes_path).write(serde_json::to_string(&dupes)?.as_bytes())?;
 
@@ -1395,10 +1410,6 @@ fn write_diff_commit_ids(
 ) -> Result<(), OxenError> {
     let compare_dir = get_diff_dir(repo, compare_id);
 
-    if !compare_dir.exists() {
-        util::fs::create_dir_all(&compare_dir)?;
-    }
-
     let left_path = compare_dir.join(LEFT_COMPARE_COMMIT);
     let right_path = compare_dir.join(RIGHT_COMPARE_COMMIT);
 
@@ -1500,6 +1511,78 @@ mod tests {
             assert_eq!(2, entries.len());
             assert_eq!(DiffEntryStatus::Added.to_string(), entries[0].status);
             assert_eq!(DiffEntryStatus::Added.to_string(), entries[1].status);
+
+            Ok(())
+        })
+        .await
+    }
+
+    // Diffing from the merge base (git three-dot base...head) excludes changes
+    // that landed on the base branch after the fork. Diffing from the base tip
+    // (two-dot) instead reports them as removals.
+    #[tokio::test]
+    async fn test_diff_entries_three_dot_excludes_base_changes() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let shared = repo.path.join("shared.txt");
+            test::write_txt_file_to_path(&shared, "shared")?;
+            repositories::add(&repo, &shared).await?;
+            let fork = repositories::commit(&repo, "shared")?;
+
+            let main_branch = repositories::branches::current_branch(&repo)?
+                .expect("default branch exists after first commit");
+
+            // Feature branch adds its own file.
+            repositories::branches::create_checkout(&repo, "feature")?;
+            let feature_file = repo.path.join("feature.txt");
+            test::write_txt_file_to_path(&feature_file, "feature")?;
+            repositories::add(&repo, &feature_file).await?;
+            let head = repositories::commit(&repo, "feature")?;
+
+            // Base branch advances past the fork with an unrelated file.
+            repositories::checkout(&repo, &main_branch.name).await?;
+            let main_side = repo.path.join("main_side.txt");
+            test::write_txt_file_to_path(&main_side, "main side")?;
+            repositories::add(&repo, &main_side).await?;
+            let base = repositories::commit(&repo, "main side")?;
+
+            let merge_base =
+                repositories::merge::lowest_common_ancestor_from_commits(&repo, &base, &head)?
+                    .expect("base and head share a merge base");
+            assert_eq!(merge_base.id, fork.id);
+
+            let two_dot = repositories::diffs::list_diff_entries(
+                &repo,
+                &base,
+                &head,
+                PathBuf::from(""),
+                PathBuf::from(""),
+                0,
+                100,
+            )
+            .await?;
+            let three_dot = repositories::diffs::list_diff_entries(
+                &repo,
+                &merge_base,
+                &head,
+                PathBuf::from(""),
+                PathBuf::from(""),
+                0,
+                100,
+            )
+            .await?;
+
+            assert!(
+                two_dot.counts.removed >= 1,
+                "two-dot keeps the base-side file"
+            );
+            assert_eq!(
+                three_dot.counts.removed, 0,
+                "three-dot drops the base-side file"
+            );
+            assert!(
+                three_dot.counts.added >= 1,
+                "three-dot still shows head's file"
+            );
 
             Ok(())
         })

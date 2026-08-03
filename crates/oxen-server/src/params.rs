@@ -159,16 +159,47 @@ pub async fn parse_resource_async(
         .ok_or_else(|| OxenError::path_does_not_exist(resource).into())
 }
 
-/// Split the base..head string into base and head strings
-pub fn parse_base_head(base_head: impl AsRef<str>) -> Result<(String, String), OxenError> {
-    let mut split = base_head.as_ref().split("..");
+/// Split a `base..head` or `base...head` string into base, head, and whether it
+/// used three-dot syntax. Three dots select the merge base of base and head
+/// (git's `base...head`); two dots compare the two revisions directly.
+pub fn parse_base_head(base_head: &str) -> Result<(String, String, bool), OxenError> {
+    // Check for the three-dot separator first, since it contains the two-dot one.
+    let (separator, three_dot) = if base_head.contains("...") {
+        ("...", true)
+    } else {
+        ("..", false)
+    };
+    let mut split = base_head.splitn(2, separator);
     if let (Some(base), Some(head)) = (split.next(), split.next()) {
-        Ok((base.to_string(), head.to_string()))
+        Ok((base.to_string(), head.to_string(), three_dot))
     } else {
         Err(OxenError::basic_str(
-            "Could not parse commits. Format should be base..head",
+            "Could not parse commits. Format should be base..head or base...head",
         ))
     }
+}
+
+/// Split a `base..head` string into base and head, rejecting `base...head`. For callers that
+/// compare the two revisions directly and have no merge-base behavior to offer, so that a three-dot
+/// request is answered rather than silently treated as two-dot.
+pub fn parse_two_dot(base_head: &str) -> Result<(String, String), OxenHttpError> {
+    let (base, head, three_dot) = parse_base_head(base_head)?;
+    if three_dot {
+        return Err(OxenHttpError::BadRequest(
+            format!("Three-dot syntax is not supported here, use {base}..{head}").into(),
+        ));
+    }
+    Ok((base, head))
+}
+
+/// Split an optional `base..head` range. A bare revision yields no head. Three-dot syntax is
+/// rejected, as in [`parse_two_dot`].
+pub fn maybe_parse_two_dot(base_head: &str) -> Result<(String, Option<String>), OxenHttpError> {
+    if !base_head.contains("..") {
+        return Ok((base_head.to_string(), None));
+    }
+    let (base, head) = parse_two_dot(base_head)?;
+    Ok((base, Some(head)))
 }
 
 pub fn resolve_base_head_branches(
@@ -338,5 +369,47 @@ mod tests {
         // bumps it; test mode keeps the suite green.
         let req = request_with_user_agent("Oxen/0.60.0 (linux; tokio)");
         assert!(!client_must_use_multipart_staging(&req, true));
+    }
+
+    #[test]
+    fn test_parse_base_head_two_dots() {
+        let (base, head, three_dot) = parse_base_head("main..feature").unwrap();
+        assert_eq!(base, "main");
+        assert_eq!(head, "feature");
+        assert!(!three_dot);
+    }
+
+    #[test]
+    fn test_parse_base_head_three_dots() {
+        let (base, head, three_dot) = parse_base_head("main...feature").unwrap();
+        assert_eq!(base, "main");
+        assert_eq!(head, "feature");
+        assert!(three_dot);
+    }
+
+    #[test]
+    fn test_parse_two_dot_accepts_two_dots() {
+        let (base, head) = parse_two_dot("main..feature").unwrap();
+        assert_eq!(base, "main");
+        assert_eq!(head, "feature");
+    }
+
+    #[test]
+    fn test_parse_two_dot_rejects_three_dots() {
+        // Endpoints that compare the revisions directly have no merge-base behavior to offer, so
+        // a three-dot request has to be answered rather than quietly downgraded.
+        let err = parse_two_dot("main...feature").unwrap_err();
+        assert!(
+            matches!(err, OxenHttpError::BadRequest(_)),
+            "expected a bad request, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_base_head_does_not_leak_dot_into_head() {
+        // The three-dot separator must be matched before the two-dot one, or the
+        // extra dot bleeds into head as ".feature".
+        let (_, head, _) = parse_base_head("main...feature").unwrap();
+        assert_eq!(head, "feature");
     }
 }

@@ -32,7 +32,7 @@ use liboxen::{constants, repositories, util};
 
 use crate::helpers::get_repo;
 use crate::params::{
-    DFOptsQuery, PageNumQuery, app_data, df_opts_query, parse_base_head, path_param,
+    DFOptsQuery, PageNumQuery, app_data, df_opts_query, parse_base_head, parse_two_dot, path_param,
     resolve_base_head,
 };
 
@@ -71,7 +71,7 @@ pub async fn commits(
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
 
     // Parse the base and head from the base..head string
-    let (base, head) = parse_base_head(&base_head)?;
+    let (base, head) = parse_two_dot(&base_head)?;
     let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head)?;
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
@@ -105,7 +105,7 @@ pub async fn commits(
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
-        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+        ("base_head" = String, Path, description = "The base and head revisions separated by '..', or '...' to diff from the merge base", example = "main...feature/add-labels"),
         ("page" = Option<usize>, Query, description = "Page number for pagination (starts at 1)"),
         ("page_size" = Option<usize>, Query, description = "Page size for pagination")
     ),
@@ -131,12 +131,24 @@ pub async fn entries(
     let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
 
-    // Parse the base and head from the base..head string
-    let (base, head) = parse_base_head(&base_head)?;
+    // Parse the base and head from the base..head or base...head string
+    let (base, head, three_dot) = parse_base_head(&base_head)?;
     let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head)?;
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
+    // Three dots (base...head) diff from the merge base, so commits that landed
+    // on the base branch after the fork don't read as part of head's changes.
+    let base_commit = if three_dot {
+        repositories::merge::lowest_common_ancestor_from_commits(
+            &repository,
+            &base_commit,
+            &head_commit,
+        )?
+        .ok_or_else(|| OxenError::basic_str("No merge base between the requested revisions"))?
+    } else {
+        base_commit
+    };
 
     let entries_diff = repositories::diffs::list_diff_entries(
         &repository,
@@ -164,7 +176,8 @@ pub async fn entries(
         &base_commit,
         &head_commit,
         summary,
-    )?;
+    )
+    .await?;
 
     let compare = CompareEntries {
         base_commit,
@@ -190,7 +203,7 @@ pub async fn entries(
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
-        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+        ("base_head" = String, Path, description = "The base and head revisions separated by '..', or '...' to diff from the merge base", example = "main...feature/add-labels")
     ),
     responses(
         (status = 200, description = "Directory diff tree found successfully", body = DirTreeDiffResponse),
@@ -206,15 +219,27 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     // Get the repository or return error
     let repository = get_repo(app_data, namespace, name)?;
 
-    // Parse the base and head from the base..head string
-    let (base, head) = parse_base_head(&base_head)?;
+    // Parse the base and head from the base..head or base...head string
+    let (base, head, three_dot) = parse_base_head(&base_head)?;
     let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head)?;
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
+    // Three dots (base...head) diff from the merge base, so commits that landed
+    // on the base branch after the fork don't read as part of head's changes.
+    let base_commit = if three_dot {
+        repositories::merge::lowest_common_ancestor_from_commits(
+            &repository,
+            &base_commit,
+            &head_commit,
+        )?
+        .ok_or_else(|| OxenError::basic_str("No merge base between the requested revisions"))?
+    } else {
+        base_commit
+    };
 
     let dir_diffs =
-        repositories::diffs::list_changed_dirs(&repository, &base_commit, &head_commit)?;
+        repositories::diffs::list_changed_dirs(&repository, &base_commit, &head_commit).await?;
     log::debug!("dir_diffs: {dir_diffs:?}");
 
     let dir_diff_tree = group_dir_diffs_by_dir(dir_diffs);
@@ -236,7 +261,7 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
-        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+        ("base_head" = String, Path, description = "The base and head revisions separated by '..', or '...' to diff from the merge base", example = "main...feature/add-labels"),
         ("dir" = String, Path, description = "The directory path to list entries for", example = "data/test"),
         ("page" = Option<usize>, Query, description = "Page number for pagination (starts at 1)"),
         ("page_size" = Option<usize>, Query, description = "Page size for pagination")
@@ -263,12 +288,24 @@ pub async fn dir_entries(
     let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
 
-    // Parse the base and head from the base..head string
-    let (base, head) = parse_base_head(&base_head)?;
+    // Parse the base and head from the base..head or base...head string
+    let (base, head, three_dot) = parse_base_head(&base_head)?;
     let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head)?;
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
+    // Three dots (base...head) diff from the merge base, so commits that landed
+    // on the base branch after the fork don't read as part of head's changes.
+    let base_commit = if three_dot {
+        repositories::merge::lowest_common_ancestor_from_commits(
+            &repository,
+            &base_commit,
+            &head_commit,
+        )?
+        .ok_or_else(|| OxenError::basic_str("No merge base between the requested revisions"))?
+    } else {
+        base_commit
+    };
     let dir = PathBuf::from(dir);
 
     let entries_diff = repositories::diffs::list_diff_entries(
@@ -295,7 +332,8 @@ pub async fn dir_entries(
     log::debug!("summary: {summary:?}");
 
     let self_entry =
-        get_dir_diff_entry_with_summary(&repository, dir, &base_commit, &head_commit, summary)?;
+        get_dir_diff_entry_with_summary(&repository, dir, &base_commit, &head_commit, summary)
+            .await?;
 
     let compare = CompareEntries {
         base_commit,
@@ -351,8 +389,19 @@ pub async fn file(
     log::debug!("base_commit: {base_commit:?}");
     log::debug!("head_commit: {head_commit:?}");
     log::debug!("resource: {resource:?}");
-    let base_entry = repositories::entries::get_file(&repository, &base_commit, &resource)?;
-    let head_entry = repositories::entries::get_file(&repository, &head_commit, &resource)?;
+    let (base_entry, head_entry) = {
+        let repository = repository.clone();
+        let base_commit = base_commit.clone();
+        let head_commit = head_commit.clone();
+        let resource = resource.clone();
+        tokio::task::spawn_blocking(move || {
+            let base_entry = repositories::entries::get_file(&repository, &base_commit, &resource)?;
+            let head_entry = repositories::entries::get_file(&repository, &head_commit, &resource)?;
+            Ok::<_, OxenError>((base_entry, head_entry))
+        })
+        .await
+        .map_err(OxenError::from)??
+    };
 
     let mut opts = DFOpts::empty();
     opts = df_opts_query::parse_opts(&query, &mut opts);
@@ -634,7 +683,7 @@ pub async fn get_df_diff(
 
     let data: TabularCompareBody = serde_json::from_str(&body)?;
 
-    let (left, right) = parse_base_head(&base_head)?;
+    let (left, right) = parse_two_dot(&base_head)?;
     let (left_commit, right_commit) = resolve_base_head(&repository, &left, &right)?;
 
     let left_commit = left_commit.ok_or_else(|| OxenError::RevisionNotFound(left.into()))?;
@@ -866,16 +915,17 @@ pub async fn get_derived_df(
 fn parse_base_head_resource(
     repo: &LocalRepository,
     base_head: &str,
-) -> Result<(Commit, Commit, PathBuf), OxenError> {
+) -> Result<(Commit, Commit, PathBuf), OxenHttpError> {
     log::debug!("Parsing base_head_resource: {base_head}");
 
-    let mut split = base_head.split("..");
-    let base = split
-        .next()
-        .ok_or_else(|| OxenError::resource_not_found(base_head))?;
-    let head = split
-        .next()
-        .ok_or_else(|| OxenError::resource_not_found(base_head))?;
+    // A three-dot range reaching here is refused rather than read as two dots; an unparseable
+    // one stays a missing resource, since head carries the resource path as well as the revision.
+    let (base, head) = parse_two_dot(base_head).map_err(|err| match err {
+        OxenHttpError::BadRequest(_) => err,
+        _ => OxenError::resource_not_found(base_head).into(),
+    })?;
+    let base = base.as_str();
+    let head = head.as_str();
 
     let base_commit = repositories::revisions::get(repo, base)?
         .ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;

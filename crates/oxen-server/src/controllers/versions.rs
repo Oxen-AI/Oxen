@@ -3,6 +3,7 @@ pub mod chunks;
 use crate::errors::OxenHttpError;
 use crate::helpers::{file_stream_response, get_repo};
 use crate::params::{app_data, parse_resource, path_param};
+use crate::tasks;
 
 use actix_multipart::Multipart;
 use actix_web::{Error, HttpRequest, HttpResponse, web};
@@ -24,7 +25,7 @@ use mime;
 use std::io::Read as StdRead;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
-use tokio::task::{JoinError, JoinSet, spawn_blocking};
+use tokio::task::{JoinError, JoinSet};
 use tokio_tar::Builder;
 use tokio_util::compat::FuturesAsyncWriteCompatExt;
 use tokio_util::compat::TokioAsyncWriteCompatExt;
@@ -350,7 +351,8 @@ pub async fn stream_versions_tar_gz(
         }
     };
 
-    tokio::spawn(writer_task);
+    // The body streams after the handler returns, outside the request hub.
+    tokio::spawn(tasks::inherit_hub(writer_task));
 
     let stream = ReaderStream::new(reader).map(move |chunk| {
         if let Ok(err) = error_rx.try_recv() {
@@ -481,7 +483,8 @@ pub async fn stream_versions_zip(
         }
     };
 
-    tokio::spawn(writer_task);
+    // The body streams after the handler returns, outside the request hub.
+    tokio::spawn(tasks::inherit_hub(writer_task));
 
     let stream = tokio_util::io::ReaderStream::new(reader).map(move |chunk| {
         if let Ok(err) = error_rx.try_recv() {
@@ -599,11 +602,11 @@ pub async fn save_multiparts(
         }
 
         let version_store = Arc::clone(&version_store);
-        in_flight.spawn(async move {
+        in_flight.spawn(tasks::inherit_hub(async move {
             // gzip inflate is CPU-bound; run it off the async runtime.
             let data = if is_gzipped {
                 let max_decompressed_size = stream_segment_size();
-                let inflated = spawn_blocking(move || {
+                let inflated = tasks::spawn_blocking(move || {
                     util::compression::decompress_gzip_capped(&field_bytes, max_decompressed_size)
                 })
                 .await
@@ -641,7 +644,7 @@ pub async fn save_multiparts(
                     })
                 }
             }
-        });
+        }));
     }
 
     while let Some(result) = in_flight.join_next().await {
@@ -683,6 +686,7 @@ mod tests {
     use liboxen::error::OxenError;
     use liboxen::repositories;
     use liboxen::util;
+    use liboxen::util::fs::AtomicFile;
     use liboxen::view::ErrorFilesResponse;
     use mime;
     use std::io::Write;
@@ -760,7 +764,7 @@ mod tests {
             0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99,
             0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
         ];
-        util::fs::write_data(&image_file, &png_bytes)?;
+        AtomicFile::new(&image_file).write(&png_bytes)?;
         repositories::add(&repo, &image_file).await?;
         repositories::commit(&repo, "First commit")?;
 
