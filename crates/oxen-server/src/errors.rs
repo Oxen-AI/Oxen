@@ -361,7 +361,7 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::NotFound().json(error_json)
                     }
                     OxenError::PathStagedForRemoval(path) => {
-                        log::debug!("Edit refused, path staged for removal: {path}");
+                        log::warn!("Edit refused, path staged for removal: {path}");
                         let error_json = json!({
                             "error": {
                                 "type": MSG_CONFLICT,
