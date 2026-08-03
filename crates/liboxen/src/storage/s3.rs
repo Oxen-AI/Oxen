@@ -1,9 +1,11 @@
 use crate::error::OxenError;
 use async_trait::async_trait;
 use aws_sdk_s3::error::SdkError;
+use aws_sdk_s3::operation::get_object::GetObjectError;
 use aws_sdk_s3::operation::head_object::HeadObjectError;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier};
 use aws_sdk_s3::{Client, config::Region, primitives::ByteStream};
+use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
 use bytes::Bytes;
 use futures::stream;
 use futures::{StreamExt, TryStreamExt};
@@ -39,6 +41,41 @@ const DELETE_OBJECTS_MAX_KEYS: usize = 1000;
 pub struct S3Opts {
     pub bucket: String,
     pub region: String,
+}
+
+/// Classifies a failed `get_object`. An absent key means the store holds no data for `hash`;
+/// every other cause keeps its message and names the key that could not be read, so a failure
+/// identifies the blob behind it.
+fn object_read_error(
+    hash: &str,
+    key: &str,
+    err: SdkError<GetObjectError, HttpResponse>,
+) -> OxenError {
+    if let SdkError::ServiceError(service_err) = &err
+        && matches!(service_err.err(), GetObjectError::NoSuchKey(_))
+    {
+        return OxenError::VersionStoreBlobMissing {
+            hash: hash.to_string(),
+        };
+    }
+    OxenError::InternalError(format!("S3 get_object failed for key {key}: {err}").into())
+}
+
+/// Classifies a failed `head_object`. An absent key means the store holds no data for `hash`;
+/// every other cause keeps its message and names the key that could not be read.
+fn object_head_error(
+    hash: &str,
+    key: &str,
+    err: SdkError<HeadObjectError, HttpResponse>,
+) -> OxenError {
+    if let SdkError::ServiceError(service_err) = &err
+        && matches!(service_err.err(), HeadObjectError::NotFound(_))
+    {
+        return OxenError::VersionStoreBlobMissing {
+            hash: hash.to_string(),
+        };
+    }
+    OxenError::InternalError(format!("S3 head_object failed for key {key}: {err}").into())
 }
 
 /// S3 implementation of version storage
@@ -546,7 +583,7 @@ impl VersionStore for S3VersionStore {
             .key(&key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("S3 head_object failed: {e}")))?;
+            .map_err(|e| object_head_error(hash, &key, e))?;
 
         let size = resp
             .content_length()
@@ -565,7 +602,7 @@ impl VersionStore for S3VersionStore {
             .key(&key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("S3 get_object failed: {e}")))?;
+            .map_err(|e| object_read_error(hash, &key, e))?;
 
         let data = resp
             .body
@@ -592,7 +629,7 @@ impl VersionStore for S3VersionStore {
             .key(&key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("S3 head_object failed: {e}")))?;
+            .map_err(|e| object_head_error(orig_hash, &key, e))?;
 
         let size = resp
             .content_length()
@@ -611,7 +648,7 @@ impl VersionStore for S3VersionStore {
             .key(&key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("S3 get_object failed: {e}")))?;
+            .map_err(|e| object_read_error(hash, &key, e))?;
 
         let adapter = ByteStreamAdapter { inner: resp.body };
 
@@ -629,10 +666,10 @@ impl VersionStore for S3VersionStore {
         let resp = client
             .get_object()
             .bucket(&self.bucket)
-            .key(key)
+            .key(&key)
             .send()
             .await
-            .map_err(|e| OxenError::basic_str(format!("S3 get_object failed: {e}")))?;
+            .map_err(|e| object_read_error(orig_hash, &key, e))?;
 
         let adapter = ByteStreamAdapter { inner: resp.body };
         Ok(Box::new(adapter) as Box<_>)
@@ -739,7 +776,8 @@ impl VersionStore for S3VersionStore {
             .key(&key)
             .range(&range)
             .send()
-            .await?;
+            .await
+            .map_err(|e| object_read_error(hash, &key, e))?;
 
         let bytes = resp
             .body
@@ -1747,6 +1785,47 @@ mod tests {
         assert!(
             chunk_keys.is_empty(),
             "chunks should be deleted after combine, found: {chunk_keys:?}"
+        );
+    }
+
+    // An absent key reaches us through two different SDK error enums — GetObjectError for reads
+    // and HeadObjectError for size lookups — so both classifiers are checked against a live
+    // endpoint rather than assumed from the SDK's types.
+    #[tokio::test]
+    async fn test_reads_of_absent_key_report_missing_blob() {
+        let (store, _tmp, _server) = setup().await;
+        let hash = "deadbeefdeadbeefdeadbeefdeadbeef";
+
+        let missing = |err: &Option<OxenError>| matches!(err, Some(OxenError::VersionStoreBlobMissing { hash: h }) if h == hash);
+
+        let get = store.get_version(hash).await.err();
+        assert!(missing(&get), "get_version: got {get:?}");
+
+        let size = store.get_version_size(hash).await.err();
+        assert!(missing(&size), "get_version_size: got {size:?}");
+
+        let stream = store.get_version_stream(hash).await.err();
+        assert!(missing(&stream), "get_version_stream: got {stream:?}");
+
+        let chunk = store.get_version_chunk(hash, 0, 8).await.err();
+        assert!(missing(&chunk), "get_version_chunk: got {chunk:?}");
+
+        let derived_size = store
+            .get_version_derived_size(hash, "100x100.png")
+            .await
+            .err();
+        assert!(
+            missing(&derived_size),
+            "get_version_derived_size: got {derived_size:?}"
+        );
+
+        let derived = store
+            .get_version_derived_stream(hash, "100x100.png")
+            .await
+            .err();
+        assert!(
+            missing(&derived),
+            "get_version_derived_stream: got {derived:?}"
         );
     }
 

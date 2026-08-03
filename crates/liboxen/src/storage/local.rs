@@ -24,6 +24,20 @@ use tokio::sync::Semaphore;
 use tokio::task::spawn_blocking;
 use tokio_util::io::ReaderStream;
 
+/// Classifies a failed read of a version file. An absent file means the store holds no data for
+/// `hash`; every other cause keeps its message and names the file that could not be read, so a
+/// failure identifies the blob behind it rather than surfacing as a bare `NotFound`.
+fn version_read_error(hash: &str, path: &Path, source: io::Error) -> OxenError {
+    if source.kind() == ErrorKind::NotFound {
+        return OxenError::VersionStoreBlobMissing {
+            hash: hash.to_string(),
+        };
+    }
+    OxenError::InternalError(
+        format!("Failed to read version file {path:?} for hash {hash}: {source}").into(),
+    )
+}
+
 /// Local filesystem implementation of version storage
 #[derive(Debug)]
 pub struct LocalVersionStore {
@@ -133,13 +147,17 @@ impl VersionStore for LocalVersionStore {
 
     async fn get_version_size(&self, hash: &str) -> Result<u64, OxenError> {
         let path = self.version_path(hash);
-        let metadata = fs::metadata(&path).await?;
+        let metadata = fs::metadata(&path)
+            .await
+            .map_err(|source| version_read_error(hash, &path, source))?;
         Ok(metadata.len())
     }
 
     async fn get_version(&self, hash: &str) -> Result<Vec<u8>, OxenError> {
         let path = self.version_path(hash);
-        let data = fs::read(&path).await?;
+        let data = fs::read(&path)
+            .await
+            .map_err(|source| version_read_error(hash, &path, source))?;
         Ok(data)
     }
 
@@ -149,13 +167,17 @@ impl VersionStore for LocalVersionStore {
         derived_filename: &str,
     ) -> Result<u64, OxenError> {
         let path = self.version_dir(orig_hash).join(derived_filename);
-        let metadata = fs::metadata(&path).await?;
+        let metadata = fs::metadata(&path)
+            .await
+            .map_err(|source| version_read_error(orig_hash, &path, source))?;
         Ok(metadata.len())
     }
 
     async fn get_version_stream(&self, hash: &str) -> Result<BoxedByteStream, OxenError> {
         let path = self.version_path(hash);
-        let file = File::open(&path).await?;
+        let file = File::open(&path)
+            .await
+            .map_err(|source| version_read_error(hash, &path, source))?;
         let reader = BufReader::new(file);
         let stream = ReaderStream::new(reader);
 
@@ -168,7 +190,9 @@ impl VersionStore for LocalVersionStore {
         derived_filename: &str,
     ) -> Result<BoxedByteStream, OxenError> {
         let path = self.version_dir(orig_hash).join(derived_filename);
-        let file = File::open(&path).await?;
+        let file = File::open(&path)
+            .await
+            .map_err(|source| version_read_error(orig_hash, &path, source))?;
         let reader = BufReader::new(file);
         let stream = ReaderStream::new(reader);
 
@@ -307,7 +331,9 @@ impl VersionStore for LocalVersionStore {
     ) -> Result<Vec<u8>, OxenError> {
         let version_file_path = self.version_path(hash);
 
-        let mut file = File::open(&version_file_path).await?;
+        let mut file = File::open(&version_file_path)
+            .await
+            .map_err(|source| version_read_error(hash, &version_file_path, source))?;
         let metadata = file.metadata().await?;
         let file_len = metadata.len();
 
@@ -764,8 +790,8 @@ mod tests {
 
         match store.get_version(hash).await {
             Ok(_) => panic!("Expected error when getting non-existent version"),
-            Err(OxenError::IO(e)) => {
-                assert_eq!(e.kind(), io::ErrorKind::NotFound);
+            Err(OxenError::VersionStoreBlobMissing { hash: missing }) => {
+                assert_eq!(missing, hash);
             }
             Err(e) => {
                 panic!("Unexpected error when getting non-existent version: {e:?}");
@@ -846,8 +872,8 @@ mod tests {
 
         match store.get_version_chunk(hash, offset, size).await {
             Ok(_) => panic!("Expected error when getting non-existent chunk"),
-            Err(OxenError::IO(e)) => {
-                assert_eq!(e.kind(), io::ErrorKind::NotFound);
+            Err(OxenError::VersionStoreBlobMissing { hash: missing }) => {
+                assert_eq!(missing, hash);
             }
             Err(e) => {
                 panic!("Unexpected error when getting non-existent chunk: {e:?}");
