@@ -1399,6 +1399,25 @@ mod tests {
         array_len
     }
 
+    /// The `id` column of every row on a page, in the order the page returned them.
+    fn page_ids(response: &WorkspaceJsonDataFrameViewResponse) -> Vec<i64> {
+        response
+            .data_frame
+            .as_ref()
+            .expect("expected a data frame in the response")
+            .view
+            .data
+            .as_array()
+            .expect("expected the view data to be a JSON array")
+            .iter()
+            .map(|row| {
+                row.get("id")
+                    .and_then(serde_json::Value::as_i64)
+                    .expect("expected an integer id on every row")
+            })
+            .collect()
+    }
+
     /// An unindexed workspace data frame larger than the requested `page_size` must paginate:
     /// each page returns at most `page_size` rows and an out-of-range page returns zero rows so
     /// pagination terminates. Regression test for the unindexed branch returning the full frame on
@@ -1446,6 +1465,7 @@ mod tests {
         .await;
         assert!(!page_1.is_indexed);
         assert_eq!(page_row_count(&page_1), 10);
+        assert_eq!(page_ids(&page_1), (0..10).collect::<Vec<i64>>());
         let pagination = &page_1.data_frame.as_ref().unwrap().view.pagination;
         assert_eq!(pagination.total_pages, 3);
         assert_eq!(pagination.total_entries, 25);
@@ -1462,6 +1482,7 @@ mod tests {
         )
         .await;
         assert_eq!(page_row_count(&page_3), 5);
+        assert_eq!(page_ids(&page_3), (20..25).collect::<Vec<i64>>());
 
         // Page 4 is past the end → 0 rows. This is the case a pager relies on to terminate.
         let page_4 = get_data_frame_page(
@@ -1515,9 +1536,9 @@ mod tests {
             25
         );
 
-        // Index the same workspace so the GET handler now takes the SQL branch. It must return
-        // identically sized pages so the two paths stay in lockstep (guards against regressing the
-        // SQL pagination).
+        // Index the same workspace so the GET handler now takes the SQL branch. It must return the
+        // same rows on the same pages so the two paths stay in lockstep (guards against regressing
+        // the SQL pagination).
         repositories::workspaces::data_frames::index(
             &repo,
             &workspace,
@@ -1525,7 +1546,12 @@ mod tests {
         )
         .await?;
 
-        for (page, expected_rows) in [(1, 10), (3, 5), (4, 0)] {
+        let indexed_expectations: [(usize, Vec<i64>); 3] = [
+            (1, (0..10).collect()),
+            (3, (20..25).collect()),
+            (4, Vec::new()),
+        ];
+        for (page, expected_ids) in indexed_expectations {
             let indexed_page = get_data_frame_page(
                 &sync_dir,
                 namespace,
@@ -1537,7 +1563,8 @@ mod tests {
             )
             .await;
             assert!(indexed_page.is_indexed);
-            assert_eq!(page_row_count(&indexed_page), expected_rows);
+            assert_eq!(page_row_count(&indexed_page), expected_ids.len());
+            assert_eq!(page_ids(&indexed_page), expected_ids);
             let pagination = &indexed_page.data_frame.as_ref().unwrap().view.pagination;
             assert_eq!(pagination.total_pages, 3);
             assert_eq!(pagination.total_entries, 25);
