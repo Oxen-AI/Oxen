@@ -17,13 +17,12 @@ use zip::ZipArchive;
 use crate::core;
 use crate::core::staged::staged_db_manager::get_staged_db_manager;
 use crate::core::v_latest::add::{
-    add_file_node_to_staged_db, get_file_node, process_add_file_with_staged_db_manager,
-    stage_file_with_hash,
+    get_file_node, process_add_file_with_staged_db_manager, stage_file_with_hash,
 };
 use crate::error::OxenError;
 use crate::model::file::TempFilePathNew;
 use crate::model::merkle_tree::node::EMerkleTreeNode;
-use crate::model::merkle_tree::node::MerkleTreeNode;
+use crate::model::merkle_tree::node::{MerkleTreeNode, StagedMerkleTreeNode};
 use crate::model::user::User;
 use crate::model::workspace::Workspace;
 use crate::model::{Branch, Commit, StagedEntryStatus};
@@ -57,11 +56,9 @@ pub async fn rm(
     filepath: impl AsRef<Path>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let filepath = filepath.as_ref();
-    let workspace_repo = &workspace.workspace_repo;
-    let base_repo = &workspace.base_repo;
 
     // Stage the file using the repositories::rm method
-    let err_files = p_rm(base_repo, workspace_repo, &workspace.commit, filepath).await?;
+    let err_files = p_rm(workspace, filepath).await?;
 
     // Return the Err files
     Ok(err_files)
@@ -295,9 +292,14 @@ pub async fn remove_files_from_staged_db(
     Ok(err_files)
 }
 
+/// Discard the workspace's staged changes for `path`, including the staged edits held in a data
+/// frame's DuckDB index. Editing the path again re-indexes it from the committed file.
 pub fn unstage(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), OxenError> {
     let workspace_repo = &workspace.workspace_repo;
     let path = util::fs::path_relative_to_dir(path.as_ref(), &workspace_repo.path)?;
+    // Drop the index first: a failure here leaves the path staged and indexed, which is coherent,
+    // where dropping the entry first would leave the discarded edits waiting to be re-staged.
+    unindex_if_staged_table(workspace, &path)?;
     get_staged_db_manager(workspace_repo)?.delete_entry(&path)
 }
 
@@ -974,7 +976,7 @@ async fn p_add_file(
     }
 
     // See if this is a new file or a modified file
-    let file_status = core::v_latest::add::determine_file_status(
+    let mut file_status = core::v_latest::add::determine_file_status(
         base_repo,
         &maybe_dir_node,
         &file_name,
@@ -997,6 +999,14 @@ async fn p_add_file(
 
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
 
+    // One handle for the read and the write below, so the staged db isn't reopened per file.
+    let staged_db_manager = get_staged_db_manager(workspace_repo)?;
+    if let Some(metadata) =
+        core::v_latest::add::staged_file_metadata(&staged_db_manager, &relative_path)?
+    {
+        file_status.previous_metadata = Some(metadata);
+    }
+
     process_add_file_with_staged_db_manager(
         workspace_repo,
         &workspace_repo.path,
@@ -1007,13 +1017,11 @@ async fn p_add_file(
     )
 }
 
-async fn p_rm(
-    base_repo: &LocalRepository,
-    workspace_repo: &LocalRepository,
-    commit: &Commit,
-    path: &Path,
-) -> Result<Vec<ErrorFileInfo>, OxenError> {
+async fn p_rm(workspace: &Workspace, path: &Path) -> Result<Vec<ErrorFileInfo>, OxenError> {
     log::debug!("p_rm: deleting file {path:?}");
+    let base_repo = &workspace.base_repo;
+    let workspace_repo = &workspace.workspace_repo;
+    let commit = &workspace.commit;
     let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
 
     let parent_path = path.parent().unwrap_or(Path::new(""));
@@ -1031,6 +1039,7 @@ async fn p_rm(
             &file_node,
             &seen_dirs,
         )?);
+        unindex_if_staged_table(workspace, &relative_path)?;
     } else if has_dir_node(&maybe_dir_node, &file_name)? {
         if let Some(dir_node) = repositories::tree::get_dir_with_children_recursive(
             base_repo,
@@ -1044,6 +1053,14 @@ async fn p_rm(
                 &relative_path,
                 &seen_dirs,
             )?;
+            // remove_dir_with_db_manager stages every file under the dir for removal, so each of
+            // them needs its index dropped too.
+            let parent_path = relative_path.parent().unwrap_or(Path::new(""));
+            for (child_path, node) in dir_node.list_files_and_dirs()? {
+                if let EMerkleTreeNode::File(_) = &node.node {
+                    unindex_if_staged_table(workspace, &parent_path.join(child_path))?;
+                }
+            }
         };
     } else {
         // If the path has neither a file node or dir node in the tree, it cannot be staged for removal
@@ -1058,6 +1075,17 @@ async fn p_rm(
     Ok(err_files)
 }
 
+/// Drop the staged DuckDB table of the data frame at `path`, if it has one. A path staged for
+/// removal must not keep an editable index: a later row or column edit would re-stage the file as
+/// `Modified`, which would undo the removal.
+fn unindex_if_staged_table(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
+    if repositories::workspaces::data_frames::has_staged_table(workspace, path)? {
+        log::debug!("p_rm: dropping staged data frame index for {path:?}");
+        repositories::workspaces::data_frames::unindex(workspace, path)?;
+    }
+    Ok(())
+}
+
 fn p_modify_file(
     base_repo: &LocalRepository,
     workspace_repo: &LocalRepository,
@@ -1068,21 +1096,31 @@ fn p_modify_file(
     if let Some(head_commit) = maybe_head_commit {
         maybe_file_node = repositories::tree::get_file_by_path(base_repo, head_commit, path)?;
     }
+    let Some(mut file_node) = maybe_file_node else {
+        return Err(OxenError::basic_str("file not found in head commit"));
+    };
+    file_node.set_name(path.to_str().unwrap());
+    log::debug!("p_modify_file file_node: {file_node}");
 
-    let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
-    if let Some(mut file_node) = maybe_file_node {
-        file_node.set_name(path.to_str().unwrap());
-        log::debug!("p_modify_file file_node: {file_node}");
-        add_file_node_to_staged_db(
-            workspace_repo,
-            path,
-            StagedEntryStatus::Modified,
-            &file_node,
-            &seen_dirs,
-        )
-    } else {
-        Err(OxenError::basic_str("file not found in head commit"))
-    }
+    let staged_db_manager = get_staged_db_manager(workspace_repo)?;
+    staged_db_manager.edit_staged_node(path, |staged| {
+        // The committed node knows nothing of workspace metadata edits. When
+        // the staged node holds the same content with different metadata,
+        // carry that metadata over so re-staging doesn't discard it.
+        if let Some(staged) = staged
+            && let Ok(staged_file) = staged.node.file()
+            && staged_file.hash() == file_node.hash()
+            && let Some(metadata) = staged_file.metadata()
+        {
+            file_node.set_metadata(Some(metadata));
+            file_node.recompute_metadata_hashes()?;
+        }
+        Ok(StagedMerkleTreeNode {
+            status: StagedEntryStatus::Modified,
+            node: MerkleTreeNode::from_file(file_node),
+        })
+    })?;
+    Ok(())
 }
 
 fn has_dir_node(
@@ -1174,28 +1212,14 @@ pub fn mv(
         staged_db_manager.upsert_file_node(path, StagedEntryStatus::Removed, &removed_file_node)?;
 
         // Add parent directories for the removed path
-        if let Some(parents) = path.parent() {
-            for dir in parents.ancestors() {
-                staged_db_manager.add_directory(dir, &seen_dirs)?;
-                if dir == Path::new("") {
-                    break;
-                }
-            }
-        }
+        staged_db_manager.add_parent_directories(path, &seen_dirs)?;
     } else {
         // Just delete the staged entry if file wasn't in base repo
         staged_db_manager.delete_entry(path)?;
     }
 
     // Add parent directories for the new path
-    if let Some(parents) = new_path.parent() {
-        for dir in parents.ancestors() {
-            staged_db_manager.add_directory(dir, &seen_dirs)?;
-            if dir == Path::new("") {
-                break;
-            }
-        }
-    }
+    staged_db_manager.add_parent_directories(new_path, &seen_dirs)?;
 
     Ok(())
 }

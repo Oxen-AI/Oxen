@@ -7,6 +7,7 @@ use crate::constants::{
 use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::df_db;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
+use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
 use crate::core::staged::get_staged_db_manager;
 use crate::core::v_latest::workspaces::files::{add, track_modified_data_frame};
 use crate::repositories::workspaces::data_frames::duckdb_path_in_dir;
@@ -18,9 +19,12 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode};
+use crate::model::merkle_tree::node::{
+    EMerkleTreeNode, FileNode, MerkleTreeNode, StagedMerkleTreeNode,
+};
+use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{
-    Commit, EntryDataType, LocalRepository, MerkleHash, StagedEntryStatus, Workspace,
+    Commit, EntryDataType, LocalRepository, MerkleHash, Schema, StagedEntryStatus, Workspace,
 };
 use crate::repositories;
 use crate::{error::OxenError, util};
@@ -29,6 +33,80 @@ use std::path::{Path, PathBuf};
 pub mod columns;
 pub mod rows;
 pub mod schemas;
+
+/// Stage an edit to a data frame's tabular schema, applying `mutate` to the
+/// schema on its staged file node. Returns the updated schema.
+pub(crate) fn stage_schema_metadata_update<F>(
+    repo: &LocalRepository,
+    workspace: &Workspace,
+    file_path: &Path,
+    mutate: F,
+) -> Result<Schema, OxenError>
+where
+    F: FnOnce(&mut Schema) -> Result<(), OxenError>,
+{
+    let path = util::fs::path_relative_to_dir(file_path, &workspace.workspace_repo.path)?;
+    // Read everything the edit needs before taking the staged-db write lock.
+    let committed_node = repositories::tree::get_file_by_path(repo, &workspace.commit, &path)?;
+    let table_schema = staged_table_schema(workspace, &path)?;
+
+    let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+    let staged = staged_db_manager.edit_staged_node(&path, |staged| {
+        let (mut file_node, status) = match staged {
+            Some(staged) => (staged.node.file()?, staged.status),
+            None => (
+                committed_node.ok_or_else(|| OxenError::path_does_not_exist(&path))?,
+                StagedEntryStatus::Modified,
+            ),
+        };
+
+        let Some(GenericMetadata::MetadataTabular(m)) = file_node.get_mut_metadata() else {
+            return Err(OxenError::NotADataFrame(path.clone().into()));
+        };
+        // The staged table is authoritative for columns a workspace edit
+        // added, removed, or retyped, and carries the metadata over by name.
+        if let Some(mut table_schema) = table_schema {
+            table_schema.update_metadata_from_schema(&m.tabular.schema);
+            m.tabular.schema = table_schema;
+        }
+        mutate(&mut m.tabular.schema)?;
+        m.tabular.width = m.tabular.schema.fields.len();
+        m.tabular.schema.recompute_hash();
+
+        file_node.set_name(path.to_string_lossy().as_ref());
+        file_node.recompute_metadata_hashes()?;
+        Ok(StagedMerkleTreeNode {
+            status,
+            node: MerkleTreeNode::from_file(file_node),
+        })
+    })?;
+
+    let Some(GenericMetadata::MetadataTabular(m)) = staged.node.file()?.metadata() else {
+        return Err(OxenError::InternalError(
+            format!("Staged node for {path:?} lost its tabular metadata").into(),
+        ));
+    };
+    Ok(m.tabular.schema)
+}
+
+/// Schema of the workspace's staged DuckDB table, or `None` if the data frame
+/// was never indexed. A db file without the staged table also yields `None`:
+/// its empty schema would wipe the committed metadata.
+fn staged_table_schema(workspace: &Workspace, path: &Path) -> Result<Option<Schema>, OxenError> {
+    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
+    if !db_path.exists() {
+        return Ok(None);
+    }
+    let table_schema = with_df_db_manager(&db_path, |manager| {
+        manager.with_conn(|conn| {
+            if !df_db::table_exists(conn, TABLE_NAME)? {
+                return Ok(None);
+            }
+            Ok(Some(schema_without_oxen_cols(conn, TABLE_NAME)?))
+        })
+    })?;
+    Ok(table_schema)
+}
 
 pub fn is_queryable_data_frame_indexed(
     repo: &LocalRepository,
@@ -519,15 +597,8 @@ pub async fn rename(
     staged_db_manager.delete_entry(path)?;
 
     // Add parent directories for the new path
-    if let Some(parents) = new_path.parent() {
-        let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
-        for dir in parents.ancestors() {
-            staged_db_manager.add_directory(dir, &seen_dirs)?;
-            if dir == Path::new("") {
-                break;
-            }
-        }
-    }
+    let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
+    staged_db_manager.add_parent_directories(new_path, &seen_dirs)?;
 
     let relative_path = util::fs::path_relative_to_dir(new_path, &workspace_repo.path)?;
     Ok(relative_path)

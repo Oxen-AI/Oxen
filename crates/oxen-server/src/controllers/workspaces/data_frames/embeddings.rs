@@ -127,7 +127,7 @@ pub async fn neighbors(req: HttpRequest, body: String) -> Result<HttpResponse, O
     repositories::workspaces::data_frames::columns::update_column_schemas(
         new_schema,
         &mut df_views,
-    )?;
+    );
 
     let response = WorkspaceJsonDataFrameViewResponse {
         status: StatusMessage::resource_found(),

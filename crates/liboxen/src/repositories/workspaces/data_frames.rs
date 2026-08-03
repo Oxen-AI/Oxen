@@ -474,9 +474,11 @@ mod tests {
     use crate::config::UserConfig;
     use crate::constants::{DEFAULT_BRANCH_NAME, OXEN_ID_COL};
     use crate::core::df;
+    use crate::core::staged::get_staged_db_manager;
     use crate::error::OxenError;
     use crate::model::NewCommitBody;
     use crate::model::diff::DiffResult;
+    use crate::model::metadata::generic_metadata::GenericMetadata;
     use crate::opts::DFOpts;
     use crate::repositories;
     use crate::repositories::workspaces;
@@ -1646,7 +1648,7 @@ mod tests {
             )?;
 
             // Attaching metadata to a still-present column reconciles the schema.
-            let results = workspaces::data_frames::columns::add_column_metadata(
+            let schema = workspaces::data_frames::columns::add_column_metadata(
                 &repo,
                 &workspace,
                 file_path.clone(),
@@ -1654,13 +1656,381 @@ mod tests {
                 &json!({"root": "images"}),
             )?;
 
-            let schema = results.values().next().expect("a schema was returned");
             let names: Vec<&str> = schema.fields.iter().map(|f| f.name.as_str()).collect();
             assert!(
                 !names.contains(&"label"),
                 "deleted column should be gone: {names:?}"
             );
             assert!(names.contains(&"file"));
+
+            // The staged node's column count has to track the reconciled field list, since
+            // that is what the diff summary and the data frame size report.
+            let staged = get_staged_db_manager(&workspace.workspace_repo)?
+                .read_from_staged_db(&file_path)?
+                .expect("data frame should be staged");
+            let Some(GenericMetadata::MetadataTabular(m)) = staged.node.file()?.metadata() else {
+                panic!("staged node should carry tabular metadata");
+            };
+            assert_eq!(m.tabular.width, m.tabular.schema.fields.len());
+            Ok(())
+        })
+        .await
+    }
+
+    /// A row edit re-stages the file node from the *committed* tree, which
+    /// knows nothing of workspace metadata edits — schema settings and column
+    /// render funcs staged beforehand must survive the write.
+    #[tokio::test]
+    async fn test_row_edit_keeps_staged_metadata() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-row-keeps-meta")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            let settings = json!({"_oxen": {"view": {"columns": ["label", "file"]}}});
+            workspaces::data_frames::schemas::add_schema_metadata(
+                &repo, &workspace, &file_path, &settings,
+            )?;
+            workspaces::data_frames::columns::add_column_metadata(
+                &repo,
+                &workspace,
+                file_path.clone(),
+                "file".to_string(),
+                &json!({"_oxen": {"render": {"func": "image"}}}),
+            )?;
+
+            let row = json!({"file": "images/x.jpg", "label": "cat"});
+            workspaces::data_frames::rows::add(&repo, &workspace, &file_path, &row)?;
+
+            let staged =
+                repositories::data_frames::schemas::get_staged_schema_with_staged_db_manager(
+                    &workspace.workspace_repo,
+                    &file_path,
+                )?
+                .expect("a staged schema still exists after the row write");
+            assert_eq!(
+                staged.metadata,
+                Some(settings),
+                "schema metadata must survive a row write"
+            );
+            let file_field = staged
+                .fields
+                .iter()
+                .find(|f| f.name == "file")
+                .expect("the file column still exists");
+            assert_eq!(
+                file_field.metadata,
+                Some(json!({"_oxen": {"render": {"func": "image"}}})),
+                "column metadata must survive a row write"
+            );
+            Ok(())
+        })
+        .await
+    }
+
+    /// A schema-metadata write must be readable back through the staged
+    /// schema, which is where the read path picks it up when building a
+    /// response.
+    #[tokio::test]
+    async fn test_add_schema_metadata_is_staged() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-schema-view")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            let settings = json!({"_oxen": {"view": {"columns": ["label", "file"]}}});
+            workspaces::data_frames::schemas::add_schema_metadata(
+                &repo, &workspace, &file_path, &settings,
+            )?;
+
+            let staged =
+                repositories::data_frames::schemas::get_staged_schema_with_staged_db_manager(
+                    &workspace.workspace_repo,
+                    &file_path,
+                )?
+                .expect("a staged schema exists after the write");
+            assert_eq!(
+                staged.metadata,
+                Some(settings),
+                "schema metadata should be staged"
+            );
+            Ok(())
+        })
+        .await
+    }
+
+    /// Unstaging a data frame discards its staged row edits, not just the staging marker. While
+    /// the DuckDB index survived an unstage, the next edit re-staged the file and the discarded
+    /// rows came back with it.
+    #[tokio::test]
+    async fn test_unstage_discards_staged_row_edits() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-unstage-discards")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+            let committed_rows = workspaces::data_frames::count(&workspace, &file_path)?;
+
+            workspaces::data_frames::rows::add(
+                &repo,
+                &workspace,
+                &file_path,
+                &json!({"file": "images/discarded.jpg", "label": "cat"}),
+            )?;
+            assert_eq!(
+                workspaces::data_frames::count(&workspace, &file_path)?,
+                committed_rows + 1
+            );
+
+            repositories::workspaces::files::unstage(&workspace, &file_path)?;
+            {
+                let staged_db_manager =
+                    crate::core::staged::get_staged_db_manager(&workspace.workspace_repo)?;
+                assert!(
+                    staged_db_manager.read_from_staged_db(&file_path)?.is_none(),
+                    "unstage should drop the staged entry"
+                );
+            }
+            assert!(
+                !workspaces::data_frames::is_indexed(&workspace, &file_path)?,
+                "unstage should drop the index holding the discarded edits"
+            );
+
+            // Re-indexing rebuilds from the committed file, so the discarded row is really gone.
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+            assert_eq!(
+                workspaces::data_frames::count(&workspace, &file_path)?,
+                committed_rows,
+                "the discarded row must not survive into a fresh index"
+            );
+
+            workspaces::data_frames::rows::add(
+                &repo,
+                &workspace,
+                &file_path,
+                &json!({"file": "images/kept.jpg", "label": "dog"}),
+            )?;
+            let body = NewCommitBody {
+                author: "author".to_string(),
+                email: "email".to_string(),
+                message: "Keep only the second row".to_string(),
+            };
+            let new_commit = workspaces::commit(&workspace, &body, &branch.name).await?;
+            let resource = crate::model::ParsedResource {
+                path: file_path.clone(),
+                version: PathBuf::from(new_commit.id.to_string()),
+                resource: file_path.clone(),
+                workspace: None,
+                commit: Some(new_commit.clone()),
+                branch: None,
+            };
+            let df = repositories::data_frames::get_slice(
+                &repo,
+                &resource,
+                &file_path,
+                &crate::opts::DFOpts::empty(),
+            )
+            .await?;
+            assert_eq!(
+                df.total_entries,
+                committed_rows + 1,
+                "only the row added after the unstage should be committed"
+            );
+            Ok(())
+        })
+        .await
+    }
+
+    /// Staging a data frame for removal drops its DuckDB index. If the index survived, then the
+    /// frame stayed editable and the next row edit re-staged it as `Modified`, so the removal
+    /// silently never happened.
+    #[tokio::test]
+    async fn test_rm_unindexes_so_a_later_edit_cannot_undo_the_removal() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-rm-unindexes")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+            assert!(workspaces::data_frames::is_indexed(&workspace, &file_path)?);
+
+            let err_files = repositories::workspaces::files::rm(&workspace, &file_path).await?;
+            assert!(err_files.is_empty(), "rm reported errors: {err_files:?}");
+            assert!(
+                !workspaces::data_frames::is_indexed(&workspace, &file_path)?,
+                "a data frame staged for removal must not keep an editable index"
+            );
+
+            // The edit that used to resurrect the file now has no index to edit.
+            let row = json!({"file": "images/x.jpg", "label": "cat"});
+            assert!(
+                workspaces::data_frames::rows::add(&repo, &workspace, &file_path, &row).is_err(),
+                "editing rows of a removed data frame must not succeed"
+            );
+
+            let body = NewCommitBody {
+                author: "author".to_string(),
+                email: "email".to_string(),
+                message: "Remove the data frame".to_string(),
+            };
+            let new_commit = workspaces::commit(&workspace, &body, &branch.name).await?;
+            assert!(
+                repositories::tree::get_file_by_path(&repo, &new_commit, &file_path)?.is_none(),
+                "the removal must survive to the commit"
+            );
+            Ok(())
+        })
+        .await
+    }
+
+    /// A metadata edit keeps whatever status is already staged, so it can't turn a newly added
+    /// file into a modified one, and it can't turn a removal into a modification.
+    #[tokio::test]
+    async fn test_add_schema_metadata_preserves_added_and_refuses_removed() -> Result<(), OxenError>
+    {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch =
+                repositories::branches::create_checkout(&repo, "test-schema-staged-status")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            let file_node = repositories::tree::get_file_by_path(&repo, &commit, &file_path)?
+                .expect("the committed data frame should exist");
+            let staged_db_manager =
+                crate::core::staged::get_staged_db_manager(&workspace.workspace_repo)?;
+
+            staged_db_manager.upsert_file_node(
+                &file_path,
+                crate::model::StagedEntryStatus::Added,
+                &file_node,
+            )?;
+            workspaces::data_frames::schemas::add_schema_metadata(
+                &repo,
+                &workspace,
+                &file_path,
+                &json!({"edited": "while added"}),
+            )?;
+            let staged = staged_db_manager
+                .read_from_staged_db(&file_path)?
+                .expect("the metadata edit should remain staged");
+            assert_eq!(
+                staged.status,
+                crate::model::StagedEntryStatus::Added,
+                "a metadata edit must not change the existing staged status"
+            );
+
+            staged_db_manager.upsert_file_node(
+                &file_path,
+                crate::model::StagedEntryStatus::Removed,
+                &file_node,
+            )?;
+            let result = workspaces::data_frames::schemas::add_schema_metadata(
+                &repo,
+                &workspace,
+                &file_path,
+                &json!({"edited": "while removed"}),
+            );
+            assert!(
+                matches!(result, Err(OxenError::PathStagedForRemoval(_))),
+                "editing a path staged for removal must be refused, got {result:?}"
+            );
+            let staged = staged_db_manager
+                .read_from_staged_db(&file_path)?
+                .expect("the removal should still be staged");
+            assert_eq!(
+                staged.status,
+                crate::model::StagedEntryStatus::Removed,
+                "a refused edit must leave the removal staged"
+            );
+            Ok(())
+        })
+        .await
+    }
+
+    /// Schema-level and per-column metadata are independent: a file-level
+    /// write must not clobber a column's metadata.
+    #[tokio::test]
+    async fn test_add_schema_metadata_preserves_column_metadata() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-schema-metadata")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            workspaces::data_frames::columns::add_column_metadata(
+                &repo,
+                &workspace,
+                file_path.clone(),
+                "file".to_string(),
+                &json!({"_oxen": {"render": {"func": "image"}}}),
+            )?;
+
+            let schema = workspaces::data_frames::schemas::add_schema_metadata(
+                &repo,
+                &workspace,
+                &file_path,
+                &json!({"_oxen": {"view": {"columns": ["file", "label"]}}}),
+            )?;
+
+            assert_eq!(
+                schema.metadata,
+                Some(json!({"_oxen": {"view": {"columns": ["file", "label"]}}})),
+                "schema metadata should be written"
+            );
+            let file_field = schema
+                .fields
+                .iter()
+                .find(|f| f.name == "file")
+                .expect("the file column still exists");
+            assert_eq!(
+                file_field.metadata,
+                Some(json!({"_oxen": {"render": {"func": "image"}}})),
+                "column metadata should survive a schema-level write"
+            );
             Ok(())
         })
         .await

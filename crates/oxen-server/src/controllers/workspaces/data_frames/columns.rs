@@ -254,7 +254,7 @@ pub async fn update(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     repositories::workspaces::data_frames::columns::update_column_schemas(
         new_schema,
         &mut df_views,
-    )?;
+    );
 
     let response = JsonDataFrameColumnResponse {
         data_frame: df_views,
@@ -267,6 +267,32 @@ pub async fn update(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     Ok(HttpResponse::Ok().json(response))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/columns/schema/metadata/{path}",
+    description = "Set the metadata on a single column of a data frame, the HTTP equivalent of `oxen schemas add <path> -c <column> -m '{...}'`. Staged into the workspace, so no commit is required. Replaces that column's existing metadata wholesale.",
+    tag = "Workspace Data Frames",
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "ID or name of the workspace", example = "b3f27f05-0955-4076-805f-39575853b27b"),
+        ("path" = String, Path, description = "Path to the data frame within the repository", example = "annotations/train.csv"),
+    ),
+    request_body(
+        content = String,
+        description = "The column to annotate and the metadata to store on it. `_oxen.render.func` controls how oxen renders the column's values.",
+        example = json!({
+            "column_name": "file",
+            "metadata": { "_oxen": { "render": { "func": "image" } } }
+        })
+    ),
+    responses(
+        (status = 200, description = "Column metadata updated", body = StatusMessage),
+        (status = 400, description = "Invalid request body, missing `column_name`, the path is not a tabular data frame, or the column does not exist in the schema"),
+        (status = 404, description = "Repository, workspace, or data frame not found"),
+        (status = 409, description = "The data frame is staged for removal in this workspace")
+    )
+)]
 pub async fn add_column_metadata(
     req: HttpRequest,
     body: String,

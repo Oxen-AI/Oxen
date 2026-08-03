@@ -19,8 +19,6 @@ pub use crate::core::v_latest::data_frames::schemas::get_staged;
 /// Get staged schema for workspace
 pub use crate::core::v_latest::data_frames::schemas::get_staged_schema_with_staged_db_manager;
 
-pub use crate::core::v_latest::data_frames::schemas::restore_schema;
-
 /// List all the staged schemas
 pub use crate::core::v_latest::data_frames::schemas::list_staged;
 
@@ -335,6 +333,39 @@ mod tests {
             // Make sure none are left
             let schema = repositories::data_frames::schemas::get_staged(&repo, schema_ref)?;
             assert!(schema.is_none());
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// The staged db holds directory markers and non-tabular files next to data
+    /// frames, so listing staged schemas has to skip them rather than fail.
+    #[tokio::test]
+    async fn test_schemas_list_staged_skips_entries_without_a_schema() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let csv_path = repo.path.join("nested").join("data.csv");
+            util::fs::create_dir_all(csv_path.parent().unwrap())?;
+            test::write_txt_file_to_path(&csv_path, "a,b\n1,2\n")?;
+            let txt_path = repo.path.join("nested").join("readme.txt");
+            test::write_txt_file_to_path(&txt_path, "not a data frame\n")?;
+
+            // Staging the csv also stages `nested` and the repo root as directory markers.
+            repositories::add(&repo, &csv_path).await?;
+            repositories::add(&repo, &txt_path).await?;
+
+            let staged = repositories::data_frames::schemas::list_staged(&repo)?;
+            let paths: Vec<&PathBuf> = staged.keys().collect();
+            assert_eq!(
+                paths.len(),
+                1,
+                "only the data frame has a staged schema, got {paths:?}"
+            );
+            let schema = staged
+                .get(&PathBuf::from("nested").join("data.csv"))
+                .expect("the csv's schema is listed under its repo-relative path");
+            let names: Vec<&str> = schema.fields.iter().map(|f| f.name.as_str()).collect();
+            assert_eq!(names, vec!["a", "b"]);
 
             Ok(())
         })

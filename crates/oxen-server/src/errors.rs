@@ -361,6 +361,32 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::NotFound().json(error_json)
                     }
+                    OxenError::PathStagedForRemoval(path) => {
+                        log::warn!("Edit refused, path staged for removal: {path}");
+                        let error_json = json!({
+                            "error": {
+                                "type": MSG_CONFLICT,
+                                "title": "Path is staged for removal",
+                                "detail": format!("Unstage the removal of '{path}' before editing it"),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_CONFLICT,
+                        });
+                        HttpResponse::Conflict().json(error_json)
+                    }
+                    OxenError::NotADataFrame(path) => {
+                        log::debug!("Not a tabular data frame: {path}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "not_a_data_frame",
+                                "title": "Not a tabular data frame",
+                                "detail": format!("Schema operations need a tabular file: '{path}'")
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
                     OxenError::WorkspaceNotFound(workspace) => {
                         log::warn!("Workspace not found: {workspace}");
                         let error_json = json!({

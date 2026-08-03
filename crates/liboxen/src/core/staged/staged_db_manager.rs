@@ -212,6 +212,70 @@ impl StagedDBManager {
         Ok(())
     }
 
+    /// Atomically read, transform, and write the staged node at `path` under a
+    /// single write lock, so a concurrent writer cannot slip in between the
+    /// read and the write and have its update silently overwritten. The
+    /// closure receives the current staged node, if any, and returns the node
+    /// to store. Returns the stored node.
+    ///
+    /// This applies no staging policy. Callers acting on a user edit want
+    /// [`Self::edit_staged_node`] instead.
+    fn modify_staged_node<F>(
+        &self,
+        path: &Path,
+        modify: F,
+    ) -> Result<StagedMerkleTreeNode, OxenError>
+    where
+        F: FnOnce(Option<StagedMerkleTreeNode>) -> Result<StagedMerkleTreeNode, OxenError>,
+    {
+        let key = normalize_key(path);
+        let db_w = self.staged_db.write();
+        let current = db_w
+            .get(key.as_bytes())?
+            .map(|data| rmp_serde::from_slice(&data))
+            .transpose()
+            .map_err(|e| OxenError::basic_str(format!("Failed to deserialize staged data: {e}")))?;
+        let updated = modify(current)?;
+        let mut buf = Vec::new();
+        updated
+            .serialize(&mut Serializer::new(&mut buf))
+            .map_err(|e| OxenError::basic_str(e.to_string()))?;
+        db_w.put(key.as_bytes(), buf)?;
+        Ok(updated)
+    }
+
+    /// Apply a user edit to the staged node at `path`, atomically as
+    /// [`Self::modify_staged_node`] does, under two staging rules:
+    ///
+    /// - A path staged for removal is refused with [`OxenError::PathStagedForRemoval`]. Removal is
+    ///   terminal until the path is unstaged, so an edit must not silently undo it.
+    /// - The status already staged at `path` is preserved by the caller's closure; when nothing was
+    ///   staged there yet, `Added` markers are staged for the parent directories. A path that was
+    ///   already staged keeps whatever markers it has.
+    pub fn edit_staged_node<F>(
+        &self,
+        path: &Path,
+        modify: F,
+    ) -> Result<StagedMerkleTreeNode, OxenError>
+    where
+        F: FnOnce(Option<StagedMerkleTreeNode>) -> Result<StagedMerkleTreeNode, OxenError>,
+    {
+        let mut was_staged = false;
+        let updated = self.modify_staged_node(path, |staged| {
+            if let Some(staged) = &staged
+                && staged.status == StagedEntryStatus::Removed
+            {
+                return Err(OxenError::PathStagedForRemoval(path.into()));
+            }
+            was_staged = staged.is_some();
+            modify(staged)
+        })?;
+        if !was_staged {
+            self.add_parent_directories(path, &Arc::new(Mutex::new(HashSet::new())))?;
+        }
+        Ok(updated)
+    }
+
     /// upsert multiple staged nodes to the staged db
     pub fn upsert_staged_nodes(
         &self,
@@ -277,6 +341,19 @@ impl StagedDBManager {
         let db_w = self.staged_db.write();
         db_w.put(directory_path_str, &buf)?;
 
+        Ok(())
+    }
+
+    /// Stage `Added` directory markers for every ancestor of `path` up to the
+    /// repository root.
+    pub fn add_parent_directories(
+        &self,
+        path: &Path,
+        seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
+    ) -> Result<(), OxenError> {
+        for dir in path.ancestors().skip(1) {
+            self.add_directory(dir, seen_dirs)?;
+        }
         Ok(())
     }
 
