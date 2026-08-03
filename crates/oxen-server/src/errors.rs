@@ -323,6 +323,21 @@ impl error::ResponseError for OxenHttpError {
                             .insert_header(("Retry-After", "5"))
                             .json(error_json)
                     }
+                    OxenError::NoMergeBase { base, head } => {
+                        log::debug!("No merge base between {base} and {head}");
+                        let error_json = json!({
+                            "error": {
+                                "type": MSG_BAD_REQUEST,
+                                "title": "No merge base",
+                                "detail": format!(
+                                    "'{base}' and '{head}' share no history, so there is no merge base to compare from"
+                                ),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
                     OxenError::RevisionNotFound(revision) => {
                         let error_json = json!({
                             "error": {

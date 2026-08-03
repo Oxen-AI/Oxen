@@ -202,6 +202,28 @@ pub fn maybe_parse_two_dot(base_head: &str) -> Result<(String, Option<String>), 
     Ok((base, Some(head)))
 }
 
+/// The commit a diff should compare from. Three dots select the merge base of the two revisions
+/// (git's `base...head`), so commits that landed on base after the fork don't read as part of
+/// head's changes.
+pub fn resolve_diff_base(
+    repo: &LocalRepository,
+    base_commit: Commit,
+    head_commit: &Commit,
+    three_dot: bool,
+) -> Result<Commit, OxenHttpError> {
+    if !three_dot {
+        return Ok(base_commit);
+    }
+    repositories::merge::lowest_common_ancestor_from_commits(repo, &base_commit, head_commit)?
+        .ok_or_else(|| {
+            OxenError::NoMergeBase {
+                base: base_commit.id.clone(),
+                head: head_commit.id.clone(),
+            }
+            .into()
+        })
+}
+
 pub fn resolve_base_head_branches(
     repo: &LocalRepository,
     base: &str,
@@ -385,6 +407,55 @@ mod tests {
         assert_eq!(base, "main");
         assert_eq!(head, "feature");
         assert!(three_dot);
+    }
+
+    /// Builds `base` -> `main_tip` on main and `base` -> `feature_tip` on a branch, so the merge
+    /// base of the two tips is the fork point rather than either tip.
+    async fn forked_repo(repo: &LocalRepository) -> Result<(Commit, Commit, Commit), OxenError> {
+        let main = repositories::branches::current_branch(repo)?.unwrap();
+        let base_path = repo.path.join("base.txt");
+        liboxen::util::fs::write_to_path(&base_path, "base")?;
+        repositories::add(repo, &base_path).await?;
+        let fork_point = repositories::commit(repo, "fork point")?;
+
+        repositories::branches::create_checkout(repo, "feature")?;
+        let feature_path = repo.path.join("feature.txt");
+        liboxen::util::fs::write_to_path(&feature_path, "feature")?;
+        repositories::add(repo, &feature_path).await?;
+        let feature_tip = repositories::commit(repo, "feature work")?;
+
+        repositories::checkout(repo, &main.name).await?;
+        let main_path = repo.path.join("main.txt");
+        liboxen::util::fs::write_to_path(&main_path, "main")?;
+        repositories::add(repo, &main_path).await?;
+        let main_tip = repositories::commit(repo, "main work")?;
+
+        Ok((fork_point, main_tip, feature_tip))
+    }
+
+    #[tokio::test]
+    async fn test_resolve_diff_base_two_dots_keeps_the_base_tip() -> Result<(), OxenError> {
+        liboxen::test::run_one_commit_local_repo_test_async(|repo| async move {
+            let (_, main_tip, feature_tip) = forked_repo(&repo).await?;
+            let resolved = resolve_diff_base(&repo, main_tip.clone(), &feature_tip, false).unwrap();
+            assert_eq!(resolved.id, main_tip.id);
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_resolve_diff_base_three_dots_uses_the_fork_point() -> Result<(), OxenError> {
+        liboxen::test::run_one_commit_local_repo_test_async(|repo| async move {
+            let (fork_point, main_tip, feature_tip) = forked_repo(&repo).await?;
+            // Without this the diff would carry main's post-fork commits as if they were
+            // feature's changes.
+            let resolved = resolve_diff_base(&repo, main_tip.clone(), &feature_tip, true).unwrap();
+            assert_eq!(resolved.id, fork_point.id);
+            assert_ne!(resolved.id, main_tip.id);
+            Ok(())
+        })
+        .await
     }
 
     #[test]

@@ -15,7 +15,25 @@ use super::StatusMessage;
 pub struct CompareCommits {
     pub base_commit: Commit,
     pub head_commit: Commit,
-    pub commits: Vec<Commit>,
+    pub commits: Vec<CompareCommit>,
+}
+
+/// Which side of a comparison a commit came from, mirroring the markers git's
+/// `log --left-right base...head` prints.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CommitSide {
+    Base,
+    Head,
+}
+
+/// A commit in a comparison, tagged with the side it came from. Every commit of a two-dot
+/// comparison is on the head side; a three-dot comparison reports commits from both.
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+pub struct CompareCommit {
+    #[serde(flatten)]
+    pub commit: Commit,
+    pub side: CommitSide,
 }
 
 #[derive(Serialize, Deserialize, Debug, ToSchema)]

@@ -898,6 +898,18 @@ pub fn list_between(
 /// The second walk pops by timestamp only to order the output newest first; a
 /// commit still always precedes its parents because a parent is pushed to the
 /// heap only after its child has been popped.
+/// The commits reachable from exactly one of `base` and `head`, as `(base_only, head_only)`.
+/// Git's `log base...head` shows this set, marking which side each commit came from.
+pub async fn list_symmetric_difference(
+    repo: &LocalRepository,
+    base: &Commit,
+    head: &Commit,
+) -> Result<(Vec<Commit>, Vec<Commit>), OxenError> {
+    let head_only = list_between_exclusive(repo, base, head).await?;
+    let base_only = list_between_exclusive(repo, head, base).await?;
+    Ok((base_only, head_only))
+}
+
 pub async fn list_between_exclusive(
     repo: &LocalRepository,
     base: &Commit,

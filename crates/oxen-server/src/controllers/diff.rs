@@ -17,8 +17,8 @@ use liboxen::model::{Commit, CommitEntry, DataFrameSize, LocalRepository, Schema
 use liboxen::opts::DFOpts;
 use liboxen::opts::df_opts::DFOptsView;
 use liboxen::view::compare::{
-    CompareCommits, CompareCommitsResponse, CompareDupes, CompareEntries, CompareEntryResponse,
-    CompareTabular, CompareTabularResponse,
+    CommitSide, CompareCommit, CompareCommits, CompareCommitsResponse, CompareDupes,
+    CompareEntries, CompareEntryResponse, CompareTabular, CompareTabularResponse,
 };
 use liboxen::view::compare::{TabularCompareBody, TabularCompareTargetBody};
 use liboxen::view::diff::{DirDiffStatus, DirDiffTreeSummary, DirTreeDiffResponse};
@@ -33,19 +33,19 @@ use liboxen::{constants, repositories, util};
 use crate::helpers::get_repo;
 use crate::params::{
     DFOptsQuery, PageNumQuery, app_data, df_opts_query, parse_base_head, parse_two_dot, path_param,
-    resolve_base_head,
+    resolve_base_head, resolve_diff_base,
 };
 
 /// List commits between two revisions
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/commits",
-    description = "List commits between a 'base' and 'head' commit.",
+    description = "List commits between a 'base' and 'head' commit. Two dots list what head added; three dots list the commits on either side but not both, each tagged with the side it came from.",
     tags = ["Compare", "Commits"], // confusing that this endpoint isn't in the 'commits' namespace. People will look there, so listing it there as well.
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "satellite-images"),
-        ("base_head" = String, Path, description = "The base and head revisions separated by '..'", example = "main..feature/add-labels"),
+        ("base_head" = String, Path, description = "The base and head revisions separated by '..', or '...' for the commits on either side but not both", example = "main...feature/add-labels"),
         ("page" = Option<usize>, Query, description = "Page number for pagination (starts at 1)"),
         ("page_size" = Option<usize>, Query, description = "Page size for pagination")
     ),
@@ -70,16 +70,45 @@ pub async fn commits(
     let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
 
-    // Parse the base and head from the base..head string
-    let (base, head) = parse_two_dot(&base_head)?;
+    // Parse the base and head from the base..head or base...head string
+    let (base, head, three_dot) = parse_base_head(&base_head)?;
     let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head)?;
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
 
-    let commits =
+    // Three dots (base...head) list the commits on either side of the fork but not both, the way
+    // git's `log base...head` does; two dots list only what head added.
+    let mut commits: Vec<CompareCommit> = if three_dot {
+        let (base_only, head_only) = repositories::commits::list_symmetric_difference(
+            &repository,
+            &base_commit,
+            &head_commit,
+        )
+        .await?;
+        base_only
+            .into_iter()
+            .map(|commit| CompareCommit {
+                commit,
+                side: CommitSide::Base,
+            })
+            .chain(head_only.into_iter().map(|commit| CompareCommit {
+                commit,
+                side: CommitSide::Head,
+            }))
+            .collect()
+    } else {
         repositories::commits::list_between_exclusive(&repository, &base_commit, &head_commit)
-            .await?;
+            .await?
+            .into_iter()
+            .map(|commit| CompareCommit {
+                commit,
+                side: CommitSide::Head,
+            })
+            .collect()
+    };
+    // Newest first across both sides, matching git's default log order.
+    commits.sort_by_key(|c| std::cmp::Reverse(c.commit.timestamp));
     let (paginated, pagination) = util::paginate(commits, page, page_size);
 
     let compare = CompareCommits {
@@ -137,18 +166,7 @@ pub async fn entries(
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
-    // Three dots (base...head) diff from the merge base, so commits that landed
-    // on the base branch after the fork don't read as part of head's changes.
-    let base_commit = if three_dot {
-        repositories::merge::lowest_common_ancestor_from_commits(
-            &repository,
-            &base_commit,
-            &head_commit,
-        )?
-        .ok_or_else(|| OxenError::basic_str("No merge base between the requested revisions"))?
-    } else {
-        base_commit
-    };
+    let base_commit = resolve_diff_base(&repository, base_commit, &head_commit, three_dot)?;
 
     let entries_diff = repositories::diffs::list_diff_entries(
         &repository,
@@ -225,18 +243,7 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
-    // Three dots (base...head) diff from the merge base, so commits that landed
-    // on the base branch after the fork don't read as part of head's changes.
-    let base_commit = if three_dot {
-        repositories::merge::lowest_common_ancestor_from_commits(
-            &repository,
-            &base_commit,
-            &head_commit,
-        )?
-        .ok_or_else(|| OxenError::basic_str("No merge base between the requested revisions"))?
-    } else {
-        base_commit
-    };
+    let base_commit = resolve_diff_base(&repository, base_commit, &head_commit, three_dot)?;
 
     let dir_diffs =
         repositories::diffs::list_changed_dirs(&repository, &base_commit, &head_commit).await?;
@@ -294,18 +301,7 @@ pub async fn dir_entries(
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
-    // Three dots (base...head) diff from the merge base, so commits that landed
-    // on the base branch after the fork don't read as part of head's changes.
-    let base_commit = if three_dot {
-        repositories::merge::lowest_common_ancestor_from_commits(
-            &repository,
-            &base_commit,
-            &head_commit,
-        )?
-        .ok_or_else(|| OxenError::basic_str("No merge base between the requested revisions"))?
-    } else {
-        base_commit
-    };
+    let base_commit = resolve_diff_base(&repository, base_commit, &head_commit, three_dot)?;
     let dir = PathBuf::from(dir);
 
     let entries_diff = repositories::diffs::list_diff_entries(
@@ -907,12 +903,10 @@ fn parse_base_head_resource(
 ) -> Result<(Commit, Commit, PathBuf), OxenHttpError> {
     log::debug!("Parsing base_head_resource: {base_head}");
 
-    // A three-dot range reaching here is refused rather than read as two dots; an unparseable
-    // one stays a missing resource, since head carries the resource path as well as the revision.
-    let (base, head) = parse_two_dot(base_head).map_err(|err| match err {
-        OxenHttpError::BadRequest(_) => err,
-        _ => OxenError::resource_not_found(base_head).into(),
-    })?;
+    // An unparseable range stays a missing resource, since head carries the resource path as well
+    // as the revision.
+    let (base, head, three_dot) =
+        parse_base_head(base_head).map_err(|_| OxenError::resource_not_found(base_head))?;
     let base = base.as_str();
     let head = head.as_str();
 
@@ -944,6 +938,7 @@ fn parse_base_head_resource(
 
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
     let resource = resource.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
+    let base_commit = resolve_diff_base(repo, base_commit, &head_commit, three_dot)?;
 
     Ok((base_commit, head_commit, resource))
 }

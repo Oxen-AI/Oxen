@@ -158,6 +158,9 @@ pub use crate::core::v_latest::commits::list_between;
 /// List commits reachable from head but not base (git `base..head`)
 pub use crate::core::v_latest::commits::list_between_exclusive;
 
+/// Commits reachable from exactly one of two revisions, as `(base_only, head_only)`
+pub use crate::core::v_latest::commits::list_symmetric_difference;
+
 /// Get a list of commits by the commit message
 pub fn get_by_message(
     repo: &LocalRepository,
@@ -834,6 +837,43 @@ mod tests {
                 assert_range_matches_reference(repo, base, head).await;
             }
         }
+    }
+
+    /// Mirrors `git log base...head`: the commits on either side of the fork but not both. A
+    /// merge-base substitution would instead yield only head's side, which is the two-dot answer.
+    #[tokio::test]
+    async fn test_list_symmetric_difference_returns_both_sides() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let main = repositories::branches::current_branch(&repo)?.unwrap();
+            let fork = add_commit(&repo, "fork").await?;
+
+            repositories::branches::create_checkout(&repo, "feature")?;
+            let d1 = add_commit(&repo, "d1").await?;
+            let head = add_commit(&repo, "d2").await?;
+
+            repositories::checkout(&repo, &main.name).await?;
+            let base = add_commit(&repo, "c1").await?;
+
+            let (base_only, head_only) =
+                repositories::commits::list_symmetric_difference(&repo, &base, &head).await?;
+
+            let base_ids: Vec<&str> = base_only.iter().map(|c| c.id.as_str()).collect();
+            let head_ids: Vec<&str> = head_only.iter().map(|c| c.id.as_str()).collect();
+            assert_eq!(base_ids, vec![base.id.as_str()], "base side is c1 only");
+            assert_eq!(
+                head_ids.len(),
+                2,
+                "head side is d1 and d2, got {head_ids:?}"
+            );
+            assert!(head_ids.contains(&d1.id.as_str()));
+            assert!(head_ids.contains(&head.id.as_str()));
+            assert!(
+                !base_ids.contains(&fork.id.as_str()) && !head_ids.contains(&fork.id.as_str()),
+                "the shared fork point belongs to neither side"
+            );
+            Ok(())
+        })
+        .await
     }
 
     #[tokio::test]
