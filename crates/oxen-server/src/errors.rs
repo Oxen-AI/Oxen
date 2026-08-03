@@ -3,6 +3,7 @@ use actix_web::{HttpResponse, error};
 use derive_more::{Display, Error};
 use liboxen::constants;
 use liboxen::core::db::data_frames::DataFrameError;
+use liboxen::core::db::merkle_node::merkle_node_db::MerkleDbError;
 use liboxen::error::{OxenError, PathBufError, StringError};
 use liboxen::model::{Branch, Workspace};
 use liboxen::view::http::{
@@ -497,6 +498,25 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::BadRequest().json(error_json)
                     }
+                    // Distinct from UnsupportedRepoVersion above: that one trusts the repo's
+                    // declared min_version, which can disagree with the bytes actually on disk.
+                    // This arm is reached when a node itself turns out to predate the format.
+                    OxenError::MerkleDbError(MerkleDbError::PreV025Node { dtype, hash }) => {
+                        // Already logged where the node was classified, which also covers the
+                        // read paths that never reach an HTTP response.
+                        let error_json = json!({
+                            "error": {
+                                "type": "pre_v0_25_node_format",
+                                "title":
+                                    "Retired Repository Storage Format",
+                                "detail":
+                                    format!("This repository contains Merkle nodes written before Oxen v0.25.0, which this server cannot read (first encountered: {dtype:?} node {hash})."),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
                     OxenError::ImportFileError(desc) => {
                         let error_json = json!({
                             "error": {
@@ -838,6 +858,20 @@ mod tests {
         // A 5xx here reads as transient to clients, which retry it with backoff. The repo's
         // on-disk format never changes on its own, so the status has to be terminal.
         let error = OxenHttpError::from(OxenError::UnsupportedRepoVersion("0.19.0".into()));
+        let status = error.error_response().status();
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(!status.is_server_error());
+    }
+
+    #[test]
+    fn test_pre_v0_25_node_is_a_client_error() {
+        // Same reasoning as above: a node that predates the format never becomes readable by
+        // retrying, so the status has to be terminal rather than the 500 this used to return.
+        let error = OxenHttpError::from(OxenError::MerkleDbError(MerkleDbError::PreV025Node {
+            dtype: liboxen::model::MerkleTreeNodeType::VNode,
+            hash: liboxen::model::MerkleHash::new(42),
+        }));
         let status = error.error_response().status();
 
         assert_eq!(status, StatusCode::BAD_REQUEST);

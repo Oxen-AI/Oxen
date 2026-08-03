@@ -11,22 +11,9 @@ use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::util;
 use liboxen::util::telemetry;
 
-mod crash_diagnostics;
-
-pub mod app_data;
-pub mod auth;
-pub mod config;
-pub mod controllers;
-pub mod errors;
-pub mod helpers;
-pub mod middleware;
-pub mod params;
-pub mod routes;
-pub mod services;
-#[cfg(test)]
-pub(crate) mod test;
-
-pub(crate) mod metrics;
+// Imported as modules rather than as items: the `crate::`-rooted paths below — notably the utoipa
+// `paths(...)` list — resolve through this crate's root.
+use oxen_server::{app_data, auth, config, controllers, crash_diagnostics, metrics, routes};
 
 extern crate liboxen;
 extern crate log;
@@ -37,7 +24,9 @@ use actix_web::{App, HttpServer, web};
 use actix_web_httpauth::middleware::HttpAuthentication;
 use thiserror::Error;
 
-use middleware::{MetricsMiddleware, RequestIdMiddleware, RequestStartLogMiddleware, request_id};
+use oxen_server::middleware::{
+    MetricsMiddleware, RequestIdMiddleware, RequestStartLogMiddleware, request_id,
+};
 use tracing_actix_web::TracingLogger;
 
 // Note: These 'view' imports are all for the auto-generated docs with utoipa
@@ -81,9 +70,14 @@ use utoipa_swagger_ui::SwaggerUi;
 
 use clap::{Parser, Subcommand};
 
+use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+use liboxen::constants;
+use liboxen::model::LocalRepository;
+use liboxen::repositories;
 
 use crate::config::Config;
 use crate::config::storage_policy::StoragePolicyError;
@@ -380,6 +374,19 @@ enum ServerCommand {
         )]
         output: PathBuf,
     },
+
+    /// Report which repositories hold Merkle nodes predating the v0.25.0 on-disk format
+    #[command(name = "scan-node-format")]
+    ScanNodeFormat {
+        #[arg(long = "namespace", help = "Limit the scan to a single namespace")]
+        namespace: Option<String>,
+
+        #[arg(
+            long = "limit",
+            help = "Stop after scanning this many repositories, for sampling a large fleet"
+        )]
+        limit: Option<usize>,
+    },
 }
 
 /// Initialize Sentry crash reporting when `dsn` is set (from `SENTRY_DSN`). Hold the returned
@@ -467,6 +474,11 @@ enum ServerError {
     },
     #[error("{0}")]
     StoragePolicy(#[from] StoragePolicyError),
+    #[error("No such namespace {namespace:?} under sync dir {sync_dir:?}")]
+    NamespaceNotFound {
+        namespace: String,
+        sync_dir: PathBuf,
+    },
     #[cfg(feature = "metrics")]
     #[error("Invalid OXEN_METRICS_PORT value: {0} (parsing error: {1})")]
     InvalidPort(String, std::num::ParseIntError),
@@ -562,7 +574,170 @@ async fn server() -> Result<(), ServerError> {
             );
             Ok(())
         }
+
+        ServerCommand::ScanNodeFormat { namespace, limit } => {
+            scan_node_format(&sync_dir, namespace.as_deref(), limit)
+        }
     }
+}
+
+/// Whether `path` is a directory and not a symlink to one.
+///
+/// Uses `metadata.is_dir()` rather than `path.is_dir()` to avoid following symlinks — Oxen does
+/// not track them, and a symlinked namespace or repo would otherwise be walked as though it were
+/// a second copy, counting the same repository twice.
+fn is_real_dir(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|metadata| metadata.is_dir())
+        .unwrap_or(false)
+}
+
+/// Walk repositories under `sync_dir` and report which hold pre-v0.25.0 Merkle nodes.
+///
+/// Read-only. Repositories the current build refuses to open at all are counted separately from
+/// those that open but contain unreadable nodes: the two have different remedies, and only the
+/// second is invisible to a `min_version` check.
+fn scan_node_format(
+    sync_dir: &Path,
+    namespace: Option<&str>,
+    limit: Option<usize>,
+) -> Result<(), ServerError> {
+    let namespaces = match namespace {
+        // Fail loudly on a namespace that isn't there. Left to the walk below it would read_dir,
+        // fail, and be skipped, printing a zero summary indistinguishable from a clean namespace
+        // — the one output a caller must be able to trust.
+        Some(one) => {
+            let namespace_dir = sync_dir.join(one);
+            if !is_real_dir(&namespace_dir) {
+                return Err(ServerError::NamespaceNotFound {
+                    namespace: one.to_string(),
+                    sync_dir: sync_dir.to_path_buf(),
+                });
+            }
+            vec![namespace_dir]
+        }
+        None => {
+            let mut dirs: Vec<PathBuf> = std::fs::read_dir(sync_dir)?
+                .filter_map(|entry| entry.ok().map(|e| e.path()))
+                .filter(|path| is_real_dir(path))
+                .collect();
+            dirs.sort();
+            dirs
+        }
+    };
+
+    // Outcomes are counted apart because they have different remedies: pre-0.25 repos get
+    // migrated, damaged and unscannable ones need a person, and unopenable ones are the
+    // `min_version` population a config sweep already finds. `unlistable` counts namespaces
+    // rather than repos — it is the one that says the totals below are incomplete.
+    let (mut scanned, mut affected, mut damaged, mut unopenable, mut unscannable, mut unlistable) =
+        (0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
+    let mut totals: BTreeMap<String, usize> = BTreeMap::new();
+
+    'outer: for namespace_dir in namespaces {
+        // A namespace that cannot be listed hides an unknown number of repositories, so skipping
+        // it quietly would understate every total below with nothing to say so. Reported and
+        // counted rather than fatal: unlike the explicit-namespace case, which is a caller
+        // mistake with nothing left to do, one bad namespace should not cost the whole run.
+        let entries = match std::fs::read_dir(&namespace_dir) {
+            Ok(entries) => entries,
+            Err(err) => {
+                unlistable += 1;
+                let label = namespace_dir
+                    .strip_prefix(sync_dir)
+                    .unwrap_or(&namespace_dir)
+                    .display();
+                // KEEP as println! -- do not log!
+                println!("{label}\tcannot list namespace: {err}");
+                continue;
+            }
+        };
+        let mut repo_dirs: Vec<PathBuf> = entries
+            .filter_map(|entry| entry.ok().map(|e| e.path()))
+            .filter(|path| is_real_dir(path) && is_real_dir(&path.join(constants::OXEN_HIDDEN_DIR)))
+            .collect();
+        repo_dirs.sort();
+
+        for repo_dir in repo_dirs {
+            if limit.is_some_and(|max| scanned >= max) {
+                break 'outer;
+            }
+            scanned += 1;
+            let label = repo_dir
+                .strip_prefix(sync_dir)
+                .unwrap_or(&repo_dir)
+                .display()
+                .to_string();
+
+            let repo = match LocalRepository::from_dir(&repo_dir) {
+                Ok(repo) => repo,
+                Err(err) => {
+                    unopenable += 1;
+                    // KEEP as println! -- do not log!
+                    println!("{label}\tcannot open: {err}");
+                    continue;
+                }
+            };
+
+            // One unreadable repo must not end a fleet-wide scan: the caller loses every count
+            // gathered so far, and a truncated run looks much like a short one.
+            let report = match repositories::fsck::scan_node_format(&repo) {
+                Ok(report) => report,
+                Err(err) => {
+                    unscannable += 1;
+                    // KEEP as println! -- do not log!
+                    println!("{label}\tcannot scan: {err}");
+                    continue;
+                }
+            };
+
+            let has_legacy = report.is_affected();
+            let has_damage = report.undecodable > 0;
+            if !has_legacy && !has_damage {
+                continue;
+            }
+            if has_legacy {
+                affected += 1;
+            }
+            if has_damage {
+                damaged += 1;
+            }
+            let mut by_type: Vec<String> = report
+                .pre_v025
+                .iter()
+                .map(|(dtype, count)| {
+                    *totals.entry(format!("{dtype:?}")).or_default() += count;
+                    format!("{dtype:?}={count}")
+                })
+                .collect();
+            by_type.sort();
+            if report.undecodable > 0 {
+                by_type.push(format!("undecodable={}", report.undecodable));
+            }
+            // KEEP as println! -- do not log!
+            println!(
+                "{label}\tnodes={}\tpre_v0_25={}\t{}",
+                report.total_nodes,
+                report.pre_v025_total(),
+                by_type.join(" ")
+            );
+        }
+    }
+
+    // KEEP as println! -- do not log!
+    println!(
+        "\nscanned={scanned} pre_v0_25_repos={affected} damaged_repos={damaged} \
+         could_not_open={unopenable} could_not_scan={unscannable} \
+         could_not_list_namespaces={unlistable}"
+    );
+    if !totals.is_empty() {
+        let breakdown: Vec<String> = totals
+            .iter()
+            .map(|(dtype, count)| format!("{dtype}={count}"))
+            .collect();
+        println!("pre-v0.25.0 nodes by type: {}", breakdown.join(" "));
+    }
+    Ok(())
 }
 
 /// Initialize the Prometheus metrics server on the port specified by `OXEN_METRICS_PORT`.

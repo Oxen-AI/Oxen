@@ -16,6 +16,7 @@ use tokio::time::{Interval, interval};
 
 use crate::app_data::OxenAppData;
 use crate::errors::OxenHttpError;
+use crate::tasks;
 
 /// Look up a repo by `<namespace>/<name>` under the server's sync dir.
 pub fn get_repo(
@@ -113,6 +114,9 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 /// the body's `status` field — rather than as an error status code. `work` must own everything it
 /// captures (`'static`); resolve the repo and read the request body before calling this so those
 /// failures still return a real error status.
+///
+/// Call from the request handler, not from another task — `work` inherits the calling thread's
+/// crash-reporting context, and a panic inside it reports under that request.
 pub fn stream_with_heartbeat<F, T>(work: F) -> HttpResponse
 where
     F: Future<Output = Result<T, OxenError>> + 'static,
@@ -134,7 +138,7 @@ where
 
     let body = stream::unfold(
         State::Running {
-            work: Box::pin(work),
+            work: Box::pin(tasks::inherit_hub(work)),
             ticker: interval(heartbeat_interval),
         },
         |state| async move {

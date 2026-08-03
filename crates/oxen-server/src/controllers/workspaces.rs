@@ -1,6 +1,7 @@
 use crate::errors::{OxenHttpError, WorkspaceBranch};
 use crate::helpers::get_repo;
 use crate::params::{NameParam, app_data, path_param};
+use crate::tasks;
 
 use liboxen::constants::INITIAL_COMMIT_MSG;
 use liboxen::core::repo_locks;
@@ -273,7 +274,7 @@ pub async fn clear(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     // write lands mid-clear. The sweep is synchronous IO, so it runs off the actix worker thread.
     let clear_repo = repo.clone();
     repo_locks::with_repo_exclusive(&repo, async move {
-        tokio::task::spawn_blocking(move || repositories::workspaces::clear(&clear_repo))
+        tasks::spawn_blocking(move || repositories::workspaces::clear(&clear_repo))
             .await
             .map_err(OxenError::from)?
     })
@@ -353,7 +354,7 @@ pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpErro
     };
     // The mergeability check does synchronous Merkle-store reads, so run it on the blocking pool
     // rather than stalling an async worker for the duration.
-    let mergeable = tokio::task::spawn_blocking(move || {
+    let mergeable = tasks::spawn_blocking(move || {
         repositories::workspaces::mergeability(&workspace, &branch_name)
     })
     .await
