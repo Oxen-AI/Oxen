@@ -774,6 +774,10 @@ mod tests {
         let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
         let schema: Schema = serde_json::from_slice(&bytes)?;
         assert_eq!(schema.metadata, Some(metadata));
+        assert!(
+            !repositories::workspaces::data_frames::has_staged_table(&workspace, file_path)?,
+            "reading a schema should not build a staged table for an unindexed data frame"
+        );
 
         drop(workspace);
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
@@ -955,6 +959,10 @@ mod tests {
                 .route(
                     "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/schema/{path:.*}",
                     web::put().to(controllers::workspaces::data_frames::put_schema_metadata),
+                )
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/schema/{path:.*}",
+                    web::get().to(controllers::workspaces::data_frames::get_schema),
                 ),
         )
         .await;
@@ -969,6 +977,20 @@ mod tests {
             repositories::workspaces::data_frames::count(&workspace, file_path)?,
             3,
             "writing metadata must not discard rows from a stale staged table"
+        );
+        assert!(!repositories::workspaces::data_frames::is_indexed(
+            &workspace, file_path
+        )?);
+
+        // Reading the schema takes the same unindexed branch, so it must leave the stale table
+        // alone too.
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        assert_eq!(
+            repositories::workspaces::data_frames::count(&workspace, file_path)?,
+            3,
+            "reading a schema must not discard rows from a stale staged table"
         );
         assert!(!repositories::workspaces::data_frames::is_indexed(
             &workspace, file_path
