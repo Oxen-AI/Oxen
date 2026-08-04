@@ -285,6 +285,125 @@ mod tests {
 
     use super::*;
 
+    // A directory's stored entry count has to agree with what the directory actually holds,
+    // including after a subdirectory is removed. Both counts are asserted so neither can drift
+    // past the other unnoticed.
+    #[tokio::test]
+    async fn test_removing_a_subdirectory_updates_parent_num_entries() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            util::fs::write_to_path(repo.path.join("top.txt"), "top")?;
+            test::populate_dir_with_txt_files(repo.path.join("d"), "f", 2)?;
+
+            repositories::add(&repo, &repo.path).await?;
+            let commit = repositories::commit(&repo, "add top.txt and d/")?;
+
+            let root = repositories::tree::get_root_with_children(&repo, &commit)?
+                .expect("commit should have a tree");
+            let root_dir = repositories::tree::get_root_dir(&root)?;
+            assert_eq!(repositories::tree::count_dir_entries(root_dir)?, 2);
+            assert_eq!(root_dir.dir()?.num_entries(), 2);
+
+            let rm_opts = RmOpts {
+                path: PathBuf::from("d"),
+                recursive: true,
+                ..Default::default()
+            };
+            repositories::rm(&repo, &rm_opts).await?;
+            let commit = repositories::commit(&repo, "remove d/")?;
+
+            let root = repositories::tree::get_root_with_children(&repo, &commit)?
+                .expect("commit should have a tree");
+            let root_dir = repositories::tree::get_root_dir(&root)?;
+            assert_eq!(repositories::tree::count_dir_entries(root_dir)?, 1);
+            assert_eq!(root_dir.dir()?.num_entries(), 1);
+
+            Ok(())
+        })
+        .await
+    }
+
+    // Entry counts are held across a sequence that exercises every staged status a directory's
+    // children can carry: added, modified, unmodified, and removed, at the root and nested.
+    #[tokio::test]
+    async fn test_dir_num_entries_matches_contents_across_commits() -> Result<(), OxenError> {
+        // Assert the directory's stored count and the count its vnodes actually hold, so a wrong
+        // stored value can't hide behind a correct tree or the reverse.
+        fn assert_entries(
+            repo: &LocalRepository,
+            commit: &Commit,
+            dir: impl AsRef<Path>,
+            expected: u64,
+        ) -> Result<(), OxenError> {
+            let dir = dir.as_ref();
+            let node = repositories::tree::get_dir_with_children(repo, commit, dir, None)?
+                .unwrap_or_else(|| panic!("dir {dir:?} should exist in commit {}", commit.id));
+            assert_eq!(
+                repositories::tree::count_dir_entries(&node)?,
+                expected,
+                "true entry count for {dir:?} at commit {:?}",
+                commit.message
+            );
+            assert_eq!(
+                node.dir()?.num_entries(),
+                expected,
+                "stored num_entries for {dir:?} at commit {:?}",
+                commit.message
+            );
+            Ok(())
+        }
+
+        test::run_empty_local_repo_test_async(|repo| async move {
+            util::fs::write_to_path(repo.path.join("top.txt"), "top")?;
+            util::fs::create_dir_all(repo.path.join("a/b"))?;
+            util::fs::write_to_path(repo.path.join("a/1.txt"), "one")?;
+            util::fs::write_to_path(repo.path.join("a/b/2.txt"), "two")?;
+            util::fs::write_to_path(repo.path.join("a/b/3.txt"), "three")?;
+            repositories::add(&repo, &repo.path).await?;
+            let commit = repositories::commit(&repo, "initial tree")?;
+
+            assert_entries(&repo, &commit, "", 2)?; // top.txt, a
+            assert_entries(&repo, &commit, "a", 2)?; // 1.txt, b
+            assert_entries(&repo, &commit, "a/b", 2)?; // 2.txt, 3.txt
+
+            // Add a file and modify another, leaving the rest unmodified
+            util::fs::write_to_path(repo.path.join("a/4.txt"), "four")?;
+            util::fs::write_to_path(repo.path.join("top.txt"), "top, revised")?;
+            repositories::add(&repo, &repo.path).await?;
+            let commit = repositories::commit(&repo, "add a/4.txt, modify top.txt")?;
+
+            assert_entries(&repo, &commit, "", 2)?;
+            assert_entries(&repo, &commit, "a", 3)?; // 1.txt, b, 4.txt
+            assert_entries(&repo, &commit, "a/b", 2)?;
+
+            // Remove a single file from the nested directory
+            let rm_opts = RmOpts {
+                path: PathBuf::from("a/b/2.txt"),
+                ..Default::default()
+            };
+            repositories::rm(&repo, &rm_opts).await?;
+            let commit = repositories::commit(&repo, "remove a/b/2.txt")?;
+
+            assert_entries(&repo, &commit, "", 2)?;
+            assert_entries(&repo, &commit, "a", 3)?;
+            assert_entries(&repo, &commit, "a/b", 1)?; // 3.txt
+
+            // Remove the nested directory outright
+            let rm_opts = RmOpts {
+                path: PathBuf::from("a/b"),
+                recursive: true,
+                ..Default::default()
+            };
+            repositories::rm(&repo, &rm_opts).await?;
+            let commit = repositories::commit(&repo, "remove a/b")?;
+
+            assert_entries(&repo, &commit, "", 2)?;
+            assert_entries(&repo, &commit, "a", 2)?; // 1.txt, 4.txt
+
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_command_commit_file() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {

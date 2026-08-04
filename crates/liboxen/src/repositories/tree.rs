@@ -366,6 +366,27 @@ pub fn list_files_and_folders_map(
     Ok(children)
 }
 
+/// Number of files and directories directly inside a directory, counted from the entries its
+/// child VNodes actually hold rather than read from the directory's stored `num_entries`.
+///
+/// The node must already have its VNode children and their entries loaded.
+pub fn count_dir_entries(node: &MerkleTreeNode) -> Result<u64, OxenError> {
+    if MerkleTreeNodeType::Dir != node.node.node_type() {
+        return Err(OxenError::basic_str(format!(
+            "count_dir_entries Merkle tree node is not a directory: '{:?}'",
+            node.node.node_type()
+        )));
+    }
+
+    // The dir node will have vnode children, whose children are the entries
+    Ok(node
+        .children
+        .iter()
+        .filter(|child| matches!(child.node, EMerkleTreeNode::VNode(_)))
+        .map(|vnode| vnode.children.len() as u64)
+        .sum())
+}
+
 /// Will traverse the given paths and return the node hashes in the `hashes` HashSet<MerkleHash>
 /// If starting_node_hashes is provided, it will only add nodes that are not in the starting_node_hashes
 pub fn collect_nodes_along_path(
