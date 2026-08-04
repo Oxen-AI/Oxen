@@ -28,6 +28,7 @@ use crate::helpers::{get_repo, get_repo_async};
 use crate::params::PageNumQuery;
 use crate::params::parse_resource_async;
 use crate::params::{app_data, maybe_parse_two_dot, path_param};
+use crate::tasks;
 
 use actix_web::{Error, HttpRequest, HttpResponse, web};
 use async_compression::tokio::bufread::GzipDecoder;
@@ -415,9 +416,15 @@ pub async fn parents(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHt
     let name = path_param(&req, "repo_name")?.to_string();
     let commit_or_branch = path_param(&req, "commit_or_branch")?.to_string();
     let repository = get_repo(app_data, namespace, name)?;
-    let commit = repositories::revisions::get(&repository, &commit_or_branch)?
-        .ok_or_else(|| OxenError::RevisionNotFound(commit_or_branch.into()))?;
-    let parents = repositories::commits::list_from(&repository, &commit.id)?;
+    // Resolving the revision and walking its history are sync RocksDB reads, and opening the
+    // commit-count cache can spin for the whole LOCK-retry window.
+    let parents = tasks::spawn_blocking(move || {
+        let commit = repositories::revisions::get(&repository, &commit_or_branch)?
+            .ok_or_else(|| OxenError::RevisionNotFound(commit_or_branch.into()))?;
+        repositories::commits::list_from(&repository, &commit.id)
+    })
+    .await
+    .map_err(OxenError::from)??;
     Ok(HttpResponse::Ok().json(ListCommitResponse {
         status: StatusMessage::resource_found(),
         commits: parents,
@@ -504,18 +511,26 @@ pub async fn download_dir_hashes_db(
 
     // Let user pass in base..head to download a range of commits
     // or we just get all the commits from the base commit to the first commit
-    let commits = match maybe_parse_two_dot(&base_head)? {
-        (base_commit_id, Some(head_commit_id)) => {
-            let base_commit = repositories::revisions::get(&repository, &base_commit_id)?
-                .ok_or_else(|| OxenError::RevisionNotFound(base_commit_id.into()))?;
-            let head_commit = repositories::revisions::get(&repository, &head_commit_id)?
-                .ok_or_else(|| OxenError::RevisionNotFound(head_commit_id.into()))?;
+    let range = maybe_parse_two_dot(&base_head)?;
 
-            repositories::commits::list_between(&repository, &base_commit, &head_commit)?
-        }
-        (revision, None) => repositories::commits::list_from(&repository, &revision)?,
-    };
-    let buffer = compress_commits(&repository, &commits)?;
+    // Resolving revisions, walking history, and tarring the dir_hashes DBs are all sync RocksDB
+    // and gzip work, and opening the commit-count cache can spin for the whole LOCK-retry window.
+    let buffer = tasks::spawn_blocking(move || -> Result<Vec<u8>, OxenError> {
+        let commits = match range {
+            (base_commit_id, Some(head_commit_id)) => {
+                let base_commit = repositories::revisions::get(&repository, &base_commit_id)?
+                    .ok_or_else(|| OxenError::RevisionNotFound(base_commit_id.into()))?;
+                let head_commit = repositories::revisions::get(&repository, &head_commit_id)?
+                    .ok_or_else(|| OxenError::RevisionNotFound(head_commit_id.into()))?;
+
+                repositories::commits::list_between(&repository, &base_commit, &head_commit)?
+            }
+            (revision, None) => repositories::commits::list_from(&repository, &revision)?,
+        };
+        compress_commits(&repository, &commits)
+    })
+    .await
+    .map_err(OxenError::from)??;
 
     Ok(HttpResponse::Ok().body(buffer))
 }

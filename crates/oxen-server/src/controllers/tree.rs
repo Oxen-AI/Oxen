@@ -365,43 +365,52 @@ pub async fn download_tree_nodes(
     );
 
     let (base_commit_id, maybe_head_commit_id) = maybe_parse_two_dot(&base_head_str)?;
-    let base_commit = repositories::commits::get_by_id(&repository, &base_commit_id)?
-        .ok_or_else(|| OxenError::RevisionNotFound(base_commit_id.into()))?;
 
     // Parse the subtrees
     let subtrees = get_subtree_paths(&query.subtrees)?;
+    let depth = query.depth;
 
-    // Could be a single commit or a range of commits
-    let commits = get_commit_list(&repository, &base_commit, &maybe_head_commit_id, &subtrees)?;
-    log::debug!("download_tree_nodes got {} commits", commits.len());
+    // Resolving the commits, collecting node hashes, and compressing them are all sync RocksDB
+    // and gzip work, and opening the commit-count cache can spin for the whole LOCK-retry window.
+    let buffer = tasks::spawn_blocking(move || -> Result<Vec<u8>, OxenError> {
+        let base_commit = repositories::commits::get_by_id(&repository, &base_commit_id)?
+            .ok_or_else(|| OxenError::RevisionNotFound(base_commit_id.into()))?;
 
-    let node_hashes = if maybe_head_commit_id.is_some() {
-        // Collect the new node hashes between the base and head commits
-        repositories::tree::get_node_hashes_between_commits(
-            &repository,
-            &commits,
-            &subtrees,
-            &query.depth,
-            is_download,
-        )?
-    } else {
-        // Collect all the node hashes for the commits
-        repositories::tree::get_all_node_hashes_for_commits(
-            &repository,
-            &commits,
-            &subtrees,
-            &query.depth,
-            is_download,
-        )?
-    };
+        // Could be a single commit or a range of commits
+        let commits = get_commit_list(&repository, &base_commit, &maybe_head_commit_id, &subtrees)?;
+        log::debug!("download_tree_nodes got {} commits", commits.len());
 
-    let buffer = repositories::tree::compress_nodes(&repository, &node_hashes)?;
-    let total_size: u64 = u64::try_from(buffer.len()).unwrap_or(u64::MAX);
-    log::debug!(
-        "Compressed {} commits size is {}",
-        commits.len(),
-        ByteSize::b(total_size)
-    );
+        let node_hashes = if maybe_head_commit_id.is_some() {
+            // Collect the new node hashes between the base and head commits
+            repositories::tree::get_node_hashes_between_commits(
+                &repository,
+                &commits,
+                &subtrees,
+                &depth,
+                is_download,
+            )?
+        } else {
+            // Collect all the node hashes for the commits
+            repositories::tree::get_all_node_hashes_for_commits(
+                &repository,
+                &commits,
+                &subtrees,
+                &depth,
+                is_download,
+            )?
+        };
+
+        let buffer = repositories::tree::compress_nodes(&repository, &node_hashes)?;
+        let total_size: u64 = u64::try_from(buffer.len()).unwrap_or(u64::MAX);
+        log::debug!(
+            "Compressed {} commits size is {}",
+            commits.len(),
+            ByteSize::b(total_size)
+        );
+        Ok(buffer)
+    })
+    .await
+    .map_err(OxenError::from)??;
 
     Ok(HttpResponse::Ok().body(buffer))
 }

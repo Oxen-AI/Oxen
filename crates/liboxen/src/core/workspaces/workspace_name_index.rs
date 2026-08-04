@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use std::str::{self, Utf8Error};
 use std::sync::{Arc, LazyLock, Weak};
 use std::thread::sleep;
-use std::time::Duration;
 
 use parking_lot::{Mutex, RwLock};
 use rocksdb::{DB, IteratorMode};
@@ -26,11 +25,6 @@ use crate::util;
 // serializes compound read-modify-write sequences; never hold its guard across `.await`.
 static DB_INSTANCES: LazyLock<Mutex<HashMap<PathBuf, Weak<RwLock<DB>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// How long `get_index` waits out a concurrent close before surfacing a LOCK error.
-/// See the retry loop in [`get_index`] for the race this covers.
-const OPEN_RETRIES: u32 = 100;
-const OPEN_RETRY_INTERVAL: Duration = Duration::from_millis(2);
 
 #[derive(Debug, thiserror::Error)]
 pub enum WsError {
@@ -126,13 +120,13 @@ pub fn get_index(repo: &LocalRepository) -> Result<WorkspaceNameIndex, WsError> 
                 instances.retain(|_, weak| weak.strong_count() > 0);
                 return Ok(WorkspaceNameIndex { db: arc_db });
             }
-            Err(err) if is_lock_collision(&err) => {
+            Err(err) if db::is_lock_collision(&err) => {
                 drop(instances);
                 attempts += 1;
-                if attempts >= OPEN_RETRIES {
+                if attempts >= db::OPEN_RETRIES {
                     return Err(WsError::OpenError(err));
                 }
-                sleep(OPEN_RETRY_INTERVAL);
+                sleep(db::OPEN_RETRY_INTERVAL);
             }
             Err(err) => return Err(WsError::OpenError(err)),
         }
@@ -142,16 +136,6 @@ pub fn get_index(repo: &LocalRepository) -> Result<WorkspaceNameIndex, WsError> 
 fn lookup_live(dir: &Path) -> Option<Arc<RwLock<DB>>> {
     let instances = DB_INSTANCES.lock();
     instances.get(dir)?.upgrade()
-}
-
-/// True if `err` is a RocksDB LOCK-file collision — i.e. another opener still holds the
-/// per-directory LOCK. The check is by error-message match rather than a distinct
-/// `ErrorKind` because RocksDB surfaces this as a plain `IOError` across platforms
-/// (Unix "While lock file: …/LOCK: Resource temporarily unavailable",
-/// Windows "Failed to create lock file: …\\LOCK: The process cannot access the file…").
-fn is_lock_collision(err: &rocksdb::Error) -> bool {
-    let msg = err.to_string();
-    msg.contains("LOCK") || msg.contains("lock file")
 }
 
 impl WorkspaceNameIndex {

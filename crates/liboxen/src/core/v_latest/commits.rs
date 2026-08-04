@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::str;
 use std::sync::{Arc, LazyLock, Weak};
 use std::thread::sleep;
-use std::time::Duration;
 
 use glob::Pattern;
 use parking_lot::Mutex;
@@ -13,6 +12,7 @@ use time::OffsetDateTime;
 
 use crate::config::UserConfig;
 use crate::constants::COMMIT_COUNT_DIR;
+use crate::core::db;
 use crate::core::db::key_val::{opts, str_val_db};
 use crate::core::db::merkle_node::MerkleNodeDB;
 use crate::core::refs::with_ref_manager;
@@ -766,10 +766,6 @@ fn list_recursive_with_depth(
 static COMMIT_COUNT_DBS: LazyLock<Mutex<HashMap<PathBuf, Weak<DBWithThreadMode<MultiThreaded>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// How long `open_commit_count_db` waits out a concurrent close before surfacing a LOCK error.
-const OPEN_RETRIES: u32 = 100;
-const OPEN_RETRY_INTERVAL: Duration = Duration::from_millis(2);
-
 /// Return the shared commit-count cache DB for `repo`, opening it on first access.
 /// Retries briefly on a LOCK-collision race with a concurrent close (see static docs).
 fn open_commit_count_db(
@@ -777,6 +773,7 @@ fn open_commit_count_db(
 ) -> Result<Arc<DBWithThreadMode<MultiThreaded>>, OxenError> {
     let db_path = util::fs::oxen_hidden_dir(&repo.path).join(COMMIT_COUNT_DIR);
 
+    // Fast path: a cache hit does no filesystem work.
     if let Some(db) = lookup_live_commit_count_db(&db_path) {
         return Ok(db);
     }
@@ -792,16 +789,17 @@ fn open_commit_count_db(
             Ok(db) => {
                 let db = Arc::new(db);
                 handles.insert(db_path, Arc::downgrade(&db));
+                // Drop tombstones left by handles whose last caller has already finished.
                 handles.retain(|_, weak| weak.strong_count() > 0);
                 return Ok(db);
             }
-            Err(err) if is_lock_collision(&err) => {
+            Err(err) if db::is_lock_collision(&err) => {
                 drop(handles);
                 attempts += 1;
-                if attempts >= OPEN_RETRIES {
+                if attempts >= db::OPEN_RETRIES {
                     return Err(OxenError::from(err));
                 }
-                sleep(OPEN_RETRY_INTERVAL);
+                sleep(db::OPEN_RETRY_INTERVAL);
             }
             Err(err) => return Err(OxenError::from(err)),
         }
@@ -811,14 +809,6 @@ fn open_commit_count_db(
 fn lookup_live_commit_count_db(db_path: &Path) -> Option<Arc<DBWithThreadMode<MultiThreaded>>> {
     let handles = COMMIT_COUNT_DBS.lock();
     handles.get(db_path)?.upgrade()
-}
-
-/// True if `err` is a RocksDB LOCK-file collision — i.e. another opener still holds the
-/// per-directory LOCK. Message match rather than a distinct `ErrorKind` because RocksDB
-/// surfaces this as a plain `IOError` across platforms.
-fn is_lock_collision(err: &rocksdb::Error) -> bool {
-    let msg = err.to_string();
-    msg.contains("LOCK") || msg.contains("lock file")
 }
 
 fn get_cached_count(
@@ -1365,7 +1355,7 @@ mod tests {
             )
             .expect_err("a second open of a locked path must fail");
             assert!(
-                is_lock_collision(&collision),
+                db::is_lock_collision(&collision),
                 "expected a LOCK collision, got: {collision}"
             );
 
@@ -1375,7 +1365,7 @@ mod tests {
             let err = open_commit_count_db(&repo).expect_err("open under a held LOCK must fail");
             let elapsed = start.elapsed();
             assert!(
-                elapsed >= OPEN_RETRY_INTERVAL * (OPEN_RETRIES - 1),
+                elapsed >= db::OPEN_RETRY_INTERVAL * (db::OPEN_RETRIES - 1),
                 "open gave up after {elapsed:?}, before exhausting its retries"
             );
             let msg = err.to_string();
@@ -1386,7 +1376,7 @@ mod tests {
 
             // Releasing the LOCK part way through the retry window lets the open through.
             let releaser = std::thread::spawn(move || {
-                sleep(OPEN_RETRY_INTERVAL * 10);
+                sleep(db::OPEN_RETRY_INTERVAL * 10);
                 drop(blocker);
             });
             open_commit_count_db(&repo)?;
