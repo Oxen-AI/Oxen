@@ -387,6 +387,23 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::BadRequest().json(error_json)
                     }
+                    OxenError::VersionStoreBlobMissing { hash } => {
+                        // Not a 404: the commit still lists this file, so the resource exists and
+                        // the server cannot produce its bytes. Reported separately from generic
+                        // IO so it is visible as data loss rather than lost among read failures.
+                        log::error!("Version store has no data for hash {hash}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "version_blob_missing",
+                                "title": "Version data missing",
+                                "detail": format!("No stored data for hash {hash}"),
+                                "hash": hash,
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_INTERNAL_SERVER_ERROR,
+                        });
+                        HttpResponse::InternalServerError().json(error_json)
+                    }
                     OxenError::WorkspaceNotFound(workspace) => {
                         log::warn!("Workspace not found: {workspace}");
                         let error_json = json!({

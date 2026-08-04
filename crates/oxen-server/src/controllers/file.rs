@@ -924,6 +924,98 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn test_controllers_file_get_missing_version_blob() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Missing-Blob";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        util::fs::create_dir_all(repo.path.join("data"))?;
+        let hello_file = repo.path.join("data/hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file).await?;
+        let commit = repositories::commit(&repo, "First commit")?;
+
+        // Drop the backing blob while the tree keeps referencing it
+        let entry =
+            repositories::entries::get_file(&repo, &commit, PathBuf::from("data/hello.txt"))?
+                .expect("committed file should be in the tree");
+        let hash = entry.hash().to_string();
+        repo.version_store().delete_version(&hash).await?;
+
+        let uri = format!("/oxen/{namespace}/{repo_name}/file/main/data/hello.txt");
+        let req = actix_web::test::TestRequest::get()
+            .uri(&uri)
+            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+            .to_request();
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/file/{resource:.*}",
+                    web::get().to(controllers::file::get),
+                ),
+        )
+        .await;
+
+        let resp = actix_web::test::call_service(&app, req).await;
+
+        // A blob the tree still references is server-side data loss, not an absent resource, so
+        // this stays a 5xx and names the hash instead of reporting a bare NotFound.
+        assert_eq!(
+            resp.status(),
+            actix_web::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
+        let body = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"]["type"], "version_blob_missing");
+        assert_eq!(body["error"]["hash"], hash);
+
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
+
+    // The counterpart to the missing-blob case: a path no commit contains is an ordinary 404 and
+    // must not be confused with the server having lost data.
+    #[actix_web::test]
+    async fn test_controllers_file_get_unknown_path_is_not_found() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Unknown-Path";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let readme_file = repo.path.join("README.md");
+        util::fs::write_to_path(&readme_file, "Initial commit")?;
+        repositories::add(&repo, &readme_file).await?;
+        let _commit = repositories::commit(&repo, "First commit")?;
+
+        let uri = format!("/oxen/{namespace}/{repo_name}/file/main/never/committed.txt");
+        let req = actix_web::test::TestRequest::get()
+            .uri(&uri)
+            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+            .to_request();
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/file/{resource:.*}",
+                    web::get().to(controllers::file::get),
+                ),
+        )
+        .await;
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
+
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
     async fn test_controllers_file_put_single_file_to_full_resource_path() -> Result<(), OxenError>
     {
         liboxen::test::init_test_env();

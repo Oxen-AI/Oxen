@@ -272,6 +272,14 @@ pub enum OxenError {
         target_path: PathBufError,
     },
 
+    /// A read of the version store found no file data for a file hash in the Merkle tree. On the
+    /// client, this may mean the content may need to be restored from the server. On the server,
+    /// this should never™ happen, but has happened in the past due to bugs (especially via
+    /// interrupted pushes) and can be recovered from by re-pushing the content with
+    /// "oxen push --missing-files" if the original content is still available.
+    #[error("Version store has no data for hash {hash}")]
+    VersionStoreBlobMissing { hash: String },
+
     /// A caller supplied a storage backend kind that isn't recognized.
     #[error("Unsupported storage kind: {0}")]
     UnsupportedStorageKind(String),
@@ -766,11 +774,16 @@ impl OxenError {
             VersionStoreDataMissing { .. } => {
                 "Run `oxen fetch --missing-files` to re-fetch missing version-store data, then retry `oxen restore`."
             }
+            VersionStoreBlobMissing { .. } => {
+                "Run `oxen fetch --missing-files` to re-fetch missing version-store data."
+            }
             RestoreFailed { failures } => {
-                if failures
-                    .iter()
-                    .any(|(_, err)| matches!(err.as_ref(), VersionStoreDataMissing { .. }))
-                {
+                if failures.iter().any(|(_, err)| {
+                    matches!(
+                        err.as_ref(),
+                        VersionStoreDataMissing { .. } | VersionStoreBlobMissing { .. }
+                    )
+                }) {
                     "Some files could not be restored because their version-store data is missing. Run `oxen fetch --missing-files` to re-fetch, then retry `oxen restore`."
                 } else {
                     "Run with RUST_LOG=debug for per-file details, or check `oxen status`."
@@ -869,6 +882,7 @@ impl OxenError {
             OxenError::ReachableObjectsMissing { .. } => true,
             OxenError::DirHashIndexMissing { .. } => true,
             OxenError::VersionStoreDataMissing { .. } => true,
+            OxenError::VersionStoreBlobMissing { .. } => true,
             OxenError::UnknownRemoteResponseStatus(_) => true,
             _ => false,
         }
@@ -1369,6 +1383,25 @@ mod tests {
             hashes: vec!["abc".to_string()],
         };
         assert!(err.is_fatal_for_retry());
+    }
+
+    #[test]
+    fn is_fatal_for_retry_short_circuits_on_missing_version_store_data() {
+        // A hash the store has no data for reads the same on every attempt, so backing off
+        // only delays the recovery guidance. Both spellings of the condition are fatal.
+        assert!(
+            OxenError::VersionStoreBlobMissing {
+                hash: "abc".to_string(),
+            }
+            .is_fatal_for_retry()
+        );
+        assert!(
+            OxenError::VersionStoreDataMissing {
+                hash: "abc".to_string(),
+                target_path: PathBuf::from("a.txt").into(),
+            }
+            .is_fatal_for_retry()
+        );
     }
 
     #[test]
