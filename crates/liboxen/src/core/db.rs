@@ -33,6 +33,7 @@ mod tests {
     use super::*;
     use crate::error::OxenError;
     use crate::test;
+    use crate::util;
 
     #[test]
     fn test_is_lock_collision_on_a_held_lock() -> Result<(), OxenError> {
@@ -64,6 +65,29 @@ mod tests {
                 .expect_err("opening a missing db without create_if_missing must fail");
             let msg = err.to_string();
             assert!(msg.contains("LOCK"), "path missing from the error: {msg}");
+            assert!(!is_lock_collision(&err), "misread as a collision: {msg}");
+
+            Ok(())
+        })
+    }
+
+    /// A LOCK path RocksDB cannot open as a file is not a collision. Unix only: the same setup
+    /// reports "Access is denied" on Windows, which is indistinguishable from a sharing
+    /// violation without matching localized system text.
+    #[cfg(unix)]
+    #[test]
+    fn test_is_lock_collision_ignores_an_unopenable_lock_path() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let db_path = dir.join("db");
+            util::fs::create_dir_all(db_path.join("LOCK"))?;
+
+            let err = DBWithThreadMode::<MultiThreaded>::open(&key_val::opts::default(), &db_path)
+                .expect_err("a db whose LOCK path is a directory must fail to open");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("while open a file for lock"),
+                "expected a failure to open the LOCK file, got: {msg}"
+            );
             assert!(!is_lock_collision(&err), "misread as a collision: {msg}");
 
             Ok(())
