@@ -905,8 +905,10 @@ pub async fn list_symmetric_difference(
     base: &Commit,
     head: &Commit,
 ) -> Result<(Vec<Commit>, Vec<Commit>), OxenError> {
-    let head_only = list_between_exclusive(repo, base, head).await?;
-    let base_only = list_between_exclusive(repo, head, base).await?;
+    let (head_only, base_only) = tokio::try_join!(
+        list_between_exclusive(repo, base, head),
+        list_between_exclusive(repo, head, base),
+    )?;
     Ok((base_only, head_only))
 }
 
