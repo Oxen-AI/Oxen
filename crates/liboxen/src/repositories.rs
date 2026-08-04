@@ -317,7 +317,16 @@ pub async fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenErro
     // custom versions_path) they live outside the repo directory.
     repo.version_store().destroy().await?;
 
-    let path = repo.path.clone();
+    delete_dir(&repo.path).await?;
+    Ok(repo)
+}
+
+/// Removes a repository's directory.
+///
+/// Version blobs held outside the directory survive, so prefer [`delete`] whenever the repository
+/// can be opened.
+pub async fn delete_dir(path: &Path) -> Result<(), OxenError> {
+    let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
         // Close DB instances before trying to delete the directory
         merkle_tree::merkle_tree_node_cache::remove_from_cache(&path)?;
@@ -333,7 +342,7 @@ pub async fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenErro
         Ok(())
     })
     .await??;
-    Ok(repo)
+    Ok(())
 }
 
 #[cfg(test)]

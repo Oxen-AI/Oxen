@@ -516,15 +516,31 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
 
-    let Ok(repository) = get_repo(app_data, &namespace, &name) else {
-        return Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()));
+    let repository = match get_repo(app_data, &namespace, &name) {
+        Ok(repository) => Some(repository),
+        Err(OxenHttpError::InternalOxenError(OxenError::RepoNotFound(_))) => {
+            return Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()));
+        }
+        // A repository the server cannot open is still deleted. Reporting it as missing would
+        // strand the directory on disk with no way for a caller to reclaim it, and version blobs
+        // held outside the directory are unreachable without the repository config anyway.
+        Err(err) => {
+            log::warn!("Deleting unreadable repo {namespace}/{name}: {err}");
+            None
+        }
     };
+    let repo_dir = app_data.path.join(&namespace).join(&name);
 
     // Delete in a background task because it could take awhile; the blocking directory
     // removal runs inside delete's own spawn_blocking.
     tokio::spawn(async move {
-        match repositories::delete(&repository).await {
-            Ok(_) => log::info!("Deleted repo: {namespace}/{name}"),
+        let result = match &repository {
+            Some(repository) => repositories::delete(repository).await.map(|_| ()),
+            None => repositories::delete_dir(&repo_dir).await,
+        };
+
+        match result {
+            Ok(()) => log::info!("Deleted repo: {namespace}/{name}"),
             Err(err) => log::error!("Err deleting repo: {err}"),
         }
     });
@@ -589,4 +605,74 @@ pub async fn transfer_namespace(
             merkle_node_backend: Some(repo.merkle_node_backend()),
         },
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test;
+    use actix_web::http;
+    use liboxen::config::RepositoryConfig;
+    use liboxen::error::OxenError;
+    use liboxen::util;
+    use std::path::Path;
+    use std::time::{Duration, Instant};
+
+    /// Waits for the handler's background delete to finish.
+    async fn wait_until_gone(path: &Path) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            if !path.exists() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        false
+    }
+
+    #[actix_web::test]
+    async fn test_delete_removes_a_repo_the_server_cannot_open() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Repo";
+
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let repo_dir = repo.path.clone();
+
+        // Declare an on-disk format this build refuses to load, so the handler cannot open the
+        // repo. Deleting it must still clear the directory: a repo the server can read the name of
+        // but not the contents of is exactly the one an operator needs removed.
+        let config_path = util::fs::config_filepath(&repo_dir);
+        let mut config = RepositoryConfig::from_file(&config_path)?;
+        config.min_version = Some("0.19.0".to_string());
+        config.save(&config_path)?;
+
+        let req = test::repo_request(&sync_dir, "/", namespace, repo_name);
+        let resp = super::delete(req)
+            .await
+            .expect("delete handler should succeed");
+
+        assert_eq!(resp.status(), http::StatusCode::OK);
+        assert!(
+            wait_until_gone(&repo_dir).await,
+            "repo dir should be deleted: {repo_dir:?}"
+        );
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    #[actix_web::test]
+    async fn test_delete_reports_not_found_for_a_repo_that_is_not_there() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+
+        let req = test::repo_request(&sync_dir, "/", "Testing-Namespace", "no-such-repo");
+        let resp = super::delete(req)
+            .await
+            .expect("delete handler should succeed");
+
+        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
 }
