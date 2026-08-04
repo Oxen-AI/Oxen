@@ -3471,7 +3471,9 @@ mod tests {
     // the decoder alone.
     #[tokio::test]
     async fn test_pre_v0_25_dir_node_is_still_readable() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
+        // FS-pinned: the rewrite below edits node blobs in the on-disk `tree/nodes` layout, which
+        // only the filesystem backend produces.
+        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
             let commit_hash: MerkleHash = repositories::commits::head_commit(&repo)?.id.parse()?;
 
             let nodes_dir = util::fs::oxen_hidden_dir(&repo.path)
