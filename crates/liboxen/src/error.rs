@@ -213,6 +213,15 @@ pub enum OxenError {
     #[error("Not a real directory: {0}")]
     NotADirectory(PathBuf),
 
+    /// A single-file operation was given a path that resolves to a directory. Carries the path,
+    /// which is what identifies the request that got it wrong.
+    #[error("Not a single file: {0}")]
+    NotAFile(PathBufError),
+
+    /// A move or rename targeted a path that already has a staged entry.
+    #[error("Destination already staged: {0}")]
+    DestinationAlreadyStaged(PathBufError),
+
     #[error("No paths to add!")]
     NoPathsToAdd,
 
@@ -850,6 +859,16 @@ impl OxenError {
     /// Is this error's source an authentication problem?
     pub fn is_auth_error(&self) -> bool {
         matches!(self, OxenError::Authentication(_))
+    }
+
+    /// Did an image operation fail because the format itself is unsupported? That is the caller's
+    /// input rather than a server fault, unlike every other image failure. Lives here because
+    /// `image::ImageError` is not in scope for callers that don't depend on the `image` crate.
+    pub fn is_unsupported_image_format(&self) -> bool {
+        matches!(
+            self,
+            OxenError::ImageError(image::ImageError::Unsupported(_))
+        )
     }
 
     /// Is this error considered as something not existing?

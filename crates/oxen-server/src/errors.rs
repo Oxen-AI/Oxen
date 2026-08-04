@@ -376,6 +376,63 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::NotFound().json(error_json)
                     }
+                    // The next four are things a caller got wrong. Each returns a terminal 4xx at
+                    // `warn!`, so it stops both the client retrying and the alert that a 5xx at
+                    // `error!` raises.
+                    OxenError::NotAFile(path) => {
+                        log::warn!("Single-file endpoint given a directory: {path}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "not_a_file",
+                                "title": "Not a single file",
+                                "detail": format!("This endpoint serves one file at a time, and {path} is a directory."),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
+                    OxenError::NoChanges => {
+                        log::warn!("Commit refused, nothing staged differs from the parent commit");
+                        let error_json = json!({
+                            "error": {
+                                "type": "no_changes",
+                                "title": "No changes to commit",
+                                "detail": "Nothing staged differs from the parent commit, so there is nothing to commit.",
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::UnprocessableEntity().json(error_json)
+                    }
+                    OxenError::DestinationAlreadyStaged(path) => {
+                        log::warn!("Move refused, destination already staged: {path}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "destination_already_staged",
+                                "title": "Destination already staged",
+                                "detail": format!("{path} already has a staged entry. Unstage it first, or choose another destination."),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_CONFLICT,
+                        });
+                        HttpResponse::Conflict().json(error_json)
+                    }
+                    // Only the unsupported-format case is the caller's: they uploaded an image
+                    // this build cannot decode. Every other image failure stays a server error.
+                    OxenError::ImageError(_) if error.is_unsupported_image_format() => {
+                        log::warn!("Unsupported image format: {error}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "unsupported_image_format",
+                                "title": "Unsupported Image Format",
+                                "detail": format!("This image cannot be decoded by the server: {error}"),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::UnsupportedMediaType().json(error_json)
+                    }
                     OxenError::PathStagedForRemoval(path) => {
                         log::warn!("Edit refused, path staged for removal: {path}");
                         let error_json = json!({
@@ -910,6 +967,7 @@ mod tests {
     use super::*;
     use actix_web::ResponseError;
     use actix_web::http::StatusCode;
+    use std::path::PathBuf;
 
     #[test]
     fn test_unsupported_repo_version_is_a_client_error() {
@@ -933,6 +991,51 @@ mod tests {
         let status = error.error_response().status();
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(!status.is_server_error());
+    }
+
+    #[test]
+    fn test_client_mistakes_are_not_server_errors() {
+        // Each of these is something a caller got wrong. As a 5xx each one alerted us and invited
+        // the client to retry a request that can never succeed, so the status has to be a terminal
+        // 4xx. `tracing_actix_web` levels its own event off the response status, so getting the
+        // status right is also what stops the Sentry report.
+        let cases = [
+            (
+                OxenError::NotAFile(PathBuf::from("some/dir").into()),
+                StatusCode::BAD_REQUEST,
+            ),
+            (OxenError::NoChanges, StatusCode::UNPROCESSABLE_ENTITY),
+            (
+                OxenError::DestinationAlreadyStaged(PathBuf::from("a.txt").into()),
+                StatusCode::CONFLICT,
+            ),
+        ];
+
+        for (error, expected) in cases {
+            let rendered = format!("{error}");
+            let status = OxenHttpError::from(error).error_response().status();
+            assert_eq!(status, expected, "wrong status for {rendered}");
+            assert!(!status.is_server_error(), "{rendered} reported as a 5xx");
+        }
+    }
+
+    #[test]
+    fn test_unsupported_image_format_is_a_client_error() {
+        // An image this build cannot decode is the caller's input. Every other image failure is
+        // still a server error, so the arm is guarded rather than matching all of `ImageError`.
+        let error = OxenError::ImageError(image::ImageError::Unsupported(
+            image::error::UnsupportedError::from_format_and_kind(
+                image::error::ImageFormatHint::Name("AVIF".to_string()),
+                image::error::UnsupportedErrorKind::Format(image::error::ImageFormatHint::Name(
+                    "AVIF".to_string(),
+                )),
+            ),
+        ));
+        assert!(error.is_unsupported_image_format());
+
+        let status = OxenHttpError::from(error).error_response().status();
+        assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
         assert!(!status.is_server_error());
     }
 }

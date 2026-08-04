@@ -99,9 +99,7 @@ pub async fn get(
     let file_node = match staged_db_manager.read_from_staged_db(&path)? {
         Some(staged_node) => match staged_node.node.node {
             EMerkleTreeNode::File(f) => Ok(f),
-            _ => Err(OxenError::basic_str(
-                "Only single file download is supported",
-            )),
+            _ => Err(OxenError::NotAFile(PathBuf::from(&path).into())),
         }?,
         None => {
             // If the file isn't in the workspace staged_db, look for it in the base repo

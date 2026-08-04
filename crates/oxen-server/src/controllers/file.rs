@@ -163,9 +163,7 @@ pub async fn get(
             if let Some(staged_node) = staged_db_manager.read_from_staged_db(&path)? {
                 match staged_node.node.node {
                     EMerkleTreeNode::File(f) => Ok(f),
-                    _ => Err(OxenError::basic_str(
-                        "Only single file download is supported",
-                    )),
+                    _ => Err(OxenError::NotAFile(path.clone().into())),
                 }?
             } else {
                 // Fall back to commit tree using workspace's commit

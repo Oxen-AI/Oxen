@@ -449,7 +449,9 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
             })))
         }
         Err(err) => {
-            log::error!("unable to commit branch {branch_name:?}. Err: {err}");
+            // The 422 below already tells the caller they got this wrong, so `warn!` rather than
+            // `error!` — an `error!` here reports every rejected commit as a server fault.
+            log::warn!("unable to commit branch {branch_name:?}. Err: {err}");
             Ok(HttpResponse::UnprocessableEntity().json(StatusMessage::error(format!("{err:?}"))))
         }
     }
