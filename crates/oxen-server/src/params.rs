@@ -205,7 +205,7 @@ pub fn maybe_parse_two_dot(base_head: &str) -> Result<(String, Option<String>), 
 /// The commit a diff should compare from. Three dots select the merge base of the two revisions
 /// (git's `base...head`), so commits that landed on base after the fork don't read as part of
 /// head's changes.
-pub fn resolve_diff_base(
+pub async fn resolve_diff_base(
     repo: &LocalRepository,
     base_commit: Commit,
     head_commit: &Commit,
@@ -214,14 +214,19 @@ pub fn resolve_diff_base(
     if !three_dot {
         return Ok(base_commit);
     }
-    repositories::merge::lowest_common_ancestor_from_commits(repo, &base_commit, head_commit)?
-        .ok_or_else(|| {
-            OxenError::NoMergeBase {
+    // Sync core: the merge base walks both commit histories, so keep it off the actix worker.
+    let repo = repo.clone();
+    let head_commit = head_commit.clone();
+    let merge_base = tokio::task::spawn_blocking(move || -> Result<Commit, OxenError> {
+        repositories::merge::lowest_common_ancestor_from_commits(&repo, &base_commit, &head_commit)?
+            .ok_or_else(|| OxenError::NoMergeBase {
                 base: base_commit.id.clone(),
                 head: head_commit.id.clone(),
-            }
-            .into()
-        })
+            })
+    })
+    .await
+    .map_err(OxenError::from)??;
+    Ok(merge_base)
 }
 
 pub fn resolve_base_head_branches(
@@ -437,7 +442,9 @@ mod tests {
     async fn test_resolve_diff_base_two_dots_keeps_the_base_tip() -> Result<(), OxenError> {
         liboxen::test::run_one_commit_local_repo_test_async(|repo| async move {
             let (_, main_tip, feature_tip) = forked_repo(&repo).await?;
-            let resolved = resolve_diff_base(&repo, main_tip.clone(), &feature_tip, false).unwrap();
+            let resolved = resolve_diff_base(&repo, main_tip.clone(), &feature_tip, false)
+                .await
+                .unwrap();
             assert_eq!(resolved.id, main_tip.id);
             Ok(())
         })
@@ -450,7 +457,9 @@ mod tests {
             let (fork_point, main_tip, feature_tip) = forked_repo(&repo).await?;
             // Without this the diff would carry main's post-fork commits as if they were
             // feature's changes.
-            let resolved = resolve_diff_base(&repo, main_tip.clone(), &feature_tip, true).unwrap();
+            let resolved = resolve_diff_base(&repo, main_tip.clone(), &feature_tip, true)
+                .await
+                .unwrap();
             assert_eq!(resolved.id, fork_point.id);
             assert_ne!(resolved.id, main_tip.id);
             Ok(())

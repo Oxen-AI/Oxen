@@ -166,7 +166,7 @@ pub async fn entries(
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
-    let base_commit = resolve_diff_base(&repository, base_commit, &head_commit, three_dot)?;
+    let base_commit = resolve_diff_base(&repository, base_commit, &head_commit, three_dot).await?;
 
     let entries_diff = repositories::diffs::list_diff_entries(
         &repository,
@@ -243,7 +243,7 @@ pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
-    let base_commit = resolve_diff_base(&repository, base_commit, &head_commit, three_dot)?;
+    let base_commit = resolve_diff_base(&repository, base_commit, &head_commit, three_dot).await?;
 
     let dir_diffs =
         repositories::diffs::list_changed_dirs(&repository, &base_commit, &head_commit).await?;
@@ -301,7 +301,7 @@ pub async fn dir_entries(
 
     let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
-    let base_commit = resolve_diff_base(&repository, base_commit, &head_commit, three_dot)?;
+    let base_commit = resolve_diff_base(&repository, base_commit, &head_commit, three_dot).await?;
     let dir = PathBuf::from(dir);
 
     let entries_diff = repositories::diffs::list_diff_entries(
@@ -380,7 +380,8 @@ pub async fn file(
     // Parse the base and head from the base..head/resource string
     // For Example)
     //   main..feature/add-data/path/to/file.txt
-    let (base_commit, head_commit, resource) = parse_base_head_resource(&repository, &base_head)?;
+    let (base_commit, head_commit, resource) =
+        parse_base_head_resource(&repository, &base_head).await?;
 
     log::debug!("base_commit: {base_commit:?}");
     log::debug!("head_commit: {head_commit:?}");
@@ -897,7 +898,7 @@ pub async fn get_derived_df(
     }
 }
 
-fn parse_base_head_resource(
+async fn parse_base_head_resource(
     repo: &LocalRepository,
     base_head: &str,
 ) -> Result<(Commit, Commit, PathBuf), OxenHttpError> {
@@ -938,7 +939,7 @@ fn parse_base_head_resource(
 
     let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
     let resource = resource.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
-    let base_commit = resolve_diff_base(repo, base_commit, &head_commit, three_dot)?;
+    let base_commit = resolve_diff_base(repo, base_commit, &head_commit, three_dot).await?;
 
     Ok((base_commit, head_commit, resource))
 }
