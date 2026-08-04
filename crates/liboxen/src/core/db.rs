@@ -33,6 +33,7 @@ mod tests {
     use super::*;
     use crate::error::OxenError;
     use crate::test;
+    #[cfg(unix)]
     use crate::util;
 
     #[test]
