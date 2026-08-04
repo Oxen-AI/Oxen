@@ -3486,15 +3486,15 @@ mod tests {
         data_type_sizes: std::collections::HashMap<String, u64>,
     }
 
-    // A repo written before v0.25.0 must report *why* it cannot be read, not surface a raw
-    // msgpack error as a server fault. Reading such a node reaches the decode through
-    // `MerkleNodeDB::map`, which is a different call site than `MerkleNodeDB::node` — an earlier
-    // attempt at this classified only the latter and left the failure looking like corruption.
+    // A repository whose directory nodes predate v0.25.0 has to stay readable. The read reaches
+    // the decode through `MerkleNodeDB::map`, a different call site than `MerkleNodeDB::node`, and
+    // an earlier change here covered only the latter — so exercise the whole tree walk rather than
+    // the decoder alone.
     #[tokio::test]
-    async fn test_pre_v0_25_dir_node_is_reported_as_a_retired_format() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            // Resolve HEAD before corrupting anything: reading the commit also walks into the
-            // dir node, so afterwards even this lookup fails.
+    async fn test_pre_v0_25_dir_node_is_still_readable() -> Result<(), OxenError> {
+        // FS-pinned: the rewrite below edits node blobs in the on-disk `tree/nodes` layout, which
+        // only the filesystem backend produces.
+        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
             let commit_hash: MerkleHash = repositories::commits::head_commit(&repo)?.id.parse()?;
 
             let nodes_dir = util::fs::oxen_hidden_dir(&repo.path)
@@ -3502,7 +3502,7 @@ mod tests {
                 .join(constants::NODES_DIR);
 
             // Rewrite the first dir node we find into the pre-0.25 shape, in place.
-            let mut rewrote = false;
+            let mut rewritten_hash: Option<MerkleHash> = None;
             for prefix in util::fs::list_dirs_in_dir(&nodes_dir)? {
                 for node_dir in util::fs::list_dirs_in_dir(&prefix)? {
                     let node_file = node_dir.join("node");
@@ -3533,29 +3533,43 @@ mod tests {
                     rewritten.extend_from_slice(&legacy);
                     rewritten.extend_from_slice(&blob[21 + data_len..]);
                     std::fs::write(&node_file, rewritten)?;
-                    rewrote = true;
+                    rewritten_hash = Some(*dir.hash());
                     break;
                 }
-                if rewrote {
+                if rewritten_hash.is_some() {
                     break;
                 }
             }
-            assert!(rewrote, "fixture repo should contain a dir node to rewrite");
+            let rewritten_hash =
+                rewritten_hash.expect("fixture repo should contain a dir node to rewrite");
 
-            let err = repositories::tree::get_node_by_id_with_children(&repo, &commit_hash)
-                .expect_err("a pre-0.25 dir node must not read as though it were current");
+            let node = repositories::tree::get_node_by_id_with_children(&repo, &commit_hash)?
+                .expect("the commit should still resolve with a pre-0.25 dir node in the tree");
 
+            // The walk has to come back whole, not merely without an error — one that silently
+            // returned nothing would look just as successful from the outside. Reaching the
+            // directory's children is what opens the rewritten blob, which is why this walk
+            // failed outright before the fallback existed.
             assert!(
-                matches!(
-                    err,
-                    OxenError::MerkleDbError(
-                        crate::core::db::merkle_node::merkle_node_db::MerkleDbError::PreV025Node {
-                            ..
-                        }
-                    )
-                ),
-                "expected PreV025Node, got {err:?}"
+                node.children.iter().any(|child| matches!(&child.node,
+                        EMerkleTreeNode::Directory(dir) if *dir.hash() == rewritten_hash)),
+                "the rewritten dir node should still appear among the commit's children"
             );
+
+            // Read by its own hash to reach the rewritten blob itself. The copy carried in the
+            // commit's `children` is still current-format and keeps the original count, so
+            // asserting on the child above would check the wrong bytes.
+            let recovered = repositories::tree::get_node_by_id(&repo, &rewritten_hash)?
+                .expect("the rewritten dir node should be readable by its own hash");
+            let EMerkleTreeNode::Directory(recovered) = &recovered.node else {
+                panic!("expected a directory, got {:?}", recovered.node);
+            };
+
+            // The pre-0.25 shape carries no entry count, so the conversion supplies zero. Pinned
+            // deliberately: the migration that rewrites these nodes has to replace it with a
+            // derived value, and this is what tells whoever does that they have changed a
+            // contract rather than an implementation detail.
+            assert_eq!(recovered.num_entries(), 0);
 
             Ok(())
         })

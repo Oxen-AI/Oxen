@@ -6,6 +6,7 @@ use std::fmt;
 
 use crate::core::v_latest::model::merkle_tree::node::dir_node::DirNodeData as DirNodeDataV0_25_0;
 use crate::error::OxenError;
+use crate::model::merkle_tree::node::legacy_pre_025::DirNodeDataPre025;
 use crate::model::{MerkleHash, MerkleTreeNodeIdType, MerkleTreeNodeType, TMerkleTreeNode};
 use crate::view::DataTypeCount;
 
@@ -86,7 +87,20 @@ impl DirNode {
 
     #[inline(always)]
     pub fn deserialize(data: &[u8]) -> Result<DirNode, rmp_serde::decode::Error> {
-        rmp_serde::from_slice(data)
+        match rmp_serde::from_slice(data) {
+            Ok(dir_node) => Ok(dir_node),
+            Err(primary_error) => {
+                // Payloads written before v0.25.0 are the bare data struct with no envelope.
+                match rmp_serde::from_slice::<DirNodeDataPre025>(data) {
+                    Ok(legacy) => Ok(Self {
+                        node: EDirNode::V0_25_0(legacy.into()),
+                    }),
+                    // Report why the current shape failed, not why the older one did — the
+                    // second attempt is a fallback, so its error describes the wrong thing.
+                    Err(_) => Err(primary_error),
+                }
+            }
+        }
     }
 
     fn node(&self) -> &dyn TDirNode {
