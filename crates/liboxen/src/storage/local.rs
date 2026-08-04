@@ -25,16 +25,22 @@ use tokio::task::spawn_blocking;
 use tokio_util::io::ReaderStream;
 
 /// Classifies a failed read of a version file. An absent file means the store holds no data for
-/// `hash`; every other cause keeps its message and names the file that could not be read, so a
-/// failure identifies the blob behind it rather than surfacing as a bare `NotFound`.
+/// `hash`. Every other cause names the blob and the kind of I/O failure, with the full path logged
+/// rather than returned, so a failure identifies the blob behind it rather than surfacing as a
+/// bare `NotFound`.
 fn version_read_error(hash: &str, path: &Path, source: io::Error) -> OxenError {
     if source.kind() == ErrorKind::NotFound {
         return OxenError::VersionStoreBlobMissing {
             hash: hash.to_string(),
         };
     }
+    log::error!("Failed to read version file {path:?} for hash {hash}: {source}");
     OxenError::InternalError(
-        format!("Failed to read version file {path:?} for hash {hash}: {source}").into(),
+        format!(
+            "Failed to read version file for hash {hash}: {:?}",
+            source.kind()
+        )
+        .into(),
     )
 }
 
@@ -797,6 +803,31 @@ mod tests {
                 panic!("Unexpected error when getting non-existent version: {e:?}");
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_read_failure_does_not_name_the_storage_path() {
+        let (_temp_dir, store) = setup().await;
+        let hash = "abcdef";
+
+        // A regular file where the version directory belongs fails the read with ENOTDIR, so this
+        // exercises a cause other than an absent blob.
+        let version_dir = store.version_dir(hash);
+        std::fs::create_dir_all(version_dir.parent().unwrap()).unwrap();
+        std::fs::write(&version_dir, b"not a directory").unwrap();
+
+        let err = store.get_version(hash).await.unwrap_err();
+        let message = err.to_string();
+
+        assert!(!matches!(err, OxenError::VersionStoreBlobMissing { .. }));
+        assert!(
+            message.contains(hash),
+            "message should name the blob: {message}"
+        );
+        assert!(
+            !message.contains(&*store.root_path.to_string_lossy()),
+            "message should not name the storage path: {message}"
+        );
     }
 
     #[tokio::test]
