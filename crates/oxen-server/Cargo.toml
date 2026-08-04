@@ -76,6 +76,9 @@ signal-hook = { workspace = true }
 
 [dev-dependencies]
 actix-multipart-test = { workspace = true }
+# Only so the error-mapping tests can construct an `image::ImageError`; the crate itself reaches
+# image handling through liboxen.
+image = { workspace = true }
 liboxen = { workspace = true, features = ["test-utils"] }
 mockito = { workspace = true }
 # "test" swaps in a capturing transport, so the `tasks` tests can assert what reaches Sentry. Kept a

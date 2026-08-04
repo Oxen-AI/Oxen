@@ -1191,9 +1191,9 @@ pub fn mv(
 
     let staged_db_manager = get_staged_db_manager(workspace_repo)?;
     if staged_db_manager.read_from_staged_db(new_path)?.is_some() {
-        return Err(OxenError::basic_str(format!(
-            "Destination already staged: {new_path:?}"
-        )));
+        return Err(OxenError::DestinationAlreadyStaged(
+            new_path.to_path_buf().into(),
+        ));
     }
     // Add the file node at the new path
     staged_db_manager.upsert_file_node(new_path, new_status, &new_file_node)?;

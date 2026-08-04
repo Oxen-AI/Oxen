@@ -5682,6 +5682,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "hex",
+ "image",
  "jsonwebtoken",
  "libc",
  "liboxen",

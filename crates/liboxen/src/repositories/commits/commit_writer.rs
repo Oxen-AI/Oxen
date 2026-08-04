@@ -412,7 +412,7 @@ pub fn commit_dir_entries(
     }
 
     if dir_entries.is_empty() {
-        return Err(OxenError::basic_str("No changes to commit"));
+        return Err(OxenError::NoChanges);
     }
 
     let message = &new_commit.message;
