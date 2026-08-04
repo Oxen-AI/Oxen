@@ -133,8 +133,11 @@ pub fn get_staged_schema_with_staged_db_manager(
 
 /// List all the staged schemas
 pub fn list_staged(repo: &LocalRepository) -> Result<HashMap<PathBuf, Schema>, OxenError> {
-    let db = get_staged_db(repo)?;
     let mut results = HashMap::new();
+
+    let Some(db) = get_staged_db_read_only(repo)? else {
+        return Ok(results);
+    };
 
     let iter = db.iterator(IteratorMode::Start);
     for item in iter {

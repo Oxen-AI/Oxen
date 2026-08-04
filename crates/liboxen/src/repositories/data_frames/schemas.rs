@@ -83,6 +83,38 @@ mod tests {
 
     use serde_json::json;
     use std::path::{Path, PathBuf};
+    use std::sync::Barrier;
+
+    #[tokio::test]
+    async fn test_list_staged_serves_simultaneous_callers() -> Result<(), OxenError> {
+        // Listing staged schemas is a read. Concurrent readers all have to get an answer rather
+        // than one of them failing on RocksDB's exclusive per-path lock.
+        test::run_empty_local_repo_test_async(|repo| async move {
+            const CALLERS: usize = 8;
+            let barrier = Barrier::new(CALLERS);
+            let results = std::thread::scope(|scope| {
+                let threads: Vec<_> = (0..CALLERS)
+                    .map(|_| {
+                        scope.spawn(|| {
+                            barrier.wait();
+                            repositories::data_frames::schemas::list_staged(&repo)
+                        })
+                    })
+                    .collect();
+                threads
+                    .into_iter()
+                    .map(|thread| thread.join().expect("listing thread panicked"))
+                    .collect::<Vec<_>>()
+            });
+
+            for result in results {
+                assert!(result?.is_empty(), "nothing is staged in an empty repo");
+            }
+
+            Ok(())
+        })
+        .await
+    }
 
     #[tokio::test]
     async fn test_command_schema_list() -> Result<(), OxenError> {
