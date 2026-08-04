@@ -805,18 +805,14 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_read_failure_does_not_name_the_storage_path() {
-        let (_temp_dir, store) = setup().await;
+    #[test]
+    fn test_read_failure_does_not_name_the_storage_path() {
         let hash = "abcdef";
+        let path = Path::new("/oxen-storage-root/ab/cdef/data");
 
-        // A regular file where the version directory belongs fails the read with ENOTDIR, so this
-        // exercises a cause other than an absent blob.
-        let version_dir = store.version_dir(hash);
-        std::fs::create_dir_all(version_dir.parent().unwrap()).unwrap();
-        std::fs::write(&version_dir, b"not a directory").unwrap();
-
-        let err = store.get_version(hash).await.unwrap_err();
+        // A synthesized cause keeps the classification independent of how each platform maps
+        // filesystem errors.
+        let err = version_read_error(hash, path, io::Error::from(ErrorKind::PermissionDenied));
         let message = err.to_string();
 
         assert!(!matches!(err, OxenError::VersionStoreBlobMissing { .. }));
@@ -825,7 +821,7 @@ mod tests {
             "message should name the blob: {message}"
         );
         assert!(
-            !message.contains(&*store.root_path.to_string_lossy()),
+            !message.contains("oxen-storage-root"),
             "message should not name the storage path: {message}"
         );
     }
