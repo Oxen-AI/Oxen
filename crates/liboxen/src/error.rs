@@ -128,6 +128,10 @@ pub enum OxenError {
     #[error("Revision not found: {0}")]
     RevisionNotFound(StringError),
 
+    /// Two revisions share no history, so there is no merge base to compare from.
+    #[error("No merge base between {base} and {head}")]
+    NoMergeBase { base: String, head: String },
+
     /// The repository is empty: it has no commits.
     #[error("No commits found.")]
     NoCommitsFound,
@@ -751,6 +755,9 @@ impl OxenError {
             }
             RevisionNotFound(_) => {
                 "Check available branches with `oxen branch --all` or commits with `oxen log`."
+            }
+            NoMergeBase { .. } => {
+                "The two revisions have no common ancestor. Compare them directly with `..` instead of `...`."
             }
             HeadNotFound | NoCommitsFound => {
                 "This repository has no commits yet. Add files and create your first commit."

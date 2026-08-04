@@ -143,7 +143,12 @@ pub async fn commits(
     let body = client::parse_json_body(&url, res).await?;
     let response: Result<CompareCommitsResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
-        Ok(commits) => Ok(commits.compare.commits),
+        Ok(commits) => Ok(commits
+            .compare
+            .commits
+            .into_iter()
+            .map(|c| c.commit)
+            .collect()),
         Err(err) => Err(OxenError::basic_str(format!(
             "commits() Could not deserialize response [{err}]\n{body}"
         ))),

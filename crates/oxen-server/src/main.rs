@@ -37,8 +37,9 @@ use liboxen::model::metadata::{
 use liboxen::model::{Commit, CommitStats};
 use liboxen::view::commit::CommitTreeValidationResponse;
 use liboxen::view::compare::{
-    CompareCommits, CompareCommitsResponse, CompareDupes, CompareEntries, CompareEntryResponse,
-    CompareTabular, CompareTabularResponse, TabularCompareBody, TabularCompareTargetBody,
+    CommitSide, CompareCommit, CompareCommits, CompareCommitsResponse, CompareDupes,
+    CompareEntries, CompareEntryResponse, CompareTabular, CompareTabularResponse,
+    TabularCompareBody, TabularCompareTargetBody,
 };
 use liboxen::view::data_frames::FromDirectoryRequest;
 use liboxen::view::diff::{DirDiffStatus, DirDiffTreeSummary, DirTreeDiffResponse};
@@ -238,7 +239,8 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
             // Merge Schemas
             MergeSuccessResponse, MergeResult, Mergeable, MergeConflictFile,
             // Compare Schemas
-            CompareCommits, CompareCommitsResponse, CompareDupes, CompareEntries, CompareEntryResponse,
+            CommitSide, CompareCommit, CompareCommits, CompareCommitsResponse, CompareDupes,
+            CompareEntries, CompareEntryResponse,
             CompareTabular, CompareTabularResponse, DirDiffStatus, DirDiffTreeSummary, DirTreeDiffResponse,
             TabularCompareBody, TabularCompareTargetBody,
             // File/Entry Schemas
