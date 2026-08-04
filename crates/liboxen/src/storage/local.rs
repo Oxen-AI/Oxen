@@ -25,16 +25,22 @@ use tokio::task::spawn_blocking;
 use tokio_util::io::ReaderStream;
 
 /// Classifies a failed read of a version file. An absent file means the store holds no data for
-/// `hash`; every other cause keeps its message and names the file that could not be read, so a
-/// failure identifies the blob behind it rather than surfacing as a bare `NotFound`.
+/// `hash`. Every other cause names the blob and the kind of I/O failure, with the full path logged
+/// rather than returned, so a failure identifies the blob behind it rather than surfacing as a
+/// bare `NotFound`.
 fn version_read_error(hash: &str, path: &Path, source: io::Error) -> OxenError {
     if source.kind() == ErrorKind::NotFound {
         return OxenError::VersionStoreBlobMissing {
             hash: hash.to_string(),
         };
     }
+    log::error!("Failed to read version file {path:?} for hash {hash}: {source}");
     OxenError::InternalError(
-        format!("Failed to read version file {path:?} for hash {hash}: {source}").into(),
+        format!(
+            "Failed to read version file for hash {hash}: {:?}",
+            source.kind()
+        )
+        .into(),
     )
 }
 
@@ -797,6 +803,27 @@ mod tests {
                 panic!("Unexpected error when getting non-existent version: {e:?}");
             }
         }
+    }
+
+    #[test]
+    fn test_read_failure_does_not_name_the_storage_path() {
+        let hash = "abcdef";
+        let path = Path::new("/oxen-storage-root/ab/cdef/data");
+
+        // A synthesized cause keeps the classification independent of how each platform maps
+        // filesystem errors.
+        let err = version_read_error(hash, path, io::Error::from(ErrorKind::PermissionDenied));
+        let message = err.to_string();
+
+        assert!(!matches!(err, OxenError::VersionStoreBlobMissing { .. }));
+        assert!(
+            message.contains(hash),
+            "message should name the blob: {message}"
+        );
+        assert!(
+            !message.contains("oxen-storage-root"),
+            "message should not name the storage path: {message}"
+        );
     }
 
     #[tokio::test]
