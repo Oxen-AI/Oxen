@@ -11,15 +11,16 @@ use crate::core::refs::with_ref_manager;
 use crate::error::OxenError;
 use crate::model::Commit;
 use crate::model::LocalRepository;
-use crate::model::file::FileContents;
 use crate::model::merkle_tree;
 use crate::storage::S3Opts;
 use crate::util;
 use crate::util::fs::AtomicFile;
+use bytes::Bytes;
 use jwalk::WalkDir;
 use regex::Regex;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use tokio::task::spawn_blocking;
 
 pub mod add;
 pub mod branches;
@@ -213,7 +214,7 @@ fn is_valid_repo_name(name: &str) -> bool {
 
 pub async fn create(
     root_dir: &Path,
-    new_repo: RepoNew,
+    mut new_repo: RepoNew,
     server_s3_opts: Option<&S3Opts>,
 ) -> Result<LocalRepository, OxenError> {
     // Validate repo name
@@ -275,27 +276,31 @@ pub async fn create(
         Ok(())
     })?;
 
-    // If the user supplied files, add and commit them
-    if let Some(files) = &new_repo.files {
-        let user = &files[0].user;
-        // Add the files
+    // If the user supplied files, add and commit them. An empty list means none were supplied.
+    let files = new_repo.files.take().unwrap_or_default();
+    if let Some(user) = files.first().map(|file| file.user.clone()) {
         log::debug!("repositories::create files: {:?}", files.len());
-        for file in files {
-            let path = &file.path;
-            let contents = &file.contents;
-            // write the data to the path
-            // if the path does not exist within the repo, make it
-            let full_path = repo_dir.join(path);
-            let bytes = match contents {
-                FileContents::Text(text) => text.as_bytes(),
-                FileContents::Binary(bytes) => bytes.as_slice(),
-            };
-            AtomicFile::new(&full_path).write(bytes)?;
-            add(&local_repo, &full_path).await?;
+        let payloads: Vec<(PathBuf, Bytes)> = files
+            .into_iter()
+            .map(|file| (repo_dir.join(file.path), file.contents.into_bytes()))
+            .collect();
+        let paths: Vec<PathBuf> = payloads.iter().map(|(path, _)| path.clone()).collect();
+
+        // Every publish fsyncs, so the whole materialization runs in one offload.
+        spawn_blocking(move || {
+            for (path, bytes) in &payloads {
+                AtomicFile::new(path).write(bytes)?;
+            }
+            Ok::<(), OxenError>(())
+        })
+        .await??;
+
+        for path in &paths {
+            add(&local_repo, path).await?;
         }
 
         let commit =
-            core::v_latest::commits::commit_with_user(&local_repo, "Initial commit", user)?;
+            core::v_latest::commits::commit_with_user(&local_repo, "Initial commit", &user)?;
         branches::create(&local_repo, constants::DEFAULT_BRANCH_NAME, &commit.id)?;
     }
 
@@ -417,6 +422,27 @@ mod tests {
 
             // Test that we can successful load a repository from that dir
             let _repo = LocalRepository::from_dir(&repo_path)?;
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_local_repository_api_create_with_an_empty_files_list() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let namespace: &str = "test-namespace";
+            let name: &str = "test-repo-name";
+
+            // A client can send `"files": []`, which must behave like sending no files at all.
+            let repo_new = RepoNew::from_files(namespace, name, vec![], None);
+            let repo = repositories::create(&sync_dir, repo_new, None).await?;
+
+            assert!(repo.path.exists());
+            assert!(
+                repositories::commits::list(&repo)?.is_empty(),
+                "an empty files list should not produce a commit"
+            );
 
             Ok(())
         })
