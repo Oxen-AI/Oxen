@@ -1114,6 +1114,13 @@ fn create_empty_merge_commit(
     Ok(commit_node.to_commit())
 }
 
+/// The common ancestor of `base_commit` and `merge_commit` that is nearest to `base_commit`, or
+/// `None` when the two share no history.
+///
+/// A criss-cross history (each branch merged the other before either was pushed) leaves several
+/// common ancestors tied at that distance, all of them merge bases. The most recent one wins, as
+/// it does in git, and an equal timestamp falls back to the lowest commit id so the same pair of
+/// commits always resolves to the same base.
 pub fn lowest_common_ancestor_from_commits(
     repo: &LocalRepository,
     base_commit: &Commit,
@@ -1134,27 +1141,39 @@ pub fn lowest_common_ancestor_from_commits(
     let commit_depths_from_merge =
         repositories::commits::list_from_with_depth(repo, merge_commit.id.as_str())?;
 
-    // If the commits have no common ancestor (new repository), return None
-    let mut has_common_ancestor = false;
-    let mut min_depth = usize::MAX;
-    let mut lca: Commit = commit_depths_from_head.keys().next().unwrap().clone();
-    for commit in commit_depths_from_merge.keys() {
-        if let Some(depth) = commit_depths_from_head.get(commit) {
-            has_common_ancestor = true;
+    let common: Vec<(usize, &Commit)> = commit_depths_from_merge
+        .keys()
+        .filter_map(|commit| {
+            commit_depths_from_head
+                .get(commit)
+                .map(|depth| (*depth, commit))
+        })
+        .collect();
 
-            if depth < &min_depth {
-                min_depth = *depth;
-                log::debug!("setting new lca, {commit:?}");
-                lca = commit.clone();
-            }
-        }
-    }
+    // No shared history (e.g. unrelated repositories)
+    let Some(&(min_depth, _)) = common.iter().min_by_key(|(depth, _)| *depth) else {
+        return Ok(None);
+    };
 
-    if has_common_ancestor {
-        Ok(Some(lca))
-    } else {
-        Ok(None)
+    let mut merge_bases: Vec<&Commit> = common
+        .iter()
+        .filter(|(depth, _)| *depth == min_depth)
+        .map(|(_, commit)| *commit)
+        .collect();
+    merge_bases.sort_by(|a, b| b.timestamp.cmp(&a.timestamp).then_with(|| a.id.cmp(&b.id)));
+
+    let Some(lca) = merge_bases.first() else {
+        return Ok(None);
+    };
+    if merge_bases.len() > 1 {
+        log::warn!(
+            "multiple merge bases between {} and {}, using {}",
+            base_commit.id,
+            merge_commit.id,
+            lca.id
+        );
     }
+    Ok(Some((*lca).clone()))
 }
 
 /// Analyze a three-way merge between commits. Always returns conflicts and files changed on the

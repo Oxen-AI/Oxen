@@ -254,6 +254,71 @@ mod tests {
         })
         .await
     }
+    /// A criss-cross history leaves two commits tied as merge bases. The depth maps backing the
+    /// search iterate in arbitrary order, so without a tie-break the same request resolved to a
+    /// different base call to call, and three-dot diffs built on it varied per request.
+    #[tokio::test]
+    async fn test_lowest_common_ancestor_is_deterministic_with_multiple_merge_bases()
+    -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+            repositories::branches::create_checkout(&repo, "X")?;
+            let x_path = repo.path.join("x.txt");
+            util::fs::write_to_path(&x_path, "x")?;
+            repositories::add(&repo, &x_path).await?;
+            let x1 = repositories::commit(&repo, "x1")?;
+
+            repositories::checkout(&repo, &main_branch.name).await?;
+            repositories::branches::create_checkout(&repo, "Y")?;
+            let y_path = repo.path.join("y.txt");
+            util::fs::write_to_path(&y_path, "y")?;
+            repositories::add(&repo, &y_path).await?;
+            let y1 = repositories::commit(&repo, "y1")?;
+
+            // Each side merges the other's commit, the way two collaborators merging in opposite
+            // directions before either pushes would. Both merges have exactly two parents.
+            let my = repositories::merge::merge_commit_into_base(&repo, &x1, &y1)
+                .await?
+                .expect("merging x1 into y1 should produce a commit");
+            repositories::checkout(&repo, "X").await?;
+            let mx = repositories::merge::merge_commit_into_base(&repo, &y1, &x1)
+                .await?
+                .expect("merging y1 into x1 should produce a commit");
+            assert_eq!(mx.parent_ids.len(), 2);
+            assert_eq!(my.parent_ids.len(), 2);
+
+            // x1 and y1 are both common ancestors one step from each merge, so this is the
+            // ambiguous case and not an accidentally-unique one. y1 was committed second, so
+            // the git rule (most recent merge base wins) selects it.
+            assert!(
+                y1.timestamp > x1.timestamp,
+                "y1 should be the newer merge base"
+            );
+            let expected = &y1.id;
+
+            let mut answers = std::collections::HashSet::new();
+            for _ in 0..200 {
+                let lca =
+                    repositories::merge::lowest_common_ancestor_from_commits(&repo, &mx, &my)?
+                        .expect("the two merges share history");
+                answers.insert(lca.id);
+            }
+            assert_eq!(
+                answers.len(),
+                1,
+                "the merge base must not vary between calls, got {answers:?}"
+            );
+            assert_eq!(
+                answers.iter().next().map(String::as_str),
+                Some(expected.as_str()),
+                "the most recent merge base should win, as it does in git"
+            );
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_merge_get_lowest_common_ancestor() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|repo| async move {
