@@ -639,7 +639,7 @@ fn build_files_from_upload_parts(
 
             let temp_file = take_single_file_part(file_parts)?;
             Ok(vec![FileNew {
-                path: target_path.to_path_buf(),
+                path: normalize_relative_upload_path(target_path, false, "target path")?,
                 contents: temp_file.contents.clone(),
                 user: user.clone(),
             }])
@@ -786,9 +786,14 @@ async fn process_and_add_files(
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure_no_file_ancestors_in_tree, normalize_relative_upload_path};
+    use super::{
+        MultipartUploadMode, build_files_from_upload_parts, ensure_no_file_ancestors_in_tree,
+        normalize_relative_upload_path,
+    };
     use crate::errors::OxenHttpError;
     use crate::test;
+    use liboxen::model::User;
+    use liboxen::model::file::{FileContents, TempFileNew};
     use std::path::{Path, PathBuf};
 
     use actix_multipart_test::MultiPartFormDataBuilder;
@@ -1427,6 +1432,113 @@ mod tests {
                 .unwrap_err();
 
         assert!(matches!(err, OxenHttpError::BadRequest(_)));
+    }
+
+    #[actix_web::test]
+    async fn test_controllers_file_put_empty_repo_rejects_target_outside_repo()
+    -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Empty-Repo-Escape";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let upload_file = repo.path.join("payload.txt");
+        util::fs::write_to_path(&upload_file, "payload")?;
+
+        let mut multipart_form_data_builder = MultiPartFormDataBuilder::new();
+        multipart_form_data_builder.with_file(upload_file, "file", "text/plain", "payload.txt");
+        multipart_form_data_builder.with_text("name", "some_name");
+        multipart_form_data_builder.with_text("email", "some_email");
+        let (header, body) = multipart_form_data_builder.build();
+
+        // repo.path is <sync_dir>/<namespace>/<repo_name>, so this resolves into sync_dir.
+        let resource = "branch/../../escaped.txt";
+        let put_req = actix_web::test::TestRequest::put()
+            .uri(&format!("/oxen/{namespace}/{repo_name}/file/{resource}"))
+            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+            .param("namespace", namespace)
+            .param("resource", resource)
+            .param("repo_name", repo_name)
+            .insert_header(header)
+            .set_payload(body)
+            .to_request();
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/file/{resource:.*}",
+                    web::put().to(controllers::file::put),
+                ),
+        )
+        .await;
+
+        let put_resp = actix_web::test::call_service(&app, put_req).await;
+        assert_eq!(put_resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+        assert!(!sync_dir.join("escaped.txt").exists());
+
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
+
+    fn single_file_upload_parts() -> (TempFileNew, User) {
+        (
+            TempFileNew {
+                path: PathBuf::from("hello.txt"),
+                contents: FileContents::Text("Hello".to_string()),
+            },
+            User {
+                name: "Test User".to_string(),
+                email: "test@oxen.ai".to_string(),
+            },
+        )
+    }
+
+    #[test]
+    fn test_build_files_single_file_rejects_parent_dir_target() {
+        let (temp_file, user) = single_file_upload_parts();
+        let err = build_files_from_upload_parts(
+            Path::new("../../outside.txt"),
+            MultipartUploadMode::SingleFile,
+            Some(&temp_file),
+            &[],
+            &user,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, OxenHttpError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_build_files_single_file_rejects_absolute_target() {
+        let (temp_file, user) = single_file_upload_parts();
+        let err = build_files_from_upload_parts(
+            Path::new("/tmp/outside.txt"),
+            MultipartUploadMode::SingleFile,
+            Some(&temp_file),
+            &[],
+            &user,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, OxenHttpError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_build_files_single_file_collapses_current_dir_target() {
+        let (temp_file, user) = single_file_upload_parts();
+        let files = build_files_from_upload_parts(
+            Path::new("./pages/./home.txt"),
+            MultipartUploadMode::SingleFile,
+            Some(&temp_file),
+            &[],
+            &user,
+        )
+        .unwrap();
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, PathBuf::from("pages/home.txt"));
     }
 
     #[actix_web::test]
