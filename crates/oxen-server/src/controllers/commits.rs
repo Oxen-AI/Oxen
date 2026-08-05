@@ -1059,7 +1059,7 @@ pub async fn complete(req: HttpRequest) -> Result<HttpResponse, Error> {
                     Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()))
                 }
                 Err(err) => {
-                    log::error!("Error finding commit [{commit_id}]: {err}");
+                    tracing::error!(commit_id = %commit_id, cause = %err, "Error finding commit");
                     Ok(HttpResponse::InternalServerError()
                         .json(StatusMessage::internal_server_error()))
                 }

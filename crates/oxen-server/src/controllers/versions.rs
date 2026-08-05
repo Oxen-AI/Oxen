@@ -263,7 +263,7 @@ pub async fn stream_versions_tar_gz(
                     let file_size = match version_store_clone.get_version_size(file_hash).await {
                         Ok(size) => size,
                         Err(e) => {
-                            log::error!("Failed to get version file size for {file_hash}: {e}");
+                            tracing::error!(file_hash = %file_hash, cause = %e, "Failed to get version file size");
                             error_tx
                                 .send(OxenError::VersionFetchFailed {
                                     file_hash: file_hash.clone(),
@@ -278,7 +278,7 @@ pub async fn stream_versions_tar_gz(
                     let mut header = tokio_tar::Header::new_gnu();
                     header.set_size(file_size as u64);
                     if let Err(e) = header.set_path(file_hash) {
-                        log::error!("Failed to set path for {file_hash}: {e}");
+                        tracing::error!(file_hash = %file_hash, cause = %e, "Failed to set tar path for version");
                         error_tx
                             .send(OxenError::basic_str(format!(
                                 "Failed to set path for {file_hash}: {e}"
@@ -294,7 +294,7 @@ pub async fn stream_versions_tar_gz(
 
                     let mut reader = StreamReader::new(data);
                     if let Err(e) = tar.append(&header, &mut reader).await {
-                        log::error!("Failed to append {file_hash} to tar: {e}");
+                        tracing::error!(file_hash = %file_hash, cause = %e, "Failed to append version to tar");
                         error_tx.send(OxenError::IO(e)).ok();
                         had_error = true;
                         break;
@@ -305,7 +305,7 @@ pub async fn stream_versions_tar_gz(
                     );
                 }
                 Err(e) => {
-                    log::error!("Failed to get version {file_hash}: {e}");
+                    tracing::error!(file_hash = %file_hash, cause = %e, "Failed to get version");
                     // Wrap with the hash so the streaming-response error names the specific
                     // content blob that couldn't be served. The HTTP 200 has already been sent
                     // by the time we reach this branch, so this is the only way the client side

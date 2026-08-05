@@ -84,6 +84,9 @@ mockito = { workspace = true }
 # "test" swaps in a capturing transport, so the `tasks` tests can assert what reaches Sentry. Kept a
 # dev-dependency feature so the resolver leaves it out of the shipped binary.
 sentry = { workspace = true, features = ["test"] }
+# Lets the fingerprint test drive error_response through the same tracing -> Sentry layer main
+# installs, and assert what the reporting backend would actually receive.
+tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true

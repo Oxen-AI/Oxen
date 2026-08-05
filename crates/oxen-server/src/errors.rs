@@ -513,7 +513,10 @@ impl error::ResponseError for OxenHttpError {
                         // Not a 404: the commit still lists this file, so the resource exists and
                         // the server cannot produce its bytes. Reported separately from generic
                         // IO so it is visible as data loss rather than lost among read failures.
-                        log::error!("Version store has no data for hash {hash}");
+                        tracing::error!(
+                            hash = %hash,
+                            "Version store is missing data for a hash the tree references"
+                        );
                         let error_json = json!({
                             "error": {
                                 "type": "version_blob_missing",
@@ -543,7 +546,11 @@ impl error::ResponseError for OxenHttpError {
                         workspace_id,
                         source,
                     } => {
-                        log::error!("Workspace '{workspace_id}' staged db corrupted: {source}");
+                        tracing::error!(
+                            workspace_id = %workspace_id,
+                            cause = %source,
+                            "Workspace staged db is corrupted"
+                        );
                         let error_json = json!({
                             "error": {
                                 "type": "workspace_staged_db_corrupted",
@@ -960,6 +967,12 @@ impl error::ResponseError for OxenHttpError {
                     err => {
                         // Surface the error's message so unmapped variants return a real reason
                         // instead of a bare "internal_server_error" that lives only in the logs.
+                        //
+                        // The error text stays in the message here, unlike the arms above. Error
+                        // reporting groups by message, and every unmapped variant reaches this
+                        // one line — a constant message would collapse every unrelated failure
+                        // into a single bucket. An unmapped error carrying an id still splits per
+                        // id; the fix for that is giving it its own arm, not flattening this one.
                         log::error!("Internal server error: {err:?}");
                         let error_json = json!({
                             "error": {
@@ -1068,6 +1081,77 @@ mod tests {
             assert_eq!(status, expected, "wrong status for {rendered}");
             assert!(!status.is_server_error(), "{rendered} reported as a 5xx");
         }
+    }
+
+    /// Reports two blob-missing errors with different hashes and returns what the reporting
+    /// backend received, driving the real `error_response` through the same tracing layer `main`
+    /// installs.
+    ///
+    /// The subscriber here is scoped rather than global, so the `log` -> `tracing` bridge is not
+    /// active: a site written with `log::error!` produces no event at all rather than a
+    /// differently-grouped one. Reverting a converted site therefore fails the count assertion
+    /// below instead of the message one.
+    fn reported_events_for_two_hashes() -> Vec<sentry::protocol::Event<'static>> {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let transport = sentry::test::TestTransport::new();
+        let options = sentry::ClientOptions {
+            dsn: Some(
+                "https://public@sentry.invalid/1"
+                    .parse()
+                    .expect("the test DSN should parse"),
+            ),
+            transport: Some(std::sync::Arc::new(std::sync::Arc::clone(&transport))),
+            ..Default::default()
+        };
+        let hub = std::sync::Arc::new(sentry::Hub::new(
+            Some(std::sync::Arc::new(options.into())),
+            std::sync::Arc::new(Default::default()),
+        ));
+
+        sentry::Hub::run(hub, || {
+            let subscriber =
+                tracing_subscriber::registry().with(sentry::integrations::tracing::layer());
+            tracing::subscriber::with_default(subscriber, || {
+                for hash in ["aaa111", "bbb222"] {
+                    let error = OxenError::VersionStoreBlobMissing {
+                        hash: hash.to_string(),
+                    };
+                    let _ = OxenHttpError::from(error).error_response();
+                }
+            });
+        });
+
+        transport.fetch_and_clear_events()
+    }
+
+    #[test]
+    fn missing_blob_reports_group_together_and_keep_the_hash() {
+        // Reports are grouped by message, so a hash in the message would file every missing blob
+        // as its own issue and a resolved one would never reopen — the recurrence arrives under a
+        // new fingerprint. The hash still has to survive somewhere or the report is unactionable.
+        let events = reported_events_for_two_hashes();
+        assert_eq!(events.len(), 2, "expected one report per call");
+
+        assert_eq!(
+            events[0].message, events[1].message,
+            "two hashes must share one message, or they group as separate issues"
+        );
+
+        let hashes: Vec<String> = events
+            .iter()
+            .map(|event| {
+                format!(
+                    "{:?}",
+                    event
+                        .contexts
+                        .get("Rust Tracing Fields")
+                        .expect("the hash should ride along as a structured field")
+                )
+            })
+            .collect();
+        assert!(hashes[0].contains("aaa111"), "got {}", hashes[0]);
+        assert!(hashes[1].contains("bbb222"), "got {}", hashes[1]);
     }
 
     #[test]
