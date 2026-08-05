@@ -37,6 +37,7 @@ jobs:
           prefix-key: rust-production
           cache-all-crates: true
           cache-on-failure: true
+          cache-bin: false # See the rust-test job in ci_test.yml for rationale.
 
       - name: Load tool versions
         run: grep -E '^[A-Z0-9_]+=' tool-versions.env >> "$GITHUB_ENV"

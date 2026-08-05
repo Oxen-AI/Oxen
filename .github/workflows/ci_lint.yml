@@ -34,6 +34,7 @@ jobs:
           # Other branches will still use the cache but won't save it.
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: "."
+          cache-bin: false # See the rust-test job in ci_test.yml for rationale.
 
       - name: Load tool versions
         run: grep -E '^[A-Z0-9_]+=' tool-versions.env >> "$GITHUB_ENV"
