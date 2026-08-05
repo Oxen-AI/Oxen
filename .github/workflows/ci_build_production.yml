@@ -25,6 +25,19 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           components: clippy
+          cache: false # We use Swatinem/rust-cache directly below for save-if control.
+
+      # Must precede the tool versions load: rust-cache hashes every CARGO*/RUST* environment
+      # variable into its key, so the cargo-tool pins in tool-versions.env would otherwise bust
+      # the whole build cache every time one of them is bumped.
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          prefix-key: rust-production
+          cache-all-crates: true
+          cache-on-failure: true
+          cache-bin: false # See the rust-test job in ci_test.yml for rationale.
 
       - name: Load tool versions
         run: grep -E '^[A-Z0-9_]+=' tool-versions.env >> "$GITHUB_ENV"
@@ -34,14 +47,6 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           python-version: "3.11"
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          prefix-key: rust-production
-          cache-all-crates: true
-          cache-on-failure: true
 
       - name: Install FFmpeg 8
         # Install FFmpeg 8 (the `production` feature enables `ffmpeg`) and point pkg-config
