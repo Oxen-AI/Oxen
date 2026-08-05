@@ -15,11 +15,21 @@ REPO_ROOT="$SCRIPT_DIR/.."
 SERVER="$REPO_ROOT/target/debug/oxen-server"
 SERVER_PID=""
 
+# Stop oxen-server, escalating to SIGKILL if it hasn't exited within 10s.
+stop_server() {
+    [ -n "$SERVER_PID" ] || return 0
+    kill "$SERVER_PID" 2>/dev/null || true
+    for _i in $(seq 1 10); do
+        kill -0 "$SERVER_PID" 2>/dev/null || break
+        sleep 1
+    done
+    kill -9 "$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID" 2>/dev/null || true
+    SERVER_PID=""
+}
+
 cleanup() {
-    if [ -n "$SERVER_PID" ]; then
-        kill "$SERVER_PID" 2>/dev/null || true
-        wait "$SERVER_PID" 2>/dev/null || true
-    fi
+    stop_server
     rm -f /tmp/span-stderr.txt
 }
 trap cleanup EXIT INT TERM
@@ -50,12 +60,10 @@ if ! curl -sf --max-time 2 http://localhost:3000/api/health > /dev/null 2>&1; th
 fi
 
 # Hit an endpoint so TracingLogger creates (and closes) a span
-curl -sf http://localhost:3000/api/health > /dev/null
+curl -sf --max-time 10 http://localhost:3000/api/health > /dev/null
 sleep 1
 
-kill "$SERVER_PID" 2>/dev/null || true
-wait "$SERVER_PID" 2>/dev/null || true
-SERVER_PID=""
+stop_server
 
 # Span CLOSE events include "time.busy" / "time.idle"
 if grep -q "time.busy" /tmp/span-stderr.txt; then

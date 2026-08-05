@@ -50,8 +50,14 @@ has_valid_user_config() {
 }
 
 cleanup() {
+    # Stop oxen-server, escalating to SIGKILL if it hasn't exited within 10s.
     if [ -n "$SERVER_PID" ]; then
         kill "$SERVER_PID" 2>/dev/null || true
+        for _i in $(seq 1 10); do
+            kill -0 "$SERVER_PID" 2>/dev/null || break
+            sleep 1
+        done
+        kill -9 "$SERVER_PID" 2>/dev/null || true
         wait "$SERVER_PID" 2>/dev/null || true
     fi
     if [ -n "$JAEGER_NAME" ]; then
@@ -190,7 +196,7 @@ fi
 # ── oxen client: Full push / clone / modify / push / pull workflow ──
 
 # Create remote repository (namespace "ox", name "otel-metrics-test")
-curl -sf -H "Authorization: Bearer $TOKEN" \
+curl -sf --max-time 30 -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -X POST -d '{"namespace":"ox","name":"otel-metrics-test"}' \
   http://localhost:3000/api/repos
