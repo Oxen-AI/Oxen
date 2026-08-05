@@ -899,6 +899,7 @@ impl OxenError {
                 | OxenError::WorkspaceNotFound(_)
                 | OxenError::QueryableWorkspaceNotFound
                 | OxenError::MerkleNodeNotFound(_)
+                | OxenError::DiffPathInNeitherRevision { .. }
         )
     }
 
