@@ -119,7 +119,7 @@ pub fn get_by_namespace_and_name(
             OxenError::UnsupportedRepoVersion(version) => {
                 log::warn!("Unsupported repo on-disk version {version} at {repo_dir:?}")
             }
-            _ => log::error!("Error getting repo from dir {repo_dir:?}: {err:?}"),
+            _ => tracing::error!(repo_dir = ?repo_dir, cause = ?err, "Error getting repo from dir"),
         })
         .map(Some)
 }

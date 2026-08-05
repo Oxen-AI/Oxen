@@ -88,10 +88,24 @@ and always formats into the message.
 **9. Match the log level to who is at fault.** `error_response` documents the convention: `error!`
 for a server-side defect, `warn!` for a request the caller got wrong, `debug!` when there is no
 identifying detail worth keeping. `error!` is what becomes a reported incident, so a 4xx logged at
-`error!` turns ordinary client traffic into alerts. Note that `tracing_actix_web` derives its own
-level from the response status, so getting the status right usually gets the level right for free.
+`error!` turns ordinary client traffic into alerts.
 
-**10. Test the classification. Never test the definition.**
+**10. Every 5xx is logged at `error!` exactly once, by whoever holds the detail.** Nothing else
+reports one: `tracing-actix-web`'s `emit_event_on_error` is disabled (see the workspace
+`Cargo.toml`), so an unlogged 5xx is **silent**. Where the log goes follows from who has the error:
+
+- The variant carries it: log in the `error_response` arm, the only place with the detail.
+- The variant is empty: the arm stays silent and the failure is reported before the variant is
+  constructed, either at the construction site or by the callee that returned the error.
+  `OxenHttpError::InternalServerError` is this case. A log in that arm would be a contextless
+  duplicate of a report that already carries the detail.
+
+Before adding a log anywhere on a 5xx path, check both directions for one that already exists: the
+callers that construct the error, and the callee that returned it. A liboxen function that logs in
+an `inspect_err` has already reported the failure, so a handler that logs again on the way out
+doubles it. This applies to handlers that build a 500 directly, not just to `error_response`.
+
+**11. Test the classification. Never test the definition.**
 
 Tests are for logic and interactions. A variant constructed directly is exactly what it was
 hard-coded to be, so asserting that proves nothing and costs a test to compile, run, and maintain

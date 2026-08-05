@@ -115,6 +115,8 @@ impl error::ResponseError for OxenHttpError {
         log::debug!("OxenHttpError: {self:?}");
         match self {
             OxenHttpError::InternalServerError => {
+                // Silent: this variant carries no detail, so the failure is reported before it
+                // is constructed, either at the construction site or by the callee.
                 HttpResponse::InternalServerError().json(StatusMessage::internal_server_error())
             }
             OxenHttpError::MultipartError(_) => {
@@ -823,17 +825,6 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::BadRequest().json(error_json)
                     }
-                    OxenError::Basic(error) | OxenError::InternalError(error) => {
-                        let error_json = json!({
-                            "error": {
-                                "type": MSG_INTERNAL_SERVER_ERROR,
-                                "title": format!("{}", error),
-                            },
-                            "status": STATUS_ERROR,
-                            "status_message": MSG_INTERNAL_SERVER_ERROR,
-                        });
-                        HttpResponse::InternalServerError().json(error_json)
-                    }
                     OxenError::LocalRepoNotFound(path) => {
                         log::debug!("Local repo not found: {path}");
                         let error_json = json!({
@@ -1061,8 +1052,7 @@ mod tests {
     fn test_client_mistakes_are_not_server_errors() {
         // Each of these is something a caller got wrong. As a 5xx each one alerted us and invited
         // the client to retry a request that can never succeed, so the status has to be a terminal
-        // 4xx. `tracing_actix_web` levels its own event off the response status, so getting the
-        // status right is also what stops the Sentry report.
+        // 4xx, reported at `warn!` rather than `error!`.
         let cases = [
             (
                 OxenError::NotAFile(PathBuf::from("some/dir").into()),

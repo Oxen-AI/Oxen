@@ -63,8 +63,8 @@ pub async fn show(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
                 log::debug!("404 Could not find namespace: {namespace}");
                 Err(OxenHttpError::NotFound)
             }
-            Err(err) => {
-                log::debug!("Err finding namespace: {namespace} => {err:?}");
+            Err(_) => {
+                // `get_storage_for_repo` reports the failure; it holds the repo that failed.
                 Err(OxenHttpError::InternalServerError)
             }
         }

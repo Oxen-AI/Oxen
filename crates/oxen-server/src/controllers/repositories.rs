@@ -202,8 +202,8 @@ pub async fn stats(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
                 log::debug!("404 Could not find repo: {name}");
                 Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()))
             }
-            Err(err) => {
-                log::debug!("Err finding repo: {name} => {err:?}");
+            Err(_) => {
+                // `get_by_namespace_and_name` reports the failure; it holds the repo directory.
                 Ok(
                     HttpResponse::InternalServerError()
                         .json(StatusMessage::internal_server_error()),
