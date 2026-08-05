@@ -489,9 +489,11 @@ pub async fn diff_entries(
     df_opts: DFOpts,
 ) -> Result<DiffEntry, OxenError> {
     if base_entry.is_none() && head_entry.is_none() {
-        return Err(OxenError::basic_str(
-            "Could not calculate diff: neither base nor head entries exist.",
-        ));
+        return Err(OxenError::DiffPathInNeitherRevision {
+            path: file_path.as_ref().to_path_buf().into(),
+            base: base_commit.id.clone(),
+            head: head_commit.id.clone(),
+        });
     }
 
     // Assume both entries exist

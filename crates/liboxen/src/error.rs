@@ -156,6 +156,15 @@ pub enum OxenError {
     #[error("{0}")]
     InvalidFileType(StringError),
 
+    /// A diff was requested for a path that neither revision contains. Names the path and both
+    /// revisions, none of which the caller could previously tell from the error.
+    #[error("{path} does not exist in {base} or in {head}")]
+    DiffPathInNeitherRevision {
+        path: PathBufError,
+        base: String,
+        head: String,
+    },
+
     /// The user supplied a CSV delimiter that was not exactly one byte.
     #[error("Delimiter must be a single character")]
     InvalidDelimiter,
@@ -876,6 +885,13 @@ impl OxenError {
         )
     }
 
+    /// Did an image decode exceed the decoder's allocation ceiling? The image is larger than this
+    /// server will decode, which the caller can act on, and retrying cannot change. Kept beside
+    /// [`OxenError::is_unsupported_image_format`] for the same reason.
+    pub fn is_image_too_large(&self) -> bool {
+        matches!(self, OxenError::ImageError(image::ImageError::Limits(_)))
+    }
+
     /// Is this error considered as something not existing?
     pub fn is_not_found(&self) -> bool {
         matches!(
@@ -888,6 +904,7 @@ impl OxenError {
                 | OxenError::WorkspaceNotFound(_)
                 | OxenError::QueryableWorkspaceNotFound
                 | OxenError::MerkleNodeNotFound(_)
+                | OxenError::DiffPathInNeitherRevision { .. }
         )
     }
 

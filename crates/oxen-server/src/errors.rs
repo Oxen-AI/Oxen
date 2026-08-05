@@ -220,8 +220,24 @@ impl error::ResponseError for OxenHttpError {
                 });
                 HttpResponse::BadRequest().json(error_json)
             }
-            OxenHttpError::ActixError(_) => {
-                HttpResponse::InternalServerError().json(StatusMessage::internal_server_error())
+            OxenHttpError::ActixError(error) => {
+                let status = error.as_response_error().status_code();
+                if status.is_server_error() {
+                    log::error!("Actix error: {error}");
+                    HttpResponse::build(status).json(StatusMessage::internal_server_error())
+                } else {
+                    log::warn!("Request rejected before it reached a handler: {error}");
+                    let error_json = json!({
+                        "error": {
+                            "type": "bad_request",
+                            "title": "Bad Request",
+                            "detail": format!("{error}"),
+                        },
+                        "status": STATUS_ERROR,
+                        "status_message": MSG_BAD_REQUEST,
+                    });
+                    HttpResponse::build(status).json(error_json)
+                }
             }
             OxenHttpError::SerdeError(_) => handle_serde(),
             OxenHttpError::UpdateRequired(version) => {
@@ -387,6 +403,19 @@ impl error::ResponseError for OxenHttpError {
                     // The next four are things a caller got wrong. Each returns a terminal 4xx at
                     // `warn!`, so it stops both the client retrying and the alert that a 5xx at
                     // `error!` raises.
+                    OxenError::DiffPathInNeitherRevision { path, base, head } => {
+                        log::warn!("Diff requested for {path}, absent from {base} and {head}");
+                        let error_json = json!({
+                            "error": {
+                                "type": MSG_RESOURCE_NOT_FOUND,
+                                "title": "Path not in either revision",
+                                "detail": format!("{path} does not exist in {base} or in {head}, so there is nothing to diff."),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_RESOURCE_NOT_FOUND,
+                        });
+                        HttpResponse::NotFound().json(error_json)
+                    }
                     OxenError::NotAFile(path) => {
                         log::warn!("Single-file endpoint given a directory: {path}");
                         let error_json = json!({
@@ -428,6 +457,19 @@ impl error::ResponseError for OxenHttpError {
                     }
                     // Only the unsupported-format case is the caller's: they uploaded an image
                     // this build cannot decode. Every other image failure stays a server error.
+                    OxenError::ImageError(_) if error.is_image_too_large() => {
+                        log::warn!("Image exceeds the decoder's allocation ceiling: {error}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "image_too_large",
+                                "title": "Image Too Large",
+                                "detail": "This image is larger than the server will decode.",
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::PayloadTooLarge().json(error_json)
+                    }
                     OxenError::ImageError(_) if error.is_unsupported_image_format() => {
                         log::warn!("Unsupported image format: {error}");
                         let error_json = json!({
@@ -1029,6 +1071,42 @@ mod tests {
     }
 
     #[test]
+    fn test_actix_errors_keep_the_status_actix_chose() {
+        // actix classifies its own errors; answering all of them with 500 turned a client that
+        // truncated its upload into an alert. The status has to come from actix, not be replaced.
+        let incomplete = OxenHttpError::from(actix_web::Error::from(
+            actix_web::error::PayloadError::Incomplete(None),
+        ));
+        let status = incomplete.error_response().status();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(!status.is_server_error());
+
+        // Overflow is the one payload case actix rates differently, and it must survive too.
+        let overflow = OxenHttpError::from(actix_web::Error::from(
+            actix_web::error::PayloadError::Overflow,
+        ));
+        assert_eq!(
+            overflow.error_response().status(),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+    }
+
+    #[test]
+    fn test_diff_path_in_neither_revision_is_not_found() {
+        // Diffing a path neither revision contains is the caller naming something that is not
+        // there, not a server failure.
+        let error = OxenError::DiffPathInNeitherRevision {
+            path: PathBuf::from("a.csv").into(),
+            base: "abc123".to_string(),
+            head: "def456".to_string(),
+        };
+        let status = OxenHttpError::from(error).error_response().status();
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(!status.is_server_error());
+    }
+
+    #[test]
     fn test_unsupported_image_format_is_a_client_error() {
         // An image this build cannot decode is the caller's input. Every other image failure is
         // still a server error, so the arm is guarded rather than matching all of `ImageError`.
@@ -1040,7 +1118,6 @@ mod tests {
                 )),
             ),
         ));
-        assert!(error.is_unsupported_image_format());
 
         let status = OxenHttpError::from(error).error_response().status();
         assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
