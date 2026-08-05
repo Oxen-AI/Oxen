@@ -1110,7 +1110,6 @@ mod tests {
                 )),
             ),
         ));
-        assert!(error.is_unsupported_image_format());
 
         let status = OxenHttpError::from(error).error_response().status();
         assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);

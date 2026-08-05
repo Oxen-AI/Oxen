@@ -42,6 +42,98 @@ this consistent design pattern on a best-effort approach
    `OxenHttpError::InternalServerError`.
 
 
+## Checklist: adding or changing an `OxenError` variant
+
+Defining the variant is the easy part. What gets missed is wiring it into the places that *classify*
+errors — each is a separate `match` that silently falls through to a default when a new variant is
+absent, so nothing fails to compile and nothing fails a test. Walk this list every time.
+
+**1. Does it need a specific HTTP status?** `oxen-server`'s `error_response` in
+`crates/oxen-server/src/errors.rs` maps `OxenError` variants to responses. A variant with no arm
+falls to the catch-all and becomes **HTTP 500**. Add an arm whenever the caller should see anything
+else — and note that a 500 for a caller's mistake both invites a pointless retry and reports the
+request as a server fault.
+
+**2. Does it need a hint?** `OxenError::hint` returns the "here is how to fix it" line the CLI
+prints. Add an arm when there is a concrete action the user can take.
+
+**3. Is it a "not found"?** `OxenError::is_not_found`. This one has reach beyond its name: several
+client retry loops branch on it, and `is_fatal_for_retry` short-circuits on it.
+
+**4. Will retrying ever succeed?** `OxenError::is_fatal_for_retry`. Return true for anything
+deterministic. A variant that is absent here defaults to *retryable*, so a permanent failure gets
+the full exponential backoff before surfacing — the user waits, and the answer does not change.
+
+**5. Does an existing classifier already cover it?** Besides the above there are
+`is_auth_error`, `is_unsupported_image_format`, and `is_image_too_large`. Adding a variant that
+belongs in one of these and forgetting is the same silent-default failure.
+
+**6. Does the variant carry what a reader needs to act?** Prefer fields over prose. An error that
+says "file not found" without the path, or "version missing" without the hash, produces a report
+nobody can act on. The fields cost nothing and are what turn a report into a diagnosis.
+
+**7. Watch `#[from]` on the variant you are classifying.** If a variant is reachable by `#[from]`
+conversion, a bare `?` anywhere converts into it *before* your classification code runs. A
+classifier added at one call site can be bypassed entirely by a `?` at another. When adding
+classification around a `#[from]` variant, find every conversion site, not just the one you are
+looking at.
+
+**8. Keep variable data out of the log message.** The log level decides what is reported as an
+incident, and the message text is the grouping key for those reports. Interpolating a hash, path, or
+id into the message produces a *separate* report per value rather than one for the condition. Log a
+constant message with the variable as a structured field (`tracing::error!(hash = %hash, "...")`)
+unless per-value grouping is genuinely what you want. Note `log::error!` has no structured fields
+and always formats into the message.
+
+**9. Match the log level to who is at fault.** `error_response` documents the convention: `error!`
+for a server-side defect, `warn!` for a request the caller got wrong, `debug!` when there is no
+identifying detail worth keeping. `error!` is what becomes a reported incident, so a 4xx logged at
+`error!` turns ordinary client traffic into alerts. Note that `tracing_actix_web` derives its own
+level from the response status, so getting the status right usually gets the level right for free.
+
+**10. Test the classification. Never test the definition.**
+
+Tests are for logic and interactions. A variant constructed directly is exactly what it was
+hard-coded to be, so asserting that proves nothing and costs a test to compile, run, and maintain
+forever. **Do not write tests like these:**
+
+```rust
+// Worthless: the field holds what it was just given.
+let err = OxenError::NotAFile(PathBuf::from("a/b").into());
+assert_eq!(err.to_string(), "Not a single file: a/b");   // restates #[error(...)]
+assert!(matches!(err, OxenError::NotAFile(_)));          // restates the constructor
+```
+
+Test what the variant *causes* somewhere else:
+
+```rust
+// Worth having: exercises error_response's mapping, which has a silent default.
+let status = OxenHttpError::from(OxenError::NoChanges).error_response().status();
+assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+assert!(!status.is_server_error());
+```
+
+**The test to apply: does the assertion restate a line of source, or exercise a computation?**
+
+Adding a variant to `is_not_found` is one line. A test asserting `err.is_not_found()` restates that
+line and nothing else — there is no branch, no input, no interaction, only membership in a
+`matches!` list. Write the line correctly and move on. The same goes for `hint` and for any other
+list-shaped classifier: **these do not get their own tests.**
+
+Beware the trap of "but it fails if I remove the fix". That proves nothing — a definitional test
+fails when you delete the definition too (`assert_eq!(err.x, 1)` fails if you remove the field). It
+is a necessary property of any useful test, not evidence that a test is useful. Judge by whether
+there is computation to exercise.
+
+What that leaves worth testing here is the HTTP boundary. `error_response` is a published contract:
+the status a caller receives is observable behavior other systems depend on, and asserting
+`!status.is_server_error()` pins the *intent* — that this is not a server fault — rather than
+restating which arm was written. Keep those. Everything upstream of that boundary is internal
+plumbing whose only observable effect shows up there anyway.
+
+If a test would fail only because someone deliberately edited the one line it mirrors, it is not
+earning its compile time. Delete it.
+
 ## Specific Guidance for Modernization of Existing Oxen Code
 
 When you touch existing code that uses `OxenError::Basic` or `OxenError::InternalError`, decide based on
