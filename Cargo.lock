@@ -5711,6 +5711,7 @@ dependencies = [
  "tracing",
  "tracing-actix-web",
  "tracing-opentelemetry",
+ "tracing-subscriber",
  "url",
  "utoipa",
  "utoipa-swagger-ui",
