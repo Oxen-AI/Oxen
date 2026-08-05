@@ -18,7 +18,8 @@ use crate::util::fs::AtomicFile;
 use bytes::Bytes;
 use jwalk::WalkDir;
 use regex::Regex;
-use std::path::{Path, PathBuf};
+use std::ffi::OsStr;
+use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 use tokio::task::spawn_blocking;
 
@@ -68,6 +69,34 @@ pub use save::save;
 pub use status::status;
 pub use status::status_from_dir;
 
+/// The directory holding the repositories in `namespace`, under `sync_dir`.
+///
+/// `namespace` must be a single ordinary path component, so the result always stays inside
+/// `sync_dir`.
+pub fn namespace_dir(sync_dir: &Path, namespace: &str) -> Result<PathBuf, OxenError> {
+    Ok(sync_dir.join(plain_segment(namespace)?))
+}
+
+/// The directory holding repository `namespace`/`name`, under `sync_dir`.
+///
+/// `namespace` and `name` must each be a single ordinary path component, so the result always
+/// stays inside `sync_dir`. Build every server-side repository path through this rather than
+/// joining the parts directly, so an identifier that arrived over the network cannot name a
+/// location outside `sync_dir`.
+pub fn repo_dir(sync_dir: &Path, namespace: &str, name: &str) -> Result<PathBuf, OxenError> {
+    Ok(namespace_dir(sync_dir, namespace)?.join(plain_segment(name)?))
+}
+
+/// Rejects anything that is not exactly one ordinary path component: `.`, `..`, a separator, an
+/// absolute path, a Windows prefix, or an empty string.
+fn plain_segment(segment: &str) -> Result<&OsStr, OxenError> {
+    let mut components = Path::new(segment).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(part)), None) => Ok(part),
+        _ => Err(OxenError::InvalidRepoIdentifier(segment.into())),
+    }
+}
+
 pub fn get_by_namespace_and_name(
     sync_dir: &Path,
     namespace: impl AsRef<str>,
@@ -76,7 +105,7 @@ pub fn get_by_namespace_and_name(
 ) -> Result<Option<LocalRepository>, OxenError> {
     let namespace = namespace.as_ref();
     let name = name.as_ref();
-    let repo_dir = sync_dir.join(namespace).join(name);
+    let repo_dir = repo_dir(sync_dir, namespace, name)?;
 
     if !repo_dir.exists() {
         log::debug!("Repo does not exist: {repo_dir:?}");
@@ -172,27 +201,27 @@ pub fn transfer_namespace(
 ) -> Result<LocalRepository, OxenError> {
     log::debug!("transfer_namespace from: {from_namespace} to: {to_namespace}");
 
-    let repo_dir = sync_dir.join(from_namespace).join(repo_name);
-    let new_repo_dir = sync_dir.join(to_namespace).join(repo_name);
+    let from_dir = repo_dir(sync_dir, from_namespace, repo_name)?;
+    let to_dir = repo_dir(sync_dir, to_namespace, repo_name)?;
 
-    if !repo_dir.exists() {
-        log::debug!("Error while transferring repo: repo does not exist: {repo_dir:?}");
+    if !from_dir.exists() {
+        log::debug!("Error while transferring repo: repo does not exist: {from_dir:?}");
         return Err(OxenError::RepoNotFound(Box::new(
             RepoNew::from_namespace_name(from_namespace, repo_name, None),
         )));
     }
 
     // ensure DB instance is closed before we move the repo
-    merkle_tree::merkle_tree_node_cache::remove_from_cache(&repo_dir)?;
-    core::staged::remove_from_cache_with_children(&repo_dir)?;
-    core::refs::remove_from_cache(&repo_dir)?;
+    merkle_tree::merkle_tree_node_cache::remove_from_cache(&from_dir)?;
+    core::staged::remove_from_cache_with_children(&from_dir)?;
+    core::refs::remove_from_cache(&from_dir)?;
 
-    util::fs::create_dir_all(&new_repo_dir)?;
-    util::fs::rename(&repo_dir, &new_repo_dir)?;
+    util::fs::create_dir_all(&to_dir)?;
+    util::fs::rename(&from_dir, &to_dir)?;
 
     // Update path in config
     {
-        let repo = LocalRepository::from_dir_with_server_opts(&new_repo_dir, server_s3_opts)?;
+        let repo = LocalRepository::from_dir_with_server_opts(&to_dir, server_s3_opts)?;
         repo.save()?;
         // ensure drop(repo)
     }
@@ -317,7 +346,16 @@ pub async fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenErro
     // custom versions_path) they live outside the repo directory.
     repo.version_store().destroy().await?;
 
-    let path = repo.path.clone();
+    delete_dir(&repo.path).await?;
+    Ok(repo)
+}
+
+/// Removes a repository's directory.
+///
+/// Version blobs held outside the directory survive, so prefer [`delete`] whenever the repository
+/// can be opened.
+pub async fn delete_dir(path: &Path) -> Result<(), OxenError> {
+    let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
         // Close DB instances before trying to delete the directory
         merkle_tree::merkle_tree_node_cache::remove_from_cache(&path)?;
@@ -333,7 +371,7 @@ pub async fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenErro
         Ok(())
     })
     .await??;
-    Ok(repo)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -652,6 +690,49 @@ mod tests {
 
             Ok(())
         })
+    }
+
+    #[test]
+    fn test_repo_dir_rejects_identifiers_that_escape_the_sync_dir() {
+        let sync_dir = Path::new("/data");
+
+        for bad in ["..", ".", "", "/", "a/b", "../..", "/etc", "./x"] {
+            assert!(
+                matches!(
+                    repositories::repo_dir(sync_dir, bad, "repo"),
+                    Err(OxenError::InvalidRepoIdentifier(_))
+                ),
+                "namespace {bad:?} should be rejected"
+            );
+            assert!(
+                matches!(
+                    repositories::repo_dir(sync_dir, "namespace", bad),
+                    Err(OxenError::InvalidRepoIdentifier(_))
+                ),
+                "name {bad:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn test_repo_dir_accepts_ordinary_identifiers() -> Result<(), OxenError> {
+        let sync_dir = Path::new("/data");
+
+        assert_eq!(
+            repositories::repo_dir(sync_dir, "my-namespace", "my-repo")?,
+            Path::new("/data/my-namespace/my-repo")
+        );
+        // A dot inside a segment is ordinary; only a segment that *is* `.` or `..` is not.
+        assert_eq!(
+            repositories::repo_dir(sync_dir, "ns.1", "repo..name")?,
+            Path::new("/data/ns.1/repo..name")
+        );
+        assert_eq!(
+            repositories::namespace_dir(sync_dir, "my-namespace")?,
+            Path::new("/data/my-namespace")
+        );
+
+        Ok(())
     }
 
     #[tokio::test]

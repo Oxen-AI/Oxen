@@ -271,6 +271,14 @@ impl error::ResponseError for OxenHttpError {
                             "Repository '{repo}' not found"
                         )))
                     }
+                    OxenError::InvalidRepoIdentifier(identifier) => {
+                        // Logged louder than an ordinary miss: this error doesn't typically happen
+                        // by accident, and could specify an arbitrary location on disk.
+                        log::warn!("Rejected invalid repo identifier: {identifier:?}");
+                        HttpResponse::BadRequest().json(StatusMessageDescription::bad_request(
+                            "A namespace and a repository name must each be a single path segment",
+                        ))
+                    }
                     OxenError::ResourceNotFound(resource) => {
                         log::debug!("Resource not found: {resource}");
                         let error_json = json!({

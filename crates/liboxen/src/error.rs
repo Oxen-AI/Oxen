@@ -54,6 +54,11 @@ pub enum OxenError {
     #[error("Repository '{0}' not found")]
     RepoNotFound(Box<RepoNew>),
 
+    /// When a namespace or repository name is not a single ordinary path component, so it could
+    /// name a location outside the directory repositories live in.
+    #[error("Invalid repository identifier: {0}")]
+    InvalidRepoIdentifier(StringError),
+
     /// When a local repository cannot be found at the given path.
     #[error("No oxen repository found at {0}")]
     LocalRepoNotFound(PathBufError),
