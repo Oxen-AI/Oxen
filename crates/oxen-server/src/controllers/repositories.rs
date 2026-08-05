@@ -43,6 +43,7 @@ use utoipa;
     ),
     responses(
         (status = 200, description = "List of repositories", body = ListRepositoryResponse),
+        (status = 400, description = "Namespace is not a single path segment"),
         (status = 404, description = "Namespace not found")
     )
 )]
@@ -50,9 +51,9 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
 
-    let namespace_path = &app_data.path.join(&namespace);
+    let namespace_path = repositories::namespace_dir(&app_data.path, &namespace)?;
 
-    let repos: Vec<RepositoryListView> = repositories::list_repos_in_namespace(namespace_path)
+    let repos: Vec<RepositoryListView> = repositories::list_repos_in_namespace(&namespace_path)
         .map(|repo| RepositoryListView {
             name: repo.dirname(),
             namespace: namespace.to_string(),
@@ -508,6 +509,7 @@ fn map_create_error_to_response(err: OxenError) -> HttpResponse {
     ),
     responses(
         (status = 200, description = "Repository deletion started", body = StatusMessage),
+        (status = 400, description = "Namespace or repository name is not a single path segment"),
         (status = 404, description = "Repository not found")
     )
 )]
@@ -515,6 +517,12 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
+
+    // Validates the segments, so it also rejects anything that could name a directory outside the
+    // sync dir. Must come before the removal below, which is why the dir is not taken from the
+    // repository lookup (that lookup fails for exactly the repos this endpoint still has to
+    // delete).
+    let repo_dir = repositories::repo_dir(&app_data.path, &namespace, &name)?;
 
     let repository = match get_repo(app_data, &namespace, &name) {
         Ok(repository) => Some(repository),
@@ -529,7 +537,6 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
             None
         }
     };
-    let repo_dir = app_data.path.join(&namespace).join(&name);
 
     // Delete in a background task because it could take awhile; the blocking directory
     // removal runs inside delete's own spawn_blocking.
@@ -609,8 +616,9 @@ pub async fn transfer_namespace(
 
 #[cfg(test)]
 mod tests {
+    use crate::app_data::OxenAppData;
     use crate::test;
-    use actix_web::http;
+    use actix_web::{App, http, web};
     use liboxen::config::RepositoryConfig;
     use liboxen::error::OxenError;
     use liboxen::util;
@@ -658,6 +666,46 @@ mod tests {
         );
 
         test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    /// A `..` namespace or name must not let the delete escape the sync directory. The request
+    /// goes through a real service so actix's own path decoding runs: `%2e%2e` decodes to `..`.
+    #[actix_web::test]
+    async fn test_delete_rejects_path_traversal_segments() -> Result<(), OxenError> {
+        let root = test::get_sync_dir()?;
+        let sync_dir = root.join("level1").join("level2");
+        util::fs::create_dir_all(&sync_dir)?;
+
+        // `sync_dir/../..` resolves to `root`. If the handler acts on that path, this file goes.
+        let canary = root.join("canary.txt");
+        std::fs::write(&canary, b"canary").expect("test fixture write should succeed");
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/repos/{namespace}/{repo_name}",
+                    web::delete().to(super::delete),
+                ),
+        )
+        .await;
+
+        let req = actix_web::test::TestRequest::delete()
+            .uri("/repos/%2e%2e/%2e%2e")
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+
+        assert_eq!(resp.status(), http::StatusCode::BAD_REQUEST);
+
+        // The removal runs in a background task, so give it time to do damage before asserting.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(
+            canary.exists(),
+            "traversal escaped the sync dir: {canary:?} was removed"
+        );
+
+        test::cleanup_sync_dir(&root)?;
         Ok(())
     }
 
