@@ -8,7 +8,13 @@ homepage = { workspace = true }
 repository = { workspace = true }
 readme = { workspace = true }
 keywords = ["self-hosted", "dataset", "hub", "version-control", "git-lfs"]
-categories = ["science", "multimedia", "database"]
+categories = [
+    "artificial-intelligence",
+    "science",
+    "web-programming::http-server",
+    "network-programming",
+    "development-tools",
+]
 
 [package.metadata.cargo-machete]
 ignored = ["astral-tokio-tar"]
