@@ -167,7 +167,9 @@ tokio-stream = "0.1.17"
 tokio-util = { version = "0.7.8", features = ["compat", "io", "io-util"] }
 toml = "0.8.19"
 tracing = "0.1"
-tracing-actix-web = "0.7"
+# `emit_event_on_error` (the crate's only default feature) is off; oxen-server reports every
+# failed request itself. See docs/error_handling.md.
+tracing-actix-web = { version = "0.7", default-features = false }
 tracing-appender = "0.2"
 tracing-log = "0.2"
 tracing-opentelemetry = "0.32"

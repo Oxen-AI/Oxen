@@ -69,12 +69,12 @@ fn get_storage_for_repo(repo: &LocalRepository) -> Result<u64, OxenError> {
                 Ok(size_file.size)
             }
             repositories::size::SizeStatus::Error => {
-                log::warn!("Size calculation failed, returning 0");
+                tracing::error!(repo = ?repo.path, "Repo size calculation failed");
                 Err(OxenError::basic_str("Size calculation failed"))
             }
         },
         Err(e) => {
-            log::error!("repositories::namespaces::get_storage_for_repo error getting size: {e}");
+            tracing::error!(repo = ?repo.path, cause = ?e, "Error getting repo size");
             Err(e)
         }
     }
