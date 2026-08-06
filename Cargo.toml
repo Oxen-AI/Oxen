@@ -11,7 +11,7 @@ description = "Oxen is a fast data version control system, built with machine le
 homepage = "https://oxen.ai"
 repository = "https://github.com/Oxen-AI/Oxen"
 readme = "README.md"
-keywords = ["machine-learning", "AI", "version-control"]
+keywords = ["data-versioning", "dataset", "mlops", "data-engineering", "fine-tuning"]
 categories = [
     "command-line-utilities",
     "science",
