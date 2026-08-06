@@ -7,7 +7,6 @@ license = "Apache 2.0"  # Ideally, we'd use workspace = true, but oxen-python ne
 homepage = { workspace = true }
 repository = { workspace = true }
 readme = { workspace = true }
-keywords = { workspace = true }
 publish = false
 
 [lib]

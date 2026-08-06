@@ -7,18 +7,9 @@ exclude = ["crates/data", "experiments/*"]
 version = "0.52.10"
 edition = "2024"
 license-file = "LICENSE"
-description = "Oxen is a fast data version control system, built with machine learning training data in mind. Designed to handle terabytes of data with ease, using a workflow similar to git. Version both structured and unstructured data of any modality: text, images, video, audio, CSV, Parquet, JSONL, model checkpoints, and more. liboxen is the embeddable core library behind the oxen CLI and server, which power fine tuning and inference pipelines for multimodal LLMs, image models, and video models on Oxen.ai."
 homepage = "https://oxen.ai"
 repository = "https://github.com/Oxen-AI/Oxen"
 readme = "README.md"
-keywords = ["data-versioning", "dataset", "mlops", "data-engineering", "fine-tuning"]
-categories = [
-    "command-line-utilities",
-    "science",
-    "multimedia",
-    "database",
-    "computer-vision",
-]
 rust-version = "1.94"
 
 [workspace.lints.clippy]
