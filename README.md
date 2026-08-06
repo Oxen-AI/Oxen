@@ -31,7 +31,7 @@
 
 Oxen is a lightning fast data version control system for large datasets. We aim to make versioning data as easy as versioning code.
 
-The interface mirrors git, but shines in many areas that git or git-lfs fall short. Oxen is built from the ground up for any data type, and is optimized to handle repositories with millions of files and scales to terabytes of data.
+The interface mirrors git, but shines where git and git-lfs fall short. Oxen is built from the ground up for any data type, from machine learning training data and model weights to game assets and studio media, and is optimized to handle repositories with millions of files and terabytes of data.
 
 ```bash
 oxen init
