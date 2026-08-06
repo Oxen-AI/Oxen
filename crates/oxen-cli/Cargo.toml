@@ -3,7 +3,7 @@ name = "oxen-cli"
 version = { workspace = true }
 edition = { workspace = true }
 license-file = { workspace = true }
-description = { workspace = true }
+description = "The oxen CLI lets you add, commit, push, and diff terabytes of data with a git style interface. Version machine learning training data, model weights, game assets, and studio media. Diff CSV and Parquet files row by row. Self host the oxen server, or push data to Oxen.ai to collaborate on datasets, fine tune models, and run inference. Installs the oxen binary."
 homepage = { workspace = true }
 repository = { workspace = true }
 readme = { workspace = true }
