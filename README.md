@@ -290,7 +290,7 @@ See [FmtSpan Events](crates/oxen-server/README.md#fmtspan-events) for details.
 
 Oxen was built by a team of machine learning engineers, who have spent countless hours in their careers managing datasets. We have used many different tools, but none of them were as easy to use and as ergonomic as we would like.
 
-If you have ever tried [git lfs](https://git-lfs.com/) to version large datasets and became frustrated, we feel your pain. Solutions like git-lfs are too slow when it comes to the scale of data we need for machine learning.
+If you have ever tried Git LFS to version large datasets and became frustrated, we feel your pain. We built Oxen as a fast alternative to Git LFS and DVC, designed for the scale of data AI and ML teams work with.
 
 If you have ever uploaded a large dataset of images, audio, video, or text to a cloud storage bucket with the name:
 
