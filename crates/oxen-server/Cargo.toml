@@ -7,7 +7,7 @@ description = "Oxen server is a fast data version control backend, supporting lo
 homepage = { workspace = true }
 repository = { workspace = true }
 readme = { workspace = true }
-keywords = ["self-hosted", "dataset", "hub", "checkpoint", "git-lfs"]
+keywords = ["self-hosted", "dataset", "hub", "version-control", "git-lfs"]
 categories = ["science", "multimedia", "database"]
 
 [package.metadata.cargo-machete]
