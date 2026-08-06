@@ -7,7 +7,13 @@ description = "The oxen CLI lets you add, commit, push, and diff terabytes of da
 homepage = { workspace = true }
 repository = { workspace = true }
 readme = { workspace = true }
-keywords = { workspace = true }
+keywords = [
+    "data-versioning",
+    "datasets",
+    "training-data",
+    "data-management",
+    "reproducibility",
+]
 categories = ["command-line-utilities", "science", "multimedia", "database"]
 
 [[bin]]
