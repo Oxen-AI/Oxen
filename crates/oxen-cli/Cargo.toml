@@ -14,7 +14,13 @@ keywords = [
     "data-management",
     "reproducibility",
 ]
-categories = ["command-line-utilities", "science", "multimedia", "database"]
+categories = [
+    "artificial-intelligence",
+    "command-line-utilities",
+    "science",
+    "development-tools",
+    "filesystem",
+]
 
 [[bin]]
 name = "oxen"
