@@ -895,7 +895,7 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::Conflict().json(error_json)
                     }
                     OxenError::VersionsMissingOnServer { hashes } => {
-                        log::warn!(
+                        log::error!(
                             "Versions missing on server: {} hash(es) absent from version store",
                             hashes.len()
                         );
