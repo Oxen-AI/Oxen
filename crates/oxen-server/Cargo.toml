@@ -3,7 +3,7 @@ name = "oxen-server"
 version = { workspace = true }
 edition = { workspace = true }
 license-file = { workspace = true }
-description = { workspace = true }
+description = "Oxen server is a fast data version control backend, supporting local disk and S3. Self host your repositories on your own storage, or use the hosted platform on Oxen.ai. Stores, syncs, and serves versioned datasets, model checkpoints, game assets, studio media, and any large data. Use the oxen CLI to push and pull from the oxen server."
 homepage = { workspace = true }
 repository = { workspace = true }
 readme = { workspace = true }
