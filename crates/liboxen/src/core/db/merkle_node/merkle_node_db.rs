@@ -724,6 +724,25 @@ mod to_node_tests {
     }
 
     #[test]
+    fn a_legacy_shape_with_trailing_bytes_is_damage_not_the_retired_format() {
+        // Decoding stops at the end of the first value, so a payload that opens with a valid
+        // pre-0.25 struct and then continues into junk reads as legacy unless the whole payload
+        // is required to be consumed. A node payload is stored with an explicit length, so a
+        // legacy one ends exactly where its struct does and anything past that is damage.
+        let ECommitNode::V0_25_0(ref data) = CommitNode::default().node;
+        let mut trailing = rmp_serde::to_vec(data).expect("commit data should serialize");
+        trailing.push(0xc1); // never a valid msgpack byte
+
+        let err = MerkleNodeDB::to_node(MerkleTreeNodeType::Commit, hash(), &trailing)
+            .expect_err("a payload with trailing bytes must not decode");
+
+        assert!(
+            matches!(err, MerkleDbError::Decode(_)),
+            "expected Decode, got {err:?}"
+        );
+    }
+
+    #[test]
     fn damage_to_the_leading_bytes_is_not_mistaken_for_the_retired_format() {
         // The case that motivated separating the two: corruption anywhere in the first bytes
         // takes the envelope with it, leaving a payload that looks untagged. Judging by prefix
