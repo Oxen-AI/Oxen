@@ -8,7 +8,13 @@ homepage = { workspace = true }
 repository = { workspace = true }
 readme = { workspace = true }
 keywords = ["data-versioning", "dataset", "mlops", "data-engineering", "fine-tuning"]
-categories = ["science", "multimedia", "database"]
+categories = [
+    "artificial-intelligence",
+    "science",
+    "database-implementations",
+    "filesystem",
+    "data-structures",
+]
 publish = true
 
 [package.metadata.docs.rs]
