@@ -14,9 +14,30 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::core::v_latest::model::merkle_tree::node::commit_node::CommitNodeData;
 use crate::core::v_latest::model::merkle_tree::node::dir_node::DirNodeData;
+use crate::core::v_latest::model::merkle_tree::node::file_node::FileNodeData;
 use crate::core::v_latest::model::merkle_tree::node::vnode::VNodeData;
 use crate::model::{MerkleHash, MerkleTreeNodeType};
+
+/// Whether these bytes decode as the payload shape written before v0.25.0 for `dtype`.
+///
+/// Answers "is this a retired-format node" by decoding it as one, so bytes that merely lack the
+/// current envelope are not taken for a retired format on that basis alone. Damage to a payload's
+/// leading bytes destroys the envelope, which makes prefix inspection alone unable to tell a
+/// legacy node from a corrupt one.
+///
+/// `Commit` and `File` kept their field lists across the change, so the current data struct reads
+/// the older bytes. `FileChunk` never had an envelope, so the question does not apply to it.
+pub(crate) fn decodes_as_pre_v025(dtype: MerkleTreeNodeType, data: &[u8]) -> bool {
+    match dtype {
+        MerkleTreeNodeType::Commit => rmp_serde::from_slice::<CommitNodeData>(data).is_ok(),
+        MerkleTreeNodeType::Dir => rmp_serde::from_slice::<DirNodeDataPre025>(data).is_ok(),
+        MerkleTreeNodeType::File => rmp_serde::from_slice::<FileNodeData>(data).is_ok(),
+        MerkleTreeNodeType::VNode => rmp_serde::from_slice::<VNodeDataPre025>(data).is_ok(),
+        MerkleTreeNodeType::FileChunk => false,
+    }
+}
 
 /// A vnode as written before v0.25.0: no `num_entries`.
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq)]
