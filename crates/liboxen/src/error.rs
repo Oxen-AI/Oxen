@@ -8,6 +8,7 @@ use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
 use aws_smithy_runtime_api::client::result::SdkError;
 use duckdb::arrow::error::ArrowError;
 use http::Uri;
+use polars::prelude::PolarsError;
 use std::fmt::Write;
 use std::io;
 use std::num::ParseIntError;
@@ -18,6 +19,7 @@ use tokio::task::JoinError;
 use crate::api::requests::RepoNew;
 use crate::command::migrate::Direction;
 use crate::config::repository_config::RepoConfigError;
+use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
 use crate::lmdb::LmdbLayerError;
 use crate::model::MerkleHash;
@@ -892,6 +894,19 @@ impl OxenError {
         matches!(self, OxenError::ImageError(image::ImageError::Limits(_)))
     }
 
+    /// Did a polars operation fail on the server's own IO rather than on the caller's data? Every
+    /// other polars failure describes something wrong with the data or the query. Lives here for
+    /// the same reason as [`OxenError::is_unsupported_image_format`], and looks through
+    /// `PolarsError::Context`, which wraps the real error behind one layer per pipeline stage.
+    pub fn is_polars_io_error(&self) -> bool {
+        let error = match self {
+            OxenError::PolarsError(error) => error,
+            OxenError::DataFrameError(DataFrameError::Polars(error)) => error,
+            _ => return false,
+        };
+        matches!(innermost_polars_error(error), PolarsError::IO { .. })
+    }
+
     /// Is this error considered as something not existing?
     pub fn is_not_found(&self) -> bool {
         matches!(
@@ -932,6 +947,11 @@ impl OxenError {
             OxenError::VersionStoreDataMissing { .. } => true,
             OxenError::VersionStoreBlobMissing { .. } => true,
             OxenError::UnknownRemoteResponseStatus(_) => true,
+            // A malformed file or an unsatisfiable query reads the same way every time. Only the
+            // IO case can resolve on its own.
+            OxenError::PolarsError(_) | OxenError::DataFrameError(DataFrameError::Polars(_)) => {
+                !self.is_polars_io_error()
+            }
             _ => false,
         }
     }
@@ -1220,6 +1240,15 @@ impl From<JoinError> for OxenError {
     }
 }
 
+/// The error at the center of any `PolarsError::Context` wrappers, which polars adds one per
+/// pipeline stage. Returns the error itself when it carries no context.
+fn innermost_polars_error(mut error: &PolarsError) -> &PolarsError {
+    while let PolarsError::Context { error: inner, .. } = error {
+        error = inner;
+    }
+    error
+}
+
 // Manual From impls for types that need transformation
 impl From<String> for OxenError {
     fn from(error: String) -> Self {
@@ -1247,6 +1276,35 @@ impl From<BuildError> for OxenError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    /// Wraps `error` the way polars does, one `Context` layer per pipeline stage.
+    fn with_pipeline_context(error: PolarsError) -> PolarsError {
+        ["'parquet scan'", "'slice'", "'sink'"]
+            .into_iter()
+            .fold(error, |error, stage| PolarsError::Context {
+                error: Box::new(error),
+                msg: stage.into(),
+            })
+    }
+
+    #[test]
+    fn polars_io_failure_is_seen_through_the_pipeline_context() {
+        let buried = OxenError::PolarsError(with_pipeline_context(PolarsError::IO {
+            error: Arc::new(io::Error::from(io::ErrorKind::PermissionDenied)),
+            msg: None,
+        }));
+        assert!(buried.is_polars_io_error());
+
+        // A malformed file the caller supplied arrives wrapped the same way, and the wrapper is
+        // all these two have in common.
+        let malformed = OxenError::DataFrameError(DataFrameError::Polars(with_pipeline_context(
+            PolarsError::ComputeError(
+                "parquet: File out of specification: The file must end with PAR1".into(),
+            ),
+        )));
+        assert!(!malformed.is_polars_io_error());
+    }
 
     #[test]
     fn download_batch_exhausted_display_lists_paths_hashes_and_last_error() {
