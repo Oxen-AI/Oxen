@@ -41,9 +41,7 @@ oxen commit "Adding 200k images and their corresponding annotations"
 oxen push origin main
 ```
 
-Oxen is comprised of a [command line
-interface](https://docs.oxen.ai/getting-started/cli), as well as bindings for
-[Rust](https://github.com/Oxen-AI/Oxen/tree/main/crates) 🦀, [Python](https://docs.oxen.ai/getting-started/python) 🐍, and [HTTP interfaces](https://docs.oxen.ai/http-api) 🌎 to make it easy to integrate into your workflow.
+Use Oxen through the [oxen CLI](https://docs.oxen.ai/getting-started/cli), the [oxenai](https://docs.oxen.ai/getting-started/python) Python package 🐍, or the [HTTP API](https://docs.oxen.ai/http-api), and host your repositories on [Oxen.ai](https://oxen.ai) or self host the [oxen-server](https://github.com/Oxen-AI/Oxen/tree/main/crates/oxen-server) on your own storage. You can also embed the same [liboxen](https://crates.io/crates/liboxen) crate 🦀 that powers all of it.
 
 ## 🌾 What kind of data?
 
