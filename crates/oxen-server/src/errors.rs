@@ -1036,7 +1036,9 @@ mod tests {
     use super::*;
     use actix_web::ResponseError;
     use actix_web::http::StatusCode;
+    use polars::prelude::PolarsError;
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     #[test]
     fn test_unsupported_repo_version_is_a_client_error() {
@@ -1061,6 +1063,62 @@ mod tests {
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(!status.is_server_error());
+    }
+
+    /// Wraps `error` the way polars does, one `Context` layer per pipeline stage.
+    fn with_pipeline_context(error: PolarsError) -> PolarsError {
+        ["'parquet scan'", "'slice'", "'sink'"]
+            .into_iter()
+            .fold(error, |error, stage| PolarsError::Context {
+                error: Box::new(error),
+                msg: stage.into(),
+            })
+    }
+
+    /// The `status_message` the caller reads out of an error response body.
+    async fn status_message_of(response: HttpResponse) -> String {
+        let body = actix_web::body::to_bytes(response.into_body())
+            .await
+            .expect("collect body");
+        let parsed: serde_json::Value = serde_json::from_slice(&body).expect("body parses as JSON");
+        parsed["status_message"]
+            .as_str()
+            .expect("body carries a status_message")
+            .to_string()
+    }
+
+    #[actix_web::test]
+    async fn test_data_frame_io_failure_is_reported_as_a_server_error() {
+        // Reading the stored file failed on our own IO, which the caller cannot act on. The
+        // status and the body have to agree, having once disagreed: a 500 whose body announced a
+        // bad request tells the caller and the reader two different things.
+        let error = OxenHttpError::from(OxenError::PolarsError(with_pipeline_context(
+            PolarsError::IO {
+                error: Arc::new(io::Error::from(io::ErrorKind::PermissionDenied)),
+                msg: None,
+            },
+        )));
+        let response = error.error_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(status_message_of(response).await, MSG_INTERNAL_SERVER_ERROR);
+    }
+
+    #[actix_web::test]
+    async fn test_malformed_data_frame_is_reported_as_a_client_error() {
+        // The caller supplied a file that will never parse. Arrives through `DataFrameError` and
+        // buried under the same pipeline context as the IO case above, so the status turns on
+        // reading through the wrapper rather than on which arm was written.
+        let error = OxenHttpError::from(OxenError::DataFrameError(DataFrameError::Polars(
+            with_pipeline_context(PolarsError::ComputeError(
+                "parquet: File out of specification: The file must end with PAR1".into(),
+            )),
+        )));
+        let response = error.error_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(!response.status().is_server_error());
+        assert_eq!(status_message_of(response).await, MSG_BAD_REQUEST);
     }
 
     #[test]

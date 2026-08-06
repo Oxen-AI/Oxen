@@ -81,6 +81,9 @@ actix-multipart-test = { workspace = true }
 image = { workspace = true }
 liboxen = { workspace = true, features = ["test-utils"] }
 mockito = { workspace = true }
+# Only so the error-mapping tests can construct a `PolarsError`; the crate itself reaches data
+# frame handling through liboxen.
+polars = { workspace = true }
 # "test" swaps in a capturing transport, so the `tasks` tests can assert what reaches Sentry. Kept a
 # dev-dependency feature so the resolver leaves it out of the shipped binary.
 sentry = { workspace = true, features = ["test"] }

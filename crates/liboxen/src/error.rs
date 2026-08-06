@@ -1288,22 +1288,43 @@ mod tests {
             })
     }
 
-    #[test]
-    fn polars_io_failure_is_seen_through_the_pipeline_context() {
-        let buried = OxenError::PolarsError(with_pipeline_context(PolarsError::IO {
+    /// Reading the stored file failed on the server's own IO, buried under the pipeline context.
+    fn buried_polars_io_failure() -> OxenError {
+        OxenError::PolarsError(with_pipeline_context(PolarsError::IO {
             error: Arc::new(io::Error::from(io::ErrorKind::PermissionDenied)),
             msg: None,
-        }));
-        assert!(buried.is_polars_io_error());
+        }))
+    }
 
-        // A malformed file the caller supplied arrives wrapped the same way, and the wrapper is
-        // all these two have in common.
-        let malformed = OxenError::DataFrameError(DataFrameError::Polars(with_pipeline_context(
+    /// A malformed file the caller supplied, wrapped the same way. The wrapper is all this and
+    /// [`buried_polars_io_failure`] have in common.
+    fn buried_malformed_data_frame() -> OxenError {
+        OxenError::DataFrameError(DataFrameError::Polars(with_pipeline_context(
             PolarsError::ComputeError(
                 "parquet: File out of specification: The file must end with PAR1".into(),
             ),
-        )));
-        assert!(!malformed.is_polars_io_error());
+        )))
+    }
+
+    #[test]
+    fn polars_io_failure_is_seen_through_the_pipeline_context() {
+        assert!(buried_polars_io_failure().is_polars_io_error());
+        assert!(!buried_malformed_data_frame().is_polars_io_error());
+    }
+
+    #[test]
+    fn only_a_polars_io_failure_is_worth_retrying() {
+        // `is_fatal_for_retry` short-circuits on auth and not-found before reaching the polars
+        // arm, and the arm inverts the IO question rather than answering it directly, so what a
+        // caller gets depends on three functions agreeing.
+        assert!(
+            !buried_polars_io_failure().is_fatal_for_retry(),
+            "an IO failure can resolve on its own, so a retry is worth paying for"
+        );
+        assert!(
+            buried_malformed_data_frame().is_fatal_for_retry(),
+            "a malformed file reads the same way every time, so backoff only delays the answer"
+        );
     }
 
     #[test]
