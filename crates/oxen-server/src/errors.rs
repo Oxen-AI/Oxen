@@ -405,6 +405,19 @@ impl error::ResponseError for OxenHttpError {
                     // The next four are things a caller got wrong. Each returns a terminal 4xx at
                     // `warn!`, so it stops both the client retrying and the alert that a 5xx at
                     // `error!` raises.
+                    OxenError::PathNotFoundInRevision { path, revision } => {
+                        log::warn!("Path {path} requested in {revision}, which does not have it");
+                        let error_json = json!({
+                            "error": {
+                                "type": MSG_RESOURCE_NOT_FOUND,
+                                "title": "Path not in revision",
+                                "detail": format!("{path} does not exist in {revision}."),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_RESOURCE_NOT_FOUND,
+                        });
+                        HttpResponse::NotFound().json(error_json)
+                    }
                     OxenError::DiffPathInNeitherRevision { path, base, head } => {
                         log::warn!("Diff requested for {path}, absent from {base} and {head}");
                         let error_json = json!({
@@ -1163,6 +1176,21 @@ mod tests {
             overflow.error_response().status(),
             StatusCode::PAYLOAD_TOO_LARGE
         );
+    }
+
+    #[test]
+    fn test_path_missing_from_a_revision_is_not_found() {
+        // Asking for the history of a path a revision does not contain is the caller naming
+        // something that is not there. As a 500 it alerted us and invited a retry that cannot
+        // change the answer.
+        let error = OxenError::PathNotFoundInRevision {
+            path: PathBuf::from("main").into(),
+            revision: "main".to_string(),
+        };
+        let status = OxenHttpError::from(error).error_response().status();
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(!status.is_server_error());
     }
 
     #[test]

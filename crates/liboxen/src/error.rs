@@ -254,6 +254,14 @@ pub enum OxenError {
     #[error("Resource not found: {0}")]
     ParsedResourceNotFound(PathBufError),
 
+    /// A path was requested in a revision whose tree does not contain it. Names the revision as
+    /// well as the path, so a report separates a mistyped path from the wrong revision.
+    #[error("{path} does not exist in {revision}")]
+    PathNotFoundInRevision {
+        path: PathBufError,
+        revision: String,
+    },
+
     //
     // Versioning
     //
@@ -905,6 +913,7 @@ impl OxenError {
                 | OxenError::QueryableWorkspaceNotFound
                 | OxenError::MerkleNodeNotFound(_)
                 | OxenError::DiffPathInNeitherRevision { .. }
+                | OxenError::PathNotFoundInRevision { .. }
         )
     }
 
