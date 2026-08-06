@@ -5694,6 +5694,7 @@ dependencies = [
  "mockito",
  "os_path",
  "percent-encoding",
+ "polars",
  "regex",
  "rocksdb",
  "sanitize-filename",
