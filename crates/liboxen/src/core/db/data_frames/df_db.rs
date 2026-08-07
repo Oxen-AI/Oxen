@@ -517,6 +517,16 @@ pub fn count(conn: &duckdb::Connection, table_name: &str) -> Result<usize, DataF
     }
 }
 
+/// Query number of rows `sql` selects, without materializing them.
+pub fn count_sql(conn: &duckdb::Connection, sql: &str) -> Result<usize, DataFrameError> {
+    let count = conn.query_row(
+        &format!("SELECT count(*) FROM ({sql}) AS _oxen_count"),
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(count)
+}
+
 /// Query number of rows in a table.
 pub fn count_where(
     conn: &duckdb::Connection,
@@ -565,6 +575,20 @@ pub fn export(
     Ok(())
 }
 
+/// Compose `opts`' sort and pagination onto `stmt`.
+///
+/// `stmt` may be caller-supplied SQL that already sorts or bounds itself, so the
+/// two are composed rather than concatenated:
+///
+/// - A statement that bounds its own extent is a finished result set: the page
+///   is read out of it through a subquery, so the two bounds nest instead of
+///   colliding, and `opts`' sort is left off rather than reordering rows the
+///   statement already picked.
+/// - Otherwise the statement's own `ORDER BY` wins, and `opts.sort_by` applies
+///   only to a statement that does not sort itself.
+/// - A paginated statement left with no order at all is ordered by
+///   `_oxen_row_id` where that column resolves against it, so a page names the
+///   same rows on every read. See [`SqlShape`].
 pub fn prepare_sql(
     conn: &duckdb::Connection,
     stmt: &str,
@@ -575,21 +599,116 @@ pub fn prepare_sql(
 
     let mut sql = add_special_columns(conn, stmt)?;
 
-    if opts.sort_by.is_some() {
-        let sort_by: String = opts.sort_by.clone().unwrap_or_default();
-        sql.push_str(&format!(" ORDER BY {}", quote_ident(&sort_by)));
+    // Nothing to compose means nothing to inspect the statement for.
+    if opts.page.is_some() || opts.sort_by.is_some() {
+        let shape = sql_shape(&sql)?;
+
+        if !shape.bounds_itself && !shape.orders_itself {
+            if let Some(sort_by) = &opts.sort_by {
+                sql.push_str(&format!(" ORDER BY {}", quote_ident(sort_by)));
+            } else if opts.page.is_some() && shape.resolves_row_id {
+                sql.push_str(&format!(" ORDER BY {OXEN_ROW_ID_COL}"));
+            }
+        }
+
+        if let Some(page) = opts.page {
+            let page = if page == 0 { 1 } else { page };
+            let requested_size = opts.page_size.unwrap_or(DEFAULT_PAGE_SIZE);
+            // LIMIT and OFFSET are BIGINTs, so both have to land inside i64 as well
+            // as usize. Saturating there rather than overflowing means an absurd
+            // page number reads past the end and yields an empty page, the same
+            // outcome a non-indexed read gives it.
+            let page_size = bigint(requested_size);
+            let offset = bigint(requested_size.saturating_mul(page - 1));
+            sql = if shape.bounds_itself {
+                format!("SELECT * FROM ({sql}) AS _oxen_page LIMIT {page_size} OFFSET {offset}")
+            } else {
+                format!("{sql} LIMIT {page_size} OFFSET {offset}")
+            };
+        }
     }
 
-    let pagination_clause = if let Some(page) = opts.page {
-        let page = if page == 0 { 1 } else { page };
-        let page_size = opts.page_size.unwrap_or(DEFAULT_PAGE_SIZE);
-        format!(" LIMIT {} OFFSET {}", page_size, (page - 1) * page_size)
-    } else {
-        "".to_string()
-    };
-    sql.push_str(&pagination_clause);
     log::debug!("select_str() running sql: {sql}");
     Ok(sql)
+}
+
+/// Clamp a row count to the range DuckDB's `BIGINT` accepts, so a value only
+/// `usize` can hold reads as the largest DuckDB can rather than failing to cast.
+fn bigint(rows: usize) -> u64 {
+    (rows as u64).min(i64::MAX as u64)
+}
+
+/// What a statement already says about its own ordering and extent, which
+/// decides how [`prepare_sql`] composes `opts` onto it. A statement whose shape
+/// this can't read is left alone: every field defaults to false.
+#[derive(Default)]
+struct SqlShape {
+    /// Carries its own `ORDER BY`.
+    orders_itself: bool,
+    /// Bounds its own extent, with `LIMIT`, `OFFSET`, or `FETCH`.
+    bounds_itself: bool,
+    /// `ORDER BY _oxen_row_id` is both valid against it and meaningful: it
+    /// selects rows of the staged table directly, rather than aggregating,
+    /// deduping, or reading a derived table that need not carry the column
+    /// through. DuckDB `UPDATE`s physically relocate rows, so a statement that
+    /// resolves the column can be given a page order that survives an edit.
+    resolves_row_id: bool,
+}
+
+fn sql_shape(sql: &str) -> Result<SqlShape, DataFrameError> {
+    let ast = Parser::parse_sql(&DIALECT, sql)?;
+    let Some(Statement::Query(query)) = ast.first() else {
+        return Ok(SqlShape::default());
+    };
+
+    let resolves_row_id = match &*query.body {
+        ast::SetExpr::Select(select) => {
+            let group_by_is_empty = matches!(
+                &select.group_by,
+                ast::GroupByExpr::Expressions(exprs, modifiers)
+                    if exprs.is_empty() && modifiers.is_empty()
+            );
+            let reads_table_directly = match select.from.as_slice() {
+                // Compare the parsed identifier rather than the rendered name so
+                // a quoted `"df"` reads as the same table.
+                [table] if table.joins.is_empty() => matches!(
+                    &table.relation,
+                    ast::TableFactor::Table { name, .. }
+                        if matches!(name.0.as_slice(), [ident] if ident.value == TABLE_NAME)
+                ),
+                _ => false,
+            };
+            let projects_columns_only = select.projection.iter().all(|item| {
+                matches!(
+                    item,
+                    SelectItem::Wildcard(_)
+                        | SelectItem::QualifiedWildcard(_, _)
+                        | SelectItem::UnnamedExpr(SqlExpr::Identifier(_))
+                        | SelectItem::UnnamedExpr(SqlExpr::CompoundIdentifier(_))
+                        | SelectItem::ExprWithAlias {
+                            expr: SqlExpr::Identifier(_) | SqlExpr::CompoundIdentifier(_),
+                            ..
+                        }
+                )
+            });
+            select.distinct.is_none()
+                && select.having.is_none()
+                && select.qualify.is_none()
+                && group_by_is_empty
+                && reads_table_directly
+                && projects_columns_only
+        }
+        _ => false,
+    };
+
+    Ok(SqlShape {
+        orders_itself: query.order_by.is_some(),
+        bounds_itself: query.limit.is_some()
+            || query.offset.is_some()
+            || query.fetch.is_some()
+            || !query.limit_by.is_empty(),
+        resolves_row_id,
+    })
 }
 
 /// Use this for DuckDB: the sqlparser dialect for all SQL destined for it.

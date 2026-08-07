@@ -162,6 +162,8 @@ async fn handle_sql_querying(
                 )?;
             let db_path =
                 repositories::workspaces::data_frames::duckdb_path(&workspace, &query_path);
+            // No opts: `collect_with_opts` below paginates this path in polars. Passing
+            // them here would apply the page twice, in SQL and then again on the page.
             let df = with_hardened_query_conn(&db_path, |conn| sql::query_df(conn, sql, None))?;
             Ok((workspace, df))
         })

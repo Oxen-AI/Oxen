@@ -183,30 +183,62 @@ impl PyWorkspaceDataFrame {
         Ok(result)
     }
 
-    /// Query the data frame using SQL
+    /// Query the data frame using SQL. Returns every row the query selects,
+    /// reading the paginated endpoint a page at a time.
     fn sql_query(&self, sql: String) -> Result<String, PyOxenError> {
-        let mut opts = DFOpts::empty();
-        opts.sql = Some(sql);
+        // The whole result is held in memory either way, so this bounds only the
+        // size of a single response — keep it high enough that most queries come
+        // back in one request rather than a round trip per thousand rows.
+        const PAGE_SIZE: usize = 10_000;
 
-        match pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            api::client::workspaces::data_frames::get(
-                self.workspace.repo.repo()?,
-                &self.workspace.id,
-                &self.path,
-                &opts,
-            )
-            .await
-        }) {
-            Ok(data) => {
-                // Extract the serde_json::Value from the JsonDataFrameView
-                let view = data.data_frame.unwrap().view.data;
+        let rows = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
+            let mut opts = DFOpts::empty();
+            opts.sql = Some(sql);
+            opts.page_size = Some(PAGE_SIZE);
 
-                // convert json to String
-                let result: String = serde_json::to_string(&view).unwrap();
-                Ok(result)
+            let mut rows = vec![];
+            let mut page_num = 1;
+            loop {
+                opts.page = Some(page_num);
+                let response = api::client::workspaces::data_frames::get(
+                    self.workspace.repo.repo()?,
+                    &self.workspace.id,
+                    &self.path,
+                    &opts,
+                )
+                .await
+                .map_err(|e| OxenError::basic_str(format!("Failed to query data frame: {e}")))?;
+
+                // A page this function can't read is an error, not the end of the
+                // result: returning the rows collected so far would silently answer
+                // a query with part of its result.
+                let Some(view) = response.data_frame.map(|df| df.view) else {
+                    return Err(OxenError::basic_str(
+                        "Query returned no data frame. Index the data frame before querying.",
+                    ));
+                };
+                let serde_json::Value::Array(page_rows) = view.data else {
+                    return Err(OxenError::basic_str(format!(
+                        "Expected a page of rows, got: {}",
+                        view.data
+                    )));
+                };
+                let page_len = page_rows.len();
+                rows.extend(page_rows);
+                // A short page ends the result set. It is also what a server too
+                // old to paginate this query answers page 1 with, so stopping
+                // here keeps such a server from re-serving the same rows.
+                if page_len < PAGE_SIZE || page_num >= view.pagination.total_pages {
+                    break;
+                }
+                page_num += 1;
             }
-            Err(e) => Err(OxenError::basic_str(format!("Failed to query data frame: {e}")).into()),
-        }
+            Ok::<_, OxenError>(rows)
+        })?;
+
+        let result = serde_json::to_string(&rows)
+            .map_err(|e| OxenError::basic_str(format!("Could not convert view to json: {e}")))?;
+        Ok(result)
     }
 
     fn is_nearest_neighbors_enabled(&self, column: String) -> Result<bool, PyOxenError> {

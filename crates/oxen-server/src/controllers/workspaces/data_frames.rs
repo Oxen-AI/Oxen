@@ -3,10 +3,12 @@ use std::path::{Path, PathBuf};
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
 use crate::params::{DFOptsQuery, PageNumQuery, app_data, df_opts_query, path_param, query_param};
+use crate::tasks;
 
 use actix_web::{HttpRequest, HttpResponse, web};
 
 use liboxen::constants::{self, TABLE_NAME};
+use liboxen::core::db::data_frames::DataFrameError;
 use liboxen::core::db::data_frames::df_db::with_df_db_manager;
 use liboxen::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
 use liboxen::core::repo_locks;
@@ -194,10 +196,22 @@ pub async fn get(
 
     log::debug!("querying data frame {file_path:?}");
     log::debug!("opts: {opts:?}");
-    let count = repositories::workspaces::data_frames::count(&workspace, &file_path)?;
-
-    // Query the data frame
-    let df = repositories::workspaces::data_frames::query(&workspace, &file_path, &opts)?;
+    // Counting and reading the page are both DuckDB work, so they run as one unit
+    // off the request thread.
+    let (count, df) = {
+        let workspace = workspace.clone();
+        let file_path = file_path.clone();
+        let opts = opts.clone();
+        tasks::spawn_blocking(move || {
+            let count = repositories::workspaces::data_frames::count_for_query(
+                &workspace, &file_path, &opts,
+            )?;
+            let df = repositories::workspaces::data_frames::query(&workspace, &file_path, &opts)?;
+            Ok::<_, DataFrameError>((count, df))
+        })
+        .await
+        .map_err(OxenError::from)??
+    };
 
     let Some(mut df_schema) =
         repositories::data_frames::schemas::get_by_path(&repo, &workspace.commit, &file_path)?
@@ -713,7 +727,8 @@ mod tests {
     use actix_web::{App, web};
     use liboxen::core::db::data_frames::df_db::with_df_db_manager;
     use liboxen::error::OxenError;
-    use liboxen::model::Schema;
+    use liboxen::model::{LocalRepository, Schema, Workspace};
+    use liboxen::opts::DFOpts;
     use liboxen::repositories;
     use liboxen::util;
     use liboxen::view::json_data_frame_view::WorkspaceJsonDataFrameViewResponse;
@@ -1371,6 +1386,16 @@ mod tests {
         Ok(())
     }
 
+    /// The query string a page request carries, built the way the client builds
+    /// it so the handler parses what it parses in production.
+    fn page_query(page: usize, page_size: usize, sql: Option<&str>) -> DFOpts {
+        let mut opts = DFOpts::empty();
+        opts.page = Some(page);
+        opts.page_size = Some(page_size);
+        opts.sql = sql.map(str::to_string);
+        opts
+    }
+
     /// GET a page of a workspace data frame through the `get` handler.
     async fn get_data_frame_page(
         sync_dir: &std::path::Path,
@@ -1378,8 +1403,7 @@ mod tests {
         repo_name: &str,
         workspace_id: &str,
         file_path: &str,
-        page: usize,
-        page_size: usize,
+        query: DFOpts,
     ) -> WorkspaceJsonDataFrameViewResponse {
         let app = actix_web::test::init_service(
             App::new()
@@ -1392,7 +1416,8 @@ mod tests {
         .await;
 
         let uri = format!(
-            "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/resource/{file_path}?page={page}&page_size={page_size}"
+            "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/resource/{file_path}?{}",
+            query.to_http_query_params()
         );
         let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
         let resp = actix_web::test::call_service(&app, req).await;
@@ -1440,20 +1465,16 @@ mod tests {
             .collect()
     }
 
-    /// An unindexed workspace data frame larger than the requested `page_size` must paginate:
-    /// each page returns at most `page_size` rows and an out-of-range page returns zero rows so
-    /// pagination terminates. Regression test for the unindexed branch returning the full frame on
-    /// every page. Also asserts the indexed branch paginates identically so the two paths stay in
-    /// lockstep.
-    #[actix_web::test]
-    async fn test_get_unindexed_data_frame_paginates() -> Result<(), OxenError> {
-        liboxen::test::init_test_env();
-        let sync_dir = test::get_sync_dir()?;
-        let namespace = "Testing-Namespace";
-        let repo_name = "Testing-Name";
-        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+    /// A committed `data/history.csv` and a workspace on that commit, not yet
+    /// indexed. The CSV holds 25 rows — larger than the page_size of 10 the
+    /// pagination tests request, so their pages are real pages.
+    async fn commit_history_csv_workspace(
+        sync_dir: &std::path::Path,
+        namespace: &str,
+        repo_name: &str,
+    ) -> Result<(LocalRepository, Workspace, String), OxenError> {
+        let repo = test::create_local_repo(sync_dir, namespace, repo_name)?;
 
-        // Commit a CSV with 25 rows — larger than the page_size of 10 we request below.
         let csv_dir = repo.path.join("data");
         util::fs::create_dir_all(&csv_dir)?;
         let csv_path = csv_dir.join("history.csv");
@@ -1465,13 +1486,28 @@ mod tests {
         repositories::add(&repo, &csv_path).await?;
         let commit = repositories::commit(&repo, "Add 25-row CSV")?;
 
-        let file_path = "data/history.csv";
-
-        // A workspace created from the commit but not yet indexed, so the GET handler takes the
-        // unindexed read path. We index this same workspace later to exercise the indexed branch
-        // (a commit can only have one non-editable workspace, so we reuse it).
         let workspace_id = uuid::Uuid::new_v4().to_string();
         let workspace = repositories::workspaces::create(&repo, &commit, &workspace_id, false)?;
+        Ok((repo, workspace, workspace_id))
+    }
+
+    /// An unindexed workspace data frame larger than the requested `page_size` must paginate:
+    /// each page returns at most `page_size` rows and an out-of-range page returns zero rows so
+    /// pagination terminates. Regression test for the unindexed branch returning the full frame on
+    /// every page. Also asserts the indexed branch paginates identically so the two paths stay in
+    /// lockstep.
+    #[actix_web::test]
+    async fn test_get_unindexed_data_frame_paginates() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Name";
+        // The workspace starts unindexed, so the GET handler takes the unindexed read path. We
+        // index this same workspace later to exercise the indexed branch (a commit can only have
+        // one non-editable workspace, so we reuse it).
+        let (repo, workspace, workspace_id) =
+            commit_history_csv_workspace(&sync_dir, namespace, repo_name).await?;
+        let file_path = "data/history.csv";
 
         // Unindexed branch: page 1 of 10 → exactly 10 rows, and total_pages/total_entries
         // reflect the full frame.
@@ -1481,8 +1517,7 @@ mod tests {
             repo_name,
             &workspace_id,
             file_path,
-            1,
-            10,
+            page_query(1, 10, None),
         )
         .await;
         assert!(!page_1.is_indexed);
@@ -1499,8 +1534,7 @@ mod tests {
             repo_name,
             &workspace_id,
             file_path,
-            3,
-            10,
+            page_query(3, 10, None),
         )
         .await;
         assert_eq!(page_row_count(&page_3), 5);
@@ -1513,8 +1547,7 @@ mod tests {
             repo_name,
             &workspace_id,
             file_path,
-            4,
-            10,
+            page_query(4, 10, None),
         )
         .await;
         assert_eq!(page_row_count(&page_4), 0);
@@ -1530,8 +1563,7 @@ mod tests {
             repo_name,
             &workspace_id,
             file_path,
-            0,
-            10,
+            page_query(0, 10, None),
         )
         .await;
         assert_eq!(page_row_count(&page_zero), 10);
@@ -1542,8 +1574,7 @@ mod tests {
             repo_name,
             &workspace_id,
             file_path,
-            1,
-            0,
+            page_query(1, 0, None),
         )
         .await;
         assert_eq!(page_row_count(&zero_page_size), 1);
@@ -1580,8 +1611,7 @@ mod tests {
                 repo_name,
                 &workspace_id,
                 file_path,
-                page,
-                10,
+                page_query(page, 10, None),
             )
             .await;
             assert!(indexed_page.is_indexed);
@@ -1590,6 +1620,60 @@ mod tests {
             let pagination = &indexed_page.data_frame.as_ref().unwrap().view.pagination;
             assert_eq!(pagination.total_pages, 3);
             assert_eq!(pagination.total_entries, 25);
+        }
+
+        drop(workspace);
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
+
+    /// A `sql` query is paginated like any other read, and the pagination the
+    /// response reports describes the rows the query selects rather than the
+    /// whole frame — otherwise a client paging by `total_pages` walks past the
+    /// end of the result.
+    #[actix_web::test]
+    async fn test_get_data_frame_with_sql_paginates() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-SQL-Pagination";
+        let (repo, workspace, workspace_id) =
+            commit_history_csv_workspace(&sync_dir, namespace, repo_name).await?;
+        let file_path = "data/history.csv";
+        repositories::workspaces::data_frames::index(
+            &repo,
+            &workspace,
+            std::path::Path::new(file_path),
+        )
+        .await?;
+
+        // 15 of the 25 rows match, so 2 pages of 10 and nothing after them.
+        let sql = "SELECT * FROM df WHERE id >= 10";
+        let expectations: [(usize, Vec<i64>); 3] = [
+            (1, (10..20).collect()),
+            (2, (20..25).collect()),
+            (3, Vec::new()),
+        ];
+        for (page, expected_ids) in expectations {
+            let response = get_data_frame_page(
+                &sync_dir,
+                namespace,
+                repo_name,
+                &workspace_id,
+                file_path,
+                page_query(page, 10, Some(sql)),
+            )
+            .await;
+            assert!(response.is_indexed);
+            assert_eq!(
+                page_row_count(&response),
+                expected_ids.len(),
+                "page {page} must hold only its own rows"
+            );
+            assert_eq!(page_ids(&response), expected_ids);
+            let pagination = &response.data_frame.as_ref().unwrap().view.pagination;
+            assert_eq!(pagination.total_entries, 15);
+            assert_eq!(pagination.total_pages, 2);
         }
 
         drop(workspace);
