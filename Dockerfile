@@ -59,7 +59,10 @@ ENV PKG_CONFIG_PATH="/opt/ffmpeg/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
 WORKDIR /usr/src/oxen-server
 COPY . .
-RUN cargo build --workspace --exclude oxen-py --release --features liboxen/ffmpeg
+# `oxen-server/otel` compiles the OTLP span exporter and inbound W3C trace-context extraction into
+# the binary; both stay dormant until an OTLP endpoint is configured at runtime. Named explicitly
+# rather than via the `production` feature, which additionally turns on `perf-logging`.
+RUN cargo build --workspace --exclude oxen-py --release --features liboxen/ffmpeg,oxen-server/otel
 
 # Minimal image to run the binary (without Rust toolchain)
 FROM debian:bookworm-slim AS runtime
