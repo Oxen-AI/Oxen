@@ -559,16 +559,22 @@ where
 
     // A collector that is slow, unreachable, or black-holing must cost the process bounded memory
     // and never back-pressure a request thread: the queue is fixed, and the processor drops spans
-    // once it is full rather than blocking the thread that ended the span. The short delay keeps
-    // the queue draining often enough that a burst has somewhere to go. Each field is also
-    // overridable through its `OTEL_BSP_*` env var.
-    let batch_config = BatchConfigBuilder::default()
-        .with_max_queue_size(4096)
-        .with_max_export_batch_size(512)
-        .with_scheduled_delay(std::time::Duration::from_secs(2))
-        .build();
+    // once it is full rather than blocking the thread that ended the span. A queue deeper than the
+    // SDK default absorbs the burst a bulk endpoint produces, and a shorter delay keeps it draining
+    // often enough for the next one.
+    //
+    // The builder's default has already read the `OTEL_BSP_*` env vars, and setting a field here
+    // would override whatever it found — so each is only set when the operator left it unset, and
+    // tuning a deployment through the standard variables still works.
+    let mut batch_config = BatchConfigBuilder::default();
+    if std::env::var_os("OTEL_BSP_MAX_QUEUE_SIZE").is_none() {
+        batch_config = batch_config.with_max_queue_size(4096);
+    }
+    if std::env::var_os("OTEL_BSP_SCHEDULE_DELAY").is_none() {
+        batch_config = batch_config.with_scheduled_delay(std::time::Duration::from_secs(2));
+    }
     let processor = BatchSpanProcessor::builder(exporter)
-        .with_batch_config(batch_config)
+        .with_batch_config(batch_config.build())
         .build();
 
     // Sampling comes from `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG`, which the provider's
