@@ -1215,6 +1215,8 @@ mod tests {
                 "test", "test", None, None, "test",
             ))
             .force_path_style(true)
+            // Production's client comes from aws_config and retries 5xx; a direct config must opt in.
+            .retry_config(aws_sdk_s3::config::retry::RetryConfig::standard())
             .build();
         Client::from_conf(config)
     }
