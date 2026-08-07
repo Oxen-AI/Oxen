@@ -9111,8 +9111,10 @@ checksum = "1ca6b15407f9bfcb35f82d0e79e603e1629ece4e91cc6d9e58f890c184dd20af"
 dependencies = [
  "actix-web",
  "mutually_exclusive_features",
+ "opentelemetry",
  "pin-project",
  "tracing",
+ "tracing-opentelemetry",
  "uuid",
 ]
 
