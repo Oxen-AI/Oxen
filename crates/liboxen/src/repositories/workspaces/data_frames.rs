@@ -938,7 +938,7 @@ mod tests {
             // Committing now would export an empty jsonl file — no schema can
             // be inferred from it, so the commit must fail instead of writing
             // a Tabular FileNode with no metadata (which would make every
-            // subsequent read fail with "File node does not have metadata").
+            // subsequent read fail with `TabularFileMissingMetadata`).
             let new_commit = NewCommitBody {
                 author: "author".to_string(),
                 email: "email".to_string(),

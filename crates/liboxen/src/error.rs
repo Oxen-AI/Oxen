@@ -215,6 +215,12 @@ pub enum OxenError {
     )]
     TabularExportMissingMetadata(PathBuf),
 
+    /// A committed file is typed as tabular but carries no metadata, so it has no schema to serve
+    /// a data frame from. Distinct from [`OxenError::TabularExportMissingMetadata`], which refuses
+    /// the commit that would create such a file.
+    #[error("{0} has no tabular metadata, so it cannot be read as a data frame")]
+    TabularFileMissingMetadata(PathBufError),
+
     /// Adding a file into a workspace
     #[error("{0}")]
     ImportFileError(StringError),
@@ -867,6 +873,9 @@ impl OxenError {
             TabularExportMissingMetadata(_) => {
                 "The data frame has no rows to commit. Add at least one row, or discard the workspace edits, then retry."
             }
+            TabularFileMissingMetadata(_) => {
+                "Commit a new version of this file with at least one row to make it readable as a data frame."
+            }
             _ => return None,
         }
         .to_string();
@@ -956,6 +965,8 @@ impl OxenError {
             OxenError::VersionStoreDataMissing { .. } => true,
             OxenError::VersionStoreBlobMissing { .. } => true,
             OxenError::UnknownRemoteResponseStatus(_) => true,
+            OxenError::TabularFileMissingMetadata(_) => true,
+            OxenError::InvalidFileType(_) => true,
             // A malformed file or an unsatisfiable query reads the same way every time. Only the
             // IO case can resolve on its own.
             OxenError::PolarsError(_) | OxenError::DataFrameError(DataFrameError::Polars(_)) => {
