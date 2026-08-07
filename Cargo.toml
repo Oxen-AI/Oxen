@@ -127,14 +127,7 @@ rocksdb = { version = "0.22.0", default-features = false, features = ["lz4", "sn
 s3s = "0.13"
 s3s-fs = "0.13"
 sanitize-filename = "0.6.0"
-sentry = { version = "0.34", default-features = false, features = [
-    "backtrace",
-    "contexts",
-    "panic",
-    "reqwest",
-    "rustls",
-    "tracing",
-] }
+sentry = { version = "0.34", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls", "tracing"] }
 sentry-actix = "0.34"
 serde = { version = "1.0.188", features = ["derive"] }
 serde_derive = "1.0.188"
@@ -188,7 +181,8 @@ debug-assertions = false
 
 [profile.release]
 codegen-units = 1
-# Windows release overrides this to "thin" through CARGO_PROFILE_RELEASE_LTO to save on build time
+# The Windows release and the oxen-server image build both override this to "thin"
+# through CARGO_PROFILE_RELEASE_LTO to save on build time
 lto = true
 opt-level = "s"
 strip = true
