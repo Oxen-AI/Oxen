@@ -430,7 +430,7 @@ async fn compute_staged_merkle_tree_node(
 
     // A tabular file we cannot parse must never be committed: a FileNode with
     // data_type Tabular and no metadata makes every subsequent read of the
-    // file fail with "File node does not have metadata". This happens when
+    // file fail with `TabularFileMissingMetadata`. This happens when
     // the exported data frame is empty (e.g. all rows were staged as removed
     // — an empty jsonl/csv has no schema to infer). Failing the commit keeps
     // the last good version readable.

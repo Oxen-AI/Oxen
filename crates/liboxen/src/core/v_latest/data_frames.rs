@@ -72,7 +72,9 @@ pub async fn get_slice(
             }
         },
         None => {
-            return Err(OxenError::basic_str("File node does not have metadata"));
+            return Err(OxenError::TabularFileMissingMetadata(
+                path.as_ref().to_path_buf().into(),
+            ));
         }
     };
     let metadata = metadata?;

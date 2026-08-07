@@ -842,6 +842,22 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::BadRequest().json(error_json)
                     }
+                    // Terminal, not transient: the file was committed without a schema and no
+                    // amount of retrying gives it one, so a 5xx would invite a retry loop that
+                    // re-reports the same unreadable file on every attempt.
+                    OxenError::TabularFileMissingMetadata(path) => {
+                        log::warn!("Data frame read refused, {path} has no tabular metadata");
+                        let error_json = json!({
+                            "error": {
+                                "type": "tabular_metadata_missing",
+                                "title": "File has no tabular metadata",
+                                "detail": format!("{path} was committed without a tabular schema, so it cannot be read as a data frame. Commit a new version of it with at least one row."),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::UnprocessableEntity().json(error_json)
+                    }
                     OxenError::LocalRepoNotFound(path) => {
                         log::debug!("Local repo not found: {path}");
                         let error_json = json!({
@@ -1130,6 +1146,21 @@ mod tests {
         let response = error.error_response();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(!response.status().is_server_error());
+        assert_eq!(status_message_of(response).await, MSG_BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn test_tabular_file_without_metadata_is_terminal_for_the_caller() {
+        // Neither the caller's mistake nor a transient fault: the file was committed without a
+        // schema. A 5xx would alert on every read and invite the retry that repeats it, so the
+        // status has to be terminal even though the caller did nothing wrong.
+        let error = OxenHttpError::from(OxenError::TabularFileMissingMetadata(
+            PathBuf::from("chat_history.jsonl").into(),
+        ));
+        let response = error.error_response();
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
         assert!(!response.status().is_server_error());
         assert_eq!(status_message_of(response).await, MSG_BAD_REQUEST);
     }
