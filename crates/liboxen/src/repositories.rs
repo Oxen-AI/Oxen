@@ -610,11 +610,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_defaults_to_filesystem_backend() -> Result<(), OxenError> {
+    async fn test_create_defaults_to_lmdb_backend() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
             let repo_new = RepoNew::from_namespace_name("ns", "repo", None);
             let repo = repositories::create(&sync_dir, repo_new, None).await?;
-            assert_eq!(repo.merkle_node_backend(), MerkleNodeBackend::Filesystem);
+            assert_eq!(repo.merkle_node_backend(), MerkleNodeBackend::Lmdb);
             Ok(())
         })
         .await
@@ -623,10 +623,11 @@ mod tests {
     #[tokio::test]
     async fn test_create_honors_requested_merkle_backend() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
+            // Requests the non-default backend, so this fails if the request is ignored.
             let mut repo_new = RepoNew::from_namespace_name("ns", "repo", None);
-            repo_new.merkle_node_backend = Some(MerkleNodeBackend::Lmdb);
+            repo_new.merkle_node_backend = Some(MerkleNodeBackend::Filesystem);
             let repo = repositories::create(&sync_dir, repo_new, None).await?;
-            assert_eq!(repo.merkle_node_backend(), MerkleNodeBackend::Lmdb);
+            assert_eq!(repo.merkle_node_backend(), MerkleNodeBackend::Filesystem);
             Ok(())
         })
         .await
