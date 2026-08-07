@@ -33,3 +33,13 @@ jobs:
           package-name: oxen-server
           package-type: container
           min-versions-to-keep: 20
+
+      # Each cache write leaves the manifest it replaced untagged, so this package
+      # grows faster than the image one. Only the newest is read. The rest are headroom
+      # for a build already pulling from one this would otherwise delete.
+      - name: Delete all but the newest build caches
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: oxen-server-buildcache
+          package-type: container
+          min-versions-to-keep: 5
