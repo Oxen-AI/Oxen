@@ -267,14 +267,14 @@ pub fn add_schema_metadata(
     }
 
     let oxen_metadata = &file_node.metadata();
-    let oxen_metadata_hash = util::hasher::get_metadata_hash(oxen_metadata)?;
+    let oxen_metadata_hash = util::hasher::maybe_get_metadata_hash(oxen_metadata)?;
     let combined_hash =
-        util::hasher::get_combined_hash(Some(oxen_metadata_hash), file_node.hash().to_u128())?;
+        util::hasher::get_combined_hash(oxen_metadata_hash, file_node.hash().to_u128())?;
 
     let mut file_node = staged_entry.node.file()?;
 
     file_node.set_name(path.to_str().unwrap());
-    file_node.set_metadata_hash(Some(MerkleHash::new(oxen_metadata_hash)));
+    file_node.set_metadata_hash(oxen_metadata_hash.map(MerkleHash::new));
     file_node.set_combined_hash(&MerkleHash::new(combined_hash));
 
     staged_entry.node = MerkleTreeNode::from_file(file_node);
@@ -392,15 +392,15 @@ pub fn add_column_metadata(
     }
 
     let oxen_metadata = &file_node.metadata();
-    let oxen_metadata_hash = util::hasher::get_metadata_hash(oxen_metadata)?;
+    let oxen_metadata_hash = util::hasher::maybe_get_metadata_hash(oxen_metadata)?;
     let combined_hash =
-        util::hasher::get_combined_hash(Some(oxen_metadata_hash), file_node.hash().to_u128())?;
+        util::hasher::get_combined_hash(oxen_metadata_hash, file_node.hash().to_u128())?;
 
     let mut file_node = staged_entry.node.file()?;
 
     file_node.set_name(path.to_str().unwrap());
     file_node.set_combined_hash(&MerkleHash::new(combined_hash));
-    file_node.set_metadata_hash(Some(MerkleHash::new(oxen_metadata_hash)));
+    file_node.set_metadata_hash(oxen_metadata_hash.map(MerkleHash::new));
 
     staged_entry.node = MerkleTreeNode::from_file(file_node);
 
