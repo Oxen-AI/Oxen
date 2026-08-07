@@ -452,9 +452,12 @@ async fn compute_staged_merkle_tree_node(
             .update_metadata_from_schema(&staged_schema);
     }
 
-    // Compute the metadata hash and combined hash
-    let metadata_hash = util::hasher::get_metadata_hash(&metadata)?;
-    let combined_hash = util::hasher::get_combined_hash(Some(metadata_hash), hash.to_u128())?;
+    // Absent metadata leaves the metadata hash unset and the combined hash equal to the content
+    // hash, the same convention `add` and `FileNode::recompute_metadata_hashes` follow. A file's
+    // combined hash feeds the vnode and dir node hashes, so one convention across every writer is
+    // what keeps identical content under one tree identity.
+    let metadata_hash = util::hasher::maybe_get_metadata_hash(&metadata)?;
+    let combined_hash = util::hasher::get_combined_hash(metadata_hash, hash.to_u128())?;
     let combined_hash = MerkleHash::new(combined_hash);
 
     // Copy file to the version store
@@ -474,7 +477,7 @@ async fn compute_staged_merkle_tree_node(
         name: relative_path_str.to_string(),
         hash,
         combined_hash,
-        metadata_hash: Some(MerkleHash::new(metadata_hash)),
+        metadata_hash: metadata_hash.map(MerkleHash::new),
         num_bytes,
         last_modified_seconds: mtime.unix_seconds(),
         last_modified_nanoseconds: mtime.nanoseconds(),
