@@ -842,6 +842,21 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::BadRequest().json(error_json)
                     }
+                    // A data frame was requested for a file that is not tabular. The file's type
+                    // does not change on retry, so the status is terminal.
+                    OxenError::InvalidFileType(detail) => {
+                        log::warn!("Data frame requested for a non-tabular file: {detail}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "invalid_file_type",
+                                "title": "Not a tabular file",
+                                "detail": format!("{detail}"),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
                     // Terminal, not transient: the file was committed without a schema and no
                     // amount of retrying gives it one, so a 5xx would invite a retry loop that
                     // re-reports the same unreadable file on every attempt.
@@ -1161,6 +1176,21 @@ mod tests {
         let response = error.error_response();
 
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(!response.status().is_server_error());
+        assert_eq!(status_message_of(response).await, MSG_BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn test_data_frame_request_for_a_non_tabular_file_is_a_client_error() {
+        // The caller pointed the data frame endpoint at a file that is not a data frame. That is
+        // the caller's own mistake and no retry changes the file's type, so it must be terminal
+        // and must not read as server breakage.
+        let error = OxenHttpError::from(OxenError::InvalidFileType(
+            "photo.png is a image file, which cannot be read as a data frame".into(),
+        ));
+        let response = error.error_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert!(!response.status().is_server_error());
         assert_eq!(status_message_of(response).await, MSG_BAD_REQUEST);
     }

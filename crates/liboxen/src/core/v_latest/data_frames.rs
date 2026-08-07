@@ -6,8 +6,7 @@ use crate::model::ParsedResource;
 use crate::model::data_frame::{DataFrameSchemaSize, DataFrameSlice, DataFrameSliceSchemas};
 use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::metadata::generic_metadata::GenericMetadata;
-use crate::model::metadata::metadata_tabular::MetadataTabularImpl;
-use crate::model::{Commit, DataFrameSize, LocalRepository, Schema};
+use crate::model::{Commit, DataFrameSize, EntryDataType, LocalRepository, Schema};
 use crate::opts::DFOpts;
 use crate::repositories;
 use polars::prelude::IntoLazy as _;
@@ -64,20 +63,27 @@ pub async fn get_slice(
 
     log::debug!("get_slice file_node {file_node:?}");
 
-    let metadata: Result<MetadataTabularImpl, OxenError> = match file_node.metadata() {
-        Some(metadata) => match metadata {
-            GenericMetadata::MetadataTabular(metadata) => Ok(metadata.tabular.clone()),
-            _ => {
-                return Err(OxenError::basic_str("Metadata is not tabular"));
-            }
-        },
-        None => {
+    let metadata = match file_node.metadata() {
+        Some(GenericMetadata::MetadataTabular(metadata)) => metadata.tabular.clone(),
+        // Only a tabular node is expected to carry tabular metadata, so any other node type means
+        // the caller asked for a data frame view of a file that is not one. A tabular node with no
+        // metadata is the damaged case, and names itself separately.
+        _ if *file_node.data_type() != EntryDataType::Tabular => {
+            return Err(OxenError::InvalidFileType(
+                format!(
+                    "{} is a {} file, which cannot be read as a data frame",
+                    path.as_ref().display(),
+                    file_node.data_type()
+                )
+                .into(),
+            ));
+        }
+        _ => {
             return Err(OxenError::TabularFileMissingMetadata(
                 path.as_ref().to_path_buf().into(),
             ));
         }
     };
-    let metadata = metadata?;
     log::debug!("get_slice metadata {metadata:?}");
 
     let source_schema = metadata.schema;

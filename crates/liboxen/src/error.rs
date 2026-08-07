@@ -966,6 +966,7 @@ impl OxenError {
             OxenError::VersionStoreBlobMissing { .. } => true,
             OxenError::UnknownRemoteResponseStatus(_) => true,
             OxenError::TabularFileMissingMetadata(_) => true,
+            OxenError::InvalidFileType(_) => true,
             // A malformed file or an unsatisfiable query reads the same way every time. Only the
             // IO case can resolve on its own.
             OxenError::PolarsError(_) | OxenError::DataFrameError(DataFrameError::Polars(_)) => {
