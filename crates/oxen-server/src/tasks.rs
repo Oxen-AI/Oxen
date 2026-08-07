@@ -32,9 +32,10 @@ use tracing::{Instrument, Span};
 /// request and timing it as a span under the caller's. Otherwise identical to
 /// `tokio::task::spawn_blocking`.
 ///
-/// The span is named for the call site, so a trace distinguishes one blocking operation from
-/// another, and it opens at the spawn rather than at the closure's first line — a span far longer
-/// than its work is a saturated blocking pool.
+/// Every such span is named `blocking task` and carries its call site in the `code.file.path` and
+/// `code.line.number` fields, which is what tells one blocking operation from another in a trace.
+/// The span opens at the spawn rather than at the closure's first line, so a span far longer than
+/// its work is a saturated blocking pool.
 ///
 /// This is the right choice for one coherent operation per request. For work dispatched once per
 /// item in a loop, use [`spawn_blocking_per_item`] instead.
