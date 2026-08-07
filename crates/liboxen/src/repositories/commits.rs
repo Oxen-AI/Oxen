@@ -1453,6 +1453,35 @@ A: Oxen.ai
     }
 
     #[tokio::test]
+    async fn test_list_by_path_from_paginated_names_a_path_the_revision_lacks()
+    -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+
+            let err = repositories::commits::list_by_path_from_paginated(
+                &repo,
+                &commit,
+                &PathBuf::from("no/such/path.txt"),
+                PaginateOpts::default(),
+            )
+            .await
+            .expect_err("a path the revision does not contain has no history");
+
+            // Names the revision alongside the path, which is what separates a mistyped path
+            // from asking the right path of the wrong revision.
+            let OxenError::PathNotFoundInRevision { path, revision } = &err else {
+                panic!("expected PathNotFoundInRevision, got {err:?}");
+            };
+            assert_eq!(path.to_string(), "no/such/path.txt");
+            assert_eq!(*revision, commit.id);
+            assert!(err.is_not_found());
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_list_by_path_from_paginated() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
             let target_file_path = PathBuf::from("target_file.txt");

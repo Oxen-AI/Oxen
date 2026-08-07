@@ -1076,15 +1076,26 @@ pub fn list_by_path_from_paginated(
     // Check if the path is a directory or file
     let _perf_node = crate::perf_guard!("core::commits::get_node_by_path");
     let node = repositories::tree::get_node_by_path(repo, commit, path)?.ok_or_else(|| {
-        OxenError::basic_str(format!("Merkle tree node not found for path: {path:?}"))
+        OxenError::PathNotFoundInRevision {
+            path: path.to_path_buf().into(),
+            revision: commit.id.clone(),
+        }
     })?;
     let last_commit_id = match &node.node {
         EMerkleTreeNode::File(file_node) => file_node.last_commit_id(),
         EMerkleTreeNode::Directory(dir_node) => dir_node.last_commit_id(),
-        _ => {
-            return Err(OxenError::basic_str(format!(
-                "Merkle tree node not found for path: {path:?}"
-            )));
+        // A path resolves through `dir_hashes` to a directory or through `read_file` to a file,
+        // so any other kind here means the tree disagrees with itself rather than that the caller
+        // named something absent.
+        node => {
+            return Err(OxenError::InternalError(
+                format!(
+                    "Path {path:?} in commit {} resolved to a {:?} node, expected a file or directory",
+                    commit.id,
+                    node.node_type()
+                )
+                .into(),
+            ));
         }
     };
     let last_commit_id = last_commit_id.to_string();
