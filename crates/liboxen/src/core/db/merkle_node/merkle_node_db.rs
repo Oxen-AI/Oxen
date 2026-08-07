@@ -60,6 +60,7 @@ use crate::error::OxenError;
 use crate::model::MerkleHash;
 use crate::model::merkle_tree::node_type::InvalidMerkleTreeNodeType;
 
+use crate::model::merkle_tree::node::legacy_pre_025::decodes_as_pre_v025;
 use crate::model::merkle_tree::node::{
     EMerkleTreeNode, MerkleTreeNode, MerkleTreeNodeType, TMerkleTreeNode,
 };
@@ -130,9 +131,13 @@ pub(crate) fn suppress_retired_format_logging() -> RetiredFormatLogGuard {
 
 /// Whether this payload was written before the node types gained their enum envelope.
 ///
-/// The single definition of "pre-v0.25.0 on disk". Both formats decode, so a read's success says
-/// nothing about which one it was — this is what tells them apart, for the classifier below and
-/// for anything counting the population still awaiting migration.
+/// The single definition of "pre-v0.25.0 on disk", used by the classifier below and by anything
+/// counting the population still awaiting migration.
+///
+/// Missing the envelope is necessary but not sufficient: damage to a payload's leading bytes
+/// destroys the envelope too, so the payload must also decode as the shape that release wrote.
+/// Without that second half, a corrupt node is indistinguishable from a legacy one, and the two
+/// call for opposite remedies.
 ///
 /// `FileChunk` never had an envelope, so the tag says nothing about it. A payload carrying an
 /// envelope that names some variant this build does not know is not *older* than v0.25.0, so it
@@ -141,11 +146,17 @@ pub(crate) fn is_pre_v025_payload(dtype: MerkleTreeNodeType, data: &[u8]) -> boo
     dtype != MerkleTreeNodeType::FileChunk
         && !data.starts_with(CURRENT_NODE_PAYLOAD_TAG)
         && !data.starts_with(NODE_ENVELOPE_PREFIX)
+        && decodes_as_pre_v025(dtype, data)
 }
 
-/// Classify a failure to decode a node payload. A payload carrying no variant tag was written
-/// before the node types gained their enum envelope, which is a property of the repository rather
-/// than a damaged node; telling the two apart keeps a retired format from looking like corruption.
+/// Classify a failure to decode a node payload, separating a retired on-disk format from a
+/// damaged one. A retired format is a property of the repository and is answered by migrating it;
+/// damage is a property of the bytes and is answered by restoring them.
+///
+/// Only `Commit` reaches the retired-format arm. `Dir`, `VNode`, and `File` each try the
+/// pre-v0.25.0 shape inside their own `deserialize`, so a payload in that shape decodes there and
+/// never arrives here, and `FileChunk` never had an envelope to lose. `CommitNode::deserialize`
+/// has no such fallback, so this is the only place that shape is recognized for it.
 ///
 /// Every conversion from a decode error into a [`MerkleDbError`] goes through here — the `#[from]`
 /// on [`MerkleDbError::Decode`] will silently classify a retired-format node as corruption if a
@@ -614,6 +625,7 @@ impl Drop for MerkleNodeDB {
 #[cfg(test)]
 mod to_node_tests {
     use super::*;
+    use crate::model::merkle_tree::node::commit_node::ECommitNode;
     use crate::model::merkle_tree::node::{CommitNode, DirNode, FileChunkNode, VNode};
 
     const HASH_VALUE: u128 = 42;
@@ -675,19 +687,100 @@ mod to_node_tests {
     }
 
     #[test]
-    fn untagged_bytes_of_no_known_shape_report_the_retired_format() {
-        // No envelope, and not readable as the pre-0.25 struct either. The classifier still has
-        // something useful to say about these: they predate the format and cannot be recovered,
-        // which is a different problem from a damaged current-format node.
+    fn untagged_bytes_of_no_known_shape_report_a_decode_error() {
+        // No envelope, and not readable as the pre-0.25 struct either. Nothing about these bytes
+        // is a retired format; naming one sends an operator to run a migration, which cannot
+        // repair a payload that decodes as nothing.
         let untagged = vec![0x92, 0xc1, 0xc1];
 
         let err = MerkleNodeDB::to_node(MerkleTreeNodeType::VNode, hash(), &untagged)
             .expect_err("bytes of no known shape must not decode");
 
         assert!(
+            matches!(err, MerkleDbError::Decode(_)),
+            "expected Decode, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn a_genuine_pre_v025_commit_still_reports_the_retired_format() {
+        // Commit is the one type whose `deserialize` has no legacy fallback, so a retired-format
+        // commit reaches the classifier and the classifier's own decode attempt is what keeps it
+        // from being called corrupt. For the others the fallback has already run, and reaching
+        // the classifier at all means neither shape decoded.
+        //
+        // The payload is the current data struct serialized bare, without the enum envelope,
+        // which is exactly what pre-0.25.0 wrote: that release's field list is unchanged.
+        let ECommitNode::V0_25_0(ref data) = CommitNode::default().node;
+        let legacy = rmp_serde::to_vec(data).expect("commit data should serialize");
+
+        let err = MerkleNodeDB::to_node(MerkleTreeNodeType::Commit, hash(), &legacy)
+            .expect_err("a bare commit payload does not decode as the enveloped shape");
+
+        assert!(
             matches!(err, MerkleDbError::PreV025Node { .. }),
             "expected PreV025Node, got {err:?}"
         );
+    }
+
+    #[test]
+    fn a_legacy_shape_with_trailing_bytes_is_damage_not_the_retired_format() {
+        // Decoding stops at the end of the first value, so a payload that opens with a valid
+        // pre-0.25 struct and then continues into junk reads as legacy unless the whole payload
+        // is required to be consumed. A node payload is stored with an explicit length, so a
+        // legacy one ends exactly where its struct does and anything past that is damage.
+        let ECommitNode::V0_25_0(ref data) = CommitNode::default().node;
+        let mut trailing = rmp_serde::to_vec(data).expect("commit data should serialize");
+        trailing.push(0xc1); // never a valid msgpack byte
+
+        let err = MerkleNodeDB::to_node(MerkleTreeNodeType::Commit, hash(), &trailing)
+            .expect_err("a payload with trailing bytes must not decode");
+
+        assert!(
+            matches!(err, MerkleDbError::Decode(_)),
+            "expected Decode, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn damage_to_the_leading_bytes_is_not_mistaken_for_the_retired_format() {
+        // The case that motivated separating the two: corruption anywhere in the first bytes
+        // takes the envelope with it, leaving a payload that looks untagged. Judging by prefix
+        // alone called this a retired format, which both named the wrong remedy and inflated
+        // every count of the population still awaiting migration.
+        //
+        // `Commit` is the case that carries this test. It is the only type whose `deserialize`
+        // has no legacy fallback, so the classifier's own decode attempt is the only thing
+        // telling damage from a retired format. For the other two that attempt can only agree
+        // with the fallback that already failed, so they are here as regression cover rather
+        // than as the thing being proven.
+        let payloads = [
+            (
+                MerkleTreeNodeType::Commit,
+                rmp_serde::to_vec(&CommitNode::default()),
+            ),
+            (
+                MerkleTreeNodeType::Dir,
+                rmp_serde::to_vec(&DirNode::default()),
+            ),
+            (
+                MerkleTreeNodeType::VNode,
+                rmp_serde::to_vec(&VNode::default()),
+            ),
+        ];
+
+        for (dtype, payload) in payloads {
+            let mut damaged = payload.expect("node should serialize");
+            damaged[..3].fill(0xc1); // never a valid msgpack byte
+
+            let err = MerkleNodeDB::to_node(dtype, hash(), &damaged)
+                .expect_err("a damaged payload must not decode");
+
+            assert!(
+                matches!(err, MerkleDbError::Decode(_)),
+                "expected Decode for {dtype:?}, got {err:?}"
+            );
+        }
     }
 
     #[test]

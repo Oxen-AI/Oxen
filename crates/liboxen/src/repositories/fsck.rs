@@ -70,9 +70,9 @@ impl NodeFormatReport {
 /// merkle-node backend, since it goes through the store rather than the on-disk file layout.
 ///
 /// Shares its definition of "pre-v0.25.0" with the read path rather than restating it, so the
-/// count cannot drift from what the server considers old. Note this is a question about the bytes,
-/// not about whether they decode: both formats read successfully, so a successful decode says
-/// nothing either way.
+/// count cannot drift from what the server considers old. A node is counted as legacy only if it
+/// decodes as the shape that release wrote, so damaged nodes land in `undecodable` rather than
+/// inflating the migration population.
 pub fn scan_node_format(repo: &LocalRepository) -> Result<NodeFormatReport, OxenError> {
     // The report below names every node this would log, so leaving the warning on buries the
     // result under one line per affected node — order 10^5 across a fleet.
