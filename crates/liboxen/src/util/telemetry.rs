@@ -45,20 +45,53 @@ pub struct TracingGuard {
     _tracer_provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
 }
 
+impl TracingGuard {
+    /// Export whatever spans are still queued and stop the OTLP pipeline.
+    ///
+    /// An async program should await this before its last return to the runtime, and is the reason
+    /// this method exists: the exporter's transport is a task on that runtime, so the flush only
+    /// succeeds while the runtime is free to poll it. [`Drop`] cannot do that — it blocks the
+    /// calling thread, which on a single-threaded runtime (actix's) is the very thread the
+    /// transport needs, so the export stalls until the processor's five-second timeout and every
+    /// queued span is lost.
+    ///
+    /// Idempotent, and a no-op without an OTLP endpoint configured.
+    pub async fn shutdown(&self) {
+        #[cfg(feature = "otel")]
+        if let Some(provider) = self._tracer_provider.clone() {
+            // The provider's shutdown blocks until the batch processor has drained, so it goes to
+            // the blocking pool; awaiting the handle leaves the runtime free to carry the spans.
+            match tokio::task::spawn_blocking(move || shutdown_provider(&provider)).await {
+                Ok(()) => {}
+                Err(e) => eprintln!("warning: OTel tracer provider shutdown task failed: {e}"),
+            }
+        }
+    }
+}
+
+/// Shut down `provider`, reporting anything but success and an already-completed shutdown.
+///
+/// The global subscriber holds an Arc clone of the tracer provider (via OpenTelemetryLayer →
+/// SdkTracer → SdkTracerProvider), so dropping the provider alone never brings the Arc refcount to
+/// zero — `TracerProviderInner::drop()` never fires, and the `BatchSpanProcessor`'s pending spans
+/// are never flushed. Shutting it down explicitly is what exports them.
+#[cfg(feature = "otel")]
+fn shutdown_provider(provider: &opentelemetry_sdk::trace::SdkTracerProvider) {
+    match provider.shutdown() {
+        // Already done by an earlier call, the atexit handler, or Drop. All three routes are
+        // expected, and the SDK guards against double-shutdown with an atomic flag.
+        Ok(()) | Err(opentelemetry_sdk::error::OTelSdkError::AlreadyShutdown) => {}
+        Err(e) => eprintln!("warning: OTel tracer provider shutdown failed: {e}"),
+    }
+}
+
 impl Drop for TracingGuard {
     fn drop(&mut self) {
-        // The global subscriber holds an Arc clone of the tracer provider
-        // (via OpenTelemetryLayer → SdkTracer → SdkTracerProvider), so
-        // dropping _tracer_provider alone never brings the Arc refcount to
-        // zero — TracerProviderInner::drop() never fires. We call shutdown()
-        // explicitly to flush the BatchSpanProcessor's pending spans.
-        // This is idempotent: if atexit_flush already ran, the atomic
-        // is_shutdown flag causes this to no-op.
+        // The last-resort flush, for a synchronous program and for an async one that returned
+        // without awaiting `shutdown`. See that method for why it is not enough on its own.
         #[cfg(feature = "otel")]
-        if let Some(ref provider) = self._tracer_provider
-            && let Err(e) = provider.shutdown()
-        {
-            eprintln!("warning: OTel tracer provider shutdown failed: {e}");
+        if let Some(ref provider) = self._tracer_provider {
+            shutdown_provider(provider);
         }
     }
 }
@@ -143,9 +176,10 @@ mod atexit_flush {
 /// the HTTP root span are recorded at. Traces therefore export at the stock `RUST_LOG` level, and
 /// raising log verbosity for debugging does not change what is exported.
 ///
-/// Returns a [TracingGuard] when file logging is active. The caller
-/// **must** hold the guard in a named binding for the lifetime of the
-/// application — dropping it flushes the non-blocking writer.
+/// Returns a [TracingGuard]. The caller **must** hold the guard in a named binding for the
+/// lifetime of the application — dropping it flushes the non-blocking writer and stops span
+/// export. An async program should additionally await [`TracingGuard::shutdown`] before its last
+/// return to the runtime; see that method for what dropping alone costs.
 pub fn init_tracing(app_name: &str, default: LevelFilter) -> Result<TracingGuard, TelemetryError> {
     init_tracing_with_layer(app_name, default, None)
 }

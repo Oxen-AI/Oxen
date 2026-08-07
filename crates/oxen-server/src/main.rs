@@ -447,7 +447,7 @@ async fn main() {
         .as_ref()
         .is_some_and(|guard| guard.is_enabled());
     // fail-fast if we cannot initialize logging
-    let _tracing_guard = telemetry::init_tracing_with_layer(
+    let tracing_guard = telemetry::init_tracing_with_layer(
         "oxen-server",
         LevelFilter::WARN,
         sentry_tracing_layer(sentry_enabled),
@@ -462,6 +462,9 @@ async fn main() {
     if let Err(e) = server().await {
         log::error!("{e}");
     }
+    // Export the last spans here rather than leaving it to the guard's Drop, which blocks the
+    // single thread the OTLP transport runs on and loses them — see `TracingGuard::shutdown`.
+    tracing_guard.shutdown().await;
 }
 
 #[derive(Debug, Error)]
