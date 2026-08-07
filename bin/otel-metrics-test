@@ -167,9 +167,12 @@ fi
 MODIFIED_AUTH_CONFIG=true
 
 # ── Start oxen-server with OTel export and Prometheus metrics ──
+# Deliberately no RUST_LOG anywhere in this script. Span export is filtered independently of the
+# log destinations, so every trace asserted below arrives at the stock log level — which for the
+# CLI and the Python bindings is "off". Setting RUST_LOG=info here would hide a regression that
+# re-couples the two.
 OXEN_OTEL_ENDPOINT=http://localhost:4317 \
 OXEN_METRICS_PORT=9090 \
-RUST_LOG=info \
 "$SERVER" start &
 SERVER_PID=$!
 
@@ -192,6 +195,17 @@ if [ "$server_ready" != true ]; then
     echo "FAIL: oxen-server did not become ready within 30s"
     exit 1
 fi
+
+# ── Inbound W3C trace context ──
+# A caller that already has a trace sends `traceparent`; the server span must join that trace as a
+# child of the caller's span rather than starting a new one. Unique per run so the assertion below
+# reads this run's request and not a leftover.
+TRACEPARENT_TRACE_ID=$(printf '%016x%016x' "$$" "$(date +%s)")
+TRACEPARENT_SPAN_ID="00f067aa0ba902b7"
+curl -sf --max-time 10 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "traceparent: 00-$TRACEPARENT_TRACE_ID-$TRACEPARENT_SPAN_ID-01" \
+  http://localhost:3000/api/version > /dev/null
 
 # ── oxen client: Full push / clone / modify / push / pull workflow ──
 
@@ -225,7 +239,6 @@ echo "modified in repo-b" >> test-file.txt
 # Repo A: pull (with client-side OTel too)
 cd "$REPO_A_DIR"
 OXEN_OTEL_ENDPOINT=http://localhost:4317 \
-RUST_LOG=info \
 "$OXEN" pull
 
 # ── oxen-python OTel check ──
@@ -241,7 +254,6 @@ echo "another change for python test" >> test-file.txt
 # Pull from repo-a using Python with OTel enabled
 cd "$REPO_A_DIR"
 OXEN_OTEL_ENDPOINT=http://localhost:4317 \
-RUST_LOG=info \
 "$REPO_ROOT/oxen-python/.venv/bin/python" -c "
 import oxen
 repo = oxen.Repo('.')
@@ -265,7 +277,9 @@ else
   echo "PASS: oxen-server service registered in Jaeger"
 fi
 
-TRACES=$(curl -sf --max-time 5 "http://localhost:16686/api/traces?service=oxen-server&limit=5")
+# A limit well above the handful of traces a push/clone/pull produces, so the blocking-pool
+# assertion further down samples the whole workflow rather than only its last few requests.
+TRACES=$(curl -sf --max-time 5 "http://localhost:16686/api/traces?service=oxen-server&limit=50")
 TRACE_COUNT=$(echo "$TRACES" | jq '.data | length')
 
 if [ "$TRACE_COUNT" -gt 0 ]; then
@@ -288,6 +302,34 @@ if echo "$SERVICES" | jq -e '.data | index("oxen-py")' > /dev/null 2>&1; then
   echo "PASS: oxen-py traces found in Jaeger"
 else
   echo "FAIL: oxen-py traces not found in Jaeger"
+  did_fail=true
+fi
+
+# ── Verify inbound trace context was continued, not discarded ──
+# The server span for the `traceparent` request above must land in the caller's trace as a child of
+# the caller's span. A root span here means extraction is off and hub-to-server traces cannot be
+# stitched together.
+PROPAGATED=$(curl -s --max-time 5 "http://localhost:16686/api/traces/$TRACEPARENT_TRACE_ID" || true)
+CHILD_SPANS=$(echo "$PROPAGATED" | jq --arg parent "$TRACEPARENT_SPAN_ID" \
+  '[.data[]?.spans[]? | select(.references[]? | .refType == "CHILD_OF" and .spanID == $parent)] | length' 2>/dev/null || echo 0)
+if [ "${CHILD_SPANS:-0}" -gt 0 ]; then
+  echo "PASS: inbound traceparent produced a child span ($CHILD_SPANS) in trace $TRACEPARENT_TRACE_ID"
+else
+  echo "FAIL: no span in trace $TRACEPARENT_TRACE_ID is a child of $TRACEPARENT_SPAN_ID"
+  echo "$PROPAGATED"
+  did_fail=true
+fi
+
+# ── Verify work moved onto the blocking pool stays in the request's trace ──
+# `tasks::spawn_blocking` opens a span named "blocking task" under its caller. Almost every
+# sizeable server operation runs there, so if these come back unparented (or missing) a request's
+# trace is a lone HTTP span with none of its work under it.
+PARENTED_BLOCKING=$(echo "$TRACES" | jq \
+  '[.data[]?.spans[]? | select(.operationName == "blocking task") | select([.references[]? | select(.refType == "CHILD_OF")] | length > 0)] | length' 2>/dev/null || echo 0)
+if [ "${PARENTED_BLOCKING:-0}" -gt 0 ]; then
+  echo "PASS: blocking-pool work reported $PARENTED_BLOCKING span(s) under their caller"
+else
+  echo "FAIL: no parented 'blocking task' spans found — span context is not crossing spawn_blocking"
   did_fail=true
 fi
 
