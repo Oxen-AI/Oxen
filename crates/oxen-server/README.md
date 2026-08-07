@@ -240,6 +240,11 @@ OXEN_OTEL_ENDPOINT=https://otlp.vendor.example:443 oxen-server start
 | `OXEN_OTEL_PROTOCOL` | Transport: `grpc` or `http`. Under `http` the OTLP signal path `/v1/traces` is appended to the endpoint unless it already names one. | `grpc` |
 | `OXEN_OTEL_FILTER` | Which spans and events are exported. Same syntax as `RUST_LOG`, and independent of it. | `info` |
 
+An `https://` endpoint is verified against the platform's root certificate
+store under both transports, so a collector behind a publicly trusted
+certificate needs no further configuration. A private CA has to be installed in
+that store.
+
 The standard `OTEL_EXPORTER_OTLP_ENDPOINT` variable is also respected as a
 fallback if `OXEN_OTEL_ENDPOINT` is not set.
 

@@ -542,6 +542,8 @@ where
     use opentelemetry::KeyValue;
     use opentelemetry::trace::TracerProvider;
     use opentelemetry_otlp::WithExportConfig;
+    use opentelemetry_otlp::WithTonicConfig;
+    use opentelemetry_otlp::tonic_types::transport::ClientTlsConfig;
     use opentelemetry_sdk::Resource;
     use opentelemetry_sdk::propagation::TraceContextPropagator;
     use opentelemetry_sdk::trace::{BatchConfigBuilder, BatchSpanProcessor, SdkTracerProvider};
@@ -561,9 +563,12 @@ where
             }
         }
         Protocol::Grpc => {
+            // Supplies the platform root certificates an `https://` endpoint's handshake verifies
+            // against. An `http://` endpoint ignores it.
             match opentelemetry_otlp::SpanExporter::builder()
                 .with_tonic()
                 .with_endpoint(endpoint)
+                .with_tls_config(ClientTlsConfig::new().with_native_roots())
                 .build()
             {
                 Ok(e) => e,
