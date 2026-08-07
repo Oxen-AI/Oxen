@@ -606,7 +606,7 @@ pub async fn save_multiparts(
             // gzip inflate is CPU-bound; run it off the async runtime.
             let data = if is_gzipped {
                 let max_decompressed_size = stream_segment_size();
-                let inflated = tasks::spawn_blocking(move || {
+                let inflated = tasks::spawn_blocking_per_item(move || {
                     util::compression::decompress_gzip_capped(&field_bytes, max_decompressed_size)
                 })
                 .await

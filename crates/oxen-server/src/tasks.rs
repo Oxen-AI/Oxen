@@ -34,19 +34,51 @@ use tracing::{Instrument, Span};
 /// The span is named for the call site, so a trace distinguishes one blocking operation from
 /// another, and it opens at the spawn rather than at the closure's first line — a span far longer
 /// than its work is a saturated blocking pool.
+///
+/// This is the right choice for one coherent operation per request. For work dispatched once per
+/// item in a loop, use [`spawn_blocking_per_item`] instead.
 #[track_caller]
 pub fn spawn_blocking<F, R>(f: F) -> JoinHandle<R>
 where
     F: FnOnce() -> R + Send + 'static,
     R: Send + 'static,
 {
-    let hub = inherited_hub();
     let caller = Location::caller();
-    let span = tracing::info_span!(
-        "blocking task",
-        code.file.path = caller.file(),
-        code.line.number = caller.line(),
-    );
+    spawn_blocking_in(
+        tracing::info_span!(
+            "blocking task",
+            code.file.path = caller.file(),
+            code.line.number = caller.line(),
+        ),
+        f,
+    )
+}
+
+/// [`spawn_blocking`] for work dispatched once per item in a loop: it stays inside the caller's
+/// span rather than opening one of its own.
+///
+/// A span per item is the wrong granularity for a bulk endpoint. One upload request carries as
+/// many files as fit in a transfer segment — thousands of small ones — and a span each would bury
+/// the operation's own spans and overrun the exporter's queue on a single push. The work is still
+/// timed, as part of the operation that dispatched it, and a panic still reports against the
+/// caller's request.
+pub fn spawn_blocking_per_item<F, R>(f: F) -> JoinHandle<R>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    spawn_blocking_in(Span::current(), f)
+}
+
+/// Run `f` on the blocking pool inside `span`, with a hub inheriting the caller's scope.
+///
+/// Both must be resolved on the calling thread: a pool thread sees neither.
+fn spawn_blocking_in<F, R>(span: Span, f: F) -> JoinHandle<R>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    let hub = inherited_hub();
     tokio::task::spawn_blocking(move || span.in_scope(|| Hub::run(hub, f)))
 }
 
