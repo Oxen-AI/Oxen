@@ -459,17 +459,36 @@ impl std::fmt::Display for Protocol {
 /// `http://` and `https://` URLs are taken as given — TLS is what every hosted collector speaks. A
 /// value with no scheme is a host with an optional port (`collector:4317`), the form the OTLP gRPC
 /// convention uses, and gets `http://`. Any other scheme names a transport this exporter cannot
-/// speak and is rejected rather than silently retried against a URL that will never connect.
+/// speak and is rejected rather than silently retried against a URL that will never connect. Either
+/// way the result has to name a host.
 #[cfg(feature = "otel")]
 fn normalize_otel_endpoint(endpoint: &str) -> Result<String, TelemetryError> {
     let endpoint = endpoint.trim();
     if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
+        require_host(endpoint, endpoint)?;
         return Ok(endpoint.to_string());
     }
     if endpoint.is_empty() || endpoint.contains("://") || endpoint.starts_with('/') {
         return Err(TelemetryError::InvalidEndpoint(endpoint.to_string()));
     }
-    Ok(format!("http://{endpoint}"))
+    let with_scheme = format!("http://{endpoint}");
+    require_host(&with_scheme, endpoint)?;
+    Ok(with_scheme)
+}
+
+/// Reject a URL with no host. Reported against `configured`, the value the operator actually set.
+///
+/// The exporter builds happily from a hostless URL and only fails once it tries to send, so
+/// without this a typo like `http://:4317` looks like a working configuration that silently
+/// exports nothing.
+#[cfg(feature = "otel")]
+fn require_host(url: &str, configured: &str) -> Result<(), TelemetryError> {
+    let invalid = || TelemetryError::InvalidEndpoint(configured.to_string());
+    let parsed = url::Url::parse(url).map_err(|_| invalid())?;
+    match parsed.host_str() {
+        Some(host) if !host.is_empty() => Ok(()),
+        _ => Err(invalid()),
+    }
 }
 
 /// The path OTLP/HTTP posts spans to, relative to the configured base endpoint.
@@ -481,15 +500,20 @@ const OTLP_HTTP_TRACES_PATH: &str = "/v1/traces";
 /// The exporter appends the signal path only to an endpoint it reads from the environment itself;
 /// one handed to the builder is used verbatim, so a base endpoint gets the path here. An endpoint
 /// that already names the path is left alone.
+///
+/// The path is set on the parsed URL rather than concatenated, so a query string an endpoint
+/// carries stays a query string instead of swallowing the path appended after it.
 #[cfg(feature = "otel")]
 fn http_traces_endpoint(endpoint: &str) -> String {
-    if endpoint
-        .trim_end_matches('/')
-        .ends_with(OTLP_HTTP_TRACES_PATH)
-    {
+    let Ok(mut url) = url::Url::parse(endpoint) else {
+        return endpoint.to_string();
+    };
+    let base_path = url.path().trim_end_matches('/');
+    if base_path.ends_with(OTLP_HTTP_TRACES_PATH) {
         return endpoint.to_string();
     }
-    format!("{}{OTLP_HTTP_TRACES_PATH}", endpoint.trim_end_matches('/'))
+    url.set_path(&format!("{base_path}{OTLP_HTTP_TRACES_PATH}"));
+    url.to_string()
 }
 
 /// Build an OpenTelemetry tracing layer that exports spans via OTLP.
@@ -755,6 +779,19 @@ mod tests {
             assert!(matches!(err, TelemetryError::InvalidEndpoint(_)));
         }
 
+        /// A hostless URL builds an exporter that only fails once it tries to send, so it has to be
+        /// rejected at startup rather than looking like a working configuration.
+        #[test]
+        fn rejects_endpoints_with_no_host() {
+            for endpoint in ["http://", "https://", "http://:4317", ":4317"] {
+                let result = normalize_otel_endpoint(endpoint);
+                assert!(
+                    matches!(result, Err(TelemetryError::InvalidEndpoint(_))),
+                    "{endpoint} should be rejected, got {result:?}"
+                );
+            }
+        }
+
         #[test]
         fn http_signal_path_is_appended_to_a_base_endpoint() {
             assert_eq!(
@@ -776,6 +813,20 @@ mod tests {
             assert_eq!(
                 http_traces_endpoint("http://localhost:4318/v1/traces"),
                 "http://localhost:4318/v1/traces"
+            );
+        }
+
+        /// The signal path belongs on the path component. Concatenating it onto the whole URL puts
+        /// it after any query string, producing something the collector never matches.
+        #[test]
+        fn http_signal_path_keeps_a_query_string_intact() {
+            assert_eq!(
+                http_traces_endpoint("http://localhost:4318?token=abc"),
+                "http://localhost:4318/v1/traces?token=abc"
+            );
+            assert_eq!(
+                http_traces_endpoint("https://vendor.example/otlp?token=abc"),
+                "https://vendor.example/otlp/v1/traces?token=abc"
             );
         }
 
