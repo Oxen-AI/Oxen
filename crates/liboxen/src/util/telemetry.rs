@@ -174,7 +174,9 @@ mod atexit_flush {
 /// destinations — stderr, the JSON file, and the caller-supplied layer. Span export is gated
 /// separately by `OXEN_OTEL_FILTER`, defaulting to `info`, the level `#[tracing::instrument]` and
 /// the HTTP root span are recorded at. Traces therefore export at the stock `RUST_LOG` level, and
-/// raising log verbosity for debugging does not change what is exported.
+/// raising log verbosity for debugging does not change what is exported. Either variable set to a
+/// value the filter parser cannot use falls back to the level that applies when it is unset, and
+/// names the rejected directives on stderr.
 ///
 /// Returns a [TracingGuard]. The caller **must** hold the guard in a named binding for the
 /// lifetime of the application — dropping it flushes the non-blocking writer and stops span
@@ -241,10 +243,11 @@ pub fn init_tracing_with_layer(
     // gating the registry, so the OTel layer below can select spans at its own level. A registry
     // filter would apply to that layer too, and the default level is below the level spans are
     // recorded at — every span would be dropped before the exporter ever saw it.
+    let log_filter = env_filter(&log_directives, default);
     let registry = tracing_subscriber::registry()
-        .with(extra.map(|layer| layer.with_filter(env_filter(&log_directives))))
-        .with(m_json_layer.map(|layer| layer.with_filter(env_filter(&log_directives))))
-        .with(stderr_layer.with_filter(env_filter(&log_directives)));
+        .with(extra.map(|layer| layer.with_filter(log_filter.clone())))
+        .with(m_json_layer.map(|layer| layer.with_filter(log_filter.clone())))
+        .with(stderr_layer.with_filter(log_filter));
 
     // OpenTelemetry layer (feature-gated). Composed separately because the
     // concrete subscriber type (`S`) changes with each `.with()` call and
@@ -291,9 +294,9 @@ pub fn init_tracing_with_layer(
     #[cfg(feature = "otel")]
     {
         let otel_directives = otel_filter_directives();
-        registry
-            .with(m_otel_layer.map(|layer| layer.with_filter(env_filter(&otel_directives))))
-            .try_init()?;
+        let otel_layer = m_otel_layer
+            .map(|layer| layer.with_filter(env_filter(&otel_directives, OTEL_DEFAULT_FILTER)));
+        registry.with(otel_layer).try_init()?;
 
         if let Some(protocol_and_endpoint) = m_endpoint_p {
             log::info!(
@@ -338,7 +341,7 @@ const OTEL_FILTER_ENV: &str = "OXEN_OTEL_FILTER";
 /// Filter applied to span export when `OXEN_OTEL_FILTER` is unset. `#[tracing::instrument]` and the
 /// HTTP root span record at `INFO`, so anything stricter exports empty traces.
 #[cfg(feature = "otel")]
-const OTEL_DEFAULT_FILTER: &str = "info";
+const OTEL_DEFAULT_FILTER: LevelFilter = LevelFilter::INFO;
 
 /// The filter directives the log destinations use: `RUST_LOG` when it is set to something
 /// non-empty, otherwise the caller's default level.
@@ -359,11 +362,15 @@ fn non_empty_env(name: &str) -> Option<String> {
         .filter(|value| !value.trim().is_empty())
 }
 
-/// Build an [`EnvFilter`] from filter directives, dropping any the parser rejects.
+/// Build an [`EnvFilter`] from filter directives, dropping any the parser rejects and falling back
+/// to `fallback` when that leaves none standing.
 ///
-/// One is built per layer: `EnvFilter` is not `Clone`, and each layer filters on its own.
-fn env_filter(directives: &str) -> EnvFilter {
-    EnvFilter::builder().parse_lossy(directives)
+/// Layers sharing one set of directives take clones of a single filter: a clone carries the same
+/// directives with callsite caches of its own, which is what each layer needs.
+fn env_filter(directives: &str, fallback: LevelFilter) -> EnvFilter {
+    EnvFilter::builder()
+        .with_default_directive(fallback.into())
+        .parse_lossy(directives)
 }
 
 /// Accepts the OXEN_LOG_DIR's value and ensures it is a valid directory.
@@ -624,6 +631,37 @@ where
 mod tests {
     use super::*;
     use tracing_subscriber::fmt::format::FmtSpan;
+
+    /// A directive the parser rejects is dropped, so a filter built only from rejected directives
+    /// holds none and silences every layer it gates unless a fallback fills the gap.
+    #[test]
+    fn a_filter_with_no_usable_directive_falls_back_to_the_given_level() {
+        for directives in ["liboxen=verbose", "warn=oops=bad", "="] {
+            assert_eq!(
+                env_filter(directives, LevelFilter::WARN).max_level_hint(),
+                Some(LevelFilter::WARN),
+                "{directives} should fall back to the given level"
+            );
+        }
+    }
+
+    /// The fallback fills an empty directive set and nothing else, so it never overrides a usable
+    /// filter, including one left usable only because a sibling directive was dropped.
+    #[test]
+    fn usable_directives_win_over_the_fallback() {
+        assert_eq!(
+            env_filter("debug", LevelFilter::WARN).max_level_hint(),
+            Some(LevelFilter::DEBUG)
+        );
+        assert_eq!(
+            env_filter("off", LevelFilter::WARN).max_level_hint(),
+            Some(LevelFilter::OFF)
+        );
+        assert_eq!(
+            env_filter("liboxen=verbose,oxen_server=debug", LevelFilter::WARN).max_level_hint(),
+            Some(LevelFilter::DEBUG)
+        );
+    }
 
     #[test]
     fn token_close() {
