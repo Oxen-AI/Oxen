@@ -59,6 +59,15 @@ ENV PKG_CONFIG_PATH="/opt/ffmpeg/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
 WORKDIR /usr/src/oxen-server
 COPY . .
+
+# Defaults to what `[profile.release]` in Cargo.toml already sets, so a build passing
+# no override compiles exactly what a plain release build compiles. Cargo reads this
+# as a profile override, the same mechanism release_windows.yml uses to select thin
+# LTO. It is re-declared as `ENV` because an `ARG` alone is not reliably present in
+# the `RUN` process environment.
+ARG CARGO_PROFILE_RELEASE_LTO=true
+ENV CARGO_PROFILE_RELEASE_LTO=${CARGO_PROFILE_RELEASE_LTO}
+
 RUN cargo build --workspace --exclude oxen-py --release --features liboxen/ffmpeg
 
 # Minimal image to run the binary (without Rust toolchain)
