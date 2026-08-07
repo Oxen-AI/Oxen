@@ -591,7 +591,7 @@ pub async fn save_parts(
                         hash: upload_filehash.to_string(),
                         path: upload_filename.into(),
                     });
-                    log::info!("Successfully stored version for hash: {}", upload_filehash);
+                    log::debug!("Successfully stored version for hash: {upload_filehash}");
                 }
                 Err(e) => {
                     log::error!(

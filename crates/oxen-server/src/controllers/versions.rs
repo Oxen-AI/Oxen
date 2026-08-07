@@ -299,10 +299,7 @@ pub async fn stream_versions_tar_gz(
                         had_error = true;
                         break;
                     }
-                    log::info!(
-                        "Successfully appended data to tarball for hash: {}",
-                        file_hash
-                    );
+                    log::debug!("Successfully appended data to tarball for hash: {file_hash}");
                 }
                 Err(e) => {
                     tracing::error!(file_hash = %file_hash, cause = %e, "Failed to get version");
@@ -451,7 +448,7 @@ pub async fn stream_versions_zip(
                         break;
                     }
 
-                    log::info!("Successfully appended data to zip for hash: {}", hash);
+                    log::debug!("Successfully appended data to zip for hash: {hash}");
                 }
                 Err(e) => {
                     log::error!("Failed to get version {hash}: {e}");
@@ -632,7 +629,7 @@ pub async fn save_multiparts(
                 .await
             {
                 Ok(_) => {
-                    log::info!("Successfully stored version for hash: {upload_filehash}");
+                    log::debug!("Successfully stored version for hash: {upload_filehash}");
                     None
                 }
                 Err(e) => {
