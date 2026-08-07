@@ -12,11 +12,12 @@
 //! Spawning through this module hands the task a hub inheriting the caller's scope and re-enters
 //! the caller's span around it.
 //!
-//! Use [`spawn_blocking`] in place of `tokio::task::spawn_blocking`, and [`inherit_hub`] around a
-//! future handed to `tokio::spawn`, `JoinSet::spawn`, or a streaming response body. A task
-//! deliberately detached from its request — one that outlives the response, like a background repo
-//! delete — keeps using tokio's own spawn: stamping it with an already-answered request is more
-//! misleading than reporting it with none.
+//! Use [`spawn_blocking`] in place of `tokio::task::spawn_blocking` — or [`spawn_blocking_per_item`]
+//! where the spawn is one of many in a loop — and [`inherit_hub`] around a future handed to
+//! `tokio::spawn`, `JoinSet::spawn`, or a streaming response body. A task deliberately detached
+//! from its request — one that outlives the response, like a background repo delete — keeps using
+//! tokio's own spawn: stamping it with an already-answered request is more misleading than
+//! reporting it with none.
 
 use std::future::Future;
 use std::panic::Location;
