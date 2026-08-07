@@ -8,6 +8,7 @@ use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
 use aws_smithy_runtime_api::client::result::SdkError;
 use duckdb::arrow::error::ArrowError;
 use http::Uri;
+use polars::prelude::PolarsError;
 use std::fmt::Write;
 use std::io;
 use std::num::ParseIntError;
@@ -18,6 +19,7 @@ use tokio::task::JoinError;
 use crate::api::requests::RepoNew;
 use crate::command::migrate::Direction;
 use crate::config::repository_config::RepoConfigError;
+use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::merkle_node::merkle_node_db::MerkleDbError;
 use crate::lmdb::LmdbLayerError;
 use crate::model::MerkleHash;
@@ -253,6 +255,14 @@ pub enum OxenError {
     /// A parsed resource was not found.
     #[error("Resource not found: {0}")]
     ParsedResourceNotFound(PathBufError),
+
+    /// A path was requested in a revision whose tree does not contain it. Names the revision as
+    /// well as the path, so a report separates a mistyped path from the wrong revision.
+    #[error("{path} does not exist in {revision}")]
+    PathNotFoundInRevision {
+        path: PathBufError,
+        revision: String,
+    },
 
     //
     // Versioning
@@ -892,6 +902,19 @@ impl OxenError {
         matches!(self, OxenError::ImageError(image::ImageError::Limits(_)))
     }
 
+    /// Did a polars operation fail on the server's own IO rather than on the caller's data? Every
+    /// other polars failure describes something wrong with the data or the query. Lives here for
+    /// the same reason as [`OxenError::is_unsupported_image_format`], and looks through
+    /// `PolarsError::Context`, which wraps the real error behind one layer per pipeline stage.
+    pub fn is_polars_io_error(&self) -> bool {
+        let error = match self {
+            OxenError::PolarsError(error) => error,
+            OxenError::DataFrameError(DataFrameError::Polars(error)) => error,
+            _ => return false,
+        };
+        matches!(innermost_polars_error(error), PolarsError::IO { .. })
+    }
+
     /// Is this error considered as something not existing?
     pub fn is_not_found(&self) -> bool {
         matches!(
@@ -905,6 +928,7 @@ impl OxenError {
                 | OxenError::QueryableWorkspaceNotFound
                 | OxenError::MerkleNodeNotFound(_)
                 | OxenError::DiffPathInNeitherRevision { .. }
+                | OxenError::PathNotFoundInRevision { .. }
         )
     }
 
@@ -932,6 +956,11 @@ impl OxenError {
             OxenError::VersionStoreDataMissing { .. } => true,
             OxenError::VersionStoreBlobMissing { .. } => true,
             OxenError::UnknownRemoteResponseStatus(_) => true,
+            // A malformed file or an unsatisfiable query reads the same way every time. Only the
+            // IO case can resolve on its own.
+            OxenError::PolarsError(_) | OxenError::DataFrameError(DataFrameError::Polars(_)) => {
+                !self.is_polars_io_error()
+            }
             _ => false,
         }
     }
@@ -1220,6 +1249,15 @@ impl From<JoinError> for OxenError {
     }
 }
 
+/// The error at the center of any `PolarsError::Context` wrappers, which polars adds one per
+/// pipeline stage. Returns the error itself when it carries no context.
+fn innermost_polars_error(mut error: &PolarsError) -> &PolarsError {
+    while let PolarsError::Context { error: inner, .. } = error {
+        error = inner;
+    }
+    error
+}
+
 // Manual From impls for types that need transformation
 impl From<String> for OxenError {
     fn from(error: String) -> Self {
@@ -1247,6 +1285,56 @@ impl From<BuildError> for OxenError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    /// Wraps `error` the way polars does, one `Context` layer per pipeline stage.
+    fn with_pipeline_context(error: PolarsError) -> PolarsError {
+        ["'parquet scan'", "'slice'", "'sink'"]
+            .into_iter()
+            .fold(error, |error, stage| PolarsError::Context {
+                error: Box::new(error),
+                msg: stage.into(),
+            })
+    }
+
+    /// Reading the stored file failed on the server's own IO, buried under the pipeline context.
+    fn buried_polars_io_failure() -> OxenError {
+        OxenError::PolarsError(with_pipeline_context(PolarsError::IO {
+            error: Arc::new(io::Error::from(io::ErrorKind::PermissionDenied)),
+            msg: None,
+        }))
+    }
+
+    /// A malformed file the caller supplied, wrapped the same way. The wrapper is all this and
+    /// [`buried_polars_io_failure`] have in common.
+    fn buried_malformed_data_frame() -> OxenError {
+        OxenError::DataFrameError(DataFrameError::Polars(with_pipeline_context(
+            PolarsError::ComputeError(
+                "parquet: File out of specification: The file must end with PAR1".into(),
+            ),
+        )))
+    }
+
+    #[test]
+    fn polars_io_failure_is_seen_through_the_pipeline_context() {
+        assert!(buried_polars_io_failure().is_polars_io_error());
+        assert!(!buried_malformed_data_frame().is_polars_io_error());
+    }
+
+    #[test]
+    fn only_a_polars_io_failure_is_worth_retrying() {
+        // `is_fatal_for_retry` short-circuits on auth and not-found before reaching the polars
+        // arm, and the arm inverts the IO question rather than answering it directly, so what a
+        // caller gets depends on three functions agreeing.
+        assert!(
+            !buried_polars_io_failure().is_fatal_for_retry(),
+            "an IO failure can resolve on its own, so a retry is worth paying for"
+        );
+        assert!(
+            buried_malformed_data_frame().is_fatal_for_retry(),
+            "a malformed file reads the same way every time, so backoff only delays the answer"
+        );
+    }
 
     #[test]
     fn download_batch_exhausted_display_lists_paths_hashes_and_last_error() {
