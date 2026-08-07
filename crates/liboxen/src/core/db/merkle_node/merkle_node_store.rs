@@ -60,7 +60,7 @@ impl std::str::FromStr for MerkleNodeBackend {
 }
 
 /// The backend a newly created repo uses when the caller doesn't request a specific one.
-pub(crate) const DEFAULT_MERKLE_NODE_BACKEND: MerkleNodeBackend = MerkleNodeBackend::Filesystem;
+pub(crate) const DEFAULT_MERKLE_NODE_BACKEND: MerkleNodeBackend = MerkleNodeBackend::Lmdb;
 
 /// Engine-agnostic persistence for Merkle tree node bytes, keyed by [`MerkleHash`]. A node is two
 /// blobs (`node` + `children`); see the module docs for the layout. Implementations persist and

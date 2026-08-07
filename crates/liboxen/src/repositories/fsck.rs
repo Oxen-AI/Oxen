@@ -409,7 +409,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_scan_node_format_finds_planted_pre_v0_25_node() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
+        // Pins the filesystem backend: the planting below rewrites raw bytes under
+        // `.oxen/tree/nodes`, a layout only the pre-0.25 backend produces.
+        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
             let clean = scan_node_format(&repo)?;
             assert!(
                 !clean.is_affected(),

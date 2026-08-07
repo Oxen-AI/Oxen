@@ -835,6 +835,36 @@ mod tests {
         Ok(())
     }
 
+    /// Changing the backend new repos default to must not change how an existing repo loads: a
+    /// config recording the filesystem backend still resolves to filesystem.
+    #[test]
+    fn test_existing_filesystem_repo_still_loads_as_filesystem() -> Result<(), OxenError> {
+        use crate::core::db::merkle_node::MerkleNodeBackend;
+
+        let temp_dir = TempDir::new()?;
+        let repo = LocalRepository::new(
+            temp_dir.path(),
+            RepositoryConfig {
+                merkle_node_backend: Some(MerkleNodeBackend::Filesystem),
+                ..Default::default()
+            },
+        )?;
+        repo.save()?;
+
+        let reloaded = LocalRepository::from_dir(temp_dir.path())?;
+        assert_eq!(
+            reloaded.merkle_node_backend(),
+            MerkleNodeBackend::Filesystem
+        );
+        assert_ne!(
+            MerkleNodeBackend::Filesystem,
+            DEFAULT_MERKLE_NODE_BACKEND,
+            "this test only proves anything while filesystem is not the create default"
+        );
+
+        Ok(())
+    }
+
     #[test]
     fn test_merkle_node_backend_persists_to_config() -> Result<(), OxenError> {
         use crate::core::db::merkle_node::MerkleNodeBackend;
