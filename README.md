@@ -227,6 +227,10 @@ This enables:
 
 Without `--features production`, the default build excludes OTel dependencies and FFmpeg support, keeping the binary smaller for local development.
 
+The published Docker image names `liboxen/ffmpeg,oxen-server/otel` rather than `production`, so it
+ships thumbnails and tracing without the extra timing instrumentation `perf-logging` adds. Tracing
+is inert there until an OTLP endpoint is configured at runtime.
+
 ## Logging
 
 Oxen uses structured logging via the [`tracing`](https://docs.rs/tracing) crate. All log output goes to **stderr** by default in a human-readable format. This applies to the CLI (`oxen`), the server (`oxen-server`), and any code using `liboxen` (including the Python bindings).
@@ -245,6 +249,11 @@ RUST_LOG=warn oxen-server start
 # Fine-grained: debug for liboxen, warn for everything else
 RUST_LOG=warn,liboxen=debug oxen-server start
 ```
+
+`RUST_LOG` gates the log destinations — stderr, the JSON file, and error
+reporting. It does not gate OpenTelemetry span export, which has its own filter
+(`OXEN_OTEL_FILTER`); raising log verbosity for a debugging session leaves the
+exported traces unchanged.
 
 ### File Logging with `OXEN_LOG_DIR`
 
@@ -277,9 +286,12 @@ at runtime. See [Prometheus Metrics](crates/oxen-server/README.md#prometheus-met
 
 ## OpenTelemetry Tracing
 
-`oxen-server` can export tracing spans to any OTLP-compatible collector (Jaeger, Tempo, etc.).
-Requires building with the `otel` feature flag.
-See [OpenTelemetry Tracing](crates/oxen-server/README.md#opentelemetry-tracing) for details.
+`oxen-server` can export tracing spans to any OTLP-compatible collector (Jaeger, Tempo, etc.),
+continuing a trace begun by whoever called it. The release image is built with the `otel` feature;
+a local build needs it named explicitly. Export stays off until `OXEN_OTEL_ENDPOINT` (or the
+standard `OTEL_EXPORTER_OTLP_ENDPOINT`) is set. The CLI and the Python bindings can export too.
+See [OpenTelemetry Tracing](crates/oxen-server/README.md#opentelemetry-tracing) for the full env-var
+reference.
 
 ## FmtSpan Events
 

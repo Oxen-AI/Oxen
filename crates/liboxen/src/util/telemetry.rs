@@ -25,7 +25,9 @@ pub enum TelemetryError {
     #[error("Unknown OXEN_OTEL_PROTOCOL value: {0}")]
     UnknownProtocol(String),
     #[cfg(feature = "otel")]
-    #[error("OXEN_OTEL_ENDPOINT must start with http:// (got: {0})")]
+    #[error(
+        "OXEN_OTEL_ENDPOINT must be an http:// or https:// URL, or a bare host:port (got: {0})"
+    )]
     InvalidEndpoint(String),
 }
 
@@ -43,20 +45,53 @@ pub struct TracingGuard {
     _tracer_provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
 }
 
+impl TracingGuard {
+    /// Export whatever spans are still queued and stop the OTLP pipeline.
+    ///
+    /// An async program should await this before its last return to the runtime, and is the reason
+    /// this method exists: the exporter's transport is a task on that runtime, so the flush only
+    /// succeeds while the runtime is free to poll it. [`Drop`] cannot do that — it blocks the
+    /// calling thread, which on a single-threaded runtime (actix's) is the very thread the
+    /// transport needs, so the export stalls until the processor's five-second timeout and every
+    /// queued span is lost.
+    ///
+    /// Idempotent, and a no-op without an OTLP endpoint configured.
+    pub async fn shutdown(&self) {
+        #[cfg(feature = "otel")]
+        if let Some(provider) = self._tracer_provider.clone() {
+            // The provider's shutdown blocks until the batch processor has drained, so it goes to
+            // the blocking pool; awaiting the handle leaves the runtime free to carry the spans.
+            match tokio::task::spawn_blocking(move || shutdown_provider(&provider)).await {
+                Ok(()) => {}
+                Err(e) => eprintln!("warning: OTel tracer provider shutdown task failed: {e}"),
+            }
+        }
+    }
+}
+
+/// Shut down `provider`, reporting anything but success and an already-completed shutdown.
+///
+/// The global subscriber holds an Arc clone of the tracer provider (via OpenTelemetryLayer →
+/// SdkTracer → SdkTracerProvider), so dropping the provider alone never brings the Arc refcount to
+/// zero — `TracerProviderInner::drop()` never fires, and the `BatchSpanProcessor`'s pending spans
+/// are never flushed. Shutting it down explicitly is what exports them.
+#[cfg(feature = "otel")]
+fn shutdown_provider(provider: &opentelemetry_sdk::trace::SdkTracerProvider) {
+    match provider.shutdown() {
+        // Already done by an earlier call, the atexit handler, or Drop. All three routes are
+        // expected, and the SDK guards against double-shutdown with an atomic flag.
+        Ok(()) | Err(opentelemetry_sdk::error::OTelSdkError::AlreadyShutdown) => {}
+        Err(e) => eprintln!("warning: OTel tracer provider shutdown failed: {e}"),
+    }
+}
+
 impl Drop for TracingGuard {
     fn drop(&mut self) {
-        // The global subscriber holds an Arc clone of the tracer provider
-        // (via OpenTelemetryLayer → SdkTracer → SdkTracerProvider), so
-        // dropping _tracer_provider alone never brings the Arc refcount to
-        // zero — TracerProviderInner::drop() never fires. We call shutdown()
-        // explicitly to flush the BatchSpanProcessor's pending spans.
-        // This is idempotent: if atexit_flush already ran, the atomic
-        // is_shutdown flag causes this to no-op.
+        // The last-resort flush, for a synchronous program and for an async one that returned
+        // without awaiting `shutdown`. See that method for why it is not enough on its own.
         #[cfg(feature = "otel")]
-        if let Some(ref provider) = self._tracer_provider
-            && let Err(e) = provider.shutdown()
-        {
-            eprintln!("warning: OTel tracer provider shutdown failed: {e}");
+        if let Some(ref provider) = self._tracer_provider {
+            shutdown_provider(provider);
         }
     }
 }
@@ -135,11 +170,18 @@ mod atexit_flush {
 /// The `OXEN_OTEL_PROTOCOL` env var is either `"http"` or `"grpc"`: it controls
 /// the protocol used for OTLP exports. If not set, defaults to `"grpc"`.
 ///
-/// Filter level is controlled by `RUST_LOG`. The filter applies to all output layers.
+/// **Filtering** is per-layer, not global. `RUST_LOG` (falling back to `default`) gates the log
+/// destinations — stderr, the JSON file, and the caller-supplied layer. Span export is gated
+/// separately by `OXEN_OTEL_FILTER`, defaulting to `info`, the level `#[tracing::instrument]` and
+/// the HTTP root span are recorded at. Traces therefore export at the stock `RUST_LOG` level, and
+/// raising log verbosity for debugging does not change what is exported. Either variable set to a
+/// value the filter parser cannot use falls back to the level that applies when it is unset, and
+/// names the rejected directives on stderr.
 ///
-/// Returns a [TracingGuard] when file logging is active. The caller
-/// **must** hold the guard in a named binding for the lifetime of the
-/// application — dropping it flushes the non-blocking writer.
+/// Returns a [TracingGuard]. The caller **must** hold the guard in a named binding for the
+/// lifetime of the application — dropping it flushes the non-blocking writer and stops span
+/// export. An async program should additionally await [`TracingGuard::shutdown`] before its last
+/// return to the runtime; see that method for what dropping alone costs.
 pub fn init_tracing(app_name: &str, default: LevelFilter) -> Result<TracingGuard, TelemetryError> {
     init_tracing_with_layer(app_name, default, None)
 }
@@ -153,7 +195,7 @@ pub fn init_tracing_with_layer(
     default: LevelFilter,
     extra: Option<BoxedLayer>,
 ) -> Result<TracingGuard, TelemetryError> {
-    let log_level = log_env_filter(default);
+    let log_directives = log_filter_directives(default);
 
     // FmtSpan configuration for stderr
     let span_events = std::env::var("OXEN_FMT_SPAN")
@@ -196,11 +238,16 @@ pub fn init_tracing_with_layer(
 
     // Base registry with all non-OTel layers. `extra` goes innermost so its subscriber type is
     // `Registry`, which is what `BoxedLayer` names.
+    //
+    // Each log destination carries its own copy of the `RUST_LOG` filter rather than one filter
+    // gating the registry, so the OTel layer below can select spans at its own level. A registry
+    // filter would apply to that layer too, and the default level is below the level spans are
+    // recorded at — every span would be dropped before the exporter ever saw it.
+    let log_filter = env_filter(&log_directives, default);
     let registry = tracing_subscriber::registry()
-        .with(extra)
-        .with(m_json_layer)
-        .with(stderr_layer)
-        .with(log_level);
+        .with(extra.map(|layer| layer.with_filter(log_filter.clone())))
+        .with(m_json_layer.map(|layer| layer.with_filter(log_filter.clone())))
+        .with(stderr_layer.with_filter(log_filter));
 
     // OpenTelemetry layer (feature-gated). Composed separately because the
     // concrete subscriber type (`S`) changes with each `.with()` call and
@@ -211,7 +258,7 @@ pub fn init_tracing_with_layer(
         .ok()
     {
         Some(endpoint) => {
-            validate_otel_endpoint(&endpoint)?;
+            let endpoint = normalize_otel_endpoint(&endpoint)?;
 
             let protocol = match std::env::var("OXEN_OTEL_PROTOCOL")
                 .map(|x| x.to_lowercase())
@@ -246,10 +293,15 @@ pub fn init_tracing_with_layer(
 
     #[cfg(feature = "otel")]
     {
-        registry.with(m_otel_layer).try_init()?;
+        let otel_directives = otel_filter_directives();
+        let otel_layer = m_otel_layer
+            .map(|layer| layer.with_filter(env_filter(&otel_directives, OTEL_DEFAULT_FILTER)));
+        registry.with(otel_layer).try_init()?;
 
         if let Some(protocol_and_endpoint) = m_endpoint_p {
-            log::info!("OpenTelemetry tracing enabled (endpoint: {protocol_and_endpoint})");
+            log::info!(
+                "OpenTelemetry tracing enabled (endpoint: {protocol_and_endpoint}, span filter: {otel_directives})"
+            );
         }
     }
 
@@ -282,13 +334,43 @@ pub fn init_tracing_with_layer(
     })
 }
 
-/// Create an [`EnvFilter`] from `RUST_LOG`, falling back to the default log level if not set.
-fn log_env_filter(default: LevelFilter) -> EnvFilter {
-    EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        EnvFilter::builder()
-            .with_default_directive(default.into())
-            .parse_lossy("")
-    })
+/// Env var selecting which spans and events reach the OTLP exporter, independently of `RUST_LOG`.
+#[cfg(feature = "otel")]
+const OTEL_FILTER_ENV: &str = "OXEN_OTEL_FILTER";
+
+/// Filter applied to span export when `OXEN_OTEL_FILTER` is unset. `#[tracing::instrument]` and the
+/// HTTP root span record at `INFO`, so anything stricter exports empty traces.
+#[cfg(feature = "otel")]
+const OTEL_DEFAULT_FILTER: LevelFilter = LevelFilter::INFO;
+
+/// The filter directives the log destinations use: `RUST_LOG` when it is set to something
+/// non-empty, otherwise the caller's default level.
+fn log_filter_directives(default: LevelFilter) -> String {
+    non_empty_env(EnvFilter::DEFAULT_ENV).unwrap_or_else(|| default.to_string())
+}
+
+/// The filter directives span export uses: `OXEN_OTEL_FILTER`, or [`OTEL_DEFAULT_FILTER`].
+#[cfg(feature = "otel")]
+fn otel_filter_directives() -> String {
+    non_empty_env(OTEL_FILTER_ENV).unwrap_or_else(|| OTEL_DEFAULT_FILTER.to_string())
+}
+
+/// The value of `name`, or `None` when it is unset or blank.
+fn non_empty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+/// Build an [`EnvFilter`] from filter directives, dropping any the parser rejects and falling back
+/// to `fallback` when that leaves none standing.
+///
+/// Layers sharing one set of directives take clones of a single filter: a clone carries the same
+/// directives with callsite caches of its own, which is what each layer needs.
+fn env_filter(directives: &str, fallback: LevelFilter) -> EnvFilter {
+    EnvFilter::builder()
+        .with_default_directive(fallback.into())
+        .parse_lossy(directives)
 }
 
 /// Accepts the OXEN_LOG_DIR's value and ensures it is a valid directory.
@@ -379,13 +461,66 @@ impl std::fmt::Display for Protocol {
     }
 }
 
-/// Validates that the OTLP endpoint starts with `http://`.
+/// Turn a configured OTLP endpoint into an absolute URL the exporter can dial.
+///
+/// `http://` and `https://` URLs are taken as given — TLS is what every hosted collector speaks. A
+/// value with no scheme is a host with an optional port (`collector:4317`), the form the OTLP gRPC
+/// convention uses, and gets `http://`. Any other scheme names a transport this exporter cannot
+/// speak and is rejected rather than silently retried against a URL that will never connect. Either
+/// way the result has to name a host.
 #[cfg(feature = "otel")]
-fn validate_otel_endpoint(endpoint: &str) -> Result<(), TelemetryError> {
-    if !endpoint.starts_with("http://") {
+fn normalize_otel_endpoint(endpoint: &str) -> Result<String, TelemetryError> {
+    let endpoint = endpoint.trim();
+    if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
+        require_host(endpoint, endpoint)?;
+        return Ok(endpoint.to_string());
+    }
+    if endpoint.is_empty() || endpoint.contains("://") || endpoint.starts_with('/') {
         return Err(TelemetryError::InvalidEndpoint(endpoint.to_string()));
     }
-    Ok(())
+    let with_scheme = format!("http://{endpoint}");
+    require_host(&with_scheme, endpoint)?;
+    Ok(with_scheme)
+}
+
+/// Reject a URL with no host. Reported against `configured`, the value the operator actually set.
+///
+/// The exporter builds happily from a hostless URL and only fails once it tries to send, so
+/// without this a typo like `http://:4317` looks like a working configuration that silently
+/// exports nothing.
+#[cfg(feature = "otel")]
+fn require_host(url: &str, configured: &str) -> Result<(), TelemetryError> {
+    let invalid = || TelemetryError::InvalidEndpoint(configured.to_string());
+    let parsed = url::Url::parse(url).map_err(|_| invalid())?;
+    match parsed.host_str() {
+        Some(host) if !host.is_empty() => Ok(()),
+        _ => Err(invalid()),
+    }
+}
+
+/// The path OTLP/HTTP posts spans to, relative to the configured base endpoint.
+#[cfg(feature = "otel")]
+const OTLP_HTTP_TRACES_PATH: &str = "/v1/traces";
+
+/// The URL OTLP/HTTP posts spans to for a configured base endpoint.
+///
+/// The exporter appends the signal path only to an endpoint it reads from the environment itself;
+/// one handed to the builder is used verbatim, so a base endpoint gets the path here. An endpoint
+/// that already names the path is left alone.
+///
+/// The path is set on the parsed URL rather than concatenated, so a query string an endpoint
+/// carries stays a query string instead of swallowing the path appended after it.
+#[cfg(feature = "otel")]
+fn http_traces_endpoint(endpoint: &str) -> String {
+    let Ok(mut url) = url::Url::parse(endpoint) else {
+        return endpoint.to_string();
+    };
+    let base_path = url.path().trim_end_matches('/');
+    if base_path.ends_with(OTLP_HTTP_TRACES_PATH) {
+        return endpoint.to_string();
+    }
+    url.set_path(&format!("{base_path}{OTLP_HTTP_TRACES_PATH}"));
+    url.to_string()
 }
 
 /// Build an OpenTelemetry tracing layer that exports spans via OTLP.
@@ -407,13 +542,17 @@ where
     use opentelemetry::KeyValue;
     use opentelemetry::trace::TracerProvider;
     use opentelemetry_otlp::WithExportConfig;
-    use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
+    use opentelemetry_otlp::WithTonicConfig;
+    use opentelemetry_otlp::tonic_types::transport::ClientTlsConfig;
+    use opentelemetry_sdk::Resource;
+    use opentelemetry_sdk::propagation::TraceContextPropagator;
+    use opentelemetry_sdk::trace::{BatchConfigBuilder, BatchSpanProcessor, SdkTracerProvider};
 
     let exporter = match protocol {
         Protocol::Http => {
             match opentelemetry_otlp::SpanExporter::builder()
                 .with_http()
-                .with_endpoint(endpoint)
+                .with_endpoint(http_traces_endpoint(endpoint))
                 .build()
             {
                 Ok(e) => e,
@@ -424,9 +563,12 @@ where
             }
         }
         Protocol::Grpc => {
+            // Supplies the platform root certificates an `https://` endpoint's handshake verifies
+            // against. An `http://` endpoint ignores it.
             match opentelemetry_otlp::SpanExporter::builder()
                 .with_tonic()
                 .with_endpoint(endpoint)
+                .with_tls_config(ClientTlsConfig::new().with_native_roots())
                 .build()
             {
                 Ok(e) => e,
@@ -438,14 +580,51 @@ where
         }
     };
 
-    let resource = Resource::builder()
-        .with_attributes([KeyValue::new("service.name", app_name.to_string())])
+    // `Resource::builder` already applies the standard detectors, so `OTEL_SERVICE_NAME` and
+    // `OTEL_RESOURCE_ATTRIBUTES` (where `deployment.environment` is set) land on every span. The
+    // attributes added here take precedence over the detectors, so `service.name` is only supplied
+    // as the fallback for a deployment that names no service of its own.
+    let mut attributes = vec![KeyValue::new(
+        "service.version",
+        crate::constants::OXEN_VERSION,
+    )];
+    if std::env::var_os("OTEL_SERVICE_NAME").is_none() {
+        attributes.push(KeyValue::new("service.name", app_name.to_string()));
+    }
+    let resource = Resource::builder().with_attributes(attributes).build();
+
+    // A collector that is slow, unreachable, or black-holing must cost the process bounded memory
+    // and never back-pressure a request thread: the queue is fixed, and the processor drops spans
+    // once it is full rather than blocking the thread that ended the span. A queue deeper than the
+    // SDK default absorbs the burst a bulk endpoint produces, and a shorter delay keeps it draining
+    // often enough for the next one.
+    //
+    // The builder's default has already read the `OTEL_BSP_*` env vars, and setting a field here
+    // would override whatever it found — so each is only set when the operator left it unset, and
+    // tuning a deployment through the standard variables still works.
+    let mut batch_config = BatchConfigBuilder::default();
+    if std::env::var_os("OTEL_BSP_MAX_QUEUE_SIZE").is_none() {
+        batch_config = batch_config.with_max_queue_size(4096);
+    }
+    if std::env::var_os("OTEL_BSP_SCHEDULE_DELAY").is_none() {
+        batch_config = batch_config.with_scheduled_delay(std::time::Duration::from_secs(2));
+    }
+    let processor = BatchSpanProcessor::builder(exporter)
+        .with_batch_config(batch_config.build())
         .build();
 
+    // Sampling comes from `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG`, which the provider's
+    // default configuration reads; absent those it is parent-based always-on, so a service that
+    // receives a sampling decision from its caller honors it.
     let provider = SdkTracerProvider::builder()
-        .with_batch_exporter(exporter)
+        .with_span_processor(processor)
         .with_resource(resource)
         .build();
+
+    // W3C `traceparent` / `tracestate`, the only format this stack propagates. Without a global
+    // propagator installed, context extraction reads an empty context and every request starts a
+    // new trace instead of continuing its caller's.
+    opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
 
     let tracer = provider.tracer("oxen");
     let layer = tracing_opentelemetry::layer().with_tracer(tracer);
@@ -457,6 +636,37 @@ where
 mod tests {
     use super::*;
     use tracing_subscriber::fmt::format::FmtSpan;
+
+    /// A directive the parser rejects is dropped, so a filter built only from rejected directives
+    /// holds none and silences every layer it gates unless a fallback fills the gap.
+    #[test]
+    fn a_filter_with_no_usable_directive_falls_back_to_the_given_level() {
+        for directives in ["liboxen=verbose", "warn=oops=bad", "="] {
+            assert_eq!(
+                env_filter(directives, LevelFilter::WARN).max_level_hint(),
+                Some(LevelFilter::WARN),
+                "{directives} should fall back to the given level"
+            );
+        }
+    }
+
+    /// The fallback fills an empty directive set and nothing else, so it never overrides a usable
+    /// filter, including one left usable only because a sibling directive was dropped.
+    #[test]
+    fn usable_directives_win_over_the_fallback() {
+        assert_eq!(
+            env_filter("debug", LevelFilter::WARN).max_level_hint(),
+            Some(LevelFilter::DEBUG)
+        );
+        assert_eq!(
+            env_filter("off", LevelFilter::WARN).max_level_hint(),
+            Some(LevelFilter::OFF)
+        );
+        assert_eq!(
+            env_filter("liboxen=verbose,oxen_server=debug", LevelFilter::WARN).max_level_hint(),
+            Some(LevelFilter::DEBUG)
+        );
+    }
 
     #[test]
     fn token_close() {
@@ -554,35 +764,124 @@ mod tests {
 
     #[cfg(feature = "otel")]
     mod otel_tests {
-        use super::super::{TelemetryError, validate_otel_endpoint};
+        use super::super::{
+            TelemetryError, http_traces_endpoint, normalize_otel_endpoint, otel_filter_directives,
+        };
 
         #[test]
-        fn valid_http_endpoint() {
-            assert!(validate_otel_endpoint("http://localhost:4317").is_ok());
+        fn keeps_http_endpoint() {
+            assert_eq!(
+                normalize_otel_endpoint("http://localhost:4317").unwrap(),
+                "http://localhost:4317"
+            );
         }
 
         #[test]
-        fn rejects_grpc_scheme() {
-            let err = validate_otel_endpoint("grpc://localhost:4317").unwrap_err();
-            assert!(matches!(err, TelemetryError::InvalidEndpoint(_)));
+        fn keeps_https_endpoint() {
+            assert_eq!(
+                normalize_otel_endpoint("https://otlp.vendor.example:443").unwrap(),
+                "https://otlp.vendor.example:443"
+            );
         }
 
         #[test]
-        fn rejects_https_scheme() {
-            let err = validate_otel_endpoint("https://localhost:4317").unwrap_err();
-            assert!(matches!(err, TelemetryError::InvalidEndpoint(_)));
+        fn adds_scheme_to_bare_host_port() {
+            assert_eq!(
+                normalize_otel_endpoint("localhost:4317").unwrap(),
+                "http://localhost:4317"
+            );
         }
 
         #[test]
-        fn rejects_bare_host_port() {
-            let err = validate_otel_endpoint("localhost:4317").unwrap_err();
-            assert!(matches!(err, TelemetryError::InvalidEndpoint(_)));
+        fn adds_scheme_to_bare_host() {
+            assert_eq!(
+                normalize_otel_endpoint("collector").unwrap(),
+                "http://collector"
+            );
         }
 
         #[test]
-        fn rejects_bare_host() {
-            let err = validate_otel_endpoint("localhost").unwrap_err();
+        fn trims_surrounding_whitespace() {
+            assert_eq!(
+                normalize_otel_endpoint("  http://localhost:4317 ").unwrap(),
+                "http://localhost:4317"
+            );
+        }
+
+        #[test]
+        fn rejects_other_schemes() {
+            for endpoint in ["grpc://localhost:4317", "unix:///var/run/otel.sock"] {
+                let err = normalize_otel_endpoint(endpoint).unwrap_err();
+                assert!(matches!(err, TelemetryError::InvalidEndpoint(_)));
+            }
+        }
+
+        #[test]
+        fn rejects_empty_endpoint() {
+            let err = normalize_otel_endpoint("   ").unwrap_err();
             assert!(matches!(err, TelemetryError::InvalidEndpoint(_)));
+        }
+
+        /// A hostless URL builds an exporter that only fails once it tries to send, so it has to be
+        /// rejected at startup rather than looking like a working configuration.
+        #[test]
+        fn rejects_endpoints_with_no_host() {
+            for endpoint in ["http://", "https://", "http://:4317", ":4317"] {
+                let result = normalize_otel_endpoint(endpoint);
+                assert!(
+                    matches!(result, Err(TelemetryError::InvalidEndpoint(_))),
+                    "{endpoint} should be rejected, got {result:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn http_signal_path_is_appended_to_a_base_endpoint() {
+            assert_eq!(
+                http_traces_endpoint("http://localhost:4318"),
+                "http://localhost:4318/v1/traces"
+            );
+            assert_eq!(
+                http_traces_endpoint("http://localhost:4318/"),
+                "http://localhost:4318/v1/traces"
+            );
+            assert_eq!(
+                http_traces_endpoint("https://vendor.example/otlp"),
+                "https://vendor.example/otlp/v1/traces"
+            );
+        }
+
+        #[test]
+        fn http_signal_path_is_not_doubled() {
+            assert_eq!(
+                http_traces_endpoint("http://localhost:4318/v1/traces"),
+                "http://localhost:4318/v1/traces"
+            );
+        }
+
+        /// The signal path belongs on the path component. Concatenating it onto the whole URL puts
+        /// it after any query string, producing something the collector never matches.
+        #[test]
+        fn http_signal_path_keeps_a_query_string_intact() {
+            assert_eq!(
+                http_traces_endpoint("http://localhost:4318?token=abc"),
+                "http://localhost:4318/v1/traces?token=abc"
+            );
+            assert_eq!(
+                http_traces_endpoint("https://vendor.example/otlp?token=abc"),
+                "https://vendor.example/otlp/v1/traces?token=abc"
+            );
+        }
+
+        /// Span export must not be silenced by the stock log level: `#[tracing::instrument]` and
+        /// the HTTP root span record at `INFO`, and the server logs at `WARN` by default.
+        #[test]
+        fn span_export_defaults_to_info() {
+            // Reading the env var directly rather than mutating it: a sibling test setting
+            // OXEN_OTEL_FILTER would otherwise decide this one's outcome.
+            if std::env::var_os("OXEN_OTEL_FILTER").is_none() {
+                assert_eq!(otel_filter_directives(), "info");
+            }
         }
     }
 }

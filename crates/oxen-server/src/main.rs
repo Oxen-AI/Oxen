@@ -25,7 +25,8 @@ use actix_web_httpauth::middleware::HttpAuthentication;
 use thiserror::Error;
 
 use oxen_server::middleware::{
-    MetricsMiddleware, RequestIdMiddleware, RequestStartLogMiddleware, request_id,
+    MetricsMiddleware, OxenRootSpanBuilder, RequestIdMiddleware, RequestStartLogMiddleware,
+    request_id,
 };
 use tracing_actix_web::TracingLogger;
 
@@ -446,7 +447,7 @@ async fn main() {
         .as_ref()
         .is_some_and(|guard| guard.is_enabled());
     // fail-fast if we cannot initialize logging
-    let _tracing_guard = telemetry::init_tracing_with_layer(
+    let tracing_guard = telemetry::init_tracing_with_layer(
         "oxen-server",
         LevelFilter::WARN,
         sentry_tracing_layer(sentry_enabled),
@@ -461,6 +462,9 @@ async fn main() {
     if let Err(e) = server().await {
         log::error!("{e}");
     }
+    // Export the last spans here rather than leaving it to the guard's Drop, which blocks the
+    // single thread the OTLP transport runs on and loses them — see `TracingGuard::shutdown`.
+    tracing_guard.shutdown().await;
 }
 
 #[derive(Debug, Error)]
@@ -916,11 +920,15 @@ async fn start(
                 .custom_response_replace("request_id", |res| request_id(res.request())),
             )
             .wrap(RequestStartLogMiddleware)
-            // RequestId must stay outer of the Logger/RequestStartLog above (actix runs the last
-            // .wrap outermost) so the request-id extension those two read is populated before them.
+            // The root span every span and event of this request hangs under. Inside RequestId so
+            // the span can record the request id, outside the two access-log middlewares so their
+            // lines are events on the span rather than orphans.
+            .wrap(TracingLogger::<OxenRootSpanBuilder>::new())
+            // RequestId must stay outer of the TracingLogger/Logger/RequestStartLog above (actix
+            // runs the last .wrap outermost) so the request-id extension those three read is
+            // populated before them.
             .wrap(RequestIdMiddleware)
             .wrap(MetricsMiddleware)
-            .wrap(TracingLogger::default())
             // Outermost: a per-request Sentry hub so a captured panic carries request context.
             // Server-error auto-capture is disabled here.
             .wrap(

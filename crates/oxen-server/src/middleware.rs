@@ -1,11 +1,14 @@
 use actix_web::{
     Error, HttpMessage, HttpRequest,
+    body::MessageBody,
     dev::{Service, ServiceRequest, ServiceResponse, Transform, forward_ready},
     http::header,
 };
 use futures_util::future::LocalBoxFuture;
 use liboxen::request_context::REQUEST_ID;
 use std::future::{Ready, ready};
+use tracing::Span;
+use tracing_actix_web::{DefaultRootSpanBuilder, RootSpanBuilder, root_span};
 
 // Oxen request Id
 pub const OXEN_REQUEST_ID: &str = "x-oxen-request-id";
@@ -94,6 +97,29 @@ where
                 Ok(res)
             },
         ))
+    }
+}
+
+/// Builds the HTTP root span every other span and event of a request hangs under, adding the
+/// `oxen.request_id` field to the fields `tracing-actix-web` records by default.
+///
+/// Two request ids are in play and they are not interchangeable. `request_id` is
+/// `tracing-actix-web`'s own: a uuid it mints per request, never leaving this process.
+/// `oxen.request_id` is the id [`RequestIdMiddleware`] assigns — taken from the inbound
+/// `x-oxen-request-id` header when a caller sent one and echoed back on the response — so it is the
+/// one shared with the services on either side of this request, and the one to correlate a trace
+/// against a log line or an error report. Registering `TracingLogger` inside `RequestIdMiddleware`
+/// is what makes that id available this early.
+pub struct OxenRootSpanBuilder;
+
+impl RootSpanBuilder for OxenRootSpanBuilder {
+    fn on_request_start(request: &ServiceRequest) -> Span {
+        let oxen_request_id = request_id(request.request());
+        root_span!(request, oxen.request_id = %oxen_request_id)
+    }
+
+    fn on_request_end<B: MessageBody>(span: Span, outcome: &Result<ServiceResponse<B>, Error>) {
+        DefaultRootSpanBuilder::on_request_end(span, outcome);
     }
 }
 
