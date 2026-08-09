@@ -357,12 +357,18 @@ fn otel_filter_directives() -> String {
 
 /// Whether the environment already names a service, in which case the app's own name is not used.
 ///
-/// `service_name_var` is `OTEL_SERVICE_NAME`'s raw value, which names nothing when blank.
-/// `attributes_name_a_service` is whether `OTEL_RESOURCE_ATTRIBUTES` carried a `service.name`,
-/// the other place the OpenTelemetry SDK accepts one.
+/// `service_name_var` is `OTEL_SERVICE_NAME`'s raw value, and `attributes_service_name` is the
+/// `service.name` entry from `OTEL_RESOURCE_ATTRIBUTES`, the other place the OpenTelemetry SDK
+/// accepts one. Either names a service only when set to something other than whitespace.
 #[cfg(feature = "otel")]
-fn env_names_a_service(service_name_var: Option<&str>, attributes_name_a_service: bool) -> bool {
-    attributes_name_a_service || service_name_var.is_some_and(|name| !name.trim().is_empty())
+fn env_names_a_service(
+    service_name_var: Option<&str>,
+    attributes_service_name: Option<&str>,
+) -> bool {
+    [service_name_var, attributes_service_name]
+        .into_iter()
+        .flatten()
+        .any(|name| !name.trim().is_empty())
 }
 
 /// The value of `name`, or `None` when it is unset or blank.
@@ -595,17 +601,17 @@ where
     // `OTEL_RESOURCE_ATTRIBUTES` (where `deployment.environment` is set) land on every span. The
     // attributes added here take precedence over the detectors, so `service.name` is only supplied
     // as the fallback for a deployment that names no service of its own.
-    let attributes_name_a_service = EnvResourceDetector::new()
+    let attributes_service_name = EnvResourceDetector::new()
         .detect()
         .get(&Key::from_static_str("service.name"))
-        .is_some();
+        .map(|name| name.to_string());
     let mut builder = Resource::builder().with_attributes([KeyValue::new(
         "service.version",
         crate::constants::OXEN_VERSION,
     )]);
     if !env_names_a_service(
         std::env::var("OTEL_SERVICE_NAME").ok().as_deref(),
-        attributes_name_a_service,
+        attributes_service_name.as_deref(),
     ) {
         builder = builder.with_service_name(app_name.to_string());
     }
@@ -793,21 +799,31 @@ mod tests {
         #[test]
         fn the_environment_names_the_service_when_it_says_so() {
             // `OTEL_SERVICE_NAME` set to something.
-            assert!(env_names_a_service(Some("checkout"), false));
+            assert!(env_names_a_service(Some("checkout"), None));
             // `service.name` supplied through `OTEL_RESOURCE_ATTRIBUTES` instead.
-            assert!(env_names_a_service(None, true));
+            assert!(env_names_a_service(None, Some("checkout")));
             // Both, which is the same answer.
-            assert!(env_names_a_service(Some("checkout"), true));
+            assert!(env_names_a_service(Some("checkout"), Some("billing")));
         }
 
-        /// An `OTEL_SERVICE_NAME` that is unset or blank names nothing, matching how the SDK's own
-        /// detector treats it. Reading it as a name would export traces under an empty service.
+        /// A blank value names nothing whichever variable carries it, so the app's own name is
+        /// still used. Reading one as a name would export traces under an empty service.
+        /// `OTEL_RESOURCE_ATTRIBUTES=service.name=` and `service.name=   ` both arrive here blank,
+        /// since the SDK trims each value it parses out of that variable.
         #[test]
-        fn a_blank_service_name_variable_names_nothing() {
-            for value in [None, Some(""), Some("   ")] {
+        fn a_blank_service_name_names_nothing() {
+            for blank in [None, Some(""), Some("   ")] {
                 assert!(
-                    !env_names_a_service(value, false),
-                    "{value:?} should not count as naming a service"
+                    !env_names_a_service(blank, None),
+                    "OTEL_SERVICE_NAME {blank:?} should not count as naming a service"
+                );
+                assert!(
+                    !env_names_a_service(None, blank),
+                    "service.name {blank:?} should not count as naming a service"
+                );
+                assert!(
+                    !env_names_a_service(blank, blank),
+                    "both blank at {blank:?} should not count as naming a service"
                 );
             }
         }
