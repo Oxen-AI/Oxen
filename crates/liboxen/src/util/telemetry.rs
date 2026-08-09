@@ -355,6 +355,16 @@ fn otel_filter_directives() -> String {
     non_empty_env(OTEL_FILTER_ENV).unwrap_or_else(|| OTEL_DEFAULT_FILTER.to_string())
 }
 
+/// Whether the environment already names a service, in which case the app's own name is not used.
+///
+/// `service_name_var` is `OTEL_SERVICE_NAME`'s raw value, which names nothing when blank.
+/// `attributes_name_a_service` is whether `OTEL_RESOURCE_ATTRIBUTES` carried a `service.name`,
+/// the other place the OpenTelemetry SDK accepts one.
+#[cfg(feature = "otel")]
+fn env_names_a_service(service_name_var: Option<&str>, attributes_name_a_service: bool) -> bool {
+    attributes_name_a_service || service_name_var.is_some_and(|name| !name.trim().is_empty())
+}
+
 /// The value of `name`, or `None` when it is unset or blank.
 fn non_empty_env(name: &str) -> Option<String> {
     std::env::var(name)
@@ -539,13 +549,14 @@ fn build_otel_layer<S>(
 where
     S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
 {
-    use opentelemetry::KeyValue;
     use opentelemetry::trace::TracerProvider;
+    use opentelemetry::{Key, KeyValue};
     use opentelemetry_otlp::WithExportConfig;
     use opentelemetry_otlp::WithTonicConfig;
     use opentelemetry_otlp::tonic_types::transport::ClientTlsConfig;
     use opentelemetry_sdk::Resource;
     use opentelemetry_sdk::propagation::TraceContextPropagator;
+    use opentelemetry_sdk::resource::{EnvResourceDetector, ResourceDetector};
     use opentelemetry_sdk::trace::{BatchConfigBuilder, BatchSpanProcessor, SdkTracerProvider};
 
     let exporter = match protocol {
@@ -584,14 +595,21 @@ where
     // `OTEL_RESOURCE_ATTRIBUTES` (where `deployment.environment` is set) land on every span. The
     // attributes added here take precedence over the detectors, so `service.name` is only supplied
     // as the fallback for a deployment that names no service of its own.
-    let mut attributes = vec![KeyValue::new(
+    let attributes_name_a_service = EnvResourceDetector::new()
+        .detect()
+        .get(&Key::from_static_str("service.name"))
+        .is_some();
+    let mut builder = Resource::builder().with_attributes([KeyValue::new(
         "service.version",
         crate::constants::OXEN_VERSION,
-    )];
-    if std::env::var_os("OTEL_SERVICE_NAME").is_none() {
-        attributes.push(KeyValue::new("service.name", app_name.to_string()));
+    )]);
+    if !env_names_a_service(
+        std::env::var("OTEL_SERVICE_NAME").ok().as_deref(),
+        attributes_name_a_service,
+    ) {
+        builder = builder.with_service_name(app_name.to_string());
     }
-    let resource = Resource::builder().with_attributes(attributes).build();
+    let resource = builder.build();
 
     // A collector that is slow, unreachable, or black-holing must cost the process bounded memory
     // and never back-pressure a request thread: the queue is fixed, and the processor drops spans
@@ -765,8 +783,34 @@ mod tests {
     #[cfg(feature = "otel")]
     mod otel_tests {
         use super::super::{
-            TelemetryError, http_traces_endpoint, normalize_otel_endpoint, otel_filter_directives,
+            TelemetryError, env_names_a_service, http_traces_endpoint, normalize_otel_endpoint,
+            otel_filter_directives,
         };
+
+        /// A service the operator named through either variable is kept, and the app's own name is
+        /// used only when neither does. Overriding a configured `service.name` would rename the
+        /// deployment's traces out from under whoever set it.
+        #[test]
+        fn the_environment_names_the_service_when_it_says_so() {
+            // `OTEL_SERVICE_NAME` set to something.
+            assert!(env_names_a_service(Some("checkout"), false));
+            // `service.name` supplied through `OTEL_RESOURCE_ATTRIBUTES` instead.
+            assert!(env_names_a_service(None, true));
+            // Both, which is the same answer.
+            assert!(env_names_a_service(Some("checkout"), true));
+        }
+
+        /// An `OTEL_SERVICE_NAME` that is unset or blank names nothing, matching how the SDK's own
+        /// detector treats it. Reading it as a name would export traces under an empty service.
+        #[test]
+        fn a_blank_service_name_variable_names_nothing() {
+            for value in [None, Some(""), Some("   ")] {
+                assert!(
+                    !env_names_a_service(value, false),
+                    "{value:?} should not count as naming a service"
+                );
+            }
+        }
 
         #[test]
         fn keeps_http_endpoint() {
