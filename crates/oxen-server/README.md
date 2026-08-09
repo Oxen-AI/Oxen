@@ -257,7 +257,8 @@ These standard `OTEL_*` variables are read by the SDK itself:
 | `OTEL_TRACES_SAMPLER` | `always_on`, `always_off`, `traceidratio`, `parentbased_always_on`, `parentbased_always_off`, `parentbased_traceidratio`. | `parentbased_always_on` |
 | `OTEL_TRACES_SAMPLER_ARG` | Sampling probability, `0.0`–`1.0`, for the ratio samplers. | `1.0` |
 | `OTEL_BSP_MAX_QUEUE_SIZE`, `OTEL_BSP_SCHEDULE_DELAY`, `OTEL_BSP_MAX_EXPORT_BATCH_SIZE`, `OTEL_BSP_EXPORT_TIMEOUT` | Batch-processor tuning: queue depth, how often a batch drains, batch size, and how long the processor waits on one export. | `4096`, `2000` ms, `512`, `30000` ms |
-| `OTEL_EXPORTER_OTLP_TIMEOUT` | How long one export request to the collector may take. `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` overrides it for spans. Distinct from `OTEL_BSP_EXPORT_TIMEOUT` above, which bounds the batch processor rather than the request. | `10000` ms |
+| `OTEL_EXPORTER_OTLP_TIMEOUT` | How long one export request to the collector may take, for every signal. Distinct from `OTEL_BSP_EXPORT_TIMEOUT` above, which bounds the batch processor rather than the request. | `10000` ms |
+| `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` | The same bound for span exports alone, and takes precedence over `OTEL_EXPORTER_OTLP_TIMEOUT` where both are set. | *(whatever `OTEL_EXPORTER_OTLP_TIMEOUT` resolves to)* |
 
 Every span carries `service.name`, `service.version`, and — when a caller sent
 an `x-oxen-request-id` header, or the server minted one — `oxen.request_id`.
