@@ -290,6 +290,9 @@ impl JsonDataFrameView {
         opts: &DFOpts,
     ) -> JsonDataFrameView {
         let mut default_df = DataFrame::empty();
+        // An empty frame still answers with the page the caller asked for, so a reader gets the
+        // same pagination shape whether or not there were rows to return.
+        let (page_number, page_size) = opts.page_bounds();
         JsonDataFrameView {
             schema: schema.to_owned(),
             size: DataFrameSize {
@@ -298,8 +301,8 @@ impl JsonDataFrameView {
             },
             data: JsonDataFrameView::json_from_df(&mut default_df),
             pagination: Pagination {
-                page_number: 0,
-                page_size: 0,
+                page_number,
+                page_size,
                 total_pages: 0,
                 total_entries,
             },
