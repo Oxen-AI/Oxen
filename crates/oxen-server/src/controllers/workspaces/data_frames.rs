@@ -135,16 +135,8 @@ pub async fn get(
         // page into a slice before reading (as controllers::data_frames::get does). Without it the
         // read returns the whole frame regardless of the page. Skip if slice/row is set.
         if opts.slice_indices().is_none() {
-            let page = opts.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
-            let page_size = opts.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
-            // page/page_size are clamped to >= 1 when read. Cap start so end = start + page_size
-            // can't overflow and stays strictly greater, preserving slice()'s start < end invariant
-            // even for an absurd page number (which then just yields an empty page).
-            let start = page_size
-                .saturating_mul(page - 1)
-                .min(usize::MAX - page_size);
-            let end = start + page_size;
-            opts.slice = Some(SliceRange::new(start as i64, end as i64)?);
+            let (page, page_size) = opts.page_bounds();
+            opts.slice = Some(SliceRange::for_page(page, page_size));
         }
 
         let data_frame_slice =

@@ -9,7 +9,6 @@ use std::io::Cursor;
 use utoipa::ToSchema;
 
 use super::StatusMessage;
-use crate::constants;
 use crate::core::df::tabular;
 use crate::error::OxenError;
 use crate::model::Commit;
@@ -137,17 +136,7 @@ impl JsonDataFrameView {
         let full_width = df.width();
         let full_height = df.height();
 
-        // Pages are 1-based and a page of zero rows names no rows, so clamp both to the valid
-        // domain: a degenerate request reads as the first page rather than an empty slice, a
-        // division by zero in the total, or an error.
-        let page_size = opts
-            .page_size
-            .unwrap_or(constants::DEFAULT_PAGE_SIZE)
-            .max(1);
-        let page = opts.page.unwrap_or(constants::DEFAULT_PAGE_NUM).max(1);
-
-        let start = page_size * (page - 1);
-        let end = page_size * page;
+        let (page, page_size) = opts.page_bounds();
 
         let total_pages = (full_height as f64 / page_size as f64).ceil() as usize;
 
@@ -161,7 +150,7 @@ impl JsonDataFrameView {
             ));
         };
 
-        opts.slice = Some(SliceRange::new(start as i64, end as i64)?);
+        opts.slice = Some(SliceRange::for_page(page, page_size));
         let opts_view = DFOptsView::from_df_opts(&opts);
         let mut sliced_df = tabular::transform(df, opts).await?;
 
@@ -216,8 +205,7 @@ impl JsonDataFrameView {
         slice_schema.update_metadata_from_schema(&og_schema);
         log::debug!("Slice schema {slice_schema:?}");
 
-        let page_size = opts.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
-        let page_number = opts.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
+        let (page_number, page_size) = opts.page_bounds();
 
         let total_pages = (og_height as f64 / page_size as f64).ceil() as usize;
 

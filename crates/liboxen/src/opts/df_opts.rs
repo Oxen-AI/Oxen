@@ -57,6 +57,20 @@ impl SliceRange {
         Ok(Self { start, end })
     }
 
+    /// The rows on a 1-based page. A page or page size below one reads as the first page, and a
+    /// page past what the arithmetic can express reads as the last page it can.
+    pub fn for_page(page: usize, page_size: usize) -> Self {
+        let page_size = i64::try_from(page_size).unwrap_or(i64::MAX).max(1);
+        let page = i64::try_from(page).unwrap_or(i64::MAX).max(1);
+        // Holding the start below `i64::MAX - page_size` keeps `start + page_size` from
+        // overflowing, so `0 <= start < end` holds for every page.
+        let start = page_size.saturating_mul(page - 1).min(i64::MAX - page_size);
+        Self {
+            start,
+            end: start + page_size,
+        }
+    }
+
     /// The number of rows the range covers.
     pub fn row_count(&self) -> u32 {
         // `0 <= start < end` holds by construction, so the difference is positive and cannot
@@ -251,6 +265,15 @@ impl DFOpts {
             || self.unique.is_some()
             || self.unique_count.is_some()
             || self.vstack.is_some()
+    }
+
+    /// The 1-based page and page size the options request, clamped to the domain the reader can
+    /// serve. A page or page size below one reads as the first page.
+    pub fn page_bounds(&self) -> (usize, usize) {
+        (
+            self.page.unwrap_or(DEFAULT_PAGE_NUM).max(1),
+            self.page_size.unwrap_or(DEFAULT_PAGE_SIZE).max(1),
+        )
     }
 
     /// The rows the options select, from either an explicit `slice` or a single `row`. `None`
@@ -529,6 +552,53 @@ mod tests {
                 "expected {value:?} to be rejected"
             );
         }
+    }
+
+    #[test]
+    fn test_a_page_covers_the_rows_it_names() -> Result<(), OxenError> {
+        assert_eq!(SliceRange::for_page(1, 10), SliceRange::new(0, 10)?);
+        assert_eq!(SliceRange::for_page(3, 10), SliceRange::new(20, 30)?);
+        Ok(())
+    }
+
+    #[test]
+    fn test_a_degenerate_page_reads_as_the_first_page() -> Result<(), OxenError> {
+        // A page or page size of zero would otherwise underflow the `page - 1` subtraction and
+        // derive a range that selects nothing.
+        assert_eq!(SliceRange::for_page(0, 10), SliceRange::new(1, 10)?);
+        assert_eq!(SliceRange::for_page(1, 0), SliceRange::new(0, 1)?);
+        assert_eq!(SliceRange::for_page(0, 0), SliceRange::new(0, 1)?);
+        Ok(())
+    }
+
+    #[test]
+    fn test_an_absurd_page_still_names_a_usable_range() {
+        // The multiplication cannot overflow into a range the reader rejects, however large the
+        // caller's page number is.
+        for (page, page_size) in [
+            (usize::MAX, usize::MAX),
+            (usize::MAX, 100),
+            (100, usize::MAX),
+            (1 << 40, 1 << 40),
+        ] {
+            let range = SliceRange::for_page(page, page_size);
+            assert!(
+                range.start >= 0 && range.start < range.end,
+                "for_page({page}, {page_size}) gave {range}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_page_bounds_clamps_to_the_servable_domain() {
+        let mut opts = DFOpts::empty();
+        opts.page = Some(0);
+        opts.page_size = Some(0);
+        assert_eq!(opts.page_bounds(), (1, 1));
+
+        opts.page = Some(4);
+        opts.page_size = Some(25);
+        assert_eq!(opts.page_bounds(), (4, 25));
     }
 
     #[test]
