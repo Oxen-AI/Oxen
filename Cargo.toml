@@ -10,7 +10,7 @@ license-file = "LICENSE"
 homepage = "https://oxen.ai"
 repository = "https://github.com/Oxen-AI/Oxen"
 readme = "README.md"
-rust-version = "1.94"
+rust-version = "1.97.1"
 
 [workspace.lints.clippy]
 disallowed-methods = "deny"
