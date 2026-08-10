@@ -55,7 +55,7 @@ impl PyRemoteDataFrame {
 
         let data = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             let mut opts = DFOpts::empty();
-            opts.slice = Some(SliceRange::new(row as i64, row as i64 + 1)?);
+            opts.slice = Some(SliceRange::for_row(row)?);
 
             let response =
                 api::client::data_frames::get(self.repo.repo()?, revision, &self.path, opts)

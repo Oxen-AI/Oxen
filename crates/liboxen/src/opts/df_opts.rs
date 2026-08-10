@@ -71,6 +71,17 @@ impl SliceRange {
         }
     }
 
+    /// The range covering a single row.
+    pub fn for_row(row: usize) -> Result<Self, OxenError> {
+        let too_large = || OxenError::InvalidDataFrameParam {
+            param: "row",
+            value: row.to_string(),
+            reason: "is past the largest row a range can name",
+        };
+        let start = i64::try_from(row).map_err(|_| too_large())?;
+        Self::new(start, start.checked_add(1).ok_or_else(too_large)?)
+    }
+
     /// The number of rows the range covers.
     pub fn row_count(&self) -> u32 {
         // `0 <= start < end` holds by construction, so the difference is positive and cannot
@@ -283,9 +294,7 @@ impl DFOpts {
             return Some(range);
         }
         if let Some(row) = self.row {
-            // A row index selects the single row `row..row + 1`.
-            let start = i64::try_from(row).ok()?;
-            return SliceRange::new(start, start.checked_add(1)?).ok();
+            return SliceRange::for_row(row).ok();
         }
         None
     }
@@ -565,7 +574,7 @@ mod tests {
     fn test_a_degenerate_page_reads_as_the_first_page() -> Result<(), OxenError> {
         // A page or page size of zero would otherwise underflow the `page - 1` subtraction and
         // derive a range that selects nothing.
-        assert_eq!(SliceRange::for_page(0, 10), SliceRange::new(1, 10)?);
+        assert_eq!(SliceRange::for_page(0, 10), SliceRange::new(0, 10)?);
         assert_eq!(SliceRange::for_page(1, 0), SliceRange::new(0, 1)?);
         assert_eq!(SliceRange::for_page(0, 0), SliceRange::new(0, 1)?);
         Ok(())
@@ -610,6 +619,16 @@ mod tests {
         // A row index too large to name a range selects everything rather than a bad range.
         opts.row = Some(usize::MAX);
         assert_eq!(opts.slice_indices(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn test_a_row_past_what_a_range_can_name_is_an_error() -> Result<(), OxenError> {
+        assert_eq!(SliceRange::for_row(7)?, SliceRange::new(7, 8)?);
+
+        // Both of these used to overflow while computing the exclusive end.
+        assert!(SliceRange::for_row(usize::MAX).is_err());
+        assert!(SliceRange::for_row(i64::MAX as usize).is_err());
         Ok(())
     }
 
