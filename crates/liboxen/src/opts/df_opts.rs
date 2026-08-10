@@ -289,14 +289,14 @@ impl DFOpts {
 
     /// The rows the options select, from either an explicit `slice` or a single `row`. `None`
     /// means every row.
-    pub fn slice_indices(&self) -> Option<SliceRange> {
+    pub fn slice_indices(&self) -> Result<Option<SliceRange>, OxenError> {
         if let Some(range) = self.slice {
-            return Some(range);
+            return Ok(Some(range));
         }
         if let Some(row) = self.row {
-            return SliceRange::for_row(row).ok();
+            return Ok(Some(SliceRange::for_row(row)?));
         }
-        None
+        Ok(None)
     }
 
     pub fn take_indices(&self) -> Result<Option<Vec<u32>>, OxenError> {
@@ -610,11 +610,12 @@ mod tests {
     fn test_a_row_selects_only_that_row() -> Result<(), OxenError> {
         let mut opts = DFOpts::empty();
         opts.row = Some(7);
-        assert_eq!(opts.slice_indices(), Some(SliceRange::new(7, 8)?));
+        assert_eq!(opts.slice_indices()?, Some(SliceRange::new(7, 8)?));
 
-        // A row index too large to name a range selects everything rather than a bad range.
+        // A row index too large to name a range used to read as no selection at all, which
+        // answered a request for one row with every row.
         opts.row = Some(usize::MAX);
-        assert_eq!(opts.slice_indices(), None);
+        assert!(opts.slice_indices().is_err());
         Ok(())
     }
 
@@ -633,7 +634,7 @@ mod tests {
         let mut opts = DFOpts::empty();
         opts.row = Some(7);
         opts.slice = Some(SliceRange::new(0, 3)?);
-        assert_eq!(opts.slice_indices(), Some(SliceRange::new(0, 3)?));
+        assert_eq!(opts.slice_indices()?, Some(SliceRange::new(0, 3)?));
         Ok(())
     }
 

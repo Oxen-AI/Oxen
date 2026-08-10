@@ -63,7 +63,7 @@ pub async fn get(
         page_size: constants::DEFAULT_PAGE_SIZE,
     };
 
-    if let Some(range) = opts.slice_indices() {
+    if let Some(range) = opts.slice_indices()? {
         log::debug!("controllers::data_frames Got slice params {range}");
     } else {
         let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);

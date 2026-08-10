@@ -574,7 +574,7 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
 // Separate out slice transform because it needs to be done after other transforms
 pub fn transform_slice_lazy(mut df: LazyFrame, opts: &DFOpts) -> Result<LazyFrame, OxenError> {
     // Maybe slice it up
-    df = slice(df, opts);
+    df = slice(df, opts)?;
     df = head(df, opts);
     df = tail(df, opts);
 
@@ -630,13 +630,13 @@ fn tail(df: LazyFrame, opts: &DFOpts) -> LazyFrame {
 
 // `SliceRange` enforces `0 <= start < end` at construction, so there is no unusable range to
 // reject.
-fn slice(df: LazyFrame, opts: &DFOpts) -> LazyFrame {
+fn slice(df: LazyFrame, opts: &DFOpts) -> Result<LazyFrame, OxenError> {
     log::debug!("SLICE {:?}", opts.slice);
-    let Some(range) = opts.slice_indices() else {
-        return df;
+    let Some(range) = opts.slice_indices()? else {
+        return Ok(df);
     };
     log::debug!("SLICE with indices {range}");
-    df.slice(range.start, range.row_count())
+    Ok(df.slice(range.start, range.row_count()))
 }
 
 pub fn df_add_row_num(df: DataFrame) -> Result<DataFrame, OxenError> {

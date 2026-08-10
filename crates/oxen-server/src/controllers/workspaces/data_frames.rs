@@ -134,7 +134,7 @@ pub async fn get(
         // The read path paginates only via opts.slice, not page/page_size, so convert the requested
         // page into a slice before reading (as controllers::data_frames::get does). Without it the
         // read returns the whole frame regardless of the page. Skip if slice/row is set.
-        if opts.slice_indices().is_none() {
+        if opts.slice_indices()?.is_none() {
             let (page, page_size) = opts.page_bounds();
             opts.slice = Some(SliceRange::for_page(page, page_size));
         }
