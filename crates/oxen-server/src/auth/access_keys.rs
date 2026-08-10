@@ -141,8 +141,8 @@ impl AccessKeyManager {
                         // Make sure we decoded the email is the one in our db
                         token_data.claims == claim
                     }
-                    _ => {
-                        log::info!("auth token is not valid: {token}");
+                    Err(e) => {
+                        log::info!("auth token is not valid: {e}");
                         false
                     }
                 }

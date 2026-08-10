@@ -26,7 +26,14 @@ path = "src/main.rs"
 [features]
 default = []
 metrics = ["liboxen/metrics", "dep:metrics", "dep:metrics-exporter-prometheus"]
-otel = ["liboxen/otel", "dep:tracing-opentelemetry"]
+# `tracing-actix-web/opentelemetry_0_31` is what extracts an inbound `traceparent` and parents the
+# HTTP root span to it. It must name the same `opentelemetry` minor the rest of the workspace
+# resolves — bump the two together.
+otel = [
+    "liboxen/otel",
+    "dep:tracing-opentelemetry",
+    "tracing-actix-web/opentelemetry_0_31",
+]
 production = ["metrics", "otel", "liboxen/production", "default"]
 
 [dependencies]
