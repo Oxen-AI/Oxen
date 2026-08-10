@@ -18,7 +18,7 @@ use crate::model::DataFrameSize;
 use crate::model::LocalRepository;
 use crate::model::data_frame::schema::DataType;
 use crate::model::merkle_tree::node::MerkleTreeNode;
-use crate::opts::{CountLinesOpts, DFOpts, PaginateOpts, SliceRange};
+use crate::opts::{CountLinesOpts, DFOpts};
 use crate::repositories;
 use crate::storage::{VersionLocation, VersionStore};
 use crate::util::fs;
@@ -626,28 +626,6 @@ fn tail(df: LazyFrame, opts: &DFOpts) -> LazyFrame {
     } else {
         df
     }
-}
-
-pub fn slice_df(df: DataFrame, start: usize, end: usize) -> Result<DataFrame, OxenError> {
-    let mut opts = DFOpts::empty();
-    opts.slice = Some(SliceRange::new(start as i64, end as i64)?);
-    log::debug!("slice_df with opts: {opts:?}");
-    let df = df.lazy();
-    let df = slice(df, &opts);
-    df.collect()
-        .map_err(|e| OxenError::basic_str(format!("{e:?}")))
-}
-
-pub fn paginate_df(df: DataFrame, page_opts: &PaginateOpts) -> Result<DataFrame, OxenError> {
-    let mut opts = DFOpts::empty();
-    opts.slice = Some(SliceRange::new(
-        (page_opts.page_size * (page_opts.page_num - 1)) as i64,
-        (page_opts.page_size * page_opts.page_num) as i64,
-    )?);
-    let df = df.lazy();
-    let df = slice(df, &opts);
-    df.collect()
-        .map_err(|e| OxenError::basic_str(format!("{e:?}")))
 }
 
 // `SliceRange` enforces `0 <= start < end` at construction, so there is no unusable range to
@@ -1768,7 +1746,10 @@ mod tests {
     use crate::core::df::{filter, tabular};
     use crate::test::{self, TEST_DATA_DIR};
     use crate::view::JsonDataFrameView;
-    use crate::{error::OxenError, opts::DFOpts};
+    use crate::{
+        error::OxenError,
+        opts::{DFOpts, SliceRange},
+    };
     use itertools::Itertools;
     use tokio::task;
 
