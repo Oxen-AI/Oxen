@@ -384,23 +384,19 @@ impl DFOpts {
 
     pub fn column_at(&self) -> Result<Option<IndexedItem>, OxenError> {
         if let Some(value) = self.item.clone() {
-            // col:index
-            // ie: file:2
-            let delimiter = ":";
-            if value.contains(delimiter) {
-                let malformed = || OxenError::InvalidDataFrameParam {
-                    param: "item",
-                    value: value.clone(),
-                    reason: "expected a column name and a whole number, as 'col:index'",
-                };
-                let mut split = value.split(delimiter);
-                let col = split.next().ok_or_else(malformed)?;
-                let index = split.next().ok_or_else(malformed)?;
-                return Ok(Some(IndexedItem {
-                    col: String::from(col),
-                    index: index.parse::<usize>().map_err(|_| malformed())?,
-                }));
+            let malformed = || OxenError::InvalidDataFrameParam {
+                param: "item",
+                value: value.clone(),
+                reason: "expected a column name and a whole number, as 'col:index'",
+            };
+            let (col, index) = value.split_once(':').ok_or_else(malformed)?;
+            if col.is_empty() {
+                return Err(malformed());
             }
+            return Ok(Some(IndexedItem {
+                col: String::from(col),
+                index: index.parse::<usize>().map_err(|_| malformed())?,
+            }));
         }
         Ok(None)
     }
@@ -638,6 +634,26 @@ mod tests {
         opts.row = Some(7);
         opts.slice = Some(SliceRange::new(0, 3)?);
         assert_eq!(opts.slice_indices(), Some(SliceRange::new(0, 3)?));
+        Ok(())
+    }
+
+    #[test]
+    fn test_an_item_that_is_not_a_column_and_index_is_an_error() -> Result<(), OxenError> {
+        let mut opts = DFOpts::empty();
+        opts.item = Some("file:2".to_string());
+        let item = opts.column_at()?.expect("item should parse");
+        assert_eq!(item.col, "file");
+        assert_eq!(item.index, 2);
+
+        // A value with no delimiter used to be ignored, returning the whole frame, and one with
+        // extra segments used to drop everything past the second.
+        for value in ["file", "", "file:2:3", "file:", ":2", "file:abc"] {
+            opts.item = Some(value.to_string());
+            assert!(
+                opts.column_at().is_err(),
+                "expected {value:?} to be rejected"
+            );
+        }
         Ok(())
     }
 
