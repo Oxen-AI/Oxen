@@ -342,13 +342,10 @@ pub enum OxenError {
     )]
     S3BackendMissingServerOpts,
 
-    /// `create_version_store` could not derive the S3 object prefix from the repo path because the
-    /// path lacks the expected `<namespace>/<name>` tail. Server repo paths are always built as
-    /// `<sync_dir>/<namespace>/<name>`, so this only surfaces for malformed callers — but we
-    /// surface it as a structured error rather than panicking.
-    #[error(
-        "Cannot derive S3 object prefix from repo path {0}: expected `<namespace>/<name>` tail"
-    )]
+    /// `create_version_store` could not derive the S3 object prefix from the repo path: the path
+    /// has no final component, or that component is not valid UTF-8. Server repo paths always end
+    /// in the repo directory, so this only surfaces for malformed callers.
+    #[error("Cannot derive S3 object prefix from repo path {0}: expected a UTF-8 directory name")]
     S3PrefixUnresolvable(PathBufError),
 
     /// `oxen restore` finished with one or more file-restore failures. Aggregated rather than

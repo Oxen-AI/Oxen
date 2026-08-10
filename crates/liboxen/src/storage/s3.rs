@@ -1188,7 +1188,7 @@ mod tests {
             Arc::new(client),
             bucket,
             "us-west-1".to_string(),
-            "test-namespace/test-repo".to_string(),
+            "test-repo".to_string(),
             Some(format!("http://{addr}")),
         );
 
@@ -1242,7 +1242,7 @@ mod tests {
             Arc::clone(&client),
             "test-bucket".to_string(),
             "us-west-1".to_string(),
-            "ns/repo".to_string(),
+            "repo".to_string(),
             Some(format!("http://{addr}")),
         );
         // A sibling repo whose prefix extends this store's prefix must survive the destroy.
@@ -1250,7 +1250,7 @@ mod tests {
             client,
             "test-bucket".to_string(),
             "us-west-1".to_string(),
-            "ns/repo2".to_string(),
+            "repo2".to_string(),
             Some(format!("http://{addr}")),
         );
 
@@ -1330,10 +1330,7 @@ mod tests {
                 region,
                 endpoint_url,
             } => {
-                assert_eq!(
-                    url,
-                    format!("s3://{}/test-namespace/test-repo/{hash}/data", store.bucket)
-                );
+                assert_eq!(url, format!("s3://{}/test-repo/{hash}/data", store.bucket));
                 assert_eq!(region, "us-west-1");
                 let endpoint = endpoint_url.expect("test setup configures a loopback endpoint");
                 assert!(

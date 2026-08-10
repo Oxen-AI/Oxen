@@ -504,9 +504,9 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
 ///
 /// `server_s3_opts` is the server-wide S3 configuration (bucket name). It must be `Some`
 /// whenever `config.kind == StorageKind::S3`; CLI and test paths pass `None` because they never
-/// run with the S3 backend enabled. The S3 prefix is derived from the repo path's
-/// `<namespace>/<name>` tail at construction time and never written to per-repo config, so the
-/// server can rotate buckets without rewriting every repo.
+/// run with the S3 backend enabled. The S3 prefix is the repo directory's name, derived at
+/// construction time and never written to per-repo config, so the server can rotate buckets
+/// without rewriting every repo.
 pub fn create_version_store(
     repo_dir: &Path,
     config: &StorageConfig,
@@ -532,20 +532,14 @@ pub fn create_version_store(
         }
         StorageKind::S3 => {
             let opts = server_s3_opts.ok_or(OxenError::S3BackendMissingServerOpts)?;
-            // Server repo paths are always `<sync_dir>/<namespace>/<name>` (the only path that
-            // reaches the S3 branch), so the tail components should always be present. We still
-            // surface a structured error instead of panicking on a malformed caller.
-            let name = repo_dir
+            // The prefix is the repo directory's name alone, so an object's key is independent
+            // of the namespace the repo currently sits under.
+            let prefix = repo_dir
                 .file_name()
                 .and_then(|s| s.to_str())
                 .ok_or_else(|| OxenError::S3PrefixUnresolvable(repo_dir.into()))?;
-            let namespace = repo_dir
-                .parent()
-                .and_then(|p| p.file_name())
-                .and_then(|s| s.to_str())
-                .ok_or_else(|| OxenError::S3PrefixUnresolvable(repo_dir.into()))?;
-            let prefix = format!("{namespace}/{name}");
-            let store = S3VersionStore::new(opts.bucket.clone(), opts.region.clone(), prefix);
+            let store =
+                S3VersionStore::new(opts.bucket.clone(), opts.region.clone(), prefix.to_string());
             Ok(Arc::new(store))
         }
     }
@@ -586,6 +580,46 @@ mod tests {
         let store = create_version_store(&repo_dir, &s3_config(), Some(&opts))
             .expect("S3 store should construct when server opts are present");
         assert_eq!(store.storage_kind(), StorageKind::S3);
+    }
+
+    /// Object keys are scoped by the repo directory's name alone. The namespace directory above
+    /// it never appears in a key, so moving a repo to another namespace leaves its objects where
+    /// they are.
+    #[tokio::test]
+    async fn create_version_store_s3_prefix_excludes_namespace() {
+        let repo_dir = PathBuf::from("/srv/oxen/test-ns/test-repo");
+        let opts = S3Opts {
+            bucket: "my-bucket".to_string(),
+            region: "us-west-1".to_string(),
+        };
+        let store = create_version_store(&repo_dir, &s3_config(), Some(&opts))
+            .expect("S3 store should construct when server opts are present");
+
+        let hash = "abc123";
+        let location = store
+            .version_location(hash)
+            .await
+            .expect("S3 version_location resolves without contacting the bucket");
+        match location {
+            VersionLocation::S3 { url, .. } => {
+                assert_eq!(url, format!("s3://my-bucket/test-repo/{hash}/data"));
+            }
+            other => panic!("expected S3 variant, got {other:?}"),
+        }
+    }
+
+    /// A repo path with no final component has no name to scope object keys by.
+    #[test]
+    fn create_version_store_s3_without_a_repo_directory_name_errors() {
+        let opts = S3Opts {
+            bucket: "my-bucket".to_string(),
+            region: "us-west-1".to_string(),
+        };
+        let result = create_version_store(Path::new("/"), &s3_config(), Some(&opts));
+        assert!(
+            matches!(result, Err(OxenError::S3PrefixUnresolvable(_))),
+            "expected S3PrefixUnresolvable, got {result:?}",
+        );
     }
 }
 
