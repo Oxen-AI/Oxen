@@ -3,6 +3,7 @@ use polars::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::{LocalRepository, Schema};
 use crate::opts::DFOpts;
@@ -41,7 +42,7 @@ impl TabularDiffView {
         base_entry: &Option<FileNode>,
         head_entry: &Option<FileNode>,
         df_opts: DFOpts,
-    ) -> TabularDiffView {
+    ) -> Result<TabularDiffView, OxenError> {
         let base_df = TabularDiffWrapper::maybe_get_df_from_file_node(repo, base_entry).await;
         let head_df = TabularDiffWrapper::maybe_get_df_from_file_node(repo, head_entry).await;
 
@@ -52,7 +53,7 @@ impl TabularDiffView {
         base_df: Option<DataFrame>,
         head_df: Option<DataFrame>,
         df_opts: DFOpts,
-    ) -> TabularDiffView {
+    ) -> Result<TabularDiffView, OxenError> {
         let schema_has_changed = TabularDiffWrapper::schema_has_changed(&base_df, &head_df);
 
         let base_schema = TabularDiffView::maybe_get_schema(&base_df);
@@ -76,12 +77,12 @@ impl TabularDiffView {
                 .unwrap();
 
                 let added_cols = match df_diff.added_cols {
-                    Some(df) => Some(JsonDataFrame::from_df_opts(df, df_opts.clone()).await),
+                    Some(df) => Some(JsonDataFrame::from_df_opts(df, df_opts.clone()).await?),
                     None => None,
                 };
 
                 let removed_cols = match df_diff.removed_cols {
-                    Some(df) => Some(JsonDataFrame::from_df_opts(df, df_opts.clone()).await),
+                    Some(df) => Some(JsonDataFrame::from_df_opts(df, df_opts.clone()).await?),
                     None => None,
                 };
 
@@ -93,7 +94,7 @@ impl TabularDiffView {
                                 head_schema.clone(),
                                 &df_opts,
                             )
-                            .await,
+                            .await?,
                         ),
                         df.full_size.width,
                     ),
@@ -108,7 +109,7 @@ impl TabularDiffView {
                                 head_schema.clone(),
                                 &df_opts,
                             )
-                            .await,
+                            .await?,
                         ),
                         df.full_size.width,
                     ),
@@ -171,11 +172,11 @@ impl TabularDiffView {
                 };
 
                 let added_rows = match added_rows_view {
-                    Some(df) => Some(df.await),
+                    Some(df) => Some(df.await?),
                     None => None,
                 };
                 let removed_rows = match removed_rows_view {
-                    Some(df) => Some(df.await),
+                    Some(df) => Some(df.await?),
                     None => None,
                 };
 
@@ -201,7 +202,7 @@ impl TabularDiffView {
 
                 log::debug!("summary: {summary:?}");
 
-                return TabularDiffView {
+                return Ok(TabularDiffView {
                     tabular: TabularDiffViewImpl {
                         summary,
                         base_schema: Some(base_schema),
@@ -215,7 +216,7 @@ impl TabularDiffView {
                         removed_cols,
                         removed_cols_view,
                     },
-                };
+                });
             } else {
                 // schema has not changed
                 // compute new rows
@@ -225,7 +226,7 @@ impl TabularDiffView {
                         .unwrap();
 
                 let added_rows = match df_diff.added_rows {
-                    Some(df) => Some(JsonDataFrame::from_df_opts(df, df_opts.clone()).await),
+                    Some(df) => Some(JsonDataFrame::from_df_opts(df, df_opts.clone()).await?),
                     None => None,
                 };
 
@@ -236,13 +237,13 @@ impl TabularDiffView {
                             base_schema.clone(),
                             &df_opts,
                         )
-                        .await,
+                        .await?,
                     ),
                     None => None,
                 };
 
                 let removed_rows = match df_diff.removed_rows {
-                    Some(df) => Some(JsonDataFrame::from_df_opts(df, df_opts.clone()).await),
+                    Some(df) => Some(JsonDataFrame::from_df_opts(df, df_opts.clone()).await?),
                     None => None,
                 };
 
@@ -253,7 +254,7 @@ impl TabularDiffView {
                             base_schema.clone(),
                             &df_opts,
                         )
-                        .await,
+                        .await?,
                     ),
                     None => None,
                 };
@@ -280,7 +281,7 @@ impl TabularDiffView {
                     },
                 };
 
-                return TabularDiffView {
+                return Ok(TabularDiffView {
                     tabular: TabularDiffViewImpl {
                         summary,
                         base_schema: Some(base_schema),
@@ -294,7 +295,7 @@ impl TabularDiffView {
                         removed_cols: None,
                         removed_cols_view: None,
                     },
-                };
+                });
             }
         }
 
@@ -303,9 +304,10 @@ impl TabularDiffView {
             let head_schema = head_schema.clone().unwrap();
             let head_df = head_df.unwrap();
             let added_df =
-                Some(JsonDataFrame::from_df_opts(head_df.clone(), df_opts.clone()).await);
-            let added_df_view =
-                Some(JsonDataFrameView::from_df_opts(head_df, head_schema.clone(), &df_opts).await);
+                Some(JsonDataFrame::from_df_opts(head_df.clone(), df_opts.clone()).await?);
+            let added_df_view = Some(
+                JsonDataFrameView::from_df_opts(head_df, head_schema.clone(), &df_opts).await?,
+            );
 
             let added_df = match added_df {
                 Some(df) => df,
@@ -324,7 +326,7 @@ impl TabularDiffView {
                 },
             };
 
-            return TabularDiffView {
+            return Ok(TabularDiffView {
                 tabular: TabularDiffViewImpl {
                     summary,
                     base_schema: None,
@@ -338,7 +340,7 @@ impl TabularDiffView {
                     removed_cols: None,
                     removed_cols_view: None,
                 },
-            };
+            });
         }
 
         if base_schema.is_some() && head_schema.is_none() {
@@ -346,9 +348,10 @@ impl TabularDiffView {
             let base_schema = base_schema.clone().unwrap();
             let base_df = base_df.unwrap();
             let removed_df =
-                Some(JsonDataFrame::from_df_opts(base_df.clone(), df_opts.clone()).await);
-            let removed_df_view =
-                Some(JsonDataFrameView::from_df_opts(base_df, base_schema.clone(), &df_opts).await);
+                Some(JsonDataFrame::from_df_opts(base_df.clone(), df_opts.clone()).await?);
+            let removed_df_view = Some(
+                JsonDataFrameView::from_df_opts(base_df, base_schema.clone(), &df_opts).await?,
+            );
 
             let removed_df = match removed_df {
                 Some(df) => df,
@@ -365,7 +368,7 @@ impl TabularDiffView {
                 },
             };
 
-            return TabularDiffView {
+            return Ok(TabularDiffView {
                 tabular: TabularDiffViewImpl {
                     summary,
                     base_schema: Some(base_schema),
@@ -379,7 +382,7 @@ impl TabularDiffView {
                     removed_cols: None,
                     removed_cols_view: None,
                 },
-            };
+            });
         }
 
         // schema has not changed
@@ -392,7 +395,7 @@ impl TabularDiffView {
                 schema_has_changed,
             },
         };
-        TabularDiffView {
+        Ok(TabularDiffView {
             tabular: TabularDiffViewImpl {
                 summary,
                 base_schema,
@@ -406,7 +409,7 @@ impl TabularDiffView {
                 removed_cols: None,
                 removed_cols_view: None,
             },
-        }
+        })
     }
 
     pub fn maybe_get_schema(df: &Option<DataFrame>) -> Option<Schema> {

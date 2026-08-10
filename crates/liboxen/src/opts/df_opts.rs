@@ -1,4 +1,6 @@
+use std::fmt;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
@@ -26,6 +28,64 @@ pub struct AddColVals {
 pub struct IndexedItem {
     pub col: String,
     pub index: usize,
+}
+
+/// A half-open row range, `start..end`. Constructing one enforces `0 <= start < end`, so a range
+/// that selects nothing, or that counts backwards from the end of the frame, cannot reach the read
+/// path. Parses from and displays as `"0..10"`, the form the `slice` query parameter travels in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SliceRange {
+    pub start: i64,
+    pub end: i64,
+}
+
+impl SliceRange {
+    pub fn new(start: i64, end: i64) -> Result<Self, OxenError> {
+        let invalid = |reason| {
+            Err(OxenError::InvalidDataFrameParam {
+                param: "slice",
+                value: format!("{start}..{end}"),
+                reason,
+            })
+        };
+        if start < 0 {
+            return invalid("start must not be negative");
+        }
+        if start >= end {
+            return invalid("start must be less than end");
+        }
+        Ok(Self { start, end })
+    }
+
+    /// The number of rows the range covers.
+    pub fn row_count(&self) -> u32 {
+        // `0 <= start < end` holds by construction, so the difference is positive and cannot
+        // overflow.
+        (self.end - self.start) as u32
+    }
+}
+
+impl FromStr for SliceRange {
+    type Err = OxenError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let malformed = || OxenError::InvalidDataFrameParam {
+            param: "slice",
+            value: value.to_string(),
+            reason: "expected two whole numbers separated by '..', as '0..10'",
+        };
+        let (start, end) = value.split_once("..").ok_or_else(malformed)?;
+        Self::new(
+            start.parse().map_err(|_| malformed())?,
+            end.parse().map_err(|_| malformed())?,
+        )
+    }
+}
+
+impl fmt::Display for SliceRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}..{}", self.start, self.end)
+    }
 }
 
 #[derive(Clone, Debug, ToSchema)]
@@ -57,7 +117,8 @@ pub struct DFOpts {
     pub should_randomize: bool,
     pub should_reverse: bool,
     pub should_page: bool,
-    pub slice: Option<String>,
+    #[schema(value_type = Option<String>)]
+    pub slice: Option<SliceRange>,
     pub sort_by: Option<String>,
     pub sort_by_similarity_to: Option<String>,
     pub sql: Option<String>,
@@ -192,37 +253,36 @@ impl DFOpts {
             || self.vstack.is_some()
     }
 
-    pub fn slice_indices(&self) -> Option<(i64, i64)> {
-        if let Some(slice) = self.slice.clone() {
-            let split = slice.split("..").collect::<Vec<&str>>();
-            if split.len() == 2 {
-                let start = split[0]
-                    .parse::<i64>()
-                    .expect("Start must be a valid integer.");
-                let end = split[1]
-                    .parse::<i64>()
-                    .expect("End must be a valid integer.");
-                return Some((start, end));
-            } else {
-                return None;
-            }
+    /// The rows the options select, from either an explicit `slice` or a single `row`. `None`
+    /// means every row.
+    pub fn slice_indices(&self) -> Option<SliceRange> {
+        if let Some(range) = self.slice {
+            return Some(range);
         }
         if let Some(row) = self.row {
-            let next_row = row + 1;
-            return Some((row as i64, next_row as i64));
+            // A row index selects the single row `row..row + 1`.
+            let start = i64::try_from(row).ok()?;
+            return SliceRange::new(start, start.checked_add(1)?).ok();
         }
         None
     }
 
-    pub fn take_indices(&self) -> Option<Vec<u32>> {
+    pub fn take_indices(&self) -> Result<Option<Vec<u32>>, OxenError> {
         if let Some(take) = self.take.clone() {
             let split = take
                 .split(',')
-                .map(|v| v.parse::<u32>().expect("Values must be a valid u32."))
-                .collect::<Vec<u32>>();
-            return Some(split);
+                .map(|v| {
+                    v.parse::<u32>()
+                        .map_err(|_| OxenError::InvalidDataFrameParam {
+                            param: "take",
+                            value: take.clone(),
+                            reason: "expected whole numbers separated by ','",
+                        })
+                })
+                .collect::<Result<Vec<u32>, OxenError>>()?;
+            return Ok(Some(split));
         }
-        None
+        Ok(None)
     }
 
     pub fn columns_names(&self) -> Option<Vec<String>> {
@@ -290,43 +350,50 @@ impl DFOpts {
         }
     }
 
-    pub fn column_at(&self) -> Option<IndexedItem> {
+    pub fn column_at(&self) -> Result<Option<IndexedItem>, OxenError> {
         if let Some(value) = self.item.clone() {
             // col:index
             // ie: file:2
             let delimiter = ":";
             if value.contains(delimiter) {
+                let malformed = || OxenError::InvalidDataFrameParam {
+                    param: "item",
+                    value: value.clone(),
+                    reason: "expected a column name and a whole number, as 'col:index'",
+                };
                 let mut split = value.split(delimiter);
-                return Some(IndexedItem {
-                    col: String::from(split.next().unwrap()),
-                    index: split
-                        .next()
-                        .unwrap()
-                        .parse::<usize>()
-                        .expect("Index must be usize"),
-                });
+                let col = split.next().ok_or_else(malformed)?;
+                let index = split.next().ok_or_else(malformed)?;
+                return Ok(Some(IndexedItem {
+                    col: String::from(col),
+                    index: index.parse::<usize>().map_err(|_| malformed())?,
+                }));
             }
         }
-        None
+        Ok(None)
     }
 
-    pub fn add_col_vals(&self) -> Option<AddColVals> {
+    pub fn add_col_vals(&self) -> Result<Option<AddColVals>, OxenError> {
         if let Some(add_col) = self.add_col.clone() {
             let split = add_col
                 .split(':')
                 .map(String::from)
                 .collect::<Vec<String>>();
             if split.len() != 3 {
-                panic!("Invalid input for col vals. Format: 'name:val:dtype'");
+                return Err(OxenError::InvalidDataFrameParam {
+                    param: "add-col",
+                    value: add_col,
+                    reason: "expected three parts, as 'name:value:dtype'",
+                });
             }
 
-            return Some(AddColVals {
+            return Ok(Some(AddColVals {
                 name: split[0].to_owned(),
                 value: split[1].to_owned(),
                 dtype: split[2].to_owned(),
-            });
+            }));
         }
-        None
+        Ok(None)
     }
 
     pub fn to_http_query_params(&self) -> String {
@@ -351,7 +418,7 @@ impl DFOpts {
             ("randomize", randomize),
             ("reverse", should_reverse),
             ("filter", self.filter.clone()),
-            ("slice", self.slice.clone()),
+            ("slice", self.slice.map(|s| s.to_string())),
             ("sort_by", self.sort_by.clone()),
             ("sql", self.sql.clone()),
             ("take", self.take.clone()),
@@ -411,12 +478,92 @@ impl DFOptsView {
                 &Some(serde_json::to_value(opts.should_reverse).unwrap()),
             ),
             DFOptView::from_opt("take", &opts.take),
-            DFOptView::from_opt("slice", &opts.slice),
+            DFOptView::from_opt("slice", &opts.slice.map(|s| s.to_string())),
             DFOptView::from_opt("head", &opts.head),
             DFOptView::from_opt("tail", &opts.tail),
         ]
         .to_vec();
 
         DFOptsView { opts: ordered_opts }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DFOpts, SliceRange};
+    use crate::error::OxenError;
+
+    #[test]
+    fn test_slice_range_rejects_a_range_that_selects_nothing() {
+        // A range whose start is not below its end reaches polars as a zero or negative length,
+        // which panics the worker thread rather than answering the caller.
+        assert!(SliceRange::new(0, 0).is_err());
+        assert!(SliceRange::new(10, 3).is_err());
+        assert!(SliceRange::new(3, 10).is_ok());
+    }
+
+    #[test]
+    fn test_slice_range_rejects_a_negative_start() {
+        // Polars reads a negative offset as counting back from the end of the frame, which is a
+        // different operation than the one `start..end` names.
+        assert!(SliceRange::new(-5, 3).is_err());
+        assert!(SliceRange::new(i64::MIN, i64::MAX).is_err());
+    }
+
+    #[test]
+    fn test_slice_range_round_trips_through_its_wire_form() -> Result<(), OxenError> {
+        let range: SliceRange = "330..333".parse()?;
+        assert_eq!(range, SliceRange::new(330, 333)?);
+        assert_eq!(range.to_string(), "330..333");
+        assert_eq!(range.row_count(), 3);
+        Ok(())
+    }
+
+    #[test]
+    fn test_a_slice_that_is_not_a_range_is_an_error() {
+        // Each of these used to be silently ignored, which answered a request for a few rows with
+        // the whole data frame.
+        for value in ["5", "1..2..3", "a..b", "", "..", "0..", "..10"] {
+            assert!(
+                value.parse::<SliceRange>().is_err(),
+                "expected {value:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn test_a_row_selects_only_that_row() -> Result<(), OxenError> {
+        let mut opts = DFOpts::empty();
+        opts.row = Some(7);
+        assert_eq!(opts.slice_indices(), Some(SliceRange::new(7, 8)?));
+
+        // A row index too large to name a range selects everything rather than a bad range.
+        opts.row = Some(usize::MAX);
+        assert_eq!(opts.slice_indices(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn test_a_slice_wins_over_a_row() -> Result<(), OxenError> {
+        let mut opts = DFOpts::empty();
+        opts.row = Some(7);
+        opts.slice = Some(SliceRange::new(0, 3)?);
+        assert_eq!(opts.slice_indices(), Some(SliceRange::new(0, 3)?));
+        Ok(())
+    }
+
+    #[test]
+    fn test_a_take_that_is_not_a_list_of_indices_is_an_error() {
+        let mut opts = DFOpts::empty();
+        opts.take = Some("1,2,3".to_string());
+        assert_eq!(opts.take_indices().unwrap(), Some(vec![1, 2, 3]));
+
+        for value in ["abc", "1,,2", "1,-2", ""] {
+            opts.take = Some(value.to_string());
+            assert!(
+                opts.take_indices().is_err(),
+                "expected {value:?} to be rejected"
+            );
+        }
     }
 }

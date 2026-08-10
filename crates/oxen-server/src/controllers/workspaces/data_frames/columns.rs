@@ -73,7 +73,7 @@ pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let opts = DFOpts::empty();
     let column_schema = Schema::from_polars(column_df.schema());
     let column_df_source = DataFrameSchemaSize::from_df(&column_df, &column_schema);
-    let column_df_view = JsonDataFrameView::from_df_opts(column_df, column_schema, &opts).await;
+    let column_df_view = JsonDataFrameView::from_df_opts(column_df, column_schema, &opts).await?;
     let df_views = JsonDataFrameViews {
         source: column_df_source,
         view: column_df_view,
@@ -140,7 +140,7 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let opts = DFOpts::empty();
     let column_schema = Schema::from_polars(column_df.schema());
     let column_df_source = DataFrameSchemaSize::from_df(&column_df, &column_schema);
-    let column_df_view = JsonDataFrameView::from_df_opts(column_df, column_schema, &opts).await;
+    let column_df_view = JsonDataFrameView::from_df_opts(column_df, column_schema, &opts).await?;
 
     let df_views = JsonDataFrameViews {
         source: column_df_source,
@@ -240,7 +240,7 @@ pub async fn update(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let opts = DFOpts::empty();
     let column_schema = Schema::from_polars(column_df.schema());
     let column_df_source = DataFrameSchemaSize::from_df(&column_df, &column_schema);
-    let column_df_view = JsonDataFrameView::from_df_opts(column_df, column_schema, &opts).await;
+    let column_df_view = JsonDataFrameView::from_df_opts(column_df, column_schema, &opts).await?;
 
     let mut df_views = JsonDataFrameViews {
         source: column_df_source,

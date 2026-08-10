@@ -1,6 +1,6 @@
 use liboxen::api;
 use liboxen::error::OxenError;
-use liboxen::opts::DFOpts;
+use liboxen::opts::{DFOpts, SliceRange};
 use pyo3::prelude::*;
 use std::path::PathBuf;
 
@@ -31,7 +31,7 @@ impl PyRemoteDataFrame {
 
         pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             let mut opts = DFOpts::empty();
-            opts.slice = Some("0..1".to_string());
+            opts.slice = Some(SliceRange::new(0, 1)?);
 
             let response = api::client::data_frames::get(
                 self.repo.repo()?,
@@ -55,7 +55,7 @@ impl PyRemoteDataFrame {
 
         let data = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             let mut opts = DFOpts::empty();
-            opts.slice = Some(format!("{}..{}", row, row + 1));
+            opts.slice = Some(SliceRange::new(row as i64, row as i64 + 1)?);
 
             let response =
                 api::client::data_frames::get(self.repo.repo()?, revision, &self.path, opts)
@@ -84,7 +84,7 @@ impl PyRemoteDataFrame {
 
         let data = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             let mut opts = DFOpts::empty();
-            opts.slice = Some(format!("{start}..{end}"));
+            opts.slice = Some(SliceRange::new(start as i64, end as i64)?);
 
             if !columns.is_empty() {
                 // turn columns into comma separated list

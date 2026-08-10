@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use actix_web::web;
+use liboxen::error::OxenError;
 use liboxen::opts::DFOpts;
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
@@ -26,16 +27,20 @@ pub struct DFOptsQuery {
 }
 
 /// Provide some default vals for opts
-pub fn parse_opts(query: &web::Query<DFOptsQuery>, filter_ops: &mut DFOpts) -> DFOpts {
+pub fn parse_opts(
+    query: &web::Query<DFOptsQuery>,
+    filter_ops: &mut DFOpts,
+) -> Result<DFOpts, OxenError> {
     // Default to 0..10 unless they ask for "all"
     log::debug!("Parsing opts {query:?}");
     if let Some(slice) = query.slice.clone() {
-        if slice == "all" {
-            // Return everything...probably don't want to do this unless explicitly asked for
+        // "all" asks for every row, and an empty parameter carries no request at all, so it reads
+        // the same as one the caller left off.
+        if slice == "all" || slice.is_empty() {
             filter_ops.slice = None;
         } else {
-            // Return what they asked for
-            filter_ops.slice = Some(slice);
+            // Reject a range the reader cannot use here, where the request is still in hand.
+            filter_ops.slice = Some(slice.parse()?);
         }
     }
 
@@ -63,7 +68,11 @@ pub fn parse_opts(query: &web::Query<DFOptsQuery>, filter_ops: &mut DFOpts) -> D
         .sort_by_similarity_to
         .clone_from(&query.sort_by_similarity_to);
     filter_ops.sql.clone_from(&query.sql);
-    filter_ops.take.clone_from(&query.take);
+    // An empty parameter carries no request, so it reads the same as one the caller left off.
+    filter_ops.take = query.take.clone().filter(|take| !take.is_empty());
+    // Reject a malformed list here, where the request is still in hand. Deeper in the read path
+    // the same error has callers that cannot answer with a 400.
+    filter_ops.take_indices()?;
 
-    filter_ops.clone()
+    Ok(filter_ops.clone())
 }

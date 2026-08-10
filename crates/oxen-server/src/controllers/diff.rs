@@ -14,8 +14,8 @@ use liboxen::model::diff::diff_entry_status::DiffEntryStatus;
 use liboxen::model::diff::dir_diff_summary::{DirDiffSummary, DirDiffSummaryImpl};
 use liboxen::model::diff::generic_diff_summary::GenericDiffSummary;
 use liboxen::model::{Commit, CommitEntry, DataFrameSize, LocalRepository, Schema};
-use liboxen::opts::DFOpts;
 use liboxen::opts::df_opts::DFOptsView;
+use liboxen::opts::{DFOpts, SliceRange};
 use liboxen::view::compare::{
     CommitSide, CompareCommit, CompareCommits, CompareCommitsResponse, CompareDupes,
     CompareEntries, CompareEntryResponse, CompareTabular, CompareTabularResponse,
@@ -401,14 +401,14 @@ pub async fn file(
     };
 
     let mut opts = DFOpts::empty();
-    opts = df_opts_query::parse_opts(&query, &mut opts);
+    opts = df_opts_query::parse_opts(&query, &mut opts)?;
 
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
     let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
 
     let start = if page == 0 { 0 } else { page_size * (page - 1) };
     let end = page_size * page;
-    opts.slice = Some(format!("{start}..{end}"));
+    opts.slice = Some(SliceRange::new(start as i64, end as i64)?);
 
     let diff = repositories::diffs::diff_entries(
         &repository,
@@ -805,7 +805,7 @@ pub async fn get_derived_df(
     let og_schema = Schema::from_polars(df.schema());
 
     let mut opts = DFOpts::empty();
-    opts = df_opts_query::parse_opts(&query, &mut opts);
+    opts = df_opts_query::parse_opts(&query, &mut opts)?;
     log::debug!("get_derived_df got opts: {opts:?}");
 
     // Clear these for the first transform
@@ -832,7 +832,7 @@ pub async fn get_derived_df(
 
             // Paginate after transform
             let mut paginate_opts = DFOpts::empty();
-            paginate_opts.slice = Some(format!("{start}..{end}"));
+            paginate_opts.slice = Some(SliceRange::new(start as i64, end as i64)?);
             let mut paginated_df = tabular::transform(view_df, paginate_opts).await?;
 
             let total_pages = (view_height as f64 / page_size as f64).ceil() as usize;

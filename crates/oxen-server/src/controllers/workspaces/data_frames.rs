@@ -12,7 +12,7 @@ use liboxen::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
 use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
 use liboxen::model::{ParsedResource, Schema, Workspace};
-use liboxen::opts::DFOpts;
+use liboxen::opts::{DFOpts, SliceRange};
 use liboxen::repositories;
 use liboxen::repositories::data_frames::schemas::get_staged_schema_with_staged_db_manager;
 use liboxen::util::paginate;
@@ -104,7 +104,7 @@ pub async fn get(
     let file_path = PathBuf::from(path_param(&req, "path")?);
 
     let mut opts = DFOpts::empty();
-    opts = df_opts_query::parse_opts(&query, &mut opts);
+    opts = df_opts_query::parse_opts(&query, &mut opts)?;
     opts.path = Some(file_path.clone());
 
     // Clamp pagination to the valid 1-based domain once, when read: downstream a 0 page derives an
@@ -144,7 +144,7 @@ pub async fn get(
                 .saturating_mul(page - 1)
                 .min(usize::MAX - page_size);
             let end = start + page_size;
-            opts.slice = Some(format!("{start}..{end}"));
+            opts.slice = Some(SliceRange::new(start as i64, end as i64)?);
         }
 
         let data_frame_slice =
@@ -167,7 +167,7 @@ pub async fn get(
         };
 
         let mut df_views =
-            JsonDataFrameViews::from_df_and_opts_unpaginated(df, df_schema, count, &opts).await;
+            JsonDataFrameViews::from_df_and_opts_unpaginated(df, df_schema, count, &opts).await?;
 
         // Metadata can be staged before the frame is ever indexed; surface it.
         let staged_schema =
@@ -222,7 +222,7 @@ pub async fn get(
     df_schema.update_metadata_from_schema(&og_schema);
 
     let mut df_views =
-        JsonDataFrameViews::from_df_and_opts_unpaginated(df, df_schema, count, &opts).await;
+        JsonDataFrameViews::from_df_and_opts_unpaginated(df, df_schema, count, &opts).await?;
 
     let new_schema = repositories::data_frames::schemas::get_staged_schema_with_staged_db_manager(
         &workspace.workspace_repo,
@@ -399,7 +399,7 @@ pub async fn download(
         ));
     };
 
-    let opts = df_opts_from_query(&query, file_path.clone());
+    let opts = df_opts_from_query(&query, file_path.clone())?;
 
     let is_indexed = repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)?;
 
@@ -459,14 +459,17 @@ pub async fn download(
         .body(contents))
 }
 
-fn df_opts_from_query(query: &web::Query<DFOptsQuery>, file_path: PathBuf) -> DFOpts {
+fn df_opts_from_query(
+    query: &web::Query<DFOptsQuery>,
+    file_path: PathBuf,
+) -> Result<DFOpts, OxenError> {
     let mut opts = DFOpts::empty();
-    opts = df_opts_query::parse_opts(query, &mut opts);
+    opts = df_opts_query::parse_opts(query, &mut opts)?;
     opts.path = Some(file_path);
 
     opts.page = Some(query.page.unwrap_or(constants::DEFAULT_PAGE_NUM));
     opts.page_size = Some(query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE));
-    opts
+    Ok(opts)
 }
 
 /// Check if the file exists in the repository or the workspace.
@@ -528,7 +531,7 @@ pub async fn download_streaming(
         ));
     };
 
-    let opts = df_opts_from_query(&query, file_path.clone());
+    let opts = df_opts_from_query(&query, file_path.clone())?;
 
     let is_indexed = repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)?;
 

@@ -118,7 +118,7 @@ pub async fn neighbors(req: HttpRequest, body: String) -> Result<HttpResponse, O
     df_schema.update_metadata_from_schema(&og_schema);
 
     let mut df_views =
-        JsonDataFrameViews::from_df_and_opts_unpaginated(df, df_schema, count, &opts).await;
+        JsonDataFrameViews::from_df_and_opts_unpaginated(df, df_schema, count, &opts).await?;
 
     let new_schema = repositories::data_frames::schemas::get_staged_schema_with_staged_db_manager(
         &workspace.workspace_repo,

@@ -175,6 +175,15 @@ pub enum OxenError {
     #[error("If provided, the quote character must be non-empty")]
     InvalidQuoteChar,
 
+    /// A data frame parameter could not be parsed, or names a range that cannot be read. Carries
+    /// the parameter and the value the caller sent, which is what identifies the bad request.
+    #[error("Invalid {param} parameter {value:?}: {reason}")]
+    InvalidDataFrameParam {
+        param: &'static str,
+        value: String,
+        reason: &'static str,
+    },
+
     //
     // Workspaces
     //
@@ -876,6 +885,9 @@ impl OxenError {
             TabularFileMissingMetadata(_) => {
                 "Commit a new version of this file with at least one row to make it readable as a data frame."
             }
+            InvalidDataFrameParam { .. } => {
+                "Check the parameter's format, for example `--slice 0..10`, `--take 1,2,3`, or `--item col:0`."
+            }
             _ => return None,
         }
         .to_string();
@@ -966,6 +978,7 @@ impl OxenError {
             OxenError::VersionStoreBlobMissing { .. } => true,
             OxenError::UnknownRemoteResponseStatus(_) => true,
             OxenError::TabularFileMissingMetadata(_) => true,
+            OxenError::InvalidDataFrameParam { .. } => true,
             OxenError::InvalidFileType(_) => true,
             // A malformed file or an unsatisfiable query reads the same way every time. Only the
             // IO case can resolve on its own.
