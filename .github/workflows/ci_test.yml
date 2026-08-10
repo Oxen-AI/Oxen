@@ -264,7 +264,20 @@ jobs:
 
       - name: Start oxen-server (Linux/macOS)
         if: matrix.platform != 'windows'
-        run: ./target/debug/oxen-server start &
+        run: |
+          ./target/debug/oxen-server start > oxen-server.log 2>&1 &
+          # Wait for the server to accept connections before any test needs one. Without this the
+          # CLI tests race startup, and the loser reports a connection error that reads like a
+          # product bug rather than a server that was not up yet.
+          for i in $(seq 1 100); do
+            if curl -sf http://localhost:3000/api/health >/dev/null 2>&1; then break; fi
+            if [ "$i" -eq 100 ]; then
+              echo "oxen-server did not become healthy"
+              cat oxen-server.log
+              exit 1
+            fi
+            sleep 0.1
+          done
 
       # CLI Tests
       - name: Run CLI tests (Linux/macOS)

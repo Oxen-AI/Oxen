@@ -999,7 +999,7 @@ pub async fn stage_file_with_hash(
             StagedEntryStatus::Modified
         } else {
             // Don't add the file if it hasn't changed
-            log::info!("file {data_path:?} has not changed - skipping add");
+            log::debug!("file {data_path:?} has not changed - skipping add");
             return Ok(());
         };
 
