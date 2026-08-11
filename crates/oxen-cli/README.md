@@ -60,7 +60,7 @@ to be exported.
 | Variable | Description | Default |
 |---|---|---|
 | `OXEN_OTEL_ENDPOINT` | Collector endpoint URL. Absent = disabled. | *(none)* |
-| `OXEN_OTEL_PROTOCOL` | Transport: `grpc` or `http` | `grpc` |
+| `OXEN_OTEL_PROTOCOL` | Transport: `grpc` or `http` (binary protobuf either way) | `grpc` |
 | `RUST_LOG` | Must include `info` level for spans to be exported | `off` |
 
 ### Quick start with Jaeger
