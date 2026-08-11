@@ -66,15 +66,12 @@ pub async fn get(
     if let Some(range) = opts.slice_indices()? {
         log::debug!("controllers::data_frames Got slice params {range}");
     } else {
-        let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
-        let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
+        let (page, page_size) = opts.page_bounds();
 
         page_opts.page_num = page;
         page_opts.page_size = page_size;
 
-        let start = if page == 0 { 0 } else { page_size * (page - 1) };
-        let end = page_size * page;
-        opts.slice = Some(SliceRange::new(start as i64, end as i64)?);
+        opts.slice = Some(SliceRange::for_page(page, page_size));
     }
 
     let resource_version = ResourceVersion {

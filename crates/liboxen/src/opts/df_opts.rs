@@ -82,11 +82,11 @@ impl SliceRange {
         Self::new(start, start.checked_add(1).ok_or_else(too_large)?)
     }
 
-    /// The number of rows the range covers.
+    /// The number of rows the range covers, at most `u32::MAX`.
     pub fn row_count(&self) -> u32 {
-        // `0 <= start < end` holds by construction, so the difference is positive and cannot
-        // overflow.
-        (self.end - self.start) as u32
+        // `0 <= start < end` holds by construction, so the difference is positive. A range wider
+        // than a `u32` asks for more rows than a data frame can hold, so it reads as all of them.
+        (self.end - self.start).min(u32::MAX as i64) as u32
     }
 }
 
@@ -574,6 +574,32 @@ mod tests {
         assert_eq!(SliceRange::for_page(1, 0), SliceRange::new(0, 1)?);
         assert_eq!(SliceRange::for_page(0, 0), SliceRange::new(0, 1)?);
         Ok(())
+    }
+
+    #[test]
+    fn test_a_page_wider_than_a_row_count_asks_for_every_row() {
+        // Truncating this width to a `u32` reads as zero rows, so a request for a very large page
+        // answers with nothing at all rather than with everything.
+        let range = SliceRange::for_page(1, 1usize << 32);
+        assert_eq!(range.row_count(), u32::MAX);
+        assert_eq!(SliceRange::for_page(1, 100).row_count(), 100);
+    }
+
+    #[test]
+    fn test_a_page_offset_never_goes_backwards() {
+        // These two multiply to exactly 2^64, which wraps to 0..4294967296. That range is
+        // well formed, so validating it catches nothing and a page far past the end of a data
+        // frame quietly serves the first rows instead. Offsets only ever grow with the page
+        // number, so a later page starting before an earlier one is the tell.
+        let page_size = 1usize << 32;
+        let prev = SliceRange::for_page(page_size, page_size);
+        let far = SliceRange::for_page(page_size + 1, page_size);
+        assert!(
+            far.start >= prev.start,
+            "page {} starts at {far}, before page {} at {prev}",
+            page_size + 1,
+            page_size
+        );
     }
 
     #[test]

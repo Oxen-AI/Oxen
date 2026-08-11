@@ -403,12 +403,8 @@ pub async fn file(
     let mut opts = DFOpts::empty();
     opts = df_opts_query::parse_opts(&query, &mut opts)?;
 
-    let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
-    let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
-
-    let start = if page == 0 { 0 } else { page_size * (page - 1) };
-    let end = page_size * page;
-    opts.slice = Some(SliceRange::new(start as i64, end as i64)?);
+    let (page, page_size) = opts.page_bounds();
+    opts.slice = Some(SliceRange::for_page(page, page_size));
 
     let diff = repositories::diffs::diff_entries(
         &repository,
@@ -808,6 +804,8 @@ pub async fn get_derived_df(
     opts = df_opts_query::parse_opts(&query, &mut opts)?;
     log::debug!("get_derived_df got opts: {opts:?}");
 
+    let (page, page_size) = opts.page_bounds();
+
     // Clear these for the first transform
     opts.page = None;
     opts.page_size = None;
@@ -815,11 +813,6 @@ pub async fn get_derived_df(
     let full_height = df.height();
     let full_width = df.width();
 
-    let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
-    let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
-
-    let start = if page == 0 { 0 } else { page_size * (page - 1) };
-    let end = page_size * page;
     let opts_view = DFOptsView::from_df_opts(&opts);
 
     // We have to run the query param transforms, then paginate separately
@@ -832,7 +825,7 @@ pub async fn get_derived_df(
 
             // Paginate after transform
             let mut paginate_opts = DFOpts::empty();
-            paginate_opts.slice = Some(SliceRange::new(start as i64, end as i64)?);
+            paginate_opts.slice = Some(SliceRange::for_page(page, page_size));
             let mut paginated_df = tabular::transform(view_df, paginate_opts).await?;
 
             let total_pages = (view_height as f64 / page_size as f64).ceil() as usize;
