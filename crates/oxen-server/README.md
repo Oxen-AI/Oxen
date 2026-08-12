@@ -245,8 +245,11 @@ store under both transports, so a collector behind a publicly trusted
 certificate needs no further configuration. A private CA has to be installed in
 that store.
 
-The standard `OTEL_EXPORTER_OTLP_ENDPOINT` variable is also respected as a
-fallback if `OXEN_OTEL_ENDPOINT` is not set.
+The standard `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_PROTOCOL`
+variables are also respected as fallbacks where `OXEN_OTEL_ENDPOINT` and
+`OXEN_OTEL_PROTOCOL` are not set, so a vendor's stock configuration snippet
+works as given. The protocol variable's `http/protobuf` and `http/json` both
+select the HTTP transport; spans are encoded as binary protobuf either way.
 
 These standard `OTEL_*` variables are read by the SDK itself:
 
@@ -257,6 +260,8 @@ These standard `OTEL_*` variables are read by the SDK itself:
 | `OTEL_TRACES_SAMPLER` | `always_on`, `always_off`, `traceidratio`, `parentbased_always_on`, `parentbased_always_off`, `parentbased_traceidratio`. | `parentbased_always_on` |
 | `OTEL_TRACES_SAMPLER_ARG` | Sampling probability, `0.0`–`1.0`, for the ratio samplers. | `1.0` |
 | `OTEL_BSP_MAX_QUEUE_SIZE`, `OTEL_BSP_SCHEDULE_DELAY`, `OTEL_BSP_MAX_EXPORT_BATCH_SIZE`, `OTEL_BSP_EXPORT_TIMEOUT` | Batch-processor tuning: queue depth, how often a batch drains, batch size, and how long the processor waits on one export. | `4096`, `2000` ms, `512`, `30000` ms |
+| `OTEL_EXPORTER_OTLP_COMPRESSION` | `gzip` to compress export payloads, which is worth roughly 8x on a full batch of spans for a few milliseconds of CPU on the exporter's own thread. Only `gzip` is compiled in; any other value fails the exporter build, which disables export. Unset sends payloads uncompressed. | *(none)* |
+| `OTEL_EXPORTER_OTLP_TRACES_COMPRESSION` | The same setting for span exports alone, and takes precedence over `OTEL_EXPORTER_OTLP_COMPRESSION` where both are set. | *(whatever `OTEL_EXPORTER_OTLP_COMPRESSION` resolves to)* |
 | `OTEL_EXPORTER_OTLP_TIMEOUT` | How long one export request to the collector may take, for every signal. Distinct from `OTEL_BSP_EXPORT_TIMEOUT` above, which bounds the batch processor rather than the request. | `10000` ms |
 | `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` | The same bound for span exports alone, and takes precedence over `OTEL_EXPORTER_OTLP_TIMEOUT` where both are set. | *(whatever `OTEL_EXPORTER_OTLP_TIMEOUT` resolves to)* |
 

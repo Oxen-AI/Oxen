@@ -5553,6 +5553,7 @@ version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f69cd6acbb9af919df949cd1ec9e5e7fdc2ef15d234b6b795aaa525cc02f71f"
 dependencies = [
+ "flate2",
  "http 1.5.0",
  "opentelemetry",
  "opentelemetry-http",
@@ -9033,6 +9034,7 @@ dependencies = [
  "async-trait",
  "base64",
  "bytes",
+ "flate2",
  "http 1.5.0",
  "http-body 1.0.1",
  "http-body-util",

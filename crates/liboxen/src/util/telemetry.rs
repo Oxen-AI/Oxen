@@ -22,7 +22,9 @@ pub enum TelemetryError {
     #[error("Failed to initialize tracing: {0}")]
     InitFail(#[from] TryInitError),
     #[cfg(feature = "otel")]
-    #[error("Unknown OXEN_OTEL_PROTOCOL value: {0}")]
+    #[error(
+        "Unknown OXEN_OTEL_PROTOCOL / OTEL_EXPORTER_OTLP_PROTOCOL value: {0} (expected grpc, http, http/protobuf, or http/json)"
+    )]
     UnknownProtocol(String),
     #[cfg(feature = "otel")]
     #[error(
@@ -168,7 +170,9 @@ mod atexit_flush {
 /// env var `OTEL_EXPORTER_OTLP_ENDPOINT`, but checks `OXEN_OTEL_ENDPOINT` first.
 ///
 /// The `OXEN_OTEL_PROTOCOL` env var is either `"http"` or `"grpc"`: it controls
-/// the protocol used for OTLP exports. If not set, defaults to `"grpc"`.
+/// the transport used for OTLP exports. If not set, the standard
+/// `OTEL_EXPORTER_OTLP_PROTOCOL` is read instead, and absent both it defaults to
+/// `"grpc"`. Spans are encoded as binary protobuf under either transport.
 ///
 /// **Filtering** is per-layer, not global. `RUST_LOG` (falling back to `default`) gates the log
 /// destinations — stderr, the JSON file, and the caller-supplied layer. Span export is gated
@@ -260,17 +264,7 @@ pub fn init_tracing_with_layer(
         Some(endpoint) => {
             let endpoint = normalize_otel_endpoint(&endpoint)?;
 
-            let protocol = match std::env::var("OXEN_OTEL_PROTOCOL")
-                .map(|x| x.to_lowercase())
-                .ok()
-                .as_deref()
-            {
-                Some("http") => Protocol::Http,
-                Some("grpc") | None => Protocol::Grpc,
-                Some(unknown) => {
-                    return Err(TelemetryError::UnknownProtocol(unknown.to_string()));
-                }
-            };
+            let protocol = otel_protocol()?;
 
             match build_otel_layer(app_name, &protocol, &endpoint) {
                 (Some(layer), Some(provider)) => {
@@ -474,6 +468,32 @@ impl std::fmt::Display for Protocol {
             Protocol::Grpc => write!(f, "grpc"),
             Protocol::Http => write!(f, "http"),
         }
+    }
+}
+
+/// The transport OTLP export uses: `OXEN_OTEL_PROTOCOL`, or the standard
+/// `OTEL_EXPORTER_OTLP_PROTOCOL` where that is unset.
+#[cfg(feature = "otel")]
+fn otel_protocol() -> Result<Protocol, TelemetryError> {
+    let configured = non_empty_env("OXEN_OTEL_PROTOCOL")
+        .or_else(|| non_empty_env("OTEL_EXPORTER_OTLP_PROTOCOL"));
+    parse_otel_protocol(configured.as_deref())
+}
+
+/// Read a configured protocol as a transport, defaulting to gRPC where nothing is configured.
+///
+/// The standard variable's `http/protobuf` and `http/json` name an encoding as well as a transport,
+/// and both select HTTP here. The encoding is fixed to binary protobuf at compile time, which every
+/// OTLP/HTTP endpoint accepts, so honoring the transport is more useful than rejecting the value.
+#[cfg(feature = "otel")]
+fn parse_otel_protocol(configured: Option<&str>) -> Result<Protocol, TelemetryError> {
+    match configured
+        .map(|value| value.trim().to_lowercase())
+        .as_deref()
+    {
+        None | Some("grpc") => Ok(Protocol::Grpc),
+        Some("http" | "http/protobuf" | "http/json") => Ok(Protocol::Http),
+        Some(unknown) => Err(TelemetryError::UnknownProtocol(unknown.to_string())),
     }
 }
 
@@ -789,9 +809,55 @@ mod tests {
     #[cfg(feature = "otel")]
     mod otel_tests {
         use super::super::{
-            TelemetryError, env_names_a_service, http_traces_endpoint, normalize_otel_endpoint,
-            otel_filter_directives,
+            Protocol, TelemetryError, env_names_a_service, http_traces_endpoint,
+            normalize_otel_endpoint, otel_filter_directives, parse_otel_protocol,
         };
+
+        /// Nothing configured is gRPC, the transport a collector reached at a bare `host:port`
+        /// speaks.
+        #[test]
+        fn no_configured_protocol_is_grpc() {
+            assert_eq!(parse_otel_protocol(None).unwrap(), Protocol::Grpc);
+        }
+
+        /// The values the standard `OTEL_EXPORTER_OTLP_PROTOCOL` carries name an encoding along
+        /// with the transport. Both HTTP spellings select HTTP rather than being rejected, so a
+        /// deployment configured only through the standard variable exports over the transport it
+        /// asked for instead of silently falling back to gRPC.
+        #[test]
+        fn standard_protocol_values_select_a_transport() {
+            for value in ["grpc", "GRPC", " grpc "] {
+                assert_eq!(
+                    parse_otel_protocol(Some(value)).unwrap(),
+                    Protocol::Grpc,
+                    "{value} should select gRPC"
+                );
+            }
+            for value in [
+                "http",
+                "http/protobuf",
+                "http/json",
+                "HTTP/protobuf",
+                " http ",
+            ] {
+                assert_eq!(
+                    parse_otel_protocol(Some(value)).unwrap(),
+                    Protocol::Http,
+                    "{value} should select HTTP"
+                );
+            }
+        }
+
+        #[test]
+        fn rejects_an_unknown_protocol() {
+            for value in ["https", "http/proto", "tcp"] {
+                let result = parse_otel_protocol(Some(value));
+                assert!(
+                    matches!(result, Err(TelemetryError::UnknownProtocol(_))),
+                    "{value} should be rejected, got {result:?}"
+                );
+            }
+        }
 
         /// A service the operator named through either variable is kept, and the app's own name is
         /// used only when neither does. Overriding a configured `service.name` would rename the
