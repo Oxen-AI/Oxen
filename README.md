@@ -31,7 +31,7 @@
 
 Oxen is a lightning fast data version control system for large datasets. We aim to make versioning data as easy as versioning code.
 
-The interface mirrors git, but shines in many areas that git or git-lfs fall short. Oxen is built from the ground up for any data type, and is optimized to handle repositories with millions of files and scales to terabytes of data.
+The interface mirrors git, but shines where git and git-lfs fall short. Oxen is built from the ground up for any data type, from machine learning training data and model weights to game assets and studio media, and is optimized to handle repositories with millions of files and terabytes of data.
 
 ```bash
 oxen init
@@ -41,9 +41,7 @@ oxen commit "Adding 200k images and their corresponding annotations"
 oxen push origin main
 ```
 
-Oxen is comprised of a [command line
-interface](https://docs.oxen.ai/getting-started/cli), as well as bindings for
-[Rust](https://github.com/Oxen-AI/Oxen/tree/main/crates) 🦀, [Python](https://docs.oxen.ai/getting-started/python) 🐍, and [HTTP interfaces](https://docs.oxen.ai/http-api) 🌎 to make it easy to integrate into your workflow.
+Use Oxen through the [oxen CLI](https://docs.oxen.ai/getting-started/cli), the [oxenai](https://docs.oxen.ai/getting-started/python) Python package 🐍, or the [HTTP API](https://docs.oxen.ai/http-api), and host your repositories on [Oxen.ai](https://oxen.ai) or self host the [oxen-server](https://github.com/Oxen-AI/Oxen/tree/main/crates/oxen-server) on your own storage. You can also embed the same [liboxen](https://crates.io/crates/liboxen) crate 🦀 that powers all of it.
 
 ## 🌾 What kind of data?
 
@@ -227,6 +225,10 @@ This enables:
 
 Without `--features production`, the default build excludes OTel dependencies and FFmpeg support, keeping the binary smaller for local development.
 
+The published Docker image names `liboxen/ffmpeg,oxen-server/otel` rather than `production`, so it
+ships thumbnails and tracing without the extra timing instrumentation `perf-logging` adds. Tracing
+is inert there until an OTLP endpoint is configured at runtime.
+
 ## Logging
 
 Oxen uses structured logging via the [`tracing`](https://docs.rs/tracing) crate. All log output goes to **stderr** by default in a human-readable format. This applies to the CLI (`oxen`), the server (`oxen-server`), and any code using `liboxen` (including the Python bindings).
@@ -245,6 +247,11 @@ RUST_LOG=warn oxen-server start
 # Fine-grained: debug for liboxen, warn for everything else
 RUST_LOG=warn,liboxen=debug oxen-server start
 ```
+
+`RUST_LOG` gates the log destinations — stderr, the JSON file, and error
+reporting. It does not gate OpenTelemetry span export, which has its own filter
+(`OXEN_OTEL_FILTER`); raising log verbosity for a debugging session leaves the
+exported traces unchanged.
 
 ### File Logging with `OXEN_LOG_DIR`
 
@@ -277,9 +284,12 @@ at runtime. See [Prometheus Metrics](crates/oxen-server/README.md#prometheus-met
 
 ## OpenTelemetry Tracing
 
-`oxen-server` can export tracing spans to any OTLP-compatible collector (Jaeger, Tempo, etc.).
-Requires building with the `otel` feature flag.
-See [OpenTelemetry Tracing](crates/oxen-server/README.md#opentelemetry-tracing) for details.
+`oxen-server` can export tracing spans to any OTLP-compatible collector (Jaeger, Tempo, etc.),
+continuing a trace begun by whoever called it. The release image is built with the `otel` feature;
+a local build needs it named explicitly. Export stays off until `OXEN_OTEL_ENDPOINT` (or the
+standard `OTEL_EXPORTER_OTLP_ENDPOINT`) is set. The CLI and the Python bindings can export too.
+See [OpenTelemetry Tracing](crates/oxen-server/README.md#opentelemetry-tracing) for the full env-var
+reference.
 
 ## FmtSpan Events
 
@@ -290,7 +300,7 @@ See [FmtSpan Events](crates/oxen-server/README.md#fmtspan-events) for details.
 
 Oxen was built by a team of machine learning engineers, who have spent countless hours in their careers managing datasets. We have used many different tools, but none of them were as easy to use and as ergonomic as we would like.
 
-If you have ever tried [git lfs](https://git-lfs.com/) to version large datasets and became frustrated, we feel your pain. Solutions like git-lfs are too slow when it comes to the scale of data we need for machine learning.
+If you have ever tried Git LFS to version large datasets and became frustrated, we feel your pain. Solutions like Git LFS are unwieldy and painfully slow in practice. We needed a faster alternative designed for large datasets.
 
 If you have ever uploaded a large dataset of images, audio, video, or text to a cloud storage bucket with the name:
 

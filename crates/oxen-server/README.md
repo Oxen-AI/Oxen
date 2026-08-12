@@ -87,6 +87,8 @@ It outputs to STDERR by default but can be configured with rotating log files.
 See [Logging](../../README.md#logging) for details.
 
 By default, `oxen-server` logs at the `WARN` level. Set `RUST_LOG` to change.
+It gates the log destinations only — span export has its own filter, see
+[Filtering: logs and spans are separate](#filtering-logs-and-spans-are-separate).
 
 
 ## Prometheus Metrics
@@ -210,65 +212,113 @@ rate(oxen_errors_total[5m])
 ## OpenTelemetry Tracing
 
 `oxen-server` can export tracing spans to any OTLP-compatible collector
-(Jaeger, Tempo, Honeycomb, Datadog, etc.). This requires building with the
-`otel` feature flag:
+(Jaeger, Tempo, Honeycomb, Datadog, etc.). The release image is built with the
+`otel` feature; a local build needs it named explicitly:
 
 ```bash
 cargo build -p oxen-server --features otel
 ```
 
-At runtime, set `OXEN_OTEL_ENDPOINT` to enable export:
+At runtime, set `OXEN_OTEL_ENDPOINT` to enable export. Nothing is exported
+until you do, so a build with the feature compiled in and no endpoint
+configured behaves exactly like one without it.
 
 ```bash
-# gRPC (default protocol)
+# gRPC (default protocol) — a bare host:port gets http://
 OXEN_OTEL_ENDPOINT=localhost:4317 oxen-server start
 
-# HTTP/JSON
+# OTLP/HTTP
 OXEN_OTEL_ENDPOINT=localhost:4318 OXEN_OTEL_PROTOCOL=http oxen-server start
 
-# Or include the protocol in the endpoint string directly
-OXEN_OTEL_ENDPOINT=http://localhost:4318 oxen-server start
-OXEN_OTEL_ENDPOINT=grpc://localhost:4318 oxen-server start
+# A TLS-terminated vendor endpoint
+OXEN_OTEL_ENDPOINT=https://otlp.vendor.example:443 oxen-server start
 ```
 
 | Variable | Description | Default |
 |---|---|---|
-| `OXEN_OTEL_ENDPOINT` | Collector endpoint URL. Absent = disabled. | *(none)* |
-| `OXEN_OTEL_PROTOCOL` | Transport: `grpc` or `http` | `grpc` or whatever is listed in `OXEN_OTEL_ENDPOINT` |
+| `OXEN_OTEL_ENDPOINT` | Collector endpoint: an `http://` or `https://` URL, or a bare `host:port` (which gets `http://`). Absent = export disabled. | *(none)* |
+| `OXEN_OTEL_PROTOCOL` | Transport: `grpc` or `http`. Under `http` the OTLP signal path `/v1/traces` is appended to the endpoint unless it already names one. | `grpc` |
+| `OXEN_OTEL_FILTER` | Which spans and events are exported. Same syntax as `RUST_LOG`, and independent of it. | `info` |
+
+An `https://` endpoint is verified against the platform's root certificate
+store under both transports, so a collector behind a publicly trusted
+certificate needs no further configuration. A private CA has to be installed in
+that store.
 
 The standard `OTEL_EXPORTER_OTLP_ENDPOINT` variable is also respected as a
 fallback if `OXEN_OTEL_ENDPOINT` is not set.
 
+These standard `OTEL_*` variables are read by the SDK itself:
+
+| Variable | Description | Default |
+|---|---|---|
+| `OTEL_SERVICE_NAME` | `service.name` on every exported span. | `oxen-server` |
+| `OTEL_RESOURCE_ATTRIBUTES` | Comma-separated `key=value` resource attributes. This is where `deployment.environment` is set — nothing else supplies it. | *(none)* |
+| `OTEL_TRACES_SAMPLER` | `always_on`, `always_off`, `traceidratio`, `parentbased_always_on`, `parentbased_always_off`, `parentbased_traceidratio`. | `parentbased_always_on` |
+| `OTEL_TRACES_SAMPLER_ARG` | Sampling probability, `0.0`–`1.0`, for the ratio samplers. | `1.0` |
+| `OTEL_BSP_MAX_QUEUE_SIZE`, `OTEL_BSP_SCHEDULE_DELAY`, `OTEL_BSP_MAX_EXPORT_BATCH_SIZE`, `OTEL_BSP_EXPORT_TIMEOUT` | Batch-processor tuning: queue depth, how often a batch drains, batch size, and how long the processor waits on one export. | `4096`, `2000` ms, `512`, `30000` ms |
+| `OTEL_EXPORTER_OTLP_TIMEOUT` | How long one export request to the collector may take, for every signal. Distinct from `OTEL_BSP_EXPORT_TIMEOUT` above, which bounds the batch processor rather than the request. | `10000` ms |
+| `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` | The same bound for span exports alone, and takes precedence over `OTEL_EXPORTER_OTLP_TIMEOUT` where both are set. | *(whatever `OTEL_EXPORTER_OTLP_TIMEOUT` resolves to)* |
+
+Every span carries `service.name`, `service.version`, and — when a caller sent
+an `x-oxen-request-id` header, or the server minted one — `oxen.request_id`.
+`deployment.environment` is there too once `OTEL_RESOURCE_ATTRIBUTES` sets it.
+`tracing-actix-web` records a second field named `request_id`; that one is its
+own per-request uuid, private to this process. Correlate on `oxen.request_id`.
+
+The default sampler is parent-based, so a caller that has already made a
+sampling decision and sent it in `traceparent` is honored. To sample a share of
+the traces this server roots:
+
+```bash
+OTEL_TRACES_SAMPLER=parentbased_traceidratio OTEL_TRACES_SAMPLER_ARG=0.1
+```
+
 When the `otel` feature is not compiled in, no OpenTelemetry dependencies are
-included and the env vars are ignored.
+included and the env vars are ignored (the server logs an error at startup if
+an endpoint is configured, rather than silently dropping it).
 
-### `RUST_LOG` and span visibility
+### Inbound trace context
 
-The `RUST_LOG` filter is global — it gates what reaches **all** tracing
-outputs, including the OpenTelemetry exporter. `#[tracing::instrument]`
-creates spans at `INFO` level by default. The server defaults to
-`LevelFilter::WARN` when `RUST_LOG` is not set, which means **all
-`#[instrument]` spans are silently dropped** before the OTel layer sees
-them.
+The server reads a W3C `traceparent` header and continues the caller's trace
+instead of starting a new one, so a request forwarded from another service
+appears as a child of that service's span. `tracestate` rides along with it; no
+other propagation format is read, and baggage is not.
 
-**To get full traces** in Jaeger (or any collector), explicitly set
-`RUST_LOG=info`:
+There is no *outbound* propagation: the server does not inject `traceparent`
+into calls it makes.
 
-```bash
-OXEN_OTEL_ENDPOINT=http://localhost:4317 RUST_LOG=info oxen-server start
-```
+### Filtering: logs and spans are separate
 
-**Without `RUST_LOG=info`, the OTel exporter is active but receives no spans.**
+`RUST_LOG` gates the log destinations — stderr, the JSON file, and error
+reporting. `OXEN_OTEL_FILTER` gates span export. They are independent, which
+matters because the two want different levels: the server logs at `WARN` by
+default, while `#[tracing::instrument]` spans and the HTTP root span are
+recorded at `INFO`.
 
-**The `TracingLogger` HTTP root span is also at `INFO` level, so it is
-similarly affected.**
-
-For targeted verbosity (e.g. keep third-party crates quiet), use a
-filter directive:
+So traces export correctly at the stock log level, and raising `RUST_LOG` for
+debugging does not change what is exported:
 
 ```bash
-RUST_LOG="warn,liboxen=info,oxen_server=info,tracing_actix_web=info"
+# Full traces, warnings and errors only on stderr — the recommended setup.
+OXEN_OTEL_ENDPOINT=http://localhost:4317 oxen-server start
+
+# Verbose stderr for a debugging session; the traces are unchanged.
+OXEN_OTEL_ENDPOINT=http://localhost:4317 RUST_LOG=warn,liboxen=debug oxen-server start
 ```
+
+`OXEN_OTEL_FILTER` takes the same directive syntax, so span export can be
+narrowed or widened on its own:
+
+```bash
+# Only spans and events from the server's own code.
+OXEN_OTEL_FILTER="warn,oxen_server=info,tracing_actix_web=info"
+```
+
+Two cautions. Anything below `info` exports nothing, because that is the level
+the spans are recorded at. And `debug` unlocks well over a thousand call sites
+in `liboxen`, many inside per-file loops — each becomes an event attached to
+the enclosing span. Scope it to a target rather than setting it globally.
 
 ### Quick Start with Jaeger
 
@@ -283,10 +333,15 @@ docker run --rm --name jaeger \
   cr.jaegertracing.io/jaegertracing/jaeger:2.17.0
 
 # Start oxen-server with OTel export
-OXEN_OTEL_ENDPOINT=http://localhost:4317 RUST_LOG=info cargo run --features otel -p oxen-server start
+OXEN_OTEL_ENDPOINT=http://localhost:4317 cargo run --features otel -p oxen-server start
 
 # View traces at http://localhost:16686 under service "oxen-server"
 ```
+
+`bin/otel-metrics-test` runs this end to end — Jaeger in Docker, a full
+push/clone/pull, then assertions that the traces arrived, that an inbound
+`traceparent` was continued, and that work on the blocking pool stayed inside
+the request's trace.
 
 
 ## FmtSpan Events
@@ -326,3 +381,6 @@ OXEN_OTEL_ENDPOINT='http://localhost:4317' \
 RUST_LOG='info' \
 oxen-server start
 ```
+
+`RUST_LOG` here raises the two log destinations. Span export is filtered by
+`OXEN_OTEL_FILTER` and is unaffected by it.
