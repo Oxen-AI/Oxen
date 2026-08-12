@@ -18,6 +18,24 @@ use actix_web::{HttpRequest, HttpResponse, web};
 
 use std::path::PathBuf;
 
+/// List staged changes in a workspace
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/changes",
+    description = "List the staged changes (added, modified, and removed files) in a workspace, paginated.",
+    tag = "Workspace Files",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
+        ("page" = Option<usize>, Query, description = "Page number for pagination (default 1)"),
+        ("page_size" = Option<usize>, Query, description = "Number of entries per page (default 100)")
+    ),
+    responses(
+        (status = 200, description = "Staged changes in the workspace", body = RemoteStagedStatusResponse),
+        (status = 404, description = "Workspace not found")
+    )
+)]
 pub async fn list_root(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,
@@ -55,6 +73,25 @@ pub async fn list_root(
     Ok(HttpResponse::Ok().json(response))
 }
 
+/// List staged changes under a directory in a workspace
+#[utoipa::path(
+    get,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/changes/{path}",
+    description = "List the staged changes (added, modified, and removed files) under a directory in a workspace, paginated.",
+    tag = "Workspace Files",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
+        ("path" = String, Path, description = "The directory to list staged changes under", example = "images/train"),
+        ("page" = Option<usize>, Query, description = "Page number for pagination (default 1)"),
+        ("page_size" = Option<usize>, Query, description = "Number of entries per page (default 100)")
+    ),
+    responses(
+        (status = 200, description = "Staged changes under the directory", body = RemoteStagedStatusResponse),
+        (status = 404, description = "Workspace not found")
+    )
+)]
 pub async fn list(
     req: HttpRequest,
     query: web::Query<PageNumQuery>,

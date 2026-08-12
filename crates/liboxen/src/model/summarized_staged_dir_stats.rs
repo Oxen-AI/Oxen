@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::model::StagedDirStats;
 
@@ -22,10 +23,11 @@ use std::path::{Path, PathBuf};
 /// Rolled up to:
 ///     annotations/ -> num_staged: 3, total: 4
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct SummarizedStagedDirStats {
     pub num_files_staged: usize,
     pub total_files: usize,
+    #[schema(value_type = HashMap<String, Vec<StagedDirStats>>)]
     pub paths: HashMap<PathBuf, Vec<StagedDirStats>>,
 }
 
