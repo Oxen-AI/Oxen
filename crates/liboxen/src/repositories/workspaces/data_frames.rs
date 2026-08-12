@@ -2609,6 +2609,51 @@ mod tests {
         .await
     }
 
+    /// A statement written the way it would be typed at a prompt — terminated by
+    /// `;`, or trailing a comment — pages and counts like any other. Both are
+    /// harmless at the end of the text and change its meaning in the middle, so
+    /// they have to come off before a page's bounds are composed on.
+    #[tokio::test]
+    async fn test_query_with_terminated_sql_paginates() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let path = list_typed_add_row_test_paths();
+            workspaces::data_frames::index(&repo, &workspace, &path).await?;
+
+            // Each of these reaches pagination by a different route: a plain
+            // projection is rewritten to carry `_oxen_id`, while an aggregate and a
+            // DISTINCT are passed through as written.
+            let selected = format!("SELECT * FROM {TABLE_NAME};");
+            let aggregated =
+                format!("SELECT label, COUNT(*) AS n FROM {TABLE_NAME} GROUP BY label;");
+            let deduped = format!("SELECT DISTINCT label FROM {TABLE_NAME};");
+            // A comment would otherwise swallow the composed bounds and quietly
+            // return the whole frame rather than failing.
+            let commented = format!("SELECT * FROM {TABLE_NAME} -- every row");
+
+            for (sql, rows, of) in [
+                (&selected, 2, 6),
+                (&aggregated, 1, 2),
+                (&deduped, 1, 2),
+                (&commented, 2, 6),
+            ] {
+                let opts = page_opts(1, rows, Some(sql));
+                let df = workspaces::data_frames::query(&workspace, &path, &opts)?;
+                assert_eq!(df.height(), rows, "{sql} should page to {rows} rows");
+                let count = workspaces::data_frames::count_for_query(&workspace, &path, &opts)?;
+                assert_eq!(count, of, "{sql} should count {of} rows");
+            }
+
+            Ok(())
+        })
+        .await
+    }
+
     /// The read with no `sql` is unchanged: row-ordered pages of page_size.
     #[tokio::test]
     async fn test_query_without_sql_pages_in_row_order() -> Result<(), OxenError> {

@@ -519,12 +519,28 @@ pub fn count(conn: &duckdb::Connection, table_name: &str) -> Result<usize, DataF
 
 /// Query number of rows `sql` selects, without materializing them.
 pub fn count_sql(conn: &duckdb::Connection, sql: &str) -> Result<usize, DataFrameError> {
+    let sql = composable(sql)?;
     let count = conn.query_row(
         &format!("SELECT count(*) FROM ({sql}) AS _oxen_count"),
         [],
         |row| row.get(0),
     )?;
     Ok(count)
+}
+
+/// Render `sql` as one statement that can be composed onto, dropping the trailing
+/// terminator and any comments a caller may have written.
+///
+/// Composition puts a statement somewhere other than the end of the text — before
+/// an appended `ORDER BY` or `LIMIT`, or inside a derived table — where a `;` and a
+/// line comment both change what follows them rather than being ignored. Text that
+/// does not parse as exactly one statement is returned as written, for the database
+/// to reject on its own terms.
+fn composable(sql: &str) -> Result<String, DataFrameError> {
+    match Parser::parse_sql(&DIALECT, sql)?.as_slice() {
+        [stmt] => Ok(stmt.to_string()),
+        _ => Ok(sql.to_string()),
+    }
 }
 
 /// Query number of rows in a table.
@@ -597,7 +613,10 @@ pub fn prepare_sql(
     let empty_opts = DFOpts::empty();
     let opts = opts.unwrap_or(&empty_opts);
 
-    let mut sql = add_special_columns(conn, stmt)?;
+    // Normalize before composing: `add_special_columns` returns the statement as
+    // written whenever it has no `_oxen_id` to inject, so a terminator would
+    // otherwise survive into the middle of the composed statement.
+    let mut sql = add_special_columns(conn, &composable(stmt)?)?;
 
     // Nothing to compose means nothing to inspect the statement for.
     if opts.page.is_some() || opts.sort_by.is_some() {
