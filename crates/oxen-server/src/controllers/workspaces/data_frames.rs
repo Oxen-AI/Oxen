@@ -137,13 +137,19 @@ pub async fn get(
         // read returns the whole frame regardless of the page. Skip if slice/row is set.
         if opts.slice_indices().is_none() {
             let page = opts.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
-            let page_size = opts.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
+            // Both bounds are read back through `slice_indices`, which parses them as
+            // i64, so a page_size only usize can hold has to come down to a width that
+            // survives the round trip.
+            let page_size = opts
+                .page_size
+                .unwrap_or(constants::DEFAULT_PAGE_SIZE)
+                .min(i64::MAX as usize);
             // page/page_size are clamped to >= 1 when read. Cap start so end = start + page_size
             // can't overflow and stays strictly greater, preserving slice()'s start < end invariant
             // even for an absurd page number (which then just yields an empty page).
             let start = page_size
                 .saturating_mul(page - 1)
-                .min(usize::MAX - page_size);
+                .min(i64::MAX as usize - page_size);
             let end = start + page_size;
             opts.slice = Some(format!("{start}..{end}"));
         }
@@ -1627,6 +1633,59 @@ mod tests {
             assert_eq!(pagination.total_pages, 3);
             assert_eq!(pagination.total_entries, 25);
         }
+
+        drop(workspace);
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
+
+    /// A client that wants a whole result asks for it as one maximal page. The
+    /// widest page a request can name has to read as "all of them" on either
+    /// branch, rather than overflowing the slice or exceeding what a SQL `LIMIT`
+    /// accepts.
+    #[actix_web::test]
+    async fn test_get_data_frame_page_holding_every_row() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Widest-Page";
+        let (repo, workspace, workspace_id) =
+            commit_history_csv_workspace(&sync_dir, namespace, repo_name).await?;
+        let file_path = "data/history.csv";
+
+        let widest = || page_query(1, usize::MAX, Some("SELECT * FROM df"));
+        let response = get_data_frame_page(
+            &sync_dir,
+            namespace,
+            repo_name,
+            &workspace_id,
+            file_path,
+            widest(),
+        )
+        .await;
+        assert!(
+            !response.is_indexed,
+            "sql is ignored until the frame is indexed"
+        );
+        assert_eq!(page_row_count(&response), 25);
+
+        repositories::workspaces::data_frames::index(
+            &repo,
+            &workspace,
+            std::path::Path::new(file_path),
+        )
+        .await?;
+        let response = get_data_frame_page(
+            &sync_dir,
+            namespace,
+            repo_name,
+            &workspace_id,
+            file_path,
+            widest(),
+        )
+        .await;
+        assert!(response.is_indexed);
+        assert_eq!(page_row_count(&response), 25);
 
         drop(workspace);
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
