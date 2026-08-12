@@ -8,7 +8,6 @@ use crate::tasks;
 use actix_web::{HttpRequest, HttpResponse, web};
 
 use liboxen::constants::{self, TABLE_NAME};
-use liboxen::core::db::data_frames::DataFrameError;
 use liboxen::core::db::data_frames::df_db::with_df_db_manager;
 use liboxen::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
 use liboxen::core::repo_locks;
@@ -196,18 +195,25 @@ pub async fn get(
 
     log::debug!("querying data frame {file_path:?}");
     log::debug!("opts: {opts:?}");
-    // Counting and reading the page are both DuckDB work, so they run as one unit
-    // off the request thread.
-    let (count, df) = {
+    // Each read is DuckDB work, and each gets its own offload from the request
+    // thread rather than sharing one: per docs/async_policy.md the granularity is
+    // one offload per operation, so the two stay independently convertible.
+    let count = {
         let workspace = workspace.clone();
         let file_path = file_path.clone();
         let opts = opts.clone();
         tasks::spawn_blocking(move || {
-            let count = repositories::workspaces::data_frames::count_for_query(
-                &workspace, &file_path, &opts,
-            )?;
-            let df = repositories::workspaces::data_frames::query(&workspace, &file_path, &opts)?;
-            Ok::<_, DataFrameError>((count, df))
+            repositories::workspaces::data_frames::count_for_query(&workspace, &file_path, &opts)
+        })
+        .await
+        .map_err(OxenError::from)??
+    };
+    let df = {
+        let workspace = workspace.clone();
+        let file_path = file_path.clone();
+        let opts = opts.clone();
+        tasks::spawn_blocking(move || {
+            repositories::workspaces::data_frames::query(&workspace, &file_path, &opts)
         })
         .await
         .map_err(OxenError::from)??
