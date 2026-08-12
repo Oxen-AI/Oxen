@@ -183,56 +183,44 @@ impl PyWorkspaceDataFrame {
         Ok(result)
     }
 
-    /// Query the data frame using SQL. Returns every row the query selects,
-    /// reading the paginated endpoint a page at a time.
+    /// Query the data frame using SQL. Returns every row the query selects.
     fn sql_query(&self, sql: String) -> Result<String, PyOxenError> {
-        // The whole result is held in memory either way, so this bounds only the
-        // size of a single response — keep it high enough that most queries come
-        // back in one request rather than a round trip per thousand rows.
-        const PAGE_SIZE: usize = 10_000;
-
         let rows = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             let mut opts = DFOpts::empty();
             opts.sql = Some(sql);
-            opts.page_size = Some(PAGE_SIZE);
+            // The read is paginated, and this returns the whole result, so ask for it
+            // as a single page. Stitching several pages together would join separate
+            // queries, and a query the read cannot order — one that groups or dedupes
+            // and carries no `ORDER BY` of its own — need not return rows in the same
+            // order twice, so its pages would repeat some rows and drop others.
+            opts.page = Some(1);
+            // The widest page the read can describe: pagination bounds travel as i64,
+            // so a larger number is not a larger page, only one the server has to
+            // narrow before it can use it.
+            opts.page_size = Some(i64::MAX as usize);
 
-            let mut rows = vec![];
-            let mut page_num = 1;
-            loop {
-                opts.page = Some(page_num);
-                let response = api::client::workspaces::data_frames::get(
-                    self.workspace.repo.repo()?,
-                    &self.workspace.id,
-                    &self.path,
-                    &opts,
-                )
-                .await
-                .map_err(|e| OxenError::basic_str(format!("Failed to query data frame: {e}")))?;
+            let response = api::client::workspaces::data_frames::get(
+                self.workspace.repo.repo()?,
+                &self.workspace.id,
+                &self.path,
+                &opts,
+            )
+            .await
+            .map_err(|e| OxenError::basic_str(format!("Failed to query data frame: {e}")))?;
 
-                // A page this function can't read is an error, not the end of the
-                // result: returning the rows collected so far would silently answer
-                // a query with part of its result.
-                let Some(view) = response.data_frame.map(|df| df.view) else {
-                    return Err(OxenError::basic_str(
-                        "Query returned no data frame. Index the data frame before querying.",
-                    ));
-                };
-                let serde_json::Value::Array(page_rows) = view.data else {
-                    return Err(OxenError::basic_str(format!(
-                        "Expected a page of rows, got: {}",
-                        view.data
-                    )));
-                };
-                let page_len = page_rows.len();
-                rows.extend(page_rows);
-                // A short page ends the result set. It is also what a server too
-                // old to paginate this query answers page 1 with, so stopping
-                // here keeps such a server from re-serving the same rows.
-                if page_len < PAGE_SIZE || page_num >= view.pagination.total_pages {
-                    break;
-                }
-                page_num += 1;
-            }
+            // A result this function can't read is an error, not an empty one:
+            // returning no rows would silently answer a query with none of its result.
+            let Some(view) = response.data_frame.map(|df| df.view) else {
+                return Err(OxenError::basic_str(
+                    "Query returned no data frame. Index the data frame before querying.",
+                ));
+            };
+            let serde_json::Value::Array(rows) = view.data else {
+                return Err(OxenError::basic_str(format!(
+                    "Expected an array of rows, got: {}",
+                    view.data
+                )));
+            };
             Ok::<_, OxenError>(rows)
         })?;
 
