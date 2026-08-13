@@ -171,7 +171,15 @@ MODIFIED_AUTH_CONFIG=true
 # log destinations, so every trace asserted below arrives at the stock log level — which for the
 # CLI and the Python bindings is "off". Setting RUST_LOG=info here would hide a regression that
 # re-couples the two.
-OXEN_OTEL_ENDPOINT=http://localhost:4317 \
+#
+# The server exports over OTLP/HTTP while the CLI and the Python bindings below stay on gRPC, so
+# one run covers both transports against a real collector. The server is the one on HTTP because
+# that is the transport a deployed server uses: it is the binary built with the otel feature, and
+# hosted collectors commonly accept OTLP/HTTP with binary protobuf and nothing else. Note that the
+# trace assertions below read the server's spans, so a break in HTTP export surfaces here as
+# missing or unparented spans rather than as an obvious export failure.
+OXEN_OTEL_ENDPOINT=http://localhost:4318 \
+OXEN_OTEL_PROTOCOL=http \
 OXEN_METRICS_PORT=9090 \
 "$SERVER" start &
 SERVER_PID=$!
