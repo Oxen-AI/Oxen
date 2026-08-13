@@ -39,29 +39,33 @@ The `oxen` CLI can export tracing spans to any OTLP-compatible collector
 cargo build -p oxen-cli --features otel
 ```
 
-At runtime, set **both** `OXEN_OTEL_ENDPOINT` and `RUST_LOG=info`:
+At runtime, set `OXEN_OTEL_ENDPOINT`:
 
 ```bash
-OXEN_OTEL_ENDPOINT=http://localhost:4317 RUST_LOG=info oxen pull
+OXEN_OTEL_ENDPOINT=http://localhost:4317 oxen pull
 ```
 
-### Why `RUST_LOG=info` is required
+### Filtering: logs and spans are separate
 
-The CLI defaults to `LevelFilter::OFF` when `RUST_LOG` is not set. The
-`RUST_LOG` filter is global — it gates what reaches **all** tracing outputs,
-including the OpenTelemetry exporter. Since `#[tracing::instrument]` creates
-spans at `INFO` level, they are silently dropped before the OTel layer ever
-sees them unless the filter is at `INFO` or below.
+`RUST_LOG` gates the CLI's log output. Span export is gated separately by
+`OXEN_OTEL_FILTER`, which defaults to `info` — the level
+`#[tracing::instrument]` records at. So spans export at the stock settings even
+though the CLI logs nothing by default, and raising `RUST_LOG` for a debugging
+session does not change what is exported.
 
-Setting `OXEN_OTEL_ENDPOINT` alone is not enough — you must also set
-`RUST_LOG=info` (or more targeted, e.g. `RUST_LOG=liboxen=info`) for spans
-to be exported.
+`OXEN_OTEL_FILTER` takes the same directive syntax as `RUST_LOG`, so export can
+be narrowed or widened on its own:
+
+```bash
+OXEN_OTEL_FILTER=warn,liboxen=debug OXEN_OTEL_ENDPOINT=http://localhost:4317 oxen pull
+```
 
 | Variable | Description | Default |
 |---|---|---|
 | `OXEN_OTEL_ENDPOINT` | Collector endpoint URL. Falls back to `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (posted to as-is under HTTP, so include `/v1/traces`), then `OTEL_EXPORTER_OTLP_ENDPOINT`. Absent from all three = disabled. | *(none)* |
 | `OXEN_OTEL_PROTOCOL` | Transport: `grpc`, or `http` / `http/protobuf` / `http/json` for HTTP (binary protobuf either way). Falls back to `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`, then `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` |
-| `RUST_LOG` | Must include `info` level for spans to be exported | `off` |
+| `OXEN_OTEL_FILTER` | Which spans and events are exported. Same syntax as `RUST_LOG`, and independent of it. | `info` |
+| `RUST_LOG` | Log verbosity on stderr. Does not affect span export. | `off` |
 
 ### Quick start with Jaeger
 
@@ -76,7 +80,7 @@ docker run --rm --name jaeger \
   cr.jaegertracing.io/jaegertracing/jaeger:2.17.0
 
 # Run a pull with tracing enabled
-OXEN_OTEL_ENDPOINT=http://localhost:4317 RUST_LOG=info cargo run --features otel -p oxen-cli pull
+OXEN_OTEL_ENDPOINT=http://localhost:4317 cargo run --features otel -p oxen-cli pull
 
 # View traces at http://localhost:16686 under service "oxen"
 ```
