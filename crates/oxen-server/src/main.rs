@@ -141,6 +141,8 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
         crate::controllers::workspaces::mergeability,
         crate::controllers::workspaces::commit,
         // Workspaces - changes
+        crate::controllers::workspaces::changes::list_root,
+        crate::controllers::workspaces::changes::list,
         crate::controllers::workspaces::changes::unstage,
         crate::controllers::workspaces::changes::unstage_many,
         // Workspaces - files

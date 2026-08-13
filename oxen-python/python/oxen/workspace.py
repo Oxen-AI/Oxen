@@ -285,13 +285,27 @@ class Workspace:
 
     def rm(self, path: str) -> None:
         """
-        Remove a file from the workspace
+        Unstage a file that was previously added to the workspace.
+        Despite the name, this does not stage a deletion of a file in
+        the base repo. Prefer `unstage`, which does the same thing
+        through the non-deprecated endpoint.
 
         Args:
             path: `str`
-                The path to the file on workspace to be removed
+                The path to the staged file to unstage
         """
         self._workspace.rm(path)
+
+    def unstage(self, path: str) -> None:
+        """
+        Unstage a file that was previously added to the workspace,
+        without touching the base repo.
+
+        Args:
+            path: `str`
+                The path to the staged file to unstage
+        """
+        self._workspace.unstage(path)
 
     def commit(
         self,

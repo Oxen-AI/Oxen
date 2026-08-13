@@ -392,7 +392,8 @@ pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpErro
         (status = 200, description = "Workspace committed successfully", body = CommitResponse),
         (status = 400, description = "Invalid request body"),
         (status = 404, description = "Workspace or branch not found"),
-        (status = 422, description = "Unprocessable Entity, e.g., workspace is behind main branch")
+        (status = 409, description = "Conflict — a staged file also changed on the target branch since the workspace's base commit"),
+        (status = 422, description = "Unprocessable Entity — the commit failed for another reason")
     )
 )]
 pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {

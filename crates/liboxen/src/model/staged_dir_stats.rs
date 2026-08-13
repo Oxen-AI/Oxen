@@ -2,12 +2,14 @@ use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::StagedEntryStatus;
 
 // Used for a quick summary of directory
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct StagedDirStats {
+    #[schema(value_type = String)]
     pub path: PathBuf,
     pub num_files_staged: usize,
     pub total_files: usize,
