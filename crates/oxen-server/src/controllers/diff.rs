@@ -403,8 +403,12 @@ pub async fn file(
     let mut opts = DFOpts::empty();
     opts = df_opts_query::parse_opts(&query, &mut opts)?;
 
-    let (page, page_size) = opts.page_bounds();
-    opts.slice = Some(SliceRange::for_page(page, page_size));
+    // A slice or row the caller named is the range they asked for, so only derive one from the
+    // page when they named none.
+    if opts.slice_indices()?.is_none() {
+        let (page, page_size) = opts.page_bounds();
+        opts.slice = Some(SliceRange::for_page(page, page_size));
+    }
 
     let diff = repositories::diffs::diff_entries(
         &repository,
@@ -805,6 +809,9 @@ pub async fn get_derived_df(
     log::debug!("get_derived_df got opts: {opts:?}");
 
     let (page, page_size) = opts.page_bounds();
+    // A slice or row the caller named is applied by the transform below, so paginating its
+    // result would slice the same frame a second time.
+    let paginate_by_page = opts.slice_indices()?.is_none();
 
     // Clear these for the first transform
     opts.page = None;
@@ -824,9 +831,13 @@ pub async fn get_derived_df(
             let view_height = view_df.height();
 
             // Paginate after transform
-            let mut paginate_opts = DFOpts::empty();
-            paginate_opts.slice = Some(SliceRange::for_page(page, page_size));
-            let mut paginated_df = tabular::transform(view_df, paginate_opts).await?;
+            let mut paginated_df = if paginate_by_page {
+                let mut paginate_opts = DFOpts::empty();
+                paginate_opts.slice = Some(SliceRange::for_page(page, page_size));
+                tabular::transform(view_df, paginate_opts).await?
+            } else {
+                view_df
+            };
 
             let total_pages = (view_height as f64 / page_size as f64).ceil() as usize;
             let source_size = DataFrameSize {
