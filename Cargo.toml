@@ -105,9 +105,10 @@ mockito = "1.1.0"
 mp4 = "0.14.0"
 num_cpus = "1.16.0"
 opentelemetry = "0.31"
-# The HTTP path's encoding is chosen at compile time, not from the environment: the exporter never
-# reads `OTEL_EXPORTER_OTLP_PROTOCOL`, and enabling "http-json" would make JSON the default encoding
-# for every OTLP/HTTP export. Binary protobuf comes from the crate's default "http-proto".
+# The protocol env vars select the transport; the OTLP/HTTP encoding is a compile-time choice this
+# feature list makes. "http-proto" (a default feature) is what supplies binary protobuf, and adding
+# "http-json" back would make JSON the encoding the exporter defaults to — which is why the builder
+# names its encoding rather than inheriting that default.
 opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic", "gzip-http", "gzip-tonic", "tls-roots", "trace"] }
 opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
 os_path = "0.8.0"

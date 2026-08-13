@@ -59,7 +59,7 @@ to be exported.
 
 | Variable | Description | Default |
 |---|---|---|
-| `OXEN_OTEL_ENDPOINT` | Collector endpoint URL. Absent = disabled. | *(none)* |
+| `OXEN_OTEL_ENDPOINT` | Collector endpoint URL. Falls back to `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (posted to as-is under HTTP, so include `/v1/traces`), then `OTEL_EXPORTER_OTLP_ENDPOINT`. Absent from all three = disabled. | *(none)* |
 | `OXEN_OTEL_PROTOCOL` | Transport: `grpc`, or `http` / `http/protobuf` / `http/json` for HTTP (binary protobuf either way). Falls back to `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`, then `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` |
 | `RUST_LOG` | Must include `info` level for spans to be exported | `off` |
 

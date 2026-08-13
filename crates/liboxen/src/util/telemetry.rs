@@ -259,23 +259,20 @@ pub fn init_tracing_with_layer(
     // concrete subscriber type (`S`) changes with each `.with()` call and
     // `OpenTelemetryLayer<S, T>` must match the exact inner subscriber.
     #[cfg(feature = "otel")]
-    let (m_otel_layer, m_tracer_provider, m_endpoint_p) = match otel_env(
-        "OXEN_OTEL_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_ENDPOINT",
-    ) {
-        Some(endpoint) => {
-            let endpoint = normalize_otel_endpoint(&endpoint)?;
+    let (m_otel_layer, m_tracer_provider, m_endpoint_p) = match otel_endpoint() {
+        Some(mut endpoint) => {
+            endpoint.url = normalize_otel_endpoint(&endpoint.url)?;
 
             let protocol = otel_protocol()?;
 
             match build_otel_layer(app_name, &protocol, &endpoint) {
                 (Some(layer), Some(provider)) => {
                     atexit_flush::register(provider.clone());
+                    let url = &endpoint.url;
                     (
                         Some(layer),
                         Some(provider),
-                        Some(format!("{protocol} (protobuf) -> {endpoint}")),
+                        Some(format!("{protocol} (protobuf) -> {url}")),
                     )
                 }
                 _ => (None, None, None),
@@ -370,13 +367,42 @@ fn env_names_a_service(
         .any(|name| !name.trim().is_empty())
 }
 
+/// An OTLP endpoint as configured, and whether it names the collector or the traces signal.
+#[cfg(feature = "otel")]
+struct OtlpEndpoint {
+    url: String,
+    /// Whether the OTLP signal path is this crate's to append. A base endpoint names the collector,
+    /// so `/v1/traces` is appended under HTTP; a signal-specific endpoint already names the signal
+    /// and is dialed exactly as configured, which is what the OpenTelemetry specification requires
+    /// of `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`.
+    is_base: bool,
+}
+
+/// The OTLP endpoint, from the first of the endpoint variables to name one.
+///
+/// Resolved here rather than through [`otel_env`] because the tier that matched decides whether the
+/// signal path is appended, and that distinction is lost once the value is just a string.
+#[cfg(feature = "otel")]
+fn otel_endpoint() -> Option<OtlpEndpoint> {
+    if let Some(url) = non_empty_env("OXEN_OTEL_ENDPOINT") {
+        return Some(OtlpEndpoint { url, is_base: true });
+    }
+    if let Some(url) = non_empty_env("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") {
+        return Some(OtlpEndpoint {
+            url,
+            is_base: false,
+        });
+    }
+    non_empty_env("OTEL_EXPORTER_OTLP_ENDPOINT").map(|url| OtlpEndpoint { url, is_base: true })
+}
+
 /// The first of three variables to name something: this project's own, then the traces-specific
 /// standard variable, then the general standard one.
 ///
 /// That is the precedence the OpenTelemetry SDK applies to its own variables, but it applies it
-/// only to settings it reads for itself. The endpoint and the transport are handed to the exporter
-/// builder instead, which bypasses the SDK's lookup — so a value configured through a standard
-/// variable reaches the exporter only by being read here.
+/// only to settings it reads for itself. The transport is handed to the exporter builder instead,
+/// which bypasses the SDK's lookup — so a value configured through a standard variable reaches the
+/// exporter only by being read here.
 ///
 /// A blank value names nothing and falls through, so blanking a variable leaves the next one
 /// standing rather than shadowing it with an empty string.
@@ -561,6 +587,17 @@ fn require_host(url: &str, configured: &str) -> Result<(), TelemetryError> {
 #[cfg(feature = "otel")]
 const OTLP_HTTP_TRACES_PATH: &str = "/v1/traces";
 
+/// The URL the OTLP/HTTP exporter posts spans to, which only a base endpoint has the signal path
+/// appended to. See [`OtlpEndpoint::is_base`].
+#[cfg(feature = "otel")]
+fn http_endpoint_url(endpoint: &OtlpEndpoint) -> String {
+    if endpoint.is_base {
+        http_traces_endpoint(&endpoint.url)
+    } else {
+        endpoint.url.clone()
+    }
+}
+
 /// The URL OTLP/HTTP posts spans to for a configured base endpoint.
 ///
 /// The exporter appends the signal path only to an endpoint it reads from the environment itself;
@@ -590,7 +627,7 @@ fn http_traces_endpoint(endpoint: &str) -> String {
 fn build_otel_layer<S>(
     app_name: &str,
     protocol: &Protocol,
-    endpoint: &str,
+    endpoint: &OtlpEndpoint,
 ) -> (
     Option<tracing_opentelemetry::OpenTelemetryLayer<S, opentelemetry_sdk::trace::SdkTracer>>,
     Option<opentelemetry_sdk::trace::SdkTracerProvider>,
@@ -617,7 +654,7 @@ where
             match opentelemetry_otlp::SpanExporter::builder()
                 .with_http()
                 .with_protocol(opentelemetry_otlp::Protocol::HttpBinary)
-                .with_endpoint(http_traces_endpoint(endpoint))
+                .with_endpoint(http_endpoint_url(endpoint))
                 .build()
             {
                 Ok(e) => e,
@@ -632,7 +669,7 @@ where
             // against. An `http://` endpoint ignores it.
             match opentelemetry_otlp::SpanExporter::builder()
                 .with_tonic()
-                .with_endpoint(endpoint)
+                .with_endpoint(&endpoint.url)
                 .with_tls_config(ClientTlsConfig::new().with_native_roots())
                 .build()
             {
@@ -837,8 +874,9 @@ mod tests {
     #[cfg(feature = "otel")]
     mod otel_tests {
         use super::super::{
-            Protocol, TelemetryError, env_names_a_service, http_traces_endpoint,
-            normalize_otel_endpoint, otel_filter_directives, parse_otel_protocol,
+            OtlpEndpoint, Protocol, TelemetryError, env_names_a_service, http_endpoint_url,
+            http_traces_endpoint, normalize_otel_endpoint, otel_filter_directives,
+            parse_otel_protocol,
         };
 
         /// Nothing configured is gRPC, the transport a collector reached at a bare `host:port`
@@ -1021,6 +1059,27 @@ mod tests {
                 http_traces_endpoint("https://vendor.example/otlp?token=abc"),
                 "https://vendor.example/otlp/v1/traces?token=abc"
             );
+        }
+
+        /// Only a base endpoint names the collector, so only a base endpoint gets the signal path.
+        /// A traces endpoint is posted to as configured even when it names no path of its own —
+        /// appending one would send spans somewhere the operator never pointed us.
+        #[test]
+        fn only_a_base_endpoint_carries_the_signal_path() {
+            let url = "https://vendor.example/otlp";
+            let base = OtlpEndpoint {
+                url: url.to_string(),
+                is_base: true,
+            };
+            let traces = OtlpEndpoint {
+                url: url.to_string(),
+                is_base: false,
+            };
+            assert_eq!(
+                http_endpoint_url(&base),
+                "https://vendor.example/otlp/v1/traces"
+            );
+            assert_eq!(http_endpoint_url(&traces), url);
         }
 
         /// Span export must not be silenced by the stock log level: `#[tracing::instrument]` and

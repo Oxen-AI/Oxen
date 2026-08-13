@@ -236,7 +236,7 @@ OXEN_OTEL_ENDPOINT=https://otlp.vendor.example:443 oxen-server start
 
 | Variable | Description | Default |
 |---|---|---|
-| `OXEN_OTEL_ENDPOINT` | Collector endpoint: an `http://` or `https://` URL, or a bare `host:port` (which gets `http://`). Absent = export disabled. | *(none)* |
+| `OXEN_OTEL_ENDPOINT` | Collector endpoint: an `http://` or `https://` URL, or a bare `host:port` (which gets `http://`). Absent = export disabled, unless a standard endpoint variable below names one. | *(none)* |
 | `OXEN_OTEL_PROTOCOL` | Transport: `grpc`, or `http` / `http/protobuf` / `http/json` for HTTP. Under HTTP the OTLP signal path `/v1/traces` is appended to the endpoint unless it already names one, and the payload is binary protobuf whichever of the three spellings is used. | `grpc` |
 | `OXEN_OTEL_FILTER` | Which spans and events are exported. Same syntax as `RUST_LOG`, and independent of it. | `info` |
 
@@ -257,6 +257,11 @@ standard variable, then the general one:
 
 A variable set to a blank value names nothing and falls through to the next,
 rather than shadowing it.
+
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` names the traces signal rather than the
+collector, so under HTTP it is posted to exactly as configured — include
+`/v1/traces` in it. The other two name the collector, and `/v1/traces` is
+appended to them.
 
 These standard `OTEL_*` variables are read by the SDK itself:
 
