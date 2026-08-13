@@ -9,8 +9,21 @@
 # Prerequisites:
 #   cargo build --workspace --features production
 #   docker (running)
-#   uv, maturin (for oxen-python)
+#   uv, maturin (for oxen-python) — the bindings must be built with production features, or the
+#     oxen-python trace assertion fails while every other one passes
 #   jq
+#
+# Environment:
+#   OXEN_SERVER_PORT   port for the oxen-server this starts (default 3000)
+#   OXEN_METRICS_PORT  port for its Prometheus endpoint (default 9090)
+#
+# SYNC_DIR is not read: this always runs against a temp data directory of its own, removed on exit.
+#
+# Set the ports to run alongside a development server holding the defaults:
+#   OXEN_SERVER_PORT=3010 OXEN_METRICS_PORT=9091 bin/otel-metrics-test
+#
+# Jaeger's ports (16686, 4317, 4318, 5778, 9411) are still fixed, so a container already
+# publishing them has to be stopped first.
 
 set -euo pipefail
 
@@ -21,6 +34,22 @@ OXEN="$REPO_ROOT/target/debug/oxen"
 SERVER="$REPO_ROOT/target/debug/oxen-server"
 SERVER_PID=""
 JAEGER_NAME=""
+
+# Ports and data directory, overridable so a run can step around a development server already
+# holding the defaults. On the defaults this run would bind nothing that machine does not expect
+# to be free, but a developer's own oxen-server is commonly on 3000: its health endpoint answers
+# the readiness probe below, and the workflow then runs against a server with no telemetry
+# configured, failing every assertion here for a reason that has nothing to do with telemetry.
+OXEN_SERVER_PORT="${OXEN_SERVER_PORT:-3000}"
+OXEN_METRICS_PORT="${OXEN_METRICS_PORT:-9090}"
+SERVER_URL="http://localhost:$OXEN_SERVER_PORT"
+
+# A data directory of this run's own, deliberately overriding any SYNC_DIR the environment
+# supplies: a developer's shell commonly exports one for their own server, and the workflow below
+# creates a remote repository that nothing deletes, so inheriting that value both writes into a
+# data directory this has no business touching and leaves the next run to fail on the leftovers.
+SYNC_DIR="$(mktemp -d)"
+export SYNC_DIR
 
 # Track which config files we modified so cleanup can restore/remove them
 MODIFIED_HOME_CONFIG=false
@@ -89,7 +118,7 @@ cleanup() {
         fi
     fi
     # Remove only the temp paths this run created.
-    rm -rf "$REPO_A_DIR" "$REPO_B_PARENT" "$CI_USER_TOML"
+    rm -rf "$REPO_A_DIR" "$REPO_B_PARENT" "$CI_USER_TOML" "$SYNC_DIR"
 }
 trap cleanup EXIT INT TERM
 
@@ -163,7 +192,7 @@ if [ -f "$AUTH_CONFIG" ]; then
     AUTH_CONFIG_BACKUP=$(mktemp)
     cp "$AUTH_CONFIG" "$AUTH_CONFIG_BACKUP"
 fi
-"$OXEN" config --auth localhost:3000 "$TOKEN"
+"$OXEN" config --auth "localhost:$OXEN_SERVER_PORT" "$TOKEN"
 MODIFIED_AUTH_CONFIG=true
 
 # ── Start oxen-server with OTel export and Prometheus metrics ──
@@ -180,8 +209,8 @@ MODIFIED_AUTH_CONFIG=true
 # missing or unparented spans rather than as an obvious export failure.
 OXEN_OTEL_ENDPOINT=http://localhost:4318 \
 OXEN_OTEL_PROTOCOL=http \
-OXEN_METRICS_PORT=9090 \
-"$SERVER" start &
+OXEN_METRICS_PORT="$OXEN_METRICS_PORT" \
+"$SERVER" start -p "$OXEN_SERVER_PORT" &
 SERVER_PID=$!
 
 # Wait for server to be ready (bounded: 30 attempts, 1s apart)
@@ -192,7 +221,7 @@ for _i in $(seq 1 30); do
         echo "FAIL: oxen-server exited before becoming ready"
         exit 1
     fi
-    if curl -sf --max-time 2 http://localhost:3000/api/health > /dev/null 2>&1; then
+    if curl -sf --max-time 2 "$SERVER_URL/api/health" > /dev/null 2>&1; then
         echo "oxen-server is ready"
         server_ready=true
         break
@@ -213,7 +242,7 @@ TRACEPARENT_SPAN_ID="00f067aa0ba902b7"
 curl -sf --max-time 10 \
   -H "Authorization: Bearer $TOKEN" \
   -H "traceparent: 00-$TRACEPARENT_TRACE_ID-$TRACEPARENT_SPAN_ID-01" \
-  http://localhost:3000/api/version > /dev/null
+  "$SERVER_URL/api/version" > /dev/null
 
 # ── oxen client: Full push / clone / modify / push / pull workflow ──
 
@@ -221,12 +250,12 @@ curl -sf --max-time 10 \
 curl -sf --max-time 30 -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -X POST -d '{"namespace":"ox","name":"otel-metrics-test"}' \
-  http://localhost:3000/api/repos
+  "$SERVER_URL/api/repos"
 
 # Repo A: init, commit, push (REPO_A_DIR already created by mktemp -d)
 cd "$REPO_A_DIR"
 "$OXEN" init
-"$OXEN" config --set-remote origin http://localhost:3000/ox/otel-metrics-test
+"$OXEN" config --set-remote origin "$SERVER_URL/ox/otel-metrics-test"
 echo "hello from CI" > test-file.txt
 "$OXEN" add test-file.txt
 "$OXEN" commit -m "initial commit"
@@ -235,7 +264,7 @@ echo "hello from CI" > test-file.txt
 # Clone to Repo B (oxen clone rejects absolute paths, so cd into a parent
 # tmpdir and clone using the relative "repo-b" name)
 cd "$REPO_B_PARENT"
-"$OXEN" clone http://localhost:3000/ox/otel-metrics-test repo-b
+"$OXEN" clone "$SERVER_URL/ox/otel-metrics-test" repo-b
 
 # Repo B: modify, commit, push
 cd "$REPO_B_DIR"
@@ -343,9 +372,9 @@ fi
 
 # ── Verify Prometheus metrics ──
 
-METRICS_OUTPUT=$(curl -sf --max-time 5 http://localhost:9090/metrics 2>/dev/null || true)
+METRICS_OUTPUT=$(curl -sf --max-time 5 "http://localhost:$OXEN_METRICS_PORT/metrics" 2>/dev/null || true)
 if [ -z "$METRICS_OUTPUT" ]; then
-  echo "FAIL: Could not fetch /metrics from Prometheus endpoint on port 9090"
+  echo "FAIL: Could not fetch /metrics from Prometheus endpoint on port $OXEN_METRICS_PORT"
   did_fail=true
 else
   echo "--- Prometheus /metrics sample ---"
