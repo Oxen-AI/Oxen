@@ -22,7 +22,7 @@ use std::path::PathBuf;
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/changes",
-    description = "List the staged changes (added, modified, and removed files) in a workspace, paginated.",
+    description = "List the staged changes (added, modified, and removed files) in a workspace. The added, modified, and removed lists are each paginated independently, with the same page and page_size applied to each list.",
     tag = "Workspace Files",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
@@ -83,7 +83,7 @@ pub async fn list_root(
 #[utoipa::path(
     get,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/changes/{path}",
-    description = "List the staged changes (added, modified, and removed files) under a directory in a workspace, paginated.",
+    description = "List the staged changes (added, modified, and removed files) under a directory in a workspace. The added, modified, and removed lists are each paginated independently, with the same page and page_size applied to each list.",
     tag = "Workspace Files",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
