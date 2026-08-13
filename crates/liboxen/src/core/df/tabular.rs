@@ -562,14 +562,8 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
         // drives Polars `block_in_place`, which panics on the server's current-thread runtime.
         // Mirrors the spawn_blocking-wrapped collects in `add_col_lazy`/`add_row`.
         let df_to_take = df.clone();
-        match task::spawn_blocking(move || take(df_to_take, indices)).await? {
-            Ok(new_df) => {
-                df = new_df.lazy();
-            }
-            Err(err) => {
-                log::error!("error taking indices from df {err:?}")
-            }
-        }
+        let new_df = task::spawn_blocking(move || take(df_to_take, indices)).await??;
+        df = new_df.lazy();
     }
     Ok(df)
 }
