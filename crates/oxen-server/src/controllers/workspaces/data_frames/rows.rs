@@ -64,7 +64,7 @@ pub async fn create(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
     let opts = DFOpts::empty();
     let row_schema = Schema::from_polars(row_df.schema());
     let row_df_source = DataFrameSchemaSize::from_df(&row_df, &row_schema);
-    let row_df_view = JsonDataFrameView::from_df_opts(row_df, row_schema, &opts).await;
+    let row_df_view = JsonDataFrameView::from_df_opts(row_df, row_schema, &opts).await?;
 
     let response = JsonDataFrameRowResponse {
         data_frame: JsonDataFrameViews {
@@ -110,7 +110,7 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let opts = DFOpts::empty();
     let row_schema = Schema::from_polars(row_df.schema());
     let row_df_source = DataFrameSchemaSize::from_df(&row_df, &row_schema);
-    let row_df_view = JsonDataFrameView::from_df_opts(row_df, row_schema, &opts).await;
+    let row_df_view = JsonDataFrameView::from_df_opts(row_df, row_schema, &opts).await?;
 
     let response = JsonDataFrameRowResponse {
         data_frame: JsonDataFrameViews {
@@ -182,7 +182,7 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
     Ok(HttpResponse::Ok().json(JsonDataFrameRowResponse {
         data_frame: JsonDataFrameViews {
             source: DataFrameSchemaSize::from_df(&modified_row, &schema),
-            view: JsonDataFrameView::from_df_opts(modified_row, schema, &DFOpts::empty()).await,
+            view: JsonDataFrameView::from_df_opts(modified_row, schema, &DFOpts::empty()).await?,
         },
         commit: None,
         derived_resource: None,
@@ -224,7 +224,7 @@ pub async fn delete(req: HttpRequest, _bytes: Bytes) -> Result<HttpResponse, Oxe
     Ok(HttpResponse::Ok().json(JsonDataFrameRowResponse {
         data_frame: JsonDataFrameViews {
             source: DataFrameSchemaSize::from_df(&df, &schema),
-            view: JsonDataFrameView::from_df_opts(df, schema, &DFOpts::empty()).await,
+            view: JsonDataFrameView::from_df_opts(df, schema, &DFOpts::empty()).await?,
         },
         commit: None,
         derived_resource: None,

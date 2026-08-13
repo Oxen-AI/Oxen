@@ -9,12 +9,12 @@ use std::io::Cursor;
 use utoipa::ToSchema;
 
 use super::StatusMessage;
-use crate::constants;
 use crate::core::df::tabular;
 use crate::error::OxenError;
 use crate::model::Commit;
 use crate::model::DataFrameSize;
 use crate::model::data_frame::DataFrameSchemaSize;
+use crate::opts::SliceRange;
 use crate::opts::df_opts::DFOptsView;
 
 use crate::view::Pagination;
@@ -108,20 +108,20 @@ pub struct DerivedDFResource {
 }
 
 impl WorkspaceJsonDataFrameViewResponse {
-    pub async fn empty() -> WorkspaceJsonDataFrameViewResponse {
-        WorkspaceJsonDataFrameViewResponse {
+    pub async fn empty() -> Result<WorkspaceJsonDataFrameViewResponse, OxenError> {
+        Ok(WorkspaceJsonDataFrameViewResponse {
             status: StatusMessage::resource_found(),
-            data_frame: Some(JsonDataFrameViews::empty().await),
+            data_frame: Some(JsonDataFrameViews::empty().await?),
             commit: None,
             resource: None,
             derived_resource: None,
             is_indexed: false,
-        }
+        })
     }
 }
 
 impl JsonDataFrameViews {
-    pub async fn empty() -> JsonDataFrameViews {
+    pub async fn empty() -> Result<JsonDataFrameViews, OxenError> {
         JsonDataFrameViews::from_df_and_opts(DataFrame::empty(), Schema::empty(), &DFOpts::empty())
             .await
     }
@@ -132,33 +132,33 @@ impl JsonDataFrameView {
         df: DataFrame,
         og_schema: Schema,
         opts: &DFOpts,
-    ) -> JsonDataFrameView {
+    ) -> Result<JsonDataFrameView, OxenError> {
         let full_width = df.width();
         let full_height = df.height();
 
-        let page_size = opts.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
-        let page = opts.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
-
-        let start = if page == 0 { 0 } else { page_size * (page - 1) };
-        let end = page_size * page;
+        let (page, page_size) = opts.page_bounds();
 
         let total_pages = (full_height as f64 / page_size as f64).ceil() as usize;
 
         let mut opts = opts.clone();
 
         if df.height() == 0 {
-            return JsonDataFrameView::empty_with_schema(&og_schema, full_height, &opts);
+            return Ok(JsonDataFrameView::empty_with_schema(
+                &og_schema,
+                full_height,
+                &opts,
+            ));
         };
 
-        opts.slice = Some(format!("{start}..{end}"));
+        opts.slice = Some(SliceRange::for_page(page, page_size));
         let opts_view = DFOptsView::from_df_opts(&opts);
-        let mut sliced_df = tabular::transform(df, opts).await.unwrap();
+        let mut sliced_df = tabular::transform(df, opts).await?;
 
         // Merge the metadata from the original schema
         let mut slice_schema = Schema::from_polars(sliced_df.schema());
         slice_schema.update_metadata_from_schema(&og_schema);
 
-        JsonDataFrameView {
+        Ok(JsonDataFrameView {
             schema: slice_schema,
             size: DataFrameSize {
                 height: full_height,
@@ -172,7 +172,7 @@ impl JsonDataFrameView {
                 total_entries: full_height,
             },
             opts: opts_view,
-        }
+        })
     }
 
     pub async fn from_df_opts_unpaginated(
@@ -180,7 +180,7 @@ impl JsonDataFrameView {
         og_schema: Schema,
         og_height: usize,
         opts: &DFOpts,
-    ) -> JsonDataFrameView {
+    ) -> Result<JsonDataFrameView, OxenError> {
         let full_width = df.width();
         let view_height = df.height();
 
@@ -196,7 +196,7 @@ impl JsonDataFrameView {
         let opts_view = DFOptsView::from_df_opts(&opts);
         let mut transform_opts = opts.clone();
         transform_opts.sort_by = None;
-        let mut sliced_df = tabular::transform(df, transform_opts).await.unwrap();
+        let mut sliced_df = tabular::transform(df, transform_opts).await?;
 
         // Merge the metadata from the original schema
         let mut slice_schema = Schema::from_polars(sliced_df.schema());
@@ -205,12 +205,11 @@ impl JsonDataFrameView {
         slice_schema.update_metadata_from_schema(&og_schema);
         log::debug!("Slice schema {slice_schema:?}");
 
-        let page_size = opts.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
-        let page_number = opts.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
+        let (page_number, page_size) = opts.page_bounds();
 
         let total_pages = (og_height as f64 / page_size as f64).ceil() as usize;
 
-        JsonDataFrameView {
+        Ok(JsonDataFrameView {
             schema: slice_schema,
             size: DataFrameSize {
                 height: view_height,
@@ -224,7 +223,7 @@ impl JsonDataFrameView {
                 total_entries: og_height,
             },
             opts: opts_view,
-        }
+        })
     }
 
     pub async fn to_df(&self) -> DataFrame {
@@ -291,6 +290,9 @@ impl JsonDataFrameView {
         opts: &DFOpts,
     ) -> JsonDataFrameView {
         let mut default_df = DataFrame::empty();
+        // An empty frame still answers with the page the caller asked for, so a reader gets the
+        // same pagination shape whether or not there were rows to return.
+        let (page_number, page_size) = opts.page_bounds();
         JsonDataFrameView {
             schema: schema.to_owned(),
             size: DataFrameSize {
@@ -299,8 +301,8 @@ impl JsonDataFrameView {
             },
             data: JsonDataFrameView::json_from_df(&mut default_df),
             pagination: Pagination {
-                page_number: 0,
-                page_size: 0,
+                page_number,
+                page_size,
                 total_pages: 0,
                 total_entries,
             },
@@ -314,10 +316,10 @@ impl JsonDataFrameViews {
         df: DataFrame,
         og_schema: Schema,
         opts: &DFOpts,
-    ) -> JsonDataFrameViews {
+    ) -> Result<JsonDataFrameViews, OxenError> {
         let source = DataFrameSchemaSize::from_df(&df, &og_schema);
-        let view = JsonDataFrameView::from_df_opts(df, og_schema, opts).await;
-        JsonDataFrameViews { source, view }
+        let view = JsonDataFrameView::from_df_opts(df, og_schema, opts).await?;
+        Ok(JsonDataFrameViews { source, view })
     }
 
     // To avoid duplicate pagination when the pagination has already been applied
@@ -327,11 +329,11 @@ impl JsonDataFrameViews {
         og_schema: Schema,
         og_height: usize,
         opts: &DFOpts,
-    ) -> JsonDataFrameViews {
+    ) -> Result<JsonDataFrameViews, OxenError> {
         let source = DataFrameSchemaSize::from_df(&df, &og_schema);
         let view =
-            JsonDataFrameView::from_df_opts_unpaginated(df, og_schema, og_height, opts).await;
-        JsonDataFrameViews { source, view }
+            JsonDataFrameView::from_df_opts_unpaginated(df, og_schema, og_height, opts).await?;
+        Ok(JsonDataFrameViews { source, view })
     }
 }
 

@@ -324,7 +324,10 @@ impl DFCmd {
             should_page: args.get_flag("full") || page_specified,
             should_randomize: args.get_flag("randomize"),
             should_reverse: args.get_flag("reverse"),
-            slice: args.get_one::<String>("slice").map(String::from),
+            slice: args
+                .get_one::<String>("slice")
+                .map(|s| s.parse())
+                .transpose()?,
             sort_by: args.get_one::<String>("sort").map(String::from),
             sort_by_similarity_to: args
                 .get_one::<String>("sort-by-similarity-to")

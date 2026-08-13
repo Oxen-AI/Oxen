@@ -110,7 +110,7 @@ mod tests {
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::constants::DEFAULT_REMOTE_NAME;
     use crate::error::OxenError;
-    use crate::opts::DFOpts;
+    use crate::opts::{DFOpts, SliceRange};
     use crate::repositories;
     use crate::test;
     use crate::util;
@@ -701,7 +701,7 @@ mod tests {
 
             // Get the df
             let mut opts = DFOpts::empty();
-            opts.slice = Some("330..333".to_string());
+            opts.slice = Some(SliceRange::new(330, 333)?);
             opts.columns = Some("id,title".to_string());
             let df = api::client::data_frames::get(
                 &remote_repo,

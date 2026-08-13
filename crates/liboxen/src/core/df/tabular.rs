@@ -18,7 +18,7 @@ use crate::model::DataFrameSize;
 use crate::model::LocalRepository;
 use crate::model::data_frame::schema::DataType;
 use crate::model::merkle_tree::node::MerkleTreeNode;
-use crate::opts::{CountLinesOpts, DFOpts, PaginateOpts};
+use crate::opts::{CountLinesOpts, DFOpts};
 use crate::repositories;
 use crate::storage::{VersionLocation, VersionStore};
 use crate::util::fs;
@@ -463,7 +463,7 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
             .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
     }
 
-    if let Some(col_vals) = opts.add_col_vals() {
+    if let Some(col_vals) = opts.add_col_vals()? {
         df = add_col_lazy(
             df,
             &col_vals.name,
@@ -557,19 +557,13 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
     }
 
     // These ops should be the last ops since they depends on order
-    if let Some(indices) = opts.take_indices() {
+    if let Some(indices) = opts.take_indices()? {
         // `take` collects the frame, so run it off the async runtime: a cloud frame's collect
         // drives Polars `block_in_place`, which panics on the server's current-thread runtime.
         // Mirrors the spawn_blocking-wrapped collects in `add_col_lazy`/`add_row`.
         let df_to_take = df.clone();
-        match task::spawn_blocking(move || take(df_to_take, indices)).await? {
-            Ok(new_df) => {
-                df = new_df.lazy();
-            }
-            Err(err) => {
-                log::error!("error taking indices from df {err:?}")
-            }
-        }
+        let new_df = task::spawn_blocking(move || take(df_to_take, indices)).await??;
+        df = new_df.lazy();
     }
     Ok(df)
 }
@@ -577,11 +571,11 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
 // Separate out slice transform because it needs to be done after other transforms
 pub fn transform_slice_lazy(mut df: LazyFrame, opts: &DFOpts) -> Result<LazyFrame, OxenError> {
     // Maybe slice it up
-    df = slice(df, opts);
+    df = slice(df, opts)?;
     df = head(df, opts);
     df = tail(df, opts);
 
-    if let Some(item) = opts.column_at() {
+    if let Some(item) = opts.column_at()? {
         // `collect` is real S3 IO for a cloud-backed frame, and col/index come from user input;
         // propagate errors rather than panicking via `unwrap`.
         let full_df = df.collect()?;
@@ -631,41 +625,15 @@ fn tail(df: LazyFrame, opts: &DFOpts) -> LazyFrame {
     }
 }
 
-pub fn slice_df(df: DataFrame, start: usize, end: usize) -> Result<DataFrame, OxenError> {
-    let mut opts = DFOpts::empty();
-    opts.slice = Some(format!("{start}..{end}"));
-    log::debug!("slice_df with opts: {opts:?}");
-    let df = df.lazy();
-    let df = slice(df, &opts);
-    df.collect()
-        .map_err(|e| OxenError::basic_str(format!("{e:?}")))
-}
-
-pub fn paginate_df(df: DataFrame, page_opts: &PaginateOpts) -> Result<DataFrame, OxenError> {
-    let mut opts = DFOpts::empty();
-    opts.slice = Some(format!(
-        "{}..{}",
-        page_opts.page_size * (page_opts.page_num - 1),
-        page_opts.page_size * page_opts.page_num
-    ));
-    let df = df.lazy();
-    let df = slice(df, &opts);
-    df.collect()
-        .map_err(|e| OxenError::basic_str(format!("{e:?}")))
-}
-
-fn slice(df: LazyFrame, opts: &DFOpts) -> LazyFrame {
+// `SliceRange` enforces `0 <= start < end` at construction, so there is no unusable range to
+// reject.
+fn slice(df: LazyFrame, opts: &DFOpts) -> Result<LazyFrame, OxenError> {
     log::debug!("SLICE {:?}", opts.slice);
-    if let Some((start, end)) = opts.slice_indices() {
-        log::debug!("SLICE with indices {start:?}..{end:?}");
-        if start >= end {
-            panic!("Slice error: Start must be greater than end.");
-        }
-        let len = end - start;
-        df.slice(start, len as u32)
-    } else {
-        df
-    }
+    let Some(range) = opts.slice_indices()? else {
+        return Ok(df);
+    };
+    log::debug!("SLICE with indices {range}");
+    Ok(df.slice(range.start, range.row_count()))
 }
 
 pub fn df_add_row_num(df: DataFrame) -> Result<DataFrame, OxenError> {
@@ -1606,7 +1574,7 @@ pub async fn show_path(input: impl AsRef<Path>, opts: DFOpts) -> Result<DataFram
     log::debug!("Got opts {opts:?}");
     let df = read_df(input, opts.clone()).await?;
     log::debug!("Transform finished");
-    if opts.column_at().is_some() {
+    if opts.column_at()?.is_some() {
         for val in df.get(0).unwrap() {
             match val {
                 polars::prelude::AnyValue::List(vals) => {
@@ -1775,7 +1743,10 @@ mod tests {
     use crate::core::df::{filter, tabular};
     use crate::test::{self, TEST_DATA_DIR};
     use crate::view::JsonDataFrameView;
-    use crate::{error::OxenError, opts::DFOpts};
+    use crate::{
+        error::OxenError,
+        opts::{DFOpts, SliceRange},
+    };
     use itertools::Itertools;
     use tokio::task;
 
@@ -2053,7 +2024,7 @@ mod tests {
     #[tokio::test]
     async fn test_slice_parquet_lazy() -> Result<(), OxenError> {
         let mut opts = DFOpts::empty();
-        opts.slice = Some("329..333".to_string());
+        opts.slice = Some(SliceRange::new(329, 333)?);
         let df = tabular::scan_df_parquet(test::test_1k_parquet(), 333)?;
         let df = tabular::transform_lazy(df, opts.clone()).await?;
 
@@ -2088,7 +2059,7 @@ mod tests {
     #[tokio::test]
     async fn test_slice_parquet_full_read() -> Result<(), OxenError> {
         let mut opts = DFOpts::empty();
-        opts.slice = Some("329..333".to_string());
+        opts.slice = Some(SliceRange::new(329, 333)?);
         let mut df = tabular::read_df(test::test_1k_parquet(), opts).await?;
         println!("{df:?}");
 

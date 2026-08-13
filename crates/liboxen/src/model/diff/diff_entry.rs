@@ -215,7 +215,7 @@ impl DiffEntry {
         {
             log::debug!("doing full diff for tabular");
             let diff =
-                TabularDiffView::from_file_nodes(repo, &base_entry, &head_entry, df_opts).await;
+                TabularDiffView::from_file_nodes(repo, &base_entry, &head_entry, df_opts).await?;
             return Ok(DiffEntry {
                 status: status.to_string(),
                 data_type: data_type.clone(),

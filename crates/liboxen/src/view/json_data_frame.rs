@@ -9,6 +9,7 @@ use std::io::Cursor;
 use utoipa::ToSchema;
 
 use crate::core::df::tabular;
+use crate::error::OxenError;
 use crate::model::DataFrameSize;
 use crate::{model::Schema, opts::DFOpts};
 
@@ -38,15 +39,15 @@ impl JsonDataFrame {
         }
     }
 
-    pub async fn from_df_opts(df: DataFrame, opts: DFOpts) -> JsonDataFrame {
+    pub async fn from_df_opts(df: DataFrame, opts: DFOpts) -> Result<JsonDataFrame, OxenError> {
         let full_height = df.height();
         let full_width = df.width();
 
         let schema = Schema::from_polars(df.schema());
-        let mut view_df = tabular::transform(df, opts).await.unwrap();
+        let mut view_df = tabular::transform(df, opts).await?;
         let view_schema = Schema::from_polars(view_df.schema());
 
-        JsonDataFrame {
+        Ok(JsonDataFrame {
             schema,
             view_schema,
             view_size: DataFrameSize {
@@ -58,7 +59,7 @@ impl JsonDataFrame {
                 width: full_width,
             },
             data: JsonDataFrame::json_data(&mut view_df),
-        }
+        })
     }
 
     pub async fn to_df(&self) -> DataFrame {

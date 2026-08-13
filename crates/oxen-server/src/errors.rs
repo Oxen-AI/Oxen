@@ -444,6 +444,23 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::BadRequest().json(error_json)
                     }
+                    OxenError::InvalidDataFrameParam {
+                        param,
+                        value,
+                        reason,
+                    } => {
+                        log::warn!("Invalid {param} parameter {value:?}: {reason}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "invalid_data_frame_param",
+                                "title": "Invalid query parameter",
+                                "detail": format!("The {param} parameter {value:?} is not usable: {reason}."),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
                     OxenError::NoChanges => {
                         log::warn!("Commit refused, nothing staged differs from the parent commit");
                         let error_json = json!({
@@ -1188,6 +1205,22 @@ mod tests {
         let error = OxenHttpError::from(OxenError::InvalidFileType(
             "photo.png is a image file, which cannot be read as a data frame".into(),
         ));
+        let response = error.error_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(!response.status().is_server_error());
+        assert_eq!(status_message_of(response).await, MSG_BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn test_an_unusable_data_frame_parameter_is_a_client_error() {
+        // These reach the server straight off the query string, so a panic or a 5xx here hands a
+        // caller the power to fault a request worker with a malformed page or slice.
+        let error = OxenHttpError::from(OxenError::InvalidDataFrameParam {
+            param: "slice",
+            value: "0..0".to_string(),
+            reason: "start must be less than end",
+        });
         let response = error.error_response();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
