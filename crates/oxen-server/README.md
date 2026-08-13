@@ -237,7 +237,7 @@ OXEN_OTEL_ENDPOINT=https://otlp.vendor.example:443 oxen-server start
 | Variable | Description | Default |
 |---|---|---|
 | `OXEN_OTEL_ENDPOINT` | Collector endpoint: an `http://` or `https://` URL, or a bare `host:port` (which gets `http://`). Absent = export disabled. | *(none)* |
-| `OXEN_OTEL_PROTOCOL` | Transport: `grpc` or `http`. Under `http` the OTLP signal path `/v1/traces` is appended to the endpoint unless it already names one, and the payload is binary protobuf. | `grpc` |
+| `OXEN_OTEL_PROTOCOL` | Transport: `grpc`, or `http` / `http/protobuf` / `http/json` for HTTP. Under HTTP the OTLP signal path `/v1/traces` is appended to the endpoint unless it already names one, and the payload is binary protobuf whichever of the three spellings is used. | `grpc` |
 | `OXEN_OTEL_FILTER` | Which spans and events are exported. Same syntax as `RUST_LOG`, and independent of it. | `info` |
 
 An `https://` endpoint is verified against the platform's root certificate
@@ -245,11 +245,18 @@ store under both transports, so a collector behind a publicly trusted
 certificate needs no further configuration. A private CA has to be installed in
 that store.
 
-The standard `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_PROTOCOL`
-variables are also respected as fallbacks where `OXEN_OTEL_ENDPOINT` and
-`OXEN_OTEL_PROTOCOL` are not set, so a vendor's stock configuration snippet
-works as given. The protocol variable's `http/protobuf` and `http/json` both
-select the HTTP transport; spans are encoded as binary protobuf either way.
+The endpoint and the transport each fall back to their standard variables where
+the `OXEN_` one is not set, so a vendor's stock configuration snippet works as
+given. Each is resolved in the order `OXEN_OTEL_*`, then the traces-specific
+standard variable, then the general one:
+
+| Setting | Resolved in this order |
+|---|---|
+| Endpoint | `OXEN_OTEL_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT` |
+| Transport | `OXEN_OTEL_PROTOCOL`, `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`, `OTEL_EXPORTER_OTLP_PROTOCOL` |
+
+A variable set to a blank value names nothing and falls through to the next,
+rather than shadowing it.
 
 These standard `OTEL_*` variables are read by the SDK itself:
 

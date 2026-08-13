@@ -60,7 +60,7 @@ to be exported.
 | Variable | Description | Default |
 |---|---|---|
 | `OXEN_OTEL_ENDPOINT` | Collector endpoint URL. Absent = disabled. | *(none)* |
-| `OXEN_OTEL_PROTOCOL` | Transport: `grpc` or `http` (binary protobuf either way). Falls back to `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` |
+| `OXEN_OTEL_PROTOCOL` | Transport: `grpc`, or `http` / `http/protobuf` / `http/json` for HTTP (binary protobuf either way). Falls back to `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`, then `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` |
 | `RUST_LOG` | Must include `info` level for spans to be exported | `off` |
 
 ### Quick start with Jaeger
