@@ -171,6 +171,14 @@ impl PyWorkspace {
         Ok(())
     }
 
+    fn unstage(&self, path: PathBuf) -> Result<(), PyOxenError> {
+        pyo3_async_runtimes::tokio::get_runtime().block_on(async {
+            api::client::workspaces::changes::rm(self.repo.repo()?, &self.get_identifier(), path)
+                .await
+        })?;
+        Ok(())
+    }
+
     fn delete(&self) -> Result<(), PyOxenError> {
         pyo3_async_runtimes::tokio::get_runtime().block_on(async {
             api::client::workspaces::delete(self.repo.repo()?, &self.id).await

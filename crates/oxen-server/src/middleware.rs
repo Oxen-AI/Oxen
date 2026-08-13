@@ -13,12 +13,41 @@ use tracing_actix_web::{DefaultRootSpanBuilder, RootSpanBuilder, root_span};
 // Oxen request Id
 pub const OXEN_REQUEST_ID: &str = "x-oxen-request-id";
 
+/// Longest inbound request id this server will adopt — room for a UUID several times over.
+const MAX_REQUEST_ID_LEN: usize = 128;
+
+/// Whether an inbound request id is one this server will carry as its own.
+///
+/// Narrower than what a header value may hold, because the id is echoed on the response, written to
+/// both access-log lines, and recorded on every span of the request: an unbounded value inflates
+/// all three, and a tab or space blurs the access-log format. The accepted shape covers a UUID and
+/// a URL-safe base64 id.
+fn is_acceptable_request_id(candidate: &str) -> bool {
+    !candidate.is_empty()
+        && candidate.len() <= MAX_REQUEST_ID_LEN
+        && candidate
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
+/// The caller's request id, or a freshly generated one when it sent none this server can use.
 pub fn extract_or_generate_request_id(headers: &actix_web::http::header::HeaderMap) -> String {
-    headers
-        .get(OXEN_REQUEST_ID)
-        .and_then(|h| h.to_str().ok())
-        .map(|s| s.to_string())
-        .unwrap_or_else(generate_request_id)
+    let Some(header) = headers.get(OXEN_REQUEST_ID) else {
+        return generate_request_id();
+    };
+    if let Ok(inbound) = header.to_str()
+        && is_acceptable_request_id(inbound)
+    {
+        return inbound.to_string();
+    }
+    // Substituting an id loses correlation with the caller, so leave something to find. At `debug`,
+    // and without the value: both are caller-controlled, and the request still succeeds. A header
+    // that is not even UTF-8 reports here too, rather than looking like no header at all.
+    log::debug!(
+        "ignoring malformed {OXEN_REQUEST_ID} header ({} bytes); generating a request id instead",
+        header.len()
+    );
+    generate_request_id()
 }
 
 pub fn generate_request_id() -> String {
@@ -330,6 +359,74 @@ mod tests {
     async fn test_no_request_id() {
         // Outside scope, should return None
         assert_eq!(get_request_id(), None);
+    }
+
+    /// Builds a header map carrying `value` as the inbound request id.
+    fn headers_with_request_id(value: &str) -> actix_web::http::header::HeaderMap {
+        use actix_web::http::header::{HeaderMap, HeaderName, HeaderValue};
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static(OXEN_REQUEST_ID),
+            HeaderValue::from_str(value).expect("the test id should be a valid header value"),
+        );
+        headers
+    }
+
+    /// A UUID, a URL-safe base64 id, and one at the length limit all survive untouched — carrying
+    /// the caller's id through is the whole point of honoring the header.
+    #[test]
+    fn test_extract_request_id_accepts_usable_values() {
+        for id in [
+            "1b4e28ba-2fa1-11d2-883f-0016d3cca427",
+            "aB3-_xYz9Qw2",
+            &"a".repeat(MAX_REQUEST_ID_LEN),
+        ] {
+            assert_eq!(
+                extract_or_generate_request_id(&headers_with_request_id(id)),
+                id,
+                "{id} should be carried through unchanged"
+            );
+        }
+    }
+
+    /// A header value that is not UTF-8 at all takes the same path: `to_str` rejects it before the
+    /// shape check runs, and it must still be replaced rather than read as no header at all.
+    #[test]
+    fn test_extract_request_id_replaces_a_non_utf8_value() {
+        use actix_web::http::header::{HeaderMap, HeaderName, HeaderValue};
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static(OXEN_REQUEST_ID),
+            HeaderValue::from_bytes(b"\xff\xfeabc").expect("the bytes should form a header value"),
+        );
+
+        let extracted = extract_or_generate_request_id(&headers);
+        assert!(
+            is_acceptable_request_id(&extracted),
+            "a non-UTF-8 id should be replaced with a usable one, got {extracted:?}"
+        );
+    }
+
+    /// An id that is oversized or carries characters that would blur a log line is replaced rather
+    /// than propagated onto every span and log line of the request.
+    #[test]
+    fn test_extract_request_id_replaces_unusable_values() {
+        for id in [
+            &"a".repeat(MAX_REQUEST_ID_LEN + 1),
+            "has space",
+            "has\ttab",
+            "has.dot",
+            "",
+        ] {
+            let extracted = extract_or_generate_request_id(&headers_with_request_id(id));
+            assert_ne!(extracted, id, "{id:?} should not be carried through");
+            assert!(
+                is_acceptable_request_id(&extracted),
+                "the replacement for {id:?} should itself be usable, got {extracted:?}"
+            );
+        }
     }
 
     #[test]

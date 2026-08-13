@@ -1,6 +1,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::{
     model::{
@@ -13,7 +14,7 @@ use crate::{
 use super::{PaginatedDirEntries, StatusMessage, entries::EMetadataEntry};
 
 // TODO: Removed dirs
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct RemoteStagedStatus {
     pub added_dirs: SummarizedStagedDirStats,
     pub added_files: PaginatedDirEntries,
@@ -21,7 +22,7 @@ pub struct RemoteStagedStatus {
     pub removed_files: PaginatedDirEntries,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
 pub struct RemoteStagedStatusResponse {
     #[serde(flatten)]
     pub status: StatusMessage,

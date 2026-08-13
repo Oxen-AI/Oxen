@@ -728,10 +728,10 @@ async fn pull_small_entries(
 
     let total_size = repositories::entries::compute_entries_size(&entries)?;
 
-    // Compute num chunks
-    let num_chunks = ((total_size / stream_segment_size()) + 1) as usize;
+    // Never zero: `chunk_size` below divides by `num_chunks`.
+    let num_chunks = total_size.div_ceil(stream_segment_size()).max(1) as usize;
 
-    let mut chunk_size = entries.len() / num_chunks;
+    let mut chunk_size = entries.len().div_ceil(num_chunks);
     if num_chunks > entries.len() {
         chunk_size = entries.len();
     }
@@ -971,10 +971,10 @@ async fn download_small_entries(
 
     let total_size = repositories::entries::compute_entries_size(&entries)?;
 
-    // Compute num chunks
-    let num_chunks = ((total_size / stream_segment_size()) + 1) as usize;
+    // Never zero: `chunk_size` below divides by `num_chunks`.
+    let num_chunks = total_size.div_ceil(stream_segment_size()).max(1) as usize;
 
-    let mut chunk_size = entries.len() / num_chunks;
+    let mut chunk_size = entries.len().div_ceil(num_chunks);
     if num_chunks > entries.len() {
         chunk_size = entries.len();
     }

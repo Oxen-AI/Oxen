@@ -435,7 +435,10 @@ fn unique_count_df(df: LazyFrame, columns: Vec<String>) -> Result<LazyFrame, Oxe
 
 pub async fn transform(df: DataFrame, opts: DFOpts) -> Result<DataFrame, OxenError> {
     let df = transform_lazy(df.lazy(), opts.clone()).await?;
-    Ok(transform_slice_lazy(df, &opts)?.collect()?)
+    task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
+        Ok(transform_slice_lazy(df, &opts)?.collect()?)
+    })
+    .await?
 }
 
 pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame, OxenError> {

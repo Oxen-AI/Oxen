@@ -7,7 +7,6 @@ use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::opts::{PaginateOpts, SortOpts};
 use crate::repositories;
 use crate::util::concurrency;
-use rayon::prelude::*;
 
 use crate::constants::ROOT_PATH;
 use crate::model::{
@@ -223,7 +222,7 @@ pub use crate::core::v_latest::entries::count_for_commit;
 
 /// Given a list of entries, compute the total in bytes size of all entries.
 pub fn compute_entries_size(entries: &[CommitEntry]) -> Result<u64, OxenError> {
-    let total_size: u64 = entries.into_par_iter().map(|e| e.num_bytes).sum();
+    let total_size: u64 = entries.iter().map(|e| e.num_bytes).sum();
     Ok(total_size)
 }
 

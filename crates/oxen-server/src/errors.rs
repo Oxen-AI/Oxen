@@ -206,7 +206,7 @@ impl error::ResponseError for OxenHttpError {
                     "status_message": MSG_CONFLICT,
                 });
 
-                HttpResponse::NotFound().json(error_json)
+                HttpResponse::Conflict().json(error_json)
             }
             OxenHttpError::DatasetAlreadyIndexed(path) => {
                 let error_json = json!({

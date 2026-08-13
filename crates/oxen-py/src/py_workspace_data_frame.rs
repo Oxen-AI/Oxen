@@ -183,30 +183,50 @@ impl PyWorkspaceDataFrame {
         Ok(result)
     }
 
-    /// Query the data frame using SQL
+    /// Query the data frame using SQL. Returns every row the query selects.
     fn sql_query(&self, sql: String) -> Result<String, PyOxenError> {
-        let mut opts = DFOpts::empty();
-        opts.sql = Some(sql);
+        let rows = pyo3_async_runtimes::tokio::get_runtime().block_on(async {
+            let mut opts = DFOpts::empty();
+            opts.sql = Some(sql);
+            // The read is paginated, and this returns the whole result, so ask for it
+            // as a single page. Stitching several pages together would join separate
+            // queries, and a query the read cannot order — one that groups or dedupes
+            // and carries no `ORDER BY` of its own — need not return rows in the same
+            // order twice, so its pages would repeat some rows and drop others.
+            opts.page = Some(1);
+            // The widest page the read can describe: pagination bounds travel as i64,
+            // so a larger number is not a larger page, only one the server has to
+            // narrow before it can use it.
+            opts.page_size = Some(i64::MAX as usize);
 
-        match pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-            api::client::workspaces::data_frames::get(
+            let response = api::client::workspaces::data_frames::get(
                 self.workspace.repo.repo()?,
                 &self.workspace.id,
                 &self.path,
                 &opts,
             )
             .await
-        }) {
-            Ok(data) => {
-                // Extract the serde_json::Value from the JsonDataFrameView
-                let view = data.data_frame.unwrap().view.data;
+            .map_err(|e| OxenError::basic_str(format!("Failed to query data frame: {e}")))?;
 
-                // convert json to String
-                let result: String = serde_json::to_string(&view).unwrap();
-                Ok(result)
-            }
-            Err(e) => Err(OxenError::basic_str(format!("Failed to query data frame: {e}")).into()),
-        }
+            // A result this function can't read is an error, not an empty one:
+            // returning no rows would silently answer a query with none of its result.
+            let Some(view) = response.data_frame.map(|df| df.view) else {
+                return Err(OxenError::basic_str(
+                    "Query returned no data frame. Index the data frame before querying.",
+                ));
+            };
+            let serde_json::Value::Array(rows) = view.data else {
+                return Err(OxenError::basic_str(format!(
+                    "Expected an array of rows, got: {}",
+                    view.data
+                )));
+            };
+            Ok::<_, OxenError>(rows)
+        })?;
+
+        let result = serde_json::to_string(&rows)
+            .map_err(|e| OxenError::basic_str(format!("Could not convert view to json: {e}")))?;
+        Ok(result)
     }
 
     fn is_nearest_neighbors_enabled(&self, column: String) -> Result<bool, PyOxenError> {
