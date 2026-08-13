@@ -906,10 +906,7 @@ pub async fn get_derived_df(
             log::warn!("Error parsing SQL: {sql}");
             Err(OxenHttpError::SQLParseError(sql))
         }
-        Err(e) => {
-            log::error!("Error transforming df: {e}");
-            Err(OxenHttpError::InternalServerError)
-        }
+        Err(err) => Err(err.into()),
     }
 }
 
