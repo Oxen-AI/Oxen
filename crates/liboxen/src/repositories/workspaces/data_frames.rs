@@ -120,6 +120,23 @@ pub fn count(workspace: &Workspace, path: &Path) -> Result<usize, DataFrameError
     })
 }
 
+/// Number of rows the pages of a [`query`] with these `opts` span: the rows
+/// `opts.sql` selects, or the whole frame when there is no `sql`. Pagination
+/// metadata has to describe the same row set the page came out of, so it belongs
+/// here rather than on [`count`], which only ever counts the whole frame.
+pub fn count_for_query(
+    workspace: &Workspace,
+    path: &Path,
+    opts: &DFOpts,
+) -> Result<usize, DataFrameError> {
+    let Some(sql) = &opts.sql else {
+        return count(workspace, path);
+    };
+
+    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
+    with_hardened_query_conn(&db_path, |conn| df_db::count_sql(conn, sql))
+}
+
 pub fn query(
     workspace: &Workspace,
     path: &Path,
@@ -147,7 +164,7 @@ pub fn query(
         with_hardened_query_conn(&db_path, |conn| {
             if let Some(sql) = &opts.sql {
                 log::debug!("querying sql: {sql:?}");
-                sql::query_df(conn, sql.clone(), None)
+                sql::query_df(conn, sql.clone(), Some(opts))
             } else {
                 let mut select = Select::new().select("*").from(TABLE_NAME);
                 // Deterministic page order: DuckDB UPDATEs physically relocate
@@ -2420,6 +2437,248 @@ mod tests {
         Path::new("annotations")
             .join("train")
             .join("bounding_box.csv")
+    }
+
+    /// Values of `name` in the frame's current row order, so a page can be
+    /// compared against the page before it.
+    fn column_values(df: &DataFrame, name: &str) -> Result<Vec<String>, OxenError> {
+        let column = df.column(name)?;
+        (0..df.height())
+            .map(|i| Ok(column.get(i)?.to_string().trim_matches('"').to_string()))
+            .collect()
+    }
+
+    fn page_opts(page: usize, page_size: usize, sql: Option<&str>) -> DFOpts {
+        let mut opts = DFOpts::empty();
+        opts.page = Some(page);
+        opts.page_size = Some(page_size);
+        opts.sql = sql.map(str::to_string);
+        opts
+    }
+
+    /// A `sql` read returns the page it was asked for. Pages are disjoint, they
+    /// run out, and they count against the query's own row set rather than the
+    /// whole frame.
+    #[tokio::test]
+    async fn test_query_with_sql_returns_one_page_at_a_time() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let path = list_typed_add_row_test_paths();
+            workspaces::data_frames::index(&repo, &workspace, &path).await?;
+
+            // 4 of the fixture's 6 rows are labelled dog.
+            let dogs = format!("SELECT * FROM {TABLE_NAME} WHERE label = 'dog'");
+            let sql_page = |page| page_opts(page, 2, Some(&dogs));
+
+            let first = workspaces::data_frames::query(&workspace, &path, &sql_page(1))?;
+            assert_eq!(first.height(), 2, "a page must hold at most page_size rows");
+
+            let second = workspaces::data_frames::query(&workspace, &path, &sql_page(2))?;
+            assert_eq!(second.height(), 2);
+            assert_eq!(
+                column_values(&first, "min_x")?,
+                vec!["101.5", "102.5"],
+                "an unsorted query pages in row order"
+            );
+            assert_eq!(column_values(&second, "min_x")?, vec!["7.0", "19.0"]);
+
+            let third = workspaces::data_frames::query(&workspace, &path, &sql_page(3))?;
+            assert_eq!(third.height(), 0, "pages past the result set are empty");
+
+            // Pagination values too large to represent must clamp rather than
+            // overflow the offset or exceed what the LIMIT/OFFSET types accept: the
+            // furthest page reads past the end, the widest page holds everything.
+            let furthest = page_opts(usize::MAX, 2, Some(&dogs));
+            assert_eq!(
+                workspaces::data_frames::query(&workspace, &path, &furthest)?.height(),
+                0
+            );
+            let widest = page_opts(1, usize::MAX, Some(&dogs));
+            assert_eq!(
+                workspaces::data_frames::query(&workspace, &path, &widest)?.height(),
+                4
+            );
+
+            assert_eq!(
+                workspaces::data_frames::count_for_query(&workspace, &path, &sql_page(1))?,
+                4,
+                "a query's count is what it selects, not what the frame holds"
+            );
+            assert_eq!(
+                workspaces::data_frames::count_for_query(
+                    &workspace,
+                    &path,
+                    &page_opts(1, 2, None)
+                )?,
+                6,
+                "without sql the count is the whole frame"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// A `sql` read pages within whatever the caller's SQL bounds and orders
+    /// itself to, instead of colliding with its LIMIT or overriding its sort.
+    #[tokio::test]
+    async fn test_query_with_sql_pages_inside_callers_own_limit() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let path = list_typed_add_row_test_paths();
+            workspaces::data_frames::index(&repo, &workspace, &path).await?;
+
+            // The 3 smallest min_x of the 6 rows: 7.0, 19.0, 30.5.
+            let smallest = format!("SELECT * FROM {TABLE_NAME} ORDER BY min_x LIMIT 3");
+            let sql_page = |page| page_opts(page, 2, Some(&smallest));
+
+            let first = workspaces::data_frames::query(&workspace, &path, &sql_page(1))?;
+            assert_eq!(
+                column_values(&first, "min_x")?,
+                vec!["7.0", "19.0"],
+                "the caller's sort survives pagination"
+            );
+
+            let second = workspaces::data_frames::query(&workspace, &path, &sql_page(2))?;
+            assert_eq!(
+                column_values(&second, "min_x")?,
+                vec!["30.5"],
+                "the last page is short because the caller's LIMIT bounds it"
+            );
+
+            let third = workspaces::data_frames::query(&workspace, &path, &sql_page(3))?;
+            assert_eq!(third.height(), 0);
+
+            assert_eq!(
+                workspaces::data_frames::count_for_query(&workspace, &path, &sql_page(1))?,
+                3,
+                "the count must respect the caller's LIMIT too"
+            );
+
+            // A single row addressed by offset: the caller bounds the result to
+            // one row and the page has to leave that row intact.
+            let offset_row = format!("SELECT * FROM {TABLE_NAME} LIMIT 1 OFFSET 3");
+            let opts = page_opts(1, 100, Some(&offset_row));
+            let one = workspaces::data_frames::query(&workspace, &path, &opts)?;
+            assert_eq!(column_values(&one, "min_x")?, vec!["19.0"]);
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// A query whose shape can't resolve `_oxen_row_id` — it aggregates or
+    /// dedupes — still paginates rather than failing to bind an added sort.
+    #[tokio::test]
+    async fn test_query_with_aggregate_sql_paginates() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let path = list_typed_add_row_test_paths();
+            workspaces::data_frames::index(&repo, &workspace, &path).await?;
+
+            let grouped_sql = format!(
+                "SELECT label, COUNT(*) AS n FROM {TABLE_NAME} GROUP BY label ORDER BY label"
+            );
+            let opts = page_opts(1, 10, Some(&grouped_sql));
+            let grouped = workspaces::data_frames::query(&workspace, &path, &opts)?;
+            assert_eq!(column_values(&grouped, "label")?, vec!["cat", "dog"]);
+            assert_eq!(column_values(&grouped, "n")?, vec!["2", "4"]);
+
+            let distinct_sql = format!("SELECT DISTINCT label FROM {TABLE_NAME}");
+            let opts = page_opts(1, 1, Some(&distinct_sql));
+            let distinct = workspaces::data_frames::query(&workspace, &path, &opts)?;
+            assert_eq!(distinct.height(), 1, "a DISTINCT query paginates as well");
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// A statement written the way it would be typed at a prompt — terminated by
+    /// `;`, or trailing a comment — pages and counts like any other. Both are
+    /// harmless at the end of the text and change its meaning in the middle, so
+    /// they have to come off before a page's bounds are composed on.
+    #[tokio::test]
+    async fn test_query_with_terminated_sql_paginates() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let path = list_typed_add_row_test_paths();
+            workspaces::data_frames::index(&repo, &workspace, &path).await?;
+
+            // Each of these reaches pagination by a different route: a plain
+            // projection is rewritten to carry `_oxen_id`, while an aggregate and a
+            // DISTINCT are passed through as written.
+            let selected = format!("SELECT * FROM {TABLE_NAME};");
+            let aggregated =
+                format!("SELECT label, COUNT(*) AS n FROM {TABLE_NAME} GROUP BY label;");
+            let deduped = format!("SELECT DISTINCT label FROM {TABLE_NAME};");
+            // A comment would otherwise swallow the composed bounds and quietly
+            // return the whole frame rather than failing.
+            let commented = format!("SELECT * FROM {TABLE_NAME} -- every row");
+
+            for (sql, rows, of) in [
+                (&selected, 2, 6),
+                (&aggregated, 1, 2),
+                (&deduped, 1, 2),
+                (&commented, 2, 6),
+            ] {
+                let opts = page_opts(1, rows, Some(sql));
+                let df = workspaces::data_frames::query(&workspace, &path, &opts)?;
+                assert_eq!(df.height(), rows, "{sql} should page to {rows} rows");
+                let count = workspaces::data_frames::count_for_query(&workspace, &path, &opts)?;
+                assert_eq!(count, of, "{sql} should count {of} rows");
+            }
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// The read with no `sql` is unchanged: row-ordered pages of page_size.
+    #[tokio::test]
+    async fn test_query_without_sql_pages_in_row_order() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            let workspace_id = UserConfig::identifier()?;
+            let workspace = repositories::workspaces::create(&repo, &commit, workspace_id, true)?;
+            let path = list_typed_add_row_test_paths();
+            workspaces::data_frames::index(&repo, &workspace, &path).await?;
+
+            let first = workspaces::data_frames::query(&workspace, &path, &page_opts(1, 4, None))?;
+            assert_eq!(
+                column_values(&first, "min_x")?,
+                vec!["101.5", "102.5", "7.0", "19.0"]
+            );
+
+            let second = workspaces::data_frames::query(&workspace, &path, &page_opts(2, 4, None))?;
+            assert_eq!(column_values(&second, "min_x")?, vec!["57.0", "30.5"]);
+
+            Ok(())
+        })
+        .await
     }
 
     #[tokio::test]
