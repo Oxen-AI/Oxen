@@ -22,7 +22,9 @@ pub enum TelemetryError {
     #[error("Failed to initialize tracing: {0}")]
     InitFail(#[from] TryInitError),
     #[cfg(feature = "otel")]
-    #[error("Unknown OXEN_OTEL_PROTOCOL value: {0}")]
+    #[error(
+        "Unknown OXEN_OTEL_PROTOCOL / OTEL_EXPORTER_OTLP_PROTOCOL value: {0} (expected grpc, http, http/protobuf, or http/json)"
+    )]
     UnknownProtocol(String),
     #[cfg(feature = "otel")]
     #[error(
@@ -167,8 +169,12 @@ mod atexit_flush {
 /// the server README for configuration details. Also accepts the standard named
 /// env var `OTEL_EXPORTER_OTLP_ENDPOINT`, but checks `OXEN_OTEL_ENDPOINT` first.
 ///
-/// The `OXEN_OTEL_PROTOCOL` env var is either `"http"` or `"grpc"`: it controls
-/// the protocol used for OTLP exports. If not set, defaults to `"grpc"`.
+/// The `OXEN_OTEL_PROTOCOL` env var selects the transport OTLP exports use, and
+/// accepts `"grpc"`, `"http"`, `"http/protobuf"`, or `"http/json"`, the last
+/// three all meaning HTTP. If not set, the standard
+/// `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` and `OTEL_EXPORTER_OTLP_PROTOCOL` are
+/// read in that order, and absent all three it defaults to `"grpc"`. Spans are
+/// encoded as binary protobuf under either transport.
 ///
 /// **Filtering** is per-layer, not global. `RUST_LOG` (falling back to `default`) gates the log
 /// destinations — stderr, the JSON file, and the caller-supplied layer. Span export is gated
@@ -253,32 +259,20 @@ pub fn init_tracing_with_layer(
     // concrete subscriber type (`S`) changes with each `.with()` call and
     // `OpenTelemetryLayer<S, T>` must match the exact inner subscriber.
     #[cfg(feature = "otel")]
-    let (m_otel_layer, m_tracer_provider, m_endpoint_p) = match std::env::var("OXEN_OTEL_ENDPOINT")
-        .or_else(|_| std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT"))
-        .ok()
-    {
-        Some(endpoint) => {
-            let endpoint = normalize_otel_endpoint(&endpoint)?;
+    let (m_otel_layer, m_tracer_provider, m_endpoint_p) = match otel_endpoint() {
+        Some(mut endpoint) => {
+            endpoint.url = normalize_otel_endpoint(&endpoint.url)?;
 
-            let protocol = match std::env::var("OXEN_OTEL_PROTOCOL")
-                .map(|x| x.to_lowercase())
-                .ok()
-                .as_deref()
-            {
-                Some("http") => Protocol::Http,
-                Some("grpc") | None => Protocol::Grpc,
-                Some(unknown) => {
-                    return Err(TelemetryError::UnknownProtocol(unknown.to_string()));
-                }
-            };
+            let protocol = otel_protocol()?;
 
             match build_otel_layer(app_name, &protocol, &endpoint) {
                 (Some(layer), Some(provider)) => {
                     atexit_flush::register(provider.clone());
+                    let url = &endpoint.url;
                     (
                         Some(layer),
                         Some(provider),
-                        Some(format!("{protocol} -> {endpoint}")),
+                        Some(format!("{protocol} (protobuf) -> {url}")),
                     )
                 }
                 _ => (None, None, None),
@@ -309,13 +303,15 @@ pub fn init_tracing_with_layer(
     {
         registry.try_init()?;
 
-        if std::env::var("OXEN_OTEL_ENDPOINT").is_ok() {
-            log::error!("OXEN_OTEL_ENDPOINT is set but otel feature is not enabled! (Ignoring)")
-        }
-
-        if std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").is_ok() {
+        if otel_env(
+            "OXEN_OTEL_ENDPOINT",
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+        )
+        .is_some()
+        {
             log::error!(
-                "OTEL_EXPORTER_OTLP_ENDPOINT is set but otel feature is not enabled! (Ignoring)"
+                "An OTLP endpoint is configured but the otel feature is not enabled! (Ignoring)"
             )
         }
     }
@@ -369,6 +365,51 @@ fn env_names_a_service(
         .into_iter()
         .flatten()
         .any(|name| !name.trim().is_empty())
+}
+
+/// An OTLP endpoint as configured, and whether it names the collector or the traces signal.
+#[cfg(feature = "otel")]
+struct OtlpEndpoint {
+    url: String,
+    /// Whether the OTLP signal path is this crate's to append. A base endpoint names the collector,
+    /// so `/v1/traces` is appended under HTTP. A signal-specific endpoint already names the signal
+    /// and is dialed exactly as configured, which is what the OpenTelemetry specification requires
+    /// of `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`.
+    is_base: bool,
+}
+
+/// The OTLP endpoint, from the first of the endpoint variables to name one.
+///
+/// Resolved here rather than through [`otel_env`] because the tier that matched decides whether the
+/// signal path is appended, and that distinction is lost once the value is just a string.
+#[cfg(feature = "otel")]
+fn otel_endpoint() -> Option<OtlpEndpoint> {
+    if let Some(url) = non_empty_env("OXEN_OTEL_ENDPOINT") {
+        return Some(OtlpEndpoint { url, is_base: true });
+    }
+    if let Some(url) = non_empty_env("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") {
+        return Some(OtlpEndpoint {
+            url,
+            is_base: false,
+        });
+    }
+    non_empty_env("OTEL_EXPORTER_OTLP_ENDPOINT").map(|url| OtlpEndpoint { url, is_base: true })
+}
+
+/// The first of three variables to name something: this project's own, then the traces-specific
+/// standard variable, then the general standard one.
+///
+/// That is the precedence the OpenTelemetry SDK applies to its own variables, but only to settings
+/// it reads for itself. The transport is handed to the exporter builder instead, which bypasses
+/// that lookup, so a value configured through a standard variable reaches the exporter only by
+/// being read here.
+///
+/// A blank value names nothing and falls through, so blanking a variable leaves the next one
+/// standing rather than shadowing it with an empty string.
+fn otel_env(oxen: &str, traces: &str, general: &str) -> Option<String> {
+    non_empty_env(oxen)
+        .or_else(|| non_empty_env(traces))
+        .or_else(|| non_empty_env(general))
 }
 
 /// The value of `name`, or `None` when it is unset or blank.
@@ -477,6 +518,34 @@ impl std::fmt::Display for Protocol {
     }
 }
 
+/// The transport OTLP export uses, from the first of the protocol variables to name one.
+#[cfg(feature = "otel")]
+fn otel_protocol() -> Result<Protocol, TelemetryError> {
+    let configured = otel_env(
+        "OXEN_OTEL_PROTOCOL",
+        "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
+        "OTEL_EXPORTER_OTLP_PROTOCOL",
+    );
+    parse_otel_protocol(configured.as_deref())
+}
+
+/// Read a configured protocol as a transport, defaulting to gRPC where nothing is configured.
+///
+/// The standard variables' `http/protobuf` and `http/json` name an encoding as well as a transport,
+/// and both select HTTP. Spans are encoded as binary protobuf either way, which every OTLP/HTTP
+/// endpoint accepts.
+#[cfg(feature = "otel")]
+fn parse_otel_protocol(configured: Option<&str>) -> Result<Protocol, TelemetryError> {
+    match configured
+        .map(|value| value.trim().to_lowercase())
+        .as_deref()
+    {
+        None | Some("grpc") => Ok(Protocol::Grpc),
+        Some("http" | "http/protobuf" | "http/json") => Ok(Protocol::Http),
+        Some(unknown) => Err(TelemetryError::UnknownProtocol(unknown.to_string())),
+    }
+}
+
 /// Turn a configured OTLP endpoint into an absolute URL the exporter can dial.
 ///
 /// `http://` and `https://` URLs are taken as given — TLS is what every hosted collector speaks. A
@@ -518,6 +587,17 @@ fn require_host(url: &str, configured: &str) -> Result<(), TelemetryError> {
 #[cfg(feature = "otel")]
 const OTLP_HTTP_TRACES_PATH: &str = "/v1/traces";
 
+/// The URL the OTLP/HTTP exporter posts spans to, which only a base endpoint has the signal path
+/// appended to. See [`OtlpEndpoint::is_base`].
+#[cfg(feature = "otel")]
+fn http_endpoint_url(endpoint: &OtlpEndpoint) -> String {
+    if endpoint.is_base {
+        http_traces_endpoint(&endpoint.url)
+    } else {
+        endpoint.url.clone()
+    }
+}
+
 /// The URL OTLP/HTTP posts spans to for a configured base endpoint.
 ///
 /// The exporter appends the signal path only to an endpoint it reads from the environment itself;
@@ -547,7 +627,7 @@ fn http_traces_endpoint(endpoint: &str) -> String {
 fn build_otel_layer<S>(
     app_name: &str,
     protocol: &Protocol,
-    endpoint: &str,
+    endpoint: &OtlpEndpoint,
 ) -> (
     Option<tracing_opentelemetry::OpenTelemetryLayer<S, opentelemetry_sdk::trace::SdkTracer>>,
     Option<opentelemetry_sdk::trace::SdkTracerProvider>,
@@ -567,9 +647,14 @@ where
 
     let exporter = match protocol {
         Protocol::Http => {
+            // Named rather than left to the exporter's default, which is whichever encoding the
+            // enabled cargo features imply: any crate in the graph turning on "http-json" would
+            // otherwise switch every export to JSON, silently and without a compile error.
+            // `opentelemetry_otlp::Protocol` is qualified to keep it apart from this module's own.
             match opentelemetry_otlp::SpanExporter::builder()
                 .with_http()
-                .with_endpoint(http_traces_endpoint(endpoint))
+                .with_protocol(opentelemetry_otlp::Protocol::HttpBinary)
+                .with_endpoint(http_endpoint_url(endpoint))
                 .build()
             {
                 Ok(e) => e,
@@ -584,7 +669,7 @@ where
             // against. An `http://` endpoint ignores it.
             match opentelemetry_otlp::SpanExporter::builder()
                 .with_tonic()
-                .with_endpoint(endpoint)
+                .with_endpoint(&endpoint.url)
                 .with_tls_config(ClientTlsConfig::new().with_native_roots())
                 .build()
             {
@@ -789,9 +874,52 @@ mod tests {
     #[cfg(feature = "otel")]
     mod otel_tests {
         use super::super::{
-            TelemetryError, env_names_a_service, http_traces_endpoint, normalize_otel_endpoint,
-            otel_filter_directives,
+            OtlpEndpoint, Protocol, TelemetryError, env_names_a_service, http_endpoint_url,
+            http_traces_endpoint, normalize_otel_endpoint, otel_filter_directives,
+            parse_otel_protocol,
         };
+
+        /// Nothing configured is gRPC, the transport a collector reached at a bare `host:port`
+        /// speaks.
+        #[test]
+        fn no_configured_protocol_is_grpc() {
+            assert_eq!(parse_otel_protocol(None).unwrap(), Protocol::Grpc);
+        }
+
+        /// The values the standard `OTEL_EXPORTER_OTLP_PROTOCOL` carries name an encoding along
+        /// with the transport. Both HTTP spellings select HTTP rather than being rejected, so a
+        /// deployment configured only through the standard variable exports over the transport it
+        /// asked for instead of silently falling back to gRPC.
+        #[test]
+        fn standard_protocol_values_select_a_transport() {
+            assert_eq!(parse_otel_protocol(Some("grpc")).unwrap(), Protocol::Grpc);
+            // Case and surrounding whitespace are normalized before the match, so the HTTP
+            // spellings cover both for every value.
+            for value in [
+                "http",
+                "http/protobuf",
+                "http/json",
+                "HTTP/protobuf",
+                " http ",
+            ] {
+                assert_eq!(
+                    parse_otel_protocol(Some(value)).unwrap(),
+                    Protocol::Http,
+                    "{value} should select HTTP"
+                );
+            }
+        }
+
+        #[test]
+        fn rejects_an_unknown_protocol() {
+            for value in ["https", "http/proto", "tcp"] {
+                let result = parse_otel_protocol(Some(value));
+                assert!(
+                    matches!(result, Err(TelemetryError::UnknownProtocol(_))),
+                    "{value} should be rejected, got {result:?}"
+                );
+            }
+        }
 
         /// A service the operator named through either variable is kept, and the app's own name is
         /// used only when neither does. Overriding a configured `service.name` would rename the
@@ -931,6 +1059,27 @@ mod tests {
                 http_traces_endpoint("https://vendor.example/otlp?token=abc"),
                 "https://vendor.example/otlp/v1/traces?token=abc"
             );
+        }
+
+        /// Only a base endpoint names the collector, so only a base endpoint gets the signal path.
+        /// A traces endpoint is posted to as configured even when it names no path of its own.
+        /// Appending one would send spans somewhere the operator never pointed us.
+        #[test]
+        fn only_a_base_endpoint_carries_the_signal_path() {
+            let url = "https://vendor.example/otlp";
+            let base = OtlpEndpoint {
+                url: url.to_string(),
+                is_base: true,
+            };
+            let traces = OtlpEndpoint {
+                url: url.to_string(),
+                is_base: false,
+            };
+            assert_eq!(
+                http_endpoint_url(&base),
+                "https://vendor.example/otlp/v1/traces"
+            );
+            assert_eq!(http_endpoint_url(&traces), url);
         }
 
         /// Span export must not be silenced by the stock log level: `#[tracing::instrument]` and

@@ -63,6 +63,15 @@ jobs:
       - name: Clippy (production features)
         run: cargo clippy --workspace --all-targets --features production --no-deps -- -D warnings
 
+      # The Test Suite workflow builds with default features, so tests behind a production-only
+      # gate like `#[cfg(feature = "otel")]` never run there. This job is the only one that
+      # enables them. The filter limits the step to lib unit tests needing no server, so a
+      # feature-gated test whose path does not match it stays uncovered: widen the filter when
+      # adding one elsewhere. oxen-py is excluded because its test binary needs the Python
+      # runtime installed by the maturin step below.
+      - name: Test (production features)
+        run: cargo test --workspace --exclude oxen-py --features production --lib telemetry
+
       - name: Build oxen-python with production features
         run: |
           cd oxen-python

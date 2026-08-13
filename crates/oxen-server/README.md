@@ -236,8 +236,8 @@ OXEN_OTEL_ENDPOINT=https://otlp.vendor.example:443 oxen-server start
 
 | Variable | Description | Default |
 |---|---|---|
-| `OXEN_OTEL_ENDPOINT` | Collector endpoint: an `http://` or `https://` URL, or a bare `host:port` (which gets `http://`). Absent = export disabled. | *(none)* |
-| `OXEN_OTEL_PROTOCOL` | Transport: `grpc` or `http`. Under `http` the OTLP signal path `/v1/traces` is appended to the endpoint unless it already names one. | `grpc` |
+| `OXEN_OTEL_ENDPOINT` | Collector endpoint: an `http://` or `https://` URL, or a bare `host:port` (which gets `http://`). Absent = export disabled, unless a standard endpoint variable below names one. | *(none)* |
+| `OXEN_OTEL_PROTOCOL` | Transport: `grpc`, or `http` / `http/protobuf` / `http/json` for HTTP. Under HTTP the OTLP signal path `/v1/traces` is appended to the endpoint unless it already names one, and the payload is binary protobuf whichever of the three spellings is used. | `grpc` |
 | `OXEN_OTEL_FILTER` | Which spans and events are exported. Same syntax as `RUST_LOG`, and independent of it. | `info` |
 
 An `https://` endpoint is verified against the platform's root certificate
@@ -245,8 +245,23 @@ store under both transports, so a collector behind a publicly trusted
 certificate needs no further configuration. A private CA has to be installed in
 that store.
 
-The standard `OTEL_EXPORTER_OTLP_ENDPOINT` variable is also respected as a
-fallback if `OXEN_OTEL_ENDPOINT` is not set.
+The endpoint and the transport each fall back to their standard variables where
+the `OXEN_` one is not set, so a vendor's stock configuration snippet works as
+given. Each is resolved in the order `OXEN_OTEL_*`, then the traces-specific
+standard variable, then the general one:
+
+| Setting | Resolved in this order |
+|---|---|
+| Endpoint | `OXEN_OTEL_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT` |
+| Transport | `OXEN_OTEL_PROTOCOL`, `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`, `OTEL_EXPORTER_OTLP_PROTOCOL` |
+
+A variable set to a blank value names nothing and falls through to the next,
+rather than shadowing it.
+
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` names the traces signal rather than the
+collector, so under HTTP it is posted to exactly as configured. Include
+`/v1/traces` in it. The other two name the collector, and `/v1/traces` is
+appended to them.
 
 These standard `OTEL_*` variables are read by the SDK itself:
 
@@ -257,6 +272,8 @@ These standard `OTEL_*` variables are read by the SDK itself:
 | `OTEL_TRACES_SAMPLER` | `always_on`, `always_off`, `traceidratio`, `parentbased_always_on`, `parentbased_always_off`, `parentbased_traceidratio`. | `parentbased_always_on` |
 | `OTEL_TRACES_SAMPLER_ARG` | Sampling probability, `0.0`–`1.0`, for the ratio samplers. | `1.0` |
 | `OTEL_BSP_MAX_QUEUE_SIZE`, `OTEL_BSP_SCHEDULE_DELAY`, `OTEL_BSP_MAX_EXPORT_BATCH_SIZE`, `OTEL_BSP_EXPORT_TIMEOUT` | Batch-processor tuning: queue depth, how often a batch drains, batch size, and how long the processor waits on one export. | `4096`, `2000` ms, `512`, `30000` ms |
+| `OTEL_EXPORTER_OTLP_COMPRESSION` | `gzip` to compress export payloads, which is worth roughly 8x on a full batch of spans for a few milliseconds of CPU on the exporter's own thread. Only `gzip` is compiled in; any other value fails the exporter build, which disables export. Unset sends payloads uncompressed. | *(none)* |
+| `OTEL_EXPORTER_OTLP_TRACES_COMPRESSION` | The same setting for span exports alone, and takes precedence over `OTEL_EXPORTER_OTLP_COMPRESSION` where both are set. | *(whatever `OTEL_EXPORTER_OTLP_COMPRESSION` resolves to)* |
 | `OTEL_EXPORTER_OTLP_TIMEOUT` | How long one export request to the collector may take, for every signal. Distinct from `OTEL_BSP_EXPORT_TIMEOUT` above, which bounds the batch processor rather than the request. | `10000` ms |
 | `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` | The same bound for span exports alone, and takes precedence over `OTEL_EXPORTER_OTLP_TIMEOUT` where both are set. | *(whatever `OTEL_EXPORTER_OTLP_TIMEOUT` resolves to)* |
 

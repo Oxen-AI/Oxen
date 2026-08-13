@@ -105,12 +105,10 @@ mockito = "1.1.0"
 mp4 = "0.14.0"
 num_cpus = "1.16.0"
 opentelemetry = "0.31"
-opentelemetry-otlp = { version = "0.31", features = [
-    "grpc-tonic",
-    "http-json",
-    "tls-roots",
-    "trace",
-] }
+# The OTLP/HTTP encoding is chosen by this feature list, not at runtime. Binary protobuf comes
+# from the default "http-proto"; adding "http-json" back would make JSON the exporter's default
+# encoding, which is why the builder names its encoding instead of inheriting it.
+opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic", "gzip-http", "gzip-tonic", "tls-roots", "trace"] }
 opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
 os_path = "0.8.0"
 page_size = "0.6.0"
