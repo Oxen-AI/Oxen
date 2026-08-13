@@ -63,17 +63,12 @@ jobs:
       - name: Clippy (production features)
         run: cargo clippy --workspace --all-targets --features production --no-deps -- -D warnings
 
-      # Unit tests behind a production-only feature gate — `#[cfg(feature = "otel")]` and the
-      # like — are compiled by the clippy step above but run nowhere else: the Test Suite
-      # workflow builds with default features, so those tests do not exist in it. This job is
-      # the only one that enables them, and it has the schedule room to run them.
-      #
-      # The filter keeps the step to lib unit tests that need no server, which is what makes it
-      # cheap enough to live here. A feature-gated test whose path does not match the filter is
-      # still uncovered, so widen the filter when adding one elsewhere.
-      #
-      # oxen-py is excluded because its test binary needs the Python runtime that the maturin
-      # step below sets up, and it carries none of these tests.
+      # The Test Suite workflow builds with default features, so tests behind a production-only
+      # gate like `#[cfg(feature = "otel")]` never run there. This job is the only one that
+      # enables them. The filter limits the step to lib unit tests needing no server, so a
+      # feature-gated test whose path does not match it stays uncovered: widen the filter when
+      # adding one elsewhere. oxen-py is excluded because its test binary needs the Python
+      # runtime installed by the maturin step below.
       - name: Test (production features)
         run: cargo test --workspace --exclude oxen-py --features production --lib telemetry
 

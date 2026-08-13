@@ -170,7 +170,7 @@ mod atexit_flush {
 /// env var `OTEL_EXPORTER_OTLP_ENDPOINT`, but checks `OXEN_OTEL_ENDPOINT` first.
 ///
 /// The `OXEN_OTEL_PROTOCOL` env var selects the transport OTLP exports use, and
-/// accepts `"grpc"`, `"http"`, `"http/protobuf"`, or `"http/json"` — the last
+/// accepts `"grpc"`, `"http"`, `"http/protobuf"`, or `"http/json"`, the last
 /// three all meaning HTTP. If not set, the standard
 /// `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` and `OTEL_EXPORTER_OTLP_PROTOCOL` are
 /// read in that order, and absent all three it defaults to `"grpc"`. Spans are
@@ -372,7 +372,7 @@ fn env_names_a_service(
 struct OtlpEndpoint {
     url: String,
     /// Whether the OTLP signal path is this crate's to append. A base endpoint names the collector,
-    /// so `/v1/traces` is appended under HTTP; a signal-specific endpoint already names the signal
+    /// so `/v1/traces` is appended under HTTP. A signal-specific endpoint already names the signal
     /// and is dialed exactly as configured, which is what the OpenTelemetry specification requires
     /// of `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`.
     is_base: bool,
@@ -399,10 +399,10 @@ fn otel_endpoint() -> Option<OtlpEndpoint> {
 /// The first of three variables to name something: this project's own, then the traces-specific
 /// standard variable, then the general standard one.
 ///
-/// That is the precedence the OpenTelemetry SDK applies to its own variables, but it applies it
-/// only to settings it reads for itself. The transport is handed to the exporter builder instead,
-/// which bypasses the SDK's lookup — so a value configured through a standard variable reaches the
-/// exporter only by being read here.
+/// That is the precedence the OpenTelemetry SDK applies to its own variables, but only to settings
+/// it reads for itself. The transport is handed to the exporter builder instead, which bypasses
+/// that lookup, so a value configured through a standard variable reaches the exporter only by
+/// being read here.
 ///
 /// A blank value names nothing and falls through, so blanking a variable leaves the next one
 /// standing rather than shadowing it with an empty string.
@@ -1062,8 +1062,8 @@ mod tests {
         }
 
         /// Only a base endpoint names the collector, so only a base endpoint gets the signal path.
-        /// A traces endpoint is posted to as configured even when it names no path of its own —
-        /// appending one would send spans somewhere the operator never pointed us.
+        /// A traces endpoint is posted to as configured even when it names no path of its own.
+        /// Appending one would send spans somewhere the operator never pointed us.
         #[test]
         fn only_a_base_endpoint_carries_the_signal_path() {
             let url = "https://vendor.example/otlp";

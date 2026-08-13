@@ -9,21 +9,21 @@
 # Prerequisites:
 #   cargo build --workspace --features production
 #   docker (running)
-#   uv, maturin (for oxen-python) — the bindings must be built with production features, or the
-#     oxen-python trace assertion fails while every other one passes
+#   uv, maturin (for oxen-python). The bindings must be built with production features, or the
+#     oxen-python trace assertion fails while every other one passes.
 #   jq
 #
 # Environment:
 #   OXEN_SERVER_PORT   port for the oxen-server this starts (default 3000)
 #   OXEN_METRICS_PORT  port for its Prometheus endpoint (default 9090)
 #
-# SYNC_DIR is not read: this always runs against a temp data directory of its own, removed on exit.
+# SYNC_DIR is not read. This always uses a temp data directory of its own, removed on exit.
 #
 # Set the ports to run alongside a development server holding the defaults:
 #   OXEN_SERVER_PORT=3010 OXEN_METRICS_PORT=9091 bin/otel-metrics-test
 #
-# Jaeger's ports (16686, 4317, 4318, 5778, 9411) are still fixed, so a container already
-# publishing them has to be stopped first.
+# Jaeger's ports (16686, 4317, 4318, 5778, 9411) are still fixed, so stop any container
+# already publishing them first.
 
 set -euo pipefail
 
@@ -35,19 +35,16 @@ SERVER="$REPO_ROOT/target/debug/oxen-server"
 SERVER_PID=""
 JAEGER_NAME=""
 
-# Ports and data directory, overridable so a run can step around a development server already
-# holding the defaults. On the defaults this run would bind nothing that machine does not expect
-# to be free, but a developer's own oxen-server is commonly on 3000: its health endpoint answers
-# the readiness probe below, and the workflow then runs against a server with no telemetry
-# configured, failing every assertion here for a reason that has nothing to do with telemetry.
+# Overridable so a run can step around a development server already on these ports. A server
+# holding 3000 answers the readiness probe below, and the workflow then runs against it with no
+# telemetry configured, failing every assertion for a reason unrelated to telemetry.
 OXEN_SERVER_PORT="${OXEN_SERVER_PORT:-3000}"
 OXEN_METRICS_PORT="${OXEN_METRICS_PORT:-9090}"
 SERVER_URL="http://localhost:$OXEN_SERVER_PORT"
 
-# A data directory of this run's own, deliberately overriding any SYNC_DIR the environment
-# supplies: a developer's shell commonly exports one for their own server, and the workflow below
-# creates a remote repository that nothing deletes, so inheriting that value both writes into a
-# data directory this has no business touching and leaves the next run to fail on the leftovers.
+# Overrides any SYNC_DIR in the environment, which a developer's shell commonly exports for their
+# own server. The workflow below creates a remote repository that nothing deletes, so inheriting
+# that value writes into data this must not touch and leaves the next run to fail on leftovers.
 SYNC_DIR="$(mktemp -d)"
 export SYNC_DIR
 
@@ -203,10 +200,10 @@ MODIFIED_AUTH_CONFIG=true
 #
 # The server exports over OTLP/HTTP while the CLI and the Python bindings below stay on gRPC, so
 # one run covers both transports against a real collector. The server is the one on HTTP because
-# that is the transport a deployed server uses: it is the binary built with the otel feature, and
-# hosted collectors commonly accept OTLP/HTTP with binary protobuf and nothing else. Note that the
-# trace assertions below read the server's spans, so a break in HTTP export surfaces here as
-# missing or unparented spans rather than as an obvious export failure.
+# that is what a deployment uses: it is the binary built with the otel feature, and hosted
+# collectors commonly accept OTLP/HTTP with binary protobuf and nothing else. The trace
+# assertions below read the server's spans, so a break in HTTP export shows up there as missing
+# or unparented spans rather than as an obvious export failure.
 OXEN_OTEL_ENDPOINT=http://localhost:4318 \
 OXEN_OTEL_PROTOCOL=http \
 OXEN_METRICS_PORT="$OXEN_METRICS_PORT" \

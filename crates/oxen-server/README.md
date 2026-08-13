@@ -259,7 +259,7 @@ A variable set to a blank value names nothing and falls through to the next,
 rather than shadowing it.
 
 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` names the traces signal rather than the
-collector, so under HTTP it is posted to exactly as configured — include
+collector, so under HTTP it is posted to exactly as configured. Include
 `/v1/traces` in it. The other two name the collector, and `/v1/traces` is
 appended to them.
 

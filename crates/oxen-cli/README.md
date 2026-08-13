@@ -48,7 +48,7 @@ OXEN_OTEL_ENDPOINT=http://localhost:4317 oxen pull
 ### Filtering: logs and spans are separate
 
 `RUST_LOG` gates the CLI's log output. Span export is gated separately by
-`OXEN_OTEL_FILTER`, which defaults to `info` — the level
+`OXEN_OTEL_FILTER`, which defaults to `info`, the level
 `#[tracing::instrument]` records at. So spans export at the stock settings even
 though the CLI logs nothing by default, and raising `RUST_LOG` for a debugging
 session does not change what is exported.
@@ -62,7 +62,7 @@ OXEN_OTEL_FILTER=warn,liboxen=debug OXEN_OTEL_ENDPOINT=http://localhost:4317 oxe
 
 | Variable | Description | Default |
 |---|---|---|
-| `OXEN_OTEL_ENDPOINT` | Collector base URL, which under HTTP has `/v1/traces` appended to it. Falls back to `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` — a full traces URL, posted to exactly as configured, so include `/v1/traces` in it — then to `OTEL_EXPORTER_OTLP_ENDPOINT`, a collector base URL appended to like the first. Absent from all three = disabled. | *(none)* |
+| `OXEN_OTEL_ENDPOINT` | Collector base URL, which under HTTP has `/v1/traces` appended to it. Falls back to `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (a full traces URL, posted to exactly as configured, so include `/v1/traces` in it), then to `OTEL_EXPORTER_OTLP_ENDPOINT`, a collector base URL appended to like the first. Absent from all three = disabled. | *(none)* |
 | `OXEN_OTEL_PROTOCOL` | Transport: `grpc`, or `http` / `http/protobuf` / `http/json` for HTTP (binary protobuf either way). Falls back to `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`, then `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` |
 | `OXEN_OTEL_FILTER` | Which spans and events are exported. Same syntax as `RUST_LOG`, and independent of it. | `info` |
 | `RUST_LOG` | Log verbosity on stderr. Does not affect span export. | `off` |
