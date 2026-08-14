@@ -68,6 +68,12 @@ COPY . .
 ARG CARGO_PROFILE_RELEASE_LTO=true
 ENV CARGO_PROFILE_RELEASE_LTO=${CARGO_PROFILE_RELEASE_LTO}
 
+# Keeps the symbol table in the server binary, so a panic reported to Sentry names its frames.
+# `debuginfo` drops DWARF, so a frame carries a function name but no file or line. Overrides the
+# `strip` setting in `[profile.release]`, which the CLI and the Python wheels still build under.
+ARG CARGO_PROFILE_RELEASE_STRIP=debuginfo
+ENV CARGO_PROFILE_RELEASE_STRIP=${CARGO_PROFILE_RELEASE_STRIP}
+
 # `oxen-server/otel` compiles the OTLP span exporter and inbound W3C trace-context extraction into
 # the binary; both stay dormant until an OTLP endpoint is configured at runtime. Named explicitly
 # rather than via the `production` feature, which additionally turns on `perf-logging`.
