@@ -11,6 +11,7 @@ use crate::core;
 use crate::core::db::merkle_node::MerkleNodeBackend;
 use crate::core::df::duckdb_setup;
 use crate::error::OxenError;
+use crate::lmdb;
 use crate::model::Schema;
 use crate::model::User;
 use crate::model::data_frame::schema::Field;
@@ -35,6 +36,7 @@ use std::sync::LazyLock;
 use std::sync::Mutex;
 use tokio::time::sleep;
 use tracing::level_filters::LevelFilter;
+use walkdir::WalkDir;
 
 pub const DEFAULT_TEST_HOST: &str = "localhost:3000";
 
@@ -976,7 +978,9 @@ where
         }
     };
 
-    // Cleanup Local
+    // Cleanup Local. The repo owns its LMDB env, which must be closed before the directory
+    // holding it is removed (see `assert_no_live_lmdb_envs`).
+    drop(local_repo);
     maybe_cleanup_repo(&path)?;
 
     // Assert everything okay after we cleanup the repo dir
@@ -1078,7 +1082,9 @@ where
         }
     };
 
-    // Cleanup Local
+    // Cleanup Local. The repo owns its LMDB env, which must be closed before the directory
+    // holding it is removed (see `assert_no_live_lmdb_envs`).
+    drop(local_repo);
     maybe_cleanup_repo(&path)?;
 
     // Assert everything okay after we cleanup the repo dir
@@ -1429,6 +1435,24 @@ fn should_cleanup() -> bool {
         .unwrap_or(false)
 }
 
+/// Panics when any LMDB env under `dir` is still open, naming each one. Removing a directory that
+/// holds an open env leaves its memory-mapped `data.mdb` and `lock.mdb` behind (an outright removal
+/// failure on Windows, a hidden `.nfsXXXX` entry on NFS that fails the `rmdir` with `ENOTEMPTY`),
+/// so every `LocalRepository` under `dir` must be dropped before this call.
+pub fn assert_no_live_lmdb_envs(dir: &Path) {
+    let live: Vec<PathBuf> = WalkDir::new(dir)
+        .into_iter()
+        .flatten()
+        .map(|entry| entry.path().to_path_buf())
+        .filter(|path| path.ends_with(constants::NODES_LMDB_DIR) && lmdb::shared_env_is_live(path))
+        .collect();
+    assert!(
+        live.is_empty(),
+        "LMDB envs still open while removing {dir:?}: {live:?}. \
+         Drop every LocalRepository under it first."
+    );
+}
+
 pub fn maybe_cleanup_repo(repo_dir: &Path) -> Result<(), OxenError> {
     // Always remove caches
     merkle_tree_node_cache::remove_from_cache(repo_dir)?;
@@ -1439,6 +1463,7 @@ pub fn maybe_cleanup_repo(repo_dir: &Path) -> Result<(), OxenError> {
     core::workspaces::workspace_name_index::remove_from_cache_with_children(repo_dir);
 
     if should_cleanup() {
+        assert_no_live_lmdb_envs(repo_dir);
         log::debug!("maybe_cleanup_repo: cleaning up repo: {repo_dir:?}");
         util::fs::remove_dir_all(repo_dir)?;
     } else {
