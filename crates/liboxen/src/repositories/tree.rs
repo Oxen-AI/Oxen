@@ -2563,8 +2563,8 @@ mod tests {
     /// payload must be identical.
     #[tokio::test]
     async fn test_compress_nodes_wire_format_unchanged() -> Result<(), OxenError> {
-        // FS-pinned: the `compress_nodes` oracle walks the on-disk `tree/nodes` layout, which only
-        // the filesystem backend produces.
+        // FS-pinned: the reference `compress_nodes` implementation walks the on-disk `tree/nodes`
+        // layout, which only the filesystem backend produces.
         test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
             let head = repositories::commits::head_commit(&repo)?;
             let hashes = HashSet::from_iter([head.hash().expect("no commit for head")]);
@@ -2593,8 +2593,8 @@ mod tests {
     /// Same byte-compat check for the whole-tree path.
     #[tokio::test]
     async fn test_compress_tree_wire_format_unchanged() -> Result<(), OxenError> {
-        // FS-pinned: the `compress_tree` oracle walks the on-disk `tree/nodes` layout, which only
-        // the filesystem backend produces.
+        // FS-pinned: the reference `compress_tree` implementation walks the on-disk `tree/nodes`
+        // layout, which only the filesystem backend produces.
         test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
             // prior code for packing an entire Merkle tree into a .tar.gz
             let old_pack_method = compress_tree(&repo)?;
@@ -2619,8 +2619,8 @@ mod tests {
     /// `pack_nodes(&{hash})`).
     #[tokio::test]
     async fn test_compress_node_wire_format_unchanged() -> Result<(), OxenError> {
-        // FS-pinned: the `compress_node` oracle walks the on-disk `tree/nodes` layout, which only
-        // the filesystem backend produces.
+        // FS-pinned: the reference `compress_node` implementation walks the on-disk `tree/nodes`
+        // layout, which only the filesystem backend produces.
         test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
             let head = repositories::commits::head_commit(&repo)?;
             let hash = head.hash().expect("no commit for head");
@@ -2651,8 +2651,8 @@ mod tests {
     /// `pack_nodes(&{commit hashes})`).
     #[tokio::test]
     async fn test_compress_commits_wire_format_unchanged() -> Result<(), OxenError> {
-        // FS-pinned: the `compress_commits` oracle walks the on-disk `tree/nodes` layout, which only
-        // the filesystem backend produces.
+        // FS-pinned: the reference `compress_commits` implementation walks the on-disk `tree/nodes`
+        // layout, which only the filesystem backend produces.
         test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
             let head = repositories::commits::head_commit(&repo)?;
             let commits: Vec<Commit> = vec![head];
@@ -2713,8 +2713,8 @@ mod tests {
     /// store in both target repos.
     #[tokio::test]
     async fn test_unpack_nodes_unchanged() -> Result<(), OxenError> {
-        // FS-pinned: the `unpack_nodes` oracle writes/reads the on-disk `tree/nodes` layout, which
-        // only the filesystem backend produces.
+        // FS-pinned: the reference `unpack_nodes` implementation writes/reads the on-disk
+        // `tree/nodes` layout, which only the filesystem backend produces.
         test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
             let head = repositories::commits::head_commit(&repo)?;
             let hashes = HashSet::from_iter([head.hash().expect("no commit for head")]);
@@ -3256,8 +3256,8 @@ mod tests {
     /// upload wire format.
     #[tokio::test]
     async fn test_create_nodes_wire_format_unchanged() -> Result<(), OxenError> {
-        // FS-pinned: the `create_nodes_pack_old` oracle walks the on-disk `tree/nodes` layout, which
-        // only the filesystem backend produces.
+        // FS-pinned: the reference `create_nodes_pack_old` implementation walks the on-disk
+        // `tree/nodes` layout, which only the filesystem backend produces.
         test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
             let head = repositories::commits::head_commit(&repo)?;
             let hashes = HashSet::from_iter([head.hash().expect("no commit for head")]);

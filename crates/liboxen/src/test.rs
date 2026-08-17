@@ -428,12 +428,12 @@ where
 }
 
 /// Init a repo pinned to the filesystem Merkle node backend. For tests whose assertions read the
-/// on-disk `tree/nodes` layout — the wire-format byte-compat oracles and the FS→LMDB migration
-/// source — which only the filesystem backend produces. Persists `merkle_node_backend = filesystem`
-/// to `config.toml`, the
-/// authoritative record `create_merkle_node_store` resolves from. Pair with
-/// [`run_empty_dir_test_async`] for empty repos, or use
-/// [`run_one_commit_local_repo_test_async_fs_backend`] when one committed file is needed.
+/// on-disk `tree/nodes` layout — the wire-format byte-compat reference implementations and the
+/// FS→LMDB migration source — which only the filesystem backend produces. Persists
+/// `merkle_node_backend = filesystem` to `config.toml`, the authoritative record
+/// `create_merkle_node_store` resolves from. Pair with [`run_empty_dir_test_async`] for empty
+/// repos, or use [`run_one_commit_local_repo_test_async_fs_backend`] when one committed file is
+/// needed.
 pub fn init_fs_merkle_backend(path: &Path) -> Result<LocalRepository, OxenError> {
     let hidden_dir = util::fs::oxen_hidden_dir(path);
     if hidden_dir.try_exists()? {
