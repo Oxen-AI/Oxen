@@ -29,14 +29,16 @@ pub fn cleanup_sync_dir(sync_dir: &Path) -> Result<(), OxenError> {
     df_db::remove_df_db_from_cache_with_children(sync_dir)?;
     dir_hashes_db::remove_from_cache_with_children(sync_dir)?;
     workspace_name_index::remove_from_cache_with_children(sync_dir);
+    liboxen::test::assert_no_live_lmdb_envs(sync_dir);
     std::fs::remove_dir_all(sync_dir)?;
     Ok(())
 }
 
 /// Drop `repo` before removing `sync_dir`, then clean up. Under the LMDB Merkle-node backend a
 /// `LocalRepository` holds its env's `data.mdb`/`lock.mdb` memory-mapped for its whole lifetime;
-/// on Windows those mapped files cannot be deleted, so the owner must be dropped before the
-/// directory is removed. Consuming `repo` makes that ordering compiler-enforced.
+/// removing the directory around a mapped file fails outright on Windows and leaves a hidden
+/// `.nfsXXXX` entry on NFS that fails the `rmdir` with `ENOTEMPTY`, so the owner must be dropped
+/// before the directory is removed. Consuming `repo` makes that ordering compiler-enforced.
 pub fn cleanup_repo_and_sync_dir(repo: LocalRepository, sync_dir: &Path) -> Result<(), OxenError> {
     drop(repo);
     cleanup_sync_dir(sync_dir)
