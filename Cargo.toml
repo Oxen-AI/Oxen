@@ -104,12 +104,23 @@ minus = { version = "5.4.0", features = ["static_output", "search"] }
 mockito = "1.1.0"
 mp4 = "0.14.0"
 num_cpus = "1.16.0"
-opentelemetry = "0.31"
+opentelemetry = "0.32"
 # The OTLP/HTTP encoding is chosen by this feature list, not at runtime. Binary protobuf comes
 # from the default "http-proto"; adding "http-json" back would make JSON the exporter's default
 # encoding, which is why the builder names its encoding instead of inheriting it.
-opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic", "gzip-http", "gzip-tonic", "tls-roots", "trace"] }
-opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
+#
+# "tls-roots" supplies the platform trust store that `ClientTlsConfig::with_native_roots()` reads,
+# and "tls-ring" supplies the crypto provider it runs on. Without a provider feature the gRPC
+# exporter refuses to build for an `https://` endpoint, which disables export.
+opentelemetry-otlp = { version = "0.32", features = [
+    "grpc-tonic",
+    "gzip-http",
+    "gzip-tonic",
+    "tls-ring",
+    "tls-roots",
+    "trace",
+] }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
 os_path = "0.8.0"
 page_size = "0.6.0"
 par-stream = { version = "0.10.2", features = ["runtime-tokio"] }
@@ -159,7 +170,7 @@ tracing = "0.1"
 tracing-actix-web = { version = "0.7", default-features = false }
 tracing-appender = "0.2"
 tracing-log = "0.2"
-tracing-opentelemetry = "0.32"
+tracing-opentelemetry = "0.33"
 # "tracing-log" installs the log->tracing bridge, without which none of the `log::*` call sites
 # reach a subscriber layer. It is also a default feature; listed explicitly so turning defaults off
 # cannot silently unhook every error report.
