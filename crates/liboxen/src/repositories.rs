@@ -336,7 +336,12 @@ pub async fn create(
     Ok(local_repo)
 }
 
-pub async fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenError> {
+/// Removes a repository: its version blobs, then its directory.
+///
+/// Consumes `repo` so the Merkle node store it owns closes before the directory is removed. A
+/// directory removed around an open LMDB env keeps the mapped `data.mdb` and `lock.mdb`, which
+/// fails the removal on Windows and on NFS.
+pub async fn delete(repo: LocalRepository) -> Result<(), OxenError> {
     if !repo.path.exists() {
         let err = format!("Repository does not exist {:?}", repo.path);
         return Err(OxenError::basic_str(err));
@@ -346,8 +351,9 @@ pub async fn delete(repo: &LocalRepository) -> Result<&LocalRepository, OxenErro
     // custom versions_path) they live outside the repo directory.
     repo.version_store().destroy().await?;
 
-    delete_dir(&repo.path).await?;
-    Ok(repo)
+    let path = repo.path.clone();
+    drop(repo);
+    delete_dir(&path).await
 }
 
 /// Removes a repository's directory.
@@ -423,7 +429,7 @@ mod tests {
             assert!(store.version_exists(&hash).await?);
             assert!(custom_root.exists());
 
-            repositories::delete(&repo).await?;
+            repositories::delete(repo).await?;
 
             assert!(
                 !custom_root.exists(),

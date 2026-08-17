@@ -541,8 +541,8 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     // Delete in a background task because it could take awhile; the blocking directory
     // removal runs inside delete's own spawn_blocking.
     tokio::spawn(async move {
-        let result = match &repository {
-            Some(repository) => repositories::delete(repository).await.map(|_| ()),
+        let result = match repository {
+            Some(repository) => repositories::delete(repository).await,
             None => repositories::delete_dir(&repo_dir).await,
         };
 
