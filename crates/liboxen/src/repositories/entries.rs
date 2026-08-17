@@ -301,11 +301,65 @@ mod tests {
     use uuid::Uuid;
 
     use crate::error::OxenError;
+    use crate::model::MerkleHash;
     use crate::opts::{PaginateOpts, SortBy, SortOpts};
     use crate::repositories;
     use crate::test;
     use crate::util;
     use tokio::time::sleep;
+
+    #[tokio::test]
+    async fn test_an_entry_naming_an_absent_commit_still_lists() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let first = repo.path.join("first.txt");
+            util::fs::write_to_path(&first, "first")?;
+            repositories::add(&repo, &first).await?;
+            let first_commit = repositories::commit(&repo, "Add first")?;
+
+            let second = repo.path.join("second.txt");
+            util::fs::write_to_path(&second, "second")?;
+            repositories::add(&repo, &second).await?;
+            repositories::commit(&repo, "Add second")?;
+
+            // first.txt still names the earlier commit, so removing that commit's node leaves the
+            // tree pointing at a commit the repository no longer has.
+            let absent: MerkleHash = first_commit.id.parse()?;
+            repo.merkle_node_store().delete(&absent)?;
+            assert!(repositories::commits::get_by_hash(&repo, &absent)?.is_none());
+
+            let listed = repositories::entries::list_directory(
+                &repo,
+                Path::new(""),
+                "main",
+                &PaginateOpts {
+                    page_num: 1,
+                    page_size: 10,
+                },
+            )?;
+
+            let named = |name: &str| {
+                listed
+                    .entries
+                    .iter()
+                    .find(|entry| entry.filename() == name)
+                    .cloned()
+            };
+            let first_entry = named("first.txt").expect("first.txt is listed");
+            let second_entry = named("second.txt").expect("second.txt is listed");
+
+            assert!(
+                first_entry.latest_commit().is_none(),
+                "an entry whose commit is absent carries no commit"
+            );
+            assert!(
+                second_entry.latest_commit().is_some(),
+                "an entry whose commit is present still carries it"
+            );
+
+            Ok(())
+        })
+        .await
+    }
 
     #[tokio::test]
     async fn test_api_local_entries_list_all() -> Result<(), OxenError> {
