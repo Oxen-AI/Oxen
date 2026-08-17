@@ -22,10 +22,8 @@ pub enum TelemetryError {
     #[error("Failed to initialize tracing: {0}")]
     InitFail(#[from] TryInitError),
     #[cfg(feature = "otel")]
-    #[error(
-        "Unknown OTEL_EXPORTER_OTLP_PROTOCOL value: {0} (expected grpc, http, http/protobuf, or http/json)"
-    )]
-    UnknownProtocol(String),
+    #[error("Unknown {var} value: {value} (expected grpc, http, http/protobuf, or http/json)")]
+    UnknownProtocol { var: &'static str, value: String },
 }
 
 /// A caller-supplied tracing layer composed into the registry by
@@ -479,24 +477,37 @@ impl std::fmt::Display for Protocol {
 /// The transport OTLP export uses, from the traces-specific protocol variable or the general one.
 #[cfg(feature = "otel")]
 fn otel_protocol() -> Result<Protocol, TelemetryError> {
-    let configured = non_empty_env("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL")
-        .or_else(|| non_empty_env("OTEL_EXPORTER_OTLP_PROTOCOL"));
-    parse_otel_protocol(configured.as_deref())
+    let (var, configured) = [
+        "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
+        "OTEL_EXPORTER_OTLP_PROTOCOL",
+    ]
+    .into_iter()
+    .find_map(|var| non_empty_env(var).map(|value| (var, Some(value))))
+    .unwrap_or(("OTEL_EXPORTER_OTLP_PROTOCOL", None));
+    parse_otel_protocol(var, configured.as_deref())
 }
 
 /// Read a configured protocol as a transport, defaulting to HTTP where nothing is configured.
 ///
+/// An unaccepted value is reported against `var`, the variable it came from.
+///
 /// `http/protobuf` and `http/json` name an encoding as well as a transport, and both select HTTP.
 /// Spans are encoded as binary protobuf either way, which every OTLP/HTTP endpoint accepts.
 #[cfg(feature = "otel")]
-fn parse_otel_protocol(configured: Option<&str>) -> Result<Protocol, TelemetryError> {
+fn parse_otel_protocol(
+    var: &'static str,
+    configured: Option<&str>,
+) -> Result<Protocol, TelemetryError> {
     match configured
         .map(|value| value.trim().to_lowercase())
         .as_deref()
     {
         None | Some("http" | "http/protobuf" | "http/json") => Ok(Protocol::Http),
         Some("grpc") => Ok(Protocol::Grpc),
-        Some(unknown) => Err(TelemetryError::UnknownProtocol(unknown.to_string())),
+        Some(unknown) => Err(TelemetryError::UnknownProtocol {
+            var,
+            value: unknown.to_string(),
+        }),
     }
 }
 
@@ -763,7 +774,10 @@ mod tests {
         /// default across the OTLP ecosystem.
         #[test]
         fn no_configured_protocol_is_http() {
-            assert_eq!(parse_otel_protocol(None).unwrap(), Protocol::Http);
+            assert_eq!(
+                parse_otel_protocol("OTEL_EXPORTER_OTLP_PROTOCOL", None).unwrap(),
+                Protocol::Http
+            );
         }
 
         /// `OTEL_EXPORTER_OTLP_PROTOCOL` carries values naming an encoding along with the
@@ -771,7 +785,11 @@ mod tests {
         /// copying a stock OTLP snippet exports over the transport it asked for.
         #[test]
         fn standard_protocol_values_select_a_transport() {
-            assert_eq!(parse_otel_protocol(Some("grpc")).unwrap(), Protocol::Grpc);
+            let var = "OTEL_EXPORTER_OTLP_PROTOCOL";
+            assert_eq!(
+                parse_otel_protocol(var, Some("grpc")).unwrap(),
+                Protocol::Grpc
+            );
             // Case and surrounding whitespace are normalized before the match, so the HTTP
             // spellings cover both for every value.
             for value in [
@@ -782,21 +800,37 @@ mod tests {
                 " http ",
             ] {
                 assert_eq!(
-                    parse_otel_protocol(Some(value)).unwrap(),
+                    parse_otel_protocol(var, Some(value)).unwrap(),
                     Protocol::Http,
                     "{value} should select HTTP"
                 );
             }
         }
 
+        /// An unaccepted value names the variable it came from, so an operator who set the
+        /// traces-specific one is not sent looking at the general one.
         #[test]
         fn rejects_an_unknown_protocol() {
-            for value in ["https", "http/proto", "tcp"] {
-                let result = parse_otel_protocol(Some(value));
-                assert!(
-                    matches!(result, Err(TelemetryError::UnknownProtocol(_))),
-                    "{value} should be rejected, got {result:?}"
-                );
+            for var in [
+                "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
+                "OTEL_EXPORTER_OTLP_PROTOCOL",
+            ] {
+                for value in ["https", "http/proto", "tcp"] {
+                    let result = parse_otel_protocol(var, Some(value));
+                    match result {
+                        Err(TelemetryError::UnknownProtocol {
+                            var: named,
+                            value: v,
+                        }) => {
+                            assert_eq!(
+                                named, var,
+                                "the rejected value should name its own variable"
+                            );
+                            assert_eq!(v, value);
+                        }
+                        other => panic!("{var}={value} should be rejected, got {other:?}"),
+                    }
+                }
             }
         }
 
