@@ -64,7 +64,7 @@ OXEN_OTEL_FILTER=warn,liboxen=debug OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost
 |---|---|---|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector URL, needing an `http://` or `https://` scheme, which under HTTP has `/v1/traces` appended to it. Absent = disabled, unless `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` names one. | *(none)* |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | The traces endpoint, taking precedence over the above and posted to exactly as configured under HTTP, so include `/v1/traces` in it. | *(none)* |
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | Transport: `grpc`, or `http` / `http/protobuf` / `http/json` for HTTP (binary protobuf either way). | `http/protobuf` |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | Transport: `grpc`, or `http` / `http/protobuf` / `http/json` for HTTP (binary protobuf either way). `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` takes precedence over it. | `http/protobuf` |
 | `OXEN_OTEL_FILTER` | Which spans and events are exported. Same syntax as `RUST_LOG`, and independent of it. | `info` |
 | `RUST_LOG` | Log verbosity on stderr. Does not affect span export. | `off` |
 

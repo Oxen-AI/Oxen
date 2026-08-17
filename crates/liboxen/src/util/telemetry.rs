@@ -476,10 +476,12 @@ impl std::fmt::Display for Protocol {
     }
 }
 
-/// The transport OTLP export uses.
+/// The transport OTLP export uses, from the traces-specific protocol variable or the general one.
 #[cfg(feature = "otel")]
 fn otel_protocol() -> Result<Protocol, TelemetryError> {
-    parse_otel_protocol(non_empty_env("OTEL_EXPORTER_OTLP_PROTOCOL").as_deref())
+    let configured = non_empty_env("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL")
+        .or_else(|| non_empty_env("OTEL_EXPORTER_OTLP_PROTOCOL"));
+    parse_otel_protocol(configured.as_deref())
 }
 
 /// Read a configured protocol as a transport, defaulting to HTTP where nothing is configured.

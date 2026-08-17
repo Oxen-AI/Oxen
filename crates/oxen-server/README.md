@@ -243,6 +243,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.vendor.example:443 oxen-server start
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector endpoint, an `http://` or `https://` URL. It names the collector, not one signal, so `/v1/traces` is appended under HTTP. Absent = export disabled, unless `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` names one. | *(none)* |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | The traces signal endpoint, taking precedence over the collector endpoint above. It already names the signal, so it is posted to exactly as configured under HTTP and needs `/v1/traces` in it. | *(none)* |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | Transport: `grpc`, or `http` / `http/protobuf` / `http/json` for HTTP. The payload is binary protobuf whichever of the three spellings is used. | `http/protobuf` |
+| `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` | The same setting for span exports alone, and takes precedence over `OTEL_EXPORTER_OTLP_PROTOCOL` where both are set. | *(whatever `OTEL_EXPORTER_OTLP_PROTOCOL` resolves to)* |
 | `OXEN_OTEL_FILTER` | Which spans and events are exported. Same syntax as `RUST_LOG`, and independent of it. | `info` |
 
 A variable set to a blank value counts as unset.
