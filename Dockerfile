@@ -1,4 +1,5 @@
-FROM rust:1.94-bookworm AS builder
+# Toolchain and system dependencies, shared by every stage that compiles anything.
+FROM rust:1.94-bookworm AS chef
 
 USER root
 RUN apt-get update
@@ -8,15 +9,6 @@ RUN apt-get install -y --no-install-recommends clang openssl libssl-dev pkg-conf
 RUN apt-get update \
     && apt-get -y install --no-install-recommends curl ca-certificates xz-utils build-essential clang cmake pkg-config libjpeg-turbo-progs libpng-dev \
     && rm -rfv /var/lib/apt/lists/*
-
-# FFmpeg 8 for the `ffmpeg` video-thumbnail feature, installed via the shared helper. Pins live in
-# tool-versions.env, the single source of truth shared with Linux dev (bin/install-prereqs) and CI.
-ARG TARGETARCH
-COPY bin/install-ffmpeg tool-versions.env /tmp/ffmpeg-install/
-RUN FFMPEG_ARCH="$TARGETARCH" TOOL_VERSIONS_FILE=/tmp/ffmpeg-install/tool-versions.env \
-    bash /tmp/ffmpeg-install/install-ffmpeg \
-    && rm -rf /tmp/ffmpeg-install
-ENV PKG_CONFIG_PATH="/opt/ffmpeg/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
 # ENV MAGICK_VERSION 7.1
 
@@ -37,37 +29,62 @@ ENV PKG_CONFIG_PATH="/opt/ffmpeg/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 #     && cmake --build . -j $(nproc) \
 #     && cmake --install .
 
-### This is breaking because cargo-build-deps forces an update to dependencies
-### Commenting out and using a simpler approach until we find an alternative
-###
-# RUN cargo install cargo-build-deps
-
-# # create an empty project to install dependencies
-# RUN cd /usr/src && cargo new --bin oxen-server
-# WORKDIR /usr/src/oxen-server
-# COPY Cargo.toml Cargo.lock ./
-# COPY crates/liboxen/Cargo.toml crates/liboxen/Cargo.toml
-# COPY crates/oxen-cli/Cargo.toml crates/oxen-cli/Cargo.toml
-# COPY crates/oxen-server/Cargo.toml crates/oxen-server/Cargo.toml
-# # build just the deps for caching
-# RUN cargo build-deps --release
-
-# # copy the rest of the source and build the server and cli
-# COPY src src
-# RUN cargo build --release
-### end commented section
+# FFmpeg 8 for the `ffmpeg` video-thumbnail feature, installed via the shared helper. Pins live in
+# tool-versions.env, the single source of truth shared with Linux dev (bin/install-prereqs) and CI.
+ARG TARGETARCH
+COPY bin/install-ffmpeg tool-versions.env /tmp/ffmpeg-install/
+RUN FFMPEG_ARCH="$TARGETARCH" TOOL_VERSIONS_FILE=/tmp/ffmpeg-install/tool-versions.env \
+    bash /tmp/ffmpeg-install/install-ffmpeg \
+    && rm -rf /tmp/ffmpeg-install
+ENV PKG_CONFIG_PATH="/opt/ffmpeg/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
 WORKDIR /usr/src/oxen-server
+
+# rustup reads rust-toolchain.toml from the working directory, and the base image's
+# toolchain is not the pinned one. A stage that compiles without it uses a different
+# rustc, so cargo reuses none of that stage's work. Nothing fails, the build just
+# recompiles every dependency, so anything that decides how a crate compiles belongs
+# here ahead of every compile step. `rustup show` installs the pinned toolchain.
+COPY rust-toolchain.toml ./
+COPY .cargo/config.toml .cargo/config.toml
+RUN rustup show
+
+# cargo-chef keys the dependency build on the manifests instead of the source tree.
+# Version pinned in tool-versions.env, as with the FFmpeg install above.
+COPY tool-versions.env /tmp/chef-install/
+RUN . /tmp/chef-install/tool-versions.env \
+    && cargo install cargo-chef --locked --version "$CARGO_CHEF_VERSION" \
+    && rm -rf /tmp/chef-install
+
+# recipe.json describes the dependency graph from the manifests alone. A source edit
+# that leaves them untouched produces an identical recipe, so the cook layer survives.
+FROM chef AS planner
 COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
 
 # Defaults to what `[profile.release]` in Cargo.toml already sets, so a build passing
 # no override compiles exactly what a plain release build compiles. Cargo reads this
 # as a profile override, the same mechanism release_windows.yml uses to select thin
 # LTO. It is re-declared as `ENV` because an `ARG` alone is not reliably present in
 # the `RUN` process environment.
+#
+# Must precede cook: the profile a dependency compiled under is part of its cached
+# artifact, so cooking and building under different profiles discards cook's work.
 ARG CARGO_PROFILE_RELEASE_LTO=true
 ENV CARGO_PROFILE_RELEASE_LTO=${CARGO_PROFILE_RELEASE_LTO}
 
+# cook compiles dependencies only. Its flags must match the build below, features
+# included, or feature unification differs and the dependencies compile again instead
+# of being reused. `-p` stands in for `--workspace --exclude oxen-py`, which cook
+# cannot express: oxen-py needs a Python toolchain this image lacks, and oxen-cli plus
+# oxen-server reach the same dependencies.
+COPY --from=planner /usr/src/oxen-server/recipe.json recipe.json
+RUN cargo chef cook --release --features liboxen/ffmpeg,oxen-server/otel \
+    -p oxen-cli -p oxen-server --recipe-path recipe.json
+
+COPY . .
 # `oxen-server/otel` compiles the OTLP span exporter and inbound W3C trace-context extraction into
 # the binary; both stay dormant until an OTLP endpoint is configured at runtime. Named explicitly
 # rather than via the `production` feature, which additionally turns on `perf-logging`.

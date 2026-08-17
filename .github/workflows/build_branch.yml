@@ -40,6 +40,10 @@ env:
   AWS_ROLE: ${{ vars.EC2_GITHUB_RUNNER_ROLE }}
   # Lowercase: registry paths are case-sensitive and the owner name is not.
   REGISTRY_IMAGE: ghcr.io/oxen-ai/oxen-server
+  # Its own package: prune_server_images.yml keeps the newest 20 versions of
+  # oxen-server, and a cache manifest per build would spend that budget on entries no
+  # deployment can roll back to.
+  CACHE_IMAGE: ghcr.io/oxen-ai/oxen-server-buildcache
 
 # Each job below states what it needs; a job's own block replaces this one rather
 # than adding to it, so nothing inherits a write it has no use for.
@@ -113,14 +117,47 @@ jobs:
           echo "COMMIT=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
           echo "BUILD_DATE_UTC=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
 
+      # Ahead of the build because the cache below reads and writes the registry.
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The runner is destroyed after the job, so the cache has to live in the
+      # registry. The default docker driver refuses --cache-to type=registry.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+
       # Thin LTO in place of the release profile's fat LTO, a serial link-time pass
       # that reruns whenever this repository's own crates change, so no layer cache
       # can avoid it. `release_docker.yml` passes no override, so released binaries
       # keep fat LTO. `codegen-units` stays at 1 — raising it trades binary size for
       # less time than this saves.
       - name: Build oxen-server Docker Image (${{ inputs.ARCHITECTURE }})
+        env:
+          # Per architecture: a shared ref would have each build overwrite the other.
+          CACHE_REF: ${{ env.CACHE_IMAGE }}:${{ inputs.ARCHITECTURE }}
+          # Branches read the cache, only main writes it, so a branch cannot replace
+          # what main and the release builds read.
+          WRITE_CACHE: ${{ github.ref == 'refs/heads/main' }}
         run: |
-          docker build \
+          cache_to=()
+          if [[ "$WRITE_CACHE" == "true" ]]; then
+            # mode=max: the dependency build is not in the final stage, and the
+            # default records only the final stage.
+            cache_to=(--cache-to "type=registry,ref=$CACHE_REF,mode=max")
+          fi
+
+          # --load: a docker-container builder does not populate the daemon, which the
+          # save, tag, and push steps below read from.
+          docker buildx build \
+            --load \
+            --cache-from "type=registry,ref=$CACHE_REF" \
+            "${cache_to[@]}" \
             --build-arg CARGO_PROFILE_RELEASE_LTO=thin \
             --label "org.opencontainers.image.revision=${{ steps.metadata.outputs.COMMIT }}" \
             --label "org.opencontainers.image.version=${{ steps.metadata.outputs.VERSION }}" \
@@ -139,13 +176,6 @@ jobs:
           name: oxen-server-docker-${{ inputs.ARCHITECTURE }}-${{ env.RELEASE_VERSION }}.tar
           path: oxen-server-docker-${{ inputs.ARCHITECTURE }}-${{ env.RELEASE_VERSION }}.tar
           retention-days: 1
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       # Published so a deployment can consume the image by digest rather than by
       # unpacking a workflow artifact, which expires and can only be fetched
