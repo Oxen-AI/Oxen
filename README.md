@@ -286,8 +286,8 @@ at runtime. See [Prometheus Metrics](crates/oxen-server/README.md#prometheus-met
 
 `oxen-server` can export tracing spans to any OTLP-compatible collector (Jaeger, Tempo, etc.),
 continuing a trace begun by whoever called it. The release image is built with the `otel` feature;
-a local build needs it named explicitly. Export stays off until `OXEN_OTEL_ENDPOINT` (or the
-standard `OTEL_EXPORTER_OTLP_ENDPOINT`) is set. The CLI and the Python bindings can export too.
+a local build needs it named explicitly. Export stays off until the standard
+`OTEL_EXPORTER_OTLP_ENDPOINT` is set. The CLI and the Python bindings can export too.
 See [OpenTelemetry Tracing](crates/oxen-server/README.md#opentelemetry-tracing) for the full env-var
 reference.
 
