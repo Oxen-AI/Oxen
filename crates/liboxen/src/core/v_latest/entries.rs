@@ -108,7 +108,7 @@ pub fn list_directory_with_depth(
 
     // Found commits is used to cache the commits so that we don't have
     // to read them from disk again while looping over entries
-    let mut found_commits: HashMap<MerkleHash, Commit> = HashMap::new();
+    let mut found_commits: HashMap<MerkleHash, Option<Commit>> = HashMap::new();
 
     let _perf_dir_entry = crate::perf_guard!("core::entries::dir_node_to_metadata");
     let dir_entry =
@@ -213,7 +213,7 @@ pub fn dir_entries(
     dir: &MerkleTreeNode,
     search_directory: impl AsRef<Path>,
     parsed_resource: &ParsedResource,
-    found_commits: &mut HashMap<MerkleHash, Commit>,
+    found_commits: &mut HashMap<MerkleHash, Option<Commit>>,
 ) -> Result<Vec<MetadataEntry>, OxenError> {
     dir_entries_with_depth(
         repo,
@@ -231,7 +231,7 @@ pub fn dir_entries_with_depth(
     dir: &MerkleTreeNode,
     search_directory: impl AsRef<Path>,
     parsed_resource: &ParsedResource,
-    found_commits: &mut HashMap<MerkleHash, Commit>,
+    found_commits: &mut HashMap<MerkleHash, Option<Commit>>,
     sort_opts: &SortOpts,
     depth: usize,
 ) -> Result<Vec<MetadataEntry>, OxenError> {
@@ -300,7 +300,7 @@ fn dir_node_to_metadata_entry(
     repo: &LocalRepository,
     node: &MerkleTreeNode,
     parsed_resource: &ParsedResource,
-    found_commits: &mut HashMap<MerkleHash, Commit>,
+    found_commits: &mut HashMap<MerkleHash, Option<Commit>>,
     // Should append resource is because at the top level we don't want to append the resource
     // but when we recurse we do
     should_append_resource: bool,
@@ -315,14 +315,21 @@ fn dir_node_to_metadata_entry(
         found_commits.entry(*dir_node.last_commit_id())
     {
         let _perf_commit = crate::perf_guard!("core::entries::get_commit_by_hash");
-        let commit = repositories::commits::get_by_hash(repo, dir_node.last_commit_id())?
-            .ok_or_else(|| {
-                OxenError::commit_id_does_not_exist(dir_node.last_commit_id().to_string())
-            })?;
+        let commit = repositories::commits::get_by_hash(repo, dir_node.last_commit_id())?;
+        if commit.is_none() {
+            tracing::error!(
+                commit_id = %dir_node.last_commit_id(),
+                entry = %dir_node.name(),
+                "Entry names a commit the repository does not have"
+            );
+        }
         e.insert(commit);
     }
 
-    let commit = found_commits.get(dir_node.last_commit_id()).unwrap();
+    let latest_commit = found_commits
+        .get(dir_node.last_commit_id())
+        .cloned()
+        .flatten();
     let mut parsed_resource = parsed_resource.clone();
     if should_append_resource {
         parsed_resource.resource = parsed_resource.resource.join(dir_node.name());
@@ -333,7 +340,7 @@ fn dir_node_to_metadata_entry(
         filename: dir_node.name().to_string(),
         hash: dir_node.hash().to_string(),
         is_dir: true,
-        latest_commit: Some(commit.clone()),
+        latest_commit,
         resource: Some(parsed_resource.into()),
         size: dir_node.num_bytes(),
         data_type: EntryDataType::Dir,
@@ -351,7 +358,7 @@ fn file_node_to_metadata_entry(
     repo: &LocalRepository,
     file_node: &FileNode,
     parsed_resource: &ParsedResource,
-    found_commits: &mut HashMap<MerkleHash, Commit>,
+    found_commits: &mut HashMap<MerkleHash, Option<Commit>>,
 ) -> Result<Option<MetadataEntry>, OxenError> {
     let _perf = crate::perf_guard!("core::entries::file_node_to_metadata_entry");
 
@@ -359,14 +366,21 @@ fn file_node_to_metadata_entry(
         found_commits.entry(*file_node.last_commit_id())
     {
         let _perf_commit = crate::perf_guard!("core::entries::get_commit_by_hash");
-        let commit = repositories::commits::get_by_hash(repo, file_node.last_commit_id())?
-            .ok_or_else(|| {
-                OxenError::commit_id_does_not_exist(file_node.last_commit_id().to_string())
-            })?;
+        let commit = repositories::commits::get_by_hash(repo, file_node.last_commit_id())?;
+        if commit.is_none() {
+            tracing::error!(
+                commit_id = %file_node.last_commit_id(),
+                entry = %file_node.name(),
+                "Entry names a commit the repository does not have"
+            );
+        }
         e.insert(commit);
     }
 
-    let commit = found_commits.get(file_node.last_commit_id()).unwrap();
+    let latest_commit = found_commits
+        .get(file_node.last_commit_id())
+        .cloned()
+        .flatten();
     let data_type = file_node.data_type();
 
     let mut parsed_resource = parsed_resource.clone();
@@ -395,7 +409,7 @@ fn file_node_to_metadata_entry(
         filename: file_node.name().to_string(),
         hash: file_node.hash().to_string(),
         is_dir: false,
-        latest_commit: Some(commit.clone()),
+        latest_commit,
         resource: Some(parsed_resource.into()),
         size: file_node.num_bytes(),
         data_type: file_node.data_type().clone(),
@@ -414,7 +428,7 @@ fn p_dir_entries(
     search_directory: impl AsRef<Path>,
     current_directory: impl AsRef<Path>,
     parsed_resource: &ParsedResource,
-    found_commits: &mut HashMap<MerkleHash, Commit>,
+    found_commits: &mut HashMap<MerkleHash, Option<Commit>>,
     entries: &mut Vec<MetadataEntry>,
     sort_opts: &SortOpts,
     depth: usize,
