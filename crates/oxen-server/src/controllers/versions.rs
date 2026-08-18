@@ -10,8 +10,9 @@ use actix_web::{Error, HttpRequest, HttpResponse, web};
 use async_compression::tokio::write::GzipEncoder;
 use async_zip::Compression;
 use async_zip::base::write::ZipFileWriter;
+use bytes::Bytes;
 use flate2::read::GzDecoder;
-use futures_util::{StreamExt, TryStreamExt as _};
+use futures_util::{Stream, StreamExt, TryStreamExt as _, stream};
 use liboxen::constants::stream_segment_size;
 use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
@@ -22,9 +23,12 @@ use liboxen::util;
 use liboxen::view::versions::{CleanCorruptedVersionsResponse, VersionFile, VersionFileResponse};
 use liboxen::view::{ErrorFileInfo, ErrorFilesResponse, FileWithHash, StatusMessage};
 use mime;
+use std::io;
+use std::io::ErrorKind;
 use std::io::Read as StdRead;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWriteExt, DuplexStream};
+use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::task::{JoinError, JoinSet};
 use tokio_tar::Builder;
 use tokio_util::compat::FuturesAsyncWriteCompatExt;
@@ -33,6 +37,37 @@ use tokio_util::io::{ReaderStream, StreamReader};
 use utoipa::ToSchema;
 
 const DOWNLOAD_BUFFER_SIZE: usize = 2 * 1024 * 1024;
+
+/// The response body for a streamed archive, carrying any failure the writer task reported on
+/// `error_rx`. A failure reported after the final chunk still reaches the caller, so a truncated
+/// archive is never delivered as a complete one.
+fn archive_body_stream(
+    reader: DuplexStream,
+    error_rx: UnboundedReceiver<OxenError>,
+) -> impl Stream<Item = Result<Bytes, OxenHttpError>> {
+    stream::unfold(
+        (ReaderStream::new(reader), error_rx),
+        |(mut reader_stream, mut error_rx)| async move {
+            let chunk = reader_stream.next().await;
+            // Checked before the chunk is unwrapped, so end-of-body is still a chance to report.
+            if let Ok(err) = error_rx.try_recv() {
+                log::error!("Stream error: {err}");
+                return Some((Err(OxenHttpError::from(err)), (reader_stream, error_rx)));
+            }
+            let item = chunk?.map_err(OxenHttpError::from);
+            Some((item, (reader_stream, error_rx)))
+        },
+    )
+}
+
+/// Whether a write to a streaming response body failed because the client stopped reading it. Such
+/// a failure means the response stream is gone, and with it the channel errors are reported on.
+fn is_client_disconnect(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        ErrorKind::BrokenPipe | ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted
+    )
+}
 
 /// Get version file metadata
 #[utoipa::path(
@@ -250,13 +285,14 @@ pub async fn stream_versions_tar_gz(
     let version_store_clone = version_store.clone();
     let file_hashes_clone = file_hashes.clone();
 
-    let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (error_tx, error_rx) = tokio::sync::mpsc::unbounded_channel();
 
     let writer_task = async move {
         let enc = GzipEncoder::new(writer);
         let mut tar = Builder::new(enc);
 
         let mut had_error = false;
+        let mut client_gone = false;
         for file_hash in file_hashes_clone.iter() {
             match version_store_clone.get_version_stream(file_hash).await {
                 Ok(data) => {
@@ -294,9 +330,14 @@ pub async fn stream_versions_tar_gz(
 
                     let mut reader = StreamReader::new(data);
                     if let Err(e) = tar.append(&header, &mut reader).await {
-                        tracing::error!(file_hash = %file_hash, cause = %e, "Failed to append version to tar");
-                        error_tx.send(OxenError::IO(e)).ok();
-                        had_error = true;
+                        if is_client_disconnect(&e) {
+                            log::debug!("Client stopped reading at version {file_hash}");
+                            client_gone = true;
+                        } else {
+                            tracing::error!(file_hash = %file_hash, cause = %e, "Failed to append version to tar");
+                            error_tx.send(OxenError::IO(e)).ok();
+                            had_error = true;
+                        }
                         break;
                     }
                     log::debug!("Successfully appended data to tarball for hash: {file_hash}");
@@ -319,31 +360,44 @@ pub async fn stream_versions_tar_gz(
             }
         }
 
-        if let Err(e) = tar.finish().await {
-            log::error!("Failed to finish tar: {e}");
-            error_tx.send(OxenError::IO(e)).ok();
-            had_error = true;
-        }
-
-        match tar.into_inner().await {
-            Ok(mut enc) => {
-                if let Err(e) = enc.shutdown().await {
-                    log::error!("Failed to shutdown gzip encoder: {e}");
-                    error_tx.send(OxenError::IO(e)).ok();
-                    had_error = true;
-                }
-                log::info!("Successfully finished tarball");
-            }
-            Err(e) => {
-                log::error!("Failed to get encoder: {e}");
+        // Finishing the tar and the encoder writes the trailing bytes of the response body, which
+        // a client that has stopped reading cannot receive.
+        if !client_gone && let Err(e) = tar.finish().await {
+            if is_client_disconnect(&e) {
+                log::debug!("Client stopped reading before the tarball was finished");
+                client_gone = true;
+            } else {
+                log::error!("Failed to finish tar: {e}");
                 error_tx.send(OxenError::IO(e)).ok();
                 had_error = true;
             }
-        };
+        }
+
+        if !client_gone {
+            match tar.into_inner().await {
+                Ok(mut enc) => {
+                    if let Err(e) = enc.shutdown().await {
+                        if is_client_disconnect(&e) {
+                            log::debug!("Client stopped reading before the encoder was flushed");
+                            client_gone = true;
+                        } else {
+                            log::error!("Failed to shutdown gzip encoder: {e}");
+                            error_tx.send(OxenError::IO(e)).ok();
+                            had_error = true;
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to get encoder: {e}");
+                    error_tx.send(OxenError::IO(e)).ok();
+                    had_error = true;
+                }
+            };
+        }
 
         if had_error {
             log::warn!("Stream closed due to earlier error");
-        } else {
+        } else if !client_gone {
             log::info!("Streaming completed successfully");
         }
     };
@@ -351,13 +405,7 @@ pub async fn stream_versions_tar_gz(
     // The body streams after the handler returns, outside the request hub.
     tokio::spawn(tasks::inherit_hub(writer_task));
 
-    let stream = ReaderStream::new(reader).map(move |chunk| {
-        if let Ok(err) = error_rx.try_recv() {
-            log::error!("Stream error: {err}");
-            return Err(OxenHttpError::from(err));
-        }
-        chunk.map_err(OxenHttpError::from)
-    });
+    let stream = archive_body_stream(reader, error_rx);
 
     Ok(HttpResponse::Ok()
         .content_type("application/gzip")
@@ -374,7 +422,7 @@ pub async fn stream_versions_zip(
     let version_store_clone = version_store.clone();
     let files_clone = files.clone();
 
-    let (error_tx, mut error_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (error_tx, error_rx) = tokio::sync::mpsc::unbounded_channel();
 
     let writer_task = async move {
         let compat_writer = writer.compat_write();
@@ -483,13 +531,7 @@ pub async fn stream_versions_zip(
     // The body streams after the handler returns, outside the request hub.
     tokio::spawn(tasks::inherit_hub(writer_task));
 
-    let stream = tokio_util::io::ReaderStream::new(reader).map(move |chunk| {
-        if let Ok(err) = error_rx.try_recv() {
-            log::error!("Stream error: {err}");
-            return Err(OxenHttpError::from(err));
-        }
-        chunk.map_err(OxenHttpError::from)
-    });
+    let stream = archive_body_stream(reader, error_rx);
 
     Ok(HttpResponse::Ok()
         .content_type("application/zip")
@@ -672,6 +714,7 @@ fn store_task_result(
 
 #[cfg(test)]
 mod tests {
+    use super::is_client_disconnect;
     use crate::app_data::OxenAppData;
     use crate::controllers;
     use crate::test;
@@ -687,6 +730,66 @@ mod tests {
     use liboxen::view::ErrorFilesResponse;
     use mime;
     use std::io::Write;
+
+    #[actix_web::test]
+    async fn test_a_writer_failure_after_the_last_chunk_still_reaches_the_caller() {
+        use super::archive_body_stream;
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+
+        let (mut writer, reader) = tokio::io::duplex(64 * 1024);
+        let (error_tx, error_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        // A complete-looking body, then a failure the writer only discovers at the end.
+        writer.write_all(b"archive bytes").await.expect("write");
+        writer.flush().await.expect("flush");
+        let mut stream = Box::pin(archive_body_stream(reader, error_rx));
+
+        let first = stream.next().await.expect("a chunk");
+        assert_eq!(
+            first.expect("chunk is ok"),
+            Bytes::from_static(b"archive bytes")
+        );
+
+        error_tx
+            .send(OxenError::basic_str("could not finish the archive"))
+            .expect("queue the failure");
+        drop(writer);
+
+        let tail = stream.next().await.expect("the failure, not end of body");
+        assert!(
+            tail.is_err(),
+            "a failure reported after the last chunk must not end the body cleanly"
+        );
+    }
+
+    #[test]
+    fn test_a_client_that_stopped_reading_is_not_a_server_failure() {
+        use std::io::{Error, ErrorKind};
+
+        for kind in [
+            ErrorKind::BrokenPipe,
+            ErrorKind::ConnectionReset,
+            ErrorKind::ConnectionAborted,
+        ] {
+            assert!(
+                is_client_disconnect(&Error::new(kind, "disconnected")),
+                "{kind:?} means the client stopped reading"
+            );
+        }
+
+        for kind in [
+            ErrorKind::PermissionDenied,
+            ErrorKind::NotFound,
+            ErrorKind::OutOfMemory,
+            ErrorKind::UnexpectedEof,
+        ] {
+            assert!(
+                !is_client_disconnect(&Error::new(kind, "server side")),
+                "{kind:?} is a server-side failure worth reporting"
+            );
+        }
+    }
 
     #[actix_web::test]
     async fn test_controllers_versions_download() -> Result<(), OxenError> {
