@@ -60,7 +60,7 @@ mod tests {
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_clone_root_subtree_depth_1_add_file() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
@@ -96,7 +96,7 @@ mod tests {
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_clone_annotations_test_subtree_add_file() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        test::run_select_data_sync_remote("annotations", |_local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
@@ -161,9 +161,13 @@ A: Oxen.ai
 
     #[tokio::test]
     async fn test_command_add_modified_file_in_subdirectory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            // Modify and add the file deep in a sub dir
+        test::run_empty_local_repo_test_async(|repo| async move {
             let one_shot_path = repo.path.join("annotations/train/one_shot.csv");
+            util::fs::write_to_path(&one_shot_path, "file,label\ntrain/dog_1.jpg,1")?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Adding one shot")?;
+
+            // Modify and add the file deep in a sub dir
             let file_contents = "file,label\ntrain/cat_1.jpg,0";
             test::modify_txt_file(one_shot_path, file_contents)?;
             let status = repositories::status(&repo).await?;
@@ -187,9 +191,9 @@ A: Oxen.ai
 
     #[tokio::test]
     async fn test_command_add_removed_file() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
-            // (file already created in helper)
+        test::run_empty_local_repo_test_async(|repo| async move {
             let file_to_remove = repo.path.join("labels.txt");
+            util::fs::write_to_path(&file_to_remove, "cat\ndog\n")?;
 
             // Commit the file
             repositories::add(&repo, &file_to_remove).await?;
@@ -210,7 +214,8 @@ A: Oxen.ai
     // At some point we were adding rocksdb inside the working dir...def should not do that
     #[tokio::test]
     async fn test_command_add_dot_should_not_add_new_files() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            test::populate_dir_with_txt_files(&repo.path, "file", 3)?;
             let num_files = util::fs::count_files_in_dir(&repo.path);
 
             repositories::add(&repo, &repo.path).await?;
@@ -337,36 +342,14 @@ A: Oxen.ai
     }
 
     #[tokio::test]
-    async fn test_add_nested_nlp_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
-            let dir = Path::new("nlp");
-            let repo_dir = repo.path.join(dir);
-            repositories::add(&repo, repo_dir).await?;
-
-            let status = repositories::status(&repo).await?;
-            status.print();
-
-            // Should add all the sub dirs
-            // nlp/classification/annotations/
-            assert_eq!(status.staged_dirs.len(), 1);
-
-            // Should add sub files
-            // nlp/classification/annotations/train.tsv
-            // nlp/classification/annotations/test.tsv
-            assert_eq!(status.staged_files.len(), 2);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
     async fn test_command_add_stage_with_wildcard() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            let _objects_dir = repo.path.join(".oxen/objects");
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let one_shot_path = repo.path.join("annotations/train/one_shot.csv");
+            util::fs::write_to_path(&one_shot_path, "file,label\ntrain/dog_1.jpg,1")?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Adding one shot")?;
 
             // Modify and add the file deep in a sub dir
-            let one_shot_path = repo.path.join("annotations/train/one_shot.csv");
             let file_contents = "file,label\ntrain/cat_1.jpg,0";
             test::modify_txt_file(one_shot_path, file_contents)?;
             let status = repositories::status(&repo).await?;
@@ -386,9 +369,25 @@ A: Oxen.ai
         .await
     }
 
+    /// Write the `nlp/classification/annotations/{train,test}.tsv` tree into the repo.
+    fn write_nlp_dir(repo: &LocalRepository) -> Result<(), OxenError> {
+        let annotations_dir = repo.path.join("nlp/classification/annotations");
+        util::fs::write_to_path(
+            annotations_dir.join("train.tsv"),
+            "text\tlabel\nI love it\t1\n",
+        )?;
+        util::fs::write_to_path(
+            annotations_dir.join("test.tsv"),
+            "text\tlabel\nI hate it\t0\n",
+        )?;
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_wildcard_add_remove_nested_nlp_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            write_nlp_dir(&repo)?;
+
             let dir = Path::new("nlp");
             let repo_dir = repo.path.join(dir);
             repositories::add(&repo, repo_dir).await?;
@@ -434,7 +433,9 @@ A: Oxen.ai
 
     #[tokio::test]
     async fn test_wildcard_add_nested_nlp_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            write_nlp_dir(&repo)?;
+
             let dir = Path::new("nlp/*");
             let repo_dir = repo.path.join(dir);
             repositories::add(&repo, repo_dir).await?;
@@ -544,20 +545,25 @@ A: Oxen.ai
 
     #[tokio::test]
     async fn test_stager_add_dir_recursive() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
-            // Write two files to a sub directory
-            let annotations_dir = repo.path.join("annotations");
-
-            // Add the directory which has the structure
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Add a directory which has the structure
             // annotations/
             //   README.md
             //   train/
             //     bounding_box.csv
-            //     annotations.txt
-            //     two_shot.txt
-            //     one_shot.csv
             //   test/
-            //     annotations.txt
+            //     annotations.csv
+            let annotations_dir = repo.path.join("annotations");
+            util::fs::write_to_path(annotations_dir.join("README.md"), "# Annotations\n")?;
+            util::fs::write_to_path(
+                annotations_dir.join("train").join("bounding_box.csv"),
+                "file,label\ntrain/dog_1.jpg,dog\n",
+            )?;
+            util::fs::write_to_path(
+                annotations_dir.join("test").join("annotations.csv"),
+                "file,label\ntest/1.jpg,dog\n",
+            )?;
+
             repositories::add(&repo, &annotations_dir).await?;
 
             // List dirs
@@ -600,9 +606,10 @@ A: Oxen.ai
 
     #[tokio::test]
     async fn test_command_add_after_modified_file_in_subdirectory() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // Track & commit all the data
             let one_shot_path = repo.path.join("annotations/train/one_shot.csv");
+            util::fs::write_to_path(&one_shot_path, "file,label\ntrain/dog_1.jpg,1\n")?;
             repositories::add(&repo, &repo.path).await?;
             repositories::commit(&repo, "Adding one shot")?;
 
@@ -638,10 +645,20 @@ A: Oxen.ai
 
     #[tokio::test]
     async fn test_add_wildcard_prefix_match() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
-            // Data from populate_train_dir:
-            // train/cat_1.jpg, train/cat_2.jpg, train/cat_3.jpg
-            // train/dog_1.jpg, train/dog_2.jpg, train/dog_3.jpg, train/dog_4.jpg
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let train_dir = repo.path.join("train");
+            for i in 1..=3 {
+                util::fs::write_to_path(
+                    train_dir.join(format!("cat_{i}.jpg")),
+                    format!("cat {i}"),
+                )?;
+            }
+            for i in 1..=4 {
+                util::fs::write_to_path(
+                    train_dir.join(format!("dog_{i}.jpg")),
+                    format!("dog {i}"),
+                )?;
+            }
 
             // Add only the cats
             repositories::add(&repo, "train/cat_*.jpg").await?;

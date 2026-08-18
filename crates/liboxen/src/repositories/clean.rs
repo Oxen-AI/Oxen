@@ -47,7 +47,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_clean_force_removes_untracked_file() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let scratch = repo.path.join("scratch.txt");
             util::fs::write_to_path(&scratch, "hello")?;
 
@@ -64,7 +64,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_clean_default_is_dry_run() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let scratch = repo.path.join("scratch.txt");
             util::fs::write_to_path(&scratch, "hello")?;
 
@@ -81,7 +81,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_clean_force_removes_untracked_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let junk_dir = repo.path.join("junk");
             util::fs::create_dir_all(&junk_dir)?;
             util::fs::write_to_path(junk_dir.join("a.txt"), "a")?;
@@ -100,10 +100,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_clean_preserves_tracked_files() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            // labels.txt is tracked by the training_data helper.
+        test::run_empty_local_repo_test_async(|repo| async move {
             let tracked = repo.path.join("labels.txt");
-            assert!(tracked.exists(), "sanity: tracked file should be present");
+            util::fs::write_to_path(&tracked, "cat\ndog\n")?;
+            repositories::add(&repo, &tracked).await?;
+            repositories::commit(&repo, "Adding labels")?;
 
             let untracked = repo.path.join("scratch.txt");
             util::fs::write_to_path(&untracked, "hello")?;
@@ -120,7 +121,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_clean_preserves_oxen_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let oxen_dir = repo.path.join(".oxen");
             assert!(oxen_dir.exists(), "sanity: .oxen/ should exist");
 
@@ -139,7 +140,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_clean_respects_oxenignore() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let ignored_name = "ignored_scratch.txt";
             util::fs::write_to_path(repo.path.join(ignored_name), "should stay")?;
             util::fs::write_to_path(repo.path.join(".oxenignore"), ignored_name)?;
@@ -162,7 +163,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_clean_path_scoping() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             util::fs::create_dir_all(repo.path.join("subtree_a"))?;
             util::fs::create_dir_all(repo.path.join("subtree_b"))?;
             util::fs::write_to_path(repo.path.join("subtree_a").join("x.txt"), "x")?;
@@ -196,10 +197,12 @@ mod tests {
     async fn test_clean_partially_untracked_dir_not_removed_wholesale() -> Result<(), OxenError> {
         // `annotations/train/` is tracked; adding an untracked sibling file inside it
         // should leave the tracked content alone and only remove the untracked file.
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let train_dir = repo.path.join("annotations").join("train");
             let tracked = train_dir.join("bounding_box.csv");
-            assert!(tracked.exists(), "sanity: tracked file must exist");
+            util::fs::write_to_path(&tracked, "file,label\ntrain/dog_1.jpg,dog\n")?;
+            repositories::add(&repo, &tracked).await?;
+            repositories::commit(&repo, "Adding bounding box annotations")?;
 
             let untracked = train_dir.join("scratch.txt");
             util::fs::write_to_path(&untracked, "temp")?;
@@ -217,7 +220,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_clean_result_counts() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             util::fs::write_to_path(repo.path.join("a.txt"), "12345")?; // 5 bytes
             util::fs::write_to_path(repo.path.join("b.txt"), "hi")?; // 2 bytes
 
@@ -247,9 +250,13 @@ mod tests {
         // behind untracked files/dirs (from the target commit) plus modified tracked files.
         // `oxen restore` handles the modifications, then `oxen clean -f` removes the
         // untracked leftovers, leaving `oxen status` clean.
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            // Simulate modified tracked file left over from a partial pull.
+        test::run_empty_local_repo_test_async(|repo| async move {
             let tracked = repo.path.join("labels.txt");
+            util::fs::write_to_path(&tracked, "cat\ndog\n")?;
+            repositories::add(&repo, &tracked).await?;
+            repositories::commit(&repo, "Adding labels")?;
+
+            // Simulate modified tracked file left over from a partial pull.
             let original = util::fs::read_from_path(&tracked)?;
             util::fs::write_to_path(&tracked, "partial write from interrupted pull\n")?;
 
