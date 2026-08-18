@@ -26,13 +26,14 @@ path = "src/main.rs"
 [features]
 default = []
 metrics = ["liboxen/metrics", "dep:metrics", "dep:metrics-exporter-prometheus"]
-# `tracing-actix-web/opentelemetry_0_31` is what extracts an inbound `traceparent` and parents the
+# `tracing-actix-web/opentelemetry_0_32` is what extracts an inbound `traceparent` and parents the
 # HTTP root span to it. It must name the same `opentelemetry` minor the rest of the workspace
-# resolves — bump the two together.
+# resolves — bump the two together. A mismatch compiles and exports spans, but the propagator
+# registered by one minor is invisible to the other, so inbound traces stop being continued.
 otel = [
     "liboxen/otel",
     "dep:tracing-opentelemetry",
-    "tracing-actix-web/opentelemetry_0_31",
+    "tracing-actix-web/opentelemetry_0_32",
 ]
 production = ["metrics", "otel", "liboxen/production", "default"]
 

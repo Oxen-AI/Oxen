@@ -203,9 +203,9 @@ MODIFIED_AUTH_CONFIG=true
 # that is what a deployment uses: it is the binary built with the otel feature, and hosted
 # collectors commonly accept OTLP/HTTP with binary protobuf and nothing else. The trace
 # assertions below read the server's spans, so a break in HTTP export shows up there as missing
-# or unparented spans rather than as an obvious export failure.
-OXEN_OTEL_ENDPOINT=http://localhost:4318 \
-OXEN_OTEL_PROTOCOL=http \
+# or unparented spans rather than as an obvious export failure. The server names no transport, so
+# this also covers the default resolving to HTTP.
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
 OXEN_METRICS_PORT="$OXEN_METRICS_PORT" \
 "$SERVER" start -p "$OXEN_SERVER_PORT" &
 SERVER_PID=$!
@@ -272,7 +272,8 @@ echo "modified in repo-b" >> test-file.txt
 
 # Repo A: pull (with client-side OTel too)
 cd "$REPO_A_DIR"
-OXEN_OTEL_ENDPOINT=http://localhost:4317 \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc \
 "$OXEN" pull
 
 # ── oxen-python OTel check ──
@@ -287,7 +288,8 @@ echo "another change for python test" >> test-file.txt
 
 # Pull from repo-a using Python with OTel enabled
 cd "$REPO_A_DIR"
-OXEN_OTEL_ENDPOINT=http://localhost:4317 \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc \
 "$REPO_ROOT/oxen-python/.venv/bin/python" -c "
 import oxen
 repo = oxen.Repo('.')

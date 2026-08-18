@@ -39,10 +39,10 @@ The `oxen` CLI can export tracing spans to any OTLP-compatible collector
 cargo build -p oxen-cli --features otel
 ```
 
-At runtime, set `OXEN_OTEL_ENDPOINT`:
+At runtime, set `OTEL_EXPORTER_OTLP_ENDPOINT`:
 
 ```bash
-OXEN_OTEL_ENDPOINT=http://localhost:4317 oxen pull
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 oxen pull
 ```
 
 ### Filtering: logs and spans are separate
@@ -57,13 +57,14 @@ session does not change what is exported.
 be narrowed or widened on its own:
 
 ```bash
-OXEN_OTEL_FILTER=warn,liboxen=debug OXEN_OTEL_ENDPOINT=http://localhost:4317 oxen pull
+OXEN_OTEL_FILTER=warn,liboxen=debug OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 oxen pull
 ```
 
 | Variable | Description | Default |
 |---|---|---|
-| `OXEN_OTEL_ENDPOINT` | Collector base URL, which under HTTP has `/v1/traces` appended to it. Falls back to `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (a full traces URL, posted to exactly as configured, so include `/v1/traces` in it), then to `OTEL_EXPORTER_OTLP_ENDPOINT`, a collector base URL appended to like the first. Absent from all three = disabled. | *(none)* |
-| `OXEN_OTEL_PROTOCOL` | Transport: `grpc`, or `http` / `http/protobuf` / `http/json` for HTTP (binary protobuf either way). Falls back to `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`, then `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector URL, needing an `http://` or `https://` scheme, which under HTTP has `/v1/traces` appended to it. Absent = disabled, unless `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` names one. | *(none)* |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | The traces endpoint, taking precedence over the above and posted to exactly as configured under HTTP, so include `/v1/traces` in it. | *(none)* |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | Transport: `grpc`, or `http` / `http/protobuf` / `http/json` for HTTP (binary protobuf either way). `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` takes precedence over it. | `http/protobuf` |
 | `OXEN_OTEL_FILTER` | Which spans and events are exported. Same syntax as `RUST_LOG`, and independent of it. | `info` |
 | `RUST_LOG` | Log verbosity on stderr. Does not affect span export. | `off` |
 
@@ -80,7 +81,7 @@ docker run --rm --name jaeger \
   cr.jaegertracing.io/jaegertracing/jaeger:2.17.0
 
 # Run a pull with tracing enabled
-OXEN_OTEL_ENDPOINT=http://localhost:4317 cargo run --features otel -p oxen-cli pull
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 cargo run --features otel -p oxen-cli pull
 
 # View traces at http://localhost:16686 under service "oxen"
 ```

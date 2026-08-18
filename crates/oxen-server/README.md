@@ -219,49 +219,44 @@ rate(oxen_errors_total[5m])
 cargo build -p oxen-server --features otel
 ```
 
-At runtime, set `OXEN_OTEL_ENDPOINT` to enable export. Nothing is exported
-until you do, so a build with the feature compiled in and no endpoint
+At runtime, set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable export. Nothing is
+exported until you do, so a build with the feature compiled in and no endpoint
 configured behaves exactly like one without it.
 
-```bash
-# gRPC (default protocol) — a bare host:port gets http://
-OXEN_OTEL_ENDPOINT=localhost:4317 oxen-server start
+The endpoint must carry an `http://` or `https://` scheme. A schemeless value
+does not fail: the exporter cannot parse it and falls back to its own default of
+`http://localhost:4318`, so spans go somewhere nobody configured.
 
-# OTLP/HTTP
-OXEN_OTEL_ENDPOINT=localhost:4318 OXEN_OTEL_PROTOCOL=http oxen-server start
+```bash
+# OTLP/HTTP (default protocol)
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 oxen-server start
+
+# gRPC
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 OTEL_EXPORTER_OTLP_PROTOCOL=grpc oxen-server start
 
 # A TLS-terminated vendor endpoint
-OXEN_OTEL_ENDPOINT=https://otlp.vendor.example:443 oxen-server start
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.vendor.example:443 oxen-server start
 ```
 
 | Variable | Description | Default |
 |---|---|---|
-| `OXEN_OTEL_ENDPOINT` | Collector endpoint: an `http://` or `https://` URL, or a bare `host:port` (which gets `http://`). Absent = export disabled, unless a standard endpoint variable below names one. | *(none)* |
-| `OXEN_OTEL_PROTOCOL` | Transport: `grpc`, or `http` / `http/protobuf` / `http/json` for HTTP. Under HTTP the OTLP signal path `/v1/traces` is appended to the endpoint unless it already names one, and the payload is binary protobuf whichever of the three spellings is used. | `grpc` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector endpoint, an `http://` or `https://` URL. It names the collector, not one signal, so `/v1/traces` is appended under HTTP. Absent = export disabled, unless `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` names one. | *(none)* |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | The traces signal endpoint, taking precedence over the collector endpoint above. It already names the signal, so it is posted to exactly as configured under HTTP and needs `/v1/traces` in it. | *(none)* |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | Transport: `grpc`, or `http` / `http/protobuf` / `http/json` for HTTP. The payload is binary protobuf whichever of the three spellings is used. | `http/protobuf` |
+| `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` | The same setting for span exports alone, and takes precedence over `OTEL_EXPORTER_OTLP_PROTOCOL` where both are set. | *(whatever `OTEL_EXPORTER_OTLP_PROTOCOL` resolves to)* |
 | `OXEN_OTEL_FILTER` | Which spans and events are exported. Same syntax as `RUST_LOG`, and independent of it. | `info` |
+
+A variable set to a blank value counts as unset.
+
+`OXEN_OTEL_FILTER` keeps a project-specific name because it selects spans by
+target and level, a `tracing` concept the OTLP specification has no equivalent
+for. Sampling, which the specification does define, is `OTEL_TRACES_SAMPLER`
+below and is a separate mechanism.
 
 An `https://` endpoint is verified against the platform's root certificate
 store under both transports, so a collector behind a publicly trusted
 certificate needs no further configuration. A private CA has to be installed in
 that store.
-
-The endpoint and the transport each fall back to their standard variables where
-the `OXEN_` one is not set, so a vendor's stock configuration snippet works as
-given. Each is resolved in the order `OXEN_OTEL_*`, then the traces-specific
-standard variable, then the general one:
-
-| Setting | Resolved in this order |
-|---|---|
-| Endpoint | `OXEN_OTEL_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT` |
-| Transport | `OXEN_OTEL_PROTOCOL`, `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`, `OTEL_EXPORTER_OTLP_PROTOCOL` |
-
-A variable set to a blank value names nothing and falls through to the next,
-rather than shadowing it.
-
-`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` names the traces signal rather than the
-collector, so under HTTP it is posted to exactly as configured. Include
-`/v1/traces` in it. The other two name the collector, and `/v1/traces` is
-appended to them.
 
 These standard `OTEL_*` variables are read by the SDK itself:
 
@@ -318,10 +313,10 @@ debugging does not change what is exported:
 
 ```bash
 # Full traces, warnings and errors only on stderr — the recommended setup.
-OXEN_OTEL_ENDPOINT=http://localhost:4317 oxen-server start
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 oxen-server start
 
 # Verbose stderr for a debugging session; the traces are unchanged.
-OXEN_OTEL_ENDPOINT=http://localhost:4317 RUST_LOG=warn,liboxen=debug oxen-server start
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 RUST_LOG=warn,liboxen=debug oxen-server start
 ```
 
 `OXEN_OTEL_FILTER` takes the same directive syntax, so span export can be
@@ -350,7 +345,7 @@ docker run --rm --name jaeger \
   cr.jaegertracing.io/jaegertracing/jaeger:2.17.0
 
 # Start oxen-server with OTel export
-OXEN_OTEL_ENDPOINT=http://localhost:4317 cargo run --features otel -p oxen-server start
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 cargo run --features otel -p oxen-server start
 
 # View traces at http://localhost:16686 under service "oxen-server"
 ```
@@ -394,7 +389,7 @@ output with span timing, JSON file logs, and OpenTelemetry export:
 ```bash
 OXEN_LOG_DIR='/var/log/oxen' \
 OXEN_FMT_SPAN='CLOSE' \
-OXEN_OTEL_ENDPOINT='http://localhost:4317' \
+OTEL_EXPORTER_OTLP_ENDPOINT='http://localhost:4318' \
 RUST_LOG='info' \
 oxen-server start
 ```
