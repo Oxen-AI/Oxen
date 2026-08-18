@@ -39,12 +39,21 @@ RUN FFMPEG_ARCH="$TARGETARCH" TOOL_VERSIONS_FILE=/tmp/tool-versions.env \
     && rm -f /tmp/install-ffmpeg
 ENV PKG_CONFIG_PATH="/opt/ffmpeg/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
+WORKDIR /usr/src/oxen-server
+
+# rustup reads rust-toolchain.toml from the working directory, and the base image's
+# toolchain is not the pinned one. A stage that compiles without it uses a different
+# rustc, so cargo reuses none of that stage's work. Nothing fails, the build just
+# recompiles every dependency, so anything that decides how a crate compiles belongs
+# here ahead of every compile step.
+COPY rust-toolchain.toml ./
+COPY .cargo/config.toml .cargo/config.toml
+RUN rustup toolchain install --no-self-update
+
 # cargo-chef keys the dependency build on the manifests instead of the source tree.
 # Version pinned in tool-versions.env, as with the FFmpeg install above.
 RUN . /tmp/tool-versions.env \
     && cargo install cargo-chef --locked --version "$CARGO_CHEF_VERSION"
-
-WORKDIR /usr/src/oxen-server
 
 # recipe.json describes the dependency graph from the manifests alone. A source edit
 # that leaves them untouched produces an identical recipe, so the cook layer survives.
