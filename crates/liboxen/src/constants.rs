@@ -110,8 +110,6 @@ pub const INDICES_DIR: &str = "indices";
 pub const FIELDS_DIR: &str = "fields";
 /// versions/ is where all the versions are stored so that we can use to quickly swap between versions of the file
 pub const VERSIONS_DIR: &str = "versions";
-/// chunks/ is where individual file chunks are stored
-pub const CHUNKS_DIR: &str = "chunks";
 /// Storage of file node representations in objects dir
 pub const OBJECT_FILES_DIR: &str = "files";
 /// File name for files stored in versions directory (>0.8.4). (Was commit id <= 0.8.4)

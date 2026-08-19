@@ -63,7 +63,6 @@ pub mod config;
 pub mod constants;
 pub mod core;
 pub mod error;
-pub mod io;
 pub mod lmdb;
 pub mod migrations;
 pub mod model;
