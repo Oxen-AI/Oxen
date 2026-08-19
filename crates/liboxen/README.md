@@ -279,6 +279,12 @@ To run with all debug output and run a specific test
 env RUST_LOG=warn,liboxen=debug,integration_test=debug bin/test-rust --no-capture test_command_push_clone_pull_push
 ```
 
+To see how long each test takes, pass `--timings`. Plain `cargo test` reports only one total per test binary. Doctests are skipped.
+
+```bash
+bin/test-rust --timings repositories::rm
+```
+
 To explicitly set the port for the `oxen-server` used in tests, set `OXEN_PORT`:
 
 ```bash

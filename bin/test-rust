@@ -2,7 +2,7 @@
 #
 # Build, configure, and run the Oxen test suite.
 #
-# Usage: test-rust [--ffmpeg] [--keep] [--install-deps] [--no-ramdisk] [-p|--python] [extra args...]
+# Usage: test-rust [--ffmpeg] [--keep] [--install-deps] [--no-ramdisk] [--timings] [-p|--python] [extra args...]
 #
 #   --ffmpeg        Enable the "ffmpeg" cargo feature for build and test commands.
 #   --keep          Do not remove test data (in data/ox and data/test/runs) on cleanup — useful for
@@ -10,6 +10,8 @@
 #   --install-deps  Check and install prerequisites (install-prereqs) before running tests.
 #                   By default, prereqs are not checked.
 #   --no-ramdisk    Skip ramdisk setup and run tests against the regular filesystem.
+#   --timings       Print each test's duration next to its result. Rust runs only; doctests are
+#                   skipped.
 #   -p|--python     Run the oxen-python test suite (via pytest) instead of the Rust test suite.
 #                   Builds the native extension with maturin.
 #   All remaining arguments are forwarded after `--` to the libtest binaries (or `pytest` under -p).
@@ -17,6 +19,7 @@
 # Examples:
 #   test-rust                       # Run all Rust tests
 #   test-rust test_name             # Run Rust tests matching test_name
+#   test-rust --timings test_name   # Report each matching test's duration
 #   test-rust -p                    # Run all Python tests
 #   test-rust -p -k test_init      # Run Python tests matching test_init
 #
@@ -31,12 +34,14 @@ KEEP_DATA=false
 INSTALL_DEPS=false
 RUN_PYTHON=false
 USE_RAMDISK=true
+TIMINGS=false
 while true; do
     case "${1:-}" in
         --ffmpeg)        FEATURE_ARGS="-F ffmpeg"; shift ;;
         --keep)          KEEP_DATA=true; shift ;;
         --install-deps)  INSTALL_DEPS=true; shift ;;
         --no-ramdisk)    USE_RAMDISK=false; shift ;;
+        --timings)       TIMINGS=true; shift ;;
         -p|--python)     RUN_PYTHON=true; shift ;;
         *) break ;;
     esac
@@ -261,9 +266,18 @@ else
     # written to the log at all. Tail the log to debug what would have shown on stderr.
     CARGO_TEST_LOG="./data/test/cargo-test.log"
     mkdir -p "$(dirname "$CARGO_TEST_LOG")"
-    echo "==> Running tests with 'cargo test --workspace --no-fail-fast $FEATURE_ARGS -- $*' (stderr at ${CARGO_TEST_LOG}) ..."
+    TARGET_ARGS=""
+    if [ "$TIMINGS" = true ]; then
+        # --report-time needs RUSTC_BOOTSTRAP; the runner sets it for the test binaries only,
+        # leaving the build untouched. Doctests reject the flag, so they are left out.
+        HOST_TRIPLE=$(rustc -vV | awk '/^host:/{print $2}')
+        export "CARGO_TARGET_$(echo "$HOST_TRIPLE" | tr 'a-z-' 'A-Z_')_RUNNER=env RUSTC_BOOTSTRAP=1"
+        TARGET_ARGS="--lib --bins --tests"
+        set -- "$@" -Z unstable-options --report-time
+    fi
+    echo "==> Running tests with 'cargo test --workspace --no-fail-fast $FEATURE_ARGS $TARGET_ARGS -- $*' (stderr at ${CARGO_TEST_LOG}) ..."
     # shellcheck disable=SC2086
-    cargo test --workspace --no-fail-fast $FEATURE_ARGS -- "$@" 2>"$CARGO_TEST_LOG"
+    cargo test --workspace --no-fail-fast $FEATURE_ARGS $TARGET_ARGS -- "$@" 2>"$CARGO_TEST_LOG"
 fi
 
 # cleanup handled via the trapped cleanup function

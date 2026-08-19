@@ -55,12 +55,14 @@ Use the `bin/test-rust` script to run the tests — it is the standard, supporte
 ```bash
 bin/test-rust                         # Build and run all Rust tests
 bin/test-rust test_function_name      # Run only Rust tests matching test_function_name
+bin/test-rust --timings test_name     # Report each matching test's duration
 bin/test-rust -p                      # Run the Python test suite (via pytest + maturin)
 bin/test-rust -p -k test_init         # Run Python tests matching test_init
 ```
 - The script starts `oxen-server` itself, so you do not need to start it separately.
 - It does not install prerequisites by default. If a dependency is missing, run `bin/install-prereqs` (or re-run with `bin/test-rust --install-deps`).
 - If the ramdisk cannot be mounted, pass `--no-ramdisk` to run against the regular filesystem.
+- `--timings` prints each test's duration next to its result; plain `cargo test` reports only a per-binary total. Doctests are skipped. When comparing numbers, discard the first run after a build (a cold run reads two to three times high) and keep both sides on the same base commit (main moves fast enough that an older base is a different suite).
 - Arguments after the script's own flags are forwarded after `--` to the libtest binaries (or `pytest` under `-p`).
 - Output the terminal doesn't show goes to two log files, both overwritten per run: `./data/test/oxen-server.log` (server subprocess stdout+stderr) and `./data/test/cargo-test.log` (cargo test's stderr — indicatif progress bars, and any `tracing` output emitted from tokio worker or `spawn_blocking` threads that don't inherit libtest's per-thread capture). Check these first when the terminal report doesn't explain a failure.
 
