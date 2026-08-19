@@ -36,7 +36,7 @@ impl RunCmd for InitCmd {
             .arg(
                 Arg::new("merkle-backend")
                     .long("merkle-backend")
-                    .help("Which engine backs the repo's Merkle node store (default: filesystem)")
+                    .help("Which engine backs the repo's Merkle node store (default: lmdb; filesystem is deprecated)")
                     .value_parser(["filesystem", "lmdb"])
                     .action(clap::ArgAction::Set),
             )
@@ -56,6 +56,7 @@ impl RunCmd for InitCmd {
             .get_one::<String>("merkle-backend")
             .map(|s| MerkleNodeBackend::from_str(s))
             .transpose()?;
+        crate::helpers::reject_deprecated_merkle_backend(merkle_backend)?;
 
         // Make sure the remote version is compatible
         let (scheme, host) = get_scheme_and_host_or_default()?;

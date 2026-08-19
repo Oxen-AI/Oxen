@@ -41,10 +41,17 @@ impl Migrate for MerkleNodesToLmdbMigration {
         "Transcode the Merkle node store between backends (up: filesystem → LMDB, down: LMDB → filesystem)"
     }
 
-    fn is_needed(&self, _repo: &LocalRepository) -> Result<bool, OxenError> {
-        // Opt-in: a repo works on either backend, so this is never required — run it explicitly
-        // with `--run-optional`.
-        Ok(false)
+    fn is_needed(&self, repo: &LocalRepository) -> Result<bool, OxenError> {
+        // The filesystem backend is deprecated in 0.54.0 and removed in 0.55.0; see
+        // docs/deprecations.md. A filesystem-backed repo must transcode before the CLI will
+        // operate on it, so every command guarded by `check_repo_migration_needed` refuses until
+        // `oxen migrate up merkle_nodes_to_lmdb` has run. `oxen migrate` itself is unguarded, so
+        // the filesystem tree stays reachable long enough to migrate it.
+        //
+        // Gate on the repo's resolved backend (config first), not raw on-disk evidence: `up` keeps
+        // the FS tree as a backup and `down` may leave an orphan env on a crash, so disk presence
+        // alone doesn't tell us which backend the repo is actually using.
+        Ok(repo.merkle_node_backend() != MerkleNodeBackend::Lmdb)
     }
 
     fn is_applicable(
@@ -52,15 +59,11 @@ impl Migrate for MerkleNodesToLmdbMigration {
         direction: Direction,
         repo: &LocalRepository,
     ) -> Result<bool, OxenError> {
-        // Gate on the repo's resolved backend (config first), not raw on-disk evidence: `up` keeps
-        // the FS tree as a backup and `down` may leave an orphan env on a crash, so disk presence
-        // alone doesn't tell us which backend the repo is actually using.
-        let on_lmdb = repo.merkle_node_backend() == MerkleNodeBackend::Lmdb;
         Ok(match direction {
             // Can move to LMDB only if the repo isn't already on it.
-            Direction::Up => !on_lmdb,
+            Direction::Up => self.is_needed(repo)?,
             // Can move back to the filesystem only if the repo is currently on LMDB.
-            Direction::Down => on_lmdb,
+            Direction::Down => !self.is_needed(repo)?,
         })
     }
 
@@ -354,6 +357,10 @@ mod tests {
             let migration = MerkleNodesToLmdbMigration;
             assert!(migration.is_applicable(Direction::Up, &repo)?);
             assert!(!migration.is_applicable(Direction::Down, &repo)?);
+            assert!(
+                migration.is_needed(&repo)?,
+                "a filesystem-backed repo must migrate before the CLI will operate on it"
+            );
 
             // --- up: FS → LMDB (source kept) ---
             migration.up(repo.clone())?;
@@ -400,6 +407,10 @@ mod tests {
             let to_down = LocalRepository::from_dir(&repo.path)?;
             assert!(migration.is_applicable(Direction::Down, &to_down)?);
             assert!(!migration.is_applicable(Direction::Up, &to_down)?);
+            assert!(
+                !migration.is_needed(&to_down)?,
+                "an LMDB-backed repo needs no migration"
+            );
             migration.down(to_down)?;
 
             assert!(

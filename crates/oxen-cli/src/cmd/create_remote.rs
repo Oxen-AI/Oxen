@@ -72,7 +72,7 @@ impl RunCmd for CreateRemoteCmd {
         .arg(
             Arg::new("merkle-backend")
                 .long("merkle-backend")
-                .help("Which engine backs the remote repo's Merkle node store (default: the server's default)")
+                .help("Which engine backs the remote repo's Merkle node store (default: the server's default; filesystem is deprecated)")
                 .value_parser(["filesystem", "lmdb"])
                 .action(clap::ArgAction::Set),
         )
@@ -95,6 +95,7 @@ impl RunCmd for CreateRemoteCmd {
             .get_one::<String>("merkle-backend")
             .map(|s| MerkleNodeBackend::from_str(s))
             .transpose()?;
+        crate::helpers::reject_deprecated_merkle_backend(merkle_backend)?;
 
         // Default the host to the oxen.ai hub
         let host = args
