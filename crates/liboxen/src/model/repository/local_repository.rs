@@ -6,7 +6,7 @@ use crate::core::db::merkle_node::{
 };
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
-use crate::model::{Remote, RemoteRepository};
+use crate::model::{Remote, RemoteRepository, RepoIdentity};
 use crate::storage::{S3Opts, StorageConfig, VersionStore, create_version_store};
 use crate::util;
 use crate::util::fs::AtomicFile;
@@ -17,6 +17,7 @@ use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, SystemTime};
+use uuid::Uuid;
 
 /// Per-process cache of mtime round-trip tolerance, keyed by repo path. Probed at most
 /// once per repo per process via `probe_mtime_drift`.
@@ -57,6 +58,11 @@ pub struct LocalRepository {
     /// The backend `merkle_node_store` resolved to. Persisted as `merkle_node_backend` in
     /// `config.toml` by [`save`](Self::save) so the choice is the authoritative record on the next load.
     merkle_node_backend: MerkleNodeBackend,
+    /// Who this repo is: the UUIDs it is addressed by, plus name hints. `None` for a repo whose
+    /// config predates identity, and for every client-side repo — identity is recorded
+    /// server-side. The config is the authoritative record; any server-level index over it is
+    /// derived and rebuildable.
+    pub(crate) identity: Option<RepoIdentity>,
 }
 
 impl LocalRepository {
@@ -106,6 +112,11 @@ impl LocalRepository {
     /// The backend this repo's Merkle node store resolved to (see `create_merkle_node_store`).
     pub fn merkle_node_backend(&self) -> MerkleNodeBackend {
         self.merkle_node_backend
+    }
+
+    /// The immutable UUID this repo's storage is addressed by.
+    pub fn repo_uuid(&self) -> Option<Uuid> {
+        self.identity.as_ref().map(|identity| identity.repo_uuid)
     }
 
     /// Load a repository from the current directory
@@ -164,6 +175,7 @@ impl LocalRepository {
             version_store,
             merkle_node_store,
             merkle_node_backend,
+            identity: config.identity,
         })
     }
 
@@ -220,6 +232,7 @@ impl LocalRepository {
             version_store,
             merkle_node_store,
             merkle_node_backend,
+            identity: None,
         })
     }
 
@@ -260,6 +273,7 @@ impl LocalRepository {
             version_store,
             merkle_node_store,
             merkle_node_backend,
+            identity: None,
         })
     }
 
@@ -343,6 +357,7 @@ impl LocalRepository {
             workspace_name: self.workspace_name.clone(),
             workspaces: self.workspaces.clone(),
             merkle_node_backend: Some(self.merkle_node_backend),
+            identity: self.identity.clone(),
         };
 
         config.save(&config_path)?;
@@ -654,7 +669,7 @@ mod tests {
     use crate::config::RepositoryConfig;
     use crate::core::db::merkle_node::{DEFAULT_MERKLE_NODE_BACKEND, MerkleNodeBackend};
     use crate::error::OxenError;
-    use crate::model::{LocalRepository, Remote, RemoteRepository};
+    use crate::model::{LocalRepository, Remote, RemoteRepository, RepoIdentity};
     use crate::storage::StorageKind;
     use crate::test;
     use tempfile::TempDir;
@@ -828,6 +843,34 @@ mod tests {
         assert_eq!(
             reloaded.storage_config().versions_path,
             custom.versions_path
+        );
+
+        Ok(())
+    }
+
+    /// Every `save` rebuilds the config from the in-memory repo, so identity has to be carried
+    /// across or a save on any unrelated path silently erases it.
+    #[test]
+    fn test_identity_survives_a_save() -> Result<(), OxenError> {
+        let temp_dir = TempDir::new()?;
+        let identity = Some(RepoIdentity::minted("ox", "cats"));
+        let repo = LocalRepository::new(
+            temp_dir.path(),
+            RepositoryConfig {
+                identity: identity.clone(),
+                ..Default::default()
+            },
+        )?;
+        repo.save()?;
+
+        let reloaded = LocalRepository::from_dir(temp_dir.path())?;
+        assert_eq!(reloaded.identity, identity);
+
+        // A second save, of a repo that only ever loaded its identity, must preserve it too.
+        reloaded.save()?;
+        assert_eq!(
+            LocalRepository::from_dir(temp_dir.path())?.identity,
+            identity
         );
 
         Ok(())

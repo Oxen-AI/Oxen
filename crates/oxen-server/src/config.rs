@@ -2,9 +2,12 @@
 //!
 //! - [`Config`] — the TOML deserialize target for `--config`.
 //! - [`StoragePolicy`] — the version store storage policy for the server.
+//! - [`IdentityPolicy`] — who assigns the UUIDs repositories are identified by.
 
+pub mod identity_policy;
 pub mod storage_policy;
 
+use crate::config::identity_policy::IdentityPolicy;
 use crate::config::storage_policy::StoragePolicy;
 use serde::Deserialize;
 
@@ -18,16 +21,35 @@ use serde::Deserialize;
 pub struct Config {
     #[serde(default)]
     pub storage: StoragePolicy,
+    #[serde(default)]
+    pub identity: IdentityPolicy,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::identity_policy::IdentitySource;
 
     #[test]
-    fn parse_empty_file_uses_default_storage() {
-        let f: Config = toml::from_str("").unwrap();
+    fn parse_empty_file_uses_defaults() {
+        let f: Config = toml::from_str("").expect("an empty file parses");
         assert_eq!(f.storage, StoragePolicy::default());
+        assert_eq!(f.identity, IdentityPolicy::default());
+    }
+
+    #[test]
+    fn parse_identity_section() {
+        let f: Config = toml::from_str(
+            r#"
+            [identity]
+            repo_uuids_assigned_by = "auth-provider"
+        "#,
+        )
+        .unwrap();
+        assert_eq!(
+            f.identity.repo_uuids_assigned_by(),
+            IdentitySource::AuthProvider
+        );
     }
 
     #[test]

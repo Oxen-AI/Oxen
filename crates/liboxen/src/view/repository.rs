@@ -5,6 +5,7 @@ use crate::model::{Commit, EntryDataType};
 use crate::storage::StorageKind;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 #[schema(
@@ -25,6 +26,10 @@ pub struct RepositoryView {
     /// from a server that predates the field, so an older backend response still parses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merkle_node_backend: Option<MerkleNodeBackend>,
+    /// The immutable UUID this repo's storage is addressed by. `None` for a repository whose
+    /// identity backfill has not run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_uuid: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
@@ -66,6 +71,10 @@ pub struct RepositoryCreationView {
     /// from a server that predates the field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merkle_node_backend: Option<MerkleNodeBackend>,
+    /// The immutable UUID this repo's storage is addressed by. `None` for a repository whose
+    /// identity backfill has not run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_uuid: Option<Uuid>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
@@ -250,6 +259,7 @@ mod tests {
                 is_empty: false,
                 storage_kind: StorageKind::S3,
                 merkle_node_backend: Some(MerkleNodeBackend::Lmdb),
+                repo_uuid: None,
             },
             size: 42,
             data_types: vec![],
@@ -305,6 +315,7 @@ mod tests {
             min_version: Some("0.0.0".to_string()),
             storage_kind: StorageKind::S3,
             merkle_node_backend: Some(MerkleNodeBackend::Filesystem),
+            repo_uuid: None,
         };
         let json = serde_json::to_value(&view).expect("view should serialize");
         assert_eq!(json["storage_kind"], "s3");
@@ -327,6 +338,7 @@ mod tests {
                 is_empty: false,
                 storage_kind: StorageKind::S3,
                 merkle_node_backend: Some(MerkleNodeBackend::Lmdb),
+                repo_uuid: None,
             },
             size: 1_073_741_824,
             data_types: vec![],
