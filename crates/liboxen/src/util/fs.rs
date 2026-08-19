@@ -25,9 +25,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use tokio_stream::Stream;
 
-use crate::constants::CHUNKS_DIR;
 use crate::constants::OXEN_HIDDEN_DIR;
-use crate::constants::TREE_DIR;
 use crate::error::OxenError;
 use crate::model::MerkleHash;
 use crate::model::merkle_tree::node::FileNode;
@@ -141,14 +139,6 @@ pub fn video_thumbnail_filename(
         .map(|t| format!("t{t:.1}"))
         .unwrap_or_else(|| "t1.0".to_string());
     format!("thumbnail_{width_str}x{height_str}_{timestamp_str}.{extension}")
-}
-
-pub fn chunk_path(repo: &LocalRepository, hash: impl AsRef<str>) -> PathBuf {
-    oxen_hidden_dir(&repo.path)
-        .join(TREE_DIR)
-        .join(CHUNKS_DIR)
-        .join(hash.as_ref())
-        .join("data")
 }
 
 pub fn extension_from_path(path: &Path) -> String {
