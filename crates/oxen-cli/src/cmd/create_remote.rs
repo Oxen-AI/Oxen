@@ -72,7 +72,7 @@ impl RunCmd for CreateRemoteCmd {
         .arg(
             Arg::new("merkle-backend")
                 .long("merkle-backend")
-                .help("Which engine backs the remote repo's Merkle node store (default: the server's default; filesystem is deprecated)")
+                .help("Which engine backs the remote repo's Merkle node store (default: the server's default; filesystem is deprecated and rejected)")
                 .value_parser(["filesystem", "lmdb"])
                 .action(clap::ArgAction::Set),
         )

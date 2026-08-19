@@ -45,7 +45,7 @@ impl RunCmd for CloneCmd {
             .arg(
                 Arg::new("merkle-backend")
                     .long("merkle-backend")
-                    .help("Which engine backs the local repo's Merkle node store (default: lmdb; filesystem is deprecated)")
+                    .help("Which engine backs the local repo's Merkle node store (default: lmdb; filesystem is deprecated and rejected)")
                     .value_parser(["filesystem", "lmdb"])
                     .action(clap::ArgAction::Set),
             )
