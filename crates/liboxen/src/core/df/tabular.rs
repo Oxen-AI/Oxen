@@ -13,7 +13,6 @@ use crate::core::df::filter::DFLogicalOp;
 use crate::core::df::pretty_print;
 use crate::core::df::sql;
 use crate::error::OxenError;
-use crate::io::chunk_reader::ChunkReader;
 use crate::model::DataFrameSize;
 use crate::model::LocalRepository;
 use crate::model::data_frame::schema::DataType;
@@ -1672,69 +1671,26 @@ pub fn polars_schema_to_flat_str(schema: &Schema) -> String {
     result
 }
 
+/// Read and print a data frame held in a commit, resolved from its merkle tree node.
 pub async fn show_node(
     repo: LocalRepository,
     node: &MerkleTreeNode,
     opts: DFOpts,
 ) -> Result<DataFrame, OxenError> {
     let file_node = node.file()?;
-    log::debug!("Opening chunked reader");
+    let version_store = repo.version_store();
+    let df = read_version_df(
+        &version_store,
+        &file_node.hash().to_string(),
+        file_node.extension(),
+        &opts,
+    )
+    .await?;
 
-    let df = if file_node.name().ends_with("parquet") {
-        let chunk_reader = ChunkReader::new(repo, file_node)?;
-        let parquet_reader = ParquetReader::new(chunk_reader);
-        log::debug!("Reading chunked parquet");
+    let pretty_df = pretty_print::df_to_str(&df);
+    println!("{pretty_df}");
 
-        match parquet_reader.finish() {
-            Ok(df) => {
-                log::debug!("Finished reading chunked parquet");
-                Ok(df)
-            }
-            err => Err(OxenError::basic_str(format!(
-                "Could not read chunked parquet: {err:?}"
-            ))),
-        }?
-    } else if file_node.name().ends_with("arrow") {
-        let chunk_reader = ChunkReader::new(repo, file_node)?;
-        let parquet_reader = IpcReader::new(chunk_reader);
-        log::debug!("Reading chunked arrow");
-
-        match parquet_reader.finish() {
-            Ok(df) => {
-                log::debug!("Finished reading chunked arrow");
-                Ok(df)
-            }
-            err => Err(OxenError::basic_str(format!(
-                "Could not read chunked arrow: {err:?}"
-            ))),
-        }?
-    } else {
-        let chunk_reader = ChunkReader::new(repo, file_node)?;
-        let json_reader = JsonLineReader::new(chunk_reader);
-
-        match json_reader.finish() {
-            Ok(df) => {
-                log::debug!("Finished reading line delimited json");
-                Ok(df)
-            }
-            err => Err(OxenError::basic_str(format!(
-                "Could not read chunked json: {err:?}"
-            ))),
-        }?
-    };
-
-    let df: PolarsResult<DataFrame> = if opts.has_transform() {
-        let df = transform(df, opts).await?;
-        let pretty_df = pretty_print::df_to_str(&df);
-        println!("{pretty_df}");
-        Ok(df)
-    } else {
-        let pretty_df = pretty_print::df_to_str(&df);
-        println!("{pretty_df}");
-        Ok(df)
-    };
-
-    Ok(df?)
+    Ok(df)
 }
 
 #[cfg(test)]
@@ -2373,5 +2329,29 @@ mod tests {
             }
             Ok(())
         })
+    }
+
+    #[tokio::test]
+    async fn test_show_node_reads_committed_data_frame() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let relative_path = Path::new("data.csv");
+            let full_path = repo.path.join(relative_path);
+            tokio::fs::write(&full_path, "a,b\n1,2\n3,4\n").await?;
+            repositories::add(&repo, &full_path).await?;
+            let commit = repositories::commit(&repo, "add data")?;
+
+            let node =
+                repositories::tree::get_node_by_path_with_children(&repo, &commit, relative_path)?
+                    .expect("committed file node exists");
+
+            let df = tabular::show_node(repo.clone(), &node, DFOpts::empty()).await?;
+
+            // Column names prove the CSV was parsed as a CSV rather than as JSON lines.
+            assert_eq!(df.get_column_names(), vec!["a", "b"]);
+            assert_eq!(df.height(), 2);
+
+            Ok(())
+        })
+        .await
     }
 }
