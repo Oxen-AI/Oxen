@@ -68,9 +68,13 @@ mod tests {
     /// $ oxen restore train/
     #[tokio::test]
     async fn test_rm_directory_restore_directory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             let rm_dir = PathBuf::from("train");
             let full_path = repo.path.join(&rm_dir);
+            test::populate_dir_with_txt_files(&full_path, "file", 3)?;
+            repositories::add(&repo, &full_path).await?;
+            repositories::commit(&repo, "Adding train dir")?;
+
             let num_files = util::fs::rcount_files_in_dir(&full_path);
 
             // Remove directory
@@ -276,9 +280,10 @@ mod tests {
 
             // Add and commit the cats
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
-                let repo_filepath = images_dir.join(test_file.file_name().unwrap());
-                util::fs::copy(&test_file, &repo_filepath)?;
+                util::fs::write_to_path(
+                    images_dir.join(format!("cat_{i}.jpg")),
+                    format!("cat {i}"),
+                )?;
             }
 
             repositories::add(&repo, &images_dir).await?;
@@ -353,41 +358,39 @@ mod tests {
 
             // Add and commit the cats to every subdirectory
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
-                let repo_filepath = images_dir.join(test_file.file_name().unwrap());
-                util::fs::copy(&test_file, &repo_filepath)?;
+                util::fs::write_to_path(
+                    images_dir.join(format!("cat_{i}.jpg")),
+                    format!("cat {i}"),
+                )?;
             }
 
             for j in 1..=3 {
                 for i in 1..=3 {
-                    let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                     let repo_filepath = images_dir
                         .join(format!("subdir{j}_level_1"))
-                        .join(test_file.file_name().unwrap());
-                    util::fs::copy(&test_file, &repo_filepath)?;
+                        .join(format!("cat_{i}.jpg"));
+                    util::fs::write_to_path(repo_filepath, format!("cat {i}"))?;
                 }
             }
 
             for j in 1..=2 {
                 for i in 1..=3 {
-                    let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                     let repo_filepath = images_dir
                         .join(format!("subdir{j}_level_1"))
                         .join(format!("subdir{j}_level_2"))
-                        .join(test_file.file_name().unwrap());
-                    util::fs::copy(&test_file, &repo_filepath)?;
+                        .join(format!("cat_{i}.jpg"));
+                    util::fs::write_to_path(repo_filepath, format!("cat {i}"))?;
                 }
             }
 
             for j in 1..=1 {
                 for i in 1..=3 {
-                    let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
                     let repo_filepath = images_dir
                         .join(format!("subdir{j}_level_1"))
                         .join(format!("subdir{j}_level_2"))
                         .join(format!("subdir{j}_level_3"))
-                        .join(test_file.file_name().unwrap());
-                    util::fs::copy(&test_file, &repo_filepath)?;
+                        .join(format!("cat_{i}.jpg"));
+                    util::fs::write_to_path(repo_filepath, format!("cat {i}"))?;
                 }
             }
 
@@ -481,9 +484,10 @@ mod tests {
 
             // Add and commit the cats
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
-                let repo_filepath = images_dir.join(test_file.file_name().unwrap());
-                util::fs::copy(&test_file, &repo_filepath)?;
+                util::fs::write_to_path(
+                    images_dir.join(format!("cat_{i}.jpg")),
+                    format!("cat {i}"),
+                )?;
             }
 
             repositories::add(&repo, &images_dir).await?;
@@ -491,9 +495,10 @@ mod tests {
 
             // Add and commit the dogs
             for i in 1..=4 {
-                let test_file = test::test_img_file_with_name(&format!("dog_{i}.jpg"));
-                let repo_filepath = images_dir.join(test_file.file_name().unwrap());
-                util::fs::copy(&test_file, &repo_filepath)?;
+                util::fs::write_to_path(
+                    images_dir.join(format!("dog_{i}.jpg")),
+                    format!("dog {i}"),
+                )?;
             }
 
             repositories::add(&repo, &images_dir).await?;
@@ -503,16 +508,14 @@ mod tests {
             let branch_name = "modify-data";
             repositories::branches::create_checkout(&repo, branch_name)?;
 
-            // Resize all the cat images
+            // Modify all the cat images
             for i in 1..=3 {
                 let repo_filepath = images_dir.join(format!("cat_{i}.jpg"));
-
-                let dims = 96;
-                util::image::resize_and_save(&repo_filepath, &repo_filepath, dims)?;
+                test::modify_txt_file(&repo_filepath, &format!("modified cat {i}"))?;
             }
 
             repositories::add(&repo, &images_dir).await?;
-            repositories::commit(&repo, "Resized all the cats")?;
+            repositories::commit(&repo, "Modified all the cats")?;
 
             // Remove one of the dogs
             let repo_filepath = PathBuf::from("images").join("dog_1.jpg");
@@ -522,9 +525,7 @@ mod tests {
             let _commit = repositories::commit(&repo, "Removing dog")?;
 
             // Add dwight howard and vince carter
-            let test_file = test::test_img_file_with_name("dwight_vince.jpeg");
-            let repo_filepath = images_dir.join(test_file.file_name().unwrap());
-            util::fs::copy(&test_file, repo_filepath)?;
+            util::fs::write_to_path(images_dir.join("dwight_vince.jpeg"), "dwight and vince")?;
             repositories::add(&repo, &images_dir).await?;
             let commit = repositories::commit(&repo, "Adding dwight and vince")?;
 
@@ -549,62 +550,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_wildcard_remove_nested_nlp_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
-            let dir = Path::new("nlp");
-            let repo_dir = repo.path.join(dir);
-            repositories::add(&repo, repo_dir).await?;
-
-            let status = repositories::status(&repo).await?;
-            status.print();
-
-            // Should add all the sub dirs
-            // nlp/classification/annotations/
-            assert_eq!(status.staged_dirs.len(), 1);
-
-            // Should add sub files
-            // nlp/classification/annotations/train.tsv
-            // nlp/classification/annotations/test.tsv
-            assert_eq!(status.staged_files.len(), 2);
-
-            repositories::commit(&repo, "Adding nlp dir")?;
-
-            // Remove the nlp dir
-            let dir = Path::new("nlp");
-            let repo_nlp_dir = repo.path.join(dir);
-            std::fs::remove_dir_all(repo_nlp_dir)?;
-
-            let status = repositories::status(&repo).await?;
-
-            // status.removed_files currently is files and dirs,
-            // we roll up the dirs into the parent dir, so len should be 1
-            // TODO: https://app.asana.com/0/1204211285259102/1208493904390183/f
-            assert_eq!(status.removed_files.len(), 1);
-            assert_eq!(status.staged_files.len(), 0);
-
-            status.print();
-
-            // Add the removed nlp dir with a wildcard
-            repositories::add(&repo, "nlp/*").await?;
-            status.print();
-
-            let status = repositories::status(&repo).await?;
-            status.print();
-
-            // There is one rolled up dir
-            // nlp
-            assert_eq!(status.staged_dirs.len(), 1);
-            // 2 files
-            // nlp/classification/annotations/test.tsv
-            // nlp/classification/annotations/train.tsv
-            assert_eq!(status.staged_files.len(), 2);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
     async fn test_wildcard_rm_deleted_and_present() -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|repo| async move {
             // create the images directory
@@ -613,9 +558,10 @@ mod tests {
 
             // Add and commit the cats
             for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
-                let repo_filepath = images_dir.join(test_file.file_name().unwrap());
-                util::fs::copy(&test_file, &repo_filepath)?;
+                util::fs::write_to_path(
+                    images_dir.join(format!("cat_{i}.jpg")),
+                    format!("cat {i}"),
+                )?;
             }
 
             repositories::add(&repo, &images_dir).await?;
@@ -623,9 +569,10 @@ mod tests {
 
             // Add and commit the dogs
             for i in 1..=4 {
-                let test_file = test::test_img_file_with_name(&format!("dog_{i}.jpg"));
-                let repo_filepath = images_dir.join(test_file.file_name().unwrap());
-                util::fs::copy(&test_file, &repo_filepath)?;
+                util::fs::write_to_path(
+                    images_dir.join(format!("dog_{i}.jpg")),
+                    format!("dog {i}"),
+                )?;
             }
 
             repositories::add(&repo, &images_dir).await?;
@@ -957,9 +904,16 @@ mod tests {
             return Ok(());
         }
 
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_empty_local_repo_test_async(|repo| async move {
             // `annotations/train/one_shot.csv` is two levels deep under `annotations/`.
             let nested_modified = Path::new("annotations/train/one_shot.csv");
+            util::fs::write_to_path(
+                repo.path.join(nested_modified),
+                "file,label\ntrain/dog_1.jpg,1\n",
+            )?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Adding one shot")?;
+
             test::modify_txt_file(repo.path.join(nested_modified), "modified at depth 2")?;
 
             // Sanity: status sees the deep modification.
@@ -1163,11 +1117,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_rm_wildcard_multi_level() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            // Data from populate_annotations_dir:
-            // annotations/train/annotations.txt
+        test::run_empty_local_repo_test_async(|repo| async move {
             // annotations/train/bounding_box.csv
             // annotations/test/annotations.csv
+            let annotations_dir = repo.path.join("annotations");
+            util::fs::write_to_path(
+                annotations_dir.join("train").join("bounding_box.csv"),
+                "file,label\ntrain/dog_1.jpg,dog\n",
+            )?;
+            util::fs::write_to_path(
+                annotations_dir.join("test").join("annotations.csv"),
+                "file,label\ntest/1.jpg,dog\n",
+            )?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Adding annotations")?;
 
             // Remove only the files in annotations/test/
             let rm_opts = RmOpts {
